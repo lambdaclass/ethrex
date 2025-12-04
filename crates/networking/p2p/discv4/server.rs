@@ -502,12 +502,21 @@ impl DiscoveryServer {
         }
 
         let pairs = enr_response_message.node_record.decode_pairs();
+
+        self.peer_table
+            .record_enr_response_received(
+                &node_id,
+                enr_response_message.request_hash,
+                enr_response_message.node_record,
+            )
+            .await?;
+
         let Some(remote_fork_id) = pairs.eth else {
             self.peer_table
                 .set_is_fork_id_valid(&node_id, false)
                 .await?;
             debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"), "missing fork id in ENR response, skipping");
-            return Err(DiscoveryServerError::InvalidContact);
+            return Ok(());
         };
 
         let chain_config = self.store.get_chain_config();
@@ -543,13 +552,6 @@ impl DiscoveryServer {
         }
 
         self.peer_table.set_is_fork_id_valid(&node_id, true).await?;
-        self.peer_table
-            .record_enr_response_received(
-                &node_id,
-                enr_response_message.request_hash,
-                enr_response_message.node_record,
-            )
-            .await?;
 
         Ok(())
     }
