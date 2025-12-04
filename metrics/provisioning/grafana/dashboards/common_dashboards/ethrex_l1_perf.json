@@ -2722,30 +2722,6 @@
                     "value": "Error %"
                   }
                 ]
-              },
-              {
-                "__systemRef": "hideSeriesFrom",
-                "matcher": {
-                  "id": "byNames",
-                  "options": {
-                    "mode": "exclude",
-                    "names": [
-                      "engine_getPayloadBodiesByRangeV1 - % of Internal error"
-                    ],
-                    "prefix": "All except:",
-                    "readOnly": true
-                  }
-                },
-                "properties": [
-                  {
-                    "id": "custom.hideFrom",
-                    "value": {
-                      "legend": false,
-                      "tooltip": true,
-                      "viz": true
-                    }
-                  }
-                ]
               }
             ]
           },
@@ -3335,7 +3311,7 @@
           "type": "table"
         }
       ],
-      "title": "P2P Metrics",
+      "title": "Peer Info",
       "type": "row"
     },
     {
