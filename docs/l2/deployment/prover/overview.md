@@ -66,4 +66,4 @@ Ensure you have the following installed on your system:
 > ```
 
 > [!IMPORTANT]
-> Building with both `sp1` and `risc0` features enabled means settlement on Ethereum will require proofs generated with both systems.
+> Building with both `sp1` and `risc0` features enabled only enables both backends. Settlement will require both proofs **only if** you deploy your contracts with both proving systems set as required (for example, `--sp1 true` and `--risc0 true` in `ethrex l2 deploy`).

@@ -65,7 +65,7 @@ Ensure you have the following installed on your system:
 > ```
 
 > [!IMPORTANT]
-> If you compile with both `sp1` and `risc0` features enabled (`--features l2,l2-sql,sp1,risc0,...`), the settlement flow will require proving with both systems before batches are considered finalized on Ethereum.
+> Compiling with both `sp1` and `risc0` features only makes the binary capable of both. Settlement requires both proofs **only if** you deploy the contracts with both proving systems marked as required (for example, `--sp1 true` and `--risc0 true` in `ethrex l2 deploy`).
 
 > [!TIP]
 > To tune the block or batch gas limits for your deployment, see [Configuring gas limits](./gas_limit.md).
