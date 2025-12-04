@@ -296,7 +296,6 @@ pub struct EIP7702Transaction {
     #[rkyv(with=rkyv::with::Skip)]
     pub inner_hash: OnceCell<H256>,
 }
-
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct PrivilegedL2Transaction {
     pub chain_id: u64,
@@ -602,11 +601,6 @@ impl EIP4844Transaction {
         let mut buf = Vec::new();
         self.rlp_encode_as_pooled_tx(&mut buf, blobs_bundle);
         buf.len()
-    }
-    pub fn rlp_encode_as_pooled_tx_to_vec(&self, blobs_bundle: &BlobsBundle) -> Vec<u8> {
-        let mut buf = Vec::new();
-        self.rlp_encode_as_pooled_tx(&mut buf, blobs_bundle);
-        buf
     }
 }
 
