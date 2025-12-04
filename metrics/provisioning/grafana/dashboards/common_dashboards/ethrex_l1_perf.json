@@ -3277,7 +3277,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "sum by (reason, client_name) (increase(ethrex_p2p_disconnections{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__range]))",
+              "expr": "round(sum by (reason, client_name) (increase(ethrex_p2p_disconnections{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__range])))",
               "format": "table",
               "instant": true,
               "legendFormat": "__auto",
