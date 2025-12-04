@@ -38,6 +38,7 @@
   - [Deploying a based ethrex L2](./l2/deployment/based.md)
   - [Synchronous Composability PoC](./l2/deployment/synchronous_composability_poc.md)
   - [Deploying a shared bridge enabled L2](./l2/deployment/shared_bridge.md)
+  - [Migrations](./l2/deployment/migrations.md)
 - [Run a prover](./l2/deployment/prover/README.md)
   - [Overview](./l2/deployment/prover/overview.md)
   - [Run an ethrex SP1 prover](./l2/deployment/prover/sp1.md)
@@ -73,7 +74,6 @@
     - [L1MessageSender]()
   - [Based sequencing](./l2/fundamentals/based.md)
   - [Transaction fees](./l2/fundamentals/transaction_fees.md)
-  - [Migrations](./l2/migrations.md)
 
 # Ethrex for developers
 
