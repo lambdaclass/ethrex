@@ -72,12 +72,15 @@ contract Router is
 
     /// @inheritdoc IRouter
     function sendERC20Message(
-        // add sender chain id to restrict call
+        uint256 senderChainId,
         uint256 chainId,
         address tokenL1,
         address otherChainTokenL2,
         uint256 amount
     ) public payable override {
+        if (bridges[senderChainId] != msg.sender) {
+            revert("Router: invalid sender, not authorized");
+        }
         if (bridges[chainId] == address(0)) {
             emit TransferToChainNotRegistered(chainId);
         } else {

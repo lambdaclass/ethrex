@@ -384,6 +384,7 @@ contract CommonBridge is
                         tv.value
                     );
                     IRouter(SHARED_BRIDGE_ROUTER).sendERC20Message(
+                        block.chainid,
                         balanceDiffs[i].chainId,
                         tv.tokenL1,
                         tv.otherChainTokenL2,
