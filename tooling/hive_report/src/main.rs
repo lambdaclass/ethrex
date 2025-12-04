@@ -151,7 +151,11 @@ fn build_slack_blocks(
         let category_passed = category.total_passed();
         let category_total = category.total_tests();
         let category_percentage = category.success_percentage();
-        let status = if category_passed == category_total { "✅" } else { "⚠️" };
+        let status = if category_passed == category_total {
+            "✅"
+        } else {
+            "⚠️"
+        };
 
         let mut lines = vec![format!(
             "*{}* {}/{} ({:.02}%) {}",
@@ -173,7 +177,10 @@ fn build_slack_blocks(
         for result in failing_tests {
             lines.push(format!(
                 "- {}: {}/{} ({:.02}%)",
-                result.display_name, result.passed_tests, result.total_tests, result.success_percentage
+                result.display_name,
+                result.passed_tests,
+                result.total_tests,
+                result.success_percentage
             ));
         }
 
