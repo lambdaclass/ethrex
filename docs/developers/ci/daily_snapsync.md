@@ -4,7 +4,7 @@ Inside [Github actions tab](https://github.com/lambdaclass/ethrex/actions) there
 
 Currently it runs this check on Sepolia and Hoodi.
 
-Apart from being a useful job to catch regressions, it is a good log to see if there were any speedups of slowdowns in terms of time to complete a snap sync.
+Apart from being a useful job to catch regressions, it is a good log to see if there were any speedups or slowdowns in terms of time to complete a snap sync.
 
 Nice to haves:
 - Currently the jobs runs on the `main` docker image of ethrex. It would be nice to be able to trigger this from a branch so that the workflow is executed by trying to sync the branch ethrex code.
