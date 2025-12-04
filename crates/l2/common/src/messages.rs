@@ -184,25 +184,19 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
             && *selector == *CROSSCHAIN_MINT_ERC20_SELECTOR
         {
             let Some(token_l1) = message.data.get(offset + 12..offset + 32) else {
-                println!("Invalid L2Message data for crosschainMintERC20: missing token_l1");
                 continue;
             };
             offset += 32;
             let Some(token_l2) = message.data.get(offset + 12..offset + 32) else {
-                println!("Invalid L2Message data for crosschainMintERC20: missing token_l2");
                 continue;
             };
             offset += 32;
             let Some(other_chain_token_l2) = message.data.get(offset + 12..offset + 32) else {
-                println!(
-                    "Invalid L2Message data for crosschainMintERC20: missing other_chain_token_l2"
-                );
                 continue;
             };
             offset += 32;
             offset += 32; // skip to
             let Some(value_bytes) = message.data.get(offset..offset + 32) else {
-                println!("Invalid L2Message data for crosschainMintERC20: missing value");
                 continue;
             };
             (
