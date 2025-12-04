@@ -6,6 +6,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IRouter} from "./interfaces/IRouter.sol";
 import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 
@@ -18,6 +19,7 @@ contract Router is
     Ownable2StepUpgradeable,
     PausableUpgradeable
 {
+    using SafeERC20 for IERC20;
     mapping(uint256 chainId => address bridge) public bridges;
 
     uint256[] public registeredChainIds;
@@ -70,6 +72,7 @@ contract Router is
 
     /// @inheritdoc IRouter
     function sendERC20Message(
+        // add sender chain id to restrict call
         uint256 chainId,
         address tokenL1,
         address otherChainTokenL2,
@@ -83,7 +86,7 @@ contract Router is
                 otherChainTokenL2,
                 amount
             );
-            IERC20(tokenL1).transfer(bridges[chainId], amount);
+            IERC20(tokenL1).safeTransfer(bridges[chainId], amount);
         }
     }
 
