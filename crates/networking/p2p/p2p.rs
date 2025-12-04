@@ -10,5 +10,5 @@ pub mod tx_broadcaster;
 pub mod types;
 pub mod utils;
 
-pub use network::periodically_show_peer_stats;
 pub use network::start_network;
+pub use network::{periodically_show_peer_stats, periodically_update_local_node_record};

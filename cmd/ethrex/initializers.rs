@@ -210,13 +210,24 @@ pub async fn init_network(
 
     let bootnodes = get_bootnodes(opts, network, datadir);
 
-    ethrex_p2p::start_network(context, bootnodes)
+    ethrex_p2p::start_network(context.clone(), bootnodes)
         .await
         .expect("Network starts");
 
     tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
         blockchain,
         peer_handler.peer_table,
+    ));
+
+    let P2PContext {
+        storage,
+        local_node_record,
+        ..
+    } = context;
+
+    tracker.spawn(ethrex_p2p::periodically_update_local_node_record(
+        storage,
+        local_node_record,
     ));
 }
 
@@ -429,11 +440,17 @@ pub async fn init_l1(
 
     let local_p2p_node = get_local_p2p_node(&opts, &signer);
 
-    let local_node_record = Arc::new(RwLock::new(get_local_node_record(
-        datadir,
-        &local_p2p_node,
-        &signer,
-    )));
+    let mut local_node_record = get_local_node_record(datadir, &local_p2p_node, &signer);
+    let fork_id = store
+        .get_fork_id()
+        .await
+        .expect("Failed to get fork id from store");
+
+    local_node_record
+        .set_fork_id(fork_id, &signer)
+        .expect("Failed to set fork id on local node record");
+
+    let local_node_record = Arc::new(RwLock::new(local_node_record));
 
     let peer_table = PeerTable::spawn(opts.target_peers);
 
