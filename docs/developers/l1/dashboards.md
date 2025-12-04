@@ -166,6 +166,33 @@ Deaggregated view of error percentages split by method and error kind for both E
 
 ![Engine and RPC Errors % by Method and Kind](img/engine_and_rpc_errors_by_method_and_kind.png)
 
+## Peer Info
+
+Collapsed row providing visibility into the P2P networking layer. Surfaces peer counts, client distribution, and disconnection events to help diagnose connectivity issues and monitor network health. Each panel repeats per instance to compare behaviour across nodes.
+
+![Peer Info row](img/peer_info_row.png)
+
+### Peer Count
+Timeseries showing the number of connected peers over time. Useful for detecting connectivity issues or confirming that the node is maintaining a healthy peer set.
+
+![Peer Count](img/peer_count.png)
+
+### Peer Clients Distribution
+Pie chart breaking down connected peers by client type (e.g., Geth, Nethermind, Besu). Helps understand the diversity of the peer set and spot any client-specific connectivity patterns.
+
+![Peer Clients Distribution](img/peer_clients_distribution.png)
+
+### Peer Clients
+Timeseries view of peer counts by client type over time. Useful for tracking how the peer composition evolves and detecting sudden drops in connections to specific client types.
+
+![Peer Clients](img/peer_clients.png)
+
+### Peer Disconnection Events
+Bar chart showing disconnection events grouped by reason. Helps identify patterns in peer churn and diagnose whether disconnections are due to protocol errors, timeouts, or other causes.
+
+### Disconnections Details
+Table providing a detailed breakdown of disconnections by client type and reason over the selected time range. Useful for investigating which clients are disconnecting most frequently and why.
+
 ## Process and server info
 
 Row panels showing process-level and host-level metrics to help you monitor resource usage and spot potential issues.
