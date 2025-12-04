@@ -400,7 +400,7 @@ async fn process_new_block(
         let block = Arc::<Block>::try_unwrap(block).map_err(|_| {
             PeerConnectionError::InternalError("Failed to take ownership of block".to_string())
         })?;
-        established.blockchain.add_block(block).inspect_err(|e| {
+        established.blockchain.add_block_pipeline(block).inspect_err(|e| {
             error!(
                 peer=%established.node,
                 error=%e,
