@@ -193,6 +193,9 @@ pub enum DisconnectReason {
 }
 
 impl DisconnectReason {
+    // Returns a vector of all DisconnectReason variants, we need to update this method when we add,
+    // change or remove any DisconnectReason variants which are used in metrics.
+    // A test ensures this method is up to date.
     pub fn all() -> Vec<DisconnectReason> {
         vec![
             DisconnectReason::DisconnectRequested,
