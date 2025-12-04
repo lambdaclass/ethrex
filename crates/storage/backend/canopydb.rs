@@ -118,7 +118,7 @@ impl StorageReadView for CanopyDBReadView {
         _table: &'static str,
         _prefix: &[u8],
     ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
-        todo!()
+        todo!("this is used only for serving snap requests")
         // let db = self
         //     .dbs
         //     .get(table)
@@ -154,33 +154,22 @@ pub struct CanopyDBWriteBatch {
     write_txs: HashMap<&'static str, WriteTransaction>,
 }
 
-impl StorageReadView for CanopyDBWriteBatch {
-    fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        Ok(self
-            .dbs
-            .get(table)
-            .unwrap()
-            .begin_read()
-            .unwrap()
+impl StorageWriteBatch for CanopyDBWriteBatch {
+    fn put(&mut self, table: &'static str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        let rw_tx = self
+            .write_txs
+            .entry(table)
+            .or_insert_with(|| self.dbs.get(table).unwrap().begin_write().unwrap());
+
+        rw_tx
             .get_tree(&[])
             .unwrap()
             .unwrap()
-            .get(key)
-            .unwrap()
-            .map(|b| b.to_vec()))
+            .insert(key, value)
+            .unwrap();
+        Ok(())
     }
 
-    fn prefix_iterator(
-        &self,
-        _table: &'static str,
-        _prefix: &[u8],
-    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
-        todo!()
-        // Ok(Box::new(iter))
-    }
-}
-
-impl StorageWriteBatch for CanopyDBWriteBatch {
     /// Stores multiple key-value pairs in different tables using WriteBatch.
     /// Changes are accumulated in the batch and written atomically on commit.
     fn put_batch(
@@ -188,7 +177,6 @@ impl StorageWriteBatch for CanopyDBWriteBatch {
         table: &'static str,
         batch: Vec<(Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
-        // TODO: this modifies the state at current time instead of time of call to begin_write
         let rw_tx = self
             .write_txs
             .entry(table)
