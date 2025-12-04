@@ -1415,22 +1415,20 @@ impl Store {
         let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
         std::thread::spawn(move || {
             let rx = fkv_rx;
+            // Wait for the first Continue to start generation
             loop {
                 match rx.recv() {
                     Ok(FKVGeneratorControlMessage::Continue) => break,
                     Ok(FKVGeneratorControlMessage::Stop) => {}
-                    Err(_) => {
+                    Err(std::sync::mpsc::RecvError) => {
                         debug!("Closing FlatKeyValue generator.");
                         return;
                     }
                 }
             }
-            info!("Generation of FlatKeyValue started.");
-            match flatkeyvalue_generator(&backend_clone, &last_computed_fkv, &rx) {
-                Ok(_) => info!("FlatKeyValue generation finished."),
-                Err(err) => error!("Error while generating FlatKeyValue: {err}"),
-            }
-            // rx channel is dropped, closing it
+
+            let _ = flatkeyvalue_generator(&backend_clone, &last_computed_fkv, &rx)
+                .inspect_err(|err| error!("Error while generating FlatKeyValue: {err}"));
         });
         let backend = store.backend.clone();
         let flatkeyvalue_control_tx = store.flatkeyvalue_control_tx.clone();
@@ -1470,7 +1468,7 @@ impl Store {
                         .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
                     }
                     Err(err) => {
-                        error!("Error while reading diff layer: {err}");
+                        debug!("Trie update sender disconnected: {err}");
                         return;
                     }
                 }
@@ -2605,6 +2603,7 @@ fn flatkeyvalue_generator(
     last_computed_fkv: &Mutex<Vec<u8>>,
     control_rx: &std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
 ) -> Result<(), StoreError> {
+    info!("Generation of FlatKeyValue started.");
     let read_tx = backend.begin_read()?;
     let last_written = read_tx
         .get(MISC_VALUES, "last_written".as_bytes())?
@@ -2616,6 +2615,7 @@ fn flatkeyvalue_generator(
         backend.clear_table(STORAGE_FLATKEYVALUE)?;
     } else if last_written == [0xff] {
         // FKV was already generated
+        info!("FlatKeyValue already generated. Skipping.");
         return Ok(());
     }
 
@@ -2708,12 +2708,15 @@ fn flatkeyvalue_generator(
         });
         match res {
             Err(StoreError::PivotChanged) => {
-                if let Ok(value) = control_rx.recv() {
-                    match value {
-                        FKVGeneratorControlMessage::Continue => {}
-                        _ => {
-                            return Err(StoreError::Custom("Unexpected message".to_string()));
-                        }
+                match control_rx.recv() {
+                    Ok(FKVGeneratorControlMessage::Continue) => {}
+                    Ok(FKVGeneratorControlMessage::Stop) => {
+                        return Err(StoreError::Custom("Unexpected Stop message".to_string()));
+                    }
+                    // If the channel was closed, we stop generation prematurely
+                    Err(std::sync::mpsc::RecvError) => {
+                        info!("Store closed, stopping FlatKeyValue generation.");
+                        return Ok(());
                     }
                 }
             }
@@ -2724,6 +2727,7 @@ fn flatkeyvalue_generator(
                 *last_computed_fkv
                     .lock()
                     .map_err(|_| StoreError::LockError)? = vec![0xff; 131];
+                info!("FlatKeyValue generation finished.");
                 return Ok(());
             }
         };
@@ -2734,14 +2738,13 @@ fn fkv_check_for_stop_msg(
     control_rx: &std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
 ) -> Result<(), StoreError> {
     match control_rx.try_recv() {
-        Ok(FKVGeneratorControlMessage::Stop) => {
+        Ok(FKVGeneratorControlMessage::Stop) | Err(TryRecvError::Disconnected) => {
             return Err(StoreError::PivotChanged);
         }
-        Ok(_) => {
-            return Err(StoreError::Custom("Unexpected message".to_string()));
-        }
-        Err(TryRecvError::Disconnected) => {
-            return Err(StoreError::Custom("Store was closed.".to_string()));
+        Ok(FKVGeneratorControlMessage::Continue) => {
+            return Err(StoreError::Custom(
+                "Unexpected Continue message".to_string(),
+            ));
         }
         Err(TryRecvError::Empty) => {}
     }

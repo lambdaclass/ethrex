@@ -40,4 +40,6 @@ pub enum StoreError {
     UpdateBatchNoBlocks,
     #[error("Pivot changed")]
     PivotChanged,
+    #[error("Store was dropped")]
+    StoreClosed,
 }
