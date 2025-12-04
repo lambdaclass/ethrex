@@ -606,23 +606,12 @@ contract OnChainProposer is
 
                 offset += 128;
 
-                (
-                    address committedTokenL1,
-                    address committedTokenL2,
-                    address committedOtherChainTokenL2,
-                    uint256 committed_value
-                ) = (
-                        balanceDiffs[i].valuePerToken[j].tokenL1,
-                        balanceDiffs[i].valuePerToken[j].tokenL2,
-                        balanceDiffs[i].valuePerToken[j].otherChainTokenL2,
-                        balanceDiffs[i].valuePerToken[j].value
-                    );
-
                 if (
-                    tokenL1 != committedTokenL1 ||
-                    tokenL2 != committedTokenL2 ||
-                    otherChainTokenL2 != committedOtherChainTokenL2 ||
-                    token_value != committed_value
+                    tokenL1 != balanceDiffs[i].valuePerToken[j].tokenL1 ||
+                    tokenL2 != balanceDiffs[i].valuePerToken[j].tokenL2 ||
+                    otherChainTokenL2 !=
+                    balanceDiffs[i].valuePerToken[j].otherChainTokenL2 ||
+                    token_value != balanceDiffs[i].valuePerToken[j].value
                 ) {
                     return "010"; // balance diffs public inputs don't match with committed balance diffs
                 }
