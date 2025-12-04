@@ -442,7 +442,7 @@ impl Blockchain {
                     } else {
                         state.encode_to_vec()
                     },
-                    delete_all: update.removed,
+                    delete_all: false,
                 })
                 .unwrap();
         }
