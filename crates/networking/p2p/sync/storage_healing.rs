@@ -164,6 +164,8 @@ pub async fn heal_storage_trie(
     let (task_sender, mut task_receiver) =
         tokio::sync::mpsc::channel::<Result<TrieNodes, RequestStorageTrieNodes>>(1000);
 
+    let mut logged_no_free_peers_count = 0;
+
     loop {
         yield_now().await;
         if state.last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
@@ -247,6 +249,7 @@ pub async fn heal_storage_trie(
             peers,
             state.state_root,
             &task_sender,
+            &mut logged_no_free_peers_count,
         )
         .await;
 
@@ -317,20 +320,24 @@ async fn ask_peers_for_nodes(
     peers: &mut PeerHandler,
     state_root: H256,
     task_sender: &Sender<Result<TrieNodes, RequestStorageTrieNodes>>,
+    logged_no_free_peers_count: &mut u32,
 ) {
     if (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
         let Some((peer_id, connection)) = peers
             .peer_table
             .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
             .await
-            .inspect_err(
-                |err| debug!(err= ?err, "Error requesting a peer to perform storage healing"),
-            )
+            .inspect_err(|err| debug!(?err, "Error requesting a peer to perform storage healing"))
             .unwrap_or(None)
         else {
-            // warn!("We have no free peers for storage healing!"); way too spammy, moving to trace
-            // If we have no peers we shrug our shoulders and wait until next free peer
-            trace!("We have no free peers for storage healing!");
+            // Log ~ once every 10 seconds
+            if *logged_no_free_peers_count == 0 {
+                trace!("We are missing peers in heal_storage_trie");
+                *logged_no_free_peers_count = 1000;
+            }
+            *logged_no_free_peers_count -= 1;
+            // Sleep for a bit to avoid busy polling
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
             return;
         };
         let at = download_queue.len().saturating_sub(STORAGE_BATCH_SIZE);

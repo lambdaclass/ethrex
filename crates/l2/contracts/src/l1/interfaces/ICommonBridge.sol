@@ -34,6 +34,15 @@ interface ICommonBridge {
         bytes32 indexed withdrawalsLogsMerkleRoot
     );
 
+    /// @notice L2 messages have been published on L1.
+    /// @dev Event emitted when the L2 messages are published on L1.
+    /// @param l2MessagesBatchNumber the batch number where the l2 messages were emitted.
+    /// @param l2MessagesMerkleRoot the merkle root of the l2 messages.
+    event L2MessagesPublished(
+        uint256 indexed l2MessagesBatchNumber,
+        bytes32 indexed l2MessagesMerkleRoot
+    );
+
     /// @notice A withdrawal has been claimed.
     /// @dev Event emitted when a withdrawal is claimed.
     /// @param withdrawalId the message Id of the claimed withdrawal
@@ -44,6 +53,12 @@ interface ICommonBridge {
         uint256 gasLimit;
         uint256 value;
         bytes data;
+    }
+
+    /// @notice Structure representing balance to send to each chain.
+    struct BalanceDiff {
+        uint256 chainId;
+        uint256 value;
     }
 
     /// @notice Method to retrieve all the pending transaction hashes.
@@ -102,6 +117,35 @@ interface ICommonBridge {
         uint256 withdrawalLogsBatchNumber,
         bytes32 withdrawalsLogsMerkleRoot
     ) external;
+
+    /// @notice Publishes the L2 messages in the router contract.
+    /// @dev This method is used by the L2 OnChainProposer to publish the L2
+    /// messages when an L2 batch is committed.
+    /// @param l2MessagesBatchNumber the batch number in L2 where the l2 messages were emitted.
+    /// @param l2MessagesMerkleRoot the merkle root of the l2 messages.
+    /// @param balanceDiffs Array of balance differences for cross-chain accounting.
+    function publishL2Messages(
+        uint256 l2MessagesBatchNumber,
+        bytes32 l2MessagesMerkleRoot,
+        BalanceDiff[] calldata balanceDiffs
+    ) external;
+
+    /// @notice Verifies a message from L2 using a Merkle proof.
+    /// @dev This method is used to verify that a message from L2 was indeed
+    /// included in a committed L2 batch.
+    /// @param l2MessageLeaf The leaf of the L2 message to verify.
+    /// @param l2MessageBatchNumber The batch number where the L2 message was emitted.
+    /// @param l2MessageProof The Merkle proof for the L2 message.
+    function verifyMessage(
+        bytes32 l2MessageLeaf,
+        uint256 l2MessageBatchNumber,
+        bytes32[] calldata l2MessageProof
+    ) external view returns (bool);
+
+    /// @notice Receives funds from another chain via shared bridge router.
+    /// @dev This method should only be called by the shared bridge router, as this
+    /// method will not burn the L2 gas.
+    function receiveFromSharedBridge() external payable;
 
     /// @notice Method that claims an L2 withdrawal.
     /// @dev For a user to claim a withdrawal, this method verifies:

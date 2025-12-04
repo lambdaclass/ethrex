@@ -1,4 +1,7 @@
-use crate::{H256, types::BlobsBundle};
+use crate::{
+    H256,
+    types::{BlobsBundle, balance_diff::BalanceDiff},
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
@@ -8,7 +11,9 @@ pub struct Batch {
     pub last_block: u64,
     pub state_root: H256,
     pub privileged_transactions_hash: H256,
-    pub message_hashes: Vec<H256>,
+    pub l1_message_hashes: Vec<H256>,
+    pub l2_message_hashes: Vec<H256>,
+    pub balance_diffs: Vec<BalanceDiff>,
     pub blobs_bundle: BlobsBundle,
     pub commit_tx: Option<H256>,
     pub verify_tx: Option<H256>,
