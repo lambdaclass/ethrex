@@ -1379,7 +1379,8 @@ impl Store {
             }
             #[cfg(feature = "canopydb")]
             EngineType::CanopyDB => {
-                Self::from_backend(Arc::new(CanopyDBBackend::open(path)?), DB_COMMIT_THRESHOLD)
+                let backend = Arc::new(CanopyDBBackend::open(path)?);
+                Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
             }
             EngineType::InMemory => {
                 let backend = Arc::new(InMemoryBackend::open()?);
