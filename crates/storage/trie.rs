@@ -11,7 +11,7 @@ use std::sync::Arc;
 /// StorageRwTx implementation for the TrieDB trait
 /// Wraps a transaction to allow multiple trie operations on the same transaction
 pub struct BackendTrieDB {
-    /// Read-write transaction wrapped in Mutex for interior mutability
+    /// Reference to the storage backend
     db: Arc<dyn StorageBackend>,
     /// Last flatkeyvalue path already generated
     last_computed_flatkeyvalue: Nibbles,

@@ -11,9 +11,9 @@
 //!
 //! The API differentiates between three types of database access:
 //!
-//! - Read-only transactions ([`StorageRoTx`])
-//! - Read-write transactions ([`StorageRwTx`])
-//! - Locked snapshots ([`StorageLocked`]): Persistent read-only views, righ now it's
+//! - Read transactions ([`StorageRoTx`])
+//! - Write transactions ([`StorageRwTx`])
+//! - Locked snapshots ([`StorageLocked`]): Persistent read-only views, right now it's
 //!   only used in snapsync stage.
 
 use crate::error::StoreError;
@@ -33,10 +33,10 @@ pub trait StorageBackend: Debug + Send + Sync {
     /// Removes all data from the specified table.
     fn clear_table(&self, table: &'static str) -> Result<(), StoreError>;
 
-    /// Begins a new read-only transaction.
+    /// Begins a new read transaction.
     fn begin_read(&self) -> Result<Box<dyn StorageRoTx + '_>, StoreError>;
 
-    /// Begins a new read-write transaction.
+    /// Begins a new write transaction.
     fn begin_write(&self) -> Result<Box<dyn StorageRwTx + 'static>, StoreError>;
 
     /// Creates a locked snapshot for a specific table.
@@ -67,9 +67,10 @@ pub trait StorageRoTx {
     ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError>;
 }
 
-/// Read-write transaction interface.
+/// Write transaction interface.
 ///
-/// Extends [`StorageRoTx`] with methods to modify the database.
+/// Note that this does not provide read access, since we don't currently use that functionality.
+///
 /// Changes are not persisted until [`commit()`](StorageRwTx::commit) is called.
 pub trait StorageRwTx: Send {
     /// Stores a key-value pair in the specified table.

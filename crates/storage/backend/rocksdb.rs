@@ -295,7 +295,7 @@ impl StorageRoTx for RocksDBRoTx {
     }
 }
 
-/// Read-write transaction for RocksDB
+/// Write transaction for RocksDB
 pub struct RocksDBRwTx {
     /// Database reference for writing
     db: Arc<DBWithThreadMode<MultiThreaded>>,
