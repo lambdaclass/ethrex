@@ -26,7 +26,7 @@ use spawned_concurrency::{
         send_message_on, spawn_listener,
     },
 };
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, ops::Div, sync::Arc, time::Duration};
 use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
 use tracing::{debug, error, info, trace};
@@ -266,12 +266,12 @@ impl DiscoveryServer {
     async fn prune(&mut self) -> Result<(), DiscoveryServerError> {
         let interval = self.get_lookup_interval().await.as_micros();
         let rate = if interval == 0 {
-            0
+            0f64
         } else {
-            1_000_000 / interval
-        } as f64;
+            1_000_000f64 / interval as f64
+        };
         tracing::info!(
-            "Current lookup interval: {:?}, {} per second",
+            "Current lookup interval: {:?}, {:.3} per second",
             interval,
             rate
         );
@@ -373,7 +373,7 @@ impl DiscoveryServer {
             .expect("first 32 bytes are the message hash");
         // We do not use self.send() here, as we already encoded the message to calculate hash.
         self.udp_socket.send_to(&buf, node.udp_addr()).await?;
-        debug!(sent = "Ping", to = %format!("{:#x}", node.public_key));
+        trace!(sent = "Ping", to = %format!("{:#x}", node.public_key));
         Ok(H256::from(ping_hash))
     }
 
@@ -393,7 +393,7 @@ impl DiscoveryServer {
 
         self.send(pong, node.udp_addr()).await?;
 
-        debug!(sent = "Pong", to = %format!("{:#x}", node.public_key));
+        trace!(sent = "Pong", to = %format!("{:#x}", node.public_key));
 
         Ok(())
     }
@@ -410,7 +410,7 @@ impl DiscoveryServer {
 
         self.send(msg, node.udp_addr()).await?;
 
-        debug!(sent = "Neighbors", to = %format!("{:#x}", node.public_key));
+        trace!(sent = "Neighbors", to = %format!("{:#x}", node.public_key));
 
         Ok(())
     }
