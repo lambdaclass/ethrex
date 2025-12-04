@@ -1,15 +1,13 @@
+use crate::rlpx::initiator::RLPxInitiator;
 use crate::{
-    discv4::peer_table::{PeerData, PeerTable, PeerTableError, TARGET_PEERS},
+    discv4::peer_table::{PeerData, PeerTable, PeerTableError},
     metrics::{CurrentStepValue, METRICS},
     rlpx::{
         connection::server::PeerConnection,
         error::PeerConnectionError,
-        eth::{
-            blocks::{
-                BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
-                HashOrNumber,
-            },
-            receipts::GetReceipts,
+        eth::blocks::{
+            BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
+            HashOrNumber,
         },
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES},
@@ -28,12 +26,13 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{
     BigEndianHash, H256, U256,
-    types::{AccountState, BlockBody, BlockHeader, Receipt, validate_block_body},
+    types::{AccountState, BlockBody, BlockHeader, validate_block_body},
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
+use spawned_concurrency::tasks::GenServerHandle;
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     io::ErrorKind,
@@ -68,6 +67,7 @@ pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
     pub peer_table: PeerTable,
+    pub initiator: GenServerHandle<RLPxInitiator>,
 }
 
 pub enum BlockRequestOrder {
@@ -142,14 +142,11 @@ async fn ask_peer_head_number(
 }
 
 impl PeerHandler {
-    pub fn new(peer_table: PeerTable) -> PeerHandler {
-        Self { peer_table }
-    }
-
-    /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
-    /// This should only be used in tests as it won't be able to interact with the node's connected peers
-    pub fn dummy() -> PeerHandler {
-        PeerHandler::new(PeerTable::spawn(TARGET_PEERS))
+    pub fn new(peer_table: PeerTable, initiator: GenServerHandle<RLPxInitiator>) -> PeerHandler {
+        Self {
+            peer_table,
+            initiator,
+        }
     }
 
     async fn make_request(
@@ -189,8 +186,6 @@ impl PeerHandler {
         METRICS
             .current_step
             .set(CurrentStepValue::DownloadingHeaders);
-
-        let initial_downloaded_headers = METRICS.downloaded_headers.load(Ordering::Relaxed);
 
         let mut ret = Vec::<BlockHeader>::new();
 
@@ -238,6 +233,9 @@ impl PeerHandler {
 
             retries += 1;
         }
+        METRICS
+            .sync_head_block
+            .store(sync_head_number, Ordering::Relaxed);
         sync_head_number = sync_head_number.min(start + MAX_HEADER_CHUNK);
 
         let sync_head_number_retrieval_elapsed = sync_head_number_retrieval_start
@@ -248,12 +246,6 @@ impl PeerHandler {
 
         *METRICS.time_to_retrieve_sync_head_block.lock().await =
             Some(sync_head_number_retrieval_elapsed);
-        METRICS
-            .sync_head_block
-            .store(sync_head_number, Ordering::Relaxed);
-        METRICS
-            .headers_to_download
-            .store(sync_head_number + 1, Ordering::Relaxed);
         *METRICS.sync_head_hash.lock().await = sync_head;
 
         let block_count = sync_head_number + 1 - start;
@@ -289,6 +281,8 @@ impl PeerHandler {
 
         *METRICS.headers_download_start_time.lock().await = Some(SystemTime::now());
 
+        let mut logged_no_free_peers_count = 0;
+
         loop {
             if let Ok((headers, peer_id, _connection, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
@@ -307,9 +301,7 @@ impl PeerHandler {
 
                 downloaded_count += headers.len() as u64;
 
-                METRICS
-                    .downloaded_headers
-                    .fetch_add(headers.len() as u64, Ordering::Relaxed);
+                METRICS.downloaded_headers.inc_by(headers.len() as u64);
 
                 let batch_show = downloaded_count / 10_000;
 
@@ -347,7 +339,14 @@ impl PeerHandler {
                 .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await?
             else {
-                trace!("We didn't get a peer from the table");
+                // Log ~ once every 10 seconds
+                if logged_no_free_peers_count == 0 {
+                    trace!("We are missing peers in request_block_headers");
+                    logged_no_free_peers_count = 1000;
+                }
+                logged_no_free_peers_count -= 1;
+                // Sleep a bit to avoid busy polling
+                tokio::time::sleep(Duration::from_millis(10)).await;
                 continue;
             };
 
@@ -392,11 +391,6 @@ impl PeerHandler {
                     })
             });
         }
-
-        METRICS.downloaded_headers.store(
-            initial_downloaded_headers + downloaded_count,
-            Ordering::Relaxed,
-        );
 
         let elapsed = start_time.elapsed().unwrap_or_default();
 
@@ -570,28 +564,12 @@ impl PeerHandler {
         }
     }
 
-    /// Requests block bodies from any suitable peer given their block hashes
-    /// Returns the block bodies or None if:
-    /// - There are no available peers (the node just started up or was rejected by all other nodes)
-    /// - No peer returned a valid response in the given time and retry limits
-    pub async fn request_block_bodies(
-        &mut self,
-        block_hashes: &[H256],
-    ) -> Result<Option<Vec<BlockBody>>, PeerHandlerError> {
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            if let Some((block_bodies, _)) = self.request_block_bodies_inner(block_hashes).await? {
-                return Ok(Some(block_bodies));
-            }
-        }
-        Ok(None)
-    }
-
     /// Requests block bodies from any suitable peer given their block headers and validates them
     /// Returns the requested block bodies or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     /// - The block bodies are invalid given the block headers
-    pub async fn request_and_validate_block_bodies(
+    pub async fn request_block_bodies(
         &mut self,
         block_headers: &[BlockHeader],
     ) -> Result<Option<Vec<BlockBody>>, PeerHandlerError> {
@@ -619,46 +597,6 @@ impl PeerHandler {
             // Retry on validation failure
             if validation_success {
                 return Ok(Some(res));
-            }
-        }
-        Ok(None)
-    }
-
-    /// Requests all receipts in a set of blocks from any suitable peer given their block hashes
-    /// Returns the lists of receipts or None if:
-    /// - There are no available peers (the node just started up or was rejected by all other nodes)
-    /// - No peer returned a valid response in the given time and retry limits
-    pub async fn request_receipts(
-        &mut self,
-        block_hashes: Vec<H256>,
-    ) -> Result<Option<Vec<Vec<Receipt>>>, PeerHandlerError> {
-        let block_hashes_len = block_hashes.len();
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetReceipts(GetReceipts {
-                id: request_id,
-                block_hashes: block_hashes.clone(),
-            });
-            match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
-                None => return Ok(None),
-                Some((peer_id, mut connection)) => {
-                    if let Some(receipts) =
-                        match PeerHandler::make_request(&mut self.peer_table, peer_id, &mut connection, request, PEER_REPLY_TIMEOUT).await {
-                            Ok(RLPxMessage::Receipts68(res)) => {
-                                Some(res.get_receipts())
-                            }
-                            Ok(RLPxMessage::Receipts69(res)) => {
-                                Some(res.receipts.clone())
-                            }
-                            _ => None
-                        }
-                    .and_then(|receipts|
-                        // Check that the response is not empty and does not contain more bodies than the ones requested
-                        (!receipts.is_empty() && receipts.len() <= block_hashes_len).then_some(receipts))
-                    {
-                        return Ok(Some(receipts));
-                    }
-                }
             }
         }
         Ok(None)
@@ -726,6 +664,8 @@ impl PeerHandler {
         let mut chunk_file = 0;
         let mut last_update: SystemTime = SystemTime::now();
         let mut write_set = tokio::task::JoinSet::new();
+
+        let mut logged_no_free_peers_count = 0;
 
         loop {
             if all_accounts_state.len() * size_of::<AccountState>() >= RANGE_FILE_CHUNK_SIZE {
@@ -807,7 +747,14 @@ impl PeerHandler {
                 .inspect_err(|err| error!(err= ?err, "Error requesting a peer for account range"))
                 .unwrap_or(None)
             else {
-                trace!("We are missing peers in request_account_range_request");
+                // Log ~ once every 10 seconds
+                if logged_no_free_peers_count == 0 {
+                    trace!("We are missing peers in request_account_range");
+                    logged_no_free_peers_count = 1000;
+                }
+                logged_no_free_peers_count -= 1;
+                // Sleep a bit to avoid busy polling
+                tokio::time::sleep(Duration::from_millis(10)).await;
                 continue;
             };
 
@@ -1045,6 +992,8 @@ impl PeerHandler {
 
         let mut completed_tasks = 0;
 
+        let mut logged_no_free_peers_count = 0;
+
         loop {
             if let Ok(result) = task_receiver.try_recv() {
                 let TaskResult {
@@ -1083,6 +1032,14 @@ impl PeerHandler {
                 .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await?
             else {
+                // Log ~ once every 10 seconds
+                if logged_no_free_peers_count == 0 {
+                    trace!("We are missing peers in request_bytecodes");
+                    logged_no_free_peers_count = 1000;
+                }
+                logged_no_free_peers_count -= 1;
+                // Sleep a bit to avoid busy polling
+                tokio::time::sleep(Duration::from_millis(10)).await;
                 continue;
             };
 
@@ -1251,6 +1208,8 @@ impl PeerHandler {
         // Maps storage root to vector of hashed addresses matching that root and
         // vector of hashed storage keys and storage values.
         let mut current_account_storages: BTreeMap<H256, AccountsWithStorage> = BTreeMap::new();
+
+        let mut logged_no_free_peers_count = 0;
 
         debug!("Starting request_storage_ranges loop");
         loop {
@@ -1597,6 +1556,14 @@ impl PeerHandler {
                 .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await?
             else {
+                // Log ~ once every 10 seconds
+                if logged_no_free_peers_count == 0 {
+                    trace!("We are missing peers in request_storage_ranges");
+                    logged_no_free_peers_count = 1000;
+                }
+                logged_no_free_peers_count -= 1;
+                // Sleep a bit to avoid busy polling
+                tokio::time::sleep(Duration::from_millis(10)).await;
                 continue;
             };
 

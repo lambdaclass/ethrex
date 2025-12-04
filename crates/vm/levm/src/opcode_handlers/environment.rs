@@ -20,7 +20,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push1(u256_from_big_endian_const(addr.to_fixed_bytes()))?;
+            .push(u256_from_big_endian_const(addr.to_fixed_bytes()))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -36,7 +36,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.increase_consumed_gas(gas_cost::balance(address_was_cold)?)?;
 
-        current_call_frame.stack.push1(account_balance)?;
+        current_call_frame.stack.push(account_balance)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -49,7 +49,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push1(u256_from_big_endian_const(origin.to_fixed_bytes()))?;
+            .push(u256_from_big_endian_const(origin.to_fixed_bytes()))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -60,7 +60,7 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::CALLER)?;
 
         let caller = u256_from_big_endian_const(current_call_frame.msg_sender.to_fixed_bytes());
-        current_call_frame.stack.push1(caller)?;
+        current_call_frame.stack.push(caller)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -72,7 +72,7 @@ impl<'a> VM<'a> {
 
         let callvalue = current_call_frame.msg_value;
 
-        current_call_frame.stack.push1(callvalue)?;
+        current_call_frame.stack.push(callvalue)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -114,7 +114,7 @@ impl<'a> VM<'a> {
 
         let result = u256_from_big_endian_const(data);
 
-        current_call_frame.stack.push1(result)?;
+        current_call_frame.stack.push(result)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -126,7 +126,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push1(U256::from(current_call_frame.calldata.len()))?;
+            .push(U256::from(current_call_frame.calldata.len()))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -204,7 +204,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push1(U256::from(current_call_frame.bytecode.bytecode.len()))?;
+            .push(U256::from(current_call_frame.bytecode.bytecode.len()))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -277,7 +277,7 @@ impl<'a> VM<'a> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::GASPRICE)?;
 
-        current_call_frame.stack.push1(gas_price)?;
+        current_call_frame.stack.push(gas_price)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -293,7 +293,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.increase_consumed_gas(gas_cost::extcodesize(address_was_cold)?)?;
 
-        current_call_frame.stack.push1(account_code_length)?;
+        current_call_frame.stack.push(account_code_length)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -367,7 +367,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push1(U256::from(current_call_frame.sub_return_data.len()))?;
+            .push(U256::from(current_call_frame.sub_return_data.len()))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -432,7 +432,7 @@ impl<'a> VM<'a> {
         }
 
         let hash = u256_from_big_endian_const(account_code_hash);
-        current_call_frame.stack.push1(hash)?;
+        current_call_frame.stack.push(hash)?;
 
         Ok(OpcodeResult::Continue)
     }

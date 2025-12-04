@@ -1,15 +1,18 @@
 use crate::api::tables::{
-    ACCOUNT_CODES, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, HEADERS, RECEIPTS, TRIE_NODES,
+    ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
+    CANONICAL_BLOCK_HASHES, FULLSYNC_HEADERS, HEADERS, RECEIPTS, STORAGE_FLATKEYVALUE,
+    STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
 };
 use crate::api::{
-    PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, tables::TABLES,
+    PrefixResult, StorageBackend, StorageLocked, StorageReadTx, StorageWriteTx, tables::TABLES,
 };
 use crate::error::StoreError;
+use rocksdb::DBWithThreadMode;
 use rocksdb::checkpoint::Checkpoint;
 use rocksdb::{
     BlockBasedOptions, ColumnFamilyDescriptor, MultiThreaded, Options, SnapshotWithThreadMode,
+    WriteBatch,
 };
-use rocksdb::{OptimisticTransactionDB, WriteBatchWithTransaction};
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
@@ -19,7 +22,7 @@ use tracing::{info, warn};
 #[derive(Debug)]
 pub struct RocksDBBackend {
     /// Optimistric transaction database
-    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+    db: Arc<DBWithThreadMode<MultiThreaded>>,
 }
 
 impl RocksDBBackend {
@@ -58,12 +61,22 @@ impl RocksDBBackend {
         opts.set_enable_write_thread_adaptive_yield(true);
         opts.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
         opts.set_advise_random_on_open(false);
+        opts.set_compression_type(rocksdb::DBCompressionType::None);
+
+        let compressible_tables = [
+            BLOCK_NUMBERS,
+            HEADERS,
+            BODIES,
+            RECEIPTS,
+            TRANSACTION_LOCATIONS,
+            FULLSYNC_HEADERS,
+        ];
 
         // opts.enable_statistics();
         // opts.set_stats_dump_period_sec(600);
 
         // Open all column families
-        let existing_cfs = OptimisticTransactionDB::<MultiThreaded>::list_cf(&opts, path.as_ref())
+        let existing_cfs = DBWithThreadMode::<MultiThreaded>::list_cf(&opts, path.as_ref())
             .unwrap_or_else(|_| vec!["default".to_string()]);
 
         let mut all_cfs_to_open = HashSet::new();
@@ -78,9 +91,14 @@ impl RocksDBBackend {
             cf_opts.set_level_zero_slowdown_writes_trigger(20);
             cf_opts.set_level_zero_stop_writes_trigger(36);
 
+            if compressible_tables.contains(&cf_name.as_str()) {
+                cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+            } else {
+                cf_opts.set_compression_type(rocksdb::DBCompressionType::None);
+            }
+
             match cf_name.as_str() {
                 HEADERS | BODIES => {
-                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
                     cf_opts.set_max_write_buffer_number(4);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
@@ -90,7 +108,6 @@ impl RocksDBBackend {
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CANONICAL_BLOCK_HASHES | BLOCK_NUMBERS => {
-                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
                     cf_opts.set_max_write_buffer_number(3);
                     cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
@@ -100,8 +117,7 @@ impl RocksDBBackend {
                     block_opts.set_bloom_filter(10.0, false);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                TRIE_NODES => {
-                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+                ACCOUNT_TRIE_NODES | STORAGE_TRIE_NODES => {
                     cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
@@ -113,8 +129,33 @@ impl RocksDBBackend {
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                RECEIPTS | ACCOUNT_CODES => {
-                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+                ACCOUNT_FLATKEYVALUE | STORAGE_FLATKEYVALUE => {
+                    cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
+                    cf_opts.set_max_write_buffer_number(6);
+                    cf_opts.set_min_write_buffer_number_to_merge(2);
+                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
+                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
+
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_size(16 * 1024); // 16KB
+                    block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    cf_opts.set_block_based_table_factory(&block_opts);
+                }
+                ACCOUNT_CODES => {
+                    cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
+                    cf_opts.set_max_write_buffer_number(3);
+                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
+
+                    cf_opts.set_enable_blob_files(true);
+                    // Small bytecodes should go inline (mainly for delegation indicators)
+                    cf_opts.set_min_blob_size(32);
+                    cf_opts.set_blob_compression_type(rocksdb::DBCompressionType::Lz4);
+
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_size(32 * 1024); // 32KB
+                    cf_opts.set_block_based_table_factory(&block_opts);
+                }
+                RECEIPTS => {
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
                     cf_opts.set_max_write_buffer_number(3);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
@@ -125,7 +166,6 @@ impl RocksDBBackend {
                 }
                 _ => {
                     // Default for other CFs
-                    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
                     cf_opts.set_max_write_buffer_number(3);
                     cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
@@ -139,7 +179,7 @@ impl RocksDBBackend {
             cf_descriptors.push(ColumnFamilyDescriptor::new(cf_name, cf_opts));
         }
 
-        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &opts,
             path.as_ref(),
             cf_descriptors,
@@ -170,7 +210,7 @@ impl StorageBackend for RocksDBBackend {
             .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
 
         let mut iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
-        let mut batch = WriteBatchWithTransaction::<true>::default();
+        let mut batch = WriteBatch::default();
 
         while let Some(Ok((key, _))) = iter.next() {
             batch.delete_cf(&cf, key);
@@ -181,16 +221,16 @@ impl StorageBackend for RocksDBBackend {
             .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
     }
 
-    fn begin_read(&self) -> Result<Box<dyn StorageRoTx + '_>, StoreError> {
-        Ok(Box::new(RocksDBRoTx {
+    fn begin_read(&self) -> Result<Box<dyn StorageReadTx + '_>, StoreError> {
+        Ok(Box::new(RocksDBReadTx {
             db: self.db.clone(),
         }))
     }
 
-    fn begin_write(&self) -> Result<Box<dyn StorageRwTx + 'static>, StoreError> {
-        let batch = WriteBatchWithTransaction::<true>::default();
+    fn begin_write(&self) -> Result<Box<dyn StorageWriteTx + 'static>, StoreError> {
+        let batch = WriteBatch::default();
 
-        Ok(Box::new(RocksDBRwTx {
+        Ok(Box::new(RocksDBWriteTx {
             db: self.db.clone(),
             batch,
         }))
@@ -221,12 +261,12 @@ impl StorageBackend for RocksDBBackend {
 }
 
 /// Read-only transaction for RocksDB
-pub struct RocksDBRoTx {
+pub struct RocksDBReadTx {
     /// Transaction
-    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+    db: Arc<DBWithThreadMode<MultiThreaded>>,
 }
 
-impl StorageRoTx for RocksDBRoTx {
+impl StorageReadTx for RocksDBReadTx {
     fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let cf = self
             .db
@@ -255,53 +295,31 @@ impl StorageRoTx for RocksDBRoTx {
     }
 }
 
-/// Read-write transaction for RocksDB
-pub struct RocksDBRwTx {
+/// Write transaction for RocksDB
+pub struct RocksDBWriteTx {
     /// Database reference for writing
-    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+    db: Arc<DBWithThreadMode<MultiThreaded>>,
     /// Write batch for accumulating changes
-    batch: WriteBatchWithTransaction<true>,
+    batch: WriteBatch,
 }
 
-impl StorageRoTx for RocksDBRwTx {
-    fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+impl StorageWriteTx for RocksDBWriteTx {
+    fn put(&mut self, table: &'static str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         let cf = self
             .db
             .cf_handle(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
-
-        self.db
-            .get_cf(&cf, key)
-            .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
+            .ok_or_else(|| StoreError::Custom(format!("Table {table:?} not found")))?;
+        self.batch.put_cf(&cf, key, value);
+        Ok(())
     }
 
-    fn prefix_iterator(
-        &self,
-        table: &'static str,
-        prefix: &[u8],
-    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
-        let cf = self
-            .db
-            .cf_handle(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
-
-        let iter = self.db.prefix_iterator_cf(&cf, prefix).map(|result| {
-            result.map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
-        });
-        Ok(Box::new(iter))
-    }
-}
-
-impl StorageRwTx for RocksDBRwTx {
-    /// Stores multiple key-value pairs in different tables using WriteBatch.
+    /// Stores multiple key-value pairs in a single table.
     /// Changes are accumulated in the batch and written atomically on commit.
     fn put_batch(
         &mut self,
         table: &'static str,
         batch: Vec<(Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
-        // Fast-path if we have only one table in the batch
-        // All tables are the same
         let cf = self
             .db
             .cf_handle(table)
@@ -336,9 +354,9 @@ impl StorageRwTx for RocksDBRwTx {
 /// This is used for batch read operations in snap sync
 pub struct RocksDBLocked {
     /// Reference to database
-    db: &'static Arc<OptimisticTransactionDB<MultiThreaded>>,
+    db: &'static Arc<DBWithThreadMode<MultiThreaded>>,
     /// Snapshot/locked transaction
-    lock: SnapshotWithThreadMode<'static, OptimisticTransactionDB<MultiThreaded>>,
+    lock: SnapshotWithThreadMode<'static, DBWithThreadMode<MultiThreaded>>,
     /// Column family handle
     cf: Arc<rocksdb::BoundColumnFamily<'static>>,
 }
@@ -355,8 +373,8 @@ impl Drop for RocksDBLocked {
     fn drop(&mut self) {
         unsafe {
             drop(Box::from_raw(
-                self.db as *const Arc<OptimisticTransactionDB<MultiThreaded>>
-                    as *mut Arc<OptimisticTransactionDB<MultiThreaded>>,
+                self.db as *const Arc<DBWithThreadMode<MultiThreaded>>
+                    as *mut Arc<DBWithThreadMode<MultiThreaded>>,
             ));
         }
     }

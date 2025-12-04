@@ -9,7 +9,7 @@ use crate::{
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::{Address, U256, evm::calculate_create_address, types::Fork};
+use ethrex_common::{Address, H256, U256, evm::calculate_create_address, types::Fork};
 use ethrex_common::{
     tracing::CallType::{self, CALL, CALLCODE, DELEGATECALL, SELFDESTRUCT, STATICCALL},
     types::Code,
@@ -667,7 +667,7 @@ impl<'a> VM<'a> {
         // Deployment will fail (consuming all gas) if the contract already exists.
         let new_account = self.get_account_mut(new_address)?;
         if new_account.create_would_collide() {
-            self.current_call_frame.stack.push1(FAIL)?;
+            self.current_call_frame.stack.push(FAIL)?;
             self.tracer
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
             return Ok(OpcodeResult::Continue);
@@ -682,7 +682,8 @@ impl<'a> VM<'a> {
             deployer,
             new_address,
             new_address,
-            Code::from_bytecode(code),
+            // SAFETY: init code hash is never used
+            Code::from_bytecode_unchecked(code, H256::zero()),
             value,
             Bytes::new(),
             false,
@@ -795,7 +796,7 @@ impl<'a> VM<'a> {
             call_frame.sub_return_data = ctx_result.output.clone();
 
             // What to do, depending on TxResult
-            call_frame.stack.push1(match &ctx_result.result {
+            call_frame.stack.push(match &ctx_result.result {
                 TxResult::Success => SUCCESS,
                 TxResult::Revert(_) => FAIL,
             })?;
@@ -916,11 +917,11 @@ impl<'a> VM<'a> {
         // What to do, depending on TxResult
         match &ctx_result.result {
             TxResult::Success => {
-                self.current_call_frame.stack.push1(SUCCESS)?;
+                self.current_call_frame.stack.push(SUCCESS)?;
                 self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
             }
             TxResult::Revert(_) => {
-                self.current_call_frame.stack.push1(FAIL)?;
+                self.current_call_frame.stack.push(FAIL)?;
             }
         };
 
@@ -963,7 +964,7 @@ impl<'a> VM<'a> {
         // What to do, depending on TxResult
         match ctx_result.result.clone() {
             TxResult::Success => {
-                parent_call_frame.stack.push1(address_to_word(to))?;
+                parent_call_frame.stack.push(address_to_word(to))?;
                 self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
             }
             TxResult::Revert(err) => {
@@ -972,7 +973,7 @@ impl<'a> VM<'a> {
                     parent_call_frame.sub_return_data = ctx_result.output.clone();
                 }
 
-                parent_call_frame.stack.push1(FAIL)?;
+                parent_call_frame.stack.push(FAIL)?;
             }
         };
 
@@ -1033,7 +1034,7 @@ impl<'a> VM<'a> {
             .gas_remaining
             .checked_add(gas_limit as i64)
             .ok_or(InternalError::Overflow)?;
-        callframe.stack.push1(FAIL)?; // It's the same as revert for CREATE
+        callframe.stack.push(FAIL)?; // It's the same as revert for CREATE
 
         self.tracer.exit_early(0, Some(reason))?;
         Ok(())

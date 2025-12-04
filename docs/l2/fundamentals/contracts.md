@@ -77,7 +77,7 @@ The `CommonBridgeL2` is an L2 smart contract that facilitates cross-chain transf
 
 - **`L1_MESSENGER`**: Constant address (`0x000000000000000000000000000000000000FFFE`) representing the L2-to-L1 messenger contract
 - **`BURN_ADDRESS`**: Constant address (`0x0000000000000000000000000000000000000000`) used to burn ETH during withdrawals
-- **`NATIVE_TOKEN_L2`**: Constant address (`0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE`) representing the native token on the L2
+- **`ETH_TOKEN`**: Constant address (`0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE`) representing ETH as a token
 
 #### **Core Functionality**
 
@@ -98,8 +98,8 @@ The `CommonBridgeL2` is an L2 smart contract that facilitates cross-chain transf
     - **`onlySelf`**: Modifier ensuring only the bridge contract itself can call privileged functions
     - Validates that privileged operations (like minting) are only performed by the bridge
 
-### `L2ToL1Messenger`
-The `L2ToL1Messenger` is a simple L2 smart contract that enables communication from L2 to L1 by emitting the data as `L1Message` events for sequencers to pick up.
+### `Messenger`
+The `Messenger` is a simple L2 smart contract that enables communication from L2 to L1 by emitting the data as `L1Message` events for sequencers to pick up.
 
 #### **State Variables**
 

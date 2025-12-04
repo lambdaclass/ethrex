@@ -6,7 +6,7 @@ use canopydb::{
 };
 
 use crate::api::{
-    PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, tables::TABLES,
+    PrefixResult, StorageBackend, StorageLocked, StorageReadTx, StorageWriteTx, tables::TABLES,
 };
 use crate::error::StoreError;
 use std::collections::HashMap;
@@ -61,14 +61,14 @@ impl StorageBackend for CanopyDBBackend {
         Ok(())
     }
 
-    fn begin_read(&self) -> Result<Box<dyn StorageRoTx + '_>, StoreError> {
-        Ok(Box::new(CanopyDBRoTx {
+    fn begin_read(&self) -> Result<Box<dyn StorageReadTx + '_>, StoreError> {
+        Ok(Box::new(CanopyDBReadTx {
             dbs: self.dbs.clone(),
         }))
     }
 
-    fn begin_write(&self) -> Result<Box<dyn StorageRwTx + 'static>, StoreError> {
-        Ok(Box::new(CanopyDBRwTx {
+    fn begin_write(&self) -> Result<Box<dyn StorageWriteTx + 'static>, StoreError> {
+        Ok(Box::new(CanopyDBWriteTx {
             env: self.env.clone(),
             dbs: self.dbs.clone(),
             write_txs: Default::default(),
@@ -93,11 +93,11 @@ impl StorageBackend for CanopyDBBackend {
 }
 
 /// Read-only transaction for CanopyDB
-pub struct CanopyDBRoTx {
+pub struct CanopyDBReadTx {
     dbs: Arc<HashMap<&'static str, canopydb::Database>>,
 }
 
-impl StorageRoTx for CanopyDBRoTx {
+impl StorageReadTx for CanopyDBReadTx {
     fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let db = self
             .dbs
@@ -141,7 +141,7 @@ impl StorageRoTx for CanopyDBRoTx {
 }
 
 /// Read-write transaction for CanopyDB
-pub struct CanopyDBRwTx {
+pub struct CanopyDBWriteTx {
     /// Database reference for writing
     env: Environment,
     /// Map of table names to databases
@@ -150,7 +150,7 @@ pub struct CanopyDBRwTx {
     write_txs: HashMap<&'static str, WriteTransaction>,
 }
 
-impl StorageRoTx for CanopyDBRwTx {
+impl StorageReadTx for CanopyDBWriteTx {
     fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         Ok(self
             .dbs
@@ -176,7 +176,7 @@ impl StorageRoTx for CanopyDBRwTx {
     }
 }
 
-impl StorageRwTx for CanopyDBRwTx {
+impl StorageWriteTx for CanopyDBWriteTx {
     /// Stores multiple key-value pairs in different tables using WriteBatch.
     /// Changes are accumulated in the batch and written atomically on commit.
     fn put_batch(

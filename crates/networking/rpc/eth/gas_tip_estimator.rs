@@ -86,7 +86,7 @@ impl GasTipEstimator {
             };
 
             let base_fee = storage
-                .get_block_header(latest_block_number)
+                .get_block_header(block_num)
                 .ok()
                 .flatten()
                 .and_then(|header| header.base_fee_per_gas);
@@ -125,7 +125,7 @@ impl Default for GasTipEstimator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eth::test_utils::{
+    use crate::test_utils::{
         BASE_PRICE_IN_WEI, add_eip1559_tx_blocks, add_empty_blocks, add_legacy_tx_blocks,
         add_mixed_tx_blocks, setup_store,
     };
@@ -141,8 +141,6 @@ mod tests {
         assert_eq!(gas_tip, BASE_PRICE_IN_WEI);
     }
 
-    // FIXME
-    #[ignore = "fails due to the tx RLP encoding not working with empty signatures"]
     #[tokio::test]
     async fn test_for_eip1559_txs() {
         let storage = setup_store().await;
@@ -154,8 +152,6 @@ mod tests {
         assert_eq!(gas_tip, BASE_PRICE_IN_WEI);
     }
 
-    // FIXME
-    #[ignore = "fails due to the tx RLP encoding not working with empty signatures"]
     #[tokio::test]
     async fn test_for_mixed_txs() {
         let storage = setup_store().await;
