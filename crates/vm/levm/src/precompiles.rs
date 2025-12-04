@@ -834,7 +834,7 @@ pub fn bn254_g1_mul(g1: G1, scalar: U256) -> Result<Bytes, VMError> {
         Fq::from_slice(&g1.1.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?,
     );
 
-    let g1 = AffineG1::new(g1_x, g1_y).map_err(|_| PrecompileError::InvalidPoint)?;
+    let g1: G1 = AffineG1::new(g1_x, g1_y).map_err(|_| PrecompileError::InvalidPoint)?.into();
 
     let scalar =
         Fr::from_slice(&scalar.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?;
