@@ -113,7 +113,6 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         IERC20L2 token = IERC20L2(tokenL2);
         token.crosschainBurn(msg.sender, amount);
         address tokenL1 = token.l1Address();
-        // TODO: should we use calldata here?
         bytes memory data = abi.encodeCall(
             ICommonBridgeL2.crosschainMintERC20,
             (tokenL1, tokenL2, otherChainTokenL2, to, amount)
