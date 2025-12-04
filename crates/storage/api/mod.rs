@@ -24,8 +24,6 @@ use std::{fmt::Debug, path::Path};
 pub mod tables;
 
 /// Type alias for the result of a prefix iterator.
-/// Uses Box<[u8]> instead of Vec<u8> to avoid unnecessary allocations
-/// when the data comes directly from the database.
 pub type PrefixResult = Result<(Box<[u8]>, Box<[u8]>), StoreError>;
 
 /// This trait provides a minimal set of operations required from a database backend.
