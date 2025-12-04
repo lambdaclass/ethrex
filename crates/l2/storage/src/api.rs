@@ -4,7 +4,10 @@ use std::fmt::Debug;
 
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch, fee_config::FeeConfig},
+    types::{
+        AccountUpdate, Blob, BlockNumber, balance_diff::BalanceDiff, batch::Batch,
+        fee_config::FeeConfig,
+    },
 };
 use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
 
@@ -20,11 +23,23 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         block_number: BlockNumber,
     ) -> Result<Option<u64>, RollupStoreError>;
 
-    /// Gets the message hashes by a given batch number.
-    async fn get_message_hashes_by_batch(
+    /// Gets the L1 message hashes by a given batch number.
+    async fn get_l1_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, RollupStoreError>;
+
+    /// Gets the L2 message hashes by a given batch number.
+    async fn get_l2_message_hashes_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<H256>>, RollupStoreError>;
+
+    /// Returns the balance diffs by a given batch_number
+    async fn get_balance_diffs_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<BalanceDiff>>, RollupStoreError>;
 
     /// Returns the block numbers by a given batch_number
     async fn get_block_numbers_by_batch(

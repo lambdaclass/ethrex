@@ -30,11 +30,20 @@ pub enum PrivilegedTransactionError {
     LengthTooLarge(#[from] std::num::TryFromIntError),
 }
 
-pub fn get_block_privileged_transactions(txs: &[Transaction]) -> Vec<PrivilegedL2Transaction> {
+pub fn get_block_l1_privileged_transactions(
+    txs: &[Transaction],
+    chain_id: u64,
+) -> Vec<PrivilegedL2Transaction> {
     txs.iter()
-        .filter_map(|tx| match tx {
-            Transaction::PrivilegedL2Transaction(tx) => Some(tx.clone()),
-            _ => None,
+        .filter_map(|tx| {
+            if let Transaction::PrivilegedL2Transaction(tx) = tx {
+                if tx.chain_id == chain_id {
+                    return Some(tx.clone());
+                }
+                None
+            } else {
+                None
+            }
         })
         .collect()
 }

@@ -10,7 +10,7 @@ On L2:
 
 1. The user sends a transaction calling `withdraw(address _receiverOnL1)` on the `CommonBridgeL2` contract, along with the amount of ETH to be withdrawn.
 2. The bridge sends the withdrawn amount to the burn address.
-3. The bridge calls `sendMessageToL1(bytes32 data)` on the `L2ToL1Messenger` contract, with `data` being:
+3. The bridge calls `sendMessageToL1(bytes32 data)` on the `Messenger` contract, with `data` being:
 
     ```solidity
     bytes32 data = keccak256(abi.encodePacked(ETH_ADDRESS, ETH_ADDRESS, _receiverOnL1, msg.value))
@@ -18,7 +18,7 @@ On L2:
 
     The `ETH_ADDRESS` is an arbitrary address we use, meaning the "token" to transfer is ETH.
 
-4. `L2ToL1Messenger` emits an `L1Message` event, with the address of the L2 bridge contract and `data` as topics, along with a unique message ID.
+4. `Messenger` emits an `L1Message` event, with the address of the L2 bridge contract and `data` as topics, along with a unique message ID.
 
 Off-chain:
 
@@ -41,7 +41,7 @@ sequenceDiagram
     box rgb(139, 63, 63) L2
         actor L2Alice as Alice
         participant CommonBridgeL2
-        participant L2ToL1Messenger
+        participant Messenger
     end
 
     actor Sequencer
@@ -54,10 +54,10 @@ sequenceDiagram
 
     L2Alice->>CommonBridgeL2: withdraws 42 ETH
     CommonBridgeL2->>CommonBridgeL2: burns 42 ETH
-    CommonBridgeL2->>L2ToL1Messenger: calls sendMessageToL1
-    L2ToL1Messenger->>L2ToL1Messenger: emits L1Message event
+    CommonBridgeL2->>Messenger: calls sendMessageToL1
+    Messenger->>Messenger: emits L1Message event
 
-    L2ToL1Messenger-->>Sequencer: receives event
+    Messenger-->>Sequencer: receives event
 
     Sequencer->>OnChainProposer: publishes batch
     OnChainProposer->>CommonBridge: publishes L1 message root
@@ -77,13 +77,13 @@ On L2:
 2. The user sends a transaction calling `withdrawERC20(address _token, address _receiverOnL1, uint256 _value)` on the `CommonBridgeL2` contract.
 3. The bridge calls `crosschainBurn` on the L2 token, burning the amount to be withdrawn by the user.
 4. The bridge fetches the address of the L1 token by calling `l1Address()` on the L2 token contract.
-5. The bridge calls `sendMessageToL1(bytes32 data)` on the `L2ToL1Messenger` contract, with `data` being:
+5. The bridge calls `sendMessageToL1(bytes32 data)` on the `Messenger` contract, with `data` being:
 
     ```solidity
     bytes32 data = keccak256(abi.encodePacked(_token.l1Address(), _token, _receiverOnL1, _value))
     ```
 
-6. `L2ToL1Messenger` emits an `L1Message` event, with the address of the L2 bridge contract and `data` as topics, along with a unique message ID.
+6. `Messenger` emits an `L1Message` event, with the address of the L2 bridge contract and `data` as topics, along with a unique message ID.
 
 Off-chain:
 
@@ -107,7 +107,7 @@ sequenceDiagram
         actor L2Alice as Alice
         participant L2Token
         participant CommonBridgeL2
-        participant L2ToL1Messenger
+        participant Messenger
     end
 
     actor Sequencer
@@ -122,10 +122,10 @@ sequenceDiagram
     L2Alice->>L2Token: approves token transfer
     L2Alice->>CommonBridgeL2: withdraws 42 of L2Token
     CommonBridgeL2->>L2Token: burns the 42 tokens
-    CommonBridgeL2->>L2ToL1Messenger: calls sendMessageToL1
-    L2ToL1Messenger->>L2ToL1Messenger: emits L1Message event
+    CommonBridgeL2->>Messenger: calls sendMessageToL1
+    Messenger->>Messenger: emits L1Message event
 
-    L2ToL1Messenger-->>Sequencer: receives event
+    Messenger-->>Sequencer: receives event
 
     Sequencer->>OnChainProposer: publishes batch
     OnChainProposer->>CommonBridge: publishes L1 message root

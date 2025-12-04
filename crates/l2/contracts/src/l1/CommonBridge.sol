@@ -14,6 +14,7 @@ import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProo
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
+import {IRouter} from "./interfaces/IRouter.sol";
 import "../l2/interfaces/IFeeTokenRegistry.sol";
 
 /// @title CommonBridge contract.
@@ -101,6 +102,16 @@ contract CommonBridge is
     /// @dev Index pointing to the first unprocessed privileged transaction in the queue.
     uint256 private pendingPrivilegedTxIndex;
 
+    /// @notice Address of the SharedBridgeRouter contract
+    address public SHARED_BRIDGE_ROUTER = address(0);
+
+    /// @notice Mapping of merkle roots to the L2 messages.
+    /// @dev The key is the L2 batch number where the messages were emitted.
+    /// @dev The value is the merkle root of the messages.
+    /// @dev If there exist a merkle root for a given batch number it means
+    /// that the messages were published on L1, and that that batch was committed.
+    mapping(uint256 => bytes32) public l2MessagesMerkleRoots;
+
     modifier onlyOnChainProposer() {
         require(
             msg.sender == ON_CHAIN_PROPOSER,
@@ -118,7 +129,8 @@ contract CommonBridge is
     function initialize(
         address owner,
         address onChainProposer,
-        uint256 inclusionMaxWait
+        uint256 inclusionMaxWait,
+        address _sharedBridgeRouter
     ) public initializer {
         require(
             onChainProposer != address(0),
@@ -131,6 +143,8 @@ contract CommonBridge is
         pendingPrivilegedTxIndex = 0;
 
         PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = inclusionMaxWait;
+
+        SHARED_BRIDGE_ROUTER = _sharedBridgeRouter;
 
         OwnableUpgradeable.__Ownable_init(owner);
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
@@ -186,8 +200,6 @@ contract CommonBridge is
     }
 
     function _sendToL2(address from, SendValues memory sendValues) private {
-        _burnGas(sendValues.gasLimit);
-
         bytes32 l2MintTxHash = keccak256(
             bytes.concat(
                 bytes20(from),
@@ -220,6 +232,7 @@ contract CommonBridge is
     function sendToL2(
         SendValues calldata sendValues
     ) public override whenNotPaused {
+        _burnGas(sendValues.gasLimit);
         _sendToL2(_getSenderAlias(), sendValues);
     }
 
@@ -340,6 +353,48 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
+    function publishL2Messages(
+        uint256 l2MessagesBatchNumber,
+        bytes32 l2MessagesMerkleRoot,
+        BalanceDiff[] calldata balanceDiffs
+    ) public onlyOnChainProposer nonReentrant {
+        require(
+            l2MessagesMerkleRoots[l2MessagesBatchNumber] == bytes32(0),
+            "CommonBridge: l2 messages already published"
+        );
+        l2MessagesMerkleRoots[
+            l2MessagesBatchNumber
+        ] = l2MessagesMerkleRoot;
+        emit L2MessagesPublished(l2MessagesBatchNumber, l2MessagesMerkleRoot);
+        for (uint i = 0; i < balanceDiffs.length; i++) {
+            IRouter(SHARED_BRIDGE_ROUTER).sendMessage{value: balanceDiffs[i].value}(
+                balanceDiffs[i].chainId
+            );
+        }
+    }
+
+    /// @inheritdoc ICommonBridge
+    function receiveFromSharedBridge() public override payable {
+        require(
+            msg.sender == SHARED_BRIDGE_ROUTER,
+            "CommonBridge: caller is not the shared bridge router"
+        );
+    }
+
+    /// @inheritdoc ICommonBridge
+    function verifyMessage(
+        bytes32 l2MessageLeaf,
+        uint256 l2MessageBatchNumber,
+        bytes32[] calldata l2MessageProof
+    ) external view override returns (bool) {
+        return MerkleProof.verify(
+            l2MessageProof,
+            l2MessagesMerkleRoots[l2MessageBatchNumber],
+            l2MessageLeaf
+        );
+    }
+
+    /// @inheritdoc ICommonBridge
     function claimWithdrawal(
         uint256 claimedAmount,
         uint256 withdrawalBatchNumber,
@@ -440,7 +495,6 @@ contract CommonBridge is
                 withdrawalLeaf
             );
     }
-
     function pendingTxHashesLength() private view returns (uint256) {
         return pendingTxHashes.length - pendingPrivilegedTxIndex;
     }

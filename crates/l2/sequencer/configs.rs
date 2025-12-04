@@ -59,6 +59,9 @@ pub struct L1WatcherConfig {
     pub max_block_step: U256,
     pub watcher_block_delay: u64,
     pub l1_blob_base_fee_update_interval: u64,
+    pub l2_rpc_urls: Vec<Url>,
+    pub l2_chain_ids: Vec<u64>,
+    pub router_address: Address,
 }
 
 #[derive(Clone, Debug)]
