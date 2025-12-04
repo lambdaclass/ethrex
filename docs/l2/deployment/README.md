@@ -4,8 +4,6 @@ This section provides step-by-step guides for deploying different types of ethre
 
 Use this section to choose the deployment method that best fits your needs and follow the instructions accordingly.
 
-- When running `ethrex l2 deploy`, enabling multiple proving systems (for example, both `--sp1 true` and `--risc0 true`) marks them all as required. Each batch will need every selected proof before it can be settled on L1.
-
 - [Overview](./overview.md)
 - [Deploying a vanilla ethrex L2](./vanilla.md)
 - [Deploying a validium ethrex L2](./validium.md)
