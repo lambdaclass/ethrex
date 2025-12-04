@@ -381,12 +381,12 @@ contract CommonBridge is
                     // TODO: update the deposits map and how do we get the token_l2 address
                     // TODO: we need to transfer the locked erc20 token to the router first
                     // TODO: uncomment the following lines after testing
-                    // uint256 deposited = deposits[tv.token_l1][tv.token_l2];
-                    // require(
-                    //     deposited >= tv.value,
-                    //     "CommonBridge: trying to withdraw more tokens than were deposited"
-                    // );
-                    // deposits[tv.token_l1][tv.token_l2] -= tv.value;
+                    uint256 deposited = deposits[tv.token_l1][tv.token_l2];
+                    require(
+                        deposited >= tv.value,
+                        "CommonBridge: trying to withdraw more tokens than were deposited"
+                    );
+                    deposits[tv.token_l1][tv.token_l2] -= tv.value;
                     IERC20(tv.token_l1).safeTransfer(
                         SHARED_BRIDGE_ROUTER,
                         tv.value
