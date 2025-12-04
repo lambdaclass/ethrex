@@ -1058,6 +1058,7 @@ impl GenServer for PeerTableServer {
                 match self.contacts.entry(node.node_id()) {
                     Entry::Occupied(_) => false,
                     Entry::Vacant(entry) => {
+                        METRICS.record_new_discovery().await;
                         entry.insert(Contact::from(node));
                         true
                     }
