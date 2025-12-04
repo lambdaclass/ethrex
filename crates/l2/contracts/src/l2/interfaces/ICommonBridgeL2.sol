@@ -74,6 +74,13 @@ interface ICommonBridgeL2 {
         uint256 amount
     ) external;
 
+    /// @notice Initiates the crosschain minting of ERC20 tokens on another L2 chain.
+    /// @dev This is used to send tokens to another L2 chain via L1.
+    /// @param tokenL1 Address of the token on L1
+    /// @param tokenL2 Address of the token on this L2
+    /// @param otherChainTokenL2 Address of the token on the destination L2
+    /// @param to Address on the destination L2 that should receive the tokens
+    /// @param amount Amount of tokens to mint on the destination L2
     function crosschainMintERC20(
         address tokenL1,
         address tokenL2,
@@ -95,6 +102,22 @@ interface ICommonBridgeL2 {
         address tokenL2,
         address destination,
         uint256 amount
+    ) external;
+
+    /// @notice Transfer ERC20 tokens to the desired L2 chain.
+    /// @dev This burns tokens on this L2 and sends a message to the destination L2
+    /// @dev so tokens can be minted on that chain.
+    /// @param chainId The chain ID of the destination chain.
+    /// @param to The address on the destination chain that should receive the tokens.
+    /// @param amount The amount of tokens to transfer.
+    /// @param token_l2 The address of the ERC20 token on this L2 chain.
+    /// @param other_chain_token_l2 The address of the ERC20 token on the destination L2 chain.
+    function transfer_erc20(
+        uint256 chainId,
+        address to,
+        uint256 amount,
+        address token_l2,
+        address other_chain_token_l2
     ) external;
 
     /// @notice Sends an arbitrary message to the another chain.

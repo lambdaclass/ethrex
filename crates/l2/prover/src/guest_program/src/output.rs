@@ -31,7 +31,7 @@ pub struct ProgramOutput {
     pub l2messages_merkle_root: H256,
     #[cfg(feature = "l2")]
     /// balance diffs for each chain id
-    pub balance_diffs: Vec<(U256, Vec<(Address, Address, Address, U256)>)>, // TODO: update comment (chain_id, balance_diff)
+    pub balance_diffs: Vec<(U256, Vec<(Address, Address, Address, U256)>)>,
 }
 
 impl ProgramOutput {

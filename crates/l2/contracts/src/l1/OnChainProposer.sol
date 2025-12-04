@@ -103,7 +103,7 @@ contract OnChainProposer is
     modifier onlySequencer() {
         require(
             authorizedSequencerAddresses[msg.sender],
-            "0a" // OnChainProposer: caller is not the sequencer
+            "000" // OnChainProposer: caller is not the sequencer
         );
         _;
     }
@@ -175,7 +175,7 @@ contract OnChainProposer is
     function initializeBridgeAddress(address bridge) public onlyOwner {
         require(
             bridge != address(0),
-            "0b" // OnChainProposer: bridge is the zero address
+            "001" // OnChainProposer: bridge is the zero address
         );
         BRIDGE = bridge;
     }
@@ -205,15 +205,15 @@ contract OnChainProposer is
         // TODO: Refactor validation
         require(
             batchNumber == lastCommittedBatch + 1,
-            "0c" // OnChainProposer: batchNumber is not the immediate successor of lastCommittedBatch
+            "002" // OnChainProposer: batchNumber is not the immediate successor of lastCommittedBatch
         );
         require(
             batchCommitments[batchNumber].newStateRoot == bytes32(0),
-            "0d" // OnChainProposer: tried to commit an already committed batch
+            "003" // OnChainProposer: tried to commit an already committed batch
         );
         require(
             lastBlockHash != bytes32(0),
-            "0e" // OnChainProposer: lastBlockHash cannot be zero
+            "004" // OnChainProposer: lastBlockHash cannot be zero
         );
 
         if (processedPrivilegedTransactionsRollingHash != bytes32(0)) {
@@ -224,7 +224,7 @@ contract OnChainProposer is
             require(
                 claimedProcessedTransactions ==
                     processedPrivilegedTransactionsRollingHash,
-                "0f" // OnChainProposer: invalid privileged transaction logs
+                "005" // OnChainProposer: invalid privileged transaction logs
             );
         }
         if (withdrawalsLogsMerkleRoot != bytes32(0)) {
@@ -239,12 +239,12 @@ contract OnChainProposer is
         if (VALIDIUM) {
             require(
                 blobVersionedHash == 0,
-                "0g" // L2 running as validium but blob was published
+                "006" // L2 running as validium but blob was published
             );
         } else {
             require(
                 blobVersionedHash != 0,
-                "0h" // L2 running as rollup but blob was not published
+                "007" // L2 running as rollup but blob was not published
             );
         }
 
@@ -282,16 +282,16 @@ contract OnChainProposer is
     ) external override onlySequencer whenNotPaused {
         require(
             !ALIGNED_MODE,
-            "0i" // Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead.
+            "008" // Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead.
         );
 
         require(
             batchNumber == lastVerifiedBatch + 1,
-            "0j" // OnChainProposer: batch already verified
+            "009" // OnChainProposer: batch already verified
         );
         require(
             batchCommitments[batchNumber].newStateRoot != bytes32(0),
-            "0k" // OnChainProposer: cannot verify an uncommitted batch
+            "00a" // OnChainProposer: cannot verify an uncommitted batch
         );
 
         // The first 2 bytes are the number of privileged transactions.
@@ -313,7 +313,7 @@ contract OnChainProposer is
             if (bytes(reason).length != 0) {
                 revert(
                     string.concat(
-                        "0l", // OnChainProposer: Invalid RISC0 proof:
+                        "00b", // OnChainProposer: Invalid RISC0 proof:
                         reason
                     )
                 );
@@ -326,7 +326,7 @@ contract OnChainProposer is
                 )
             {} catch {
                 revert(
-                    "0m" // OnChainProposer: Invalid RISC0 proof failed proof verification
+                    "00c" // OnChainProposer: Invalid RISC0 proof failed proof verification
                 );
             }
         }
@@ -340,7 +340,7 @@ contract OnChainProposer is
             if (bytes(reason).length != 0) {
                 revert(
                     string.concat(
-                        "0n", // OnChainProposer: Invalid SP1 proof:
+                        "00d", // OnChainProposer: Invalid SP1 proof:
                         reason
                     )
                 );
@@ -353,7 +353,7 @@ contract OnChainProposer is
                 )
             {} catch {
                 revert(
-                    "0o" // OnChainProposer: Invalid SP1 proof failed proof verification
+                    "00e" // OnChainProposer: Invalid SP1 proof failed proof verification
                 );
             }
         }
@@ -367,7 +367,7 @@ contract OnChainProposer is
             if (bytes(reason).length != 0) {
                 revert(
                     string.concat(
-                        "0p", // OnChainProposer: Invalid TDX proof:
+                        "00f", // OnChainProposer: Invalid TDX proof:
                         reason
                     )
                 );
@@ -379,7 +379,7 @@ contract OnChainProposer is
                 )
             {} catch {
                 revert(
-                    "0q" // OnChainProposer: Invalid TDX proof failed proof verification
+                    "00g" // OnChainProposer: Invalid TDX proof failed proof verification
                 );
             }
         }
@@ -409,23 +409,23 @@ contract OnChainProposer is
     ) external override onlySequencer whenNotPaused {
         require(
             ALIGNED_MODE,
-            "0r" // Batch verification should be done via smart contract verifiers. Call verifyBatch() instead.
+            "00h" // Batch verification should be done via smart contract verifiers. Call verifyBatch() instead.
         );
         require(
             firstBatchNumber == lastVerifiedBatch + 1,
-            "0s" // OnChainProposer: incorrect first batch number
+            "00i" // OnChainProposer: incorrect first batch number
         );
 
         if (REQUIRE_SP1_PROOF) {
             require(
                 publicInputsList.length == sp1MerkleProofsList.length,
-                "0t" // OnChainProposer: SP1 input/proof array length mismatch
+                "00j" // OnChainProposer: SP1 input/proof array length mismatch
             );
         }
         if (REQUIRE_RISC0_PROOF) {
             require(
                 publicInputsList.length == risc0MerkleProofsList.length,
-                "0u" // OnChainProposer: Risc0 input/proof array length mismatch
+                "00k" // OnChainProposer: Risc0 input/proof array length mismatch
             );
         }
 
@@ -434,7 +434,7 @@ contract OnChainProposer is
         for (uint256 i = 0; i < publicInputsList.length; i++) {
             require(
                 batchCommitments[batchNumber].newStateRoot != bytes32(0),
-                "0v" // OnChainProposer: cannot verify an uncommitted batch
+                "00l" // OnChainProposer: cannot verify an uncommitted batch
             );
 
             // The first 2 bytes are the number of transactions.
@@ -458,7 +458,7 @@ contract OnChainProposer is
             if (bytes(reason).length != 0) {
                 revert(
                     string.concat(
-                        "0w", // OnChainProposer: Invalid ALIGNED proof:
+                        "00m", // OnChainProposer: Invalid ALIGNED proof:
                         reason
                     )
                 );
@@ -494,7 +494,7 @@ contract OnChainProposer is
         uint256 batchNumber,
         bytes calldata publicData
     ) internal view returns (string memory) {
-        ICommonBridge.BalanceDiff[] storage balanceDiffs = batchCommitments[
+        ICommonBridge.BalanceDiff[] memory balanceDiffs = batchCommitments[
             batchNumber
         ].balanceDiffs;
         uint256 registered_chains = balanceDiffs.length;
@@ -504,24 +504,24 @@ contract OnChainProposer is
             expected_length += balanceDiffs[i].value_per_token.length * 128;
         }
         if (publicData.length != expected_length) {
-            return "0x"; // invalid public data length
+            return "00n"; // invalid public data length
         }
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
         if (
             batchCommitments[lastVerifiedBatch].newStateRoot != initialStateRoot
         ) {
-            return "0y"; // initial state root public inputs don't match with initial state root
+            return "00o"; // initial state root public inputs don't match with initial state root
         }
         bytes32 finalStateRoot = bytes32(publicData[32:64]);
         if (batchCommitments[batchNumber].newStateRoot != finalStateRoot) {
-            return "0z"; // final state root public inputs don't match with final state root
+            return "00p"; // final state root public inputs don't match with final state root
         }
         bytes32 withdrawalsMerkleRoot = bytes32(publicData[64:96]);
         if (
             batchCommitments[batchNumber].withdrawalsLogsMerkleRoot !=
             withdrawalsMerkleRoot
         ) {
-            return "0A"; // withdrawals public inputs don't match with committed withdrawals
+            return "00q"; // withdrawals public inputs don't match with committed withdrawals
         }
         bytes32 privilegedTransactionsHash = bytes32(publicData[96:128]);
         if (
@@ -529,22 +529,22 @@ contract OnChainProposer is
                 .processedPrivilegedTransactionsRollingHash !=
             privilegedTransactionsHash
         ) {
-            return "0B"; // privileged transactions hash public input does not match with committed transactions
+            return "00r"; // privileged transactions hash public input does not match with committed transactions
         }
         bytes32 blobVersionedHash = bytes32(publicData[128:160]);
         if (
             batchCommitments[batchNumber].blobKZGVersionedHash !=
             blobVersionedHash
         ) {
-            return "0C"; // blob versioned hash public input does not match with committed hash
+            return "00s"; // blob versioned hash public input does not match with committed hash
         }
         bytes32 lastBlockHash = bytes32(publicData[160:192]);
         if (batchCommitments[batchNumber].lastBlockHash != lastBlockHash) {
-            return "0D"; // last block hash public inputs don't match with last block hash
+            return "00t"; // last block hash public inputs don't match with last block hash
         }
         uint256 chainId = uint256(bytes32(publicData[192:224]));
         if (chainId != CHAIN_ID) {
-            return ("0E"); // given chain id does not correspond to this network
+            return ("00u"); // given chain id does not correspond to this network
         }
         uint256 nonPrivilegedTransactions = uint256(
             bytes32(publicData[224:256])
@@ -553,27 +553,27 @@ contract OnChainProposer is
             ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() &&
             nonPrivilegedTransactions != 0
         ) {
-            return "0F"; // exceeded privileged transaction inclusion deadline, can't include non-privileged transactions
+            return "00v"; // exceeded privileged transaction inclusion deadline, can't include non-privileged transactions
         }
         bytes32 l2MessagesMerkleRoot = bytes32(publicData[256:288]);
         if (
             batchCommitments[batchNumber].l2MessagesMerkleRoot !=
             l2MessagesMerkleRoot
         ) {
-            return "0G"; // l2 messages merkle root public inputs don't match with committed l2 messages merkle root
+            return "00w"; // l2 messages merkle root public inputs don't match with committed l2 messages merkle root
         }
 
         uint256 offset = 288;
         for (uint256 i = 0; i < registered_chains; i++) {
             if (publicData.length < offset + 32) {
-                return "0x"; // invalid public data length
+                return "00x"; // invalid public data length
             }
 
             uint256 chainId = uint256(bytes32(publicData[offset:offset + 32]));
             offset += 32;
 
             if (balanceDiffs[i].chainId != chainId) {
-                return "0H"; // balance diffs public inputs don't match with committed balance diffs
+                return "00y"; // balance diffs public inputs don't match with committed balance diffs
             }
 
             // Validate each token entry
@@ -583,7 +583,7 @@ contract OnChainProposer is
                 j++
             ) {
                 if (publicData.length < offset + 128) {
-                    return "0x"; // invalid public data length
+                    return "00z"; // invalid public data length
                 }
 
                 (
@@ -628,12 +628,12 @@ contract OnChainProposer is
                     other_chain_token_l2 != committed_other_chain_token_l2 ||
                     token_value != committed_value
                 ) {
-                    return "0I"; // balance diffs public inputs don't match with committed balance diffs
+                    return "010"; // balance diffs public inputs don't match with committed balance diffs
                 }
             }
         }
         if (offset != publicData.length) {
-            return "0x"; // invalid public data length
+            return "011"; // invalid public data length
         }
         return "";
     }
@@ -653,12 +653,12 @@ contract OnChainProposer is
             .staticcall(callData);
         require(
             callResult,
-            "0J" // OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed
+            "012" // OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed
         );
         bool proofVerified = abi.decode(response, (bool));
         require(
             proofVerified,
-            "010" // OnChainProposer: Aligned proof verification failed
+            "013" // OnChainProposer: Aligned proof verification failed
         );
     }
 
@@ -668,11 +668,11 @@ contract OnChainProposer is
     ) external override onlySequencer whenPaused {
         require(
             batchNumber >= lastVerifiedBatch,
-            "011" // OnChainProposer: can't revert verified batch
+            "014" // OnChainProposer: can't revert verified batch
         );
         require(
             batchNumber < lastCommittedBatch,
-            "012" // OnChainProposer: no batches are being reverted
+            "015" // OnChainProposer: no batches are being reverted
         );
 
         // Remove old batches

@@ -102,8 +102,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         );
     }
 
-    // TODO: add it to the interface
-    // TODO: ensure that if using sendToL2 burns anyway the tokens
+    /// @inheritdoc ICommonBridgeL2
     function transfer_erc20(
         uint256 chainId,
         address to,
@@ -114,12 +113,12 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         IERC20L2 token = IERC20L2(token_l2);
         token.crosschainBurn(msg.sender, amount);
         address token_l1 = token.l1Address();
-        // TODO: we cannot use calldata, anyone can set this
+        // TODO: should we use calldata here?
         bytes memory data = abi.encodeCall(
             ICommonBridgeL2.crosschainMintERC20,
             (token_l1, token_l2, other_chain_token_l2, to, amount)
         );
-        this.sendToL2(chainId, address(this), 21000 * 10, data); // i think here should be the common bridge address
+        this.sendToL2(chainId, address(this), 21000 * 10, data);
     }
 
     function crosschainMintERC20(
