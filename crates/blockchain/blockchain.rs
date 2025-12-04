@@ -543,6 +543,9 @@ impl Blockchain {
                     value,
                     delete_all,
                 } => {
+                    if delete_all {
+                        tree.insert(prefix, Trie::new_temp());
+                    }
                     let trie = match tree.entry(prefix.clone()) {
                         Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
                         Entry::Vacant(vacant_entry) => vacant_entry.insert(
@@ -553,9 +556,6 @@ impl Blockchain {
                         trie.remove(&key.as_bytes().to_vec())?;
                     } else {
                         trie.insert(key.as_bytes().to_vec(), value)?;
-                    }
-                    if delete_all {
-                        tree.insert(prefix, Trie::new_temp());
                     }
                 }
                 MerklizationRequest::Collect { tx } => {
