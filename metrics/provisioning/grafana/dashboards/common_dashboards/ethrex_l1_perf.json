@@ -3302,6 +3302,24 @@
               }
             },
             {
+              "id": "filterByValue",
+              "options": {
+                "filters": [
+                  {
+                    "config": {
+                      "id": "greater",
+                      "options": {
+                        "value": "0"
+                      }
+                    },
+                    "fieldName": "Count"
+                  }
+                ],
+                "match": "any",
+                "type": "include"
+              }
+            },
+            {
               "id": "sortBy",
               "options": {
                 "fields": {},
