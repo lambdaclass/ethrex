@@ -229,11 +229,12 @@ impl Metrics {
 
         self.peers.fetch_add(1, Ordering::Relaxed);
 
-        let client_type = client_version
-            .split('/')
-            .next()
-            .unwrap_or("unknown");
+        let client_type = client_version.split('/').next().unwrap_or("unknown");
 
+        // TODO (#4240): This module expose metrics to be used in the snapsync logs, to actually
+        // expose them in prometheus we need to call the metrics crate instead, so we do it here. 
+        // In the future this module will be rewritten as part of the snapsync rewrite and all
+        // the metrics calls will be done directly using the metrics crate.
         #[cfg(feature = "metrics")]
         {
             use ethrex_metrics::p2p::METRICS_P2P;
@@ -278,11 +279,7 @@ impl Metrics {
     ) {
         self.peers.fetch_sub(1, Ordering::Relaxed);
 
-        let client_type = client_version
-            .split('/')
-            .next()
-            .unwrap_or("unknown");
-
+        let client_type = client_version.split('/').next().unwrap_or("unknown");
         #[cfg(feature = "metrics")]
         {
             use ethrex_metrics::p2p::METRICS_P2P;
