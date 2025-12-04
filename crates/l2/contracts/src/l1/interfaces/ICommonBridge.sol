@@ -56,15 +56,15 @@ interface ICommonBridge {
     }
 
     struct TokenValue {
-        address token_l1;
-        address token_l2;
-        address other_chain_token_l2;
+        address tokenL1;
+        address tokenL2;
+        address otherChainTokenL2;
         uint256 value;
     }
 
     struct BalanceDiff {
         uint256 chainId;
-        TokenValue[] value_per_token;
+        TokenValue[] valuePerToken;
     }
 
     /// @notice Method to retrieve all the pending transaction hashes.
@@ -157,8 +157,8 @@ interface ICommonBridge {
     /// @dev This method should only be called by the shared bridge router, as this
     /// method will modify the token balances accordingly.
     function receiveERC20Message(
-        address token_l1,
-        address token_l2,
+        address tokenL1,
+        address tokenL2,
         uint256 amount
     ) external payable;
 

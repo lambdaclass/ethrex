@@ -367,26 +367,26 @@ contract CommonBridge is
         ] = l2MessagesMerkleRoot;
         emit L2MessagesPublished(l2MessagesBatchNumber, l2MessagesMerkleRoot);
         for (uint i = 0; i < balanceDiffs.length; i++) {
-            for (uint j = 0; j < balanceDiffs[i].value_per_token.length; j++) {
-                TokenValue memory tv = balanceDiffs[i].value_per_token[j];
-                if (tv.token_l1 == address(0)) {
+            for (uint j = 0; j < balanceDiffs[i].valuePerToken.length; j++) {
+                TokenValue memory tv = balanceDiffs[i].valuePerToken[j];
+                if (tv.tokenL1 == address(0)) {
                     IRouter(SHARED_BRIDGE_ROUTER).sendMessage{value: tv.value}(
                         balanceDiffs[i].chainId
                     );
                 } else {
                     require(
-                        deposits[tv.token_l1][tv.token_l2] >= tv.value,
+                        deposits[tv.tokenL1][tv.tokenL2] >= tv.value,
                         "CommonBridge: trying to withdraw more tokens than were deposited"
                     );
-                    deposits[tv.token_l1][tv.token_l2] -= tv.value;
-                    IERC20(tv.token_l1).safeTransfer(
+                    deposits[tv.tokenL1][tv.tokenL2] -= tv.value;
+                    IERC20(tv.tokenL1).safeTransfer(
                         SHARED_BRIDGE_ROUTER,
                         tv.value
                     );
                     IRouter(SHARED_BRIDGE_ROUTER).sendERC20Message(
                         balanceDiffs[i].chainId,
-                        tv.token_l1,
-                        tv.other_chain_token_l2,
+                        tv.tokenL1,
+                        tv.otherChainTokenL2,
                         tv.value
                     );
                 }
@@ -404,11 +404,11 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function receiveERC20Message(
-        address token_l1,
-        address token_l2,
+        address tokenL1,
+        address tokenL2,
         uint256 amount
     ) public payable override {
-        deposits[token_l1][token_l2] += amount;
+        deposits[tokenL1][tokenL2] += amount;
         require(
             msg.sender == SHARED_BRIDGE_ROUTER,
             "CommonBridge: caller is not the shared bridge router"

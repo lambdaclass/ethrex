@@ -110,14 +110,14 @@ interface ICommonBridgeL2 {
     /// @param chainId The chain ID of the destination chain.
     /// @param to The address on the destination chain that should receive the tokens.
     /// @param amount The amount of tokens to transfer.
-    /// @param token_l2 The address of the ERC20 token on this L2 chain.
-    /// @param other_chain_token_l2 The address of the ERC20 token on the destination L2 chain.
-    function transfer_erc20(
+    /// @param tokenL2 The address of the ERC20 token on this L2 chain.
+    /// @param otherChainTokenL2 The address of the ERC20 token on the destination L2 chain.
+    function transferERC20(
         uint256 chainId,
         address to,
         uint256 amount,
-        address token_l2,
-        address other_chain_token_l2
+        address tokenL2,
+        address otherChainTokenL2
     ) external;
 
     /// @notice Sends an arbitrary message to the another chain.

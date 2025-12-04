@@ -501,7 +501,7 @@ contract OnChainProposer is
         uint256 expected_length = 288;
         for (uint256 i = 0; i < registered_chains; i++) {
             expected_length += 32;
-            expected_length += balanceDiffs[i].value_per_token.length * 128;
+            expected_length += balanceDiffs[i].valuePerToken.length * 128;
         }
         if (publicData.length != expected_length) {
             return "00n"; // invalid public data length
@@ -579,7 +579,7 @@ contract OnChainProposer is
             // Validate each token entry
             for (
                 uint256 j = 0;
-                j < balanceDiffs[i].value_per_token.length;
+                j < balanceDiffs[i].valuePerToken.length;
                 j++
             ) {
                 if (publicData.length < offset + 128) {
@@ -587,9 +587,9 @@ contract OnChainProposer is
                 }
 
                 (
-                    address token_l1,
-                    address token_l2,
-                    address other_chain_token_l2,
+                    address tokenL1,
+                    address tokenL2,
+                    address otherChainTokenL2,
                     uint256 token_value
                 ) = (
                         address(
@@ -611,21 +611,21 @@ contract OnChainProposer is
                 offset += 128;
 
                 (
-                    address committed_token_l1,
-                    address committed_token_l2,
-                    address committed_other_chain_token_l2,
+                    address committedTokenL1,
+                    address committedTokenL2,
+                    address committedOtherChainTokenL2,
                     uint256 committed_value
                 ) = (
-                        balanceDiffs[i].value_per_token[j].token_l1,
-                        balanceDiffs[i].value_per_token[j].token_l2,
-                        balanceDiffs[i].value_per_token[j].other_chain_token_l2,
-                        balanceDiffs[i].value_per_token[j].value
+                        balanceDiffs[i].valuePerToken[j].tokenL1,
+                        balanceDiffs[i].valuePerToken[j].tokenL2,
+                        balanceDiffs[i].valuePerToken[j].otherChainTokenL2,
+                        balanceDiffs[i].valuePerToken[j].value
                     );
 
                 if (
-                    token_l1 != committed_token_l1 ||
-                    token_l2 != committed_token_l2 ||
-                    other_chain_token_l2 != committed_other_chain_token_l2 ||
+                    tokenL1 != committedTokenL1 ||
+                    tokenL2 != committedTokenL2 ||
+                    otherChainTokenL2 != committedOtherChainTokenL2 ||
                     token_value != committed_value
                 ) {
                     return "010"; // balance diffs public inputs don't match with committed balance diffs

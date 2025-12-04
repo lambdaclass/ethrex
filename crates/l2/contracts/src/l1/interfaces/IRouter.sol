@@ -19,13 +19,13 @@ interface IRouter {
 
     /// @notice Sends a ERC20 token message to a specified chain via its CommonBridge.
     /// @param chainId The ID of the destination chain.
-    /// @param token_l1 The address of the ERC20 L1 token to send.
-    /// @param other_chain_token_l2 The address of the ERC20 token on the other chain.
+    /// @param tokenL1 The address of the ERC20 L1 token to send.
+    /// @param otherChainTokenL2 The address of the ERC20 token on the other chain.
     /// @param amount The amount of the ERC20 L1 token to send.
     function sendERC20Message(
         uint256 chainId,
-        address token_l1,
-        address other_chain_token_l2,
+        address tokenL1,
+        address otherChainTokenL2,
         uint256 amount
     ) external payable;
 

@@ -103,20 +103,20 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
     }
 
     /// @inheritdoc ICommonBridgeL2
-    function transfer_erc20(
+    function transferERC20(
         uint256 chainId,
         address to,
         uint256 amount,
-        address token_l2,
-        address other_chain_token_l2
-    ) external {
-        IERC20L2 token = IERC20L2(token_l2);
+        address tokenL2,
+        address otherChainTokenL2
+    ) external override {
+        IERC20L2 token = IERC20L2(tokenL2);
         token.crosschainBurn(msg.sender, amount);
-        address token_l1 = token.l1Address();
+        address tokenL1 = token.l1Address();
         // TODO: should we use calldata here?
         bytes memory data = abi.encodeCall(
             ICommonBridgeL2.crosschainMintERC20,
-            (token_l1, token_l2, other_chain_token_l2, to, amount)
+            (tokenL1, tokenL2, otherChainTokenL2, to, amount)
         );
         this.sendToL2(chainId, address(this), 21000 * 10, data);
     }

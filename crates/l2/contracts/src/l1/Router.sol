@@ -69,19 +69,19 @@ contract Router is
     /// @inheritdoc IRouter
     function sendERC20Message(
         uint256 chainId,
-        address token_l1,
-        address other_chain_token_l2,
+        address tokenL1,
+        address otherChainTokenL2,
         uint256 amount
     ) public payable override {
         if (bridges[chainId] == address(0)) {
             emit TransferToChainNotRegistered(chainId);
         } else {
             ICommonBridge(bridges[chainId]).receiveERC20Message(
-                token_l1,
-                other_chain_token_l2,
+                tokenL1,
+                otherChainTokenL2,
                 amount
             );
-            IERC20(token_l1).transfer(bridges[chainId], amount);
+            IERC20(tokenL1).transfer(bridges[chainId], amount);
         }
     }
 
