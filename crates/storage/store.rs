@@ -2556,11 +2556,12 @@ fn apply_trie_updates(
     // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
     let mut trie_mut = (*trie).clone();
 
-    let mut write_tx = backend.begin_write()?;
-
-    let last_written = write_tx
+    let last_written = backend
+        .begin_read()?
         .get(MISC_VALUES, "last_written".as_bytes())?
         .unwrap_or_default();
+
+    let mut write_tx = backend.begin_write()?;
 
     // Before encoding, accounts have only the account address as their path, while storage keys have
     // the account address (32 bytes) + storage path (up to 32 bytes).

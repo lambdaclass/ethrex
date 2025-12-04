@@ -136,46 +136,6 @@ pub struct InMemoryRwTx {
     backend: Arc<RwLock<Database>>,
 }
 
-impl StorageRoTx for InMemoryRwTx {
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        let db = self
-            .backend
-            .read()
-            .map_err(|_| StoreError::Custom("Failed to acquire read lock".to_string()))?;
-
-        let value = db
-            .get(table)
-            .and_then(|table_ref| table_ref.get(key))
-            .cloned();
-        Ok(value)
-    }
-
-    fn prefix_iterator(
-        &self,
-        table: &str,
-        prefix: &[u8],
-    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
-        let db = self
-            .backend
-            .read()
-            .map_err(|_| StoreError::Custom("Failed to acquire read lock".to_string()))?;
-
-        let table_data = db.get(table).cloned().unwrap_or_default();
-        let prefix_vec = prefix.to_vec();
-
-        let results: Vec<PrefixResult> = table_data
-            .into_iter()
-            .filter(|(key, _)| key.starts_with(&prefix_vec))
-            .map(|(k, v)| Ok((k.into_boxed_slice(), v.into_boxed_slice())))
-            .collect();
-
-        let iter = InMemoryPrefixIter {
-            results: results.into_iter(),
-        };
-        Ok(Box::new(iter))
-    }
-}
-
 impl StorageRwTx for InMemoryRwTx {
     fn put_batch(
         &mut self,
@@ -210,6 +170,7 @@ impl StorageRwTx for InMemoryRwTx {
 
     fn commit(&mut self) -> Result<(), StoreError> {
         // We don't need to commit for in-memory backend
+        // FIXME: in-memory writes aren't atomic
         Ok(())
     }
 }

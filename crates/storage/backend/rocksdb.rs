@@ -303,35 +303,6 @@ pub struct RocksDBRwTx {
     batch: WriteBatch,
 }
 
-impl StorageRoTx for RocksDBRwTx {
-    fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        let cf = self
-            .db
-            .cf_handle(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
-
-        self.db
-            .get_cf(&cf, key)
-            .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
-    }
-
-    fn prefix_iterator(
-        &self,
-        table: &'static str,
-        prefix: &[u8],
-    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
-        let cf = self
-            .db
-            .cf_handle(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
-
-        let iter = self.db.prefix_iterator_cf(&cf, prefix).map(|result| {
-            result.map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
-        });
-        Ok(Box::new(iter))
-    }
-}
-
 impl StorageRwTx for RocksDBRwTx {
     fn put(&mut self, table: &'static str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         let cf = self

@@ -71,7 +71,7 @@ pub trait StorageRoTx {
 ///
 /// Extends [`StorageRoTx`] with methods to modify the database.
 /// Changes are not persisted until [`commit()`](StorageRwTx::commit) is called.
-pub trait StorageRwTx: StorageRoTx + Send {
+pub trait StorageRwTx: Send {
     /// Stores a key-value pair in the specified table.
     fn put(&mut self, table: &'static str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         self.put_batch(table, vec![(key.to_vec(), value.to_vec())])
