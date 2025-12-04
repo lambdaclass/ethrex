@@ -62,7 +62,9 @@ contract Router is
         if (bridges[chainId] == address(0)) {
             emit TransferToChainNotRegistered(chainId);
         } else {
-            ICommonBridge(bridges[chainId]).receiveFromSharedBridge{value: msg.value}();
+            ICommonBridge(bridges[chainId]).receiveFromSharedBridge{
+                value: msg.value
+            }();
         }
     }
 
@@ -76,7 +78,7 @@ contract Router is
         if (bridges[chainId] == address(0)) {
             emit TransferToChainNotRegistered(chainId);
         } else {
-            ICommonBridge(bridges[chainId]).receiveERC20Message(
+            ICommonBridge(bridges[chainId]).receiveERC20FromSharedBridge(
                 tokenL1,
                 otherChainTokenL2,
                 amount

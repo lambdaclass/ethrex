@@ -403,7 +403,7 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
-    function receiveERC20Message(
+    function receiveERC20FromSharedBridge(
         address tokenL1,
         address tokenL2,
         uint256 amount

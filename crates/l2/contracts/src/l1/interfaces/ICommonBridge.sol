@@ -158,7 +158,7 @@ interface ICommonBridge {
     /// @notice Receives an ERC20 message from another chain via shared bridge router.
     /// @dev This method should only be called by the shared bridge router, as this
     /// method will modify the token balances accordingly.
-    function receiveERC20Message(
+    function receiveERC20FromSharedBridge(
         address tokenL1,
         address tokenL2,
         uint256 amount
