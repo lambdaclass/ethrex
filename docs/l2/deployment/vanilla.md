@@ -28,14 +28,15 @@ ethrex l2 deploy \
 
 > [!IMPORTANT]
 > If you plan to prove your L2 using SP1, RISC0, or TDX, add the following extra arguments to the command above:
-> `--sp1 true` to require SP1 proofs for validating batch execution and state settlement.
-> `--sp1.verifier-address` to use an existing verifier instead of deploying one on the public network. Succinct Labs recommends their deployed canonical verifier gateways; see the list here.
-> `--risc0 true` to require RISC0 proofs for validating batch execution and state settlement.
-> `--risc0.verifier-address` to use an existing verifier instead of deploying one on the public network. RISC0 recommends their deployed canonical verifier gateways; see the list here.
-> `--tdx true` to require TEE proofs for validating batch execution and state settlement.
-> `--tdx.verifier-address` to use an existing verifier instead of deploying one on the public network. Do not pass this flag if you want to deploy a new verifier.
-> Enabling multiple proving backend will require running multiple provers, one for each backend. Refer to the [Run multiple provers](./prover/multi-prover.md) section for more details.
-> If you enable more than one proving system (e.g., both `--sp1 true` and `--risc0 true`), every selected proof becomes required for each batch to settle on L1.
+>
+> - `--sp1 true` to require SP1 proofs for validating batch execution and state settlement.
+> - `--sp1.verifier-address` to use an existing verifier instead of deploying one on the public network. Succinct Labs recommends their deployed canonical verifier gateways; see the list here.
+> - `--risc0 true` to require RISC0 proofs for validating batch execution and state settlement.
+> - `--risc0.verifier-address` to use an existing verifier instead of deploying one on the public network. RISC0 recommends their deployed canonical verifier gateways; see the list here.
+> - `--tdx true` to require TEE proofs for validating batch execution and state settlement.
+> - `--tdx.verifier-address` to use an existing verifier instead of deploying one on the public network. Do not pass this flag if you want to deploy a new verifier.
+> - Enabling multiple proving backends will require running multiple provers, one for each backend. Refer to the [Run multiple provers](./prover/multi-prover.md) section for more details.
+> - If you enable more than one proving system (e.g., both `--sp1 true` and `--risc0 true`), every selected proof becomes required for each batch to settle on L1.
 
 > [!IMPORTANT]
 > Retrieve the deployed contract addresses from the console logs or the .env file generated during deployment (in the directory where you ran the command) for use in the next step.
