@@ -28,6 +28,7 @@ use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, TrieLogger};
 use ethrex_metrics::metrics;
+use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
@@ -392,7 +393,7 @@ impl Blockchain {
                 nodes.push((Nibbles::default(), root.encode_to_vec()));
                 storage_roots.insert(hashed_account, root.compute_hash().finalize());
             } else {
-                nodes.push((Nibbles::default(), vec![]));
+                nodes.push((Nibbles::default(), vec![RLP_NULL]));
                 storage_roots.insert(hashed_account, *EMPTY_TRIE_HASH);
             }
             storage_updates.push((hashed_account, nodes));
@@ -466,7 +467,7 @@ impl Blockchain {
             state_updates.push((Nibbles::default(), root.encode_to_vec()));
             root.compute_hash().finalize()
         } else {
-            state_updates.push((Nibbles::default(), vec![]));
+            state_updates.push((Nibbles::default(), vec![RLP_NULL]));
             *EMPTY_TRIE_HASH
         };
 
@@ -509,16 +510,7 @@ impl Blockchain {
         index: u8,
     ) -> Result<Trie, StoreError> {
         let mut trie = self.load_trie(parent_header, prefix)?;
-
-        // force the trie into having a branch node in the root
-        // to avoid interfering with the given merkelization task, we insert
-        // fake values to paths whose first nibble isn't the one we're processing
-        let mut path = vec![index << 4; 32];
-        path[0] = path[0].wrapping_add(16); // increase high nibble
-        trie.insert(path.clone(), vec![0xf; 64])?;
-        path[0] = path[0].wrapping_add(16);
-        trie.insert(path, vec![0xf; 64])?;
-
+        fatten_trie(&mut trie, index)?;
         Ok(trie)
     }
 
@@ -544,7 +536,9 @@ impl Blockchain {
                     delete_all,
                 } => {
                     if delete_all {
-                        tree.insert(prefix, Trie::new_temp());
+                        let mut trie = Trie::new_temp();
+                        fatten_trie(&mut trie, index)?;
+                        tree.insert(prefix, trie);
                     }
                     let trie = match tree.entry(prefix.clone()) {
                         Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
@@ -573,10 +567,11 @@ impl Blockchain {
                         } else {
                             None
                         };
+                        if prefix == None {
+                            //println!("PAR {index} {subroot:?}");
+                        }
                         let (_, mut nodes) = trie.collect_changes_since_last_hash();
-                        nodes.retain(|(nib, _)| {
-                            nib.as_ref().first() == Some(&index)
-                        });
+                        nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
 
                         tx.send((prefix, index, subroot, nodes)).unwrap();
                     }
@@ -1845,6 +1840,18 @@ fn collapse_root_node(root: BranchNode) -> Option<Node> {
             leaf.into()
         }
     })
+}
+
+/// force the trie into having a branch node in the root
+/// to avoid interfering with the given merkelization task, we insert
+/// fake values to paths whose first nibble isn't the one we're processing
+fn fatten_trie(trie: &mut Trie, index: u8) -> Result<(), StoreError> {
+    let mut path = vec![index << 4; 32];
+    path[0] = path[0].wrapping_add(16); // increase high nibble
+    trie.insert(path.clone(), vec![0xf; 64])?;
+    path[0] = path[0].wrapping_add(16);
+    trie.insert(path, vec![0xf; 64])?;
+    Ok(())
 }
 
 #[cfg(test)]
