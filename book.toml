@@ -37,6 +37,8 @@ additional-js = ["mermaid.min.js", "mermaid-init.js"]
 "/getting-started/installation/README.html" = "/getting-started/installation/index.html"
 "/l1/running/README.html" = "/l1/running/index.html"
 "/developers/l1/testing/README.html" = "/developers/l1/testing/index.html"
+"/l2/fundamentals/README.html" = "/l2/fundamentals/index.html"
+"/l2/architecture/README.html" = "/l2/architecture/index.html"
 
 # Broken-link checker
 # https://github.com/Michael-F-Bryan/mdbook-linkcheck
