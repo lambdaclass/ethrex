@@ -91,7 +91,6 @@ impl PeerConnection {
         });
         let connection = PeerConnectionServer {
             state,
-            is_established: false,
         };
         Self {
             handle: connection.start(),
@@ -105,7 +104,6 @@ impl PeerConnection {
         });
         let connection = PeerConnectionServer {
             state,
-            is_established: false,
         };
         Self {
             handle: connection.start(),
@@ -195,7 +193,10 @@ pub struct Established {
     pub(crate) l2_state: L2ConnState,
     pub(crate) tx_broadcaster: GenServerHandle<TxBroadcaster>,
     pub(crate) current_requests: HashMap<u64, (String, oneshot::Sender<Message>)>,
+    // We store the disconnection reason to handle it in the teardown
     pub(crate) disconnect_reason: Option<DisconnectReason>,
+    // Indicates if the peer has been validated (ie. the connection was established successfully)
+    pub(crate) is_validated: bool,
 }
 
 impl Established {
@@ -252,7 +253,6 @@ pub enum OutMessage {
 #[derive(Debug)]
 pub struct PeerConnectionServer {
     state: ConnectionState,
-    is_established: bool,
 }
 
 impl GenServer for PeerConnectionServer {
@@ -305,7 +305,7 @@ impl GenServer for PeerConnectionServer {
                                 .unwrap_or("Unknown".to_string()),
                         )
                         .await;
-                    self.is_established = true;
+                    established_state.is_validated = true;
                     // New state
                     self.state = ConnectionState::Established(Box::new(established_state));
                     Ok(Success(self))
@@ -478,7 +478,8 @@ impl GenServer for PeerConnectionServer {
         match self.state {
             ConnectionState::Established(mut established_state) => {
                 trace!(peer=%established_state.node, "Closing connection with established peer");
-                if self.is_established {
+                if established_state.is_validated {
+                    // If its validated the peer was connected, so we record the disconnection.
                     let reason = established_state
                         .disconnect_reason
                         .unwrap_or(DisconnectReason::NetworkError);
@@ -915,8 +916,6 @@ async fn handle_incoming_message(
                 "Received Disconnect"
             );
             state.disconnect_reason = Some(reason);
-
-            state.peer_table.remove_peer(state.node.node_id()).await?;
 
             // TODO handle the disconnection request
 

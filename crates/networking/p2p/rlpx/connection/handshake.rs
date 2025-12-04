@@ -145,6 +145,7 @@ pub(crate) async fn perform(
             tx_broadcaster: context.tx_broadcaster,
             current_requests: HashMap::new(),
             disconnect_reason: None,
+            is_validated: false,
         },
         stream,
     ))
