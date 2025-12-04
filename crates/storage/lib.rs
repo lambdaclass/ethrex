@@ -17,4 +17,4 @@ pub use trie_db::layering::apply_prefix;
 
 /// Store Schema Version, must be updated on any breaking change
 /// An upgrade to a newer schema version invalidates currently stored data, requiring a re-sync.
-pub const STORE_SCHEMA_VERSION: u64 = 0;
+pub const STORE_SCHEMA_VERSION: u64 = 1;
