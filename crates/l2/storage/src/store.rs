@@ -8,7 +8,8 @@ use crate::store_db::sql::SQLStore;
 use ethrex_common::{
     H256,
     types::{
-        AccountUpdate, Blob, BlobsBundle, BlockNumber, Fork, batch::Batch, fee_config::FeeConfig,
+        AccountUpdate, Blob, BlobsBundle, BlockNumber, Fork, balance_diff::BalanceDiff,
+        batch::Batch, fee_config::FeeConfig,
     },
 };
 use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
@@ -58,10 +59,12 @@ impl Store {
             last_block: 0,
             state_root: H256::zero(),
             privileged_transactions_hash: H256::zero(),
-            message_hashes: Vec::new(),
+            l1_message_hashes: Vec::new(),
+            l2_message_hashes: Vec::new(),
             blobs_bundle: BlobsBundle::empty(),
             commit_tx: None,
             verify_tx: None,
+            balance_diffs: Vec::new(),
         })
         .await?;
         // Sets the latest sent batch proof to 0
@@ -87,11 +90,29 @@ impl Store {
         self.engine.get_batch_number_by_block(block_number).await
     }
 
-    pub async fn get_message_hashes_by_batch(
+    pub async fn get_l1_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, RollupStoreError> {
-        self.engine.get_message_hashes_by_batch(batch_number).await
+        self.engine
+            .get_l1_message_hashes_by_batch(batch_number)
+            .await
+    }
+
+    pub async fn get_l2_message_hashes_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<H256>>, RollupStoreError> {
+        self.engine
+            .get_l2_message_hashes_by_batch(batch_number)
+            .await
+    }
+
+    pub async fn get_balance_diffs_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<BalanceDiff>>, RollupStoreError> {
+        self.engine.get_balance_diffs_by_batch(batch_number).await
     }
 
     pub async fn get_privileged_transactions_hash_by_batch(
@@ -197,8 +218,18 @@ impl Store {
             RollupStoreError::Custom(format!("Failed to create blobs bundle from blob while getting batch from database: {e}. This is a bug"))
         })?;
 
-        let message_hashes = self
-            .get_message_hashes_by_batch(batch_number)
+        let l1_message_hashes = self
+            .get_l1_message_hashes_by_batch(batch_number)
+            .await?
+            .unwrap_or_default();
+
+        let l2_message_hashes = self
+            .get_l2_message_hashes_by_batch(batch_number)
+            .await?
+            .unwrap_or_default();
+
+        let balance_diffs = self
+            .get_balance_diffs_by_batch(batch_number)
             .await?
             .unwrap_or_default();
 
@@ -219,10 +250,12 @@ impl Store {
             last_block,
             state_root,
             blobs_bundle,
-            message_hashes,
+            l1_message_hashes,
             privileged_transactions_hash,
             commit_tx,
             verify_tx,
+            balance_diffs,
+            l2_message_hashes,
         }))
     }
 

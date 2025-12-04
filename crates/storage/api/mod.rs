@@ -11,9 +11,11 @@
 //!
 //! The API differentiates between three types of database access:
 //!
-//! - Read-only transactions ([`StorageRoTx`])
-//! - Read-write transactions ([`StorageRwTx`])
-//! - Locked snapshots ([`StorageLocked`]): Persistent read-only views, righ now it's
+//! - Read transactions ([`StorageReadTx`]): Read-only views of the database,
+//!   with no atomicity guarantees between operations.
+//! - Write transactions ([`StorageWriteTx`]): Write batch functionality, with
+//!   atomicity guarantees at commit time.
+//! - Locked snapshots ([`StorageLocked`]): Read-only views of a point in time, right now it's
 //!   only used in snapsync stage.
 
 use crate::error::StoreError;
@@ -33,11 +35,11 @@ pub trait StorageBackend: Debug + Send + Sync {
     /// Removes all data from the specified table.
     fn clear_table(&self, table: &'static str) -> Result<(), StoreError>;
 
-    /// Begins a new read-only transaction.
-    fn begin_read(&self) -> Result<Box<dyn StorageRoTx + '_>, StoreError>;
+    /// Begins a new read transaction.
+    fn begin_read(&self) -> Result<Box<dyn StorageReadTx + '_>, StoreError>;
 
-    /// Begins a new read-write transaction.
-    fn begin_write(&self) -> Result<Box<dyn StorageRwTx + 'static>, StoreError>;
+    /// Begins a new write transaction.
+    fn begin_write(&self) -> Result<Box<dyn StorageWriteTx + 'static>, StoreError>;
 
     /// Creates a locked snapshot for a specific table.
     ///
@@ -55,7 +57,7 @@ pub trait StorageBackend: Debug + Send + Sync {
 
 /// Read-only transaction interface.
 /// Provides methods to read data from the database
-pub trait StorageRoTx {
+pub trait StorageReadTx {
     /// Retrieves a value by key from the specified table.
     fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
 
@@ -67,11 +69,12 @@ pub trait StorageRoTx {
     ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError>;
 }
 
-/// Read-write transaction interface.
+/// Write transaction interface.
 ///
-/// Extends [`StorageRoTx`] with methods to modify the database.
-/// Changes are not persisted until [`commit()`](StorageRwTx::commit) is called.
-pub trait StorageRwTx: Send {
+/// Note that this does not provide read access, since we don't currently use that functionality.
+///
+/// Changes are not persisted until [`commit()`](StorageWriteTx::commit) is called.
+pub trait StorageWriteTx: Send {
     /// Stores a key-value pair in the specified table.
     fn put(&mut self, table: &'static str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         self.put_batch(table, vec![(key.to_vec(), value.to_vec())])
@@ -96,7 +99,7 @@ pub trait StorageRwTx: Send {
 /// This is optimized for scenarios where many reads are performed on the same
 /// table, such as trie traversal operations.
 /// This is currently only used in snapsync stage.
-// TODO: Check if we can remove this trait and use [`StorageRoTx`] instead.
+// TODO: Check if we can remove this trait and use [`StorageReadTx`] instead.
 pub trait StorageLocked: Send + Sync {
     /// Retrieves a value by key from the locked table.
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
