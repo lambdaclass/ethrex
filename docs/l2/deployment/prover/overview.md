@@ -60,5 +60,5 @@ Ensure you have the following installed on your system:
 > Example:
 >
 > ```shell
-> PROVER_REPRODUCIBLE_BUILD=true COMPILE_CONTRACTS=true cargo b -r --bin ethrex -F l2,l2-sql,sp1,risc0,gpu
+> PROVER_REPRODUCIBLE_BUILD=true cargo b -r --bin ethrex -F l2,l2-sql,sp1,risc0,gpu
 > ```

@@ -87,7 +87,6 @@ rm-db-l1: ## 🛑 Removes the DB used by the L1
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L1_DEV_DB} --force
 
 deploy-l1: ## 📜 Deploys the L1 contracts
-	COMPILE_CONTRACTS=true \
 	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- l2 deploy \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
@@ -101,7 +100,6 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 
 ## Same as deploy-l1 but deploys the SP1 verifier
 deploy-l1-sp1: ## 📜 Deploys the L1 contracts
-	COMPILE_CONTRACTS=true \
 	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- l2 deploy \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
@@ -157,7 +155,6 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--proof-coordinator.addr ${PROOF_COORDINATOR_ADDRESS}
 
 init-l2-dev: ## 🚀 Initializes an L1 and L2 Lambda ethrex Client
-	COMPILE_CONTRACTS=true \
 	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- \
 	l2 --dev --osaka-activation-time ${ETHREX_OSAKA_ACTIVATION_TIME}
 

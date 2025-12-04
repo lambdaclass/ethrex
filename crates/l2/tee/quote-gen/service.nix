@@ -25,7 +25,13 @@ let
     sha256 = "sha256-HG2cCnktfHsKV0s4XW83gU3F57gaTljL9KNSuG6bnQs";
   };
   inherit (import gitignoreSrc { inherit (pkgs) lib; }) gitignoreSource;
-
+  solc_0_8_29 = pkgs.callPackage ./solc-0.8.29.nix { };
+  openzeppelinContracts = pkgs.fetchFromGitHub {
+    owner = "OpenZeppelin";
+    repo = "openzeppelin-contracts";
+    rev = "f7da70c26e7bbb54da485908b332df6b6b5b70ee";
+    hash = "sha256-UrpIpJBQ7hPtRZE9HckUWhHjJ2Xq3LntgClm3HEbg00=";
+  };
 in
 let
   quoteGen = rustPlatform.buildRustPackage rec {
@@ -48,11 +54,14 @@ let
     nativeBuildInputs = [
       pkgs.pkg-config
       rustPlatform.cargoSetupHook
+      pkgs.git
+      solc_0_8_29
     ];
 
     env = {
       OPENSSL_NO_VENDOR = 1;
       VERGEN_GIT_SHA = gitRev;
+      ETHREX_SDK_OZ_CONTRACTS_DIR = "${openzeppelinContracts}";
     };
   };
 in

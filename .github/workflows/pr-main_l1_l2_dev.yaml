@@ -40,7 +40,7 @@ jobs:
 
       - name: Start ethrex
         run: |
-          COMPILE_CONTRACTS=1 cargo run --release --bin ethrex -F l2,l2-sql -- l2 --dev \
+          cargo run --release --bin ethrex -F l2,l2-sql -- l2 --dev \
           --block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
           --block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
           --block-producer.l1-fee-vault-address 0x45681AE1768a8936FB87aB11453B4755e322ceec \
