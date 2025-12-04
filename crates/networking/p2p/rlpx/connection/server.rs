@@ -89,9 +89,7 @@ impl PeerConnection {
             peer_addr,
             stream: Arc::new(stream),
         });
-        let connection = PeerConnectionServer {
-            state,
-        };
+        let connection = PeerConnectionServer { state };
         Self {
             handle: connection.start(),
         }
@@ -102,9 +100,7 @@ impl PeerConnection {
             context,
             node: node.clone(),
         });
-        let connection = PeerConnectionServer {
-            state,
-        };
+        let connection = PeerConnectionServer { state };
         Self {
             handle: connection.start(),
         }
