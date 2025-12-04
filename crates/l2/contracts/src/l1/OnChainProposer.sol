@@ -577,11 +577,7 @@ contract OnChainProposer is
             }
 
             // Validate each token entry
-            for (
-                uint256 j = 0;
-                j < balanceDiffs[i].valuePerToken.length;
-                j++
-            ) {
+            for (uint256 j = 0; j < balanceDiffs[i].valuePerToken.length; j++) {
                 if (publicData.length < offset + 128) {
                     return "00z"; // invalid public data length
                 }

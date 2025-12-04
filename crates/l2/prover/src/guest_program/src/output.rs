@@ -1,6 +1,6 @@
-use ethrex_common::{H256, U256};
 #[cfg(feature = "l2")]
 use ethrex_common::types::balance_diff::BalanceDiff;
+use ethrex_common::{H256, U256};
 use serde::{Deserialize, Serialize};
 
 /// Public output variables exposed by the zkVM execution program. Some of these are part of
