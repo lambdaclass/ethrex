@@ -269,7 +269,7 @@ impl Metrics {
         client_version: &str,
         reason: DisconnectReason,
     ) {
-        self.peers.fetch_add(1, Ordering::Relaxed);
+        self.peers.fetch_sub(1, Ordering::Relaxed);
 
         #[cfg(feature = "metrics")]
         {

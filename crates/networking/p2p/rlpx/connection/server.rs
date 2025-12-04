@@ -189,6 +189,7 @@ pub struct Established {
     pub(crate) l2_state: L2ConnState,
     pub(crate) tx_broadcaster: GenServerHandle<TxBroadcaster>,
     pub(crate) current_requests: HashMap<u64, (String, oneshot::Sender<Message>)>,
+    pub(crate) disconnect_reason: Option<DisconnectReason>,
 }
 
 impl Established {
@@ -469,6 +470,19 @@ impl GenServer for PeerConnectionServer {
         match self.state {
             ConnectionState::Established(mut established_state) => {
                 trace!(peer=%established_state.node, "Closing connection with established peer");
+                let reason = established_state
+                    .disconnect_reason
+                    .unwrap_or(DisconnectReason::NetworkError);
+                METRICS
+                    .record_new_rlpx_conn_disconnection(
+                        &established_state
+                            .node
+                            .version
+                            .clone()
+                            .unwrap_or("Unknown".to_string()),
+                        reason,
+                    )
+                    .await;
                 established_state
                     .peer_table
                     .remove_peer(established_state.node.node_id())
@@ -890,12 +904,7 @@ async fn handle_incoming_message(
                 ?reason,
                 "Received Disconnect"
             );
-            METRICS
-                .record_new_rlpx_conn_disconnection(
-                    &state.node.version.clone().unwrap_or("Unknown".to_string()),
-                    reason,
-                )
-                .await;
+            state.disconnect_reason = Some(reason);
 
             state.peer_table.remove_peer(state.node.node_id()).await?;
 
