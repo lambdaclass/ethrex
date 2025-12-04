@@ -238,7 +238,7 @@ pub struct Options {
     )]
     pub tx_broadcasting_time_interval: u64,
     #[arg(
-        long = "target.peers",
+        long = "p2p.target-peers",
         default_value_t = TARGET_PEERS,
         value_name = "MAX_PEERS",
         help = "Max amount of connected peers.",
