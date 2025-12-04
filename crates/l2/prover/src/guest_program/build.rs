@@ -67,11 +67,6 @@ fn build_sp1_program() {
     use hex;
     use sp1_sdk::{HashableKey, ProverClient};
 
-    unsafe {
-        std::env::set_var("CARGO_PROFILE_RELEASE_LTO", "thin");
-        std::env::set_var("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1");
-    }
-
     let features = if cfg!(feature = "l2") {
         vec!["l2".to_string()]
     } else {
