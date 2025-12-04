@@ -378,7 +378,7 @@ impl PeerTable {
         }
     }
 
-    /// Return percentage of target peers completion
+    /// Return rate of target peers completion
     pub async fn target_peers_completion(&mut self) -> Result<f64, PeerTableError> {
         match self.handle.call(CallMessage::TargetPeersCompletion).await? {
             OutMessage::TargetCompletion(result) => Ok(result),
