@@ -77,15 +77,11 @@ jobs:
         shell: bash
         env:
           SIM_LIMIT: ${{ matrix.limit }}
-          SIM_BUILDARG: ${{ matrix.buildarg }}
         run: |
           FLAGS='--sim.parallelism 4 --sim.loglevel 3'
           if [[ -n "$SIM_LIMIT" ]]; then
             escaped_limit=${SIM_LIMIT//\'/\'\\\'\'}
             FLAGS+=" --sim.limit '$escaped_limit'"
-          fi
-          if [[ -n "$SIM_BUILDARG" ]]; then
-            FLAGS+=" --sim.buildarg $SIM_BUILDARG"
           fi
           echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
 
