@@ -18,8 +18,6 @@ jobs:
   docker_build:
     name: Build Docker
     runs-on: ubuntu-latest
-    needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
       - uses: actions/checkout@v4
 
