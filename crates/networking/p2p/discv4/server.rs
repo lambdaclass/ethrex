@@ -26,7 +26,7 @@ use spawned_concurrency::{
         send_message_on, spawn_listener,
     },
 };
-use std::{net::SocketAddr, ops::Div, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
 use tracing::{debug, error, info, trace};
@@ -40,8 +40,8 @@ const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12
 /// The initial interval between peer lookups, until the number of peers reaches
 /// [target_peers](DiscoverySideCarState::target_peers), or the number of
 /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
-pub const INITIAL_LOOKUP_INTERVAL_MS: u64 = 100; // 10 per second
-pub const LOOKUP_INTERVAL_MS: u64 = 600; // 100 per minute
+pub const INITIAL_LOOKUP_INTERVAL_MS: f64 = 100.0; // 10 per second
+pub const LOOKUP_INTERVAL_MS: f64 = 600.0; // 100 per minute
 const CHANGE_FIND_NODE_MESSAGE_INTERVAL: Duration = Duration::from_secs(5);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -87,7 +87,7 @@ pub struct DiscoveryServer {
     /// The last `FindNode` message sent, cached due to message
     /// signatures being expensive.
     find_node_message: BytesMut,
-    initial_lookup_interval: u64,
+    initial_lookup_interval: f64,
 }
 
 impl DiscoveryServer {
@@ -98,7 +98,7 @@ impl DiscoveryServer {
         udp_socket: Arc<UdpSocket>,
         mut peer_table: PeerTable,
         bootnodes: Vec<Node>,
-        initial_lookup_interval: u64,
+        initial_lookup_interval: f64,
     ) -> Result<(), DiscoveryServerError> {
         info!("Starting Discovery Server");
 
@@ -264,17 +264,6 @@ impl DiscoveryServer {
     }
 
     async fn prune(&mut self) -> Result<(), DiscoveryServerError> {
-        let interval = self.get_lookup_interval().await.as_micros();
-        let rate = if interval == 0 {
-            0f64
-        } else {
-            1_000_000f64 / interval as f64
-        };
-        tracing::info!(
-            "Current lookup interval: {:?}, {:.3} per second",
-            interval,
-            rate
-        );
         self.peer_table.prune().await?;
         Ok(())
     }
@@ -285,24 +274,11 @@ impl DiscoveryServer {
             .target_peers_completion()
             .await
             .unwrap_or_default();
-        let value = if peer_completion < 0.5 {
-            4.0 * peer_completion.powf(3.0)
-        } else {
-            1.0 - ((-2.0 * peer_completion + 2.0).powf(3.0)) / 2.0
-        };
-        let indexed = (1000f64
-            * (value * (LOOKUP_INTERVAL_MS - self.initial_lookup_interval) as f64
-                + self.initial_lookup_interval as f64))
-            .round() as u64;
-        //tracing::info!("Peer count {} - progress {} - value {} - indexed {}", peer_count, peer_completion, value, indexed);
-        Duration::from_micros(indexed)
-
-        // if !self.peer_table.target_reached().await.unwrap_or(false) {
-        //     INITIAL_LOOKUP_INTERVAL
-        // } else {
-        //     trace!("Reached target number of peers or contacts. Using longer lookup interval.");
-        //     LOOKUP_INTERVAL
-        // }
+        lookup_interval_function(
+            peer_completion,
+            self.initial_lookup_interval,
+            LOOKUP_INTERVAL_MS,
+        )
     }
 
     async fn enr_lookup(&mut self) -> Result<(), DiscoveryServerError> {
@@ -706,6 +682,20 @@ impl Discv4Message {
     pub fn get_node_id(&self) -> H256 {
         node_id(&self.sender_public_key)
     }
+}
+
+pub fn lookup_interval_function(progress: f64, lower_limit: f64, upper_limit: f64) -> Duration {
+    // Smooth progression curve
+    // See https://easings.net/#easeInOutCubic
+    let ease_in_out_cubic = if progress < 0.5 {
+        4.0 * progress.powf(3.0)
+    } else {
+        1.0 - ((-2.0 * progress + 2.0).powf(3.0)) / 2.0
+    };
+    Duration::from_micros(
+        // Use `progress` here instead of `ease_in_out_cubic` for a linear function.
+        (1000f64 * (ease_in_out_cubic * (upper_limit - lower_limit) + lower_limit)).round() as u64,
+    )
 }
 
 // TODO: Reimplement tests removed during snap sync refactor

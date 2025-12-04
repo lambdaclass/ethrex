@@ -332,7 +332,7 @@ pub async fn dummy_p2p_context(peer_table: PeerTable) -> P2PContext {
         "".to_string(),
         None,
         1000,
-        100,
+        100.0,
     )
     .await
     .unwrap()

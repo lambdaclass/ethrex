@@ -1,3 +1,4 @@
+use crate::discv4::server::lookup_interval_function;
 use crate::types::Node;
 use crate::{
     discv4::{peer_table::PeerTableError, server::LOOKUP_INTERVAL_MS},
@@ -56,15 +57,11 @@ impl RLPxInitiator {
             .target_peers_completion()
             .await
             .unwrap_or_default();
-        let value = if peer_completion < 0.5 {
-            4.0 * peer_completion.powf(3.0)
-        } else {
-            1.0 - ((-2.0 * peer_completion + 2.0).powf(3.0)) / 2.0
-        };
-        let indexed = (1000f64 * value * (LOOKUP_INTERVAL_MS - self.context.lookup_interval) as f64
-            + self.context.lookup_interval as f64)
-            .round() as u64;
-        Duration::from_micros(indexed)
+        lookup_interval_function(
+            peer_completion,
+            self.context.initial_lookup_interval,
+            LOOKUP_INTERVAL_MS,
+        )
     }
 }
 

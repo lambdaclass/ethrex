@@ -252,7 +252,7 @@ pub struct Options {
         help = "Initial Lookup Time Interval (ms) to trigger each Discovery lookup message and RLPx connection attempt.",
         help_heading = "P2P options"
     )]
-    pub lookup_interval: u64,
+    pub lookup_interval: f64,
     #[arg(
         long = "builder.extra-data",
         default_value = get_minimal_client_version(),

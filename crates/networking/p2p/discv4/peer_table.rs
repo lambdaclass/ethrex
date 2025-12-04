@@ -636,10 +636,6 @@ impl PeerTableServer {
     }
 
     fn prune(&mut self) {
-        let peers = self.peers.len();
-        let contacts = self.contacts.len();
-        tracing::info!("Current peers: {}, contacts: {}", peers, contacts);
-
         let disposable_contacts = self
             .contacts
             .iter()

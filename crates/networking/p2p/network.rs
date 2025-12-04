@@ -46,7 +46,7 @@ pub struct P2PContext {
     #[cfg(feature = "l2")]
     pub based_context: Option<P2PBasedContext>,
     pub tx_broadcaster: GenServerHandle<TxBroadcaster>,
-    pub lookup_interval: u64,
+    pub initial_lookup_interval: f64,
 }
 
 impl P2PContext {
@@ -61,7 +61,7 @@ impl P2PContext {
         client_version: String,
         based_context: Option<P2PBasedContext>,
         tx_broadcasting_time_interval: u64,
-        lookup_interval: u64,
+        lookup_interval: f64,
     ) -> Result<Self, NetworkError> {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
             tokio::task::Id,
@@ -93,7 +93,7 @@ impl P2PContext {
             #[cfg(feature = "l2")]
             based_context,
             tx_broadcaster,
-            lookup_interval,
+            initial_lookup_interval: lookup_interval,
         })
     }
 }
@@ -120,7 +120,7 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
         udp_socket.clone(),
         context.table.clone(),
         bootnodes,
-        context.lookup_interval,
+        context.initial_lookup_interval,
     )
     .await
     .inspect_err(|e| {
