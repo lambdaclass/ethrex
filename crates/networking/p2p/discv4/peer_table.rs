@@ -224,7 +224,7 @@ impl PeerTable {
         Ok(())
     }
 
-    /// Cache whether the contact matches our fork. Unknown remains untouched until set.
+    /// Set whether the contact fork id is valid.
     pub async fn set_is_fork_id_valid(
         &mut self,
         node_id: &H256,

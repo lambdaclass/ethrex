@@ -366,7 +366,7 @@ impl DiscoveryServer {
 
         self.send(pong, node.udp_addr()).await?;
 
-        debug!(sent = "Pong", to = %format!("{:#x}", node.public_key));
+        trace!(sent = "Pong", to = %format!("{:#x}", node.public_key));
 
         Ok(())
     }
@@ -547,10 +547,11 @@ impl DiscoveryServer {
             self.peer_table
                 .set_is_fork_id_valid(&node_id, false)
                 .await?;
-            debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"), "fork id mismatch in ENR response, skipping");
+            debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"), local_fork_id=%local_fork_id, remote_fork_id=%remote_fork_id, "fork id mismatch in ENR response, skipping");
             return Ok(());
         }
 
+        debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"), local_fork_id=%local_fork_id, remote_fork_id=%remote_fork_id, "valid fork id in ENR found");
         self.peer_table.set_is_fork_id_valid(&node_id, true).await?;
 
         Ok(())
