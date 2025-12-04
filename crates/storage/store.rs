@@ -97,6 +97,7 @@ impl Store {
             },
         };
 
+        // Check that the last used DB version matches the current version
         if let Some(latest_store_schema_version) = store.get_store_schema_version()?
             && latest_store_schema_version != STORE_SCHEMA_VERSION
         {
