@@ -31,7 +31,13 @@ jobs:
           filters: |
             run_tests:
               - "crates/l2/**"
-              - "fixtures/**"
+              - "fixtures/keys/**"
+              - "fixtures/genesis/l1-dev.json"
+              - "fixtures/genesis/l2.json"
+              - "fixtures/cache/**"
+              - "fixtures/blobs/**"
+              - "fixtures/blockchain/**"
+              - "fixtures/contracts/**"
               - "crates/blockchain/dev/**"
               - "crates/vm/levm/**"
               - ".github/workflows/pr-main_l2.yaml"
