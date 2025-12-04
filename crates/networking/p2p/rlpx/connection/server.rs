@@ -89,7 +89,10 @@ impl PeerConnection {
             peer_addr,
             stream: Arc::new(stream),
         });
-        let connection = PeerConnectionServer { state };
+        let connection = PeerConnectionServer {
+            state,
+            is_established: false,
+        };
         Self {
             handle: connection.start(),
         }
@@ -100,7 +103,10 @@ impl PeerConnection {
             context,
             node: node.clone(),
         });
-        let connection = PeerConnectionServer { state };
+        let connection = PeerConnectionServer {
+            state,
+            is_established: false,
+        };
         Self {
             handle: connection.start(),
         }
@@ -246,6 +252,7 @@ pub enum OutMessage {
 #[derive(Debug)]
 pub struct PeerConnectionServer {
     state: ConnectionState,
+    is_established: bool,
 }
 
 impl GenServer for PeerConnectionServer {
@@ -298,6 +305,7 @@ impl GenServer for PeerConnectionServer {
                                 .unwrap_or("Unknown".to_string()),
                         )
                         .await;
+                    self.is_established = true;
                     // New state
                     self.state = ConnectionState::Established(Box::new(established_state));
                     Ok(Success(self))
@@ -470,19 +478,21 @@ impl GenServer for PeerConnectionServer {
         match self.state {
             ConnectionState::Established(mut established_state) => {
                 trace!(peer=%established_state.node, "Closing connection with established peer");
-                let reason = established_state
-                    .disconnect_reason
-                    .unwrap_or(DisconnectReason::NetworkError);
-                METRICS
-                    .record_new_rlpx_conn_disconnection(
-                        &established_state
-                            .node
-                            .version
-                            .clone()
-                            .unwrap_or("Unknown".to_string()),
-                        reason,
-                    )
-                    .await;
+                if self.is_established {
+                    let reason = established_state
+                        .disconnect_reason
+                        .unwrap_or(DisconnectReason::NetworkError);
+                    METRICS
+                        .record_new_rlpx_conn_disconnection(
+                            &established_state
+                                .node
+                                .version
+                                .clone()
+                                .unwrap_or("Unknown".to_string()),
+                            reason,
+                        )
+                        .await;
+                }
                 established_state
                     .peer_table
                     .remove_peer(established_state.node.node_id())
