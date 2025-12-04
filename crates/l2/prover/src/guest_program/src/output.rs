@@ -1,6 +1,6 @@
-#[cfg(feature = "l2")]
-use ethrex_common::Address;
 use ethrex_common::{H256, U256};
+#[cfg(feature = "l2")]
+use ethrex_common::types::balance_diff::BalanceDiff;
 use serde::{Deserialize, Serialize};
 
 /// Public output variables exposed by the zkVM execution program. Some of these are part of
@@ -31,7 +31,7 @@ pub struct ProgramOutput {
     pub l2messages_merkle_root: H256,
     #[cfg(feature = "l2")]
     /// balance diffs for each chain id
-    pub balance_diffs: Vec<(U256, Vec<(Address, Address, Address, U256)>)>,
+    pub balance_diffs: Vec<BalanceDiff>,
 }
 
 impl ProgramOutput {
@@ -55,9 +55,11 @@ impl ProgramOutput {
 
         #[cfg(feature = "l2")]
         {
-            for (chain_id, balance_diff) in &self.balance_diffs {
-                encoded.extend_from_slice(&chain_id.to_big_endian());
-                for &(token_l1, token_l2, other_chain_token_l2, amount) in balance_diff {
+            for balance_diff in &self.balance_diffs {
+                encoded.extend_from_slice(&balance_diff.chain_id.to_big_endian());
+                for &(token_l1, token_l2, other_chain_token_l2, amount) in
+                    &balance_diff.value_per_token
+                {
                     encoded.extend_from_slice(&[0u8; 12]);
                     encoded.extend_from_slice(&token_l1.to_fixed_bytes());
                     encoded.extend_from_slice(&[0u8; 12]);

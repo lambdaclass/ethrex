@@ -313,10 +313,7 @@ pub fn stateless_validation_l2(
             &privileged_transactions,
         )?;
 
-    let balance_diffs = get_balance_diffs(&l2messages)
-        .iter()
-        .map(|diff| (diff.chain_id, diff.value_per_token.clone()))
-        .collect();
+    let balance_diffs = get_balance_diffs(&l2messages);
 
     // TODO: this could be replaced with something like a ProverConfig in the future.
     let validium = (blob_commitment, &blob_proof) == ([0; 48], &[0; 48]);
