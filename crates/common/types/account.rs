@@ -110,6 +110,13 @@ pub struct AccountState {
     pub code_hash: H256,
 }
 
+/// A slim codec for an [`AccountState`].
+///
+/// The slim codec will optimize both the [storage root](AccountState::storage_root) and the
+/// [code hash](AccountState::code_hash)'s encoding so that it does not take space when empty.
+///
+/// The correct way to use it is to wrap the [`AccountState`] and encode it using this codec, and
+/// not to store the codec as a field in a struct.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct AccountStateSlimCodec(pub AccountState);
 
