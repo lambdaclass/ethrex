@@ -346,7 +346,7 @@ impl DiscoveryServer {
             .expect("first 32 bytes are the message hash");
         // We do not use self.send() here, as we already encoded the message to calculate hash.
         self.udp_socket.send_to(&buf, node.udp_addr()).await?;
-        debug!(sent = "Ping", to = %format!("{:#x}", node.public_key));
+        trace!(sent = "Ping", to = %format!("{:#x}", node.public_key));
         Ok(H256::from(ping_hash))
     }
 
@@ -548,7 +548,7 @@ impl DiscoveryServer {
                 .set_is_fork_id_valid(&node_id, false)
                 .await?;
             debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"), "fork id mismatch in ENR response, skipping");
-            return Err(DiscoveryServerError::InvalidContact);
+            return Ok(());
         }
 
         self.peer_table.set_is_fork_id_valid(&node_id, true).await?;
