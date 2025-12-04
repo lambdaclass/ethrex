@@ -44,7 +44,27 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: "Devp2p tests"
+          - name: "Devp2p tests 1"
+            simulation: devp2p
+            limit: discv4|eth|snap
+            artifact_prefix: devp2p
+        include:
+          - name: "Devp2p tests 2"
+            simulation: devp2p
+            limit: discv4|eth|snap
+            artifact_prefix: devp2p
+        include:
+          - name: "Devp2p tests 3"
+            simulation: devp2p
+            limit: discv4|eth|snap
+            artifact_prefix: devp2p
+        include:
+          - name: "Devp2p tests 4"
+            simulation: devp2p
+            limit: discv4|eth|snap
+            artifact_prefix: devp2p
+        include:
+          - name: "Devp2p tests 5"
             simulation: devp2p
             limit: discv4|eth|snap
             artifact_prefix: devp2p
