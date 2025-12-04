@@ -50,6 +50,7 @@ ethrex l2 deploy \
 > In this step we are initializing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers; you can find the address for the aligned aggregator service [here](https://docs.alignedlayer.com/guides/7_contract_addresses).
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
 > Accounts for the deployer, on-chain proposer owner, bridge owner, and proof sender must have funds. Add `--bridge-owner-pk <PRIVATE_KEY>` if you want the deployer to immediately call `acceptOwnership` on behalf of that owner; otherwise, they can accept later.
+> If you pass both `--sp1 true` and `--risc0 true`, both proofs become required for every batch to settle on L1 (Aligned will expect both).
 
 ### 3. Deposit funds to the `AlignedBatcherPaymentService` contract from the proof sender
 

@@ -36,6 +36,7 @@ ethrex l2 deploy \
 > `--tdx true` to require TEE proofs for validating batch execution and state settlement.
 > `--tdx.verifier-address` to use an existing verifier instead of deploying one on the public network. Do not pass this flag if you want to deploy a new verifier.
 > Enabling multiple proving backend will require running multiple provers, one for each backend. Refer to the [Run multiple provers](./prover/multi-prover.md) section for more details.
+> If you pass both `--sp1 true` and `--risc0 true`, both proofs become required for every batch to settle on L1.
 
 > [!IMPORTANT]
 > Retrieve the deployed contract addresses from the console logs or the .env file generated during deployment (in the directory where you ran the command) for use in the next step.
