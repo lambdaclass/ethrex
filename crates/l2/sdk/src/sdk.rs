@@ -1162,7 +1162,7 @@ pub async fn get_pending_l2_messages(
     common_bridge_address: Address,
     chain_id: u64,
 ) -> Result<Vec<H256>, EthClientError> {
-    let selector = keccak(b"getPendingL2MessageHashes(uint256)")
+    let selector = keccak(b"getPendingL2MessagesHashes(uint256)")
         .as_bytes()
         .get(..4)
         .ok_or(EthClientError::Custom("Failed to get selector.".to_owned()))?

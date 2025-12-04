@@ -165,6 +165,24 @@ contract CommonBridge is
         return buffer;
     }
 
+    /// @inheritdoc ICommonBridge
+    function getPendingL2MessagesHashes(
+        uint256 chainId
+    ) public view returns (bytes32[] memory) {
+        uint256 pendingMessageIndex = pendingMessagesIndexPerChain[chainId];
+        bytes32[] storage pendingMessagesHashes = pendingMessagesHashesPerChain[
+            chainId
+        ];
+        bytes32[] memory buffer = new bytes32[](
+            pendinL2MessagesLength(chainId)
+        );
+        for (uint256 i = 0; i < pendinL2MessagesLength(chainId); i++) {
+            buffer[i] = pendingMessagesHashes[i + pendingMessageIndex];
+        }
+
+        return buffer;
+    }
+
     /// Burns at least {amount} gas
     function _burnGas(uint256 amount) private view {
         uint256 startingGas = gasleft();

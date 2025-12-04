@@ -75,6 +75,13 @@ interface ICommonBridge {
         view
         returns (bytes32[] memory);
 
+    /// @notice Method to retrieve all the pending L2 message hashes for a given chain.
+    /// @dev This method is used by the L1 watcher to get the pending L2 messages
+    /// to be processed for a given chain.
+    function getPendingL2MessagesHashes(
+        uint256 chainId
+    ) external view returns (bytes32[] memory);
+
     /// @notice Method that sends a transaction to L2.
     /// @dev The deposit process starts here by emitting a L1ToL2Message
     /// event. This event will later be intercepted by the L2 operator to
