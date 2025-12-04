@@ -6,7 +6,10 @@ use ethrex::{
 };
 use ethrex_p2p::{discv4::peer_table::PeerTable, types::NodeRecord};
 use std::{path::Path, sync::Arc, time::Duration};
-use tokio::{signal::unix::{SignalKind, signal}, sync::RwLock};
+use tokio::{
+    signal::unix::{SignalKind, signal},
+    sync::RwLock,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 

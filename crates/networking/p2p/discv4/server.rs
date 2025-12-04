@@ -392,7 +392,10 @@ impl DiscoveryServer {
     ) -> Result<(), DiscoveryServerError> {
         let node_record = &self.local_node_record;
 
-        let msg = Message::ENRResponse(ENRResponseMessage::new(request_hash, node_record.read().await.clone()));
+        let msg = Message::ENRResponse(ENRResponseMessage::new(
+            request_hash,
+            node_record.read().await.clone(),
+        ));
 
         self.send(msg, from).await?;
 

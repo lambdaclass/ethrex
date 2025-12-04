@@ -701,7 +701,13 @@ mod tests {
         let context = default_context_with_storage(storage).await;
         let local_p2p_node = context.node_data.local_p2p_node.clone();
 
-        let enr_url = context.node_data.local_node_record.read().await.enr_url().unwrap();
+        let enr_url = context
+            .node_data
+            .local_node_record
+            .read()
+            .await
+            .enr_url()
+            .unwrap();
         let result = map_http_requests(&request, context).await;
         let rpc_response = rpc_response(request.id, result).unwrap();
         let blob_schedule = serde_json::json!({

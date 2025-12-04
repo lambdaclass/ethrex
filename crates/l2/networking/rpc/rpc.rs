@@ -24,7 +24,6 @@ use ethrex_rpc::{
 };
 use ethrex_storage::Store;
 use serde_json::Value;
-use tokio::sync::RwLock;
 use std::{
     collections::HashMap,
     future::IntoFuture,
@@ -32,6 +31,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
+use tokio::sync::RwLock;
 use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
 use tower_http::cors::CorsLayer;
 use tracing::{debug, info};
