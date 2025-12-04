@@ -5,7 +5,6 @@ use serde::{Deserialize, Deserializer, Serializer, de::Error, ser::SerializeSeq}
 pub mod u256 {
     use super::*;
     use ethereum_types::U256;
-    use serde_json::Number;
 
     pub mod dec_str {
         use super::*;
@@ -22,32 +21,6 @@ pub mod u256 {
             S: Serializer,
         {
             serializer.serialize_str(&value.to_string())
-        }
-    }
-
-    pub fn deser_number<'de, D>(d: D) -> Result<U256, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = Number::deserialize(d)?.to_string();
-        U256::from_dec_str(&value).map_err(|e| D::Error::custom(e.to_string()))
-    }
-
-    pub fn deser_number_opt<'de, D>(d: D) -> Result<Option<U256>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        // Handle the null case explicitly
-        let opt = Option::<Number>::deserialize(d)?;
-        match opt {
-            Some(number) => {
-                // Convert number to string and parse to U256
-                let value = number.to_string();
-                U256::from_dec_str(&value)
-                    .map(Some)
-                    .map_err(|e| D::Error::custom(e.to_string()))
-            }
-            None => Ok(None),
         }
     }
 
