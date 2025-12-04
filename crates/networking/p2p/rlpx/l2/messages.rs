@@ -110,13 +110,15 @@ impl RLPxMessage for BatchSealed {
             .encode_field(&self.batch.last_block)
             .encode_field(&self.batch.state_root)
             .encode_field(&self.batch.privileged_transactions_hash)
-            .encode_field(&self.batch.message_hashes)
+            .encode_field(&self.batch.l1_message_hashes)
             .encode_field(&self.batch.blobs_bundle.blobs)
             .encode_field(&self.batch.blobs_bundle.commitments)
             .encode_field(&self.batch.blobs_bundle.proofs)
             .encode_optional_field(&self.batch.commit_tx)
             .encode_optional_field(&self.batch.verify_tx)
             .encode_field(&self.signature)
+            .encode_field(&self.batch.l2_message_hashes)
+            .encode_field(&self.batch.balance_diffs)
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
         buf.put_slice(&msg_data);
@@ -139,6 +141,8 @@ impl RLPxMessage for BatchSealed {
         let (commit_tx, decoder) = decoder.decode_optional_field();
         let (verify_tx, decoder) = decoder.decode_optional_field();
         let (signature, decoder) = decoder.decode_field("signature")?;
+        let (l2_message_hashes, decoder) = decoder.decode_field("l2_message_hashes")?;
+        let (balance_diffs, decoder) = decoder.decode_field("balance_diffs")?;
         decoder.finish()?;
 
         let batch = Batch {
@@ -147,7 +151,7 @@ impl RLPxMessage for BatchSealed {
             last_block,
             state_root,
             privileged_transactions_hash,
-            message_hashes,
+            l1_message_hashes: message_hashes,
             blobs_bundle: ethrex_common::types::blobs_bundle::BlobsBundle {
                 blobs,
                 commitments,
@@ -156,6 +160,8 @@ impl RLPxMessage for BatchSealed {
             },
             commit_tx,
             verify_tx,
+            balance_diffs,
+            l2_message_hashes,
         };
         Ok(BatchSealed::new(batch, signature))
     }
