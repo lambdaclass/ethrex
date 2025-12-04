@@ -188,6 +188,58 @@ impl Blockchain {
         Ok((execution_result, account_updates))
     }
 
+    fn execute_l2_block_pipeline(
+        &self,
+        block: &Block,
+        parent_header: &BlockHeader,
+        vm: &mut Evm,
+    ) -> Result<(BlockExecutionResult, AccountUpdatesList), ChainError> {
+        let queue_length = AtomicUsize::new(0);
+        let queue_length_ref = &queue_length;
+        let mut max_queue_length = 0;
+        let (execution_result, account_updates_list) = std::thread::scope(|s| {
+            let max_queue_length_ref = &mut max_queue_length;
+            let (tx, rx) = channel();
+            let execution_handle = std::thread::Builder::new()
+                .name("block_executor_execution".to_string())
+                .spawn_scoped(s, move || -> Result<_, ChainError> {
+                    let execution_result =
+                        vm.execute_block_pipeline(block, tx, queue_length_ref)?;
+
+                    Ok(execution_result)
+                })
+                .expect("Failed to spawn block_executor exec thread");
+            let parent_header_ref = &parent_header; // Avoid moving to thread
+            let merkleize_handle = std::thread::Builder::new()
+                .name("block_executor_merkleizer".to_string())
+                .spawn_scoped(s, move || -> Result<_, StoreError> {
+                    let account_updates_list = self.handle_merkleization(
+                        s,
+                        rx,
+                        parent_header_ref,
+                        queue_length_ref,
+                        max_queue_length_ref,
+                    )?;
+                    Ok(account_updates_list)
+                })
+                .expect("Failed to spawn block_executor merkleizer thread");
+            (
+                execution_handle.join().unwrap_or_else(|_| {
+                    Err(ChainError::Custom("execution thread panicked".to_string()))
+                }),
+                merkleize_handle.join().unwrap_or_else(|_| {
+                    Err(StoreError::Custom(
+                        "merklization thread panicked".to_string(),
+                    ))
+                }),
+            )
+        });
+        let execution_result = execution_result?;
+        let account_updates_list = account_updates_list?;
+
+        Ok((execution_result, account_updates_list))
+    }
+
     /// Executes a block withing a new vm instance and state
     #[instrument(
         level = "trace",
@@ -1088,6 +1140,25 @@ impl Blockchain {
             );
         }
         result
+    }
+
+    pub fn add_l2_block_pipeline(
+        &self,
+        block: Block,
+        parent_header: &BlockHeader,
+        vm: &mut Evm,
+    ) -> Result<(), ChainError> {
+        let (res, account_updates_list) =
+            self.execute_l2_block_pipeline(&block, parent_header, vm)?;
+
+        self.store_block(
+            block,
+            account_updates_list,
+            BlockExecutionResult {
+                receipts: res.receipts,
+                requests: vec![],
+            },
+        )
     }
 
     pub fn add_block_pipeline(&self, block: Block) -> Result<(), ChainError> {

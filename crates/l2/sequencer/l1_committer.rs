@@ -470,38 +470,15 @@ impl L1Committer {
 
             // Here we use the checkpoint store because we need the previous
             // state available (i.e. not pruned) for re-execution.
-            let vm_db = StoreVmDatabase::new(one_time_checkpoint_store.clone(), parent_header);
+            let vm_db =
+                StoreVmDatabase::new(one_time_checkpoint_store.clone(), parent_header.clone());
 
             let mut vm = Evm::new_for_l2(vm_db, *fee_config)?;
 
-            vm.execute_block(block)?;
-
-            let account_updates = vm.get_state_transitions()?;
-            let account_updates_list = one_time_checkpoint_store
-                .apply_account_updates_batch(block.header.parent_hash, &account_updates)?
-                .ok_or(CommitterError::FailedToGetInformationFromStorage(
-                    "no account updated".to_owned(),
-                ))?;
-
-            let mut receipts = vec![];
-            for (index, _) in block.body.transactions.iter().enumerate() {
-                let receipt = self
-                    .store
-                    .get_receipt(block.header.number, index.try_into()?)
-                    .await?
-                    .ok_or(CommitterError::RetrievalError(
-                        "Transactions in a block should have a receipt".to_owned(),
-                    ))?;
-                receipts.push(receipt);
-            }
-
-            one_time_checkpoint_blockchain.store_block(
+            one_time_checkpoint_blockchain.add_l2_block_pipeline(
                 block.clone(),
-                account_updates_list,
-                BlockExecutionResult {
-                    receipts,
-                    requests: vec![],
-                },
+                &parent_header,
+                &mut vm,
             )?;
         }
 
@@ -732,12 +709,31 @@ impl L1Committer {
                 get_block_l1_privileged_transactions(&txs, self.store.chain_config.chain_id);
 
             // Get block account updates.
-            let account_updates = if let Some(account_updates) = self
+            if let Some(account_updates) = self
                 .rollup_store
                 .get_account_updates_by_block_number(block_to_commit_number)
                 .await?
             {
-                account_updates
+                // The checkpoint store's state corresponds to the parent state of
+                // the first block of the batch. Therefore, we need to apply the
+                // account updates of each block as we go, to be able to continue
+                // re-executing the next blocks in the batch.
+                let account_updates_list = checkpoint_store
+                    .apply_account_updates_batch(
+                        potential_batch_block.header.parent_hash,
+                        &account_updates,
+                    )?
+                    .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                        "no account updated".to_owned(),
+                    ))?;
+                checkpoint_blockchain.store_block(
+                    potential_batch_block.clone(),
+                    account_updates_list,
+                    BlockExecutionResult {
+                        receipts,
+                        requests: vec![],
+                    },
+                )?;
             } else {
                 warn!(
                     "Could not find execution cache result for block {}, falling back to re-execution",
@@ -750,7 +746,7 @@ impl L1Committer {
 
                 // Here we use the checkpoint store because we need the previous
                 // state available (i.e. not pruned) for re-execution.
-                let vm_db = StoreVmDatabase::new(checkpoint_store.clone(), parent_header);
+                let vm_db = StoreVmDatabase::new(checkpoint_store.clone(), parent_header.clone());
 
                 let fee_config = self
                     .rollup_store
@@ -762,34 +758,12 @@ impl L1Committer {
 
                 let mut vm = Evm::new_for_l2(vm_db, fee_config)?;
 
-                vm.execute_block(&potential_batch_block)?;
-
-                vm.get_state_transitions()?
-            };
-
-            // The checkpoint store's state corresponds to the parent state of
-            // the first block of the batch. Therefore, we need to apply the
-            // account updates of each block as we go, to be able to continue
-            // re-executing the next blocks in the batch.
-            {
-                let account_updates_list = checkpoint_store
-                    .apply_account_updates_batch(
-                        potential_batch_block.header.parent_hash,
-                        &account_updates,
-                    )?
-                    .ok_or(CommitterError::FailedToGetInformationFromStorage(
-                        "no account updated".to_owned(),
-                    ))?;
-
-                checkpoint_blockchain.store_block(
+                checkpoint_blockchain.add_l2_block_pipeline(
                     potential_batch_block.clone(),
-                    account_updates_list,
-                    BlockExecutionResult {
-                        receipts,
-                        requests: vec![],
-                    },
-                )?;
-            }
+                    &parent_header,
+                    &mut vm,
+                )?
+            };
 
             // Accumulate block data with the rest of the batch.
             acc_privileged_txs.extend(privileged_transactions.clone());
