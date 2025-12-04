@@ -9,9 +9,7 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {
-    MerkleProof
-} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
@@ -364,7 +362,9 @@ contract CommonBridge is
             l2MessagesMerkleRoots[l2MessagesBatchNumber] == bytes32(0),
             "CommonBridge: l2 messages already published"
         );
-        l2MessagesMerkleRoots[l2MessagesBatchNumber] = l2MessagesMerkleRoot;
+        l2MessagesMerkleRoots[
+            l2MessagesBatchNumber
+        ] = l2MessagesMerkleRoot;
         emit L2MessagesPublished(l2MessagesBatchNumber, l2MessagesMerkleRoot);
         for (uint i = 0; i < balanceDiffs.length; i++) {
             for (uint j = 0; j < balanceDiffs[i].value_per_token.length; j++) {
@@ -421,12 +421,11 @@ contract CommonBridge is
         uint256 l2MessageBatchNumber,
         bytes32[] calldata l2MessageProof
     ) external view override returns (bool) {
-        return
-            MerkleProof.verify(
-                l2MessageProof,
-                l2MessagesMerkleRoots[l2MessageBatchNumber],
-                l2MessageLeaf
-            );
+        return MerkleProof.verify(
+            l2MessageProof,
+            l2MessagesMerkleRoots[l2MessageBatchNumber],
+            l2MessageLeaf
+        );
     }
 
     /// @inheritdoc ICommonBridge
