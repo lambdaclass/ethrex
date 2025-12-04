@@ -9,7 +9,6 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import "./Print.sol";
 import {
     MerkleProof
 } from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
@@ -368,22 +367,15 @@ contract CommonBridge is
         l2MessagesMerkleRoots[l2MessagesBatchNumber] = l2MessagesMerkleRoot;
         emit L2MessagesPublished(l2MessagesBatchNumber, l2MessagesMerkleRoot);
         for (uint i = 0; i < balanceDiffs.length; i++) {
-            // TODO: if token is ETH_TOKEN, send value ETH
-            // else send amount of the token with transfer
-            // we need a different sendMessage function that takes token address + amount
             for (uint j = 0; j < balanceDiffs[i].value_per_token.length; j++) {
                 TokenValue memory tv = balanceDiffs[i].value_per_token[j];
                 if (tv.token_l1 == address(0)) {
                     IRouter(SHARED_BRIDGE_ROUTER).sendMessage{value: tv.value}(
-                        balanceDiffs[i].chainId // TODO: change this. We need to send value ETH or a token
+                        balanceDiffs[i].chainId
                     );
                 } else {
-                    // TODO: update the deposits map and how do we get the token_l2 address
-                    // TODO: we need to transfer the locked erc20 token to the router first
-                    // TODO: uncomment the following lines after testing
-                    uint256 deposited = deposits[tv.token_l1][tv.token_l2];
                     require(
-                        deposited >= tv.value,
+                        deposits[tv.token_l1][tv.token_l2] >= tv.value,
                         "CommonBridge: trying to withdraw more tokens than were deposited"
                     );
                     deposits[tv.token_l1][tv.token_l2] -= tv.value;
@@ -410,7 +402,7 @@ contract CommonBridge is
         );
     }
 
-    /// @dev in here we already have the tokens locked on the bridge because of the router
+    /// @inheritdoc ICommonBridge
     function receiveERC20Message(
         address token_l1,
         address token_l2,

@@ -153,6 +153,9 @@ interface ICommonBridge {
     /// method will not burn the L2 gas.
     function receiveMessage() external payable;
 
+    /// @notice Receives an ERC20 message from another chain via shared bridge router.
+    /// @dev This method should only be called by the shared bridge router, as this
+    /// method will modify the token balances accordingly.
     function receiveERC20Message(
         address token_l1,
         address token_l2,
