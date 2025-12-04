@@ -6,7 +6,7 @@ bench_around = {}
 for file_path in sys.argv[1:]:
     bench_around[file_path] = {}
 
-    with open(file_path, "r+") as file:
+    with open(file_path, "r") as file:
         for line in file:
             if "Finished regenerating state" in line:
                 break
