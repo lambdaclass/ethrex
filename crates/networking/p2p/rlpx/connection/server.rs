@@ -330,7 +330,7 @@ impl GenServer for PeerConnectionServer {
                     trace!(
                         peer=%established_state.node,
                         %message,
-                        "Received incomming message",
+                        "Received incoming message",
                     );
                     handle_incoming_message(established_state, message).await
                 }
