@@ -3199,7 +3199,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "sum by (reason) (\n  changes(\n    ethrex_p2p_disconnections{\n      job=\"$job\",\n      instance=~\"$instance(:\\\\d+)?$\"\n    }[$__rate_interval]\n  )\n)",
+              "expr": "sum by (reason) (\n  changes(\n    ethrex_p2p_disconnections{\n      job=\"$job\",\n      instance=~\"$instance(:\\\\d+)?$\"\n    }[$__rate_interval]\n  )\n) > 0",
               "legendFormat": "{{reason}}",
               "range": true,
               "refId": "A"
