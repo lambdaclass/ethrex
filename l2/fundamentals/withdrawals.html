@@ -250,13 +250,13 @@
 <p>The bridge sends the withdrawn amount to the burn address.</p>
 </li>
 <li>
-<p>The bridge calls <code>sendMessageToL1(bytes32 data)</code> on the <code>L2ToL1Messenger</code> contract, with <code>data</code> being:</p>
+<p>The bridge calls <code>sendMessageToL1(bytes32 data)</code> on the <code>Messenger</code> contract, with <code>data</code> being:</p>
 <pre><code class="language-solidity">bytes32 data = keccak256(abi.encodePacked(ETH_ADDRESS, ETH_ADDRESS, _receiverOnL1, msg.value))
 </code></pre>
 <p>The <code>ETH_ADDRESS</code> is an arbitrary address we use, meaning the "token" to transfer is ETH.</p>
 </li>
 <li>
-<p><code>L2ToL1Messenger</code> emits an <code>L1Message</code> event, with the address of the L2 bridge contract and <code>data</code> as topics, along with a unique message ID.</p>
+<p><code>Messenger</code> emits an <code>L1Message</code> event, with the address of the L2 bridge contract and <code>data</code> as topics, along with a unique message ID.</p>
 </li>
 </ol>
 <p>Off-chain:</p>
@@ -279,7 +279,7 @@ sequenceDiagram
     box rgb(139, 63, 63) L2
         actor L2Alice as Alice
         participant CommonBridgeL2
-        participant L2ToL1Messenger
+        participant Messenger
     end
 
     actor Sequencer
@@ -292,10 +292,10 @@ sequenceDiagram
 
     L2Alice-&gt;&gt;CommonBridgeL2: withdraws 42 ETH
     CommonBridgeL2-&gt;&gt;CommonBridgeL2: burns 42 ETH
-    CommonBridgeL2-&gt;&gt;L2ToL1Messenger: calls sendMessageToL1
-    L2ToL1Messenger-&gt;&gt;L2ToL1Messenger: emits L1Message event
+    CommonBridgeL2-&gt;&gt;Messenger: calls sendMessageToL1
+    Messenger-&gt;&gt;Messenger: emits L1Message event
 
-    L2ToL1Messenger--&gt;&gt;Sequencer: receives event
+    Messenger--&gt;&gt;Sequencer: receives event
 
     Sequencer-&gt;&gt;OnChainProposer: publishes batch
     OnChainProposer-&gt;&gt;CommonBridge: publishes L1 message root
@@ -321,12 +321,12 @@ sequenceDiagram
 <p>The bridge fetches the address of the L1 token by calling <code>l1Address()</code> on the L2 token contract.</p>
 </li>
 <li>
-<p>The bridge calls <code>sendMessageToL1(bytes32 data)</code> on the <code>L2ToL1Messenger</code> contract, with <code>data</code> being:</p>
+<p>The bridge calls <code>sendMessageToL1(bytes32 data)</code> on the <code>Messenger</code> contract, with <code>data</code> being:</p>
 <pre><code class="language-solidity">bytes32 data = keccak256(abi.encodePacked(_token.l1Address(), _token, _receiverOnL1, _value))
 </code></pre>
 </li>
 <li>
-<p><code>L2ToL1Messenger</code> emits an <code>L1Message</code> event, with the address of the L2 bridge contract and <code>data</code> as topics, along with a unique message ID.</p>
+<p><code>Messenger</code> emits an <code>L1Message</code> event, with the address of the L2 bridge contract and <code>data</code> as topics, along with a unique message ID.</p>
 </li>
 </ol>
 <p>Off-chain:</p>
@@ -350,7 +350,7 @@ sequenceDiagram
         actor L2Alice as Alice
         participant L2Token
         participant CommonBridgeL2
-        participant L2ToL1Messenger
+        participant Messenger
     end
 
     actor Sequencer
@@ -365,10 +365,10 @@ sequenceDiagram
     L2Alice-&gt;&gt;L2Token: approves token transfer
     L2Alice-&gt;&gt;CommonBridgeL2: withdraws 42 of L2Token
     CommonBridgeL2-&gt;&gt;L2Token: burns the 42 tokens
-    CommonBridgeL2-&gt;&gt;L2ToL1Messenger: calls sendMessageToL1
-    L2ToL1Messenger-&gt;&gt;L2ToL1Messenger: emits L1Message event
+    CommonBridgeL2-&gt;&gt;Messenger: calls sendMessageToL1
+    Messenger-&gt;&gt;Messenger: emits L1Message event
 
-    L2ToL1Messenger--&gt;&gt;Sequencer: receives event
+    Messenger--&gt;&gt;Sequencer: receives event
 
     Sequencer-&gt;&gt;OnChainProposer: publishes batch
     OnChainProposer-&gt;&gt;CommonBridge: publishes L1 message root

@@ -2148,13 +2148,15 @@ if is_stale &amp;&amp; nodes_to_heal.is_empty() &amp;&amp; inflight_tasks == 0 {
 
 </style>
 <h1 id="deploy-an-l2"><a class="header" href="#deploy-an-l2">Deploy an L2</a></h1>
-<p>This section provides step-by-step guides for deploying different types of ethrex L2 chains, including vanilla, validium, and based configurations. Each guide outlines the necessary commands and parameters to successfully deploy and start an L2 node.</p>
+<p>This section provides step-by-step guides for deploying different types of ethrex L2 chains, including vanilla, validium, and based configurations, as well as a shared bridge enabled L2 and migrations bewteen versions. Each guide outlines the necessary commands and parameters to successfully deploy and start an L2 node.</p>
 <p>Use this section to choose the deployment method that best fits your needs and follow the instructions accordingly.</p>
 <ul>
 <li><a href="l2/deployment/./overview.html">Overview</a></li>
 <li><a href="l2/deployment/./vanilla.html">Deploying a vanilla ethrex L2</a></li>
 <li><a href="l2/deployment/./validium.html">Deploying a validium ethrex L2</a></li>
 <li><a href="l2/deployment/./based.html">Deploying a based ethrex L2</a></li>
+<li><a href="l2/deployment/./shared_bridge.html">Deploying a shared bridge enabled L2</a></li>
+<li><a href="l2/deployment/./migrations.html">Migrations</a></li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
@@ -2931,6 +2933,245 @@ rex l2 withdraw 111111111111111111 0x41443995d9eb6c6d6df51e55db2b188b12fe0f80d32
 }
 
 </style>
+<h1 id="deploying-an-ethrex-l2-with-shared-bridge-enabled"><a class="header" href="#deploying-an-ethrex-l2-with-shared-bridge-enabled">Deploying an ethrex L2 with shared bridge enabled</a></h1>
+<p>In this section, we'll cover how to deploy two ethrex L2 with shared bridge enabled on a devnet.</p>
+<h2 id="prerequisites-7"><a class="header" href="#prerequisites-7">Prerequisites</a></h2>
+<p>This guide assumes that you have the ethrex repository cloned.</p>
+<h2 id="steps"><a class="header" href="#steps">Steps</a></h2>
+<h3 id="change-directory"><a class="header" href="#change-directory">Change directory</a></h3>
+<p>Every command should be run under <code>crates/l2</code></p>
+<pre><code class="language-bash">cd crates/l2
+</code></pre>
+<h3 id="start-an-l1"><a class="header" href="#start-an-l1">Start an L1</a></h3>
+<pre><code class="language-bash">make init-l1
+</code></pre>
+<h3 id="deploy-the-first-l2"><a class="header" href="#deploy-the-first-l2">Deploy the first L2</a></h3>
+<p>On another terminal</p>
+<pre><code class="language-bash">ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER=true make deploy-l1
+</code></pre>
+<h3 id="start-the-first-l2"><a class="header" href="#start-the-first-l2">Start the first L2</a></h3>
+<p>Replace <code>L1_BRIDGE_ADDRESS</code>, <code>L1_ON_CHAIN_PROPOSER_ADDRESS</code> and <code>ROUTER_ADDRESS</code> with the outputs of the previous command, you can also check it under <code>cmd/.env</code>.</p>
+<pre><code class="language-bash">../../target/release/ethrex \
+	l2 \
+	--watcher.block-delay 0 \
+	--network ../../fixtures/genesis/l2.json \
+	--http.port 1729 \
+	--http.addr 0.0.0.0 \
+	--metrics \
+	--metrics.port 3702 \
+	--datadir dev_ethrex_l2 \
+	--l1.bridge-address &lt;L1_BRIDGE_ADDRESS&gt; \
+	--l1.on-chain-proposer-address &lt;L1_ON_CHAIN_PROPOSER_ADDRESS&gt; \
+	--eth.rpc-url http://localhost:8545 \
+	--osaka-activation-time 1761677592 \
+	--block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
+	--block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+	--block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+	--block-producer.operator-fee-per-gas 1000000000 \
+	--committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+	--proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+	--proof-coordinator.addr 127.0.0.1 \
+    --l1.router-address &lt;ROUTER_ADDRESS&gt; \
+    --watcher.l2-rpcs http://localhost:1730 \
+    --watcher.l2-chain-ids 1730
+</code></pre>
+<h3 id="deploy-the-second-l2"><a class="header" href="#deploy-the-second-l2">Deploy the second L2</a></h3>
+<p>On another terminal</p>
+<p>Copy the <code>../../fixtures/genesis/l2.json</code> file to <code>../../fixtures/genesis/l2_2.json</code> and modify chain id to 1730</p>
+<p>Replace <code>ROUTER_ADDRESS</code> with the outputs of the first deploy</p>
+<pre><code class="language-bash">../../target/release/ethrex l2 deploy \
+	--eth-rpc-url http://localhost:8545 \
+	--private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--deposit-rich \
+	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
+	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
+	--genesis-l2-path ../../fixtures/genesis/l2_2.json \
+    --randomize-contract-deployment \
+    --router.address &lt;ROUTER_ADDRESS&gt;
+</code></pre>
+<h3 id="start-the-second-l2"><a class="header" href="#start-the-second-l2">Start the second L2</a></h3>
+<p>Replace <code>L1_BRIDGE_ADDRESS</code> and <code>L1_ON_CHAIN_PROPOSER_ADDRESS</code> with the outputs of the previous command, you can also check it under <code>cmd/.env</code>.
+And <code>ROUTER_ADDRESS</code> with the outputs of the first deploy</p>
+<pre><code class="language-bash">../../target/release/ethrex \
+	l2 \
+	--watcher.block-delay 0 \
+	--network ../../fixtures/genesis/l2_2.json \
+	--http.port 1730 \
+	--http.addr 0.0.0.0 \
+	--metrics \
+	--metrics.port 3703 \
+	--datadir dev_ethrex_l2_2 \
+	--l1.bridge-address &lt;L1_BRIDGE_ADDRESS&gt; \
+	--l1.on-chain-proposer-address &lt;L1_ON_CHAIN_PROPOSER_ADDRESS&gt; \
+	--eth.rpc-url http://localhost:8545 \
+	--osaka-activation-time 1761677592 \
+	--block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
+	--block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+	--block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+	--block-producer.operator-fee-per-gas 1000000000 \
+	--committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+	--proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+	--proof-coordinator.addr 127.0.0.1 \
+    --proof-coordinator.port 3901 \
+    --l1.router-address &lt;ROUTER_ADDRESS&gt; \
+    --watcher.l2-rpcs http://localhost:1729 \
+    --watcher.l2-chain-ids 65536999
+</code></pre>
+<h3 id="start-the-prover"><a class="header" href="#start-the-prover">Start the prover</a></h3>
+<p>On another terminal</p>
+<pre><code class="language-bash">../../target/release/ethrex \
+	l2 prover \
+	--proof-coordinators tcp://127.0.0.1:3900 tcp://127.0.0.1:3901 \
+	--backend exec
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="migrations"><a class="header" href="#migrations">Migrations</a></h1>
+<h2 id="from-v7-to-v8"><a class="header" href="#from-v7-to-v8">From v7 to v8</a></h2>
+<p>The following table name change was made:
+<code>messages</code> -&gt; <code>l1_messages</code></p>
+<p>In order to perform a migration you would need to copy the contents of your <code>messages</code> table into <code>l1_messeges</code></p>
+<pre><code class="language-sql">INSERT INTO l1_messages
+SELECT *
+FROM messages;
+</code></pre>
+<p>You can then safely delete the <code>messages</code> table</p>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
 <h1 id="run-a-prover"><a class="header" href="#run-a-prover">Run a prover</a></h1>
 <p>This section provides step-by-step guides for running an ethrex L2 prover, which is responsible for generating ZK proofs for L2 blocks. These proofs are then submitted to L1 for verification, finalizing the state of your L2.</p>
 <p>Use this section to choose which prover setup best fits your already deployed ethrex L2 and follow the instructions accordingly.</p>
@@ -3023,7 +3264,7 @@ rex l2 withdraw 111111111111111111 0x41443995d9eb6c6d6df51e55db2b188b12fe0f80d32
 </div>
 <p>Before proceeding, note that this guide assumes you have ethrex installed. If you haven't installed it yet, follow one of the methods in the <a href="l2/deployment/prover/../../../getting-started/installation/README.html">Installation Guide</a>. If you're looking to build from source, don't skip this section—we'll cover that method here, as it is independent of the deployment approach you choose later.</p>
 <h2 id="building-from-source-skip-if-ethrex-is-already-installed-1"><a class="header" href="#building-from-source-skip-if-ethrex-is-already-installed-1">Building from source (skip if ethrex is already installed)</a></h2>
-<h3 id="prerequisites-7"><a class="header" href="#prerequisites-7">Prerequisites</a></h3>
+<h3 id="prerequisites-8"><a class="header" href="#prerequisites-8">Prerequisites</a></h3>
 <p>Ensure you have the following installed on your system:</p>
 <ul>
 <li>Rust and Cargo (install via <a href="https://rustup.rs/">rustup</a>)</li>
@@ -3141,7 +3382,7 @@ cargo build --release --bin ethrex --features l2,l2-sql,sp1,risc0,gpu
 </style>
 <h1 id="run-an-ethrex-l2-sp1-prover"><a class="header" href="#run-an-ethrex-l2-sp1-prover">Run an ethrex L2 SP1 prover</a></h1>
 <p>In this section, we'll guide you through the steps to run an ethrex L2 prover that utilizes SP1 for generating ZK proofs. These proofs are essential for validating batch execution and state settlement on your ethrex L2.</p>
-<h2 id="prerequisites-8"><a class="header" href="#prerequisites-8">Prerequisites</a></h2>
+<h2 id="prerequisites-9"><a class="header" href="#prerequisites-9">Prerequisites</a></h2>
 <ul>
 <li>This guide assumes that you have ethrex installed with the SP1 feature and available in your PATH. If you haven't installed it yet, follow one of the methods in the Installation Guide. If you want to build the binary from source, refer to the <a href="l2/deployment/prover/./overview.html#building-from-source-skip-if-ethrex-is-already-installed">Building from source</a> section and select the appropriate build option.</li>
 <li>This guide also assumes that you have already deployed an ethrex L2 with SP1 enabled. If you haven't done so yet, please refer to one of the <a href="l2/deployment/prover/../overview.html">Deploying an ethrex L2</a> guides.</li>
@@ -3247,7 +3488,7 @@ We choose SP1 as the backend to indicate the prover to generate SP1 proofs.</p>
 </style>
 <h1 id="run-an-ethrex-l2-risc0-prover"><a class="header" href="#run-an-ethrex-l2-risc0-prover">Run an ethrex L2 RISC0 prover</a></h1>
 <p>In this section, we'll guide you through the steps to run an ethrex L2 prover that utilizes RISC0 for generating ZK proofs. These proofs are essential for validating batch execution and state settlement on your ethrex L2.</p>
-<h2 id="prerequisites-9"><a class="header" href="#prerequisites-9">Prerequisites</a></h2>
+<h2 id="prerequisites-10"><a class="header" href="#prerequisites-10">Prerequisites</a></h2>
 <ul>
 <li>This guide assumes that you have ethrex installed with the RISC0 feature and available in your PATH. If you haven't installed it yet, follow one of the methods in the Installation Guide. If you want to build the binary from source, refer to the <a href="l2/deployment/prover/./overview.html#building-from-source-skip-if-ethrex-is-already-installed">Building from source</a> section and select the appropriate build option.</li>
 <li>This guide also assumes that you have already deployed an ethrex L2 with RISC0 enabled. If you haven't done so yet, please refer to one of the <a href="l2/deployment/prover/../overview.html">Deploying an ethrex L2</a> guides.</li>
@@ -3343,7 +3584,7 @@ We choose RISC0 as the backend to indicate the prover to generate RISC0 proofs.<
 </style>
 <h1 id="run-an-ethrex-tdx-prover"><a class="header" href="#run-an-ethrex-tdx-prover">Run an ethrex TDX prover</a></h1>
 <p>In this section, we'll guide you through the steps to run an ethrex L2 TDX prover for generating TEE proofs. These proofs are essential for validating batch execution and state settlement on your ethrex L2.</p>
-<h2 id="prerequisites-10"><a class="header" href="#prerequisites-10">Prerequisites</a></h2>
+<h2 id="prerequisites-11"><a class="header" href="#prerequisites-11">Prerequisites</a></h2>
 <ul>
 <li>This guide assumes that you have already deployed an ethrex L2 with TDX enabled. If you haven't done so yet, please refer to one of the <a href="l2/deployment/prover/../overview.html">Deploying an ethrex L2</a> guides.</li>
 <li>A machine with TDX support <a href="https://github.com/canonical/tdx">with the required setup</a>.</li>
@@ -3433,7 +3674,7 @@ make run
 </style>
 <h1 id="run-multiple-provers"><a class="header" href="#run-multiple-provers">Run multiple provers</a></h1>
 <p>In this section, we'll guide you through the steps to run multiple ethrex L2 provers for generating ZK proofs using different backends. These proofs are essential for validating batch execution and state settlement on your ethrex L2.</p>
-<h2 id="prerequisites-11"><a class="header" href="#prerequisites-11">Prerequisites</a></h2>
+<h2 id="prerequisites-12"><a class="header" href="#prerequisites-12">Prerequisites</a></h2>
 <ul>
 <li>This guide assumes that you have already deployed an ethrex L2 with TDX enabled. If you haven't done so yet, please refer to one of the <a href="l2/deployment/prover/../overview.html">Deploying an ethrex L2</a> guides.</li>
 </ul>
@@ -4722,6 +4963,7 @@ sysctl kernel.apparmor_restrict_unprivileged_userns=0
 <li><a href="l2/interacting/./wallet.html">Connecting wallets</a> like MetaMask</li>
 <li><a href="l2/interacting/./deploy_contracts.html">Deploying</a> smart contracts</li>
 <li>Maintaining and operating the sequencer</li>
+<li><a href="l2/interacting/./shared_bridge.html">Interacting with shared bridge</a></li>
 </ul>
 <p>Use these guides to perform common actions and manage your L2 network.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
@@ -5307,6 +5549,168 @@ rex l2 claim-withdraw &lt;L2_WITHDRAWAL_TX_HASH&gt; 0xbcdf20249abf0ed6d944c0288f
 }
 
 </style>
+<h1 id="interacting-with-the-shared-bridge"><a class="header" href="#interacting-with-the-shared-bridge">Interacting with the shared bridge</a></h1>
+<p>This document details different scenarios for interacting with shared bridge enabled L2s.</p>
+<h2 id="prerequisites-13"><a class="header" href="#prerequisites-13">Prerequisites</a></h2>
+<p>This guide assumes you already have two L2s running with the shared bridge enabled.
+Refer to <a href="l2/interacting/../deployment/shared_bridge.html">Deploy a shared bridge enabled L2</a></p>
+<h2 id="eth-transfer"><a class="header" href="#eth-transfer">ETH Transfer</a></h2>
+<h3 id="check-balances"><a class="header" href="#check-balances">Check balances</a></h3>
+<p>Check the balances before sending the transfer</p>
+<pre><code class="language-bash">rex balance 0xe25583099ba105d9ec0a67f5ae86d90e50036425 http://localhost:1729 # Receiver balance on first L2
+rex balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776 http://localhost:1730 # Sender balance on second L2
+</code></pre>
+<h3 id="send-the-transfer"><a class="header" href="#send-the-transfer">Send the transfer</a></h3>
+<pre><code class="language-bash">rex send --rpc-url http://localhost:1730 --private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 --value 10000000000000001 0x000000000000000000000000000000000000FFFF 'sendToL2(uint256,address,uint256,bytes)' 65536999 0xe25583099ba105d9ec0a67f5ae86d90e50036425 100000 "" --gas-price 3946771033
+</code></pre>
+<h3 id="check-balances-1"><a class="header" href="#check-balances-1">Check balances</a></h3>
+<p>After some time the balances should change (about 1-2 minutes)</p>
+<pre><code class="language-bash">rex balance 0xe25583099ba105d9ec0a67f5ae86d90e50036425 http://localhost:1729 # Receiver balance on first L2
+rex balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776 http://localhost:1730 # Sender balance on second L2
+</code></pre>
+<h2 id="contract-call"><a class="header" href="#contract-call">Contract Call</a></h2>
+<h3 id="add-the-contract"><a class="header" href="#add-the-contract">Add the contract</a></h3>
+<p>Create a <code>Counter.sol</code> file with the following content</p>
+<pre><code class="language-solidity">// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Counter {
+    uint256 public count;
+
+    function increment() external {
+        count += 1;
+    }
+
+    function get() external view returns (uint256) {
+        return count;
+    }
+}
+</code></pre>
+<h3 id="deploy-the-contract"><a class="header" href="#deploy-the-contract">Deploy the contract</a></h3>
+<pre><code class="language-bash">rex deploy --rpc-url http://localhost:1729 --remappings 0 --contract-path ./Counter.sol 0 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
+</code></pre>
+<p>Save the contract address for the next steps:</p>
+<pre><code class="language-bash">export COUNTER_ADDRESS=&lt;COUNTER_ADDRESS&gt; 
+</code></pre>
+<h3 id="check-counter-value"><a class="header" href="#check-counter-value">Check counter value</a></h3>
+<pre><code class="language-bash">rex call $COUNTER_ADDRESS "get()" --rpc-url http://localhost:1729
+</code></pre>
+<h3 id="increase-the-counter-from-the-other-l2"><a class="header" href="#increase-the-counter-from-the-other-l2">Increase the counter from the other L2</a></h3>
+<pre><code class="language-bash">rex send --rpc-url http://localhost:1730 --private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 0x000000000000000000000000000000000000FFFF 'sendToL2(uint256,address,uint256,bytes)' 65536999 $COUNTER_ADDRESS 100000 d09de08a --gas-price 3946771033
+</code></pre>
+<h3 id="check-counter-value-1"><a class="header" href="#check-counter-value-1">Check counter value</a></h3>
+<pre><code class="language-bash">rex call $COUNTER_ADDRESS "get()" --rpc-url http://localhost:1729
+</code></pre>
+<h2 id="contract-call-and-eth-transfer"><a class="header" href="#contract-call-and-eth-transfer">Contract Call and ETH Transfer</a></h2>
+<h3 id="add-the-contract-1"><a class="header" href="#add-the-contract-1">Add the contract</a></h3>
+<p>Create a <code>Counter.sol</code> file with the following content (The increment function is now payable)</p>
+<pre><code class="language-solidity">// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Counter {
+    uint256 public count;
+
+    function increment() external payable {
+        count += 1;
+    }
+
+    function get() external view returns (uint256) {
+        return count;
+    }
+}
+</code></pre>
+<h3 id="deploy-the-contract-1"><a class="header" href="#deploy-the-contract-1">Deploy the contract</a></h3>
+<pre><code class="language-bash">rex deploy --rpc-url http://localhost:1729 --remappings 0 --contract-path ./Counter.sol 0 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
+</code></pre>
+<p>Save the contract address for the next steps:</p>
+<pre><code class="language-bash">export COUNTER_ADDRESS=&lt;COUNTER_ADDRESS&gt; 
+</code></pre>
+<h3 id="check-counter-value-2"><a class="header" href="#check-counter-value-2">Check counter value</a></h3>
+<pre><code class="language-bash">rex call $COUNTER_ADDRESS "get()" --rpc-url http://localhost:1729
+</code></pre>
+<h3 id="check-counter-balance"><a class="header" href="#check-counter-balance">Check counter balance</a></h3>
+<pre><code class="language-bash">rex balance $COUNTER_ADDRESS http://localhost:1729
+</code></pre>
+<h3 id="increase-the-counter-from-the-other-l2-1"><a class="header" href="#increase-the-counter-from-the-other-l2-1">Increase the counter from the other L2</a></h3>
+<pre><code class="language-bash">rex send --rpc-url http://localhost:1730 --private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 --value 1000 0x000000000000000000000000000000000000FFFF 'sendToL2(uint256,address,uint256,bytes)' 65536999 $COUNTER_ADDRESS 100000 d09de08a --gas-price 3946771033
+</code></pre>
+<h3 id="check-counter-value-3"><a class="header" href="#check-counter-value-3">Check counter value</a></h3>
+<pre><code class="language-bash">rex call $COUNTER_ADDRESS "get()" --rpc-url http://localhost:1729
+</code></pre>
+<h3 id="check-counter-balance-1"><a class="header" href="#check-counter-balance-1">Check counter balance</a></h3>
+<pre><code class="language-bash">rex balance $COUNTER_ADDRESS http://localhost:1729
+</code></pre>
+<h2 id="troubleshooting-2"><a class="header" href="#troubleshooting-2">Troubleshooting</a></h2>
+<p>If you can't deploy the counter contract, either because of <code>Transaction intrinsic gas overflow</code> or because the transaction is never included in a block.
+Retry the deploy command adding <code>--priority-gas-price</code> and <code>--gas-price</code> with the same value, increment it by 10 until it deploys correctly.</p>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
 <h1 id="fundamentals-1"><a class="header" href="#fundamentals-1">Fundamentals</a></h1>
 <p>In L2 mode, the ethrex code is repurposed to run a rollup that settles on Ethereum as the L1.</p>
 <p>The main differences between this mode and regular ethrex are:</p>
@@ -5597,12 +6001,12 @@ number_of_privileged_transaction_logs_u16 ||
 <h2 id="conclusion"><a class="header" href="#conclusion">Conclusion</a></h2>
 <p>Sending block lists in blobs instead of state diffs decreases the number of transactions that can fit in a single blob by approximately 2x for ETH transfers and 3x for ERC20 transfers.</p>
 <h2 id="how-this-measurements-were-done"><a class="header" href="#how-this-measurements-were-done">How this measurements were done</a></h2>
-<h3 id="prerequisites-12"><a class="header" href="#prerequisites-12">Prerequisites</a></h3>
+<h3 id="prerequisites-14"><a class="header" href="#prerequisites-14">Prerequisites</a></h3>
 <ul>
 <li>Fresh cloned ethrex repository</li>
 <li>The spammer and measurer code provided in the appendix set up for running (you can create a new cargo project and copy the code there)</li>
 </ul>
-<h3 id="steps"><a class="header" href="#steps">Steps</a></h3>
+<h3 id="steps-1"><a class="header" href="#steps-1">Steps</a></h3>
 <h4 id="1-run-an-l2-ethrex"><a class="header" href="#1-run-an-l2-ethrex">1. Run an L2 ethrex:</a></h4>
 <p>For running the measurements, we need to run an ethrex L2 node. For doing that, change your current directory to <code>ethrex/crates/l2</code> in your fresh-cloned ethrex and run the following in a terminal:</p>
 <pre><code class="language-shell">ETHREX_COMMITTER_COMMIT_TIME=120000 MEMPOOL_MAX_SIZE=1000000 make init-l2-dev
@@ -6617,13 +7021,13 @@ We also enforce the same maximum cap per block in the <code>block_producer</code
 <p>The bridge sends the withdrawn amount to the burn address.</p>
 </li>
 <li>
-<p>The bridge calls <code>sendMessageToL1(bytes32 data)</code> on the <code>L2ToL1Messenger</code> contract, with <code>data</code> being:</p>
+<p>The bridge calls <code>sendMessageToL1(bytes32 data)</code> on the <code>Messenger</code> contract, with <code>data</code> being:</p>
 <pre><code class="language-solidity">bytes32 data = keccak256(abi.encodePacked(ETH_ADDRESS, ETH_ADDRESS, _receiverOnL1, msg.value))
 </code></pre>
 <p>The <code>ETH_ADDRESS</code> is an arbitrary address we use, meaning the "token" to transfer is ETH.</p>
 </li>
 <li>
-<p><code>L2ToL1Messenger</code> emits an <code>L1Message</code> event, with the address of the L2 bridge contract and <code>data</code> as topics, along with a unique message ID.</p>
+<p><code>Messenger</code> emits an <code>L1Message</code> event, with the address of the L2 bridge contract and <code>data</code> as topics, along with a unique message ID.</p>
 </li>
 </ol>
 <p>Off-chain:</p>
@@ -6646,7 +7050,7 @@ sequenceDiagram
     box rgb(139, 63, 63) L2
         actor L2Alice as Alice
         participant CommonBridgeL2
-        participant L2ToL1Messenger
+        participant Messenger
     end
 
     actor Sequencer
@@ -6659,10 +7063,10 @@ sequenceDiagram
 
     L2Alice-&gt;&gt;CommonBridgeL2: withdraws 42 ETH
     CommonBridgeL2-&gt;&gt;CommonBridgeL2: burns 42 ETH
-    CommonBridgeL2-&gt;&gt;L2ToL1Messenger: calls sendMessageToL1
-    L2ToL1Messenger-&gt;&gt;L2ToL1Messenger: emits L1Message event
+    CommonBridgeL2-&gt;&gt;Messenger: calls sendMessageToL1
+    Messenger-&gt;&gt;Messenger: emits L1Message event
 
-    L2ToL1Messenger--&gt;&gt;Sequencer: receives event
+    Messenger--&gt;&gt;Sequencer: receives event
 
     Sequencer-&gt;&gt;OnChainProposer: publishes batch
     OnChainProposer-&gt;&gt;CommonBridge: publishes L1 message root
@@ -6688,12 +7092,12 @@ sequenceDiagram
 <p>The bridge fetches the address of the L1 token by calling <code>l1Address()</code> on the L2 token contract.</p>
 </li>
 <li>
-<p>The bridge calls <code>sendMessageToL1(bytes32 data)</code> on the <code>L2ToL1Messenger</code> contract, with <code>data</code> being:</p>
+<p>The bridge calls <code>sendMessageToL1(bytes32 data)</code> on the <code>Messenger</code> contract, with <code>data</code> being:</p>
 <pre><code class="language-solidity">bytes32 data = keccak256(abi.encodePacked(_token.l1Address(), _token, _receiverOnL1, _value))
 </code></pre>
 </li>
 <li>
-<p><code>L2ToL1Messenger</code> emits an <code>L1Message</code> event, with the address of the L2 bridge contract and <code>data</code> as topics, along with a unique message ID.</p>
+<p><code>Messenger</code> emits an <code>L1Message</code> event, with the address of the L2 bridge contract and <code>data</code> as topics, along with a unique message ID.</p>
 </li>
 </ol>
 <p>Off-chain:</p>
@@ -6717,7 +7121,7 @@ sequenceDiagram
         actor L2Alice as Alice
         participant L2Token
         participant CommonBridgeL2
-        participant L2ToL1Messenger
+        participant Messenger
     end
 
     actor Sequencer
@@ -6732,10 +7136,10 @@ sequenceDiagram
     L2Alice-&gt;&gt;L2Token: approves token transfer
     L2Alice-&gt;&gt;CommonBridgeL2: withdraws 42 of L2Token
     CommonBridgeL2-&gt;&gt;L2Token: burns the 42 tokens
-    CommonBridgeL2-&gt;&gt;L2ToL1Messenger: calls sendMessageToL1
-    L2ToL1Messenger-&gt;&gt;L2ToL1Messenger: emits L1Message event
+    CommonBridgeL2-&gt;&gt;Messenger: calls sendMessageToL1
+    Messenger-&gt;&gt;Messenger: emits L1Message event
 
-    L2ToL1Messenger--&gt;&gt;Sequencer: receives event
+    Messenger--&gt;&gt;Sequencer: receives event
 
     Sequencer-&gt;&gt;OnChainProposer: publishes batch
     OnChainProposer-&gt;&gt;CommonBridge: publishes L1 message root
@@ -7010,8 +7414,8 @@ To do this, they compute a merkle proof for the included batch and call the L1 <
 </ul>
 </li>
 </ol>
-<h3 id="l2tol1messenger"><a class="header" href="#l2tol1messenger"><code>L2ToL1Messenger</code></a></h3>
-<p>The <code>L2ToL1Messenger</code> is a simple L2 smart contract that enables communication from L2 to L1 by emitting the data as <code>L1Message</code> events for sequencers to pick up.</p>
+<h3 id="messenger"><a class="header" href="#messenger"><code>Messenger</code></a></h3>
+<p>The <code>Messenger</code> is a simple L2 smart contract that enables communication from L2 to L1 by emitting the data as <code>L1Message</code> events for sequencers to pick up.</p>
 <h4 id="state-variables-3"><a class="header" href="#state-variables-3"><strong>State Variables</strong></a></h4>
 <ul>
 <li><strong><code>lastMessageId</code></strong>: Counter that tracks the ID of the last emitted message (incremented before each message is sent)</li>
@@ -7930,7 +8334,7 @@ Each method accepts a single argument: the <strong><code>block_number</code></st
 
 </style>
 <h1 id="setting-up-a-development-environment-for-ethrex"><a class="header" href="#setting-up-a-development-environment-for-ethrex">Setting up a development environment for ethrex</a></h1>
-<h2 id="prerequisites-13"><a class="header" href="#prerequisites-13">Prerequisites</a></h2>
+<h2 id="prerequisites-15"><a class="header" href="#prerequisites-15">Prerequisites</a></h2>
 <ul>
 <li><a href="https://www.rust-lang.org/tools/install">Rust</a></li>
 <li><a href="https://git-scm.com/downloads">Git</a></li>
@@ -8117,7 +8521,7 @@ Each method accepts a single argument: the <strong><code>block_number</code></st
 
 </style>
 <h1 id="ethrex-as-a-local-development-node"><a class="header" href="#ethrex-as-a-local-development-node">Ethrex as a local development node</a></h1>
-<h2 id="prerequisites-14"><a class="header" href="#prerequisites-14">Prerequisites</a></h2>
+<h2 id="prerequisites-16"><a class="header" href="#prerequisites-16">Prerequisites</a></h2>
 <p>This guide assumes you've read the dev <a href="developers/l1/../installing.html">installation guide</a></p>
 <h2 id="dev-mode"><a class="header" href="#dev-mode">Dev mode</a></h2>
 <p>In dev mode ethrex acts as a local Ethereum development node it can be run with the following command</p>
@@ -8197,7 +8601,7 @@ Each method accepts a single argument: the <strong><code>block_number</code></st
 </style>
 <h2 id="importing-blocks"><a class="header" href="#importing-blocks">Importing blocks</a></h2>
 <p>The simplest task a node can do is import blocks offline. We would do so like this:</p>
-<h2 id="prerequisites-15"><a class="header" href="#prerequisites-15">Prerequisites</a></h2>
+<h2 id="prerequisites-17"><a class="header" href="#prerequisites-17">Prerequisites</a></h2>
 <p>This guide assumes you've read the dev <a href="developers/l1/../installing.html">installation guide</a></p>
 <h2 id="import-blocks"><a class="header" href="#import-blocks">Import blocks</a></h2>
 <pre><code class="language-bash"># Execute the import
@@ -8412,7 +8816,7 @@ fn get_account_code(&amp;self, code_hash: H256) -&gt; Result&lt;Bytes, EvmError&
 </style>
 <h1 id="quick-start-l1-localnet"><a class="header" href="#quick-start-l1-localnet">Quick Start (L1 localnet)</a></h1>
 <p>This page will show you how to quickly spin up a local development network with ethrex.</p>
-<h2 id="prerequisites-16"><a class="header" href="#prerequisites-16">Prerequisites</a></h2>
+<h2 id="prerequisites-18"><a class="header" href="#prerequisites-18">Prerequisites</a></h2>
 <ul>
 <li><a href="https://docs.kurtosis.com/install/#ii-install-the-cli">Kurtosis</a></li>
 <li><a href="https://www.rust-lang.org/tools/install">Rust</a></li>
@@ -9393,7 +9797,7 @@ make load-test-io
 
 </style>
 <h1 id="ethrex-as-a-local-l2-development-node"><a class="header" href="#ethrex-as-a-local-l2-development-node">Ethrex as a local L2 development node</a></h1>
-<h2 id="prerequisites-17"><a class="header" href="#prerequisites-17">Prerequisites</a></h2>
+<h2 id="prerequisites-19"><a class="header" href="#prerequisites-19">Prerequisites</a></h2>
 <ul>
 <li>This guide assumes you've read the dev <a href="developers/l2/../installing.html">installation guide</a></li>
 <li>An Ethereum utility tool like <a href="https://github.com/lambdaclass/rex">rex</a></li>
@@ -9481,7 +9885,7 @@ make load-test-io
 </style>
 <h1 id="running-integration-tests"><a class="header" href="#running-integration-tests">Running integration tests</a></h1>
 <p>In this section, we will explain how to run integration tests for ethrex L2 with the objective of validating the correct functioning of our stack in our releases. For this, we will use ethrex as a local L2 dev node.</p>
-<h2 id="prerequisites-18"><a class="header" href="#prerequisites-18">Prerequisites</a></h2>
+<h2 id="prerequisites-20"><a class="header" href="#prerequisites-20">Prerequisites</a></h2>
 <ul>
 <li>Install the latest ethrex release or pre-release binary following the instructions in the <a href="https://docs.ethrex.xyz/getting-started/installation/binary_distribution.html">Install ethrex (binary distribution)</a> section.</li>
 <li>For running the tests, you'll need a fresh clone of <a href="https://github.com/lambdaclass/ethrex/">ethrex</a>.</li>
@@ -9589,7 +9993,7 @@ To see more about the proof coordinator, read the <a href="https://docs.ethrex.x
 <p>Logs are being constantly improved to provide better clarity. However, during the execution of the integration tests, you might notice periodic warning logs from the L2 prover indicating that there are no new batches to prove. These warnings are expected behavior in this testing scenario and can be safely ignored.</p>
 <h3 id="the-tests-are-failing-what-should-i-do"><a class="header" href="#the-tests-are-failing-what-should-i-do">The tests are failing, what should I do?</a></h3>
 <p>If the tests are failing, first ensure that both the ethrex L2 node and the ethrex L2 prover are running correctly without any errors. Check their logs for any issues. If everything seems fine, try restarting both services and rerun the tests. Ensure that your configuration files (e.g., <code>.env</code>) are correctly set up and that all required environment variables are defined. If the problem persists, consider reaching out to the ethrex community or support channels for further assistance.</p>
-<h2 id="troubleshooting-2"><a class="header" href="#troubleshooting-2">Troubleshooting</a></h2>
+<h2 id="troubleshooting-3"><a class="header" href="#troubleshooting-3">Troubleshooting</a></h2>
 <div class="mdbook-alerts mdbook-alerts-note">
 <p class="mdbook-alerts-title">
   <span class="mdbook-alerts-icon"></span>
@@ -11832,7 +12236,7 @@ xattr -dr com.apple.quarantine ethrex
 <p>Once the release is verified, <strong>merge the branch via PR</strong>.</p>
 <h2 id="dealing-with-hotfixes"><a class="header" href="#dealing-with-hotfixes">Dealing with hotfixes</a></h2>
 <p>If hotfixes are needed before the final release, commit them to <code>release/vX.Y.Z</code>, push, and create a new pre-release tag. The final tag <code>vX.Y.Z</code> should always point to the exact commit you will merge via PR.</p>
-<h2 id="troubleshooting-3"><a class="header" href="#troubleshooting-3">Troubleshooting</a></h2>
+<h2 id="troubleshooting-4"><a class="header" href="#troubleshooting-4">Troubleshooting</a></h2>
 <h3 id="failure-on-latest-release-workflow"><a class="header" href="#failure-on-latest-release-workflow">Failure on "latest release" workflow</a></h3>
 <p>If the CI fails when setting a release as latest (step 4), Docker tags <code>latest</code> and <code>l2</code> may not be updated. To manually push that changes, follow these steps:</p>
 <ul>

@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>L2 Hub - Ethrex</title>
+        <title>Shared Bridge - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,18 +237,110 @@
 }
 
 </style>
-<h1 id="l2-hub"><a class="header" href="#l2-hub">L2 Hub</a></h1>
-<p>TDB</p>
+<h1 id="interacting-with-the-shared-bridge"><a class="header" href="#interacting-with-the-shared-bridge">Interacting with the shared bridge</a></h1>
+<p>This document details different scenarios for interacting with shared bridge enabled L2s.</p>
+<h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
+<p>This guide assumes you already have two L2s running with the shared bridge enabled.
+Refer to <a href="../deployment/shared_bridge.html">Deploy a shared bridge enabled L2</a></p>
+<h2 id="eth-transfer"><a class="header" href="#eth-transfer">ETH Transfer</a></h2>
+<h3 id="check-balances"><a class="header" href="#check-balances">Check balances</a></h3>
+<p>Check the balances before sending the transfer</p>
+<pre><code class="language-bash">rex balance 0xe25583099ba105d9ec0a67f5ae86d90e50036425 http://localhost:1729 # Receiver balance on first L2
+rex balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776 http://localhost:1730 # Sender balance on second L2
+</code></pre>
+<h3 id="send-the-transfer"><a class="header" href="#send-the-transfer">Send the transfer</a></h3>
+<pre><code class="language-bash">rex send --rpc-url http://localhost:1730 --private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 --value 10000000000000001 0x000000000000000000000000000000000000FFFF 'sendToL2(uint256,address,uint256,bytes)' 65536999 0xe25583099ba105d9ec0a67f5ae86d90e50036425 100000 "" --gas-price 3946771033
+</code></pre>
+<h3 id="check-balances-1"><a class="header" href="#check-balances-1">Check balances</a></h3>
+<p>After some time the balances should change (about 1-2 minutes)</p>
+<pre><code class="language-bash">rex balance 0xe25583099ba105d9ec0a67f5ae86d90e50036425 http://localhost:1729 # Receiver balance on first L2
+rex balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776 http://localhost:1730 # Sender balance on second L2
+</code></pre>
+<h2 id="contract-call"><a class="header" href="#contract-call">Contract Call</a></h2>
+<h3 id="add-the-contract"><a class="header" href="#add-the-contract">Add the contract</a></h3>
+<p>Create a <code>Counter.sol</code> file with the following content</p>
+<pre><code class="language-solidity">// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Counter {
+    uint256 public count;
+
+    function increment() external {
+        count += 1;
+    }
+
+    function get() external view returns (uint256) {
+        return count;
+    }
+}
+</code></pre>
+<h3 id="deploy-the-contract"><a class="header" href="#deploy-the-contract">Deploy the contract</a></h3>
+<pre><code class="language-bash">rex deploy --rpc-url http://localhost:1729 --remappings 0 --contract-path ./Counter.sol 0 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
+</code></pre>
+<p>Save the contract address for the next steps:</p>
+<pre><code class="language-bash">export COUNTER_ADDRESS=&lt;COUNTER_ADDRESS&gt; 
+</code></pre>
+<h3 id="check-counter-value"><a class="header" href="#check-counter-value">Check counter value</a></h3>
+<pre><code class="language-bash">rex call $COUNTER_ADDRESS "get()" --rpc-url http://localhost:1729
+</code></pre>
+<h3 id="increase-the-counter-from-the-other-l2"><a class="header" href="#increase-the-counter-from-the-other-l2">Increase the counter from the other L2</a></h3>
+<pre><code class="language-bash">rex send --rpc-url http://localhost:1730 --private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 0x000000000000000000000000000000000000FFFF 'sendToL2(uint256,address,uint256,bytes)' 65536999 $COUNTER_ADDRESS 100000 d09de08a --gas-price 3946771033
+</code></pre>
+<h3 id="check-counter-value-1"><a class="header" href="#check-counter-value-1">Check counter value</a></h3>
+<pre><code class="language-bash">rex call $COUNTER_ADDRESS "get()" --rpc-url http://localhost:1729
+</code></pre>
+<h2 id="contract-call-and-eth-transfer"><a class="header" href="#contract-call-and-eth-transfer">Contract Call and ETH Transfer</a></h2>
+<h3 id="add-the-contract-1"><a class="header" href="#add-the-contract-1">Add the contract</a></h3>
+<p>Create a <code>Counter.sol</code> file with the following content (The increment function is now payable)</p>
+<pre><code class="language-solidity">// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Counter {
+    uint256 public count;
+
+    function increment() external payable {
+        count += 1;
+    }
+
+    function get() external view returns (uint256) {
+        return count;
+    }
+}
+</code></pre>
+<h3 id="deploy-the-contract-1"><a class="header" href="#deploy-the-contract-1">Deploy the contract</a></h3>
+<pre><code class="language-bash">rex deploy --rpc-url http://localhost:1729 --remappings 0 --contract-path ./Counter.sol 0 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
+</code></pre>
+<p>Save the contract address for the next steps:</p>
+<pre><code class="language-bash">export COUNTER_ADDRESS=&lt;COUNTER_ADDRESS&gt; 
+</code></pre>
+<h3 id="check-counter-value-2"><a class="header" href="#check-counter-value-2">Check counter value</a></h3>
+<pre><code class="language-bash">rex call $COUNTER_ADDRESS "get()" --rpc-url http://localhost:1729
+</code></pre>
+<h3 id="check-counter-balance"><a class="header" href="#check-counter-balance">Check counter balance</a></h3>
+<pre><code class="language-bash">rex balance $COUNTER_ADDRESS http://localhost:1729
+</code></pre>
+<h3 id="increase-the-counter-from-the-other-l2-1"><a class="header" href="#increase-the-counter-from-the-other-l2-1">Increase the counter from the other L2</a></h3>
+<pre><code class="language-bash">rex send --rpc-url http://localhost:1730 --private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 --value 1000 0x000000000000000000000000000000000000FFFF 'sendToL2(uint256,address,uint256,bytes)' 65536999 $COUNTER_ADDRESS 100000 d09de08a --gas-price 3946771033
+</code></pre>
+<h3 id="check-counter-value-3"><a class="header" href="#check-counter-value-3">Check counter value</a></h3>
+<pre><code class="language-bash">rex call $COUNTER_ADDRESS "get()" --rpc-url http://localhost:1729
+</code></pre>
+<h3 id="check-counter-balance-1"><a class="header" href="#check-counter-balance-1">Check counter balance</a></h3>
+<pre><code class="language-bash">rex balance $COUNTER_ADDRESS http://localhost:1729
+</code></pre>
+<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
+<p>If you can't deploy the counter contract, either because of <code>Transaction intrinsic gas overflow</code> or because the transaction is never included in a block.
+Retry the deploy command adding <code>--priority-gas-price</code> and <code>--gas-price</code> with the same value, increment it by 10 until it deploys correctly.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../l2/interacting/blockscout.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../l2/interacting/l2_hub.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../l2/interacting/shared_bridge.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../l2/fundamentals/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -258,11 +350,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../l2/interacting/blockscout.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../l2/interacting/l2_hub.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../l2/interacting/shared_bridge.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../l2/fundamentals/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

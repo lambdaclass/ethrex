@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>L2 Hub - Ethrex</title>
+        <title>Deploying a shared bridge enabled L2 - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,18 +237,109 @@
 }
 
 </style>
-<h1 id="l2-hub"><a class="header" href="#l2-hub">L2 Hub</a></h1>
-<p>TDB</p>
+<h1 id="deploying-an-ethrex-l2-with-shared-bridge-enabled"><a class="header" href="#deploying-an-ethrex-l2-with-shared-bridge-enabled">Deploying an ethrex L2 with shared bridge enabled</a></h1>
+<p>In this section, we'll cover how to deploy two ethrex L2 with shared bridge enabled on a devnet.</p>
+<h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
+<p>This guide assumes that you have the ethrex repository cloned.</p>
+<h2 id="steps"><a class="header" href="#steps">Steps</a></h2>
+<h3 id="change-directory"><a class="header" href="#change-directory">Change directory</a></h3>
+<p>Every command should be run under <code>crates/l2</code></p>
+<pre><code class="language-bash">cd crates/l2
+</code></pre>
+<h3 id="start-an-l1"><a class="header" href="#start-an-l1">Start an L1</a></h3>
+<pre><code class="language-bash">make init-l1
+</code></pre>
+<h3 id="deploy-the-first-l2"><a class="header" href="#deploy-the-first-l2">Deploy the first L2</a></h3>
+<p>On another terminal</p>
+<pre><code class="language-bash">ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER=true make deploy-l1
+</code></pre>
+<h3 id="start-the-first-l2"><a class="header" href="#start-the-first-l2">Start the first L2</a></h3>
+<p>Replace <code>L1_BRIDGE_ADDRESS</code>, <code>L1_ON_CHAIN_PROPOSER_ADDRESS</code> and <code>ROUTER_ADDRESS</code> with the outputs of the previous command, you can also check it under <code>cmd/.env</code>.</p>
+<pre><code class="language-bash">../../target/release/ethrex \
+	l2 \
+	--watcher.block-delay 0 \
+	--network ../../fixtures/genesis/l2.json \
+	--http.port 1729 \
+	--http.addr 0.0.0.0 \
+	--metrics \
+	--metrics.port 3702 \
+	--datadir dev_ethrex_l2 \
+	--l1.bridge-address &lt;L1_BRIDGE_ADDRESS&gt; \
+	--l1.on-chain-proposer-address &lt;L1_ON_CHAIN_PROPOSER_ADDRESS&gt; \
+	--eth.rpc-url http://localhost:8545 \
+	--osaka-activation-time 1761677592 \
+	--block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
+	--block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+	--block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+	--block-producer.operator-fee-per-gas 1000000000 \
+	--committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+	--proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+	--proof-coordinator.addr 127.0.0.1 \
+    --l1.router-address &lt;ROUTER_ADDRESS&gt; \
+    --watcher.l2-rpcs http://localhost:1730 \
+    --watcher.l2-chain-ids 1730
+</code></pre>
+<h3 id="deploy-the-second-l2"><a class="header" href="#deploy-the-second-l2">Deploy the second L2</a></h3>
+<p>On another terminal</p>
+<p>Copy the <code>../../fixtures/genesis/l2.json</code> file to <code>../../fixtures/genesis/l2_2.json</code> and modify chain id to 1730</p>
+<p>Replace <code>ROUTER_ADDRESS</code> with the outputs of the first deploy</p>
+<pre><code class="language-bash">../../target/release/ethrex l2 deploy \
+	--eth-rpc-url http://localhost:8545 \
+	--private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--deposit-rich \
+	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
+	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
+	--genesis-l2-path ../../fixtures/genesis/l2_2.json \
+    --randomize-contract-deployment \
+    --router.address &lt;ROUTER_ADDRESS&gt;
+</code></pre>
+<h3 id="start-the-second-l2"><a class="header" href="#start-the-second-l2">Start the second L2</a></h3>
+<p>Replace <code>L1_BRIDGE_ADDRESS</code> and <code>L1_ON_CHAIN_PROPOSER_ADDRESS</code> with the outputs of the previous command, you can also check it under <code>cmd/.env</code>.
+And <code>ROUTER_ADDRESS</code> with the outputs of the first deploy</p>
+<pre><code class="language-bash">../../target/release/ethrex \
+	l2 \
+	--watcher.block-delay 0 \
+	--network ../../fixtures/genesis/l2_2.json \
+	--http.port 1730 \
+	--http.addr 0.0.0.0 \
+	--metrics \
+	--metrics.port 3703 \
+	--datadir dev_ethrex_l2_2 \
+	--l1.bridge-address &lt;L1_BRIDGE_ADDRESS&gt; \
+	--l1.on-chain-proposer-address &lt;L1_ON_CHAIN_PROPOSER_ADDRESS&gt; \
+	--eth.rpc-url http://localhost:8545 \
+	--osaka-activation-time 1761677592 \
+	--block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
+	--block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+	--block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+	--block-producer.operator-fee-per-gas 1000000000 \
+	--committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+	--proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+	--proof-coordinator.addr 127.0.0.1 \
+    --proof-coordinator.port 3901 \
+    --l1.router-address &lt;ROUTER_ADDRESS&gt; \
+    --watcher.l2-rpcs http://localhost:1729 \
+    --watcher.l2-chain-ids 65536999
+</code></pre>
+<h3 id="start-the-prover"><a class="header" href="#start-the-prover">Start the prover</a></h3>
+<p>On another terminal</p>
+<pre><code class="language-bash">../../target/release/ethrex \
+	l2 prover \
+	--proof-coordinators tcp://127.0.0.1:3900 tcp://127.0.0.1:3901 \
+	--backend exec
+</code></pre>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../l2/interacting/blockscout.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../l2/deployment/synchronous_composability_poc.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../l2/interacting/shared_bridge.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../l2/deployment/migrations.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -258,11 +349,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../l2/interacting/blockscout.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../l2/deployment/synchronous_composability_poc.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../l2/interacting/shared_bridge.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../l2/deployment/migrations.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
