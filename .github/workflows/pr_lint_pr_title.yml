@@ -57,16 +57,16 @@ jobs:
           #disallowScopes: |
 
           # Configure additional validation for the subject based on a regex.
-          # This example ensures the subject doesn't start with an uppercase character.
-          # subjectPattern: ^(?![A-Z]).+$
+          # Require the subject to start with a letter.
+          subjectPattern: ^[A-Za-z].*$
 
           # If `subjectPattern` is configured, you can use this property to override
           # the default error message that is shown when the pattern doesn't match.
           # The variables `subject` and `title` can be used within the message.
-          # subjectPatternError: |
-          #   The subject "{subject}" found in the pull request title "{title}"
-          #   didn't match the configured pattern. Please ensure that the subject
-          #   doesn't start with an uppercase character.
+          subjectPatternError: |
+            The subject "{subject}" found in the pull request title "{title}"
+            didn't match the configured pattern. Please ensure the subject starts
+            with a letter.
 
           # If the PR contains one of these newline-delimited labels, the
           # validation is skipped. If you want to rerun the validation when
