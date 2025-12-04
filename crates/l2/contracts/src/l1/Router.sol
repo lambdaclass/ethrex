@@ -62,7 +62,7 @@ contract Router is
         if (bridges[chainId] == address(0)) {
             emit TransferToChainNotRegistered(chainId);
         } else {
-            ICommonBridge(bridges[chainId]).receiveMessage{value: msg.value}();
+            ICommonBridge(bridges[chainId]).receiveFromSharedBridge{value: msg.value}();
         }
     }
 
@@ -104,20 +104,6 @@ contract Router is
             );
     }
 
-    /// @notice Allow owner to upgrade the contract.
-    /// @param newImplementation the address of the new implementation
-    function _authorizeUpgrade(
-        address newImplementation
-    ) internal virtual override onlyOwner {}
-
-    function pause() external onlyOwner {
-        _pause();
-    }
-
-    function unpause() external onlyOwner {
-        _unpause();
-    }
-
     function removeChainID(uint256 chainId) internal {
         for (uint i = 0; i < registeredChainIds.length; i++) {
             if (registeredChainIds[i] == chainId) {
@@ -132,5 +118,19 @@ contract Router is
 
     function getRegisteredChainIds() external view returns (uint256[] memory) {
         return registeredChainIds;
+    }
+
+    /// @notice Allow owner to upgrade the contract.
+    /// @param newImplementation the address of the new implementation
+    function _authorizeUpgrade(
+        address newImplementation
+    ) internal virtual override onlyOwner {}
+
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    function unpause() external onlyOwner {
+        _unpause();
     }
 }

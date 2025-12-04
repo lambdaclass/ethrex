@@ -2,7 +2,7 @@
 pragma solidity =0.8.29;
 
 import "./interfaces/ICommonBridgeL2.sol";
-import "./interfaces/IL2ToL1Messenger.sol";
+import "./interfaces/IMessenger.sol";
 import "./interfaces/IERC20L2.sol";
 
 /// @title CommonBridge L2 contract.
@@ -16,7 +16,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
     address public constant ETH_TOKEN =
         0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
-    mapping(uint256 chainId => uint256 tx_id) public transactionIds;
+    mapping(uint256 chainId => uint256 txId) public transactionIds;
 
     // Some calls come as a privileged transaction, whose sender is the bridge itself.
     modifier onlySelf() {
@@ -35,7 +35,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
 
         emit WithdrawalInitiated(msg.sender, _receiverOnL1, msg.value);
 
-        IL2ToL1Messenger(L1_MESSENGER).sendMessageToL1(
+        IMessenger(L1_MESSENGER).sendMessageToL1(
             keccak256(
                 abi.encodePacked(ETH_TOKEN, ETH_TOKEN, _receiverOnL1, msg.value)
             )
@@ -97,7 +97,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         address destination,
         uint256 amount
     ) private {
-        IL2ToL1Messenger(L1_MESSENGER).sendMessageToL1(
+        IMessenger(L1_MESSENGER).sendMessageToL1(
             keccak256(abi.encodePacked(tokenL1, tokenL2, destination, amount))
         );
     }
@@ -139,7 +139,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
     ) external payable override {
         _burnGas(destGasLimit);
         if (msg.value > 0) {
-            IL2ToL1Messenger(L1_MESSENGER).sendMessageToL2(
+            IMessenger(L1_MESSENGER).sendMessageToL2(
                 chainId,
                 address(this),
                 address(this),
@@ -150,7 +150,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
             );
             transactionIds[chainId] += 1;
         }
-        IL2ToL1Messenger(L1_MESSENGER).sendMessageToL2(
+        IMessenger(L1_MESSENGER).sendMessageToL2(
             chainId,
             msg.sender,
             to,

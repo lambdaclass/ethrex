@@ -99,12 +99,12 @@ impl L1Watcher {
         let mut l2_clients: Vec<L2Client> = vec![];
         info!(
             "Configuring L1 Watcher L2 clients {:?} {:?}",
-            watcher_config.l2s_rpc_urls, watcher_config.l2s_chain_ids
+            watcher_config.l2_rpc_urls, watcher_config.l2_chain_ids
         );
         for (url, chain_id) in watcher_config
-            .l2s_rpc_urls
+            .l2_rpc_urls
             .iter()
-            .zip(watcher_config.l2s_chain_ids.clone())
+            .zip(watcher_config.l2_chain_ids.clone())
         {
             info!(
                 "Adding L2 client with URL: {} and chain ID: {}",
@@ -378,7 +378,7 @@ impl L1Watcher {
     }
 
     async fn privileged_transaction_already_processed(
-        &mut self,
+        &self,
         tx_hash: H256,
     ) -> Result<bool, L1WatcherError> {
         if self
@@ -398,7 +398,7 @@ impl L1Watcher {
         Ok(!pending_privileged_transactions.contains(&tx_hash))
     }
 
-    async fn health(&mut self) -> CallResponse<Self> {
+    async fn health(&self) -> CallResponse<Self> {
         let l1_rpc_healthcheck = self.eth_client.test_urls().await;
 
         CallResponse::Reply(OutMessage::Health(L1WatcherHealth {

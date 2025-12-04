@@ -126,8 +126,8 @@ pub fn download_script() {
             "CommonBridgeL2",
         ),
         (
-            &Path::new("../../crates/l2/contracts/src/l2/L2ToL1Messenger.sol"),
-            "L2ToL1Messenger",
+            &Path::new("../../crates/l2/contracts/src/l2/Messenger.sol"),
+            "Messenger",
         ),
         (
             &Path::new("../../crates/l2/contracts/src/l2/L2Upgradeable.sol"),
@@ -187,7 +187,7 @@ fn write_empty_bytecode_files(output_contracts_path: &Path) {
         "CommonBridge",
         "Router",
         "CommonBridgeL2",
-        "L2ToL1Messenger",
+        "Messenger",
         "UpgradeableSystemContract",
         "SequencerRegistry",
         "OnChainProposerBased",
@@ -343,9 +343,9 @@ fn common_bridge_l2_runtime(out_dir: &Path) -> Vec<u8> {
     fs::read(path).expect("Failed to read bytecode file")
 }
 
-/// Bytecode of the L2ToL1Messenger contract.
+/// Bytecode of the Messenger contract.
 fn l2_to_l1_messenger_runtime(out_dir: &Path) -> Vec<u8> {
-    let path = out_dir.join("contracts/solc_out/L2ToL1Messenger.bytecode");
+    let path = out_dir.join("contracts/solc_out/Messenger.bytecode");
     fs::read(path).expect("Failed to read bytecode file")
 }
 

@@ -25,12 +25,17 @@ pub async fn get_batch(
     commit_tx: Option<H256>,
     blobs_bundle: BlobsBundle,
 ) -> Result<Batch, UtilsError> {
+    let chain_id = store.get_chain_config().chain_id;
     let privileged_transactions: Vec<PrivilegedL2Transaction> = batch
         .iter()
         .flat_map(|block| {
             block.body.transactions.iter().filter_map(|tx| {
                 if let Transaction::PrivilegedL2Transaction(tx) = tx {
-                    Some(tx.clone())
+                    if tx.chain_id == chain_id {
+                        Some(tx.clone())
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
@@ -115,9 +120,8 @@ async fn extract_block_messages(
         )));
     };
 
-    let mut txs = vec![];
     let mut receipts = vec![];
-    for (index, tx) in block_body.transactions.iter().enumerate() {
+    for index in 0..block_body.transactions.len() {
         let receipt = store
             .get_receipt(
                 block_number,
@@ -129,7 +133,6 @@ async fn extract_block_messages(
             .ok_or(UtilsError::RetrievalError(
                 "Transactions in a block should have a receipt".to_owned(),
             ))?;
-        txs.push(tx.clone());
         receipts.push(receipt);
     }
     Ok((

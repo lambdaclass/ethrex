@@ -23,9 +23,7 @@ pub static L2MESSAGE_EVENT_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
 
 // keccak256("crosschainMintERC20(address,address,address,address,uint256)")
 pub static CROSSCHAIN_MINT_ERC20_SELECTOR: LazyLock<[u8; 4]> = LazyLock::new(|| {
-    let h = keccak(
-        "crosschainMintERC20(address,address,address,address,uint256)".as_bytes()
-    );
+    let h = keccak("crosschainMintERC20(address,address,address,address,uint256)".as_bytes());
     let mut sel = [0u8; 4];
     sel.copy_from_slice(&h.0[..4]);
     sel
@@ -71,13 +69,6 @@ pub fn get_l1_message_hash(msg: &L1Message) -> H256 {
 
 pub fn get_l2_message_hash(msg: &L2Message) -> H256 {
     keccak(msg.encode())
-}
-
-pub fn get_block_l1_message_hashes(receipts: &[Receipt]) -> Vec<H256> {
-    get_block_l1_messages(receipts)
-        .iter()
-        .map(get_l1_message_hash)
-        .collect()
 }
 
 pub fn get_block_l1_messages(receipts: &[Receipt]) -> Vec<L1Message> {
@@ -182,27 +173,27 @@ pub fn get_block_l2_messages(receipts: &[Receipt]) -> Vec<L2Message> {
 }
 
 pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
-    let mut acc: BTreeMap<U256, BalanceDiff> = BTreeMap::new();
-    for m in messages {
-        if m.to == BRIDGE_ADDRESS && m.from == BRIDGE_ADDRESS {
+    let mut balance_diffs: BTreeMap<U256, BalanceDiff> = BTreeMap::new();
+    for message in messages {
+        if message.to == BRIDGE_ADDRESS && message.from == BRIDGE_ADDRESS {
             continue;
         }
         let mut offset = 4;
         let (token_l1, token_l2, other_chain_token_l2, value) = if let Some(selector) =
-            m.data.get(..4)
+            message.data.get(..4)
             && *selector == *CROSSCHAIN_MINT_ERC20_SELECTOR
         {
-            let Some(token_l1) = m.data.get(offset + 12..offset + 32) else {
+            let Some(token_l1) = message.data.get(offset + 12..offset + 32) else {
                 println!("Invalid L2Message data for crosschainMintERC20: missing token_l1");
                 continue;
             };
             offset += 32;
-            let Some(token_l2) = m.data.get(offset + 12..offset + 32) else {
+            let Some(token_l2) = message.data.get(offset + 12..offset + 32) else {
                 println!("Invalid L2Message data for crosschainMintERC20: missing token_l2");
                 continue;
             };
             offset += 32;
-            let Some(other_chain_token_l2) = m.data.get(offset + 12..offset + 32) else {
+            let Some(other_chain_token_l2) = message.data.get(offset + 12..offset + 32) else {
                 println!(
                     "Invalid L2Message data for crosschainMintERC20: missing other_chain_token_l2"
                 );
@@ -210,7 +201,7 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
             };
             offset += 32;
             offset += 32; // skip to
-            let Some(value_bytes) = m.data.get(offset..offset + 32) else {
+            let Some(value_bytes) = message.data.get(offset..offset + 32) else {
                 println!("Invalid L2Message data for crosschainMintERC20: missing value");
                 continue;
             };
@@ -221,12 +212,19 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
                 U256::from_big_endian(value_bytes),
             )
         } else {
-            (Address::zero(), Address::zero(), Address::zero(), m.value)
+            (
+                Address::zero(),
+                Address::zero(),
+                Address::zero(),
+                message.value,
+            )
         };
-        let entry = acc.entry(m.chain_id).or_insert(BalanceDiff {
-            chain_id: m.chain_id,
-            value_per_token: Vec::new(),
-        });
+        let entry = balance_diffs
+            .entry(message.chain_id)
+            .or_insert(BalanceDiff {
+                chain_id: message.chain_id,
+                value_per_token: Vec::new(),
+            });
         let mut found = false;
         for (t1, t2, oct2, v) in &mut entry.value_per_token {
             if *t1 == token_l1 && *t2 == token_l2 && *oct2 == other_chain_token_l2 {
@@ -241,5 +239,5 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
                 .push((token_l1, token_l2, other_chain_token_l2, value));
         }
     }
-    acc.into_values().collect()
+    balance_diffs.into_values().collect()
 }

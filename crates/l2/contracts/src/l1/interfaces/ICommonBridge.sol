@@ -55,6 +55,7 @@ interface ICommonBridge {
         bytes data;
     }
 
+    /// @notice Structure representing token and value information.
     struct TokenValue {
         address tokenL1;
         address tokenL2;
@@ -62,6 +63,7 @@ interface ICommonBridge {
         uint256 value;
     }
 
+    /// @notice Structure representing the changes per chain id and token values.
     struct BalanceDiff {
         uint256 chainId;
         TokenValue[] valuePerToken;
@@ -148,10 +150,10 @@ interface ICommonBridge {
         bytes32[] calldata l2MessageProof
     ) external view returns (bool);
 
-    /// @notice Receives a message from another chain via shared bridge router.
+    /// @notice Receives funds from another chain via shared bridge router.
     /// @dev This method should only be called by the shared bridge router, as this
     /// method will not burn the L2 gas.
-    function receiveMessage() external payable;
+    function receiveFromSharedBridge() external payable;
 
     /// @notice Receives an ERC20 message from another chain via shared bridge router.
     /// @dev This method should only be called by the shared bridge router, as this

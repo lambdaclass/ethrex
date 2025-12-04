@@ -37,6 +37,7 @@
   - [Deploying a validium ethrex L2](./l2/deployment/validium.md)
   - [Deploying a based ethrex L2](./l2/deployment/based.md)
   - [Synchronous Composability PoC](./l2/deployment/synchronous_composability_poc.md)
+  - [Deploying a shared bridge enabled L2](./l2/deployment/shared_bridge.md)
 - [Run a prover](./l2/deployment/prover/README.md)
   - [Overview](./l2/deployment/prover/overview.md)
   - [Run an ethrex SP1 prover](./l2/deployment/prover/sp1.md)
@@ -58,6 +59,7 @@
   - [Deploy a contract](./l2/interacting/deploy_contracts.md)
   - [Blockscout for ethrex L2](./l2/interacting/blockscout.md)
   - [L2 Hub](./l2/interacting/l2_hub.md)
+  - [Shared Bridge](./l2/interacting/shared_bridge.md)
 - [Fundamentals](./l2/fundamentals/README.md)
   - [State diffs](./l2/fundamentals/state_diffs.md)
   - [Block vs StateDiff](./l2/fundamentals/block_vs_state_diff_measurements.md)
@@ -71,6 +73,7 @@
     - [L1MessageSender]()
   - [Based sequencing](./l2/fundamentals/based.md)
   - [Transaction fees](./l2/fundamentals/transaction_fees.md)
+  - [Migrations](./l2/migrations.md)
 
 # Ethrex for developers
 
