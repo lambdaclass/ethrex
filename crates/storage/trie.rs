@@ -187,7 +187,7 @@ mod tests {
         let backend = Arc::new(InMemoryBackend::open().unwrap());
 
         // Create TrieDB
-        let trie_db = BackendTrieDB::new(backend, None, vec![]).unwrap();
+        let trie_db = BackendTrieDB::new_for_accounts(backend, vec![]).unwrap();
 
         // Test data
         let node_hash = Nibbles::from_hex(vec![1]);
@@ -213,7 +213,7 @@ mod tests {
 
         // Create TrieDB with address prefix
         let address = H256::from([0xaa; 32]);
-        let trie_db = BackendTrieDB::new(backend, Some(address), vec![]).unwrap();
+        let trie_db = BackendTrieDB::new_for_account_storage(backend, address, vec![]).unwrap();
 
         // Test data
         let node_hash = Nibbles::from_hex(vec![1]);
@@ -234,7 +234,7 @@ mod tests {
         let backend = Arc::new(InMemoryBackend::open().unwrap());
 
         // Create TrieDB
-        let trie_db = BackendTrieDB::new(backend, None, vec![]).unwrap();
+        let trie_db = BackendTrieDB::new_for_accounts(backend, vec![]).unwrap();
 
         // Test data
         // NOTE: we don't use the same paths to avoid overwriting in the batch
