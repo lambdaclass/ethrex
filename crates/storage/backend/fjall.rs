@@ -50,8 +50,10 @@ impl StorageBackend for FjallBackend {
     fn begin_write(&self) -> Result<Box<dyn crate::api::StorageRwTx + 'static>, StoreError> {
         let backend = self.clone();
         let write_batch = self.keyspace.batch();
-        let ro_tx = FjallRoTx { backend };
-        Ok(Box::new(FjallRwTx { ro_tx, write_batch }))
+        Ok(Box::new(FjallRwTx {
+            backend,
+            write_batch,
+        }))
     }
 
     fn begin_locked(
@@ -117,22 +119,8 @@ impl StorageRoTx for FjallRoTx {
 }
 
 struct FjallRwTx {
-    ro_tx: FjallRoTx,
+    backend: FjallBackend,
     write_batch: WriteBatch,
-}
-
-impl StorageRoTx for FjallRwTx {
-    fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        self.ro_tx.get(table, key)
-    }
-
-    fn prefix_iterator(
-        &self,
-        table: &'static str,
-        prefix: &[u8],
-    ) -> Result<Box<dyn Iterator<Item = crate::api::PrefixResult> + '_>, StoreError> {
-        self.ro_tx.prefix_iterator(table, prefix)
-    }
 }
 
 impl StorageRwTx for FjallRwTx {
@@ -145,7 +133,7 @@ impl StorageRwTx for FjallRwTx {
         for (mut key, value) in batch {
             let partition = partitions
                 .entry(table)
-                .or_insert_with(|| self.ro_tx.backend.get_partition(table).unwrap());
+                .or_insert_with(|| self.backend.get_partition(table).unwrap());
             // NOTE: we prepend a 0 to avoid keys being empty, since that triggers a panic
             key.insert(0, 0);
             self.write_batch.insert(partition, key, value);
@@ -154,7 +142,7 @@ impl StorageRwTx for FjallRwTx {
     }
 
     fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError> {
-        let partition = self.ro_tx.backend.get_partition(table).unwrap();
+        let partition = self.backend.get_partition(table).unwrap();
         // NOTE: we prepend a 0 to avoid keys being empty, since that triggers a panic in put_batch
         let mut key = key.to_vec();
         key.insert(0, 0);
@@ -163,7 +151,7 @@ impl StorageRwTx for FjallRwTx {
     }
 
     fn commit(&mut self) -> Result<(), StoreError> {
-        let empty_batch = self.ro_tx.backend.keyspace.batch();
+        let empty_batch = self.backend.keyspace.batch();
         std::mem::replace(&mut self.write_batch, empty_batch)
             .commit()
             .unwrap();
