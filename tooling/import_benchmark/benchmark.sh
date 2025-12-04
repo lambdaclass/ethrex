@@ -24,6 +24,18 @@ NUM_REPETITIONS=$2
 # as the current `bench_id` (the script will increment it before the first run).
 START_BENCH_ID=${3:-}
 
+# Get the directory of this script, so it can be ran from anywhere
+BENCHMARKS_DIR=$(
+    cd "$(dirname "${BASH_SOURCE[0]}")"
+    pwd -P
+)
+
+# Go to ethrex/tooling/import_benchmark
+cd $BENCHMARKS_DIR
+
+# Create directory for benchmark results, if it doesn't exist
+mkdir -p bench_results
+
 if [ -n "$START_BENCH_ID" ]; then
     if ! [[ "$START_BENCH_ID" =~ ^[0-9]+$ ]]; then
         echo "Error: START_BENCH_ID must be a non-negative integer" >&2
@@ -31,18 +43,25 @@ if [ -n "$START_BENCH_ID" ]; then
     fi
     bench_id=$START_BENCH_ID
 else
+    # Determine the next available bench id
+    cd bench_results
     touch bench-0.log
     bench_id=$(ls bench-*.log | cut -d '-' -f 2 | cut -d '.' -f 1 | sort -n | tail -1)
     # When no START_BENCH_ID is supplied, start from the next available id
     bench_id=$((bench_id + 1))
+    cd ..
 fi
 
+# Move to repo root
 cd ../..
 
 for i in $(seq 1 $NUM_REPETITIONS); do
+    # Remove previous temp data dir and copy base state to it
     rm -rf ~/.local/share/temp
     cp -r ~/.local/share/ethrex_${NETWORK}_bench/ethrex ~/.local/share/temp
-    cargo run --release -- --network $NETWORK --datadir ~/.local/share/temp import-bench ~/.local/share/ethrex_${NETWORK}_bench/chain.rlp | tee bench-${bench_id}.log
+
+    # Run the benchmark and save output to log file in the benchmarks directory
+    cargo run --release -- --network $NETWORK --datadir ~/.local/share/temp import-bench ~/.local/share/ethrex_${NETWORK}_bench/chain.rlp | tee "${BENCHMARKS_DIR}/bench_results/bench-${bench_id}.log"
 
     bench_id=$((bench_id + 1))
 done
