@@ -51,7 +51,6 @@ ethrex l2 deploy \
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
 > Accounts for the deployer, on-chain proposer owner, bridge owner, and proof sender must have funds. Add `--bridge-owner-pk <PRIVATE_KEY>` if you want the deployer to immediately call `acceptOwnership` on behalf of that owner; otherwise, they can accept later.
 > If you enable more than one proving system (e.g., both `--sp1 true` and `--risc0 true`), every selected proof becomes required for each batch to settle on L1 (Aligned will expect all of them).
-> To tune L2 block and batch gas caps, see [Configuring gas limits](./gas_limit.md).
 
 ### 3. Deposit funds to the `AlignedBatcherPaymentService` contract from the proof sender
 

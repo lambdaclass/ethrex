@@ -9,4 +9,3 @@ Use this section to choose the deployment method that best fits your needs and f
 - [Deploying a validium ethrex L2](./validium.md)
 - [Deploying a based ethrex L2](./based.md)
 - [Ethrex <> Aligned](./aligned.md)
-- [Configuring gas limits](./gas_limit.md)

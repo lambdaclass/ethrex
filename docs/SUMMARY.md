@@ -37,7 +37,6 @@
   - [Deploying a validium ethrex L2](./l2/deployment/validium.md)
   - [Deploying a based ethrex L2](./l2/deployment/based.md)
   - [Ethrex <> Aligned](./l2/deployment/aligned.md)
-  - [Configuring gas limits](./l2/deployment/gas_limit.md)
   - [Synchronous Composability PoC](./l2/deployment/synchronous_composability_poc.md)
 - [Run a prover](./l2/deployment/prover/README.md)
   - [Overview](./l2/deployment/prover/overview.md)
