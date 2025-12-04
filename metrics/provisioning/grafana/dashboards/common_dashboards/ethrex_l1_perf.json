@@ -2975,8 +2975,9 @@
               },
               "editorMode": "code",
               "expr": "ethrex_p2p_peer_clients{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}",
+              "instant": true,
               "legendFormat": "{{client_name}}",
-              "range": true,
+              "range": false,
               "refId": "A"
             }
           ],
