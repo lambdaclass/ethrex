@@ -65,7 +65,7 @@ Ensure you have the following installed on your system:
 > ```
 
 > [!IMPORTANT]
-> Compiling with both `sp1` and `risc0` features only makes the binary capable of both. Settlement requires both proofs **only if** you deploy the contracts with both proving systems marked as required (for example, `--sp1 true` and `--risc0 true` in `ethrex l2 deploy`).
+> Compiling with both `sp1` and `risc0` features only makes the binary capable of both. Settlement requires every proof you mark as required at deploy time (e.g., passing both `--sp1 true` and `--risc0 true` in `ethrex l2 deploy` will require both proofs).
 
 > [!TIP]
 > To tune the block or batch gas limits for your deployment, see [Configuring gas limits](./gas_limit.md).
