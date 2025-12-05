@@ -13,6 +13,7 @@ hex.workspace = true
 lazy_static.workspace = true
 ethereum-types.workspace = true
 snap.workspace = true
+bitvec.workspace = true
 
 [dev-dependencies]
 hex-literal.workspace = true
