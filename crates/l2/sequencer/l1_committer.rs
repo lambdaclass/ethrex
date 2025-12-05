@@ -576,7 +576,7 @@ impl L1Committer {
             first_block: first_block_to_commit,
             last_block: last_block_of_batch,
             state_root: new_state_root,
-            l1_in_messages_rolling_hash: l1_in_messages_rolling_hash,
+            l1_in_messages_rolling_hash,
             l2_in_message_rolling_hashes,
             l1_out_message_hashes,
             balance_diffs,

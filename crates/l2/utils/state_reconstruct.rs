@@ -83,7 +83,7 @@ pub async fn get_batch(
         first_block: first_block.header.number,
         last_block: last_block.header.number,
         state_root: new_state_root,
-        l1_in_messages_rolling_hash: l1_in_messages_rolling_hash,
+        l1_in_messages_rolling_hash,
         l2_in_message_rolling_hashes,
         l1_out_message_hashes,
         blobs_bundle,
