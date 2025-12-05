@@ -17,6 +17,7 @@ ethrex-trie.workspace = true
 ethrex-storage-rollup = { workspace = true, optional = true }
 ethrex-threadpool.workspace = true
 ethereum-types.workspace = true
+ethrex-metrics = { workspace = true, features = ["metrics"], optional = true }
 
 async-trait.workspace = true
 tracing.workspace = true
@@ -63,6 +64,7 @@ c-kzg = ["ethrex-blockchain/c-kzg", "ethrex-common/c-kzg"]
 sync-test = []
 l2 = ["dep:ethrex-storage-rollup"]
 test-utils = []
+metrics = ["dep:ethrex-metrics"]
 
 [lints.clippy]
 unwrap_used = "deny"
