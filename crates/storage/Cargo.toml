@@ -29,9 +29,12 @@ qfilter = "0.2.5"
 rayon.workspace = true
 lru = "0.16.2"
 
+libmdbx = { version = "0.6.4", optional = true }
+
 [features]
 default = []
 rocksdb = ["dep:rocksdb", "ethrex-trie/rocksdb"]
+libmdbx = ["dep:libmdbx"]
 
 [dev-dependencies]
 hex.workspace = true
