@@ -46,23 +46,31 @@ jobs:
         include:
           - name: "Devp2p tests 1"
             simulation: devp2p
-            limit: discv4|eth|snap
+            limit: eth/LargeTxRequest
             artifact_prefix: devp2p
           - name: "Devp2p tests 2"
             simulation: devp2p
-            limit: discv4|eth|snap
+            limit: eth/LargeTxRequest
             artifact_prefix: devp2p
           - name: "Devp2p tests 3"
             simulation: devp2p
-            limit: discv4|eth|snap
+            limit: eth/LargeTxRequest
             artifact_prefix: devp2p
           - name: "Devp2p tests 4"
             simulation: devp2p
-            limit: discv4|eth|snap
+            limit: eth/LargeTxRequest
             artifact_prefix: devp2p
           - name: "Devp2p tests 5"
             simulation: devp2p
-            limit: discv4|eth|snap
+            limit: eth/LargeTxRequest
+            artifact_prefix: devp2p
+          - name: "Devp2p tests 6"
+            simulation: devp2p
+            limit: eth/LargeTxRequest
+            artifact_prefix: devp2p
+          - name: "Devp2p tests 7"
+            simulation: devp2p
+            limit: eth/LargeTxRequest
             artifact_prefix: devp2p
     steps:
       - name: Checkout sources
