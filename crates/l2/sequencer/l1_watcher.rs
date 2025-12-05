@@ -9,10 +9,8 @@ use ethrex_common::types::{Log, PrivilegedL2Transaction, TxKind, TxType};
 use ethrex_common::utils::keccak;
 use ethrex_common::{H160, types::Transaction};
 use ethrex_l2_common::messages::{L2MESSAGE_EVENT_SELECTOR, L2Message, MESSENGER_ADDRESS};
-use ethrex_l2_rpc::clients::get_l2_message_proof;
 use ethrex_l2_sdk::{
-    build_generic_tx, get_last_fetched_l1_block, get_pending_privileged_transactions,
-    verify_message,
+    build_generic_tx, get_last_fetched_l1_block, get_pending_l1_messages, get_pending_l2_messages,
 };
 use ethrex_rpc::clients::EthClientError;
 use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
@@ -394,7 +392,7 @@ impl L1Watcher {
         // If we have a reconstructed state, we don't have the transaction in our store.
         // Check if the transaction is marked as pending in the contract.
         let pending_privileged_transactions =
-            get_pending_privileged_transactions(&self.eth_client, self.bridge_address).await?;
+            get_pending_l1_messages(&self.eth_client, self.bridge_address).await?;
         Ok(!pending_privileged_transactions.contains(&tx_hash))
     }
 
@@ -441,7 +439,11 @@ impl L1Watcher {
 
         // TODO: On errors, we may want to try updating the rest of L2 clients.
         for l2_client in &mut self.l2_clients {
-            let (_, logs) = Self::get_privileged_transactions(
+            debug!(
+                "Fetching logs from block {}",
+                l2_client.last_block_fetched_l2
+            );
+            let (new_last_block, logs) = Self::get_privileged_transactions(
                 l2_client.last_block_fetched_l2,
                 block_delay,
                 &l2_client.eth_client,
@@ -453,8 +455,14 @@ impl L1Watcher {
 
             info!("Fetched {} L2 logs from L2 client", logs.len());
 
+            if logs.is_empty() {
+                // No logs, just update the last block fetched.
+                l2_client.last_block_fetched_l2 = new_last_block;
+                continue;
+            }
+
             let verified_logs =
-                filter_verified_messages(self.router_address, &self.eth_client, l2_client, logs)
+                filter_verified_messages(self.bridge_address, &self.eth_client, l2_client, logs)
                     .await?;
 
             info!("Verified {} L2 logs from L2 client", verified_logs.len());
@@ -474,7 +482,7 @@ impl L1Watcher {
 }
 
 pub async fn filter_verified_messages(
-    router_address: Address,
+    bridge_address: Address,
     l1_client: &EthClient,
     l2_client: &L2Client,
     logs: Vec<RpcLog>,
@@ -482,52 +490,53 @@ pub async fn filter_verified_messages(
     let mut verified_logs = Vec::new();
     info!("Filtering L2 messages");
 
-    for (index, rpc_log) in logs.iter().enumerate() {
-        info!(
-            "Verifying L2 Message with tx hash {:#}",
-            rpc_log.transaction_hash
-        );
-        let Some(message_proof) =
-            get_l2_message_proof(&l2_client.eth_client, rpc_log.transaction_hash).await?
-        else {
-            // Message proof not found.
-            // Given that logs are fetched in block order, we can stop here.
-            break;
-        };
-        info!("Got message proofs {}", message_proof.len());
-        info!("log_index index {}", index);
-
-        let proof = message_proof.get(index).ok_or(L1WatcherError::Custom(
-            "L2 Message proof is empty".to_owned(),
-        ))?;
-
+    for rpc_log in logs {
         let log = Log {
             address: rpc_log.log.address,
             topics: rpc_log.log.topics.clone(),
             data: rpc_log.log.data.clone(),
         };
 
-        let Some(l2_message) = L2Message::from_log(&log) else {
+        let Some(l2_message) = L2Message::from_log(&log, l2_client.chain_id) else {
             return Err(L1WatcherError::FailedToDeserializeLog(
                 "Failed to parse L2Message from log".to_owned(),
             ));
         };
 
-        info!("l2 message parsed from log");
+        info!("l2 message parsed from log: {:?}", l2_message);
 
-        if !verify_message(
-            l2_client.chain_id,
-            l1_client,
-            &l2_message,
-            proof,
-            router_address,
-        )
-        .await?
-        {
+        // Check if the transaction is marked as pending in the contract.
+        let pending_l2_messages =
+            get_pending_l2_messages(l1_client, bridge_address, l2_client.chain_id).await?;
+
+        info!("Pending l2 messages {:?}", pending_l2_messages);
+
+        // TODO: refactor this.
+        let mint_transaction = PrivilegedL2Transaction {
+            chain_id: l2_client.chain_id,
+            nonce: l2_message.tx_id.as_u64(),
+            max_priority_fee_per_gas: Default::default(),
+            max_fee_per_gas: Default::default(),
+            gas_limit: l2_message.gas_limit.as_u64(),
+            to: TxKind::Call(l2_message.to),
+            value: l2_message.value,
+            data: l2_message.data.clone(),
+            access_list: vec![],
+            from: l2_message.from,
+            inner_hash: Default::default(),
+        };
+        let message_hash = mint_transaction.get_privileged_hash().ok_or(
+            L1WatcherError::FailedToDeserializeLog(
+                "Failed to compute privileged hash from L2 message".to_owned(),
+            ),
+        )?;
+        if !pending_l2_messages.contains(&message_hash) {
+            info!("L2 message not found in pending messages: {message_hash:#x}");
             // Message not verified.
             // Given that logs are fetched in block order, we can stop here.
             break;
         }
+        info!("L2 message verified: {message_hash:#x}");
 
         verified_logs.push((l2_message, rpc_log.block_number, l2_client.chain_id));
     }

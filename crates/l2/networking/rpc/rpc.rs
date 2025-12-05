@@ -4,7 +4,7 @@ use crate::l2::fees::{
     GetBaseFeeVaultAddress, GetL1BlobBaseFeeRequest, GetL1FeeVaultAddress, GetOperatorFee,
     GetOperatorFeeVaultAddress,
 };
-use crate::l2::messages::{GetL1MessageProof, GetL2MessageProof};
+use crate::l2::messages::GetL1MessageProof;
 use crate::utils::{RpcErr, RpcNamespace, resolve_namespace};
 use axum::extract::State;
 use axum::{Json, Router, http::StatusCode, routing::post};
@@ -228,7 +228,6 @@ pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result
     match req.method.as_str() {
         "ethrex_sendTransaction" => SponsoredTx::call(req, context).await,
         "ethrex_getL1MessageProof" => GetL1MessageProof::call(req, context).await,
-        "ethrex_getL2MessageProof" => GetL2MessageProof::call(req, context).await,
         "ethrex_batchNumber" => BatchNumberRequest::call(req, context).await,
         "ethrex_getBatchByNumber" => GetBatchByBatchNumberRequest::call(req, context).await,
         "ethrex_getBaseFeeVaultAddress" => GetBaseFeeVaultAddress::call(req, context).await,
