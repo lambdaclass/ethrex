@@ -525,6 +525,8 @@ impl RLPEncode for ENRResponseMessage {
 
 #[cfg(test)]
 mod tests {
+    use crate::types::NodeRecordPairs;
+
     use super::*;
     use bytes::Bytes;
     use ethrex_common::{H256, H264};
@@ -762,7 +764,7 @@ mod tests {
         let node_record = NodeRecord {
             signature,
             seq,
-            pairs,
+            pairs: NodeRecordPairs::decode_pairs(&pairs),
         };
         let msg = Message::ENRResponse(ENRResponseMessage {
             request_hash,
@@ -888,7 +890,7 @@ mod tests {
         let node_record = NodeRecord {
             signature,
             seq,
-            pairs,
+            pairs: NodeRecordPairs::decode_pairs(&pairs),
         };
         let expected = Message::ENRResponse(ENRResponseMessage {
             request_hash,

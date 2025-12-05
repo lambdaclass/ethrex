@@ -521,7 +521,7 @@ impl DiscoveryServer {
         sender_public_key: H512,
         node_record: NodeRecord,
     ) -> Result<(), DiscoveryServerError> {
-        let pairs = node_record.decode_pairs();
+        let pairs = node_record.pairs;
 
         let Some(remote_fork_id) = pairs.eth else {
             self.peer_table
