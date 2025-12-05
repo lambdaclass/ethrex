@@ -41,7 +41,7 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         batch_number: u64,
     ) -> Result<Option<Vec<BalanceDiff>>, RollupStoreError>;
 
-    async fn get_l1_in_message_rolling_hash_by_batch_number(
+    async fn get_l1_in_messages_rolling_hash_by_batch_number(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError>;
