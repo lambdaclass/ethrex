@@ -13,3 +13,7 @@ pub use store::{
     AccountUpdatesList, EngineType, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS, Store, UpdateBatch,
     hash_address, hash_key,
 };
+
+/// Store Schema Version, must be updated on any breaking change
+/// An upgrade to a newer schema version invalidates currently stored data, requiring a re-sync.
+pub const STORE_SCHEMA_VERSION: u64 = 1;
