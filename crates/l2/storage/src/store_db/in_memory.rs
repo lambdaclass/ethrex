@@ -24,7 +24,7 @@ struct StoreInner {
     /// Map of batches by block numbers
     batches_by_block: HashMap<BlockNumber, u64>,
     /// Map of l1 message hashes by batch numbers
-    l1_message_hashes_by_batch: HashMap<u64, Vec<H256>>,
+    l1_out_message_hashes_by_batch: HashMap<u64, Vec<H256>>,
     /// Map of balance diffs by batch numbers
     balance_diffs_by_batch: HashMap<u64, Vec<BalanceDiff>>,
     /// Map of batch number to block numbers
@@ -79,13 +79,13 @@ impl StoreEngineRollup for Store {
         Ok(self.inner()?.batches_by_block.get(&block_number).copied())
     }
 
-    async fn get_l1_message_hashes_by_batch(
+    async fn get_l1_out_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, RollupStoreError> {
         Ok(self
             .inner()?
-            .l1_message_hashes_by_batch
+            .l1_out_message_hashes_by_batch
             .get(&batch_number)
             .cloned())
     }
@@ -307,7 +307,7 @@ impl StoreEngineRollup for Store {
             .batches_by_block
             .retain(|_, batch| *batch <= batch_number);
         store
-            .l1_message_hashes_by_batch
+            .l1_out_message_hashes_by_batch
             .retain(|batch, _| *batch <= batch_number);
         store
             .block_numbers_by_batch
@@ -334,7 +334,7 @@ impl StoreEngineRollup for Store {
         inner.block_numbers_by_batch.insert(batch.number, blocks);
 
         inner
-            .l1_message_hashes_by_batch
+            .l1_out_message_hashes_by_batch
             .insert(batch.number, batch.l1_out_message_hashes);
 
         inner

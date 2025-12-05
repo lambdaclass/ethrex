@@ -24,7 +24,7 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
     ) -> Result<Option<u64>, RollupStoreError>;
 
     /// Gets the L1 message hashes by a given batch number.
-    async fn get_l1_message_hashes_by_batch(
+    async fn get_l1_out_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, RollupStoreError>;

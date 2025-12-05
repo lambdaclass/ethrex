@@ -95,7 +95,7 @@ impl Store {
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, RollupStoreError> {
         self.engine
-            .get_l1_message_hashes_by_batch(batch_number)
+            .get_l1_out_message_hashes_by_batch(batch_number)
             .await
     }
 
