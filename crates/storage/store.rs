@@ -1,3 +1,5 @@
+#[cfg(feature = "fjall")]
+use crate::backend::fjall::FjallBackend;
 #[cfg(feature = "rocksdb")]
 use crate::backend::rocksdb::RocksDBBackend;
 use crate::{
@@ -152,6 +154,8 @@ pub enum EngineType {
     InMemory,
     #[cfg(feature = "rocksdb")]
     RocksDB,
+    #[cfg(feature = "fjall")]
+    Fjall,
 }
 
 pub struct UpdateBatch {
@@ -1372,6 +1376,11 @@ impl Store {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
                 let backend = Arc::new(RocksDBBackend::open(path)?);
+                Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
+            }
+            #[cfg(feature = "fjall")]
+            EngineType::Fjall => {
+                let backend = Arc::new(FjallBackend::open(path)?);
                 Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
             }
             EngineType::InMemory => {
@@ -2894,6 +2903,12 @@ mod tests {
     #[tokio::test]
     async fn test_rocksdb_store() {
         test_store_suite(EngineType::RocksDB).await;
+    }
+
+    #[cfg(feature = "fjall")]
+    #[tokio::test]
+    async fn test_fjall_store() {
+        test_store_suite(EngineType::Fjall).await;
     }
 
     // Creates an empty store, runs the test and then removes the store (if needed)
