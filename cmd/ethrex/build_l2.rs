@@ -167,6 +167,7 @@ pub fn download_script() {
         false,
         Some(&remappings),
         &[contracts_path],
+        Some(50),
     )
     .unwrap();
 
@@ -259,6 +260,7 @@ fn compile_contract_to_bytecode(
         abi_json,
         remappings,
         allow_paths,
+        Some(50),
     )
     .expect("Failed to compile contract");
     println!("Successfully compiled {contract_name} contract");

@@ -311,6 +311,7 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<Fees
         false,
         Some(&remappings),
         &[contracts_path],
+        None,
     )?;
 
     let bridge_code = hex::decode(std::fs::read("contracts/solc_out/CommonBridgeL2.bin")?)?;
@@ -565,6 +566,7 @@ async fn test_erc20_roundtrip(
         false,
         Some(&remappings),
         &[contracts_path],
+        None,
     )?;
     let init_code_l2_inner = hex::decode(String::from_utf8(std::fs::read(
         "contracts/solc_out/TestTokenL2.bin",
@@ -2033,6 +2035,7 @@ async fn test_fee_token(
         false,
         Some(&remappings),
         &allow_paths,
+        None,
     )?;
 
     let mut fee_token_contract =
