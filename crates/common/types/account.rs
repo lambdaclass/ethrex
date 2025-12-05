@@ -49,6 +49,14 @@ impl Code {
         }
     }
 
+    pub fn from_bytecode_no_jump_targets(code: Bytes) -> Self {
+        Self {
+            hash: keccak(code.as_ref()),
+            bytecode: code,
+            jump_targets: Vec::new(),
+        }
+    }
+
     pub fn from_bytecode(code: Bytes) -> Self {
         let jump_targets = Self::compute_jump_targets(&code);
         Self {
@@ -79,6 +87,36 @@ impl Code {
             i += 1;
         }
         targets
+    }
+
+    pub fn is_jump_target(&self, address: usize) -> bool {
+        if address >= self.bytecode.len() {
+            return false;
+        }
+
+        if self.bytecode[address] != 0x5B {
+            // OP_JUMPDEST
+            return false;
+        }
+
+        let mut i = address.saturating_sub(32);
+        while i < address {
+            match self.bytecode[i] {
+                // OP_PUSH1..32
+                c @ 0x60..0x80 => {
+                    // OP_PUSH0
+                    i += (c - 0x5F) as usize;
+                }
+                _ => i += 1,
+            }
+        }
+
+        if i > address {
+            // the byte is contained in the value of a PUSHN opcode
+            return false;
+        }
+
+        return true;
     }
 
     /// Estimates the size of the Code struct in bytes

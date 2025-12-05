@@ -292,11 +292,15 @@ impl<'a> VM<'a> {
     ///   - Ensuring the byte is not blacklisted. In other words, the 0x5B value is not part of a
     ///     constant associated with a push instruction.
     fn target_address_is_valid(call_frame: &CallFrame, jump_address: u32) -> bool {
-        call_frame
-            .bytecode
-            .jump_targets
-            .binary_search(&jump_address)
-            .is_ok()
+        if cfg!(feature = "zisk") {
+            call_frame.bytecode.is_jump_target(jump_address as usize)
+        } else {
+            call_frame
+                .bytecode
+                .jump_targets
+                .binary_search(&jump_address)
+                .is_ok()
+        }
     }
 
     /// JUMP* family (`JUMP` and `JUMP` ATTOW [DEC 2024]) helper

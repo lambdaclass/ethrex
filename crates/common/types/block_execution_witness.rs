@@ -156,7 +156,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             .codes
             .into_iter()
             .map(|code| {
-                let code = Code::from_bytecode(code.into());
+                let code = Code::from_bytecode_no_jump_targets(code.into());
                 (code.hash, code)
             })
             .collect();
