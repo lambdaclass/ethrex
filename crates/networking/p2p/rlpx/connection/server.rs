@@ -332,7 +332,16 @@ impl GenServer for PeerConnectionServer {
                         %message,
                         "Received incoming message",
                     );
-                    handle_incoming_message(established_state, message).await
+                    let message_type = message.to_string();
+                    #[cfg(feature = "metrics")]
+                    let result = ethrex_metrics::p2p::record_p2p_message_duration(
+                        &message_type,
+                        handle_incoming_message(established_state, message),
+                    )
+                    .await;
+                    #[cfg(not(feature = "metrics"))]
+                    let result = handle_incoming_message(established_state, message).await;
+                    result
                 }
                 Self::CastMsg::OutgoingMessage(message) => {
                     trace!(
