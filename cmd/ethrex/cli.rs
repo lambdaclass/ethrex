@@ -202,7 +202,7 @@ pub struct Options {
         help_heading = "RPC options"
     )]
     pub authrpc_jwtsecret: String,
-    #[arg(long = "p2p.disabled", default_value = "false", value_name = "P2P_DISABLED", action = ArgAction::SetFalse, help_heading = "P2P options")]
+    #[arg(long = "p2p.disabled", default_value = "false", value_name = "P2P_DISABLED", action = ArgAction::SetTrue, help_heading = "P2P options")]
     pub p2p_disabled: bool,
     #[arg(
         long = "p2p.addr",
