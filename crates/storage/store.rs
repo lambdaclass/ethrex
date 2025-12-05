@@ -3,6 +3,7 @@ use crate::backend::canopydb::CanopyDBBackend;
 #[cfg(feature = "rocksdb")]
 use crate::backend::rocksdb::RocksDBBackend;
 use crate::{
+    STORE_SCHEMA_VERSION,
     api::{
         StorageBackend,
         tables::{
@@ -1394,6 +1395,8 @@ impl Store {
         db_path: PathBuf,
         commit_threshold: usize,
     ) -> Result<Self, StoreError> {
+        check_schema_version(backend.as_ref())?;
+
         debug!("Initializing Store with {commit_threshold} in-memory diff-layers");
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
         let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(0);
@@ -2831,6 +2834,33 @@ fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {
 
 fn snap_state_key(index: SnapStateIndex) -> Vec<u8> {
     (index as u8).encode_to_vec()
+}
+
+fn check_schema_version(backend: &dyn StorageBackend) -> Result<(), StoreError> {
+    // Check that the last used DB version matches the current version
+    let latest_store_schema_version = backend
+        .begin_read()?
+        .get(MISC_VALUES, b"store_schema_version")?
+        .map(|bytes| -> Result<u64, StoreError> {
+            let array: [u8; 8] = bytes.try_into().map_err(|_| {
+                StoreError::Custom("Invalid store schema version bytes".to_string())
+            })?;
+            Ok(u64::from_le_bytes(array))
+        })
+        .transpose()?;
+    if let Some(schema_version) = latest_store_schema_version
+        && schema_version != STORE_SCHEMA_VERSION
+    {
+        return Err(StoreError::IncompatibleDBVersion);
+    }
+    let mut tx = backend.begin_write()?;
+    tx.put(
+        MISC_VALUES,
+        b"store_schema_version",
+        &STORE_SCHEMA_VERSION.to_le_bytes(),
+    )?;
+    tx.commit()?;
+    Ok(())
 }
 
 #[derive(Debug, Default, Clone)]

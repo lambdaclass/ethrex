@@ -699,7 +699,7 @@ async fn delete_blocks_from_batch(
     let genesis = network.get_genesis()?;
 
     let mut block_to_delete = last_kept_block + 1;
-    let store = init_store(datadir, genesis).await;
+    let store = init_store(datadir, genesis).await?;
 
     while store
         .get_canonical_block_hash(block_to_delete)
