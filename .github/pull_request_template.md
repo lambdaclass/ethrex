@@ -10,3 +10,7 @@
 
 Closes #issue_number
 
+**Checklist**
+
+[ ] Does this PR change user facing features?
+    [ ] Has documentation been updated?
