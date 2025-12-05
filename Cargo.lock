@@ -4061,6 +4061,7 @@ dependencies = [
  "ethrex-trie",
  "hex",
  "hex-literal 0.4.1",
+ "libmdbx",
  "lru 0.16.2",
  "qfilter",
  "rayon",
@@ -6175,6 +6176,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9fbbcab51052fe104eb5e5d351cf728d30a5be1fe14d9be8a3b097481fb97de"
 
 [[package]]
+name = "libmdbx"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4b75fe430f9832fbf5d3552f135f56be97f86e83ed395d21e7bc30918f57c18"
+dependencies = [
+ "bitflags 2.10.0",
+ "derive_more 2.0.1",
+ "indexmap 2.12.1",
+ "libc",
+ "mdbx-sys",
+ "parking_lot",
+ "sealed",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "libredox"
 version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6647,6 +6664,17 @@ checksum = "d89e7ee0cfbedfc4da3340218492196241d89eefb6dab27de5df917a6d2e78cf"
 dependencies = [
  "cfg-if 1.0.4",
  "digest 0.10.7",
+]
+
+[[package]]
+name = "mdbx-sys"
+version = "13.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "830893fbde1f4863b6eb830d0f5b314b1be2fa7e55f60f6f3d4e52e5b072103b"
+dependencies = [
+ "bindgen 0.72.1",
+ "cc",
+ "libc",
 ]
 
 [[package]]
@@ -11387,6 +11415,17 @@ name = "sdd"
 version = "3.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "490dcfcbfef26be6800d11870ff2df8774fa6e86d047e3e8c8a76b25655e41ca"
+
+[[package]]
+name = "sealed"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22f968c5ea23d555e670b449c1c5e7b2fc399fdaec1d304a17cd48e288abc107"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.111",
+]
 
 [[package]]
 name = "sec1"
