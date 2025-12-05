@@ -7,7 +7,7 @@ on:
       - ".github/workflows/daily_snapsync.yaml"
   schedule:
     # Every day at UTC 03:00
-    - cron: "0 3 * * 1,2,3,4,5"
+    - cron: "0 3 * * *"
   workflow_dispatch:
     inputs:
       network:
@@ -43,7 +43,7 @@ jobs:
                 json='[{"network":"hoodi","timeout":"30m"}]'
                 ;;
               sepolia)
-                json='[{"network":"sepolia","timeout":"10h"}]'
+                json='[{"network":"sepolia","timeout":"2h"}]'
                 ;;
               *)
                 echo "::error::Unsupported network value '$network'. Allowed values: hoodi, sepolia."
