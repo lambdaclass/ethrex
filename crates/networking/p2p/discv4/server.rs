@@ -14,8 +14,8 @@ use crate::{
     },
 };
 use bytes::BytesMut;
-use ethrex_common::{H256, H512};
-use ethrex_storage::Store;
+use ethrex_common::{H256, H512, types::ForkId};
+use ethrex_storage::{Store, error::StoreError};
 use futures::StreamExt;
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
@@ -59,6 +59,8 @@ pub enum DiscoveryServerError {
     InvalidContact,
     #[error(transparent)]
     PeerTable(#[from] PeerTableError),
+    #[error(transparent)]
+    Store(#[from] StoreError),
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +85,7 @@ pub struct DiscoveryServer {
     local_node_record: NodeRecord,
     signer: SecretKey,
     udp_socket: Arc<UdpSocket>,
+    store: Store,
     peer_table: PeerTable,
     /// The last `FindNode` message sent, cached due to message
     /// signatures being expensive.
@@ -115,6 +118,7 @@ impl DiscoveryServer {
             local_node_record,
             signer,
             udp_socket,
+            store: storage.clone(),
             peer_table: peer_table.clone(),
             find_node_message: Self::random_message(&signer),
             initial_lookup_interval,
@@ -507,9 +511,67 @@ impl DiscoveryServer {
             .record_enr_response_received(
                 &node_id,
                 enr_response_message.request_hash,
-                enr_response_message.node_record,
+                enr_response_message.node_record.clone(),
             )
             .await?;
+
+        self.validate_enr_fork_id(node_id, sender_public_key, enr_response_message.node_record)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Validates the fork id of the given ENR is valid, saving it to the peer_table.
+    async fn validate_enr_fork_id(
+        &mut self,
+        node_id: H256,
+        sender_public_key: H512,
+        node_record: NodeRecord,
+    ) -> Result<(), DiscoveryServerError> {
+        let pairs = node_record.decode_pairs();
+
+        let Some(remote_fork_id) = pairs.eth else {
+            self.peer_table
+                .set_is_fork_id_valid(&node_id, false)
+                .await?;
+            debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"), "missing fork id in ENR response, skipping");
+            return Ok(());
+        };
+
+        let chain_config = self.store.get_chain_config();
+        let genesis_header = self
+            .store
+            .get_block_header(0)?
+            .ok_or(DiscoveryServerError::InvalidContact)?;
+        let latest_block_number = self.store.get_latest_block_number().await?;
+        let latest_block_header = self
+            .store
+            .get_block_header(latest_block_number)?
+            .ok_or(DiscoveryServerError::InvalidContact)?;
+
+        let local_fork_id = ForkId::new(
+            chain_config,
+            genesis_header.clone(),
+            latest_block_header.timestamp,
+            latest_block_number,
+        );
+
+        if !local_fork_id.is_valid(
+            remote_fork_id.clone(),
+            latest_block_number,
+            latest_block_header.timestamp,
+            chain_config,
+            genesis_header,
+        ) {
+            self.peer_table
+                .set_is_fork_id_valid(&node_id, false)
+                .await?;
+            debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"), local_fork_id=%local_fork_id, remote_fork_id=%remote_fork_id, "fork id mismatch in ENR response, skipping");
+            return Ok(());
+        }
+
+        debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"), local_fork_id=%local_fork_id, remote_fork_id=%remote_fork_id, "valid fork id in ENR found");
+        self.peer_table.set_is_fork_id_valid(&node_id, true).await?;
 
         Ok(())
     }
