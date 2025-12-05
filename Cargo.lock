@@ -3890,6 +3890,7 @@ dependencies = [
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-crypto",
+ "ethrex-metrics",
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-storage-rollup",
