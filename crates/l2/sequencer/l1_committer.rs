@@ -882,7 +882,7 @@ impl L1Committer {
         } // end loop
 
         if acc_blocks.is_empty() {
-            info!("No new blocks were available to build batch {batch_number}, skipping it");
+            debug!("No new blocks were available to build batch {batch_number}, skipping it");
             return Ok(None);
         }
 
@@ -914,12 +914,6 @@ impl L1Committer {
             l1_in_message_hashes.len() + l2_in_message_hashes.len()
         );
 
-        info!(
-            "Added {} l2 in messages to the batch: {:?}",
-            acc_l2_in_messages.len(),
-            acc_l2_in_messages
-        );
-
         let l1_in_messages_rolling_hash =
             compute_privileged_transactions_hash(l1_in_message_hashes)?;
         let mut l2_in_message_rolling_hashes = Vec::new();
@@ -944,8 +938,6 @@ impl L1Committer {
                 None,
             )
             .await?;
-
-        info!("L1 in rolling hash: {l1_in_messages_rolling_hash:#x}");
 
         Ok(Some((
             blobs_bundle,
