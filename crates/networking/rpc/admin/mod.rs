@@ -35,9 +35,9 @@ enum Protocol {
     Eth(ChainConfig),
 }
 
-pub fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> {
+pub async fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> {
     let enode_url = node_data.local_p2p_node.enode_url();
-    let enr_url = match node_data.local_node_record.enr_url() {
+    let enr_url = match node_data.local_node_record.read().await.enr_url() {
         Ok(enr) => enr,
         Err(_) => "".into(),
     };

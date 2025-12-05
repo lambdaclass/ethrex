@@ -6,8 +6,11 @@ use ethrex::{
 };
 use ethrex_p2p::{discv4::peer_table::PeerTable, types::NodeRecord};
 use serde::Deserialize;
-use std::{path::Path, time::Duration};
-use tokio::signal::unix::{SignalKind, signal};
+use std::{path::Path, sync::Arc, time::Duration};
+use tokio::{
+    signal::unix::{SignalKind, signal},
+    sync::RwLock,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -36,13 +39,14 @@ async fn server_shutdown(
     datadir: &Path,
     cancel_token: &CancellationToken,
     peer_table: PeerTable,
-    local_node_record: NodeRecord,
+    local_node_record: Arc<RwLock<NodeRecord>>,
 ) {
     info!("Server shut down started...");
     let node_config_path = datadir.join("node_config.json");
     info!("Storing config at {:?}...", node_config_path);
     cancel_token.cancel();
-    let node_config = NodeConfigFile::new(peer_table, local_node_record).await;
+    let record = local_node_record.read().await.clone();
+    let node_config = NodeConfigFile::new(peer_table, record).await;
     store_node_config_file(node_config, node_config_path).await;
     tokio::time::sleep(Duration::from_secs(1)).await;
     info!("Server shutting down!");

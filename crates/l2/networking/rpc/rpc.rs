@@ -31,6 +31,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
+use tokio::sync::RwLock;
 use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
 use tower_http::cors::CorsLayer;
 use tracing::{debug, info};
@@ -76,7 +77,7 @@ pub async fn start_api(
     blockchain: Arc<Blockchain>,
     jwt_secret: Bytes,
     local_p2p_node: Node,
-    local_node_record: NodeRecord,
+    local_node_record: Arc<RwLock<NodeRecord>>,
     syncer: Option<Arc<SyncManager>>,
     peer_handler: Option<PeerHandler>,
     client_version: String,

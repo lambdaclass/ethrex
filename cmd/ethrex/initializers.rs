@@ -36,6 +36,7 @@ use std::{
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
+use tokio::sync::RwLock;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{Level, debug, error, info, warn};
 use tracing_subscriber::{
@@ -132,7 +133,7 @@ pub async fn init_rpc_api(
     opts: &Options,
     peer_handler: PeerHandler,
     local_p2p_node: Node,
-    local_node_record: NodeRecord,
+    local_node_record: Arc<RwLock<NodeRecord>>,
     store: Store,
     blockchain: Arc<Blockchain>,
     cancel_token: CancellationToken,
@@ -377,7 +378,12 @@ async fn set_sync_block(store: &Store) {
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
+) -> eyre::Result<(
+    PathBuf,
+    CancellationToken,
+    PeerTable,
+    Arc<RwLock<NodeRecord>>,
+)> {
     let datadir: &PathBuf = if opts.dev && cfg!(feature = "dev") {
         &opts.datadir.join("dev")
     } else {
@@ -426,7 +432,17 @@ pub async fn init_l1(
 
     let local_p2p_node = get_local_p2p_node(&opts, &signer);
 
-    let local_node_record = get_local_node_record(datadir, &local_p2p_node, &signer);
+    let mut local_node_record = get_local_node_record(datadir, &local_p2p_node, &signer);
+    let fork_id = store
+        .get_fork_id()
+        .await
+        .expect("Failed to get fork id from store");
+
+    local_node_record
+        .set_fork_id(fork_id, &signer)
+        .expect("Failed to set fork id on local node record");
+
+    let local_node_record = Arc::new(RwLock::new(local_node_record));
 
     let peer_table = PeerTable::spawn(opts.target_peers);
 
@@ -437,6 +453,7 @@ pub async fn init_l1(
 
     let p2p_context = P2PContext::new(
         local_p2p_node.clone(),
+        local_node_record.clone(),
         tracker.clone(),
         signer,
         peer_table.clone(),

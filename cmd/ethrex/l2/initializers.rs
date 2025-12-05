@@ -28,6 +28,7 @@ use eyre::OptionExt;
 use secp256k1::SecretKey;
 use spawned_concurrency::tasks::GenServerHandle;
 use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
+use tokio::sync::RwLock;
 use tokio::task::JoinSet;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{info, warn};
@@ -41,7 +42,7 @@ async fn init_rpc_api(
     l2_opts: &L2Options,
     peer_handler: Option<PeerHandler>,
     local_p2p_node: Node,
-    local_node_record: NodeRecord,
+    local_node_record: Arc<RwLock<NodeRecord>>,
     store: Store,
     blockchain: Arc<Blockchain>,
     syncer: Option<Arc<SyncManager>>,
@@ -209,7 +210,11 @@ pub async fn init_l2(
 
     let local_p2p_node = get_local_p2p_node(&opts.node_opts, &signer);
 
-    let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
+    let local_node_record = Arc::new(RwLock::new(get_local_node_record(
+        &datadir,
+        &local_p2p_node,
+        &signer,
+    )));
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -223,6 +228,7 @@ pub async fn init_l2(
         let peer_table = PeerTable::spawn(opts.node_opts.target_peers);
         let p2p_context = P2PContext::new(
             local_p2p_node.clone(),
+            local_node_record.clone(),
             tracker.clone(),
             signer,
             peer_table.clone(),
@@ -341,7 +347,8 @@ pub async fn init_l2(
     cancel_token.cancel();
     if based {
         let peer_handler = peer_handler.ok_or_eyre("Peer handler not initialized")?;
-        let node_config = NodeConfigFile::new(peer_handler.peer_table, local_node_record).await;
+        let record = local_node_record.read().await.clone();
+        let node_config = NodeConfigFile::new(peer_handler.peer_table, record).await;
         store_node_config_file(node_config, node_config_path).await;
     }
     tokio::time::sleep(Duration::from_secs(1)).await;
