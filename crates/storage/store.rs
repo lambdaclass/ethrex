@@ -24,6 +24,7 @@ use std::{
     sync::Mutex,
 };
 use std::{fmt::Debug, path::Path};
+use tokio::sync::broadcast;
 use tracing::{debug, error, info};
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -42,6 +43,10 @@ pub struct Store {
     /// - a Latest tag for RPC, where a small extra delay before the newest block is expected
     /// - sync-related operations, which must be idempotent in order to handle reorgs
     latest_block_header: LatestBlockHeaderCache,
+
+    /// Broadcasting channel used to allow other parts of the code to subscribe when new head has
+    /// been committed.
+    new_head_tx: broadcast::Sender<BlockHeader>,
 }
 
 pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
@@ -83,17 +88,21 @@ impl Store {
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
         let path = path.as_ref();
         info!(engine = ?engine_type, ?path, "Opening storage engine");
+
+        let (new_head_tx, _) = broadcast::channel(128);
         let store = match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => Self {
                 engine: Arc::new(RocksDBStore::new(path)?),
                 chain_config: Default::default(),
                 latest_block_header: Default::default(),
+                new_head_tx,
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
                 chain_config: Default::default(),
                 latest_block_header: Default::default(),
+                new_head_tx,
             },
         };
 
@@ -825,7 +834,7 @@ impl Store {
             .engine
             .get_block_header_by_hash(head_hash)?
             .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
-        self.latest_block_header.update(latest_block_header);
+        self.latest_block_header.update(latest_block_header.clone());
         self.engine
             .forkchoice_update(
                 new_canonical_blocks,
@@ -835,6 +844,13 @@ impl Store {
                 finalized,
             )
             .await?;
+
+        // In following scenarios receivers are not initialized:
+        // - Genesis setup using `add_initial_state`.
+        // - Importing blocks using `import/import-bench` commands.
+        // - During tests and benchmarks.
+        // So, we ignore the error if there are no receivers for this notification.
+        let _  = self.new_head_tx.send(latest_block_header);
 
         Ok(())
     }
@@ -1368,6 +1384,11 @@ impl Store {
 
     pub fn get_store_directory(&self) -> Result<PathBuf, StoreError> {
         self.engine.get_store_directory()
+    }
+
+
+    pub fn subscribe_chain_head_update(&self) -> broadcast::Receiver<BlockHeader>{
+        self.new_head_tx.subscribe()
     }
 }
 

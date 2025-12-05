@@ -378,15 +378,8 @@ impl NodeRecord {
         // But the spec requires nested lists:
         // [[forkHash, forkNext]]
         let eth = vec![fork_id];
-        self.pairs.push(("eth".into(), eth.encode_to_vec().into()));
 
-        //Pairs need to be sorted by their key.
-        //The keys are Bytes which implements Ord, so they can be compared directly. The sorting
-        //will be lexicographic (alphabetical for string keys like "eth", "id", "ip", etc.).
-        self.pairs.sort_by(|a, b| a.0.cmp(&b.0));
-
-        self.signature = self.sign_record(signer)?;
-        Ok(())
+        self.update("eth".into(), eth.encode_to_vec().into(), signer)
     }
 
     fn sign_record(&self, signer: &SecretKey) -> Result<H512, NodeError> {
@@ -398,6 +391,35 @@ impl NodeRecord {
             .serialize_compact();
 
         Ok(H512::from_slice(&signature_bytes))
+    }
+
+    // TODO: This is absolutely not optimized, might be a time to rethink of using vec for pairs.
+    pub fn update(
+        &mut self,
+        key: Bytes,
+        value: Bytes,
+        signer: &SecretKey,
+    ) -> Result<(), NodeError> {
+        let mut found = false;
+        for (k, v) in self.pairs.iter_mut() {
+            if *k == key {
+                found = true;
+                *v = value.clone();
+                break;
+            }
+        }
+        if !found {
+            self.pairs.push((key, value));
+        }
+
+        //Pairs need to be sorted by their key.
+        //The keys are Bytes which implements Ord, so they can be compared directly. The sorting
+        //will be lexicographic (alphabetical for string keys like "eth", "id", "ip", etc.).
+        self.pairs.sort_by(|a, b| a.0.cmp(&b.0));
+
+        self.seq += 1;
+        self.signature = self.sign_record(signer)?;
+        Ok(())
     }
 
     pub fn get_signature_digest(&self) -> [u8; 32] {

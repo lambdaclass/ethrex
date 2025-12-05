@@ -18,7 +18,7 @@ use crate::{
     types::{Node, NodeRecord},
 };
 use ethrex_blockchain::Blockchain;
-use ethrex_storage::{Store, error::StoreError};
+use ethrex_storage::Store;
 use secp256k1::SecretKey;
 use spawned_concurrency::tasks::GenServerHandle;
 use std::{
@@ -32,7 +32,7 @@ use tokio::{
     sync::RwLock,
 };
 use tokio_util::task::TaskTracker;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 pub const MAX_MESSAGES_TO_BROADCAST: usize = 100000;
 
@@ -415,51 +415,4 @@ fn format_duration(duration: Duration) -> String {
     let milliseconds = total_seconds / 1000;
 
     format!("{hours:02}h {minutes:02}m {seconds:02}s {milliseconds:02}ms")
-}
-
-// TODO: this should run when a new canonical head is committed. But we don't have way to listen
-// from store that a new block is committed.
-/// Update Local node record with correct fork_id on a set interval
-pub async fn periodically_update_local_node_record(
-    storage: Store,
-    local_node_record: Arc<RwLock<NodeRecord>>,
-) {
-    // // With 12s blocktime this should be fine but once we have lower blocktimes this would lag.
-    const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(10);
-    let mut interval = tokio::time::interval(INTERVAL_DURATION);
-    loop {
-        if update_forkid(&storage, local_node_record.clone())
-            .await
-            .is_err()
-        {
-            warn!("Failed to update local node record with forkid");
-        }
-        interval.tick().await;
-    }
-}
-
-async fn update_forkid(
-    storage: &Store,
-    local_node_record: Arc<RwLock<NodeRecord>>,
-) -> Result<(), StoreError> {
-    let latest_block_number = storage.get_latest_block_number().await?;
-
-    let block_header = storage
-        .get_block_header(latest_block_number)?
-        .ok_or(StoreError::MissingLatestBlockNumber)?;
-
-    let mut pairs = local_node_record.read().await.decode_pairs();
-
-    tracing::trace!(fork_id=?&pairs.eth, latest_block_number=latest_block_number, latest_block_timestamp=block_header.timestamp, "Updating ForkId");
-    if let Some(fork_id) = pairs.eth
-        && fork_id.fork_next <= block_header.timestamp
-    {
-        let latest_fork_id = storage.get_fork_id().await?;
-
-        pairs.eth = Some(latest_fork_id);
-
-        local_node_record.write().await.pairs = pairs.into();
-    }
-
-    Ok(())
 }

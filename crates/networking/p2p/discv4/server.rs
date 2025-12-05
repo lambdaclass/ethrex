@@ -14,8 +14,8 @@ use crate::{
     },
 };
 use bytes::BytesMut;
-use ethrex_common::{H256, H512};
-use ethrex_storage::Store;
+use ethrex_common::{H256, H512, types::BlockHeader};
+use ethrex_storage::{Store, error::StoreError};
 use futures::StreamExt;
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
@@ -26,6 +26,7 @@ use spawned_concurrency::{
         send_message_on, spawn_listener,
     },
 };
+use spawned_rt::tasks::BroadcastStream;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{net::UdpSocket, sync::RwLock};
 use tokio_util::udp::UdpFramed;
@@ -59,6 +60,8 @@ pub enum DiscoveryServerError {
     InvalidContact,
     #[error(transparent)]
     PeerTable(#[from] PeerTableError),
+    #[error(transparent)]
+    Store(#[from] StoreError),
 }
 
 #[derive(Debug, Clone)]
@@ -70,6 +73,7 @@ pub enum InMessage {
     Prune,
     ChangeFindNodeMessage,
     Shutdown,
+    NewHead(Box<BlockHeader>),
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +83,7 @@ pub enum OutMessage {
 
 #[derive(Debug)]
 pub struct DiscoveryServer {
+    storage: Store,
     local_node: Node,
     local_node_record: Arc<RwLock<NodeRecord>>,
     signer: SecretKey,
@@ -91,7 +96,7 @@ pub struct DiscoveryServer {
 
 impl DiscoveryServer {
     pub async fn spawn(
-        _storage: Store,
+        storage: Store,
         local_node: Node,
         local_node_record: Arc<RwLock<NodeRecord>>,
         signer: SecretKey,
@@ -102,6 +107,7 @@ impl DiscoveryServer {
         info!("Starting Discovery Server");
 
         let mut discovery_server = Self {
+            storage,
             local_node: local_node.clone(),
             local_node_record,
             signer,
@@ -563,6 +569,31 @@ impl DiscoveryServer {
             |e| error!(sending = ?message, addr = ?addr, err=?e, "Error sending message"),
         )?)
     }
+
+    /// Update Local node record with correct fork_id when a new canonical head is received.
+    async fn update_local_node_record(
+        &self,
+        latest_block_header: BlockHeader,
+    ) -> Result<(), DiscoveryServerError> {
+        let mut node_record = self.local_node_record.read().await.clone();
+        let pairs = node_record.decode_pairs();
+
+        tracing::trace!(fork_id=?&pairs.eth, latest_block_number=latest_block_header.number, latest_block_timestamp=latest_block_header.timestamp, "Updating ForkId");
+        if let Some(fork_id) = pairs.eth
+            && fork_id.fork_next <= latest_block_header.timestamp
+        {
+            let latest_fork_id = self.storage.get_fork_id().await?;
+            if node_record
+                .set_fork_id(latest_fork_id, &self.signer)
+                .inspect_err(|e| error!(err = ?e, "Failed to update node record with fork id"))
+                .is_err()
+            {
+                return Ok(());
+            }
+            *self.local_node_record.write().await = node_record;
+        }
+        Ok(())
+    }
 }
 
 impl GenServer for DiscoveryServer {
@@ -592,6 +623,21 @@ impl GenServer for DiscoveryServer {
                 }
             }),
         );
+
+        let head_rx = BroadcastStream::new(self.storage.subscribe_chain_head_update());
+        spawn_listener(
+            handle.clone(),
+            head_rx.filter_map(|header| async {
+                match header {
+                    Ok(header) => Some(InMessage::NewHead(Box::new(header))),
+                    Err(e) => {
+                        debug!(error=?e, "Error receiving latest canonical head");
+                        None
+                    }
+                }
+            }),
+        );
+
         send_interval(
             REVALIDATION_CHECK_INTERVAL,
             handle.clone(),
@@ -658,6 +704,12 @@ impl GenServer for DiscoveryServer {
             }
             Self::CastMsg::ChangeFindNodeMessage => {
                 self.find_node_message = Self::random_message(&self.signer);
+            }
+            Self::CastMsg::NewHead(header) => {
+                let _ = self
+                    .update_local_node_record(*header)
+                    .await
+                    .inspect_err(|e| error!(err=?e, "Error updating local node record"));
             }
             Self::CastMsg::Shutdown => return CastResponse::Stop,
         }

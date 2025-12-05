@@ -210,24 +210,13 @@ pub async fn init_network(
 
     let bootnodes = get_bootnodes(opts, network, datadir);
 
-    ethrex_p2p::start_network(context.clone(), bootnodes)
+    ethrex_p2p::start_network(context, bootnodes)
         .await
         .expect("Network starts");
 
     tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
         blockchain,
         peer_handler.peer_table,
-    ));
-
-    let P2PContext {
-        storage,
-        local_node_record,
-        ..
-    } = context;
-
-    tracker.spawn(ethrex_p2p::periodically_update_local_node_record(
-        storage,
-        local_node_record,
     ));
 }
 
