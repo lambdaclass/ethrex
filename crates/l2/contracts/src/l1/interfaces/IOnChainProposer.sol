@@ -102,18 +102,18 @@ interface IOnChainProposer {
     // TODO: imageid, programvkey and riscvvkey should be constants
     // TODO: organize each zkvm proof arguments in their own structs
 
-    // /// @notice Method used to verify a sequence of L2 batches in Aligned, starting from `firstBatchNumber`.
-    // /// Each proof corresponds to one batch, and batch numbers must increase by 1 sequentially.
-    // /// @param firstBatchNumber The batch number of the first proof to verify. Must be `lastVerifiedBatch + 1`.
-    // /// @param publicInputsList An array of public input bytes, one per proof.
-    // /// @param sp1MerkleProofsList An array of Merkle proofs (sibling hashes), one per SP1 proof.
-    // /// @param risc0MerkleProofsList An array of Merkle proofs (sibling hashes), one per Risc0 proof.
-    // function verifyBatchesAligned(
-    //     uint256 firstBatchNumber,
-    //     bytes[] calldata publicInputsList,
-    //     bytes32[][] calldata sp1MerkleProofsList,
-    //     bytes32[][] calldata risc0MerkleProofsList
-    // ) external;
+    /// @notice Method used to verify a sequence of L2 batches in Aligned, starting from `firstBatchNumber`.
+    /// Each proof corresponds to one batch, and batch numbers must increase by 1 sequentially.
+    /// @param firstBatchNumber The batch number of the first proof to verify. Must be `lastVerifiedBatch + 1`.
+    /// @param publicInputsList An array of public input bytes, one per proof.
+    /// @param sp1MerkleProofsList An array of Merkle proofs (sibling hashes), one per SP1 proof.
+    /// @param risc0MerkleProofsList An array of Merkle proofs (sibling hashes), one per Risc0 proof.
+    function verifyBatchesAligned(
+        uint256 firstBatchNumber,
+        bytes[] calldata publicInputsList,
+        bytes32[][] calldata sp1MerkleProofsList,
+        bytes32[][] calldata risc0MerkleProofsList
+    ) external;
 
     // /// @notice Allows unverified batches to be reverted
     // function revertBatch(uint256 batchNumber) external;
