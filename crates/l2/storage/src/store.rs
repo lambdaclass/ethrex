@@ -90,7 +90,7 @@ impl Store {
         self.engine.get_batch_number_by_block(block_number).await
     }
 
-    pub async fn get_l1_message_hashes_by_batch(
+    pub async fn get_l1_out_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, RollupStoreError> {
@@ -219,7 +219,7 @@ impl Store {
         })?;
 
         let l1_out_message_hashes = self
-            .get_l1_message_hashes_by_batch(batch_number)
+            .get_l1_out_message_hashes_by_batch(batch_number)
             .await?
             .unwrap_or_default();
 

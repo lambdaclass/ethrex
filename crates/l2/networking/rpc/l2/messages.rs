@@ -74,7 +74,7 @@ impl RpcHandler for GetL1MessageProof {
         // Gets the message hashes for the batch
         let batch_message_hashes = match context
             .rollup_store
-            .get_l1_message_hashes_by_batch(batch_number)
+            .get_l1_out_message_hashes_by_batch(batch_number)
             .await?
         {
             Some(messages) => messages,
