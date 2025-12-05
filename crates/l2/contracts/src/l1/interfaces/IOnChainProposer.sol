@@ -44,11 +44,19 @@ interface IOnChainProposer {
 
     /// @notice Upgrades the SP1 verification key that represents the sequencer's code.
     /// @param new_vk new verification key for SP1 verifier
-    function upgradeSP1VerificationKey(bytes32 new_vk) external;
+    /// @param commit_hash git commit hash that produced the new verification key
+    function upgradeSP1VerificationKey(
+        bytes32 commit_hash,
+        bytes32 new_vk
+    ) external;
 
     /// @notice Upgrades the RISC0 verification key that represents the sequencer's code.
     /// @param new_vk new verification key for RISC0 verifier
-    function upgradeRISC0VerificationKey(bytes32 new_vk) external;
+    /// @param commit_hash git commit hash that produced the new verification key
+    function upgradeRISC0VerificationKey(
+        bytes32 commit_hash,
+        bytes32 new_vk
+    ) external;
 
     /// @notice Commits to a batch of L2 blocks.
     /// @dev Committing to an L2 batch means to store the batch's commitment
@@ -57,19 +65,21 @@ interface IOnChainProposer {
     /// @param newStateRoot the new state root of the batch to be committed.
     /// @param withdrawalsLogsMerkleRoot the merkle root of the withdrawal logs
     /// of the batch to be committed.
-    /// @param l2MessagesMerkleRoot the merkle root of the l2 messages
-    /// of the batch to be committed.
     /// @param processedPrivilegedTransactionsRollingHash the rolling hash of the processed
     /// privileged transactions of the batch to be committed.
     /// @param lastBlockHash the hash of the last block of the batch to be committed.
+    /// @param l2MessagesMerkleRoot the merkle root of the l2 messages
+    /// of the batch to be committed.
+    /// @param commitHash git commit hash that produced the verifier keys for this batch.
     /// @param balanceDiffs the balance diffs of the batch to be committed.
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
         bytes32 withdrawalsLogsMerkleRoot,
-        bytes32 l2MessagesMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash,
+        bytes32 l2MessagesMerkleRoot,
+        bytes32 commitHash,
         ICommonBridge.BalanceDiff[] calldata balanceDiffs
     ) external;
 

@@ -40,6 +40,9 @@ pub fn compile_contract(
             .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
     )
     .arg("--via-ir")
+    .arg("--optimize")
+    .arg("--optimize-runs")
+    .arg("50")
     .arg("-o")
     .arg(
         output_dir

@@ -37,12 +37,20 @@ interface IOnChainProposer {
     function initializeBridgeAddress(address bridge) external;
 
     /// @notice Upgrades the SP1 verification key that represents the sequencer's code.
+    /// @param commitHash git commit hash that produced the verifier keys for this batch.
     /// @param new_vk new verification key for SP1 verifier
-    function upgradeSP1VerificationKey(bytes32 new_vk) external;
+    function upgradeSP1VerificationKey(
+        bytes32 commitHash,
+        bytes32 new_vk
+    ) external;
 
     /// @notice Upgrades the RISC0 verification key that represents the sequencer's code.
+    /// @param commitHash git commit hash that produced the verifier keys for this batch.
     /// @param new_vk new verification key for RISC0 verifier
-    function upgradeRISC0VerificationKey(bytes32 new_vk) external;
+    function upgradeRISC0VerificationKey(
+        bytes32 commitHash,
+        bytes32 new_vk
+    ) external;
 
     /// @notice Commits to a batch of L2 blocks.
     /// @dev Committing to an L2 batch means to store the batch's commitment
@@ -54,6 +62,7 @@ interface IOnChainProposer {
     /// @param processedDepositLogsRollingHash the rolling hash of the processed
     /// deposits logs of the batch to be committed.
     /// @param lastBlockHash the hash of the last block of the batch to be committed.
+    /// @param commitHash git commit hash that produced the verifier keys for this batch.
     /// @param _rlpEncodedBlocks the list of RLP-encoded blocks in the batch.
     function commitBatch(
         uint256 batchNumber,
@@ -61,6 +70,7 @@ interface IOnChainProposer {
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedDepositLogsRollingHash,
         bytes32 lastBlockHash,
+        bytes32 commitHash,
         bytes[] calldata _rlpEncodedBlocks
     ) external;
 
