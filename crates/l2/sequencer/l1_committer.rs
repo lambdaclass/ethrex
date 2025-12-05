@@ -473,12 +473,12 @@ impl L1Committer {
             let vm_db =
                 StoreVmDatabase::new(one_time_checkpoint_store.clone(), parent_header.clone());
 
-            let mut vm = Evm::new_for_l2(vm_db, *fee_config)?;
+            let vm = Evm::new_for_l2(vm_db, *fee_config)?;
 
             one_time_checkpoint_blockchain.add_l2_block_pipeline(
                 block.clone(),
                 &parent_header,
-                &mut vm,
+                vm,
             )?;
         }
 
@@ -756,12 +756,12 @@ impl L1Committer {
                         "Failed to get fee config for re-execution".to_owned(),
                     ))?;
 
-                let mut vm = Evm::new_for_l2(vm_db, fee_config)?;
+                let vm = Evm::new_for_l2(vm_db, fee_config)?;
 
                 checkpoint_blockchain.add_l2_block_pipeline(
                     potential_batch_block.clone(),
                     &parent_header,
-                    &mut vm,
+                    vm,
                 )?
             };
 

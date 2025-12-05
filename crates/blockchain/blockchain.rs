@@ -188,58 +188,6 @@ impl Blockchain {
         Ok((execution_result, account_updates))
     }
 
-    fn execute_l2_block_pipeline(
-        &self,
-        block: &Block,
-        parent_header: &BlockHeader,
-        vm: &mut Evm,
-    ) -> Result<(BlockExecutionResult, AccountUpdatesList), ChainError> {
-        let queue_length = AtomicUsize::new(0);
-        let queue_length_ref = &queue_length;
-        let mut max_queue_length = 0;
-        let (execution_result, account_updates_list) = std::thread::scope(|s| {
-            let max_queue_length_ref = &mut max_queue_length;
-            let (tx, rx) = channel();
-            let execution_handle = std::thread::Builder::new()
-                .name("block_executor_execution".to_string())
-                .spawn_scoped(s, move || -> Result<_, ChainError> {
-                    let execution_result =
-                        vm.execute_block_pipeline(block, tx, queue_length_ref)?;
-
-                    Ok(execution_result)
-                })
-                .expect("Failed to spawn block_executor exec thread");
-            let parent_header_ref = &parent_header; // Avoid moving to thread
-            let merkleize_handle = std::thread::Builder::new()
-                .name("block_executor_merkleizer".to_string())
-                .spawn_scoped(s, move || -> Result<_, StoreError> {
-                    let account_updates_list = self.handle_merkleization(
-                        s,
-                        rx,
-                        parent_header_ref,
-                        queue_length_ref,
-                        max_queue_length_ref,
-                    )?;
-                    Ok(account_updates_list)
-                })
-                .expect("Failed to spawn block_executor merkleizer thread");
-            (
-                execution_handle.join().unwrap_or_else(|_| {
-                    Err(ChainError::Custom("execution thread panicked".to_string()))
-                }),
-                merkleize_handle.join().unwrap_or_else(|_| {
-                    Err(StoreError::Custom(
-                        "merklization thread panicked".to_string(),
-                    ))
-                }),
-            )
-        });
-        let execution_result = execution_result?;
-        let account_updates_list = account_updates_list?;
-
-        Ok((execution_result, account_updates_list))
-    }
-
     /// Executes a block withing a new vm instance and state
     #[instrument(
         level = "trace",
@@ -250,6 +198,8 @@ impl Blockchain {
     fn execute_block_pipeline(
         &self,
         block: &Block,
+        parent_header: &BlockHeader,
+        mut vm: Evm,
     ) -> Result<
         (
             BlockExecutionResult,
@@ -261,21 +211,12 @@ impl Blockchain {
         ChainError,
     > {
         let start_instant = Instant::now();
-        // Validate if it can be the new head and find the parent
-        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
-            // If the parent is not present, we store it as pending.
-            self.storage.add_pending_block(block.clone())?;
-            return Err(ChainError::ParentNotFound);
-        };
 
         let chain_config = self.storage.get_chain_config();
 
         // Validate the block pre-execution
-        validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        validate_block(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         let block_validated_instant = Instant::now();
-
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone());
-        let mut vm = self.new_evm(vm_db)?;
 
         let exec_merkle_start = Instant::now();
         let queue_length = AtomicUsize::new(0);
@@ -1142,28 +1083,37 @@ impl Blockchain {
         result
     }
 
+    pub fn add_block_pipeline(&self, block: Block) -> Result<(), ChainError> {
+        // Validate if it can be the new head and find the parent
+        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+            // If the parent is not present, we store it as pending.
+            self.storage.add_pending_block(block)?;
+            return Err(ChainError::ParentNotFound);
+        };
+
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone());
+        let vm = self.new_evm(vm_db)?;
+
+        self._add_block_pipeline(block, &parent_header, vm)
+    }
+
     pub fn add_l2_block_pipeline(
         &self,
         block: Block,
         parent_header: &BlockHeader,
-        vm: &mut Evm,
+        vm: Evm,
     ) -> Result<(), ChainError> {
-        let (res, account_updates_list) =
-            self.execute_l2_block_pipeline(&block, parent_header, vm)?;
-
-        self.store_block(
-            block,
-            account_updates_list,
-            BlockExecutionResult {
-                receipts: res.receipts,
-                requests: vec![],
-            },
-        )
+        self._add_block_pipeline(block, parent_header, vm)
     }
 
-    pub fn add_block_pipeline(&self, block: Block) -> Result<(), ChainError> {
+    pub fn _add_block_pipeline(
+        &self,
+        block: Block,
+        parent_header: &BlockHeader,
+        vm: Evm,
+    ) -> Result<(), ChainError> {
         let (res, account_updates_list, merkle_queue_length, instants) =
-            self.execute_block_pipeline(&block)?;
+            self.execute_block_pipeline(&block, parent_header, vm)?;
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
