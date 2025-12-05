@@ -108,7 +108,8 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         address to,
         uint256 amount,
         address tokenL2,
-        address otherChainTokenL2
+        address otherChainTokenL2,
+        uint256 destGasLimit
     ) external override {
         IERC20L2 token = IERC20L2(tokenL2);
         token.crosschainBurn(msg.sender, amount);
@@ -117,7 +118,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
             ICommonBridgeL2.crosschainMintERC20,
             (tokenL1, tokenL2, otherChainTokenL2, to, amount)
         );
-        this.sendToL2(chainId, address(this), 21000 * 10, data);
+        this.sendToL2(chainId, address(this), destGasLimit, data);
     }
 
     function crosschainMintERC20(
