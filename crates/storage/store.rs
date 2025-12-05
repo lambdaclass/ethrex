@@ -850,7 +850,7 @@ impl Store {
         // - Importing blocks using `import/import-bench` commands.
         // - During tests and benchmarks.
         // So, we ignore the error if there are no receivers for this notification.
-        let _  = self.new_head_tx.send(latest_block_header);
+        let _ = self.new_head_tx.send(latest_block_header);
 
         Ok(())
     }
@@ -1386,8 +1386,7 @@ impl Store {
         self.engine.get_store_directory()
     }
 
-
-    pub fn subscribe_chain_head_update(&self) -> broadcast::Receiver<BlockHeader>{
+    pub fn subscribe_chain_head_update(&self) -> broadcast::Receiver<BlockHeader> {
         self.new_head_tx.subscribe()
     }
 }
