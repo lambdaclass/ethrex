@@ -380,7 +380,7 @@ impl SQLStore {
         .await?;
         self.store_privileged_transactions_hash_by_batch_number_in_tx(
             batch.number,
-            batch.l1_in_message_rolling_hash,
+            batch.l1_in_messages_rolling_hash,
             Some(transaction),
         )
         .await?;

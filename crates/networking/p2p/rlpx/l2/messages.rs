@@ -109,7 +109,7 @@ impl RLPxMessage for BatchSealed {
             .encode_field(&self.batch.first_block)
             .encode_field(&self.batch.last_block)
             .encode_field(&self.batch.state_root)
-            .encode_field(&self.batch.l1_in_message_rolling_hash)
+            .encode_field(&self.batch.l1_in_messages_rolling_hash)
             .encode_field(&self.batch.l2_in_message_rolling_hashes)
             .encode_field(&self.batch.l1_out_message_hashes)
             .encode_field(&self.batch.blobs_bundle.blobs)
@@ -151,7 +151,7 @@ impl RLPxMessage for BatchSealed {
             first_block,
             last_block,
             state_root,
-            l1_in_message_rolling_hash,
+            l1_in_messages_rolling_hash: l1_in_message_rolling_hash,
             l2_in_message_rolling_hashes,
             l1_out_message_hashes,
             blobs_bundle: ethrex_common::types::blobs_bundle::BlobsBundle {

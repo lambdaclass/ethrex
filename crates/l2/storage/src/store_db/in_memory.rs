@@ -339,7 +339,7 @@ impl StoreEngineRollup for Store {
 
         inner
             .privileged_transactions_hashes
-            .insert(batch.number, batch.l1_in_message_rolling_hash);
+            .insert(batch.number, batch.l1_in_messages_rolling_hash);
 
         inner
             .balance_diffs_by_batch

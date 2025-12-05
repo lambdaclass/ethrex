@@ -10,7 +10,7 @@ pub struct Batch {
     pub first_block: u64,
     pub last_block: u64,
     pub state_root: H256,
-    pub l1_in_message_rolling_hash: H256,
+    pub l1_in_messages_rolling_hash: H256,
     pub l2_in_message_rolling_hashes: Vec<(u64, H256)>,
     pub l1_out_message_hashes: Vec<H256>,
     pub balance_diffs: Vec<BalanceDiff>,

@@ -576,7 +576,7 @@ impl L1Committer {
             first_block: first_block_to_commit,
             last_block: last_block_of_batch,
             state_root: new_state_root,
-            l1_in_message_rolling_hash,
+            l1_in_messages_rolling_hash: l1_in_message_rolling_hash,
             l2_in_message_rolling_hashes,
             l1_out_message_hashes,
             balance_diffs,
@@ -1152,7 +1152,7 @@ impl L1Committer {
             Value::Uint(U256::from(batch.number)),
             Value::FixedBytes(batch.state_root.0.to_vec().into()),
             Value::FixedBytes(l1_messages_merkle_root.0.to_vec().into()),
-            Value::FixedBytes(batch.l1_in_message_rolling_hash.0.to_vec().into()),
+            Value::FixedBytes(batch.l1_in_messages_rolling_hash.0.to_vec().into()),
             Value::FixedBytes(last_block_hash.0.to_vec().into()),
         ];
 
