@@ -512,7 +512,7 @@ fn get_batch_messages_and_deposit_transactions(
         l1_in_messages.extend(get_block_l1_in_messages(txs, chain_id));
         l2_in_messages.extend(get_block_l2_in_messages(txs, chain_id));
         l1_out_messages.extend(get_block_l1_messages(receipts));
-        l2_out_messages.extend(get_block_l2_messages(receipts));
+        l2_out_messages.extend(get_block_l2_messages(receipts, chain_id));
     }
 
     Ok((

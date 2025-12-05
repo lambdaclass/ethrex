@@ -564,7 +564,12 @@ impl L1Committer {
             return Ok(None);
         };
 
+        info!("Get L2 messages: {:?}", l2_messages);
         let balance_diffs = get_balance_diffs(&l2_messages);
+        info!(
+            "Prepared balance diffs for batch {}: {:?}",
+            batch_number, balance_diffs
+        );
 
         let batch = Batch {
             number: batch_number,
@@ -728,7 +733,8 @@ impl L1Committer {
             );
             // Get block messages and privileged transactions
             let l1_out_messages = get_block_l1_messages(&receipts);
-            let l2_out_messages = get_block_l2_messages(&receipts);
+            let l2_out_messages =
+                get_block_l2_messages(&receipts, self.store.chain_config.chain_id);
             let l1_in_messages = get_block_l1_in_messages(&txs, self.store.chain_config.chain_id);
             let l2_in_messages = get_block_l2_in_messages(&txs, self.store.chain_config.chain_id);
 
@@ -911,6 +917,12 @@ impl L1Committer {
         info!(
             "Added {} privileged to the batch",
             l1_in_message_hashes.len() + l2_in_message_hashes.len()
+        );
+
+        info!(
+            "Added {} l2 in messages to the batch: {:?}",
+            acc_l2_in_messages.len(),
+            acc_l2_in_messages
         );
 
         let l1_in_message_rolling_hash =

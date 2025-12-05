@@ -75,7 +75,7 @@ pub async fn get_batch(
         .hash_no_commit();
 
     let (l1_out_message_hashes, balance_diffs) =
-        get_batch_message_hashes_and_balance_diffs(store, batch).await?;
+        get_batch_message_hashes_and_balance_diffs(store, batch, chain_id).await?;
 
     Ok(Batch {
         number: batch_number.as_u64(),
@@ -95,13 +95,14 @@ pub async fn get_batch(
 async fn get_batch_message_hashes_and_balance_diffs(
     store: &Store,
     batch: &[Block],
+    chain_id: u64,
 ) -> Result<(Vec<H256>, Vec<BalanceDiff>), UtilsError> {
     let mut l1_message_hashes = Vec::new();
     let mut l2_messages = Vec::new();
 
     for block in batch {
         let (l1_block_messages, l2_block_messages) =
-            extract_block_messages(store, block.header.number).await?;
+            extract_block_messages(store, block.header.number, chain_id).await?;
 
         for l1_msg in l1_block_messages.iter() {
             l1_message_hashes.push(get_l1_message_hash(l1_msg));
@@ -120,6 +121,7 @@ async fn get_batch_message_hashes_and_balance_diffs(
 async fn extract_block_messages(
     store: &Store,
     block_number: BlockNumber,
+    chain_id: u64,
 ) -> Result<(Vec<L1Message>, Vec<L2Message>), UtilsError> {
     let Some(block_body) = store.get_block_body(block_number).await? else {
         return Err(UtilsError::InconsistentStorage(format!(
@@ -144,6 +146,6 @@ async fn extract_block_messages(
     }
     Ok((
         get_block_l1_messages(&receipts),
-        get_block_l2_messages(&receipts),
+        get_block_l2_messages(&receipts, chain_id),
     ))
 }

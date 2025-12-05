@@ -439,7 +439,11 @@ impl L1Watcher {
 
         // TODO: On errors, we may want to try updating the rest of L2 clients.
         for l2_client in &mut self.l2_clients {
-            let (_, logs) = Self::get_privileged_transactions(
+            debug!(
+                "Fetching logs from block {}",
+                l2_client.last_block_fetched_l2
+            );
+            let (new_last_block, logs) = Self::get_privileged_transactions(
                 l2_client.last_block_fetched_l2,
                 block_delay,
                 &l2_client.eth_client,
@@ -450,6 +454,12 @@ impl L1Watcher {
             .await?;
 
             info!("Fetched {} L2 logs from L2 client", logs.len());
+
+            if logs.is_empty() {
+                // No logs, just update the last block fetched.
+                l2_client.last_block_fetched_l2 = new_last_block;
+                continue;
+            }
 
             let verified_logs =
                 filter_verified_messages(self.bridge_address, &self.eth_client, l2_client, logs)
@@ -487,18 +497,20 @@ pub async fn filter_verified_messages(
             data: rpc_log.log.data.clone(),
         };
 
-        let Some(l2_message) = L2Message::from_log(&log) else {
+        let Some(l2_message) = L2Message::from_log(&log, l2_client.chain_id) else {
             return Err(L1WatcherError::FailedToDeserializeLog(
                 "Failed to parse L2Message from log".to_owned(),
             ));
         };
 
-        info!("l2 message parsed from log");
+        info!("l2 message parsed from log: {:?}", l2_message);
 
         // If we have a reconstructed state, we don't have the transaction in our store.
         // Check if the transaction is marked as pending in the contract.
         let pending_l2_messages =
             get_pending_l2_messages(l1_client, bridge_address, l2_client.chain_id).await?;
+
+        info!("Pending l2 messages {:?}", pending_l2_messages);
 
         // TODO: refactor this.
         let mint_transaction = PrivilegedL2Transaction {
@@ -520,10 +532,12 @@ pub async fn filter_verified_messages(
             ),
         )?;
         if !pending_l2_messages.contains(&message_hash) {
+            info!("L2 message not found in pending messages: {message_hash:#x}");
             // Message not verified.
             // Given that logs are fetched in block order, we can stop here.
             break;
         }
+        info!("L2 message verified: {message_hash:#x}");
 
         verified_logs.push((l2_message, rpc_log.block_number, l2_client.chain_id));
     }

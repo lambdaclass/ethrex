@@ -21,7 +21,7 @@ contract Router is
 
     uint256[] public registeredChainIds;
 
-    mapping(address => bool) public registeredAddresses;
+    mapping(address => uint256) public registeredAddresses;
 
     function initialize(address owner) public initializer {
         OwnableUpgradeable.__Ownable_init(owner);
@@ -42,7 +42,7 @@ contract Router is
 
         bridges[chainId] = _commonBridge;
         registeredChainIds.push(chainId);
-        registeredAddresses[_commonBridge] = true;
+        registeredAddresses[_commonBridge] = chainId;
 
         emit ChainRegistered(chainId, _commonBridge);
     }
@@ -56,7 +56,7 @@ contract Router is
         address bridge = bridges[chainId];
         delete bridges[chainId];
         removeChainID(chainId);
-        registeredAddresses[bridge] = false;
+        registeredAddresses[bridge] = chainId;
 
         emit ChainDeregistered(chainId);
     }
@@ -66,7 +66,8 @@ contract Router is
         uint256 chainId,
         bytes32[] memory message_hashes
     ) public payable override {
-        if (!registeredAddresses[msg.sender]) {
+        uint256 senderChainId = registeredAddresses[msg.sender];
+        if (senderChainId == 0) {
             revert CallerNotBridge(msg.sender);
         }
         if (bridges[chainId] == address(0)) {
@@ -75,7 +76,7 @@ contract Router is
 
         ICommonBridge(bridges[chainId]).receiveFromSharedBridge{
             value: msg.value
-        }(chainId, message_hashes);
+        }(senderChainId, message_hashes);
     }
 
     function removeChainID(uint256 chainId) internal {

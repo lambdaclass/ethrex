@@ -108,6 +108,7 @@ pub async fn fill_transactions(
     let mut acc_encoded_size = context.payload.length();
     let fee_config_len = fee_config.to_vec().len();
     let chain_config = store.get_chain_config();
+    let chain_id = chain_config.chain_id;
 
     debug!("Fetching transactions from mempool");
     // Fetch mempool transactions
@@ -225,10 +226,10 @@ pub async fn fill_transactions(
             }
         };
 
-        let l2_messages = get_block_l2_messages(std::slice::from_ref(&receipt));
+        let l2_messages = get_block_l2_messages(std::slice::from_ref(&receipt), chain_id);
         let mut found_invalid_message = false;
         for msg in l2_messages {
-            if !registered_chains.contains(&msg.chain_id) {
+            if !registered_chains.contains(&msg.dest_chain_id) {
                 txs.pop();
                 context.vm.undo_last_tx()?;
                 context.remaining_gas = previous_remaining_gas;

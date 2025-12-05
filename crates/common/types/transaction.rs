@@ -1523,6 +1523,7 @@ impl PrivilegedL2Transaction {
 
         Some(crate::utils::keccak(
             [
+                &U256::from(self.chain_id).to_big_endian().as_ref(),
                 self.from.as_bytes(),
                 to.as_bytes(),
                 &nonce,

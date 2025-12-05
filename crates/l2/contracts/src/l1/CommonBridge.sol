@@ -107,6 +107,9 @@ contract CommonBridge is
     /// @notice Address of the SharedBridgeRouter contract
     address public SHARED_BRIDGE_ROUTER = address(0);
 
+    /// @notice Chain ID of the network
+    uint256 public CHAIN_ID;
+
     /// @notice Mapping of chain ID to array of pending message hashes received from that chain.
     mapping(uint256 => bytes32[]) public pendingMessagesHashesPerChain;
 
@@ -131,7 +134,8 @@ contract CommonBridge is
         address owner,
         address onChainProposer,
         uint256 inclusionMaxWait,
-        address _sharedBridgeRouter
+        address _sharedBridgeRouter,
+        uint256 chainId
     ) public initializer {
         require(
             onChainProposer != address(0),
@@ -149,6 +153,8 @@ contract CommonBridge is
 
         OwnableUpgradeable.__Ownable_init(owner);
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
+
+        CHAIN_ID = chainId;
     }
 
     /// @inheritdoc ICommonBridge
@@ -221,6 +227,7 @@ contract CommonBridge is
     function _sendToL2(address from, SendValues memory sendValues) private {
         bytes32 l2MintTxHash = keccak256(
             bytes.concat(
+                bytes32(CHAIN_ID),
                 bytes20(from),
                 bytes20(sendValues.to),
                 bytes32(transactionId),
@@ -451,7 +458,7 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function receiveFromSharedBridge(
-        uint256 chainID,
+        uint256 senderChainId,
         bytes32[] memory message_hashes
     ) public payable override {
         require(
@@ -460,7 +467,9 @@ contract CommonBridge is
         );
         // Append new hashes instead of overwriting
         for (uint i = 0; i < message_hashes.length; i++) {
-            pendingMessagesHashesPerChain[chainID].push(message_hashes[i]);
+            pendingMessagesHashesPerChain[senderChainId].push(
+                message_hashes[i]
+            );
 
             privilegedTxDeadline[message_hashes[i]] =
                 block.timestamp +
