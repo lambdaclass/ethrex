@@ -7,7 +7,8 @@ use ethrex_common::{
     U256,
     types::{Block, BlockNumber, PrivilegedL2Transaction, batch::Batch},
 };
-use ethrex_l2_common::messages::{L2Message, get_balance_diffs, get_block_l2_messages};
+
+use ethrex_l2_common::messages::{L2Message, get_balance_diffs, get_block_l2_out_messages};
 use ethrex_l2_common::privileged_transactions::{
     get_block_l1_in_messages, get_block_l2_in_messages,
 };
@@ -146,6 +147,6 @@ async fn extract_block_messages(
     }
     Ok((
         get_block_l1_messages(&receipts),
-        get_block_l2_messages(&receipts, chain_id),
+        get_block_l2_out_messages(&receipts, chain_id),
     ))
 }

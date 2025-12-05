@@ -56,7 +56,7 @@ contract Router is
         address bridge = bridges[chainId];
         delete bridges[chainId];
         removeChainID(chainId);
-        registeredAddresses[bridge] = chainId;
+        delete registeredAddresses[bridge];
 
         emit ChainDeregistered(chainId);
     }

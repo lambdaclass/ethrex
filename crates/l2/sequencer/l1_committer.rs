@@ -25,7 +25,7 @@ use ethrex_l2_common::{
     calldata::Value,
     merkle_tree::compute_merkle_root,
     messages::{
-        L2Message, get_balance_diffs, get_block_l1_messages, get_block_l2_messages,
+        L2Message, get_balance_diffs, get_block_l1_messages, get_block_l2_out_messages,
         get_l1_message_hash,
     },
     privileged_transactions::{
@@ -734,7 +734,7 @@ impl L1Committer {
             // Get block messages and privileged transactions
             let l1_out_messages = get_block_l1_messages(&receipts);
             let l2_out_messages =
-                get_block_l2_messages(&receipts, self.store.chain_config.chain_id);
+                get_block_l2_out_messages(&receipts, self.store.chain_config.chain_id);
             let l1_in_messages = get_block_l1_in_messages(&txs, self.store.chain_config.chain_id);
             let l2_in_messages = get_block_l2_in_messages(&txs, self.store.chain_config.chain_id);
 

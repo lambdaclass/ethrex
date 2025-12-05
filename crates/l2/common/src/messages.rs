@@ -109,7 +109,7 @@ pub struct L2Message {
 impl L2Message {
     pub fn encode(&self) -> Vec<u8> {
         [
-            &U256::from(self.source_chain_id).to_big_endian().as_ref(),
+            U256::from(self.source_chain_id).to_big_endian().as_ref(),
             self.from.as_bytes(),
             self.to.as_bytes(),
             &self.tx_id.to_big_endian(),
@@ -145,7 +145,7 @@ impl L2Message {
     }
 }
 
-pub fn get_block_l2_messages(receipts: &[Receipt], source_chain_id: u64) -> Vec<L2Message> {
+pub fn get_block_l2_out_messages(receipts: &[Receipt], source_chain_id: u64) -> Vec<L2Message> {
     receipts
         .iter()
         .flat_map(|receipt| {

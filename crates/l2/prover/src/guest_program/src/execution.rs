@@ -29,7 +29,7 @@ use ethrex_common::types::{
 };
 #[cfg(feature = "l2")]
 use ethrex_l2_common::{
-    messages::{L1Message, L2Message, get_block_l1_messages, get_block_l2_messages},
+    messages::{L1Message, L2Message, get_block_l1_messages, get_block_l2_out_messages},
     privileged_transactions::{PrivilegedTransactionError, compute_privileged_transactions_hash},
 };
 
@@ -512,7 +512,7 @@ fn get_batch_messages_and_deposit_transactions(
         l1_in_messages.extend(get_block_l1_in_messages(txs, chain_id));
         l2_in_messages.extend(get_block_l2_in_messages(txs, chain_id));
         l1_out_messages.extend(get_block_l1_messages(receipts));
-        l2_out_messages.extend(get_block_l2_messages(receipts, chain_id));
+        l2_out_messages.extend(get_block_l2_out_messages(receipts, chain_id));
     }
 
     Ok((
