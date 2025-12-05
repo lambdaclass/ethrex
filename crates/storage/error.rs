@@ -40,4 +40,6 @@ pub enum StoreError {
     UpdateBatchNoBlocks,
     #[error("Pivot changed")]
     PivotChanged,
+    #[error("Incompatible DB Version")]
+    IncompatibleDBVersion,
 }

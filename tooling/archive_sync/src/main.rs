@@ -738,7 +738,7 @@ pub async fn main() -> eyre::Result<()> {
     tracing::subscriber::set_global_default(FmtSubscriber::new())
         .expect("setting default subscriber failed");
     init_datadir(&args.datadir);
-    let store = open_store(&args.datadir);
+    let store = open_store(&args.datadir).expect("Failed to open Store");
     archive_sync(
         args.ipc_path,
         args.block_number,
