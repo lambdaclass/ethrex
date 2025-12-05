@@ -115,8 +115,8 @@ interface IOnChainProposer {
         bytes32[][] calldata risc0MerkleProofsList
     ) external;
 
-    // /// @notice Allows unverified batches to be reverted
-    // function revertBatch(uint256 batchNumber) external;
+    /// @notice Allows unverified batches to be reverted
+    function revertBatch(uint256 batchNumber) external;
 
     /// @notice Allows the owner to pause the contract
     function pause() external;

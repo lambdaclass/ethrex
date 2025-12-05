@@ -229,14 +229,14 @@ contract OnChainProposer is
         }
 
         for (uint256 i = 0; i < l2MessageRollingHashes.length; i++) {
-            bytes32 claimedProcessedL2Messages = ICommonBridge(BRIDGE)
+            bytes32 receivedRollingHash = l2MessageRollingHashes[i].rollingHash;
+            bytes32 expextedRollingHash = ICommonBridge(BRIDGE)
                 .getPendingL2MessagesVersionedHash(
                     l2MessageRollingHashes[i].chainId,
-                    uint16(bytes2(l2MessageRollingHashes[i].rollingHash))
+                    uint16(bytes2(receivedRollingHash))
                 );
             require(
-                claimedProcessedL2Messages ==
-                    l2MessageRollingHashes[i].rollingHash,
+                expextedRollingHash == receivedRollingHash,
                 "012" // OnChainProposer: invalid L2 message rolling hash
             );
         }
@@ -321,22 +321,14 @@ contract OnChainProposer is
             );
         }
 
-        for (
-            uint256 i = 0;
-            i < batchCommitments[batchNumber].l2InMessageRollingHashes.length;
-            i++
-        ) {
+        address batchL2InRollingHashes = batchCommitments[batchNumber]
+            .l2InMessageRollingHashes;
+        for (uint256 i = 0; i < batchL2InRollingHashes.length; i++) {
             uint16 l2_messages_count = uint16(
-                bytes2(
-                    batchCommitments[batchNumber]
-                        .l2InMessageRollingHashes[i]
-                        .rollingHash
-                )
+                bytes2(batchL2InRollingHashes[i].rollingHash)
             );
             ICommonBridge(BRIDGE).removePendingL2Messages(
-                batchCommitments[batchNumber]
-                    .l2InMessageRollingHashes[i]
-                    .chainId,
+                batchL2InRollingHashes[i].chainId,
                 l2_messages_count
             );
         }
@@ -524,18 +516,18 @@ contract OnChainProposer is
         uint256 batchNumber,
         bytes calldata publicData
     ) internal view returns (string memory) {
-        uint256 targetedChains = batchCommitments[batchNumber]
+        uint256 targetedChainsCount = batchCommitments[batchNumber]
             .balanceDiffs
             .length;
         uint256 totalMessagesCount = 0;
-        for (uint256 i = 0; i < targetedChains; i++) {
+        for (uint256 i = 0; i < targetedChainsCount; i++) {
             totalMessagesCount += batchCommitments[batchNumber]
                 .balanceDiffs[i]
                 .message_hashes
                 .length;
         }
         uint256 balanceDiffsLength = 64 *
-            targetedChains +
+            targetedChainsCount +
             totalMessagesCount *
             32;
         uint256 L2RollingHasheslength = batchCommitments[batchNumber]
@@ -598,57 +590,51 @@ contract OnChainProposer is
         }
 
         uint256 offset = 256;
-        for (uint256 i = 0; i < targetedChains; i++) {
-            uint256 targetChainId = uint256(
+        for (uint256 i = 0; i < targetedChainsCount; i++) {
+            uint256 verifiedChainId = uint256(
                 bytes32(publicData[offset:offset + 32])
             );
-            uint256 value = uint256(
+            uint256 verifiedValue = uint256(
                 bytes32(publicData[offset + 32:offset + 64])
             );
-            uint256 messagesCount = batchCommitments[batchNumber]
+            uint256 messageHashes = batchCommitments[batchNumber]
                 .balanceDiffs[i]
-                .message_hashes
-                .length;
+                .message_hashes;
             if (
                 batchCommitments[batchNumber].balanceDiffs[i].chainId !=
-                targetChainId ||
-                batchCommitments[batchNumber].balanceDiffs[i].value != value
+                verifiedChainId ||
+                batchCommitments[batchNumber].balanceDiffs[i].value !=
+                verifiedValue
             ) {
                 return "00x"; // balance diffs public inputs don't match with committed balance diffs
             }
-            for (uint256 j = 0; j < messagesCount; j++) {
-                bytes32 messageHash = bytes32(
+            for (uint256 j = 0; j < messageHashes.length; j++) {
+                bytes32 verifiedMessageHash = bytes32(
                     publicData[offset + 64 + j * 32:offset + 64 + (j + 1) * 32]
                 );
-                if (
-                    batchCommitments[batchNumber]
-                        .balanceDiffs[i]
-                        .message_hashes[j] != messageHash
-                ) {
+                if (messageHashes[j] != verifiedMessageHash) {
                     return "00y"; // message hash public inputs don't match with committed message hashes
                 }
             }
 
             offset += 64 + messagesCount * 32;
         }
-        for (
-            uint256 k = 0;
-            k < batchCommitments[batchNumber].l2InMessageRollingHashes.length;
-            k++
-        ) {
-            uint256 sourceChainId = uint256(
+        uint256 batchL2RollingHashesCount = batchCommitments[batchNumber]
+            .l2InMessageRollingHashes
+            .length;
+        for (uint256 k = 0; k < batchL2RollingHashesCount; k++) {
+            uint256 verifiedChainId = uint256(
                 bytes32(publicData[offset:offset + 32])
             );
-            bytes32 rollingHash = bytes32(publicData[offset + 32:offset + 64]);
+            bytes32 verifiedRollingHash = bytes32(
+                publicData[offset + 32:offset + 64]
+            );
+            ICommonBridge.L2MessageRollingHash committedRollingHash = batchCommitments[
+                    batchNumber
+                ].l2InMessageRollingHashes[k];
             if (
-                batchCommitments[batchNumber]
-                    .l2InMessageRollingHashes[k]
-                    .chainId !=
-                sourceChainId ||
-                batchCommitments[batchNumber]
-                    .l2InMessageRollingHashes[k]
-                    .rollingHash !=
-                rollingHash
+                committedRollingHash.chainId != verifiedChainId ||
+                committedRollingHash.rollingHash != verifiedRollingHash
             ) {
                 return "00z"; // L2 in message rolling hash public inputs don't match with committed L2 in message rolling hashes
             }
