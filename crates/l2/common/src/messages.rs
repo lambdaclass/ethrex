@@ -163,20 +163,22 @@ pub fn get_block_l2_out_messages(receipts: &[Receipt], source_chain_id: u64) -> 
 }
 
 pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
-    let mut acc: BTreeMap<U256, BalanceDiff> = BTreeMap::new();
-    for m in messages {
-        let mut value = m.value;
-        if m.to == BRIDGE_ADDRESS && m.from == BRIDGE_ADDRESS {
-            // avoud adding the value twice
+    let mut balance_diffs: BTreeMap<U256, BalanceDiff> = BTreeMap::new();
+    for message in messages {
+        let mut value = message.value;
+        if message.to == BRIDGE_ADDRESS && message.from == BRIDGE_ADDRESS {
+            // This is the mint transaction, ignore the value
             value = U256::zero();
         }
-        let entry = acc.entry(m.dest_chain_id).or_insert(BalanceDiff {
-            chain_id: m.dest_chain_id,
-            value: U256::zero(),
-            message_hashes: Vec::new(),
-        });
+        let entry = balance_diffs
+            .entry(message.dest_chain_id)
+            .or_insert(BalanceDiff {
+                chain_id: message.dest_chain_id,
+                value: U256::zero(),
+                message_hashes: Vec::new(),
+            });
         entry.value += value;
-        entry.message_hashes.push(get_l2_message_hash(m));
+        entry.message_hashes.push(get_l2_message_hash(message));
     }
-    acc.into_values().collect()
+    balance_diffs.into_values().collect()
 }
