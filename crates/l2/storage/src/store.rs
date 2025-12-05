@@ -106,7 +106,7 @@ impl Store {
         self.engine.get_balance_diffs_by_batch(batch_number).await
     }
 
-    pub async fn get_privileged_transactions_hash_by_batch(
+    pub async fn get_l1_in_messages_rolling_hash_by_batch_number(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError> {
@@ -228,8 +228,8 @@ impl Store {
             .await?
             .unwrap_or_default();
 
-        let l1_in_message_rolling_hash = self
-            .get_privileged_transactions_hash_by_batch(batch_number)
+        let l1_in_messages_rolling_hash = self
+            .get_l1_in_messages_rolling_hash_by_batch_number(batch_number)
             .await?.ok_or(RollupStoreError::Custom(
             "Failed while trying to retrieve the deposit logs hash of a known batch. This is a bug."
                 .to_owned(),
@@ -254,7 +254,7 @@ impl Store {
             state_root,
             blobs_bundle,
             l1_out_message_hashes,
-            l1_in_messages_rolling_hash: l1_in_message_rolling_hash,
+            l1_in_messages_rolling_hash: l1_in_messages_rolling_hash,
             l2_in_message_rolling_hashes,
             balance_diffs,
             commit_tx,

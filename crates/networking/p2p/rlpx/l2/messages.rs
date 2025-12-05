@@ -132,8 +132,8 @@ impl RLPxMessage for BatchSealed {
         let (first_block, decoder) = decoder.decode_field("first_block")?;
         let (last_block, decoder) = decoder.decode_field("last_block")?;
         let (state_root, decoder) = decoder.decode_field("state_root")?;
-        let (l1_in_message_rolling_hash, decoder) =
-            decoder.decode_field("l1_in_message_rolling_hash")?;
+        let (l1_in_messages_rolling_hash, decoder) =
+            decoder.decode_field("l1_in_messages_rolling_hash")?;
         let (l2_in_message_rolling_hashes, decoder) =
             decoder.decode_field("l2_in_message_rolling_hashes")?;
         let (l1_out_message_hashes, decoder) = decoder.decode_field("l1_out_message_hashes")?;
@@ -151,7 +151,7 @@ impl RLPxMessage for BatchSealed {
             first_block,
             last_block,
             state_root,
-            l1_in_messages_rolling_hash: l1_in_message_rolling_hash,
+            l1_in_messages_rolling_hash: l1_in_messages_rolling_hash,
             l2_in_message_rolling_hashes,
             l1_out_message_hashes,
             blobs_bundle: ethrex_common::types::blobs_bundle::BlobsBundle {

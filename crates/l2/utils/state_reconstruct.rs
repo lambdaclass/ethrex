@@ -37,7 +37,7 @@ pub async fn get_batch(
         .iter()
         .filter_map(|tx| tx.get_privileged_hash())
         .collect();
-    let l1_in_message_rolling_hash = compute_privileged_transactions_hash(l1_in_messages_hashes)?;
+    let l1_in_messages_rolling_hash = compute_privileged_transactions_hash(l1_in_messages_hashes)?;
 
     let l2_in_messages: Vec<PrivilegedL2Transaction> = batch
         .iter()
@@ -83,7 +83,7 @@ pub async fn get_batch(
         first_block: first_block.header.number,
         last_block: last_block.header.number,
         state_root: new_state_root,
-        l1_in_messages_rolling_hash: l1_in_message_rolling_hash,
+        l1_in_messages_rolling_hash: l1_in_messages_rolling_hash,
         l2_in_message_rolling_hashes,
         l1_out_message_hashes,
         blobs_bundle,

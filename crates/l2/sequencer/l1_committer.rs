@@ -555,7 +555,7 @@ impl L1Committer {
             new_state_root,
             l1_out_message_hashes,
             l2_messages,
-            l1_in_message_rolling_hash,
+            l1_in_messages_rolling_hash,
             l2_in_message_rolling_hashes,
             last_block_of_batch,
         )) = result
@@ -576,7 +576,7 @@ impl L1Committer {
             first_block: first_block_to_commit,
             last_block: last_block_of_batch,
             state_root: new_state_root,
-            l1_in_messages_rolling_hash: l1_in_message_rolling_hash,
+            l1_in_messages_rolling_hash: l1_in_messages_rolling_hash,
             l2_in_message_rolling_hashes,
             l1_out_message_hashes,
             balance_diffs,
@@ -925,7 +925,7 @@ impl L1Committer {
             acc_l2_in_messages
         );
 
-        let l1_in_message_rolling_hash =
+        let l1_in_messages_rolling_hash =
             compute_privileged_transactions_hash(l1_in_message_hashes)?;
         let mut l2_in_message_rolling_hashes = Vec::new();
         for (chain_id, hashes) in &l2_in_message_hashes {
@@ -950,14 +950,14 @@ impl L1Committer {
             )
             .await?;
 
-        info!("L1 in rolling hash: {l1_in_message_rolling_hash:#x}");
+        info!("L1 in rolling hash: {l1_in_messages_rolling_hash:#x}");
 
         Ok(Some((
             blobs_bundle,
             new_state_root,
             l1_out_message_hashes,
             acc_l2_out_messages,
-            l1_in_message_rolling_hash,
+            l1_in_messages_rolling_hash,
             l2_in_message_rolling_hashes,
             last_added_block_number,
         )))
