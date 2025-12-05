@@ -66,7 +66,6 @@ interface IOnChainProposer {
         uint256 batchNumber,
         bytes32 newStateRoot,
         bytes32 withdrawalsLogsMerkleRoot,
-        bytes32 l2MessagesMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash,
         ICommonBridge.BalanceDiff[] calldata balanceDiffs,

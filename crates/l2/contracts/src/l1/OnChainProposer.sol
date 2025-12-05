@@ -321,8 +321,9 @@ contract OnChainProposer is
             );
         }
 
-        address batchL2InRollingHashes = batchCommitments[batchNumber]
-            .l2InMessageRollingHashes;
+        ICommonBridge.L2MessageRollingHash[]
+            memory batchL2InRollingHashes = batchCommitments[batchNumber]
+                .l2InMessageRollingHashes;
         for (uint256 i = 0; i < batchL2InRollingHashes.length; i++) {
             uint16 l2_messages_count = uint16(
                 bytes2(batchL2InRollingHashes[i].rollingHash)
@@ -597,7 +598,7 @@ contract OnChainProposer is
             uint256 verifiedValue = uint256(
                 bytes32(publicData[offset + 32:offset + 64])
             );
-            uint256 messageHashes = batchCommitments[batchNumber]
+            bytes32[] memory messageHashes = batchCommitments[batchNumber]
                 .balanceDiffs[i]
                 .message_hashes;
             if (
@@ -617,7 +618,7 @@ contract OnChainProposer is
                 }
             }
 
-            offset += 64 + messagesCount * 32;
+            offset += 64 + messageHashes.length * 32;
         }
         uint256 batchL2RollingHashesCount = batchCommitments[batchNumber]
             .l2InMessageRollingHashes
@@ -629,9 +630,9 @@ contract OnChainProposer is
             bytes32 verifiedRollingHash = bytes32(
                 publicData[offset + 32:offset + 64]
             );
-            ICommonBridge.L2MessageRollingHash committedRollingHash = batchCommitments[
-                    batchNumber
-                ].l2InMessageRollingHashes[k];
+            ICommonBridge.L2MessageRollingHash
+                memory committedRollingHash = batchCommitments[batchNumber]
+                    .l2InMessageRollingHashes[k];
             if (
                 committedRollingHash.chainId != verifiedChainId ||
                 committedRollingHash.rollingHash != verifiedRollingHash
