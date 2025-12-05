@@ -1,3 +1,5 @@
+#[cfg(feature = "l2")]
+use ethrex_common::types::balance_diff::BalanceDiff;
 use ethrex_common::{H256, U256};
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +31,7 @@ pub struct ProgramOutput {
     pub l2messages_merkle_root: H256,
     #[cfg(feature = "l2")]
     /// balance diffs for each chain id
-    pub balance_diffs: Vec<(U256, U256)>, // (chain_id, balance_diff)
+    pub balance_diffs: Vec<BalanceDiff>,
 }
 
 impl ProgramOutput {
@@ -50,10 +52,22 @@ impl ProgramOutput {
             self.l2messages_merkle_root.to_fixed_bytes(),
         ]
         .concat();
+
         #[cfg(feature = "l2")]
-        for (chain_id, balance_diff) in &self.balance_diffs {
-            encoded.extend_from_slice(&chain_id.to_big_endian());
-            encoded.extend_from_slice(&balance_diff.to_big_endian());
+        {
+            for balance_diff in &self.balance_diffs {
+                encoded.extend_from_slice(&balance_diff.chain_id.to_big_endian());
+                for value_per_token in &balance_diff.value_per_token {
+                    encoded.extend_from_slice(&[0u8; 12]);
+                    encoded.extend_from_slice(&value_per_token.token_l1.to_fixed_bytes());
+                    encoded.extend_from_slice(&[0u8; 12]);
+                    encoded.extend_from_slice(&value_per_token.token_l2.to_fixed_bytes());
+                    encoded.extend_from_slice(&[0u8; 12]);
+                    encoded
+                        .extend_from_slice(&value_per_token.other_chain_token_l2.to_fixed_bytes());
+                    encoded.extend_from_slice(&value_per_token.value.to_big_endian());
+                }
+            }
         }
         encoded
     }

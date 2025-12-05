@@ -17,6 +17,20 @@ interface IRouter {
     /// @param chainId The ID of the destination chain.
     function sendMessage(uint256 chainId) external payable;
 
+    /// @notice Sends a ERC20 token message to a specified chain via its CommonBridge.
+    /// @param senderChainId The ID of the source chain.
+    /// @param chainId The ID of the destination chain.
+    /// @param tokenL1 The address of the ERC20 L1 token to send.
+    /// @param otherChainTokenL2 The address of the ERC20 token on the other chain.
+    /// @param amount The amount of the ERC20 L1 token to send.
+    function sendERC20Message(
+        uint256 senderChainId,
+        uint256 chainId,
+        address tokenL1,
+        address otherChainTokenL2,
+        uint256 amount
+    ) external payable;
+
     /// @notice Verifies a message from a specified chain via its CommonBridge.
     /// @param chainId The ID of the source chain.
     /// @param l2MessageBatchNumber The batch number where the L2 message was emitted.
@@ -37,7 +51,6 @@ interface IRouter {
     /// @notice Emitted when a chain is deregistered.
     /// @param chainId The ID of the deregistered chain.
     event ChainDeregistered(uint256 indexed chainId);
-
 
     /// @notice Emitted when a message is sent to a chain that is not registered.
     /// @param chainId The ID of the chain that is not registered.

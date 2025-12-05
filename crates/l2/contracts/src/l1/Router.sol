@@ -5,6 +5,8 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IRouter} from "./interfaces/IRouter.sol";
 import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 
@@ -17,6 +19,7 @@ contract Router is
     Ownable2StepUpgradeable,
     PausableUpgradeable
 {
+    using SafeERC20 for IERC20;
     mapping(uint256 chainId => address bridge) public bridges;
 
     uint256[] public registeredChainIds;
@@ -61,7 +64,32 @@ contract Router is
         if (bridges[chainId] == address(0)) {
             emit TransferToChainNotRegistered(chainId);
         } else {
-            ICommonBridge(bridges[chainId]).receiveFromSharedBridge{value: msg.value}();
+            ICommonBridge(bridges[chainId]).receiveFromSharedBridge{
+                value: msg.value
+            }();
+        }
+    }
+
+    /// @inheritdoc IRouter
+    function sendERC20Message(
+        uint256 senderChainId,
+        uint256 chainId,
+        address tokenL1,
+        address otherChainTokenL2,
+        uint256 amount
+    ) public payable override {
+        if (bridges[senderChainId] != msg.sender) {
+            revert("Router: invalid sender, not authorized");
+        }
+        if (bridges[chainId] == address(0)) {
+            emit TransferToChainNotRegistered(chainId);
+        } else {
+            ICommonBridge(bridges[chainId]).receiveERC20FromSharedBridge(
+                tokenL1,
+                otherChainTokenL2,
+                amount
+            );
+            IERC20(tokenL1).safeTransfer(bridges[chainId], amount);
         }
     }
 
@@ -87,7 +115,9 @@ contract Router is
     function removeChainID(uint256 chainId) internal {
         for (uint i = 0; i < registeredChainIds.length; i++) {
             if (registeredChainIds[i] == chainId) {
-                registeredChainIds[i] = registeredChainIds[registeredChainIds.length - 1];
+                registeredChainIds[i] = registeredChainIds[
+                    registeredChainIds.length - 1
+                ];
                 registeredChainIds.pop();
                 return;
             }
