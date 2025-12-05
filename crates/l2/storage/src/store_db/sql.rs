@@ -211,10 +211,10 @@ impl SQLStore {
         self.execute_in_tx(queries, db_tx).await
     }
 
-    async fn store_privileged_transactions_hash_by_batch_number_in_tx(
+    async fn store_l1_in_messages_hash_by_batch_number_in_tx(
         &self,
         batch_number: u64,
-        privileged_transactions_hash: H256,
+        l1_in_messages_hash: H256,
         db_tx: Option<&Transaction>,
     ) -> Result<(), RollupStoreError> {
         let queries = vec![
@@ -226,7 +226,7 @@ impl SQLStore {
                 "INSERT INTO privileged_transactions VALUES (?1, ?2)",
                 (
                     batch_number,
-                    Vec::from(privileged_transactions_hash.to_fixed_bytes()),
+                    Vec::from(l1_in_messages_hash.to_fixed_bytes()),
                 )
                     .into_params()?,
             ),
@@ -378,7 +378,7 @@ impl SQLStore {
             Some(transaction),
         )
         .await?;
-        self.store_privileged_transactions_hash_by_batch_number_in_tx(
+        self.store_l1_in_messages_hash_by_batch_number_in_tx(
             batch.number,
             batch.l1_in_messages_rolling_hash,
             Some(transaction),
@@ -527,7 +527,6 @@ impl StoreEngineRollup for SQLStore {
         }
     }
 
-    // TODO: review
     async fn get_l2_in_message_rolling_hashes_by_batch(
         &self,
         batch_number: u64,

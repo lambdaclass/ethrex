@@ -254,7 +254,7 @@ impl Store {
             state_root,
             blobs_bundle,
             l1_out_message_hashes,
-            l1_in_messages_rolling_hash: l1_in_messages_rolling_hash,
+            l1_in_messages_rolling_hash,
             l2_in_message_rolling_hashes,
             balance_diffs,
             commit_tx,

@@ -30,7 +30,7 @@ struct StoreInner {
     /// Map of batch number to block numbers
     block_numbers_by_batch: HashMap<u64, Vec<BlockNumber>>,
     /// Map of batch number to deposit logs hash
-    privileged_transactions_hashes: HashMap<u64, H256>,
+    l1_in_messages_rolling_hashes: HashMap<u64, H256>,
     /// Map of batch number to L2 in message rolling hashes
     l2_in_message_rolling_hashes: HashMap<u64, Vec<(u64, H256)>>,
     /// Map of batch number to state root
@@ -120,7 +120,7 @@ impl StoreEngineRollup for Store {
     ) -> Result<Option<H256>, RollupStoreError> {
         Ok(self
             .inner()?
-            .privileged_transactions_hashes
+            .l1_in_messages_rolling_hashes
             .get(&batch_number)
             .cloned())
     }
@@ -313,7 +313,7 @@ impl StoreEngineRollup for Store {
             .block_numbers_by_batch
             .retain(|batch, _| *batch <= batch_number);
         store
-            .privileged_transactions_hashes
+            .l1_in_messages_rolling_hashes
             .retain(|batch, _| *batch <= batch_number);
         store.state_roots.retain(|batch, _| *batch <= batch_number);
         store.blobs.retain(|batch, _| *batch <= batch_number);
@@ -338,7 +338,7 @@ impl StoreEngineRollup for Store {
             .insert(batch.number, batch.l1_out_message_hashes);
 
         inner
-            .privileged_transactions_hashes
+            .l1_in_messages_rolling_hashes
             .insert(batch.number, batch.l1_in_messages_rolling_hash);
 
         inner

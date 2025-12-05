@@ -151,7 +151,7 @@ impl RLPxMessage for BatchSealed {
             first_block,
             last_block,
             state_root,
-            l1_in_messages_rolling_hash: l1_in_messages_rolling_hash,
+            l1_in_messages_rolling_hash,
             l2_in_message_rolling_hashes,
             l1_out_message_hashes,
             blobs_bundle: ethrex_common::types::blobs_bundle::BlobsBundle {
