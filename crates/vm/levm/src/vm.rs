@@ -24,12 +24,12 @@ use ethrex_common::{
 };
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet},
     mem,
     rc::Rc,
 };
 
-pub type Storage = HashMap<U256, H256>;
+pub type Storage = BTreeMap<U256, H256>;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub enum VMType {
@@ -45,10 +45,10 @@ pub enum VMType {
 pub struct Substate {
     parent: Option<Box<Self>>,
 
-    selfdestruct_set: HashSet<Address>,
-    accessed_addresses: HashSet<Address>,
+    selfdestruct_set: BTreeSet<Address>,
+    accessed_addresses: BTreeSet<Address>,
     accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
-    created_accounts: HashSet<Address>,
+    created_accounts: BTreeSet<Address>,
     pub refunded_gas: u64,
     transient_storage: TransientStorage,
     logs: Vec<Log>,
@@ -56,16 +56,16 @@ pub struct Substate {
 
 impl Substate {
     pub fn from_accesses(
-        accessed_addresses: HashSet<Address>,
+        accessed_addresses: BTreeSet<Address>,
         accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
     ) -> Self {
         Self {
             parent: None,
 
-            selfdestruct_set: HashSet::new(),
+            selfdestruct_set: BTreeSet::new(),
             accessed_addresses,
             accessed_storage_slots,
-            created_accounts: HashSet::new(),
+            created_accounts: BTreeSet::new(),
             refunded_gas: 0,
             transient_storage: TransientStorage::new(),
             logs: Vec::new(),
@@ -116,7 +116,7 @@ impl Substate {
     pub fn iter_selfdestruct(&self) -> impl Iterator<Item = &Address> {
         struct Iter<'a> {
             parent: Option<&'a Substate>,
-            iter: std::collections::hash_set::Iter<'a, Address>,
+            iter: std::collections::btree_set::Iter<'a, Address>,
         }
 
         impl<'a> Iterator for Iter<'a> {
@@ -550,7 +550,7 @@ impl Substate {
     /// Initializes the VM substate, mainly adding addresses to the "accessed_addresses" field and the same with storage slots
     pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
-        let mut initial_accessed_addresses = HashSet::new();
+        let mut initial_accessed_addresses = BTreeSet::new();
         let mut initial_accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>> = BTreeMap::new();
 
         // Add Tx sender to accessed accounts
