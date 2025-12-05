@@ -473,7 +473,7 @@ impl LEVM {
     ) -> Result<(), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let block_header = &block.header;
-        let fork = chain_config.fork(block_header.timestamp);
+        let fork = chain_config.get_fork(block_header.timestamp);
 
         // TODO: I don't like deciding the behavior based on the VMType here.
         if let VMType::L2(_) = vm_type {
@@ -585,7 +585,7 @@ pub fn extract_all_requests_levm(
     }
 
     let chain_config = db.store.get_chain_config()?;
-    let fork = chain_config.fork(header.timestamp);
+    let fork = chain_config.get_fork(header.timestamp);
 
     if fork < Fork::Prague {
         return Ok(Default::default());

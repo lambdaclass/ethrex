@@ -19,9 +19,9 @@ use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
     AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code,
-    EIP4844Transaction, Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root,
-    validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
-    validate_pre_cancun_header_fields,
+    EIP4844Transaction, Fork::*, Receipt, Transaction, WrappedEIP4844Transaction,
+    compute_receipts_root, validate_block_header, validate_cancun_header_fields,
+    validate_prague_header_fields, validate_pre_cancun_header_fields,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
@@ -1513,7 +1513,7 @@ impl Blockchain {
         // NOTE: We could add a tx size limit here, but it's not in the actual spec
 
         // Check init code size
-        if config.is_shanghai_activated(header.timestamp)
+        if config.is_fork_activated(Shanghai, header.timestamp)
             && tx.is_contract_creation()
             && tx.data().len() > MAX_INITCODE_SIZE as usize
         {
@@ -1524,7 +1524,8 @@ impl Blockchain {
             return Err(MempoolError::TxMaxDataSizeError);
         }
 
-        if config.is_osaka_activated(header.timestamp) && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
+        if config.is_fork_activated(Osaka, header.timestamp)
+            && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
         {
             // https://eips.ethereum.org/EIPS/eip-7825
             return Err(MempoolError::TxMaxGasLimitExceededError(
@@ -1658,7 +1659,7 @@ impl Blockchain {
             .storage
             .get_block_header(latest_block_number)?
             .ok_or(StoreError::Custom("Latest block not in DB".to_string()))?;
-        Ok(chain_config.fork(latest_block.timestamp))
+        Ok(chain_config.get_fork(latest_block.timestamp))
     }
 }
 
@@ -1681,7 +1682,7 @@ pub fn validate_requests_hash(
     chain_config: &ChainConfig,
     requests: &[Requests],
 ) -> Result<(), ChainError> {
-    if !chain_config.is_prague_activated(header.timestamp) {
+    if !chain_config.is_fork_activated(Prague, header.timestamp) {
         return Ok(());
     }
 
@@ -1771,7 +1772,7 @@ pub fn validate_block(
     validate_block_header(&block.header, parent_header, elasticity_multiplier)
         .map_err(InvalidBlockError::from)?;
 
-    if chain_config.is_osaka_activated(block.header.timestamp) {
+    if chain_config.is_fork_activated(Osaka, block.header.timestamp) {
         let block_rlp_size = block.length();
         if block_rlp_size > MAX_RLP_BLOCK_SIZE as usize {
             return Err(error::ChainError::InvalidBlock(
@@ -1782,14 +1783,14 @@ pub fn validate_block(
             ));
         }
     }
-    if chain_config.is_prague_activated(block.header.timestamp) {
+    if chain_config.is_fork_activated(Prague, block.header.timestamp) {
         validate_prague_header_fields(&block.header, parent_header, chain_config)
             .map_err(InvalidBlockError::from)?;
         verify_blob_gas_usage(block, chain_config)?;
-        if chain_config.is_osaka_activated(block.header.timestamp) {
+        if chain_config.is_fork_activated(Osaka, block.header.timestamp) {
             verify_transaction_max_gas_limit(block)?;
         }
-    } else if chain_config.is_cancun_activated(block.header.timestamp) {
+    } else if chain_config.is_fork_activated(Cancun, block.header.timestamp) {
         validate_cancun_header_fields(&block.header, parent_header, chain_config)
             .map_err(InvalidBlockError::from)?;
         verify_blob_gas_usage(block, chain_config)?;
@@ -1831,7 +1832,7 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
     let mut blob_gas_used = 0_u32;
     let mut blobs_in_block = 0_u32;
     let max_blob_number_per_block = config
-        .get_fork_blob_schedule(block.header.timestamp)
+        .get_blob_schedule_for_time(block.header.timestamp)
         .map(|schedule| schedule.max)
         .ok_or(ChainError::Custom("Provided block fork is invalid".into()))?;
     let max_blob_gas_per_block = max_blob_number_per_block * GAS_PER_BLOB;
