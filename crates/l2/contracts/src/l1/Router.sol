@@ -64,27 +64,27 @@ contract Router is
     /// @inheritdoc IRouter
     function sendMessages(
         uint256 chainId,
-        bytes32[] memory message_hashes
+        bytes32[] calldata message_hashes
     ) public payable override {
         uint256 senderChainId = registeredAddresses[msg.sender];
         if (senderChainId == 0) {
             revert CallerNotBridge(msg.sender);
         }
-        if (bridges[chainId] == address(0)) {
+        address receiverBridge = bridges[chainId];
+        if (receiverBridge == address(0)) {
             revert TransferToChainNotRegistered(chainId);
         }
 
-        ICommonBridge(bridges[chainId]).receiveFromSharedBridge{
-            value: msg.value
-        }(senderChainId, message_hashes);
+        ICommonBridge(receiverBridge).receiveFromSharedBridge{value: msg.value}(
+            senderChainId,
+            message_hashes
+        );
     }
 
     function removeChainID(uint256 chainId) internal {
         for (uint i = 0; i < registeredChainIds.length; i++) {
             if (registeredChainIds[i] == chainId) {
-                registeredChainIds[i] = registeredChainIds[
-                    registeredChainIds.length - 1
-                ];
+                registeredChainIds[i] = registeredChainIds[registeredChainIds.length - 1];
                 registeredChainIds.pop();
                 return;
             }

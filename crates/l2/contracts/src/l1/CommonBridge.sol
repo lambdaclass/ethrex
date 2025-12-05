@@ -176,7 +176,7 @@ contract CommonBridge is
         uint256 chainId
     ) public view returns (bytes32[] memory) {
         uint256 pendingMessageIndex = pendingMessagesIndexPerChain[chainId];
-        bytes32[] storage pendingMessagesHashes = pendingMessagesHashesPerChain[
+        bytes32[] memory pendingMessagesHashes = pendingMessagesHashesPerChain[
             chainId
         ];
         bytes32[] memory buffer = new bytes32[](
@@ -401,7 +401,7 @@ contract CommonBridge is
             uint256 chainId = registeredChainIDs[i];
             uint256 pendingMessageIndex = pendingMessagesIndexPerChain[chainId];
             bytes32[]
-                storage pendingMessagesHashes = pendingMessagesHashesPerChain[
+                memory pendingMessagesHashes = pendingMessagesHashesPerChain[
                     chainId
                 ];
             if (pendingMessageIndex < pendingMessagesHashes.length) {
@@ -459,7 +459,7 @@ contract CommonBridge is
     /// @inheritdoc ICommonBridge
     function receiveFromSharedBridge(
         uint256 senderChainId,
-        bytes32[] memory message_hashes
+        bytes32[] calldata message_hashes
     ) public payable override {
         require(
             msg.sender == SHARED_BRIDGE_ROUTER,
