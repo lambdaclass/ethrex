@@ -225,7 +225,6 @@ impl Store {
         db_options.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
         db_options.set_advise_random_on_open(false);
         db_options.set_compression_type(rocksdb::DBCompressionType::None);
-        db_options.set_bottommost_compression_type(rocksdb::DBCompressionType::None);
 
         // db_options.enable_statistics();
         // db_options.set_stats_dump_period_sec(600);
@@ -249,6 +248,14 @@ impl Store {
             CF_ACCOUNT_FLATKEYVALUE,
             CF_STORAGE_FLATKEYVALUE,
             CF_MISC_VALUES,
+        ];
+        let compressible_cfs = [
+            CF_BLOCK_NUMBERS,
+            CF_HEADERS,
+            CF_BODIES,
+            CF_RECEIPTS,
+            CF_TRANSACTION_LOCATIONS,
+            CF_FULLSYNC_HEADERS,
         ];
 
         // Get existing column families to know which ones to drop later
@@ -287,7 +294,12 @@ impl Store {
             cf_opts.set_level_zero_file_num_compaction_trigger(4);
             cf_opts.set_level_zero_slowdown_writes_trigger(20);
             cf_opts.set_level_zero_stop_writes_trigger(36);
-            cf_opts.set_compression_type(rocksdb::DBCompressionType::None);
+
+            if compressible_cfs.contains(&cf_name.as_str()) {
+                cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+            } else {
+                cf_opts.set_compression_type(rocksdb::DBCompressionType::None);
+            }
 
             match cf_name.as_str() {
                 CF_HEADERS | CF_BODIES => {
