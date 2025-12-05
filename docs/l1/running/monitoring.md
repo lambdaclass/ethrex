@@ -30,6 +30,8 @@ _**Note:** You might want to restart the docker containers in case of an update 
 
 This will launch Prometheus and Grafana, already set up to scrape ethrex metrics.
 
+**Note: We depend on `ethereum-metrics-exporter` for some key metrics to define variables on the Grafana dashboards. For it to work properly we need the consensus client to expose its RPC endpoints. For example if you are running lighthhouse you may need to add `--http` and `--http-address 0.0.0.0` flags to it before the dashboards pick up all metrics. This wont be needed in the near future**
+
 ## Logs
 
 Ethrex logs are written to stdout by default. To enable file logging, you must specify the `--log.dir` argument, with this you'll be able to have Promtail collect the logs and send them to Grafana Loki for log visualization.
