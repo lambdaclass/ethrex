@@ -112,12 +112,14 @@ interface ICommonBridgeL2 {
     /// @param amount The amount of tokens to transfer.
     /// @param tokenL2 The address of the ERC20 token on this L2 chain.
     /// @param otherChainTokenL2 The address of the ERC20 token on the destination L2 chain.
+    /// @param destGasLimit The gas limit for the destination chain execution.
     function transferERC20(
         uint256 chainId,
         address to,
         uint256 amount,
         address tokenL2,
-        address otherChainTokenL2
+        address otherChainTokenL2,
+        uint256 destGasLimit
     ) external;
 
     /// @notice Sends an arbitrary message to the another chain.
