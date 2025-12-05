@@ -105,7 +105,7 @@
 - [CLI reference](./CLI.md)
 - [Release Process](./developers/release-process/README.md)
   - [Overview](./developers/release-process/release-process.md)
-  - [Release checklist](./developers/release-process/release-checklist.md)
+  - [Release checklist](./developers/release-process/pre-release-checklist.md)
 - [Troubleshooting]()
 
 # Roadmap
