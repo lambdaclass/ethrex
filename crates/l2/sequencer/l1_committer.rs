@@ -564,12 +564,7 @@ impl L1Committer {
             return Ok(None);
         };
 
-        info!("Get L2 messages: {:?}", l2_messages);
         let balance_diffs = get_balance_diffs(&l2_messages);
-        info!(
-            "Prepared balance diffs for batch {}: {:?}",
-            batch_number, balance_diffs
-        );
 
         let batch = Batch {
             number: batch_number,
