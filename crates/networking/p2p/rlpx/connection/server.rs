@@ -332,10 +332,9 @@ impl GenServer for PeerConnectionServer {
                         %message,
                         "Received incoming message",
                     );
-                    let message_type = message.to_string();
                     #[cfg(feature = "metrics")]
                     let result = ethrex_metrics::p2p::record_p2p_message_duration(
-                        &message_type,
+                        &message.to_string(),
                         handle_incoming_message(established_state, message),
                     )
                     .await;
