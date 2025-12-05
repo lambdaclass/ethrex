@@ -1084,6 +1084,14 @@ impl Blockchain {
     }
 
     pub fn add_block_pipeline(&self, block: Block) -> Result<(), ChainError> {
+        self.add_block_pipeline_with_fee_config(block, None)
+    }
+
+    pub fn add_block_pipeline_with_fee_config(
+        &self,
+        block: Block,
+        fee_config: Option<FeeConfig>,
+    ) -> Result<(), ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -1092,28 +1100,10 @@ impl Blockchain {
         };
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone());
-        let vm = self.new_evm(vm_db)?;
+        let vm = self.new_evm_with_fee_config(vm_db, fee_config)?;
 
-        self._add_block_pipeline(block, &parent_header, vm)
-    }
-
-    pub fn add_l2_block_pipeline(
-        &self,
-        block: Block,
-        parent_header: &BlockHeader,
-        vm: Evm,
-    ) -> Result<(), ChainError> {
-        self._add_block_pipeline(block, parent_header, vm)
-    }
-
-    pub fn _add_block_pipeline(
-        &self,
-        block: Block,
-        parent_header: &BlockHeader,
-        vm: Evm,
-    ) -> Result<(), ChainError> {
         let (res, account_updates_list, merkle_queue_length, instants) =
-            self.execute_block_pipeline(&block, parent_header, vm)?;
+            self.execute_block_pipeline(&block, &parent_header, vm)?;
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -1671,6 +1661,14 @@ impl Blockchain {
         new_evm(&self.options.r#type, vm_db)
     }
 
+    pub fn new_evm_with_fee_config(
+        &self,
+        vm_db: StoreVmDatabase,
+        fee_config: Option<FeeConfig>,
+    ) -> Result<Evm, EvmError> {
+        new_evm_with_fee_config(&self.options.r#type, vm_db, fee_config)
+    }
+
     /// Get the current fork of the chain, based on the latest block's timestamp
     pub async fn current_fork(&self) -> Result<Fork, StoreError> {
         let chain_config = self.storage.get_chain_config();
@@ -1684,13 +1682,25 @@ impl Blockchain {
 }
 
 pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
+    new_evm_with_fee_config(blockchain_type, vm_db, None)
+}
+
+pub fn new_evm_with_fee_config(
+    blockchain_type: &BlockchainType,
+    vm_db: StoreVmDatabase,
+    fee_config: Option<FeeConfig>,
+) -> Result<Evm, EvmError> {
     let evm = match blockchain_type {
         BlockchainType::L1 => Evm::new_for_l1(vm_db),
         BlockchainType::L2(l2_config) => {
-            let fee_config = *l2_config
-                .fee_config
-                .read()
-                .map_err(|_| EvmError::Custom("Fee config lock was poisoned".to_string()))?;
+            let fee_config = if let Some(fee_config) = fee_config {
+                fee_config
+            } else {
+                *l2_config
+                    .fee_config
+                    .read()
+                    .map_err(|_| EvmError::Custom("Fee config lock was poisoned".to_string()))?
+            };
             Evm::new_for_l2(vm_db, fee_config)?
         }
     };

@@ -11,7 +11,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_blockchain::{
-    Blockchain, BlockchainOptions, BlockchainType, L2Config, error::ChainError, vm::StoreVmDatabase,
+    Blockchain, BlockchainOptions, BlockchainType, L2Config, error::ChainError,
 };
 use ethrex_common::{
     Address, H256, U256,
@@ -50,7 +50,7 @@ use ethrex_rpc::{
 use ethrex_storage::EngineType;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::{BlockExecutionResult, Evm};
+use ethrex_vm::BlockExecutionResult;
 use rand::Rng;
 use serde::Serialize;
 use std::{
@@ -414,15 +414,11 @@ impl L1Committer {
         let (one_time_checkpoint_path, one_time_checkpoint_store, one_time_checkpoint_blockchain) =
             self.generate_one_time_checkpoint(batch.number).await?;
 
-        self.execute_batch_to_generate_checkpoint(
-            batch,
-            one_time_checkpoint_store.clone(),
-            one_time_checkpoint_blockchain,
-        )
-        .await
-        .inspect_err(|_| {
-            let _ = self.remove_one_time_checkpoint(&one_time_checkpoint_path);
-        })?;
+        self.execute_batch_to_generate_checkpoint(batch, one_time_checkpoint_blockchain)
+            .await
+            .inspect_err(|_| {
+                let _ = self.remove_one_time_checkpoint(&one_time_checkpoint_path);
+            })?;
 
         // Create the next checkpoint from the one-time checkpoint used
         let new_checkpoint_path = self
@@ -444,7 +440,6 @@ impl L1Committer {
     async fn execute_batch_to_generate_checkpoint(
         &self,
         batch: &Batch,
-        one_time_checkpoint_store: Store,
         one_time_checkpoint_blockchain: Arc<Blockchain>,
     ) -> Result<(), CommitterError> {
         info!("Generating missing checkpoint for batch {}", batch.number);
@@ -463,23 +458,8 @@ impl L1Committer {
                 "FeeConfig not found for witness generation".to_string(),
             ))?;
 
-            let parent_header = self
-                .store
-                .get_block_header_by_hash(block.header.parent_hash)?
-                .ok_or(CommitterError::ChainError(ChainError::ParentNotFound))?;
-
-            // Here we use the checkpoint store because we need the previous
-            // state available (i.e. not pruned) for re-execution.
-            let vm_db =
-                StoreVmDatabase::new(one_time_checkpoint_store.clone(), parent_header.clone());
-
-            let vm = Evm::new_for_l2(vm_db, *fee_config)?;
-
-            one_time_checkpoint_blockchain.add_l2_block_pipeline(
-                block.clone(),
-                &parent_header,
-                vm,
-            )?;
+            one_time_checkpoint_blockchain
+                .add_block_pipeline_with_fee_config(block.clone(), Some(*fee_config))?;
         }
 
         Ok(())
@@ -739,14 +719,6 @@ impl L1Committer {
                     "Could not find execution cache result for block {}, falling back to re-execution",
                     last_added_block_number + 1
                 );
-                let parent_header = self
-                    .store
-                    .get_block_header_by_hash(potential_batch_block.header.parent_hash)?
-                    .ok_or(CommitterError::ChainError(ChainError::ParentNotFound))?;
-
-                // Here we use the checkpoint store because we need the previous
-                // state available (i.e. not pruned) for re-execution.
-                let vm_db = StoreVmDatabase::new(checkpoint_store.clone(), parent_header.clone());
 
                 let fee_config = self
                     .rollup_store
@@ -756,12 +728,9 @@ impl L1Committer {
                         "Failed to get fee config for re-execution".to_owned(),
                     ))?;
 
-                let vm = Evm::new_for_l2(vm_db, fee_config)?;
-
-                checkpoint_blockchain.add_l2_block_pipeline(
+                checkpoint_blockchain.add_block_pipeline_with_fee_config(
                     potential_batch_block.clone(),
-                    &parent_header,
-                    vm,
+                    Some(fee_config),
                 )?
             };
 
