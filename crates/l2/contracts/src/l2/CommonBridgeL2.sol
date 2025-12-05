@@ -128,7 +128,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         address to,
         uint256 amount
     ) external onlySelf {
-        this.mintERC20(tokenL1, otherChainTokenL2, to, amount);
+        this.tryMintERC20(tokenL1, otherChainTokenL2, to, amount);
     }
 
     /// @inheritdoc ICommonBridgeL2
