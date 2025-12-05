@@ -50,9 +50,10 @@ pub enum ProofData {
     BatchRequest { commit_hash: String },
 
     /// 4.
-    /// The Server responds with an InvalidCodeVersion if the code version is not compatible.
-    /// The Client should then update its code to match the server's version.
-    InvalidCodeVersion { commit_hash: String },
+    /// The Server responds with a NoBatchForVersion if the code version is not the same as the one
+    /// generated in the batch.
+    /// The Client can only prove bathces of its own version.
+    NoBatchForVersion { commit_hash: String },
 
     /// 5.
     /// The Server responds with a BatchResponse containing the ProverInputData.
@@ -95,9 +96,9 @@ impl ProofData {
         ProofData::BatchRequest { commit_hash }
     }
 
-    /// Builder function for creating a InvalidCodeVersion
-    pub fn invalid_code_version(commit_hash: String) -> Self {
-        ProofData::InvalidCodeVersion { commit_hash }
+    /// Builder function for creating a NoBatchForVersion
+    pub fn no_batch_for_version(commit_hash: String) -> Self {
+        ProofData::NoBatchForVersion { commit_hash }
     }
 
     /// Builder function for creating a BatchResponse
@@ -251,15 +252,10 @@ impl ProofCoordinator {
         let batch_to_prove = 1 + self.rollup_store.get_latest_sent_batch_proof().await?;
 
         if commit_hash != self.git_commit_hash {
-            error!(
-                "Code version mismatch: expected {}, got {}",
+            debug!(
+                "Mismatch on prover version. Expected: {}, got: {}. Looking for batches left to prove",
                 self.git_commit_hash, commit_hash
             );
-
-            let response = ProofData::invalid_code_version(self.git_commit_hash.clone());
-            send_response(stream, &response).await?;
-            info!("InvalidCodeVersion sent");
-            return Ok(());
         }
 
         let mut all_proofs_exist = true;
@@ -282,13 +278,13 @@ impl ProofCoordinator {
             } else {
                 let Some(input) = self
                     .rollup_store
-                    .get_prover_input_by_batch_and_version(batch_to_prove, &self.git_commit_hash)
+                    .get_prover_input_by_batch_and_version(batch_to_prove, &commit_hash)
                     .await?
                 else {
-                    return Err(ProofCoordinatorError::MissingBatchProverInput(
-                        batch_to_prove,
-                        self.git_commit_hash.clone(),
-                    ));
+                    let response = ProofData::no_batch_for_version(commit_hash);
+                    send_response(stream, &response).await?;
+                    info!("No batch for version sent");
+                    return Ok(());
                 };
                 debug!("Sending BatchResponse for block_number: {batch_to_prove}");
                 let format = if self.aligned {
