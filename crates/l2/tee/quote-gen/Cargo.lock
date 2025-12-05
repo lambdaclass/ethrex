@@ -2447,7 +2447,6 @@ version = "7.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "bincode",
  "bytes",
  "ethereum-types 0.15.1",
  "ethrex-common",
@@ -2462,6 +2461,7 @@ dependencies = [
  "serde 1.0.228",
  "serde_json",
  "thiserror 2.0.16",
+ "tokio",
  "tracing",
 ]
 

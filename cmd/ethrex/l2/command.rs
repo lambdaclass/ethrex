@@ -526,7 +526,7 @@ impl Command {
                     // Create checkpoint
                     let checkpoint_path =
                         store_path.join(format!("checkpoint_batch_{batch_number}"));
-                    store.create_checkpoint(&checkpoint_path).await?;
+                    store.create_checkpoint(&checkpoint_path)?;
 
                     info!("Sealed batch {batch_number}.");
                 }
