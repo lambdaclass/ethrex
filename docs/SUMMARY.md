@@ -21,7 +21,7 @@
   - [Metrics]()
   - [Logs]()
   - [Security]()
-  - [Databases]()
+  - [Databases](./l1/fundamentals/databases.md)
   - [Networking](./l1/fundamentals/networking.md)
   - [Sync modes](./l1/fundamentals/sync_modes.md)
   - [Snap sync internals](./internal/l1/healing.md)
