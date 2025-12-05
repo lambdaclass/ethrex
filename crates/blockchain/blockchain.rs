@@ -28,11 +28,13 @@ use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H160, H256, TrieLogger};
 use ethrex_metrics::metrics;
+use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
+use ethrex_trie::node::{BranchNode, ExtensionNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
@@ -432,20 +434,34 @@ impl Blockchain {
             state_updates_map.extend(worker_result.state_updates);
         }
 
-        if real_root.choices.iter().filter(|c| c.is_valid()).count() < 2 {
-            // On most chains, there's no way to go from a branch root node to a leaf or extension.
-            // There are exceptions in networks engineered to trigger this case, but it's
-            // not expected in normal operation.
-            //
-            // Example: network starts with a single account in genesis, transfers to other addresses,
-            // generating more subtries, then deploys a contract which self-destructs in each of those
-            // addresses, reverting back to the base case.
-            //
-            // TODO(#5387): support this case
-            todo!("real root has less than 2 valid subtries after merkleization");
-        }
-        let root_node = real_root.encode_to_vec();
-        let state_trie_hash = keccak(&root_node);
+        // Turn the root back into an extension or leaf if applicable
+        let root_node_opt = {
+            let children = real_root
+                .choices
+                .iter()
+                .filter(|child| child.is_valid())
+                // No need to check all of them
+                .take(2)
+                .count();
+
+            match children {
+                0 | 1 => collapse_root_node(
+                    real_root,
+                    &mut state_updates_map,
+                    &self.storage,
+                    parent_header,
+                )?,
+                // More than one child. Keep as branch
+                _ => Some(Node::Branch(real_root)),
+            }
+        };
+
+        let (state_trie_hash, root_node) = if let Some(root_node) = &root_node_opt {
+            let encoded_root_node = root_node.encode_to_vec();
+            (keccak(&encoded_root_node), encoded_root_node)
+        } else {
+            (*EMPTY_TRIE_HASH, vec![RLP_NULL])
+        };
         state_updates_map.insert(Nibbles::default(), root_node);
         let state_updates = state_updates_map.into_iter().collect();
         let storage_updates = storage_updates_map
@@ -1870,6 +1886,58 @@ fn verify_transaction_max_gas_limit(block: &Block) -> Result<(), ChainError> {
 /// Calculates the blob gas required by a transaction
 pub fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
     GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u32
+}
+
+/// Collapses a root branch node into an extension or leaf node if it has only one valid child.
+/// Returns None if there are no valid children.
+///
+/// NOTE: this assumes the branch has 0 or 1 children. If there are more than 1,
+/// it will discard all but the first valid child found.
+#[cold]
+fn collapse_root_node(
+    real_root: Box<BranchNode>,
+    state_updates_map: &mut FxHashMap<Nibbles, Vec<u8>>,
+    storage: &Store,
+    parent_header: &BlockHeader,
+) -> Result<Option<Node>, StoreError> {
+    // Collapse the branch into an extension or leaf
+    let Some((choice, only_child)) = real_root
+        .choices
+        .into_iter()
+        .enumerate()
+        .find(|(_, c)| c.is_valid())
+    else {
+        return Ok(None);
+    };
+    let path = Nibbles::from_hex(vec![choice as u8]);
+    let child_bytes = match state_updates_map.get(&path) {
+        Some(v) => v.clone(),
+        None => storage
+            .state_trie(parent_header.hash())?
+            .ok_or(StoreError::MissingStore)?
+            .db()
+            .get(path)?
+            .ok_or_else(|| StoreError::Custom("Missing child node during root collapse".into()))?,
+    };
+    // Same match as in [`BranchNode::remove`]
+    let child = match Node::decode(&child_bytes)? {
+        // Replace root with an extension node leading to the child
+        Node::Branch(_) => {
+            ExtensionNode::new(Nibbles::from_hex(vec![choice as u8]), only_child).into()
+        }
+        // Replace root with the child extension node, updating its path in the process
+        Node::Extension(mut extension_node) => {
+            let mut extension_node = extension_node.take();
+            extension_node.prefix.prepend(choice as u8);
+            extension_node.into()
+        }
+        Node::Leaf(mut leaf) => {
+            let mut leaf = leaf.take();
+            leaf.partial.prepend(choice as u8);
+            leaf.into()
+        }
+    };
+    Ok(Some(child))
 }
 
 #[cfg(test)]
