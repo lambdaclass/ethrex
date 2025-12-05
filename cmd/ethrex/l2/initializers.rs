@@ -118,7 +118,12 @@ fn init_metrics(opts: &L1Options, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-pub fn init_tracing(opts: &L2Options) -> Option<reload::Handle<EnvFilter, Registry>> {
+pub fn init_tracing(
+    opts: &L2Options,
+) -> (
+    Option<reload::Handle<EnvFilter, Registry>>,
+    Option<tracing_appender::non_blocking::WorkerGuard>,
+) {
     if !opts.sequencer_opts.no_monitor {
         let level_filter = EnvFilter::builder()
             .parse_lossy("debug,tower_http::trace=debug,reqwest_tracing=off,hyper=off,libsql=off,ethrex::initializers=off,ethrex::l2::initializers=off,ethrex::l2::command=off");
@@ -130,9 +135,10 @@ pub fn init_tracing(opts: &L2Options) -> Option<reload::Handle<EnvFilter, Regist
         tui_logger::init_logger(LevelFilter::max()).expect("Failed to initialize tui_logger");
 
         // Monitor already registers all log levels
-        None
+        (None, None)
     } else {
-        Some(initializers::init_tracing(&opts.node_opts))
+        let (handle, guard) = initializers::init_tracing(&opts.node_opts);
+        (Some(handle), guard)
     }
 }
 

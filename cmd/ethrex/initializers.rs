@@ -48,7 +48,12 @@ const _: () = {
     compile_error!("Database feature must be enabled (Available: `rocksdb`).");
 };
 
-pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
+pub fn init_tracing(
+    opts: &Options,
+) -> (
+    reload::Handle<EnvFilter, Registry>,
+    Option<tracing_appender::non_blocking::WorkerGuard>,
+) {
     let log_filter = EnvFilter::builder()
         .with_default_directive(Directive::from(opts.log_level))
         .from_env_lossy();
@@ -66,16 +71,45 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
 
     let fmt_layer = fmt::layer()
         .with_target(include_target)
-        .with_ansi(use_color)
-        .with_filter(filter);
+        .with_ansi(use_color);
+
+    let (file_layer, guard) = if let Some(log_dir) = &opts.log_dir {
+        if !log_dir.exists() {
+            std::fs::create_dir_all(log_dir).expect("Failed to create log directory");
+        }
+
+        let branch = env!("VERGEN_GIT_BRANCH").replace('/', "-");
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let log_file = log_dir.join(format!("ethrex_{}_{}.log", branch, timestamp));
+
+        let file = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(log_file)
+            .expect("Failed to open log file");
+
+        let (non_blocking, guard) = tracing_appender::non_blocking(file);
+        let file_layer = fmt::layer()
+            .with_target(include_target)
+            .with_ansi(false)
+            .with_writer(non_blocking);
+        (Some(file_layer), Some(guard))
+    } else {
+        (None, None)
+    };
 
     let profiling_layer = opts.metrics_enabled.then_some(FunctionProfilingLayer);
 
-    let subscriber = Registry::default().with(fmt_layer).with(profiling_layer);
+    let subscriber = Registry::default()
+        .with(fmt_layer.and_then(file_layer).with_filter(filter))
+        .with(profiling_layer);
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
-    filter_handle
+    (filter_handle, guard)
 }
 
 pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
