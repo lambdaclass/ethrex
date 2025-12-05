@@ -841,6 +841,10 @@ pub fn bn254_g1_mul(g1: G1, scalar: U256) -> Result<Bytes, VMError> {
     let scalar =
         Fr::from_slice(&scalar.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?;
 
+    #[allow(
+        clippy::arithmetic_side_effects,
+        reason = "G1 scalar multiplication doesn't overflow, intermediate operations that could overflow should be handled correctly by the library"
+    )]
     let result = g1 * scalar;
 
     let mut x_bytes = [0u8; 32];
