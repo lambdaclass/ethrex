@@ -1401,6 +1401,7 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overr
 </li>
 </ol>
 <p>This will launch Prometheus and Grafana, already set up to scrape ethrex metrics.</p>
+<p><strong>Note: We depend on <code>ethereum-metrics-exporter</code> for some key metrics to define variables on the Grafana dashboards. For it to work properly we need the consensus client to expose its RPC endpoints. For example if you are running lighthhouse you may need to add <code>--http</code> and <code>--http-address 0.0.0.0</code> flags to it before the dashboards pick up all metrics. This wont be needed in the near future</strong></p>
 <h2 id="accessing-metrics-and-dashboards"><a class="header" href="#accessing-metrics-and-dashboards">Accessing Metrics and Dashboards</a></h2>
 <ul>
 <li><strong>Prometheus:</strong> <a href="http://localhost:9091">http://localhost:9091</a></li>
@@ -9100,6 +9101,24 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overr
 <h3 id="engine-and-rpc-errors--by-method-and-kind"><a class="header" href="#engine-and-rpc-errors--by-method-and-kind">Engine and RPC Errors % by Method and Kind</a></h3>
 <p>Deaggregated view of error percentages split by method and error kind for both Engine and RPC APIs. The % are calculated against total requests for a particular method, so all different error percentage for a method should sum up to the percentage of errors for that method.</p>
 <p><img src="developers/l1/img/engine_and_rpc_errors_by_method_and_kind.png" alt="Engine and RPC Errors % by Method and Kind" /></p>
+<h2 id="peer-info"><a class="header" href="#peer-info">Peer Info</a></h2>
+<p>Collapsed row providing visibility into the P2P networking layer. Surfaces peer counts, client distribution, and disconnection events to help diagnose connectivity issues and monitor network health. Each panel repeats per instance to compare behaviour across nodes.</p>
+<p><img src="developers/l1/img/peer_info_row.png" alt="Peer Info row" /></p>
+<h3 id="peer-count"><a class="header" href="#peer-count">Peer Count</a></h3>
+<p>Timeseries showing the number of connected peers over time. Useful for detecting connectivity issues or confirming that the node is maintaining a healthy peer set.</p>
+<p><img src="developers/l1/img/peer_count.png" alt="Peer Count" /></p>
+<h3 id="peer-clients-distribution"><a class="header" href="#peer-clients-distribution">Peer Clients Distribution</a></h3>
+<p>Pie chart breaking down connected peers by client type (e.g., Geth, Nethermind, Besu). Helps understand the diversity of the peer set and spot any client-specific connectivity patterns.</p>
+<p><img src="developers/l1/img/peer_clients_distribution.png" alt="Peer Clients Distribution" /></p>
+<h3 id="peer-clients"><a class="header" href="#peer-clients">Peer Clients</a></h3>
+<p>Timeseries view of peer counts by client type over time. Useful for tracking how the peer composition evolves and detecting sudden drops in connections to specific client types.</p>
+<p><img src="developers/l1/img/peer_clients.png" alt="Peer Clients" /></p>
+<h3 id="peer-disconnection-events"><a class="header" href="#peer-disconnection-events">Peer Disconnection Events</a></h3>
+<p>Bar chart showing disconnection events grouped by reason. Helps identify patterns in peer churn and diagnose whether disconnections are due to protocol errors, timeouts, or other causes.</p>
+<p><img src="developers/l1/img/peer_disconnection_events.png" alt="Peer Disconnection Events" /></p>
+<h3 id="disconnections-details"><a class="header" href="#disconnections-details">Disconnections Details</a></h3>
+<p>Table providing a detailed breakdown of disconnections by client type and reason over the selected time range. Useful for investigating which clients are disconnecting most frequently and why.</p>
+<p><img src="developers/l1/img/disconnections_details.png" alt="Disconnections Details" /></p>
 <h2 id="process-and-server-info"><a class="header" href="#process-and-server-info">Process and server info</a></h2>
 <p>Row panels showing process-level and host-level metrics to help you monitor resource usage and spot potential issues.</p>
 <p><img src="developers/l1/img/process_and_server_info_row.png" alt="Process &amp; Server info row" /></p>

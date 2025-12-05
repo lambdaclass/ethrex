@@ -265,6 +265,7 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overr
 </li>
 </ol>
 <p>This will launch Prometheus and Grafana, already set up to scrape ethrex metrics.</p>
+<p><strong>Note: We depend on <code>ethereum-metrics-exporter</code> for some key metrics to define variables on the Grafana dashboards. For it to work properly we need the consensus client to expose its RPC endpoints. For example if you are running lighthhouse you may need to add <code>--http</code> and <code>--http-address 0.0.0.0</code> flags to it before the dashboards pick up all metrics. This wont be needed in the near future</strong></p>
 <h2 id="accessing-metrics-and-dashboards"><a class="header" href="#accessing-metrics-and-dashboards">Accessing Metrics and Dashboards</a></h2>
 <ul>
 <li><strong>Prometheus:</strong> <a href="http://localhost:9091">http://localhost:9091</a></li>
