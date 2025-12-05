@@ -248,9 +248,12 @@ impl DiscoveryServer {
 
     async fn lookup(&mut self) -> Result<(), DiscoveryServerError> {
         if let Some(contact) = self.peer_table.get_contact_for_lookup().await? {
-            if self.udp_socket.send_to(&self.find_node_message, &contact.node.udp_addr()).await.inspect_err(
-                |e| error!(sending = "FindNode", addr = ?&contact.node.udp_addr(), err=?e, "Error sending message"),
-            ).is_err() {
+            if let Err(e) = self
+                .udp_socket
+                .send_to(&self.find_node_message, &contact.node.udp_addr())
+                .await
+            {
+                error!(sending = "FindNode", addr = ?&contact.node.udp_addr(), err=?e, "Error sending message");
                 self.peer_table
                     .set_disposable(&contact.node.node_id())
                     .await?;
@@ -286,24 +289,6 @@ impl DiscoveryServer {
     }
 
     async fn send_ping(&mut self, node: &Node) -> Result<(), DiscoveryServerError> {
-        match self.send_ping_internal(node).await {
-            Ok(ping_hash) => {
-                METRICS.record_ping_sent().await;
-                self.peer_table
-                    .record_ping_sent(&node.node_id(), ping_hash)
-                    .await?;
-            }
-            Err(err) => {
-                error!(sent = "Ping", to = %format!("{:#x}", node.public_key), err = ?err, "Error sending message");
-                self.peer_table.set_disposable(&node.node_id()).await?;
-                METRICS.record_new_discarded_node().await;
-            }
-        }
-        Ok(())
-    }
-
-    async fn send_ping_internal(&self, node: &Node) -> Result<H256, DiscoveryServerError> {
-        let mut buf = Vec::new();
         // TODO: Parametrize this expiration.
         let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
         let from = Endpoint {
@@ -318,14 +303,13 @@ impl DiscoveryServer {
         };
         let enr_seq = self.local_node_record.seq;
         let ping = Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(enr_seq));
-        ping.encode_with_header(&mut buf, &self.signer);
-        let ping_hash: [u8; 32] = buf[..32]
-            .try_into()
-            .expect("first 32 bytes are the message hash");
-        // We do not use self.send() here, as we already encoded the message to calculate hash.
-        self.udp_socket.send_to(&buf, node.udp_addr()).await?;
+        let ping_hash = self.send_else_dispose(ping, node).await?;
         trace!(sent = "Ping", to = %format!("{:#x}", node.public_key));
-        Ok(H256::from(ping_hash))
+        METRICS.record_ping_sent().await;
+        self.peer_table
+            .record_ping_sent(&node.node_id(), ping_hash)
+            .await?;
+        Ok(())
     }
 
     async fn send_pong(&self, ping_hash: H256, node: &Node) -> Result<(), DiscoveryServerError> {
@@ -370,25 +354,10 @@ impl DiscoveryServer {
         let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
         let enr_request = Message::ENRRequest(ENRRequestMessage { expiration });
 
-        let mut buf = Vec::new();
-        enr_request.encode_with_header(&mut buf, &self.signer);
-        let enr_request_hash: [u8; 32] = buf[..32]
-            .try_into()
-            .expect("first 32 bytes are the message hash");
-
-        if self.udp_socket.send_to(&buf, node.udp_addr())
-                .await
-                .inspect_err( |e| error!(sending = "ENRRequest", addr = ?node.udp_addr(), to = %format!("{:#x}", node.public_key), err=?e, "Error sending message"),)
-                .is_err()
-            {
-                self.peer_table
-                    .set_disposable(&node.node_id())
-                    .await?;
-                METRICS.record_new_discarded_node().await;
-            }
+        let enr_request_hash = self.send_else_dispose(enr_request, node).await?;
 
         self.peer_table
-            .record_enr_request_sent(&node.node_id(), H256::from(enr_request_hash))
+            .record_enr_request_sent(&node.node_id(), enr_request_hash)
             .await?;
         Ok(())
     }
@@ -672,6 +641,24 @@ impl DiscoveryServer {
         Ok(self.udp_socket.send_to(&buf, addr).await.inspect_err(
             |e| error!(sending = ?message, addr = ?addr, err=?e, "Error sending message"),
         )?)
+    }
+
+    async fn send_else_dispose(
+        &mut self,
+        message: Message,
+        node: &Node,
+    ) -> Result<H256, DiscoveryServerError> {
+        let mut buf = BytesMut::new();
+        message.encode_with_header(&mut buf, &self.signer);
+        let message_hash: [u8; 32] = buf[..32]
+            .try_into()
+            .expect("first 32 bytes are the message hash");
+        if let Err(e) = self.udp_socket.send_to(&buf, node.udp_addr()).await {
+            error!(sending = ?message, addr = ?node.udp_addr(), to = ?node.node_id(), err=?e, "Error sending message");
+            self.peer_table.set_disposable(&node.node_id()).await?;
+            METRICS.record_new_discarded_node().await;
+        }
+        Ok(H256::from(message_hash))
     }
 }
 
