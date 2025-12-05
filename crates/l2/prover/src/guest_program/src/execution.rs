@@ -265,7 +265,7 @@ pub fn stateless_validation_l1(
         #[cfg(feature = "l2")]
         l1_out_messages_merkle_root: H256::zero(),
         #[cfg(feature = "l2")]
-        l1_in_message_hash: H256::zero(),
+        l1_in_messages_rolling_hash: H256::zero(),
         #[cfg(feature = "l2")]
         l2_in_message_rolling_hashes: Vec::new(),
         #[cfg(feature = "l2")]
@@ -330,7 +330,7 @@ pub fn stateless_validation_l2(
         initial_state_hash,
         final_state_hash,
         l1_out_messages_merkle_root,
-        l1_in_message_hash,
+        l1_in_messages_rolling_hash: l1_in_message_hash,
         l2_in_message_rolling_hashes,
         blob_versioned_hash,
         last_block_hash,
