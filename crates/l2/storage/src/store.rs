@@ -111,7 +111,7 @@ impl Store {
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError> {
         self.engine
-            .get_privileged_transactions_hash_by_batch_number(batch_number)
+            .get_l1_in_message_rolling_hash_by_batch_number(batch_number)
             .await
     }
 

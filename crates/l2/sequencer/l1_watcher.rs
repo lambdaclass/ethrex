@@ -505,7 +505,6 @@ pub async fn filter_verified_messages(
 
         info!("l2 message parsed from log: {:?}", l2_message);
 
-        // If we have a reconstructed state, we don't have the transaction in our store.
         // Check if the transaction is marked as pending in the contract.
         let pending_l2_messages =
             get_pending_l2_messages(l1_client, bridge_address, l2_client.chain_id).await?;

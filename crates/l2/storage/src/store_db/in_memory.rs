@@ -114,7 +114,7 @@ impl StoreEngineRollup for Store {
         Ok(block_numbers)
     }
 
-    async fn get_privileged_transactions_hash_by_batch_number(
+    async fn get_l1_in_message_rolling_hash_by_batch_number(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError> {

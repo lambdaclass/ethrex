@@ -544,7 +544,7 @@ fn compute_messages_and_deposit_transactions_digests(
         .map_err(StatelessExecutionError::PrivilegedTransactionError)?;
 
     // We need to guarantee that the rolling hashes are computed in the same order
-    // both in the prover and in the committer.
+    // both in the prover and committer.
     let mut l2_in_hashes_per_chain_id = BTreeMap::new();
 
     for tx in l2_in_messages {
