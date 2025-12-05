@@ -44,7 +44,7 @@ fn main() {
         false,
         None,
         &[&contracts_path],
-        some(50),
+        Some(50),
     )
     .expect("failed to compile ERC1967Proxy contract");
 
