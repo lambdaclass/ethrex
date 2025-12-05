@@ -1096,12 +1096,12 @@ impl L1Committer {
                 let per_token: Vec<Value> = d
                     .value_per_token
                     .iter()
-                    .map(|(token_l1, token_l2, other_chain_token_l2, value)| {
+                    .map(|value_per_token| {
                         Value::Tuple(vec![
-                            Value::Address(*token_l1),
-                            Value::Address(*token_l2),
-                            Value::Address(*other_chain_token_l2),
-                            Value::Uint(*value),
+                            Value::Address(value_per_token.token_l1),
+                            Value::Address(value_per_token.token_l2),
+                            Value::Address(value_per_token.other_chain_token_l2),
+                            Value::Uint(value_per_token.value),
                         ])
                     })
                     .collect();

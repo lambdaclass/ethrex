@@ -4,10 +4,10 @@ use tokio::sync::Mutex;
 use crate::{RollupStoreError, api::StoreEngineRollup};
 use ethereum_types::U256;
 use ethrex_common::{
-    Address, H256,
+    H256,
     types::{
-        AccountUpdate, Blob, BlockNumber, balance_diff::BalanceDiff, batch::Batch,
-        fee_config::FeeConfig,
+        AccountUpdate, Blob, BlockNumber, balance_diff::BalanceDiff, balance_diff::ValuePerToken,
+        batch::Batch, fee_config::FeeConfig,
     },
 };
 use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
@@ -510,7 +510,7 @@ impl StoreEngineRollup for SQLStore {
             .await?;
         while let Some(row) = rows.next().await? {
             let chain_id = U256::from_big_endian(&read_from_row_blob(&row, 1)?);
-            let value_per_token: Vec<(Address, Address, Address, U256)> =
+            let value_per_token: Vec<ValuePerToken> =
                 bincode::deserialize(&read_from_row_blob(&row, 2)?).map_err(|e| {
                     RollupStoreError::Custom(format!(
                         "Failed to deserialize balance diff value_per_token: {e}"

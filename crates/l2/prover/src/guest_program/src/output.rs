@@ -57,16 +57,15 @@ impl ProgramOutput {
         {
             for balance_diff in &self.balance_diffs {
                 encoded.extend_from_slice(&balance_diff.chain_id.to_big_endian());
-                for &(token_l1, token_l2, other_chain_token_l2, amount) in
-                    &balance_diff.value_per_token
-                {
+                for value_per_token in &balance_diff.value_per_token {
                     encoded.extend_from_slice(&[0u8; 12]);
-                    encoded.extend_from_slice(&token_l1.to_fixed_bytes());
+                    encoded.extend_from_slice(&value_per_token.token_l1.to_fixed_bytes());
                     encoded.extend_from_slice(&[0u8; 12]);
-                    encoded.extend_from_slice(&token_l2.to_fixed_bytes());
+                    encoded.extend_from_slice(&value_per_token.token_l2.to_fixed_bytes());
                     encoded.extend_from_slice(&[0u8; 12]);
-                    encoded.extend_from_slice(&other_chain_token_l2.to_fixed_bytes());
-                    encoded.extend_from_slice(&amount.to_big_endian());
+                    encoded
+                        .extend_from_slice(&value_per_token.other_chain_token_l2.to_fixed_bytes());
+                    encoded.extend_from_slice(&value_per_token.value.to_big_endian());
                 }
             }
         }

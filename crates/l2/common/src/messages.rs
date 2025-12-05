@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256};
-use ethrex_common::types::balance_diff::BalanceDiff;
+use ethrex_common::types::balance_diff::{BalanceDiff, ValuePerToken};
 use ethrex_common::utils::keccak;
 use ethrex_common::{H160, U256, types::Receipt};
 
@@ -179,8 +179,7 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
             continue;
         }
         let mut offset = 4;
-        let (token_l1, token_l2, other_chain_token_l2, value) = if let Some(selector) =
-            message.data.get(..4)
+        let value_per_token_decoded = if let Some(selector) = message.data.get(..4)
             && *selector == *CROSSCHAIN_MINT_ERC20_SELECTOR
         {
             let Some(token_l1) = message.data.get(offset + 12..offset + 32) else {
@@ -199,19 +198,19 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
             let Some(value_bytes) = message.data.get(offset..offset + 32) else {
                 continue;
             };
-            (
-                Address::from_slice(token_l1),
-                Address::from_slice(token_l2),
-                Address::from_slice(other_chain_token_l2),
-                U256::from_big_endian(value_bytes),
-            )
+            ValuePerToken {
+                token_l1: Address::from_slice(token_l1),
+                token_l2: Address::from_slice(token_l2),
+                other_chain_token_l2: Address::from_slice(other_chain_token_l2),
+                value: U256::from_big_endian(value_bytes),
+            }
         } else {
-            (
-                Address::zero(),
-                Address::zero(),
-                Address::zero(),
-                message.value,
-            )
+            ValuePerToken {
+                token_l1: Address::zero(),
+                token_l2: Address::zero(),
+                other_chain_token_l2: Address::zero(),
+                value: message.value,
+            }
         };
         let entry = balance_diffs
             .entry(message.chain_id)
@@ -220,17 +219,24 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
                 value_per_token: Vec::new(),
             });
         let mut found = false;
-        for (t1, t2, oct2, v) in &mut entry.value_per_token {
-            if *t1 == token_l1 && *t2 == token_l2 && *oct2 == other_chain_token_l2 {
-                *v += value;
+        for value_per_token in &mut entry.value_per_token {
+            if value_per_token.token_l1 == value_per_token_decoded.token_l1
+                && value_per_token.token_l2 == value_per_token_decoded.token_l2
+                && value_per_token.other_chain_token_l2
+                    == value_per_token_decoded.other_chain_token_l2
+            {
+                value_per_token.value += value_per_token_decoded.value;
                 found = true;
                 break;
             }
         }
         if !found {
-            entry
-                .value_per_token
-                .push((token_l1, token_l2, other_chain_token_l2, value));
+            entry.value_per_token.push(ValuePerToken {
+                token_l1: value_per_token_decoded.token_l1,
+                token_l2: value_per_token_decoded.token_l2,
+                other_chain_token_l2: value_per_token_decoded.other_chain_token_l2,
+                value: value_per_token_decoded.value,
+            });
         }
     }
     balance_diffs.into_values().collect()
