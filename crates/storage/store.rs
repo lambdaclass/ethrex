@@ -1,3 +1,5 @@
+#[cfg(feature = "canopydb")]
+use crate::backend::canopydb::CanopyDBBackend;
 #[cfg(feature = "rocksdb")]
 use crate::backend::rocksdb::RocksDBBackend;
 use crate::{
@@ -152,6 +154,8 @@ pub enum EngineType {
     InMemory,
     #[cfg(feature = "rocksdb")]
     RocksDB,
+    #[cfg(feature = "canopydb")]
+    CanopyDB,
 }
 
 pub struct UpdateBatch {
@@ -1372,6 +1376,11 @@ impl Store {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
                 let backend = Arc::new(RocksDBBackend::open(path)?);
+                Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
+            }
+            #[cfg(feature = "canopydb")]
+            EngineType::CanopyDB => {
+                let backend = Arc::new(CanopyDBBackend::open(path)?);
                 Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
             }
             EngineType::InMemory => {
@@ -2896,6 +2905,12 @@ mod tests {
         test_store_suite(EngineType::RocksDB).await;
     }
 
+    #[cfg(feature = "canopydb")]
+    #[tokio::test]
+    async fn test_canopydb_store() {
+        test_store_suite(EngineType::CanopyDB).await;
+    }
+
     // Creates an empty store, runs the test and then removes the store (if needed)
     async fn run_test<F, Fut>(test_func: F, engine_type: EngineType)
     where
@@ -2906,6 +2921,9 @@ mod tests {
         let path = format!("store-test-db-{nonce}");
         // Remove preexistent DBs in case of a failed previous test
         if !matches!(engine_type, EngineType::InMemory) {
+            if !Path::new(&path).exists() {
+                std::fs::create_dir_all(&path).expect("Failed to create test db dir");
+            }
             remove_test_dbs(&path);
         };
         // Build a new store
