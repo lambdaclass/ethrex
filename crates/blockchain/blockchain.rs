@@ -43,7 +43,6 @@ use payload::PayloadOrTask;
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
-use std::str::FromStr;
 use std::sync::mpsc::Sender;
 use std::sync::{
     Arc, Mutex, RwLock,
@@ -516,7 +515,10 @@ impl Blockchain {
     /// Returns None if there are no valid children.
     ///
     /// Precondition: the branch node's reference to their children are of type NodeRef::Node
-fn collapse_root_node(&self, parent_header: &BlockHeader, prefix: Option<H256>, root: BranchNode) -> Result<Option<Node>, StoreError> {
+fn collapse_root_node(&self, parent_header: &BlockHeader, prefix: Option<H256>, mut root: BranchNode) -> Result<Option<Node>, StoreError> {
+    root.choices.iter_mut().for_each(|choice| {
+        choice.clear_hash();
+    });
     let mut valid_children_iter = root
         .choices
         .iter()

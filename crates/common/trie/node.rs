@@ -132,6 +132,9 @@ impl NodeRef {
     pub fn commit(&mut self, path: Nibbles, acc: &mut Vec<(Nibbles, Vec<u8>)>) -> NodeHash {
         match *self {
             NodeRef::Node(ref mut node, ref mut hash) => {
+                if let Some(hash) = hash.get() {
+                    return *hash;
+                }
                 match Arc::make_mut(node) {
                     Node::Branch(node) => {
                         for (choice, node) in &mut node.choices.iter_mut().enumerate() {
@@ -188,7 +191,7 @@ impl NodeRef {
     ///
     /// This is used when mutating a node in place, in which case the memoized hash
     /// is not valid anymore.
-    pub(crate) fn clear_hash(&mut self) {
+    pub fn clear_hash(&mut self) {
         if let NodeRef::Node(_, hash) = self {
             hash.take();
         }
