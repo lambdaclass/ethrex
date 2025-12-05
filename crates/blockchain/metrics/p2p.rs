@@ -1,9 +1,40 @@
-use prometheus::{Encoder, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder};
-use std::sync::LazyLock;
+use prometheus::{
+    Encoder, HistogramVec, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder,
+    register_histogram_vec,
+};
+use std::{future::Future, sync::LazyLock};
 
 use crate::MetricsError;
 
 pub static METRICS_P2P: LazyLock<MetricsP2P> = LazyLock::new(MetricsP2P::default);
+
+/// Histogram for P2P message handling duration.
+/// Registered in the default Prometheus registry so it's automatically gathered.
+pub static METRICS_P2P_MESSAGE_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register_histogram_vec!(
+        "ethrex_p2p_message_duration_seconds",
+        "Histogram of P2P message handling duration partitioned by message type",
+        &["message_type"],
+    )
+    .expect("Failed to create p2p message duration histogram")
+});
+
+/// Records the duration of an async P2P message handler.
+///
+/// Use this at the centralized message dispatch point to automatically
+/// track latency for all P2P message types.
+pub async fn record_p2p_message_duration<Fut, T>(message_type: &str, future: Fut) -> T
+where
+    Fut: Future<Output = T>,
+{
+    let timer = METRICS_P2P_MESSAGE_DURATION
+        .with_label_values(&[message_type])
+        .start_timer();
+
+    let output = future.await;
+    timer.observe_duration();
+    output
+}
 
 #[derive(Debug, Clone)]
 pub struct MetricsP2P {
