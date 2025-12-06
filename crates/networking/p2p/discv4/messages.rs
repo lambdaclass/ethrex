@@ -761,11 +761,7 @@ mod tests {
             (String::from("tcp").into(), tcp_rlp.clone().into()),
             (String::from("udp").into(), udp_rlp.clone().into()),
         ];
-        let node_record = NodeRecord {
-            signature,
-            seq,
-            pairs: NodeRecordPairs::decode_pairs(&pairs),
-        };
+        let node_record = NodeRecord::new(signature, seq, NodeRecordPairs::decode_pairs(&pairs));
         let msg = Message::ENRResponse(ENRResponseMessage {
             request_hash,
             node_record,
@@ -887,11 +883,7 @@ mod tests {
             (String::from("tcp").into(), tcp_rlp.clone().into()),
             (String::from("udp").into(), udp_rlp.clone().into()),
         ];
-        let node_record = NodeRecord {
-            signature,
-            seq,
-            pairs: NodeRecordPairs::decode_pairs(&pairs),
-        };
+        let node_record = NodeRecord::new(signature, seq, NodeRecordPairs::decode_pairs(&pairs));
         let expected = Message::ENRResponse(ENRResponseMessage {
             request_hash,
             node_record,

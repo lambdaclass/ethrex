@@ -259,16 +259,8 @@ impl Display for Node {
 }
 
 /// Reference: [ENR records](https://github.com/ethereum/devp2p/blob/master/enr.md)
-#[derive(Debug, PartialEq, Clone, Eq, Default, Serialize, Deserialize)]
-pub struct NodeRecord {
-    pub signature: H512,
-    pub seq: u64,
-    // holds optional values in (key, value) format
-    // value represents the rlp encoded bytes
-    // The key/value pairs must be sorted by key and must be unique
-    pub pairs: NodeRecordPairs,
-}
-
+/// Holds optional values in (key, value) format, value represents the rlp encoded bytes
+/// The key/value pairs must be sorted by key and must be unique
 #[derive(Debug, Default, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct NodeRecordPairs {
     /// The ID of the identity scheme: https://github.com/ethereum/devp2p/blob/master/enr.md#v4-identity-scheme
@@ -371,7 +363,24 @@ impl NodeRecordPairs {
     }
 }
 
+/// Reference: [ENR records](https://github.com/ethereum/devp2p/blob/master/enr.md#record-structure)
+#[derive(Debug, PartialEq, Clone, Eq, Default, Serialize, Deserialize)]
+pub struct NodeRecord {
+    pub signature: H512,
+    pub seq: u64,
+    /// The remainder of the record consists of arbitrary key/value pairs
+    pairs: NodeRecordPairs,
+}
+
 impl NodeRecord {
+    pub fn new(signature: H512, seq: u64, pairs: NodeRecordPairs) -> Self {
+        Self {
+            signature,
+            seq,
+            pairs,
+        }
+    }
+
     pub fn enr_url(&self) -> Result<String, NodeError> {
         let rlp_encoded = self.encode_to_vec();
         let base64_encoded = ethrex_common::base64::encode(&rlp_encoded);
@@ -409,7 +418,15 @@ impl NodeRecord {
 
     pub fn set_fork_id(&mut self, fork_id: ForkId, signer: &SecretKey) -> Result<(), NodeError> {
         self.pairs.eth = Some(fork_id);
+        self.update(signer)
+    }
 
+    pub fn get_fork_id(&self) -> Option<ForkId> {
+        self.pairs.eth.clone()
+    }
+
+    fn update(&mut self, signer: &SecretKey) -> Result<(), NodeError> {
+        self.seq += 1;
         self.signature = self.sign_record(signer)?;
         Ok(())
     }
@@ -432,6 +449,10 @@ impl NodeRecord {
             .encode_key_value_list::<Bytes>(&self.pairs.encode_pairs())
             .finish();
         keccak_hash(&rlp)
+    }
+
+    pub fn pairs(&self) -> NodeRecordPairs {
+        self.pairs.clone()
     }
 }
 
