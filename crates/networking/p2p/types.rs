@@ -282,7 +282,7 @@ pub struct NodeRecordPairs {
 }
 
 impl NodeRecordPairs {
-    pub fn decode_pairs(pairs: &Vec<(Bytes, Bytes)>) -> NodeRecordPairs {
+    pub fn decode_pairs(pairs: &Vec<(Bytes, Bytes)>) -> Result<NodeRecordPairs, RLPDecodeError> {
         let mut decoded_pairs = NodeRecordPairs::default();
         for (key, value) in pairs {
             let Ok(key) = String::from_utf8(key.to_vec()) else {
@@ -290,27 +290,26 @@ impl NodeRecordPairs {
             };
             let value = value.to_vec();
             match key.as_str() {
-                "id" => decoded_pairs.id = String::decode(&value).ok(),
-                "ip" => decoded_pairs.ip = Ipv4Addr::decode(&value).ok(),
-                "ip6" => decoded_pairs.ip6 = Ipv6Addr::decode(&value).ok(),
-                "tcp" => decoded_pairs.tcp_port = u16::decode(&value).ok(),
-                "udp" => decoded_pairs.udp_port = u16::decode(&value).ok(),
+                "id" => decoded_pairs.id = Some(String::decode(&value)?),
+                "ip" => decoded_pairs.ip = Some(Ipv4Addr::decode(&value)?),
+                "ip6" => decoded_pairs.ip6 = Some(Ipv6Addr::decode(&value)?),
+                "tcp" => decoded_pairs.tcp_port = Some(u16::decode(&value)?),
+                "udp" => decoded_pairs.udp_port = Some(u16::decode(&value)?),
                 "secp256k1" => {
-                    let Ok(bytes) = Bytes::decode(&value) else {
-                        continue;
-                    };
+                    let bytes = Bytes::decode(&value)?;
                     if bytes.len() < 33 {
-                        continue;
+                        return Err(RLPDecodeError::Custom(format!(
+                            "Invalid signature length {}",
+                            bytes.len()
+                        )));
                     }
                     decoded_pairs.secp256k1 = Some(H264::from_slice(&bytes))
                 }
-                "snap" => decoded_pairs.snap = Vec::<u32>::decode(&value).ok(),
+                "snap" => decoded_pairs.snap = Some(Vec::<u32>::decode(&value)?),
                 "eth" => {
                     // https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
                     // entry-value = [[ forkHash, forkNext ], ...]
-                    let Ok(decoder) = Decoder::new(&value) else {
-                        continue;
-                    };
+                    let decoder = Decoder::new(&value)?;
                     // Here we decode fork-id = [ forkHash, forkNext ]
                     // TODO(#3494): here we decode as optional to ignore any errors,
                     // but we should return an error if we can't decode it
@@ -324,7 +323,7 @@ impl NodeRecordPairs {
             }
         }
 
-        decoded_pairs
+        Ok(decoded_pairs)
     }
 
     pub fn encode_pairs(&self) -> Vec<(Bytes, Bytes)> {
@@ -475,7 +474,7 @@ impl RLPDecode for NodeRecord {
         // all fields in pairs are optional except for id
         let id_pair = pairs.iter().find(|(k, _v)| k.eq("id".as_bytes()));
         if id_pair.is_some() {
-            let pairs = NodeRecordPairs::decode_pairs(&pairs);
+            let pairs = NodeRecordPairs::decode_pairs(&pairs)?;
             let node_record = NodeRecord {
                 signature,
                 seq,
