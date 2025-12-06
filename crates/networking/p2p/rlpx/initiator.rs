@@ -1,9 +1,7 @@
+use crate::discv4::server::lookup_interval_function;
 use crate::types::Node;
 use crate::{
-    discv4::{
-        peer_table::PeerTableError,
-        server::{INITIAL_LOOKUP_INTERVAL, LOOKUP_INTERVAL},
-    },
+    discv4::{peer_table::PeerTableError, server::LOOKUP_INTERVAL_MS},
     metrics::METRICS,
     network::P2PContext,
     rlpx::connection::server::PeerConnection,
@@ -24,25 +22,11 @@ pub enum RLPxInitiatorError {
 #[derive(Debug, Clone)]
 pub struct RLPxInitiator {
     context: P2PContext,
-
-    /// The initial interval between peer lookups, until the number of peers
-    /// reaches [target_peers](RLPxInitiatorState::target_peers).
-    initial_lookup_interval: Duration,
-    lookup_interval: Duration,
-
-    /// The target number of RLPx connections to reach.
-    target_peers: u64,
 }
 
 impl RLPxInitiator {
     pub fn new(context: P2PContext) -> Self {
-        Self {
-            context,
-            // We use the same lookup intervals as Discovery to try to get both process to check at the same rate
-            initial_lookup_interval: INITIAL_LOOKUP_INTERVAL,
-            lookup_interval: LOOKUP_INTERVAL,
-            target_peers: 50,
-        }
+        Self { context }
     }
 
     pub async fn spawn(context: P2PContext) -> GenServerHandle<RLPxInitiator> {
@@ -65,15 +49,19 @@ impl RLPxInitiator {
         Ok(())
     }
 
+    // We use the same lookup intervals as Discovery to try to get both process to check at the same rate
     async fn get_lookup_interval(&mut self) -> Duration {
-        let num_peers = self.context.table.peer_count().await.unwrap_or(0) as u64;
-
-        if num_peers < self.target_peers {
-            self.initial_lookup_interval
-        } else {
-            debug!("Reached target number of peers. Using longer lookup interval.");
-            self.lookup_interval
-        }
+        let peer_completion = self
+            .context
+            .table
+            .target_peers_completion()
+            .await
+            .unwrap_or_default();
+        lookup_interval_function(
+            peer_completion,
+            self.context.initial_lookup_interval,
+            LOOKUP_INTERVAL_MS,
+        )
     }
 }
 
