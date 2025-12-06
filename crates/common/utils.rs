@@ -79,6 +79,88 @@ pub fn truncate_array<const N: usize, const M: usize>(data: [u8; N]) -> [u8; M] 
     res
 }
 
+// Profiling tools
+#[cfg(feature = "profiling")]
+pub mod profiling {
+    use tracing::warn;
+    // TODO: convert to message passing with a dedicated thread
+    // so the rest of the program doesn't need to block.
+    pub struct ProfilingGuard {
+        // Keep the result so we don't pollute the callers with error checking
+        guard: pprof::Result<pprof::ProfilerGuard<'static>>,
+        name: String,
+        thread_prefixes: Vec<String>,
+    }
+    impl ProfilingGuard {
+        pub fn stop(mut self) {
+            use pprof::protos::Message;
+
+            let Ok(guard) = self.guard else {
+                warn!("Building profiler guard failed, no profile will be created");
+                return;
+            };
+            let prefixes = std::mem::take(&mut self.thread_prefixes);
+            let Ok(mut report) = guard.report().build() else {
+                warn!("Building profiler report failed, no profile will be created");
+                return;
+            };
+            report
+                .data
+                .retain(|k, _| prefixes.iter().any(|p| k.thread_name.starts_with(p)));
+            let Ok(mut files): Result<Vec<_>, _> = ["profile", "pb", "flamegraph", "svg"]
+                .chunks_exact(2)
+                .map(|c| std::fs::File::create(format!("{}-{}.{}", c[0], &self.name, c[1])))
+                .collect()
+            else {
+                warn!("Failed to create files, no profile will be created");
+                return;
+            };
+            if let Ok(profile) = report.pprof() {
+                _ = profile
+                    .write_to_writer(&mut files[0])
+                    .inspect_err(|e| warn!("Profile writing failed: {e}"));
+            };
+            _ = report
+                .flamegraph(&mut files[1])
+                .inspect_err(|e| warn!("Flamegraph writing failed: {e}"));
+        }
+        pub fn start_profiling(
+            freq: i32,
+            name: impl FnOnce() -> String,
+            thread_prefixes: &[&str],
+        ) -> ProfilingGuard {
+            let guard = pprof::ProfilerGuardBuilder::default()
+                .frequency(freq)
+                .blocklist(&["libc", "libgcc", "pthread", "vdso"])
+                .build();
+            ProfilingGuard {
+                guard,
+                name: name(),
+                thread_prefixes: thread_prefixes.iter().map(|tp| tp.to_string()).collect(),
+            }
+        }
+    }
+}
+
+#[cfg(not(feature = "profiling"))]
+pub mod profiling {
+    pub struct ProfilingGuard();
+    impl ProfilingGuard {
+        #[inline(always)]
+        pub fn stop(self) {}
+        #[inline(always)]
+        pub fn start_profiling(
+            _freq: i32,
+            _name: impl FnOnce() -> String,
+            _thread_prefixes: &[&str],
+        ) -> ProfilingGuard {
+            ProfilingGuard()
+        }
+    }
+}
+
+pub use profiling::*;
+
 #[cfg(test)]
 mod test {
     use ethereum_types::U256;
