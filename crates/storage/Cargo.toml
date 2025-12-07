@@ -32,7 +32,7 @@ lru = "0.16.2"
 
 [features]
 default = []
-rocksdb = ["dep:rocksdb", "ethrex-trie/rocksdb"]
+rocksdb = ["dep:rocksdb"]
 
 [dev-dependencies]
 hex.workspace = true

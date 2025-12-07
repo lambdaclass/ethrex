@@ -1,8 +1,8 @@
-use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "rocksdb")]
 use crate::store_db::rocksdb::Store as RocksDBStore;
+use crate::{STORE_SCHEMA_VERSION, api::StoreEngine};
 
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::{
@@ -105,6 +105,14 @@ impl Store {
                 new_head_tx,
             },
         };
+
+        // Check that the last used DB version matches the current version
+        if let Some(latest_store_schema_version) = store.get_store_schema_version()?
+            && latest_store_schema_version != STORE_SCHEMA_VERSION
+        {
+            return Err(StoreError::IncompatibleDBVersion);
+        }
+        store.set_store_schema_version()?;
 
         Ok(store)
     }
@@ -1277,6 +1285,16 @@ impl Store {
         &self,
     ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
         self.engine.get_storage_trie_rebuild_pending().await
+    }
+
+    /// Save the current store schema version
+    pub fn set_store_schema_version(&self) -> Result<(), StoreError> {
+        self.engine.set_store_schema_version()
+    }
+
+    /// Obtain the latest used store schema version
+    pub fn get_store_schema_version(&self) -> Result<Option<u64>, StoreError> {
+        self.engine.get_store_schema_version()
     }
 
     /// Clears all checkpoint data created during the last snap sync
