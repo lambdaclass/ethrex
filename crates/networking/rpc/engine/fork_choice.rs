@@ -4,6 +4,7 @@ use ethrex_blockchain::{
     payload::{BuildPayloadArgs, create_payload},
 };
 use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
+use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
 use tracing::{info, warn};
 
@@ -219,22 +220,19 @@ async fn handle_forkchoice(
         ));
     }
 
-    /*   Revert #4985
-    if context.syncer.sync_mode() == SyncMode::Snap {
+    if syncer.sync_mode() == SyncMode::Snap {
         // Don't trigger a sync if the block is already canonical
         if context
             .storage
             .is_canonical_sync(fork_choice_state.head_block_hash)?
         {
             // Disable snapsync mode so we can process incoming payloads
-            context.syncer.disable_snap();
+            syncer.disable_snap();
         } else {
-            context
-                .syncer
-                .sync_to_head(fork_choice_state.head_block_hash);
+            syncer.sync_to_head(fork_choice_state.head_block_hash);
             return Ok((None, PayloadStatus::syncing().into()));
         }
-    } */
+    }
 
     match apply_fork_choice(
         &context.storage,
