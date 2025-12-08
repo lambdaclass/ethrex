@@ -1,5 +1,7 @@
 use ethrex_crypto::keccak::keccak_hash;
-use ethrex_rlp::{decode::decode_bytes, encode::RLPEncode, error::RLPDecodeError, structs::Decoder};
+use ethrex_rlp::{
+    decode::decode_bytes, encode::RLPEncode, error::RLPDecodeError, structs::Decoder,
+};
 use rkyv::with::Skip;
 
 use crate::{Nibbles, Node, NodeRef};
@@ -25,7 +27,7 @@ pub struct FlatTrie {
     /// Root hash that gets initialized when calling `Self::authenticate`
     #[serde(skip)]
     #[rkyv(with = Skip)]
-    root_hash: Option<[u8; 32]>
+    root_hash: Option<[u8; 32]>,
 }
 
 /// A view into a particular node
@@ -127,15 +129,17 @@ impl FlatTrie {
             match view.childs {
                 NodeChilds::Leaf => {}
                 NodeChilds::Extension { child } => {
-                    let Some(child_hash) = recursive(trie, &trie.views[child.unwrap()])? else {
-                        return Ok(None);
-                    };
-                    let Some(items) = trie.decode_view(view)? else {
-                        panic!(); // TODO: err
-                    };
-                    let (child_data_hash, _) = decode_bytes(items[1])?;
-                    if &child_hash != child_data_hash {
-                        return Ok(None);
+                    if let Some(child) = child {
+                        let Some(child_hash) = recursive(trie, &trie.views[child])? else {
+                            return Ok(None);
+                        };
+                        let Some(items) = trie.decode_view(view)? else {
+                            panic!(); // TODO: err
+                        };
+                        let (child_data_hash, _) = decode_bytes(items[1])?;
+                        if &child_hash != child_data_hash {
+                            return Ok(None);
+                        }
                     }
                 }
                 NodeChilds::Branch { childs } => {
@@ -149,7 +153,7 @@ impl FlatTrie {
                             let Some(child_hash) = recursive(trie, child_view)? else {
                                 return Ok(None);
                             };
-                    let (child_data_hash, _) = decode_bytes(items[i])?;
+                            let (child_data_hash, _) = decode_bytes(items[i])?;
                             if &child_hash != child_data_hash {
                                 return Ok(None);
                             }
