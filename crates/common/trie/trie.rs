@@ -1,4 +1,4 @@
-pub mod zerocopy_trie;
+pub mod flattrie;
 pub mod db;
 pub mod error;
 pub mod logger;

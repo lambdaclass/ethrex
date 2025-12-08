@@ -1,0 +1,197 @@
+use std::usize;
+
+use ethrex_crypto::keccak::keccak_hash;
+use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError, structs::Decoder};
+
+use crate::{Nibbles, Node, NodeRef};
+
+/// A trie implementation that is non recursive, POD and avoids copying and encoding
+/// nodes by providing views into a RLP flat buffer
+#[derive(Default, Clone)]
+pub struct FlatTrie {
+    /// Stores a contiguous byte buffer with each RLP encoded node
+    pub data: Vec<u8>,
+    /// Contains the structural information of the MPT
+    pub views: Vec<NodeView>,
+    /// The index of the view for the root of this trie
+    pub root_index: usize,
+}
+
+/// A view into a particular node
+#[derive(Clone, Copy)]
+pub struct NodeView {
+    /// Indices to the RLP code of this node over the flat data buffer
+    pub data_range: (usize, usize),
+    /// Handle into this node's childs
+    pub childs: NodeChilds,
+}
+
+/// Contains indices to the `handles` list for each child of a node
+#[derive(Clone, Copy)]
+pub enum NodeChilds {
+    /// A leaf node doesn't have any childs
+    Leaf,
+    /// An extension node always has a branch as a child
+    Extension { child: Option<usize> },
+    /// A branch node can have any node type as any of its 16 childs
+    /// TODO: This can be optimized to a bitmap if the data vec is ordered (contiguous childs)
+    Branch { childs: [Option<usize>; 16] },
+}
+
+impl From<&Node> for FlatTrie {
+    fn from(root: &Node) -> Self {
+        let mut trie = FlatTrie::default();
+
+        fn recursive(value: &Node, trie: &mut FlatTrie) {
+            let childs = match value {
+                Node::Branch(node) => {
+                    let mut childs = [None; 16];
+                    for (i, choice) in node.choices.iter().enumerate() {
+                        if let NodeRef::Node(choice, _) = choice {
+                            recursive(&(*choice), trie);
+                            childs[i] = Some(trie.views.len() - 1);
+                        }
+                    }
+                    NodeChilds::Branch { childs }
+                }
+                Node::Extension(node) => {
+                    let mut child = None;
+                    if let NodeRef::Node(child_node, _) = &node.child {
+                        recursive(child_node, trie);
+                        child = Some(trie.views.len() - 1);
+                    }
+                    NodeChilds::Extension { child }
+                }
+                Node::Leaf(_) => NodeChilds::Leaf,
+            };
+
+            let offset = trie.data.len();
+            trie.data.extend(value.encode_to_vec());
+            trie.views.push(NodeView {
+                data_range: (offset, trie.data.len()),
+                childs,
+            });
+        }
+
+        recursive(root, &mut trie);
+        trie.root_index = trie.views.len() - 1; // last stored node is the root
+        trie
+    }
+}
+
+impl FlatTrie {
+    pub fn authenticate(&self) -> Result<bool, RLPDecodeError> {
+        fn recursive<'a>(
+            trie: &'a FlatTrie,
+            view: &NodeView,
+        ) -> Result<Option<[u8; 32]>, RLPDecodeError> {
+            match view.childs {
+                NodeChilds::Leaf => {}
+                NodeChilds::Extension { child } => {
+                    let Some(child_hash) = recursive(trie, &trie.views[child.unwrap()])? else {
+                        return Ok(None);
+                    };
+                    let Some(items) = trie.decode_view(view)? else {
+                        panic!(); // TODO: err
+                    };
+                    if &child_hash != items[1] {
+                        return Ok(None);
+                    }
+                }
+                NodeChilds::Branch { childs } => {
+                    // TODO: we can decode just the Some(_) childs
+                    let Some(items) = trie.decode_view(view)? else {
+                        panic!(); // TODO: err
+                    };
+                    for (i, child) in childs.iter().enumerate() {
+                        if let Some(child) = child {
+                            let child_view = &trie.views[*child];
+                            let Some(child_hash) = recursive(trie, child_view)? else {
+                                return Ok(None);
+                            };
+                            if &child_hash != items[i] {
+                                return Ok(None);
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Some(keccak_hash(trie.get_view_data(view))))
+        }
+
+        let Some(root_view) = self.views.get(self.root_index) else {
+            panic!(); // TODO: err
+        };
+        recursive(&self, root_view).map(|h| h.is_some())
+    }
+
+    pub fn get(&self, mut path: Nibbles) -> Result<Option<&[u8]>, RLPDecodeError> {
+        fn recursive<'a>(
+            trie: &'a FlatTrie,
+            path: &mut Nibbles,
+            view: &NodeView,
+        ) -> Result<Option<&'a [u8]>, RLPDecodeError> {
+            match view.childs {
+                NodeChilds::Leaf => {
+                    let Some(items) = trie.decode_view(view)? else {
+                        panic!(); // TODO: err
+                    };
+
+                    let partial = items[0];
+                    if partial == path.as_ref() {
+                        return Ok(Some(items[1]));
+                    } else {
+                        return Ok(None);
+                    }
+                }
+                NodeChilds::Extension { child } => {
+                    let Some(items) = trie.decode_view(view)? else {
+                        panic!(); // TODO: err
+                    };
+
+                    let prefix = items[0];
+                    if path.skip_prefix(prefix) {
+                        recursive(trie, path, &trie.views[child.unwrap()])
+                    } else {
+                        Ok(None)
+                    }
+                }
+                NodeChilds::Branch { childs } => {
+                    if let Some(choice) = path.next_choice() {
+                        let Some(child_view_index) = childs[choice] else {
+                            panic!("child is not present / inconsistent trie")
+                        };
+                        let child_view = trie.views[child_view_index];
+                        recursive(trie, path, &child_view)
+                    } else {
+                        Ok(None) // values on branches are unsupported
+                    }
+                }
+            }
+        }
+
+        let Some(root_view) = self.views.get(self.root_index) else {
+            panic!(); // TODO: err
+        };
+        recursive(&self, &mut path, root_view)
+    }
+
+    // TODO: cache decoded view?
+    pub fn decode_view(&self, view: &NodeView) -> Result<Option<Vec<&[u8]>>, RLPDecodeError> {
+        let data = self.get_view_data(view);
+        let mut decoder = Decoder::new(data)?;
+
+        let mut rlp_items = Vec::with_capacity(17);
+        while !decoder.is_done() && rlp_items.len() < 17 {
+            let (item, new_decoder) = decoder.get_encoded_item_ref()?;
+            decoder = new_decoder;
+            rlp_items.push(item);
+        }
+
+        Ok(Some(rlp_items))
+    }
+
+    pub fn get_view_data(&self, view: &NodeView) -> &[u8] {
+        &self.data[view.data_range.0..view.data_range.1]
+    }
+}
