@@ -1,5 +1,5 @@
 use ethrex_crypto::keccak::keccak_hash;
-use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError, structs::Decoder};
+use ethrex_rlp::{decode::decode_bytes, encode::RLPEncode, error::RLPDecodeError, structs::Decoder};
 use rkyv::with::Skip;
 
 use crate::{Nibbles, Node, NodeRef};
@@ -135,7 +135,8 @@ impl FlatTrie {
                     let Some(items) = trie.decode_view(view)? else {
                         panic!(); // TODO: err
                     };
-                    if &child_hash != items[1] {
+                    let (child_data_hash, _) = decode_bytes(items[1])?;
+                    if &child_hash != child_data_hash {
                         dbg!("b");
                         return Ok(None);
                     }
@@ -152,7 +153,8 @@ impl FlatTrie {
                                 dbg!("c");
                                 return Ok(None);
                             };
-                            if &child_hash != items[i] {
+                    let (child_data_hash, _) = decode_bytes(items[i])?;
+                            if &child_hash != child_data_hash {
                                 dbg!(items[i]);
                                 dbg!(&child_hash);
                                 dbg!("d");
@@ -189,9 +191,10 @@ impl FlatTrie {
                         panic!(); // TODO: err
                     };
 
-                    let partial = items[0];
-                    if partial == path.as_ref() {
-                        return Ok(Some(items[1]));
+                    let partial = Nibbles::decode_compact(items[0]);
+                    if partial == *path {
+                        let (value, _) = decode_bytes(items[1])?;
+                        return Ok(Some(value));
                     } else {
                         return Ok(None);
                     }
@@ -201,7 +204,7 @@ impl FlatTrie {
                         panic!(); // TODO: err
                     };
 
-                    let prefix = items[0];
+                    let (prefix, _) = decode_bytes(items[0])?;
                     if path.skip_prefix(prefix) {
                         recursive(trie, path, &trie.views[child.unwrap()])
                     } else {
