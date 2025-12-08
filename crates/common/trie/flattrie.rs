@@ -153,6 +153,7 @@ impl FlatTrie {
                                 return Ok(None);
                             };
                             if &child_hash != items[i] {
+                                dbg!(items[i]);
                                 dbg!("d");
                                 return Ok(None);
                             }
@@ -160,6 +161,7 @@ impl FlatTrie {
                     }
                 }
             }
+            dbg!(trie.get_view_data(view));
             Ok(Some(keccak_hash(trie.get_view_data(view))))
         }
 
