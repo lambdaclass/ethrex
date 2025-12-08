@@ -124,12 +124,10 @@ impl FlatTrie {
             trie: &'a FlatTrie,
             view: &NodeView,
         ) -> Result<Option<[u8; 32]>, RLPDecodeError> {
-            dbg!("start");
             match view.childs {
                 NodeChilds::Leaf => {}
                 NodeChilds::Extension { child } => {
                     let Some(child_hash) = recursive(trie, &trie.views[child.unwrap()])? else {
-                        dbg!("a");
                         return Ok(None);
                     };
                     let Some(items) = trie.decode_view(view)? else {
@@ -137,7 +135,6 @@ impl FlatTrie {
                     };
                     let (child_data_hash, _) = decode_bytes(items[1])?;
                     if &child_hash != child_data_hash {
-                        dbg!("b");
                         return Ok(None);
                     }
                 }
@@ -150,21 +147,16 @@ impl FlatTrie {
                         if let Some(child) = child {
                             let child_view = &trie.views[*child];
                             let Some(child_hash) = recursive(trie, child_view)? else {
-                                dbg!("c");
                                 return Ok(None);
                             };
                     let (child_data_hash, _) = decode_bytes(items[i])?;
                             if &child_hash != child_data_hash {
-                                dbg!(items[i]);
-                                dbg!(&child_hash);
-                                dbg!("d");
                                 return Ok(None);
                             }
                         }
                     }
                 }
             }
-            dbg!(trie.get_view_data(view));
             Ok(Some(keccak_hash(trie.get_view_data(view))))
         }
 
@@ -172,7 +164,6 @@ impl FlatTrie {
             panic!(); // TODO: err
         };
         let Some(root_hash) = recursive(&self, root_view)? else {
-            dbg!("e");
             return Ok(false);
         };
         self.root_hash = Some(root_hash);
