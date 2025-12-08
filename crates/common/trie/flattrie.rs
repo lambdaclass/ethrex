@@ -1,5 +1,3 @@
-use std::usize;
-
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError, structs::Decoder};
 use rkyv::with::Skip;
@@ -126,16 +124,19 @@ impl FlatTrie {
             trie: &'a FlatTrie,
             view: &NodeView,
         ) -> Result<Option<[u8; 32]>, RLPDecodeError> {
+            dbg!("start");
             match view.childs {
                 NodeChilds::Leaf => {}
                 NodeChilds::Extension { child } => {
                     let Some(child_hash) = recursive(trie, &trie.views[child.unwrap()])? else {
+                        dbg!("a");
                         return Ok(None);
                     };
                     let Some(items) = trie.decode_view(view)? else {
                         panic!(); // TODO: err
                     };
                     if &child_hash != items[1] {
+                        dbg!("b");
                         return Ok(None);
                     }
                 }
@@ -148,9 +149,11 @@ impl FlatTrie {
                         if let Some(child) = child {
                             let child_view = &trie.views[*child];
                             let Some(child_hash) = recursive(trie, child_view)? else {
+                                dbg!("c");
                                 return Ok(None);
                             };
                             if &child_hash != items[i] {
+                                dbg!("d");
                                 return Ok(None);
                             }
                         }
@@ -164,6 +167,7 @@ impl FlatTrie {
             panic!(); // TODO: err
         };
         let Some(root_hash) = recursive(&self, root_view)? else {
+            dbg!("e");
             return Ok(false);
         };
         self.root_hash = Some(root_hash);
