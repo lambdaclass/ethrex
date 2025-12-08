@@ -154,6 +154,7 @@ impl FlatTrie {
                             };
                             if &child_hash != items[i] {
                                 dbg!(items[i]);
+                                dbg!(&child_hash);
                                 dbg!("d");
                                 return Ok(None);
                             }
