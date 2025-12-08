@@ -2,12 +2,21 @@ use std::usize;
 
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError, structs::Decoder};
+use rkyv::with::Skip;
 
 use crate::{Nibbles, Node, NodeRef};
 
 /// A trie implementation that is non recursive, POD and avoids copying and encoding
 /// nodes by providing views into a RLP flat buffer
-#[derive(Default, Clone)]
+#[derive(
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    rkyv::Archive,
+    Clone,
+)]
 pub struct FlatTrie {
     /// Stores a contiguous byte buffer with each RLP encoded node
     pub data: Vec<u8>,
@@ -15,10 +24,22 @@ pub struct FlatTrie {
     pub views: Vec<NodeView>,
     /// The index of the view for the root of this trie
     pub root_index: usize,
+    /// Root hash that gets initialized when calling `Self::authenticate`
+    #[serde(skip)]
+    #[rkyv(with = Skip)]
+    root_hash: Option<[u8; 32]>
 }
 
 /// A view into a particular node
-#[derive(Clone, Copy)]
+#[derive(
+    Clone,
+    Copy,
+    serde::Serialize,
+    serde::Deserialize,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    rkyv::Archive,
+)]
 pub struct NodeView {
     /// Indices to the RLP code of this node over the flat data buffer
     pub data_range: (usize, usize),
@@ -27,7 +48,15 @@ pub struct NodeView {
 }
 
 /// Contains indices to the `handles` list for each child of a node
-#[derive(Clone, Copy)]
+#[derive(
+    Clone,
+    Copy,
+    serde::Serialize,
+    serde::Deserialize,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    rkyv::Archive,
+)]
 pub enum NodeChilds {
     /// A leaf node doesn't have any childs
     Leaf,
@@ -80,7 +109,19 @@ impl From<&Node> for FlatTrie {
 }
 
 impl FlatTrie {
-    pub fn authenticate(&self) -> Result<bool, RLPDecodeError> {
+    pub fn root_hash(&self) -> Option<[u8; 32]> {
+        self.root_hash
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
+    /// Recursively traverses the trie, hashes each node's data and checks that their parents reference
+    /// those same hashes. This way the data gets authenticated.
+    ///
+    /// Initializes `Self::root_hash` if successful, and returns a boolean indicating success.
+    pub fn authenticate(&mut self) -> Result<bool, RLPDecodeError> {
         fn recursive<'a>(
             trie: &'a FlatTrie,
             view: &NodeView,
@@ -122,7 +163,11 @@ impl FlatTrie {
         let Some(root_view) = self.views.get(self.root_index) else {
             panic!(); // TODO: err
         };
-        recursive(&self, root_view).map(|h| h.is_some())
+        let Some(root_hash) = recursive(&self, root_view)? else {
+            return Ok(false);
+        };
+        self.root_hash = Some(root_hash);
+        Ok(true)
     }
 
     pub fn get(&self, mut path: Nibbles) -> Result<Option<&[u8]>, RLPDecodeError> {

@@ -7,6 +7,7 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
+use ethrex_trie::flattrie::FlatTrie;
 use ::tracing::{debug, info, instrument, trace};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
@@ -988,7 +989,7 @@ impl Blockchain {
         } else {
             Trie::new_temp()
         };
-        let mut storage_trie_roots = BTreeMap::new();
+        let mut storage_tries = BTreeMap::new();
         for key in &keys {
             if key.len() != 20 {
                 continue; // not an address
@@ -1011,16 +1012,18 @@ impl Blockchain {
                     "execution witness does not contain non-empty storage trie".to_string(),
                 ));
             };
-            storage_trie_roots.insert(address, (*node).clone());
+            storage_tries.insert(address, FlatTrie::from(&(*node)));
         }
+
+        let state_trie = state_trie_root.map(|n| FlatTrie::from(&n));
 
         Ok(ExecutionWitness {
             codes,
             block_headers_bytes,
             first_block_number: first_block_header.number,
             chain_config: self.storage.get_chain_config(),
-            state_trie_root,
-            storage_trie_roots,
+            state_trie,
+            storage_tries,
             keys,
         })
     }
