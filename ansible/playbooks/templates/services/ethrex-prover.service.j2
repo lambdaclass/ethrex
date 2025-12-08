@@ -1,0 +1,13 @@
+[Unit]
+Description=Ethrex Prover
+After=network.target
+
+[Service]
+ExecStart={{ ethrex_dir }}/bin/ethrex_prover \
+          --http.addr {{ ethrex_sequencer_address }} \
+          --http.port {{ ethrex_sequencer_port }}
+Restart=on-failure
+Environment="SP1_PROVER=cuda"
+
+[Install]
+WantedBy=multi-user.target
