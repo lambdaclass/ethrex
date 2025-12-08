@@ -3312,7 +3312,7 @@
           "type": "table"
         }
       ],
-      "title": "Peer Info",
+      "title": "P2P Peer Info",
       "type": "row"
     },
     {
