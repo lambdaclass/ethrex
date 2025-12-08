@@ -40,7 +40,7 @@ runs:
             el_image: ${ETHREX_IMAGE}:${ETHREX_TAG}
             el_extra_params:
               - "--syncmode=snap"
-              - "--log.level=debug"
+              - "--log.level=info"
             cl_type: lighthouse
             cl_image: sigp/lighthouse:v8.0.1
             count: 1
