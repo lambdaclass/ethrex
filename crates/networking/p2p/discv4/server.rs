@@ -14,7 +14,7 @@ use crate::{
     },
 };
 use bytes::BytesMut;
-use ethrex_common::{H256, H512, types::ForkId};
+use ethrex_common::{H256, H512, types::BlockHeader, types::ForkId};
 use ethrex_storage::{Store, error::StoreError};
 use futures::StreamExt;
 use rand::rngs::OsRng;
@@ -26,8 +26,9 @@ use spawned_concurrency::{
         send_message_on, spawn_listener,
     },
 };
+use spawned_rt::tasks::BroadcastStream;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
-use tokio::net::UdpSocket;
+use tokio::{net::UdpSocket, sync::RwLock};
 use tokio_util::udp::UdpFramed;
 use tracing::{debug, error, info, trace};
 
@@ -72,6 +73,7 @@ pub enum InMessage {
     Prune,
     ChangeFindNodeMessage,
     Shutdown,
+    NewHead(Box<BlockHeader>),
 }
 
 #[derive(Debug, Clone)]
@@ -82,7 +84,7 @@ pub enum OutMessage {
 #[derive(Debug)]
 pub struct DiscoveryServer {
     local_node: Node,
-    local_node_record: NodeRecord,
+    local_node_record: Arc<RwLock<NodeRecord>>,
     signer: SecretKey,
     udp_socket: Arc<UdpSocket>,
     store: Store,
@@ -96,20 +98,13 @@ impl DiscoveryServer {
     pub async fn spawn(
         storage: Store,
         local_node: Node,
+        local_node_record: Arc<RwLock<NodeRecord>>,
         signer: SecretKey,
         udp_socket: Arc<UdpSocket>,
         mut peer_table: PeerTable,
         bootnodes: Vec<Node>,
     ) -> Result<(), DiscoveryServerError> {
         info!("Starting Discovery Server");
-
-        let mut local_node_record = NodeRecord::from_node(&local_node, 1, &signer)
-            .expect("Failed to create local node record");
-        if let Ok(fork_id) = storage.get_fork_id().await {
-            local_node_record
-                .set_fork_id(fork_id, &signer)
-                .expect("Failed to set fork_id on local node record");
-        }
 
         let mut discovery_server = Self {
             local_node: local_node.clone(),
@@ -338,7 +333,7 @@ impl DiscoveryServer {
             udp_port: node.udp_port,
             tcp_port: node.tcp_port,
         };
-        let enr_seq = self.local_node_record.seq;
+        let enr_seq = self.local_node_record.read().await.seq;
         let ping = Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(enr_seq));
         ping.encode_with_header(&mut buf, &self.signer);
         let ping_hash: [u8; 32] = buf[..32]
@@ -360,7 +355,7 @@ impl DiscoveryServer {
             tcp_port: node.tcp_port,
         };
 
-        let enr_seq = self.local_node_record.seq;
+        let enr_seq = self.local_node_record.read().await.seq;
 
         let pong = Message::Pong(PongMessage::new(to, ping_hash, expiration).with_enr_seq(enr_seq));
 
@@ -395,7 +390,10 @@ impl DiscoveryServer {
     ) -> Result<(), DiscoveryServerError> {
         let node_record = &self.local_node_record;
 
-        let msg = Message::ENRResponse(ENRResponseMessage::new(request_hash, node_record.clone()));
+        let msg = Message::ENRResponse(ENRResponseMessage::new(
+            request_hash,
+            node_record.read().await.clone(),
+        ));
 
         self.send(msg, from).await?;
 
@@ -629,6 +627,31 @@ impl DiscoveryServer {
             |e| error!(sending = ?message, addr = ?addr, err=?e, "Error sending message"),
         )?)
     }
+
+    /// Update Local node record with correct fork_id when a new canonical head is received.
+    async fn update_local_node_record(
+        &self,
+        latest_block_header: BlockHeader,
+    ) -> Result<(), DiscoveryServerError> {
+        let mut node_record = self.local_node_record.read().await.clone();
+        let pairs = node_record.decode_pairs();
+
+        tracing::trace!(fork_id=?&pairs.eth, latest_block_number=latest_block_header.number, latest_block_timestamp=latest_block_header.timestamp, "Updating ForkId");
+        if let Some(fork_id) = pairs.eth
+            && fork_id.fork_next <= latest_block_header.timestamp
+        {
+            let latest_fork_id = self.store.get_fork_id().await?;
+            if node_record
+                .set_fork_id(latest_fork_id, &self.signer)
+                .inspect_err(|e| error!(err = ?e, "Failed to update node record with fork id"))
+                .is_err()
+            {
+                return Ok(());
+            }
+            *self.local_node_record.write().await = node_record;
+        }
+        Ok(())
+    }
 }
 
 impl GenServer for DiscoveryServer {
@@ -658,6 +681,21 @@ impl GenServer for DiscoveryServer {
                 }
             }),
         );
+
+        let head_rx = BroadcastStream::new(self.store.subscribe_chain_head_update());
+        spawn_listener(
+            handle.clone(),
+            head_rx.filter_map(|header| async {
+                match header {
+                    Ok(header) => Some(InMessage::NewHead(Box::new(header))),
+                    Err(e) => {
+                        debug!(error=?e, "Error receiving latest canonical head");
+                        None
+                    }
+                }
+            }),
+        );
+
         send_interval(
             REVALIDATION_CHECK_INTERVAL,
             handle.clone(),
@@ -724,6 +762,12 @@ impl GenServer for DiscoveryServer {
             }
             Self::CastMsg::ChangeFindNodeMessage => {
                 self.find_node_message = Self::random_message(&self.signer);
+            }
+            Self::CastMsg::NewHead(header) => {
+                let _ = self
+                    .update_local_node_record(*header)
+                    .await
+                    .inspect_err(|e| error!(err=?e, "Error updating local node record"));
             }
             Self::CastMsg::Shutdown => return CastResponse::Stop,
         }

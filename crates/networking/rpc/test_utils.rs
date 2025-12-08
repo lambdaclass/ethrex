@@ -26,7 +26,7 @@ use hex_literal::hex;
 use secp256k1::SecretKey;
 use spawned_concurrency::tasks::{GenServer, GenServerHandle};
 use std::{net::SocketAddr, str::FromStr, sync::Arc};
-use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::{Mutex as TokioMutex, RwLock};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::info;
 // Base price for each test transaction.
@@ -235,7 +235,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
     let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
     let jwt_secret = Default::default();
     let local_p2p_node = example_p2p_node();
-    let local_node_record = example_local_node_record();
+    let local_node_record = Arc::new(RwLock::new(example_local_node_record()));
     tokio::spawn(async move {
         start_api(
             http_addr,
@@ -271,7 +271,7 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         node_data: NodeData {
             jwt_secret: Default::default(),
             local_p2p_node: example_p2p_node(),
-            local_node_record,
+            local_node_record: Arc::new(RwLock::new(local_node_record)),
             client_version: "ethrex/test".to_string(),
             extra_data: Bytes::new(),
         },
@@ -317,15 +317,22 @@ pub async fn dummy_gen_server(peer_table: PeerTable) -> GenServerHandle<RLPxInit
 /// Creates a dummy P2PContext for tests
 /// This should only be used in tests as it won't be able to connect to the p2p network
 pub async fn dummy_p2p_context(peer_table: PeerTable) -> P2PContext {
+    let signer = SecretKey::from_byte_array(&[0xcd; 32]).expect("32 bytes, within curve order");
     let local_node = Node::from_enode_url(
         "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+
     ).expect("Bad enode url");
+
+    let local_node_record = NodeRecord::from_node(&local_node, 1, &signer)
+        .expect("Node record could not be created from local node");
+
     let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
 
     P2PContext::new(
         local_node,
+        Arc::new(RwLock::new(local_node_record)),
         TaskTracker::default(),
-        SecretKey::from_byte_array(&[0xcd; 32]).expect("32 bytes, within curve order"),
+        signer,
         peer_table,
         storage.clone(),
         Arc::new(Blockchain::default_with_store(storage)),
