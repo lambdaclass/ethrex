@@ -186,7 +186,10 @@ impl FlatTrie {
                         panic!(); // TODO: err
                     };
 
-                    let partial = Nibbles::decode_compact(items[0]);
+                    let (partial, _) = decode_bytes(items[0])?;
+                    let partial = Nibbles::decode_compact(partial);
+                    debug_assert!(partial.is_leaf());
+
                     if partial == *path {
                         let (value, _) = decode_bytes(items[1])?;
                         return Ok(Some(value));
@@ -199,7 +202,10 @@ impl FlatTrie {
                         panic!(); // TODO: err
                     };
 
-                    let prefix = Nibbles::decode_compact(items[0]);
+                    let (prefix, _) = decode_bytes(items[0])?;
+                    let prefix = Nibbles::decode_compact(prefix);
+                    debug_assert!(!prefix.is_leaf());
+
                     if path.skip_prefix(prefix) {
                         recursive(trie, path, &trie.views[child.unwrap()])
                     } else {
