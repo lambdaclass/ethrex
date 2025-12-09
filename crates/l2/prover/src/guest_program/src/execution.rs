@@ -445,8 +445,12 @@ fn execute_stateless(
             }
         }
 
-        non_privileged_count += block.body.transactions.len()
-            - get_block_l1_in_messages(&block.body.transactions, chain_config.chain_id).len();
+        non_privileged_count += block
+            .body
+            .transactions
+            .iter()
+            .filter(|tx| !tx.is_privileged())
+            .count();
 
         validate_gas_used(&receipts, &block.header)
             .map_err(StatelessExecutionError::GasValidationError)?;

@@ -69,7 +69,7 @@ use spawned_concurrency::tasks::{
 
 const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
     "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes[])";
-const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,(uint256,uint256,bytes32[])[],(uint256,bytes32)[])
+const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,uint256,(uint256,uint256,bytes32[])[],(uint256,bytes32)[])
 ";
 /// Default wake up time for the committer to check if it should send a commit tx
 const COMMITTER_DEFAULT_WAKE_TIME_MS: u64 = 60_000;
@@ -558,6 +558,7 @@ impl L1Committer {
             l1_in_messages_rolling_hash,
             l2_in_message_rolling_hashes,
             last_block_of_batch,
+            non_privileged_transactions,
         )) = result
         else {
             self.remove_one_time_checkpoint(&one_time_checkpoint_path)?;
@@ -576,6 +577,7 @@ impl L1Committer {
             l1_out_message_hashes,
             balance_diffs,
             blobs_bundle,
+            non_privileged_transactions,
             commit_tx: None,
             verify_tx: None,
         };
@@ -634,6 +636,7 @@ impl L1Committer {
             H256,
             Vec<(u64, H256)>,
             BlockNumber,
+            u64,
         )>,
         CommitterError,
     > {
@@ -644,6 +647,7 @@ impl L1Committer {
         let mut acc_l2_in_messages = vec![];
         let mut l1_out_message_hashes = vec![];
         let mut acc_l2_out_messages = vec![];
+        let mut acc_non_privileged_transactions = 0;
         let mut l1_in_message_hashes = vec![];
         let mut l2_in_message_hashes = BTreeMap::new();
         let mut new_state_root = H256::default();
@@ -869,6 +873,13 @@ impl L1Committer {
             l1_out_message_hashes.extend(l1_out_messages.iter().map(get_l1_message_hash));
             acc_l2_out_messages.extend(l2_out_messages);
 
+            acc_non_privileged_transactions += potential_batch_block
+                .body
+                .transactions
+                .iter()
+                .filter(|tx| !tx.is_privileged())
+                .count();
+
             new_state_root = checkpoint_store
                 .state_trie(potential_batch_block.hash())?
                 .ok_or(CommitterError::FailedToGetInformationFromStorage(
@@ -947,6 +958,7 @@ impl L1Committer {
             l1_in_messages_rolling_hash,
             l2_in_message_rolling_hashes,
             last_added_block_number,
+            acc_non_privileged_transactions.try_into()?,
         )))
     }
 
@@ -1141,6 +1153,7 @@ impl L1Committer {
             Value::FixedBytes(l1_messages_merkle_root.0.to_vec().into()),
             Value::FixedBytes(batch.l1_in_messages_rolling_hash.0.to_vec().into()),
             Value::FixedBytes(last_block_hash.0.to_vec().into()),
+            Value::Uint(U256::from(batch.non_privileged_transactions)),
         ];
 
         let (commit_function_signature, values) = if self.based {

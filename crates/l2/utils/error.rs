@@ -35,4 +35,6 @@ pub enum UtilsError {
     PrivilegedTransactionError(#[from] PrivilegedTransactionError),
     #[error("Privileged transaction hash could not be computed")]
     InvalidPrivilegedTransaction,
+    #[error("Integer conversion error: {0}")]
+    TryFromIntError(#[from] std::num::TryFromIntError),
 }

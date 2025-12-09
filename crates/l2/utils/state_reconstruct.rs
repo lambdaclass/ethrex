@@ -45,7 +45,7 @@ pub async fn get_batch(
         .collect();
 
     let mut l2_in_message_hashes = BTreeMap::new();
-    for tx in l2_in_messages {
+    for tx in &l2_in_messages {
         let tx_hash = tx
             .get_privileged_hash()
             .ok_or(UtilsError::InvalidPrivilegedTransaction)?;
@@ -59,6 +59,15 @@ pub async fn get_batch(
         let rolling_hash = compute_privileged_transactions_hash(hashes.clone())?;
         l2_in_message_rolling_hashes.push((*chain_id, rolling_hash));
     }
+
+    let non_privileged_transactions_usize = batch
+        .iter()
+        .map(|block| block.body.transactions.len())
+        .sum::<usize>()
+        - l1_in_messages.len()
+        - l2_in_messages.len();
+
+    let non_privileged_transactions: u64 = non_privileged_transactions_usize.try_into()?;
 
     let first_block = batch.first().ok_or(UtilsError::RetrievalError(
         "Batch is empty. This shouldn't happen.".to_owned(),
@@ -86,6 +95,7 @@ pub async fn get_batch(
         l1_in_messages_rolling_hash,
         l2_in_message_rolling_hashes,
         l1_out_message_hashes,
+        non_privileged_transactions,
         blobs_bundle,
         commit_tx,
         verify_tx: None,

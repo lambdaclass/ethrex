@@ -61,6 +61,7 @@ impl Store {
             l1_in_messages_rolling_hash: H256::zero(),
             l2_in_message_rolling_hashes: Vec::new(),
             l1_out_message_hashes: Vec::new(),
+            non_privileged_transactions: 0,
             balance_diffs: Vec::new(),
             blobs_bundle: BlobsBundle::empty(),
             commit_tx: None,
@@ -235,6 +236,15 @@ impl Store {
                 .to_owned(),
         ))?;
 
+        let non_privileged_transactions = self
+            .engine
+            .get_non_privileged_transactions_by_batch(batch_number)
+            .await?
+            .ok_or(RollupStoreError::Custom(
+            "Failed while trying to retrieve the non-privileged transactions count of a known batch. This is a bug."
+                .to_owned(),
+        ))?;
+
         let l2_in_message_rolling_hashes = self
             .get_l2_in_message_rolling_hashes_by_batch(batch_number)
             .await?
@@ -256,6 +266,7 @@ impl Store {
             l1_out_message_hashes,
             l1_in_messages_rolling_hash,
             l2_in_message_rolling_hashes,
+            non_privileged_transactions,
             balance_diffs,
             commit_tx,
             verify_tx,

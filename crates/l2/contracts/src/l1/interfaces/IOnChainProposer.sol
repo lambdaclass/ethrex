@@ -60,6 +60,7 @@ interface IOnChainProposer {
     /// @param processedPrivilegedTransactionsRollingHash the rolling hash of the processed
     /// privileged transactions of the batch to be committed.
     /// @param lastBlockHash the hash of the last block of the batch to be committed.
+    /// @param nonPrivilegedTransactions the number of non-privileged transactions in the batch to be committed.
     /// @param balanceDiffs the balance diffs of the batch to be committed.
     /// @param l2MessageRollingHashes the L2 message rolling hashes of the batch to be committed.
     function commitBatch(
@@ -68,6 +69,7 @@ interface IOnChainProposer {
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash,
+        uint256 nonPrivilegedTransactions,
         ICommonBridge.BalanceDiff[] calldata balanceDiffs,
         ICommonBridge.L2MessageRollingHash[] calldata l2MessageRollingHashes
     ) external;

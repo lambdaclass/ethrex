@@ -32,12 +32,13 @@ impl Debug for SQLStore {
     }
 }
 
-const DB_SCHEMA: [&str; 19] = [
+const DB_SCHEMA: [&str; 20] = [
     "CREATE TABLE IF NOT EXISTS blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE IF NOT EXISTS l1_messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE IF NOT EXISTS l2_rolling_hashes (batch INT PRIMARY KEY, value BLOB)",
     "CREATE TABLE IF NOT EXISTS balance_diffs (batch INT, chain_id BLOB, value BLOB, message_hashes BLOB, PRIMARY KEY (batch, chain_id))",
     "CREATE TABLE IF NOT EXISTS privileged_transactions (batch INT PRIMARY KEY, transactions_hash BLOB)",
+    "CREATE TABLE IF NOT EXISTS non_privileged_transactions (batch INT PRIMARY KEY, transactions INT)",
     "CREATE TABLE IF NOT EXISTS state_roots (batch INT PRIMARY KEY, state_root BLOB)",
     "CREATE TABLE IF NOT EXISTS blob_bundles (batch INT, idx INT, blob_bundle BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE IF NOT EXISTS account_updates (block_number INT PRIMARY KEY, updates BLOB)",
@@ -159,6 +160,19 @@ impl SQLStore {
                 (batch_number, index, Vec::from(hash.to_fixed_bytes())).into_params()?,
             ));
         }
+        self.execute_in_tx(queries, db_tx).await
+    }
+
+    async fn store_non_privileged_transactions_by_batch_in_tx(
+        &self,
+        batch_number: u64,
+        non_privileged_transactions: u64,
+        db_tx: Option<&Transaction>,
+    ) -> Result<(), RollupStoreError> {
+        let queries = vec![(
+            "INSERT OR REPLACE INTO non_privileged_transactions VALUES (?1, ?2)",
+            (batch_number, non_privileged_transactions).into_params()?,
+        )];
         self.execute_in_tx(queries, db_tx).await
     }
 
@@ -384,6 +398,12 @@ impl SQLStore {
             Some(transaction),
         )
         .await?;
+        self.store_non_privileged_transactions_by_batch_in_tx(
+            batch.number,
+            batch.non_privileged_transactions,
+            Some(transaction),
+        )
+        .await?;
         self.store_l2_rolling_hashes_by_batch_in_tx(
             batch.number,
             batch.l2_in_message_rolling_hashes,
@@ -560,6 +580,23 @@ impl StoreEngineRollup for SQLStore {
         if let Some(row) = rows.next().await? {
             let vec = read_from_row_blob(&row, 1)?;
             return Ok(Some(H256::from_slice(&vec)));
+        }
+        Ok(None)
+    }
+
+    async fn get_non_privileged_transactions_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<u64>, RollupStoreError> {
+        let mut rows = self
+            .query(
+                "SELECT * from non_privileged_transactions WHERE batch = ?1",
+                vec![batch_number],
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            let val = read_from_row_int(&row, 1)?;
+            return Ok(Some(val));
         }
         Ok(None)
     }
@@ -754,6 +791,10 @@ impl StoreEngineRollup for SQLStore {
             ),
             (
                 "DELETE FROM privileged_transactions WHERE batch > ?1",
+                [batch_number].into_params()?,
+            ),
+            (
+                "DELETE FROM non_privileged_transactions WHERE batch > ?1",
                 [batch_number].into_params()?,
             ),
             (

@@ -111,6 +111,7 @@ impl RLPxMessage for BatchSealed {
             .encode_field(&self.batch.state_root)
             .encode_field(&self.batch.l1_in_messages_rolling_hash)
             .encode_field(&self.batch.l2_in_message_rolling_hashes)
+            .encode_field(&self.batch.non_privileged_transactions)
             .encode_field(&self.batch.l1_out_message_hashes)
             .encode_field(&self.batch.blobs_bundle.blobs)
             .encode_field(&self.batch.blobs_bundle.commitments)
@@ -136,6 +137,8 @@ impl RLPxMessage for BatchSealed {
             decoder.decode_field("l1_in_messages_rolling_hash")?;
         let (l2_in_message_rolling_hashes, decoder) =
             decoder.decode_field("l2_in_message_rolling_hashes")?;
+        let (non_privileged_transactions, decoder) =
+            decoder.decode_field("non_privileged_transactions")?;
         let (l1_out_message_hashes, decoder) = decoder.decode_field("l1_out_message_hashes")?;
         let (blobs, decoder) = decoder.decode_field("blobs")?;
         let (commitments, decoder) = decoder.decode_field("commitments")?;
@@ -154,6 +157,7 @@ impl RLPxMessage for BatchSealed {
             l1_in_messages_rolling_hash,
             l2_in_message_rolling_hashes,
             l1_out_message_hashes,
+            non_privileged_transactions,
             blobs_bundle: ethrex_common::types::blobs_bundle::BlobsBundle {
                 blobs,
                 commitments,

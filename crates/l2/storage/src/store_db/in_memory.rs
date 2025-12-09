@@ -33,6 +33,8 @@ struct StoreInner {
     l1_in_messages_rolling_hashes: HashMap<u64, H256>,
     /// Map of batch number to L2 in message rolling hashes
     l2_in_message_rolling_hashes: HashMap<u64, Vec<(u64, H256)>>,
+    /// Map of batch number to non-privileged transactions count
+    non_privileged_transactions_by_batch: HashMap<u64, u64>,
     /// Map of batch number to state root
     state_roots: HashMap<u64, H256>,
     /// Map of batch number to blob
@@ -301,6 +303,17 @@ impl StoreEngineRollup for Store {
             .cloned())
     }
 
+    async fn get_non_privileged_transactions_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<u64>, RollupStoreError> {
+        Ok(self
+            .inner()?
+            .non_privileged_transactions_by_batch
+            .get(&batch_number)
+            .cloned())
+    }
+
     async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError> {
         let mut store = self.inner()?;
         store
@@ -340,6 +353,10 @@ impl StoreEngineRollup for Store {
         inner
             .l1_in_messages_rolling_hashes
             .insert(batch.number, batch.l1_in_messages_rolling_hash);
+
+        inner
+            .non_privileged_transactions_by_batch
+            .insert(batch.number, batch.non_privileged_transactions);
 
         inner
             .balance_diffs_by_batch

@@ -38,6 +38,7 @@ contract OnChainProposer is
         bytes32 processedPrivilegedTransactionsRollingHash;
         bytes32 withdrawalsLogsMerkleRoot;
         bytes32 lastBlockHash;
+        uint256 nonPrivilegedTransactions;
         ICommonBridge.BalanceDiff[] balanceDiffs;
         ICommonBridge.L2MessageRollingHash[] l2InMessageRollingHashes;
     }
@@ -199,6 +200,7 @@ contract OnChainProposer is
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash,
+        uint256 nonPrivilegedTransactions,
         ICommonBridge.BalanceDiff[] calldata balanceDiffs,
         ICommonBridge.L2MessageRollingHash[] calldata l2MessageRollingHashes
     ) external override onlySequencer whenNotPaused {
@@ -268,6 +270,7 @@ contract OnChainProposer is
             processedPrivilegedTransactionsRollingHash,
             withdrawalsLogsMerkleRoot,
             lastBlockHash,
+            nonPrivilegedTransactions,
             balanceDiffs,
             l2MessageRollingHashes
         );
@@ -332,6 +335,13 @@ contract OnChainProposer is
                 batchL2InRollingHashes[i].chainId,
                 l2_messages_count
             );
+        }
+
+        if (
+            ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() &&
+            batchCommitments[batchNumber].nonPrivilegedTransactions != 0
+        ) {
+            revert("00v"); // exceeded privileged transaction inclusion deadline, can't include non-privileged transactions
         }
 
         if (REQUIRE_RISC0_PROOF) {
@@ -584,10 +594,10 @@ contract OnChainProposer is
             bytes32(publicData[224:256])
         );
         if (
-            ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() &&
-            nonPrivilegedTransactions != 0
+            batchCommitments[batchNumber].nonPrivilegedTransactions !=
+            nonPrivilegedTransactions
         ) {
-            return "00v"; // exceeded privileged transaction inclusion deadline, can't include non-privileged transactions
+            return "00w"; // non-privileged transactions public input does not match with committed value
         }
 
         uint256 offset = 256;

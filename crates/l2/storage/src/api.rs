@@ -51,6 +51,11 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         batch_number: u64,
     ) -> Result<Option<Vec<(u64, H256)>>, RollupStoreError>;
 
+    async fn get_non_privileged_transactions_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<u64>, RollupStoreError>;
+
     async fn get_state_root_by_batch_number(
         &self,
         batch_number: u64,
