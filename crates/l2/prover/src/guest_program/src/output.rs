@@ -56,7 +56,7 @@ impl ProgramOutput {
             encoded.extend_from_slice(&diff.value.to_big_endian());
             encoded.extend(diff.message_hashes.iter().flat_map(|h| h.to_fixed_bytes()));
         }
-
+        #[cfg(feature = "l2")]
         for (chain_id, hash) in &self.l2_in_message_rolling_hashes {
             encoded.extend_from_slice(&chain_id.to_be_bytes());
             encoded.extend_from_slice(&hash.to_fixed_bytes());

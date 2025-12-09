@@ -392,11 +392,17 @@ contract CommonBridge is
                 return true;
             }
         }
+        if (SHARED_BRIDGE_ROUTER == address(0)) {
+            return false;
+        }
         uint256[] memory registeredChainIDs = IRouter(SHARED_BRIDGE_ROUTER)
             .getRegisteredChainIds();
 
         for (uint256 i = 0; i < registeredChainIDs.length; i++) {
             uint256 chainId = registeredChainIDs[i];
+            if (chainId == CHAIN_ID) {
+                continue;
+            }
             uint256 pendingMessageIndex = pendingMessagesIndexPerChain[chainId];
             bytes32[]
                 memory pendingMessagesHashes = pendingMessagesHashesPerChain[
