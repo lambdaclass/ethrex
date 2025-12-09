@@ -990,6 +990,7 @@ impl Blockchain {
             Trie::new_temp()
         };
         let mut storage_tries = BTreeMap::new();
+        dbg!("storage tries");
         for key in &keys {
             if key.len() != 20 {
                 continue; // not an address
