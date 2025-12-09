@@ -194,6 +194,7 @@ impl FlatTrie {
                         let (value, _) = decode_bytes(items[1])?;
                         return Ok(Some(value));
                     } else {
+                        dbg!("none for leaf");
                         return Ok(None);
                     }
                 }
@@ -209,12 +210,14 @@ impl FlatTrie {
                     if path.skip_prefix(prefix) {
                         recursive(trie, path, &trie.views[child.unwrap()])
                     } else {
+                        dbg!("none for ext");
                         Ok(None)
                     }
                 }
                 NodeChilds::Branch { childs } => {
                     if let Some(choice) = path.next_choice() {
                         let Some(child_view_index) = childs[choice] else {
+                            dbg!("none for branch");
                             return Ok(None);
                         };
                         let child_view = trie.views[child_view_index];
@@ -224,6 +227,7 @@ impl FlatTrie {
                             panic!(); // TODO: err
                         };
                         let (value, _) = decode_bytes(items[16])?;
+                        dbg!("branch value");
                         Ok((!value.is_empty()).then_some(value))
                     }
                 }

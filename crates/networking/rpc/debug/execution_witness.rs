@@ -144,7 +144,6 @@ pub fn execution_witness_from_rpc_chain_config(
         };
         let trie = FlatTrie::from(&(*node));
         storage_tries.insert(address, trie.clone());
-        dbg!(hex::encode(trie.data));
     }
 
     let state_trie = state_trie_root.map(|n| FlatTrie::from(&n));
