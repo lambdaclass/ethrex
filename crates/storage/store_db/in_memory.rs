@@ -729,16 +729,6 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn set_store_schema_version(&self) -> Result<(), StoreError> {
-        // This is not relevant for InMemory store as it won't be saved once execution ends
-        Ok(())
-    }
-
-    fn get_store_schema_version(&self) -> Result<Option<u64>, StoreError> {
-        // This is not relevant for InMemory store as it won't be saved once execution ends
-        Ok(None)
-    }
-
     fn get_store_directory(&self) -> Result<PathBuf, StoreError> {
         Ok(PathBuf::from("in_memory_store"))
     }
