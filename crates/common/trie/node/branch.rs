@@ -70,9 +70,11 @@ impl BranchNode {
                 })?;
                 child_node.get(db, path)
             } else {
+                dbg!("none for branch");
                 Ok(None)
             }
         } else {
+            dbg!("branch value");
             // Return internal value if present.
             Ok((!self.value.is_empty()).then_some(self.value.clone()))
         }

@@ -52,6 +52,7 @@ impl ExtensionNode {
 
             child_node.get(db, path)
         } else {
+            dbg!("none for ext");
             Ok(None)
         }
     }

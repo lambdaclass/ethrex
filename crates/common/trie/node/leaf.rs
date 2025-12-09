@@ -41,6 +41,7 @@ impl LeafNode {
         if self.partial == path {
             Ok(Some(self.value.clone()))
         } else {
+            dbg!("none for leaf");
             Ok(None)
         }
     }
