@@ -1,6 +1,6 @@
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
-    decode::decode_bytes, encode::RLPEncode, error::RLPDecodeError, structs::Decoder,
+    decode::{RLPDecode, decode_bytes}, encode::RLPEncode, error::RLPDecodeError, structs::Decoder,
 };
 use rkyv::with::Skip;
 
@@ -199,7 +199,7 @@ impl FlatTrie {
                         panic!(); // TODO: err
                     };
 
-                    let (prefix, _) = decode_bytes(items[0])?;
+                    let prefix = Nibbles::decode_compact(items[0]);
                     if path.skip_prefix(prefix) {
                         recursive(trie, path, &trie.views[child.unwrap()])
                     } else {
