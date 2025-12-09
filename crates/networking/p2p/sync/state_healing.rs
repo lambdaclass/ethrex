@@ -19,7 +19,7 @@ use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
-use tracing::{debug, trace};
+use tracing::debug;
 
 use crate::{
     metrics::{CurrentStepValue, METRICS},
@@ -119,9 +119,6 @@ async fn heal_state_trie(
     )>(1000);
     // Contains both nodes and their corresponding paths to heal
     let mut nodes_to_heal = Vec::new();
-
-    let mut logged_no_free_peers_count = 0;
-
     loop {
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             let num_peers = peers
@@ -235,16 +232,6 @@ async fn heal_state_trie(
                 else {
                     // If there are no peers available, re-add the batch to the paths vector, and continue
                     paths.extend(batch);
-
-                    // Log ~ once every 10 seconds
-                    if logged_no_free_peers_count == 0 {
-                        trace!("We are missing peers in heal_state_trie");
-                        logged_no_free_peers_count = 1000;
-                    }
-                    logged_no_free_peers_count -= 1;
-
-                    // Sleep a bit to avoid busy polling
-                    tokio::time::sleep(Duration::from_millis(10)).await;
                     continue;
                 };
 
