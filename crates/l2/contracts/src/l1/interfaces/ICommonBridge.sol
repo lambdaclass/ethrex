@@ -34,15 +34,6 @@ interface ICommonBridge {
         bytes32 indexed withdrawalsLogsMerkleRoot
     );
 
-    /// @notice L2 messages have been published on L1.
-    /// @dev Event emitted when the L2 messages are published on L1.
-    /// @param l2MessagesBatchNumber the batch number where the l2 messages were emitted.
-    /// @param l2MessagesMerkleRoot the merkle root of the l2 messages.
-    event L2MessagesPublished(
-        uint256 indexed l2MessagesBatchNumber,
-        bytes32 indexed l2MessagesMerkleRoot
-    );
-
     /// @notice A withdrawal has been claimed.
     /// @dev Event emitted when a withdrawal is claimed.
     /// @param withdrawalId the message Id of the claimed withdrawal
