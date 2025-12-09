@@ -8,7 +8,9 @@ use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::{Log, PrivilegedL2Transaction, TxKind, TxType};
 use ethrex_common::utils::keccak;
 use ethrex_common::{H160, types::Transaction};
-use ethrex_l2_common::messages::{L2MESSAGE_EVENT_SELECTOR, L2Message, MESSENGER_ADDRESS};
+use ethrex_l2_common::messages::{
+    L2MESSAGE_EVENT_SELECTOR, L2Message, MESSENGER_ADDRESS, get_l2_message_hash,
+};
 use ethrex_l2_sdk::{
     build_generic_tx, get_last_fetched_l1_block, get_pending_l1_messages, get_pending_l2_messages,
 };
@@ -488,7 +490,7 @@ pub async fn filter_verified_messages(
     logs: Vec<RpcLog>,
 ) -> Result<Vec<(L2Message, u64, u64)>, L1WatcherError> {
     let mut verified_logs = Vec::new();
-    info!("Filtering L2 messages");
+    debug!("Filtering L2 messages");
 
     for rpc_log in logs {
         let log = Log {
@@ -503,33 +505,15 @@ pub async fn filter_verified_messages(
             ));
         };
 
-        info!("l2 message parsed from log: {:?}", l2_message);
+        debug!("l2 message parsed from log: {:?}", l2_message);
 
         // Check if the transaction is marked as pending in the contract.
         let pending_l2_messages =
             get_pending_l2_messages(l1_client, bridge_address, l2_client.chain_id).await?;
 
-        info!("Pending l2 messages {:?}", pending_l2_messages);
+        debug!("Pending l2 messages {:?}", pending_l2_messages);
 
-        // TODO: refactor this.
-        let mint_transaction = PrivilegedL2Transaction {
-            chain_id: l2_client.chain_id,
-            nonce: l2_message.tx_id.as_u64(),
-            max_priority_fee_per_gas: Default::default(),
-            max_fee_per_gas: Default::default(),
-            gas_limit: l2_message.gas_limit.as_u64(),
-            to: TxKind::Call(l2_message.to),
-            value: l2_message.value,
-            data: l2_message.data.clone(),
-            access_list: vec![],
-            from: l2_message.from,
-            inner_hash: Default::default(),
-        };
-        let message_hash = mint_transaction.get_privileged_hash().ok_or(
-            L1WatcherError::FailedToDeserializeLog(
-                "Failed to compute privileged hash from L2 message".to_owned(),
-            ),
-        )?;
+        let message_hash = get_l2_message_hash(&l2_message);
         if !pending_l2_messages.contains(&message_hash) {
             info!("L2 message not found in pending messages: {message_hash:#x}");
             // Message not verified.
