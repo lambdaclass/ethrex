@@ -724,8 +724,8 @@ jobs:
           export ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=0x45681AE1768a8936FB87aB11453B4755e322ceec
           if  [ "${{ matrix.forced_inclusion }}" = false ]; then
             # In forced_inclusion, we ommit these variables to avoid including messages from L2B into L2A
-            export ETHREX_WATCHER_L2_RPCS=http://ethrex_l2_b:1730 \
-            export ETHREX_WATCHER_L2_CHAIN_IDS=1730 \
+            export ETHREX_WATCHER_L2_RPCS=http://ethrex_l2_b:1730
+            export ETHREX_WATCHER_L2_CHAIN_IDS=1730
           fi
           cd crates/l2
           export $(xargs < ../../cmd/.env_l2a)
