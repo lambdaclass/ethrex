@@ -159,6 +159,7 @@ contract OnChainProposer is
             bytes32(0),
             bytes32(0),
             bytes32(0),
+            0,
             new ICommonBridge.BalanceDiff[](0),
             new ICommonBridge.L2MessageRollingHash[](0)
         );
