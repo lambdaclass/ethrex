@@ -221,17 +221,8 @@ async fn handle_forkchoice(
     }
 
     if syncer.sync_mode() == SyncMode::Snap {
-        // Don't trigger a sync if the block is already canonical
-        if context
-            .storage
-            .is_canonical_sync(fork_choice_state.head_block_hash)?
-        {
-            // Disable snapsync mode so we can process incoming payloads
-            syncer.disable_snap();
-        } else {
-            syncer.sync_to_head(fork_choice_state.head_block_hash);
-            return Ok((None, PayloadStatus::syncing().into()));
-        }
+        syncer.sync_to_head(fork_choice_state.head_block_hash);
+        return Ok((None, PayloadStatus::syncing().into()));
     }
 
     match apply_fork_choice(
