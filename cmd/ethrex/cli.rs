@@ -18,7 +18,7 @@ use ethrex_p2p::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use tokio_util::sync::CancellationToken;
-use tracing::{Level, info, warn};
+use tracing::{Level, error, info, warn};
 
 use crate::{
     initializers::{
@@ -202,7 +202,7 @@ pub struct Options {
         help_heading = "RPC options"
     )]
     pub authrpc_jwtsecret: String,
-    #[arg(long = "p2p.disabled", default_value = "false", value_name = "P2P_DISABLED", action = ArgAction::SetFalse, help_heading = "P2P options")]
+    #[arg(long = "p2p.disabled", default_value = "false", value_name = "P2P_DISABLED", action = ArgAction::SetTrue, help_heading = "P2P options")]
     pub p2p_disabled: bool,
     #[arg(
         long = "p2p.addr",
@@ -568,7 +568,7 @@ pub async fn import_blocks(
     const MIN_FULL_BLOCKS: usize = 132;
     let start_time = Instant::now();
     init_datadir(datadir);
-    let store = init_store(datadir, genesis).await;
+    let store = init_store(datadir, genesis).await?;
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
     let path_metadata = metadata(path).expect("Failed to read path");
 
@@ -683,7 +683,7 @@ pub async fn import_blocks_bench(
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
     init_datadir(datadir);
-    let store = init_store(datadir, genesis).await;
+    let store = init_store(datadir, genesis).await?;
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
     regenerate_head_state(&store, &blockchain).await.unwrap();
     let path_metadata = metadata(path).expect("Failed to read path");
@@ -794,7 +794,13 @@ pub async fn export_blocks(
     last_number: Option<u64>,
 ) {
     init_datadir(datadir);
-    let store = load_store(datadir).await;
+    let store = match load_store(datadir).await {
+        Err(err) => {
+            error!("Failed to load Store due to: {err}");
+            return;
+        }
+        Ok(store) => store,
+    };
     let start = first_number.unwrap_or_default();
     // If we have no latest block then we don't have any blocks to export
     let latest_number = match store.get_latest_block_number().await {
