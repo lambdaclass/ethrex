@@ -45,34 +45,18 @@ Yes.
 
 ### Does the project use a proper proof system?
 
-Ethrex is designed as a **zk rollup / zk‑validium framework** and includes a full validity‑proof pipeline:
+Yes, assuming proofs are enabled.
 
-- The prover (`ethrex-prover`, documented in the [prover docs](../prover/prover.md)) uses a zkVM to re‑execute batches using an execution witness and commits:
-  - Initial and final state roots.
-  - Withdrawal log Merkle root.
-  - Privileged transaction rolling hash.
-  - Data‑availability commitments (blob hashes / state‑diff commitments, depending on the version).
-- The L1 `OnChainProposer` contract verifies the proofs on‑chain:
-  - Directly, via Groth16 verifiers for Risc0/SP1/TDX (`IRiscZeroVerifier`, `ISP1Verifier`, `ITDXVerifier`).
-  - Or indirectly, via an Aligned Layer aggregator (`verifyBatchesAligned` path).
-- The public inputs are checked against the committed batch data in `_verifyPublicData`, and a failed check or proof verification makes the transaction revert.
-
-However, proof *enforcement* is a deployment choice:
-
-- `OnChainProposer` has boolean flags like `REQUIRE_RISC0_PROOF`, `REQUIRE_SP1_PROOF`, `REQUIRE_TDX_PROOF`.
-- A chain that disables all proofs for production would **not** meet the “proper proof system is used to accept state roots” requirement, even though ethrex supports it.
+Ethrex supports multiple proving systems, such as SP1 and RISC0.
+The `OnChainProposer` contract can be configured to require any combination of these proofs when verifying. A batch is only verified on L1 if all configured proofs pass and their public inputs match the committed data (state roots, withdrawals, blobs, etc.).
 
 ### Are there at least 5 external actors that can submit a fraud proof?
 
-Not applicable as stated, and not implemented as a fraud‑proof system.
+Not applicable, and not implemented as a fraud‑proof system.
 
-- Ethrex uses **validity proofs**, not fraud proofs. There is no on‑chain “challenge game” where watchers can submit alternate traces to invalidate a state root.
-- The standard `OnChainProposer` variant (`crates/l2/contracts/src/l1/OnChainProposer.sol`) restricts `commitBatch`/`verifyBatch` to an allowlisted set of sequencer addresses (`onlySequencer`), so even proof submission is not permissionless there.
-- The “based” variant (`crates/l2/contracts/src/l1/based/OnChainProposer.sol`) keeps `commitBatch` restricted to the leader sequencer but makes `verifyBatch` and `verifyBatchesAligned` externally callable, so anyone can *submit* a validity proof; it is still not a fraud‑proof scheme.
+Ethrex uses **validity proofs**, not fraud proofs. There is no on‑chain “challenge game” where watchers can submit alternate traces to invalidate a state root.
 
-So there is no fraud‑proof system with ≥5 external challengers today. Ethrex targets the zk‑rollup path in the stage specification, not the optimistic‑rollup / fraud‑proof path.
-
-## Stage 1 questions
+## Stage 1
 
 Stage 1 is mostly about **governance and upgrades**: who can block/alter L2→L1 messages, under what assumptions, and with what exit windows.
 
