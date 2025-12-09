@@ -1012,7 +1012,9 @@ impl Blockchain {
                     "execution witness does not contain non-empty storage trie".to_string(),
                 ));
             };
-            storage_tries.insert(address, FlatTrie::from(&(*node)));
+            let trie = FlatTrie::from(&(*node));
+            storage_tries.insert(address, trie.clone());
+            dbg!(trie.data.len());
         }
 
         let state_trie = state_trie_root.map(|n| FlatTrie::from(&n));
