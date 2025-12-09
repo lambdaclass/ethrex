@@ -251,12 +251,6 @@ jobs:
           fi
           echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
 
-      - name: Log in to the Container registry
-        uses: docker/login-action@v3
-        with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
       - name: Run Hive Simulation
         id: run-hive-action
         uses: ethpandaops/hive-github-action@v0.5.0
