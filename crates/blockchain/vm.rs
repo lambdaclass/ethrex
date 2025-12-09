@@ -24,20 +24,32 @@ pub struct StoreVmDatabase {
 }
 
 impl StoreVmDatabase {
-    pub fn new(store: Store, block_header: BlockHeader) -> Self {
-        StoreVmDatabase {
+    pub fn new(store: Store, block_header: BlockHeader) -> Result<Self, EvmError> {
+        if !store
+            .has_state_root(block_header.state_root)
+            .map_err(|e| EvmError::DB(e.to_string()))?
+        {
+            return Err(EvmError::DB("state root missing".to_string()));
+        }
+        Ok(StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
             block_hash_cache: Arc::new(Mutex::new(BTreeMap::new())),
             state_root: block_header.state_root,
-        }
+        })
     }
 
     pub fn new_with_block_hash_cache(
         store: Store,
         block_header: BlockHeader,
         block_hash_cache: BTreeMap<BlockNumber, BlockHash>,
-    ) -> Self {
+    ) -> Result<Self, EvmError> {
+        if !store
+            .has_state_root(block_header.state_root)
+            .map_err(|e| EvmError::DB(e.to_string()))?
+        {
+            return Err(EvmError::DB("state root missing".to_string()));
+        }
         StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
