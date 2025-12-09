@@ -1,4 +1,6 @@
-use crate::l2::batch::{BatchNumberRequest, GetBatchByBatchNumberRequest};
+use crate::l2::batch::{
+    BatchNumberRequest, GetBatchByBatchBlockNumberRequest, GetBatchByBatchNumberRequest,
+};
 use crate::l2::execution_witness::handle_execution_witness;
 use crate::l2::fees::{
     GetBaseFeeVaultAddress, GetL1BlobBaseFeeRequest, GetL1FeeVaultAddress, GetOperatorFee,
@@ -229,6 +231,7 @@ pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result
         "ethrex_sendTransaction" => SponsoredTx::call(req, context).await,
         "ethrex_getL1MessageProof" => GetL1MessageProof::call(req, context).await,
         "ethrex_batchNumber" => BatchNumberRequest::call(req, context).await,
+        "ethrex_getBatchByBlock" => GetBatchByBatchBlockNumberRequest::call(req, context).await,
         "ethrex_getBatchByNumber" => GetBatchByBatchNumberRequest::call(req, context).await,
         "ethrex_getBaseFeeVaultAddress" => GetBaseFeeVaultAddress::call(req, context).await,
         "ethrex_getOperatorFeeVaultAddress" => GetOperatorFeeVaultAddress::call(req, context).await,

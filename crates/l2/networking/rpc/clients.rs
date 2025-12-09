@@ -47,6 +47,23 @@ pub async fn get_l1_message_proof(
     }
 }
 
+pub async fn get_batch_by_block(
+    client: &EthClient,
+    block: BlockIdentifier,
+) -> Result<Option<RpcBatch>, EthClientError> {
+    let params = Some(vec![block.into(), json!(true)]);
+    let request = RpcRequest::new("ethrex_getBatchByBlock", params);
+
+    match client.send_request(request).await? {
+        RpcResponse::Success(result) => serde_json::from_value(result.result)
+            .map_err(GetBatchByNumberError::SerdeJSONError)
+            .map_err(EthClientError::from),
+        RpcResponse::Error(error_response) => {
+            Err(GetBatchByNumberError::RPCError(error_response.error.message).into())
+        }
+    }
+}
+
 pub async fn get_batch_by_number(
     client: &EthClient,
     batch_number: u64,
