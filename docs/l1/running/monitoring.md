@@ -30,8 +30,6 @@ _**Note:** You might want to restart the docker containers in case of an update 
 
 This will launch Prometheus and Grafana, already set up to scrape ethrex metrics.
 
-**Note: We depend on `ethereum-metrics-exporter` for some key metrics to define variables on the Grafana dashboards. For it to work properly we need the consensus client to expose its RPC endpoints. For example if you are running lighthhouse you may need to add `--http` and `--http-address 0.0.0.0` flags to it before the dashboards pick up all metrics. This wont be needed in the near future**
-
 ## Accessing Metrics and Dashboards
 
 - **Prometheus:** [http://localhost:9091](http://localhost:9091)

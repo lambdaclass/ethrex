@@ -992,7 +992,6 @@ dependencies = [
  "substrate-bn",
  "thiserror",
  "walkdir",
- "ziskos",
 ]
 
 [[package]]

@@ -248,8 +248,7 @@ impl L1ProofVerifier {
 
         if let Err(EthClientError::EstimateGasError(EstimateGasError::RPCError(error))) =
             send_verify_tx_result.as_ref()
-            && error.contains("00m")
-        // Invalid Aligned proof
+            && error.contains("Invalid ALIGNED proof")
         {
             warn!("Deleting invalid ALIGNED proof");
             for batch_number in first_batch_number..=last_batch_number {

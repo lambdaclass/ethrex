@@ -229,37 +229,17 @@ impl Metrics {
 
         self.peers.fetch_add(1, Ordering::Relaxed);
 
-        let client_type = client_version.split('/').next().unwrap_or("unknown");
-
-        // TODO (#4240): This module expose metrics to be used in the snapsync logs, to actually
-        // expose them in prometheus we need to call the metrics crate instead, so we do it here.
-        // In the future this module will be rewritten as part of the snapsync rewrite and all
-        // the metrics calls will be done directly using the metrics crate.
-        #[cfg(feature = "metrics")]
-        {
-            use ethrex_metrics::p2p::METRICS_P2P;
-            METRICS_P2P.inc_peer_count();
-            METRICS_P2P.inc_peer_client(client_type);
-        }
-
         self.update_rate(&mut events, &self.new_connection_establishments_rate)
             .await;
 
         let mut clients = self.peers_by_client_type.lock().await;
+        let split = client_version.split('/').collect::<Vec<&str>>();
+        let client_type = split.first().expect("Split always returns 1 element");
+
         clients
             .entry(client_type.to_string())
             .and_modify(|count| *count += 1)
-            .or_insert_with(|| {
-                // First time seeing this client type, initialize disconnection metrics
-                #[cfg(feature = "metrics")]
-                {
-                    use ethrex_metrics::p2p::METRICS_P2P;
-                    for reason in DisconnectReason::all() {
-                        METRICS_P2P.init_disconnection(&reason.to_string(), client_type);
-                    }
-                }
-                1
-            });
+            .or_insert(1);
     }
 
     pub async fn record_ping_sent(&self) {
@@ -277,18 +257,11 @@ impl Metrics {
         client_version: &str,
         reason: DisconnectReason,
     ) {
-        self.peers.fetch_sub(1, Ordering::Relaxed);
-
-        let client_type = client_version.split('/').next().unwrap_or("unknown");
-        #[cfg(feature = "metrics")]
-        {
-            use ethrex_metrics::p2p::METRICS_P2P;
-            METRICS_P2P.dec_peer_count();
-            METRICS_P2P.dec_peer_client(client_type);
-            METRICS_P2P.inc_disconnection(&reason.to_string(), client_type);
-        }
+        self.peers.fetch_add(1, Ordering::Relaxed);
 
         let mut clients = self.peers_by_client_type.lock().await;
+        let split = client_version.split('/').collect::<Vec<&str>>();
+        let client_type = split.first().expect("Split always returns 1 element");
 
         let mut disconnection_by_client = self.disconnections_by_client_type.lock().await;
         disconnection_by_client

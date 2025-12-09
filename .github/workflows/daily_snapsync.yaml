@@ -7,7 +7,7 @@ on:
       - ".github/workflows/daily_snapsync.yaml"
   schedule:
     # Every day at UTC 03:00
-    - cron: "0 3 * * *"
+    - cron: "0 3 * * 1,2,3,4,5"
   workflow_dispatch:
     inputs:
       network:
@@ -32,7 +32,7 @@ jobs:
         run: |
           event_name="${GITHUB_EVENT_NAME}"
           if [[ "$event_name" == "schedule" ]]; then
-            json='[{"network":"hoodi","timeout":"30m"},{"network":"sepolia","timeout":"2h"}]'
+            json='[{"network":"hoodi","timeout":"30m"},{"network":"sepolia","timeout":"10h"}]'
           elif [[ "$event_name" == "pull_request" ]]; then
             json='[{"network":"hoodi","timeout":"30m"}]'
           else
@@ -43,7 +43,7 @@ jobs:
                 json='[{"network":"hoodi","timeout":"30m"}]'
                 ;;
               sepolia)
-                json='[{"network":"sepolia","timeout":"2h"}]'
+                json='[{"network":"sepolia","timeout":"10h"}]'
                 ;;
               *)
                 echo "::error::Unsupported network value '$network'. Allowed values: hoodi, sepolia."

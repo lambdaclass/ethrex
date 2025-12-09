@@ -226,8 +226,6 @@ pub enum BlockProducerError {
     InternalError(#[from] GenServerError),
     #[error("EthClientError error: {0}")]
     EthClientError(#[from] EthClientError),
-    #[error("Failed to encode calldata: {0}")]
-    CalldataEncodeError(#[from] CalldataEncodeError),
 }
 
 #[derive(Debug, thiserror::Error)]

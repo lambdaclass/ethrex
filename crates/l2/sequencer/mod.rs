@@ -48,7 +48,7 @@ pub async fn start_l2(
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
     cancellation_token: CancellationToken,
-    l2_url: Url,
+    _l2_url: Url,
     genesis: Genesis,
     checkpoints_dir: PathBuf,
 ) -> Result<
@@ -110,7 +110,6 @@ pub async fn start_l2(
         blockchain.clone(),
         cfg.clone(),
         shared_state.clone(),
-        l2_url.clone(),
     )
     .await
     .inspect_err(|err| {
@@ -155,7 +154,6 @@ pub async fn start_l2(
         blockchain.clone(),
         cfg.clone(),
         shared_state.clone(),
-        cfg.l1_watcher.router_address,
     )
     .await
     .inspect_err(|err| {
@@ -163,7 +161,7 @@ pub async fn start_l2(
     });
 
     #[cfg(feature = "metrics")]
-    let metrics_gatherer = MetricsGatherer::spawn(&cfg, rollup_store.clone(), l2_url)
+    let metrics_gatherer = MetricsGatherer::spawn(&cfg, rollup_store.clone(), _l2_url)
         .await
         .inspect_err(|err| {
             error!("Error starting Block Producer: {err}");
