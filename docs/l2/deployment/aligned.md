@@ -2,7 +2,7 @@
 
 This guide extends the [Deploy an L2 overview](./overview.md) and shows how to run an ethrex L2 with **Aligned mode** enabled. It assumes:
 
-- You already installed the `ethrex` binary to your `$PATH` (for example from the repo root with `cargo install --path cmd/ethrex --bin ethrex --features l2,l2-sql --force`).
+- You already installed the `ethrex` binary to your `$PATH` (for example from the repo root with `cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql --force`).
 - You have the ethrex repository checked out locally for the `make` targets referenced below.
 
 - Check [How to Run (local devnet)](#how-to-run-local-devnet) for development or testing.
