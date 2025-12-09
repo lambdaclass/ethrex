@@ -990,8 +990,6 @@ impl Blockchain {
             Trie::new_temp()
         };
         let mut storage_tries = BTreeMap::new();
-        println!("storage tries");
-        dbg!("storage tries");
         for key in &keys {
             if key.len() != 20 {
                 continue; // not an address
@@ -1014,9 +1012,7 @@ impl Blockchain {
                     "execution witness does not contain non-empty storage trie".to_string(),
                 ));
             };
-            let trie = FlatTrie::from(&(*node));
-            storage_tries.insert(address, trie.clone());
-            dbg!(trie.data.len());
+            storage_tries.insert(address, FlatTrie::from(&(*node)));
         }
 
         let state_trie = state_trie_root.map(|n| FlatTrie::from(&n));

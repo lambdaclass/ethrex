@@ -142,7 +142,9 @@ pub fn execution_witness_from_rpc_chain_config(
                 "execution witness does not contain non-empty storage trie".to_string(),
             ));
         };
-        storage_tries.insert(address, FlatTrie::from(&(*node)));
+        let trie = FlatTrie::from(&(*node));
+        storage_tries.insert(address, trie.clone());
+        dbg!(hex::encode(trie.data));
     }
 
     let state_trie = state_trie_root.map(|n| FlatTrie::from(&n));
