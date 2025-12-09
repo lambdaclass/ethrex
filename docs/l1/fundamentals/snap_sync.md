@@ -303,11 +303,14 @@ struct StorageTaskResult {
 
 ![Big Account logic](snap_sync/Flow%20-%20Big%20Account%20Logic.png)
 
-
-#### Memory Concerns
-
-Currently, we use a struct `accounts_by_root_hash` that we don't check the memory size. When rewriting this algorithm we should check if we're not going over the memory limit.
-
 #### Retry Limit
 
 Currently, if ethrex has been downloading storages for more than 2 pivots, the node will stop trying to download storage, and fallback to heal (fast sync) all the storage accounts that were still missing downloads. This stops ethrex hanging due to a problem but it indicates that we still have bugs in our storage slots download.
+
+### Downloading Bytecodes
+
+Whenever an account is download or healed we check if the code is not empty. If it isn't, we store it for future download. This is added to a list, and when the list grows beyond a certain size it is written to disk. After the healing is done and we have a complete state and storage tree, we start with the download of bytecodes, chunking them to avoid memory overflow.
+
+### Forkchoice update
+
+Once the entire files are downloaded, we change the snap sync mode to full, and we do an `apply_forkchoice` to mark that as the last pivot as the last block.
