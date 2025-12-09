@@ -84,7 +84,7 @@ impl RLPEncode for P2PTransaction {
 impl RLPDecode for P2PTransaction {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (is_list, payload, remainder) = decode_rlp_item(rlp)?;
-        if !is_list {
+        let res = if !is_list {
             let tx_type = payload.first().ok_or(RLPDecodeError::InvalidLength)?;
             let tx_encoding = &payload.get(1..).ok_or(RLPDecodeError::InvalidLength)?;
             // Look at the first byte to check if it corresponds to a TransactionType
@@ -115,7 +115,9 @@ impl RLPDecode for P2PTransaction {
             // LegacyTransaction
             LegacyTransaction::decode_unfinished(rlp)
                 .map(|(tx, rem)| (P2PTransaction::LegacyTransaction(tx), rem))
-        }
+        }?;
+        dbg!(res.0.compute_hash(), hex::encode(rlp));
+        Ok(res)
     }
 }
 
