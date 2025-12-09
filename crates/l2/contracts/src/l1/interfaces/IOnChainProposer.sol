@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.29;
 
-import {ICommonBridge} from "./ICommonBridge.sol";
-
 /// @title Interface for the OnChainProposer contract.
 /// @author LambdaClass
 /// @notice A OnChainProposer contract ensures the advancement of the L2. It is used
@@ -57,20 +55,15 @@ interface IOnChainProposer {
     /// @param newStateRoot the new state root of the batch to be committed.
     /// @param withdrawalsLogsMerkleRoot the merkle root of the withdrawal logs
     /// of the batch to be committed.
-    /// @param l2MessagesMerkleRoot the merkle root of the l2 messages
-    /// of the batch to be committed.
     /// @param processedPrivilegedTransactionsRollingHash the rolling hash of the processed
     /// privileged transactions of the batch to be committed.
     /// @param lastBlockHash the hash of the last block of the batch to be committed.
-    /// @param balanceDiffs the balance diffs of the batch to be committed.
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
         bytes32 withdrawalsLogsMerkleRoot,
-        bytes32 l2MessagesMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
-        bytes32 lastBlockHash,
-        ICommonBridge.BalanceDiff[] calldata balanceDiffs
+        bytes32 lastBlockHash
     ) external;
 
     /// @notice Method used to verify a batch of L2 blocks.

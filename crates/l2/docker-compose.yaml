@@ -59,7 +59,6 @@ services:
       - ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM:-false}
       - COMPILE_CONTRACTS=true
       - ETHREX_USE_COMPILED_GENESIS=true
-      - ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER
     depends_on:
       - ethrex_l1
     entrypoint:
@@ -98,9 +97,6 @@ services:
       - ETHREX_COMMITTER_COMMIT_TIME=${ETHREX_COMMITTER_COMMIT_TIME:-60000}
       - ETHREX_WATCHER_WATCH_INTERVAL=${ETHREX_WATCHER_WATCH_INTERVAL:-12000}
       - ETHREX_OSAKA_ACTIVATION_TIME=${ETHREX_OSAKA_ACTIVATION_TIME:-1761677592}
-      - ETHREX_WATCHER_L2_RPCS
-      - ETHREX_WATCHER_L2_CHAIN_IDS
-      - ETHREX_WATCHER_ROUTER_ADDRESS
     volumes:
       - ../../fixtures/genesis/l2.json:/genesis/l2.json
       - env:/env/
