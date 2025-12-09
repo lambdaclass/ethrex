@@ -1,4 +1,5 @@
 use crate::{
+    STORE_SCHEMA_VERSION,
     rlp::AccountCodeHashRLP,
     trie_db::{
         layering::{TrieLayerCache, TrieWrapper, apply_prefix},
@@ -224,7 +225,6 @@ impl Store {
         db_options.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
         db_options.set_advise_random_on_open(false);
         db_options.set_compression_type(rocksdb::DBCompressionType::None);
-        db_options.set_bottommost_compression_type(rocksdb::DBCompressionType::None);
 
         // db_options.enable_statistics();
         // db_options.set_stats_dump_period_sec(600);
@@ -248,6 +248,14 @@ impl Store {
             CF_ACCOUNT_FLATKEYVALUE,
             CF_STORAGE_FLATKEYVALUE,
             CF_MISC_VALUES,
+        ];
+        let compressible_cfs = [
+            CF_BLOCK_NUMBERS,
+            CF_HEADERS,
+            CF_BODIES,
+            CF_RECEIPTS,
+            CF_TRANSACTION_LOCATIONS,
+            CF_FULLSYNC_HEADERS,
         ];
 
         // Get existing column families to know which ones to drop later
@@ -286,7 +294,12 @@ impl Store {
             cf_opts.set_level_zero_file_num_compaction_trigger(4);
             cf_opts.set_level_zero_slowdown_writes_trigger(20);
             cf_opts.set_level_zero_stop_writes_trigger(36);
-            cf_opts.set_compression_type(rocksdb::DBCompressionType::None);
+
+            if compressible_cfs.contains(&cf_name.as_str()) {
+                cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+            } else {
+                cf_opts.set_compression_type(rocksdb::DBCompressionType::None);
+            }
 
             match cf_name.as_str() {
                 CF_HEADERS | CF_BODIES => {
@@ -532,6 +545,18 @@ impl Store {
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
+    // Helper method for sync writes
+    fn write_sync<K, V>(&self, cf_name: &str, key: K, value: V) -> Result<(), StoreError>
+    where
+        K: AsRef<[u8]> + Send + 'static,
+        V: AsRef<[u8]> + Send + 'static,
+    {
+        let cf = self.cf_handle(cf_name)?;
+        self.db
+            .put_cf(&cf, key, value)
+            .map_err(|e| StoreError::Custom(format!("RocksDB write error: {}", e)))
     }
 
     // Helper method for async reads
@@ -2132,6 +2157,26 @@ impl StoreEngine for Store {
         let account_nibbles = Nibbles::from_bytes(account.as_bytes());
         let last_computed_flatkeyvalue = self.last_written()?;
         Ok(&last_computed_flatkeyvalue[0..64] > account_nibbles.as_ref())
+    }
+
+    fn set_store_schema_version(&self) -> Result<(), StoreError> {
+        self.write_sync(
+            CF_MISC_VALUES,
+            "store_schema_version",
+            STORE_SCHEMA_VERSION.to_le_bytes(),
+        )
+    }
+
+    fn get_store_schema_version(&self) -> Result<Option<u64>, StoreError> {
+        self.read_sync(CF_MISC_VALUES, "store_schema_version")?
+            .map(|bytes| -> Result<u64, StoreError> {
+                let array: [u8; 8] = bytes.try_into().map_err(|_| {
+                    StoreError::Custom("Invalid store schema version bytes".to_string())
+                })?;
+                Ok(u64::from_le_bytes(array))
+            })
+            .transpose()
+            .map_err(|_| StoreError::DecodeError)
     }
 }
 
