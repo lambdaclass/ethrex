@@ -781,9 +781,13 @@ fn validate_excess_blob_gas(
     chain_config: &ChainConfig,
 ) -> Result<(), InvalidBlockHeaderError> {
     let expected_excess_blob_gas = chain_config
-        .get_fork_blob_schedule(header.timestamp)
+        .get_blob_schedule_for_time(header.timestamp)
         .map(|schedule| {
-            calc_excess_blob_gas(parent_header, schedule, chain_config.fork(header.timestamp))
+            calc_excess_blob_gas(
+                parent_header,
+                schedule,
+                chain_config.get_fork(header.timestamp),
+            )
         })
         .unwrap_or_default();
     if header
