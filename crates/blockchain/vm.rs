@@ -50,12 +50,12 @@ impl StoreVmDatabase {
         {
             return Err(EvmError::DB("state root missing".to_string()));
         }
-        StoreVmDatabase {
+        Ok(StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
             block_hash_cache: Arc::new(Mutex::new(block_hash_cache)),
             state_root: block_header.state_root,
-        }
+        })
     }
 }
 
