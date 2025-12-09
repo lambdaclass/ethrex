@@ -133,7 +133,7 @@ impl FlatTrie {
                         let Some(child_hash) = recursive(trie, &trie.views[child])? else {
                             return Ok(None);
                         };
-                        let Some(items) = trie.decode_view(view)? else {
+                        let Some(items) = trie.get_encoded_items(view)? else {
                             panic!(); // TODO: err
                         };
                         let (child_data_hash, _) = decode_bytes(items[1])?;
@@ -144,7 +144,7 @@ impl FlatTrie {
                 }
                 NodeChilds::Branch { childs } => {
                     // TODO: we can decode just the Some(_) childs
-                    let Some(items) = trie.decode_view(view)? else {
+                    let Some(items) = trie.get_encoded_items(view)? else {
                         panic!(); // TODO: err
                     };
                     for (i, child) in childs.iter().enumerate() {
@@ -182,7 +182,7 @@ impl FlatTrie {
         ) -> Result<Option<&'a [u8]>, RLPDecodeError> {
             match view.childs {
                 NodeChilds::Leaf => {
-                    let Some(items) = trie.decode_view(view)? else {
+                    let Some(items) = trie.get_encoded_items(view)? else {
                         panic!(); // TODO: err
                     };
 
@@ -198,7 +198,7 @@ impl FlatTrie {
                     }
                 }
                 NodeChilds::Extension { child } => {
-                    let Some(items) = trie.decode_view(view)? else {
+                    let Some(items) = trie.get_encoded_items(view)? else {
                         panic!(); // TODO: err
                     };
 
@@ -220,7 +220,11 @@ impl FlatTrie {
                         let child_view = trie.views[child_view_index];
                         recursive(trie, path, &child_view)
                     } else {
-                        Ok(None) // values on branches are unsupported
+                        let Some(items) = trie.get_encoded_items(view)? else {
+                            panic!(); // TODO: err
+                        };
+                        let (value, _) = decode_bytes(items[16])?;
+                        Ok((!value.is_empty()).then_some(value))
                     }
                 }
             }
@@ -233,7 +237,7 @@ impl FlatTrie {
     }
 
     // TODO: cache decoded view?
-    pub fn decode_view(&self, view: &NodeView) -> Result<Option<Vec<&[u8]>>, RLPDecodeError> {
+    pub fn get_encoded_items(&self, view: &NodeView) -> Result<Option<Vec<&[u8]>>, RLPDecodeError> {
         let data = self.get_view_data(view);
         let mut decoder = Decoder::new(data)?;
 
