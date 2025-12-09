@@ -364,7 +364,7 @@ impl Node {
 
         let payload_response = self
             .engine_client
-            .engine_get_payload_v4(payload_id)
+            .engine_get_payload_v5(payload_id)
             .await
             .unwrap();
 
@@ -610,13 +610,8 @@ fn generate_jwt_secret() -> Bytes {
 }
 
 fn keccak256(data: &[u8]) -> H256 {
-    H256(
-        Sha256::new_with_prefix(data)
-            .finalize()
-            .as_slice()
-            .try_into()
-            .unwrap(),
-    )
+    let digest = Sha256::new_with_prefix(data).finalize();
+    H256::from_slice(digest.as_ref())
 }
 
 async fn wait_until_synced(engine_client: &EngineClient, fork_choice_state: ForkChoiceState) {

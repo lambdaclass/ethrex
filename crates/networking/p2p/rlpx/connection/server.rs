@@ -36,9 +36,9 @@ use crate::{
     types::Node,
 };
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::MempoolTransaction;
 #[cfg(feature = "l2")]
 use ethrex_common::types::Transaction;
+use ethrex_common::types::{MempoolTransaction, P2PTransaction};
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
@@ -189,6 +189,10 @@ pub struct Established {
     pub(crate) l2_state: L2ConnState,
     pub(crate) tx_broadcaster: GenServerHandle<TxBroadcaster>,
     pub(crate) current_requests: HashMap<u64, (String, oneshot::Sender<Message>)>,
+    // We store the disconnection reason to handle it in the teardown
+    pub(crate) disconnect_reason: Option<DisconnectReason>,
+    // Indicates if the peer has been validated (ie. the connection was established successfully)
+    pub(crate) is_validated: bool,
 }
 
 impl Established {
@@ -297,6 +301,7 @@ impl GenServer for PeerConnectionServer {
                                 .unwrap_or("Unknown".to_string()),
                         )
                         .await;
+                    established_state.is_validated = true;
                     // New state
                     self.state = ConnectionState::Established(Box::new(established_state));
                     Ok(Success(self))
@@ -325,7 +330,7 @@ impl GenServer for PeerConnectionServer {
                     trace!(
                         peer=%established_state.node,
                         %message,
-                        "Received incomming message",
+                        "Received incoming message",
                     );
                     handle_incoming_message(established_state, message).await
                 }
@@ -469,6 +474,22 @@ impl GenServer for PeerConnectionServer {
         match self.state {
             ConnectionState::Established(mut established_state) => {
                 trace!(peer=%established_state.node, "Closing connection with established peer");
+                if established_state.is_validated {
+                    // If its validated the peer was connected, so we record the disconnection.
+                    let reason = established_state
+                        .disconnect_reason
+                        .unwrap_or(DisconnectReason::NetworkError);
+                    METRICS
+                        .record_new_rlpx_conn_disconnection(
+                            &established_state
+                                .node
+                                .version
+                                .clone()
+                                .unwrap_or("Unknown".to_string()),
+                            reason,
+                        )
+                        .await;
+                }
                 established_state
                     .peer_table
                     .remove_peer(established_state.node.node_id())
@@ -589,6 +610,7 @@ async fn send_all_pooled_tx_hashes(
         .get_all_txs_by_sender()?
         .into_values()
         .flatten()
+        .filter(|tx| !tx.is_privileged())
         .collect();
     if !txs.is_empty() {
         state
@@ -628,9 +650,7 @@ async fn send_block_range_update(state: &mut Established) -> Result<(), PeerConn
     Ok(())
 }
 
-async fn should_send_block_range_update(
-    state: &mut Established,
-) -> Result<bool, PeerConnectionError> {
+async fn should_send_block_range_update(state: &Established) -> Result<bool, PeerConnectionError> {
     let latest_block = state.storage.get_latest_block_number().await?;
     if latest_block < state.last_block_range_update_block
         || latest_block - state.last_block_range_update_block >= 32
@@ -891,14 +911,7 @@ async fn handle_incoming_message(
                 ?reason,
                 "Received Disconnect"
             );
-            METRICS
-                .record_new_rlpx_conn_disconnection(
-                    &state.node.version.clone().unwrap_or("Unknown".to_string()),
-                    reason,
-                )
-                .await;
-
-            state.peer_table.remove_peer(state.node.node_id()).await?;
+            state.disconnect_reason = Some(reason);
 
             // TODO handle the disconnection request
 
@@ -933,8 +946,11 @@ async fn handle_incoming_message(
                 for tx in &txs.transactions {
                     // Reject blob transactions in L2 mode
                     #[cfg(feature = "l2")]
-                    if is_l2_mode && matches!(tx, Transaction::EIP4844Transaction(_)) {
-                        debug!(peer=%state.node, "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2");
+                    if (is_l2_mode && matches!(tx, Transaction::EIP4844Transaction(_)))
+                        || tx.is_privileged()
+                    {
+                        let tx_type = tx.tx_type();
+                        debug!(peer=%state.node, "Rejecting transaction in L2 mode - {tx_type} transactions are not broadcasted in L2");
                         continue;
                     }
 
@@ -1023,8 +1039,26 @@ async fn handle_incoming_message(
             send(state, Message::PooledTransactions(response)).await?;
         }
         Message::PooledTransactions(msg) if peer_supports_eth => {
+            // If we receive a blob transaction without blobs or with blobs that don't match the versioned hashes we must disconnect from the peer
+            for tx in &msg.pooled_transactions {
+                if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx
+                    && (itx.blobs_bundle.is_empty()
+                        || itx
+                            .blobs_bundle
+                            .validate_blob_commitment_hashes(&itx.tx.blob_versioned_hashes)
+                            .is_err())
+                {
+                    warn!(
+                        peer=%state.node,
+                        "disconnected from peer. Reason: Invalid/Missing Blobs",
+                    );
+                    send_disconnect_message(state, Some(DisconnectReason::SubprotocolError)).await;
+                    return Err(PeerConnectionError::DisconnectSent(
+                        DisconnectReason::SubprotocolError,
+                    ));
+                }
+            }
             if state.blockchain.is_synced() {
-                // TODO(#3745): disconnect from peers that send invalid blob sidecars
                 if let Some(requested) = state.requested_pooled_txs.get(&msg.id) {
                     let fork = state.blockchain.current_fork().await?;
                     if let Err(error) = msg.validate_requested(requested, fork).await {
@@ -1057,14 +1091,11 @@ async fn handle_incoming_message(
         }
         Message::GetByteCodes(req) => {
             let storage_clone = state.storage.clone();
-            let response =
-                tokio::task::spawn_blocking(move || process_byte_codes_request(req, storage_clone))
-                    .await
-                    .map_err(|_| {
-                        PeerConnectionError::InternalError(
-                            "Failed to execute bytecode retrieval task".to_string(),
-                        )
-                    })??;
+            let response = process_byte_codes_request(req, storage_clone).map_err(|_| {
+                PeerConnectionError::InternalError(
+                    "Failed to execute bytecode retrieval task".to_string(),
+                )
+            })?;
             send(state, Message::ByteCodes(response)).await?
         }
         Message::GetTrieNodes(req) => {

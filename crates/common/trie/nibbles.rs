@@ -1,4 +1,4 @@
-use std::cmp;
+use std::{cmp, mem};
 
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -10,7 +10,16 @@ use ethrex_rlp::{
 // TODO: move path-tracking logic somewhere else
 // PERF: try using a stack-allocated array
 /// Struct representing a list of nibbles (half-bytes)
-#[derive(Debug, Clone, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    rkyv::Archive,
+)]
 pub struct Nibbles {
     data: Vec<u8>,
     /// Parts of the path that have already been consumed (used for tracking
@@ -250,6 +259,14 @@ impl Nibbles {
         Nibbles {
             data: self.already_consumed.clone(),
             already_consumed: vec![],
+        }
+    }
+
+    /// Empties `self.data` and returns the content
+    pub fn take(&mut self) -> Self {
+        Nibbles {
+            data: mem::take(&mut self.data),
+            already_consumed: mem::take(&mut self.already_consumed),
         }
     }
 }

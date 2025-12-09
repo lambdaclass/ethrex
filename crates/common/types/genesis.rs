@@ -1,10 +1,10 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
-use sha3::{Digest, Keccak256};
 use std::{
     collections::{BTreeMap, HashMap},
     io::{BufReader, Error},
@@ -421,7 +421,17 @@ impl ChainConfig {
     }
 
     pub fn get_fork(&self, block_timestamp: u64) -> Fork {
-        if self.is_osaka_activated(block_timestamp) {
+        if self.is_bpo5_activated(block_timestamp) {
+            Fork::BPO5
+        } else if self.is_bpo4_activated(block_timestamp) {
+            Fork::BPO4
+        } else if self.is_bpo3_activated(block_timestamp) {
+            Fork::BPO3
+        } else if self.is_bpo2_activated(block_timestamp) {
+            Fork::BPO2
+        } else if self.is_bpo1_activated(block_timestamp) {
+            Fork::BPO1
+        } else if self.is_osaka_activated(block_timestamp) {
             Fork::Osaka
         } else if self.is_prague_activated(block_timestamp) {
             Fork::Prague
@@ -695,7 +705,7 @@ impl Genesis {
     pub fn compute_state_root(&self) -> H256 {
         let iter = self.alloc.iter().map(|(addr, account)| {
             (
-                Keccak256::digest(addr).to_vec(),
+                keccak_hash(addr).to_vec(),
                 AccountState::from(account).encode_to_vec(),
             )
         });

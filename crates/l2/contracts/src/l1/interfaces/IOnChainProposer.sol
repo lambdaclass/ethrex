@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.29;
 
+import {ICommonBridge} from "./ICommonBridge.sol";
+
 /// @title Interface for the OnChainProposer contract.
 /// @author LambdaClass
 /// @notice A OnChainProposer contract ensures the advancement of the L2. It is used
@@ -55,15 +57,20 @@ interface IOnChainProposer {
     /// @param newStateRoot the new state root of the batch to be committed.
     /// @param withdrawalsLogsMerkleRoot the merkle root of the withdrawal logs
     /// of the batch to be committed.
+    /// @param l2MessagesMerkleRoot the merkle root of the l2 messages
+    /// of the batch to be committed.
     /// @param processedPrivilegedTransactionsRollingHash the rolling hash of the processed
     /// privileged transactions of the batch to be committed.
     /// @param lastBlockHash the hash of the last block of the batch to be committed.
+    /// @param balanceDiffs the balance diffs of the batch to be committed.
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
         bytes32 withdrawalsLogsMerkleRoot,
+        bytes32 l2MessagesMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
-        bytes32 lastBlockHash
+        bytes32 lastBlockHash,
+        ICommonBridge.BalanceDiff[] calldata balanceDiffs
     ) external;
 
     /// @notice Method used to verify a batch of L2 blocks.
@@ -98,12 +105,14 @@ interface IOnChainProposer {
     /// @notice Method used to verify a sequence of L2 batches in Aligned, starting from `firstBatchNumber`.
     /// Each proof corresponds to one batch, and batch numbers must increase by 1 sequentially.
     /// @param firstBatchNumber The batch number of the first proof to verify. Must be `lastVerifiedBatch + 1`.
-    /// @param alignedPublicInputsList An array of public input bytes, one per proof.
-    /// @param alignedMerkleProofsList An array of Merkle proofs (sibling hashes), one per proof.
+    /// @param publicInputsList An array of public input bytes, one per proof.
+    /// @param sp1MerkleProofsList An array of Merkle proofs (sibling hashes), one per SP1 proof.
+    /// @param risc0MerkleProofsList An array of Merkle proofs (sibling hashes), one per Risc0 proof.
     function verifyBatchesAligned(
         uint256 firstBatchNumber,
-        bytes[] calldata alignedPublicInputsList,
-        bytes32[][] calldata alignedMerkleProofsList
+        bytes[] calldata publicInputsList,
+        bytes32[][] calldata sp1MerkleProofsList,
+        bytes32[][] calldata risc0MerkleProofsList
     ) external;
 
     /// @notice Allows unverified batches to be reverted

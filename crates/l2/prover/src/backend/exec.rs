@@ -1,9 +1,9 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 use ethrex_l2_common::{
     calldata::Value,
-    prover::{BatchProof, ProofCalldata, ProverType},
+    prover::{BatchProof, ProofCalldata, ProofFormat, ProverType},
 };
 use guest_program::{input::ProgramInput, output::ProgramOutput};
 
@@ -16,13 +16,33 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+pub fn execute_timed(input: ProgramInput) -> Result<Duration, Box<dyn std::error::Error>> {
+    let now = Instant::now();
+    execution_program(input)?;
+    let duration = now.elapsed();
+
+    Ok(duration)
+}
+
 pub fn prove(
     input: ProgramInput,
-    _aligned_mode: bool,
+    _format: ProofFormat,
 ) -> Result<ProgramOutput, Box<dyn std::error::Error>> {
     warn!("\"exec\" prover backend generates no proof, only executes");
     let output = execution_program(input)?;
     Ok(output)
+}
+
+pub fn prove_timed(
+    input: ProgramInput,
+    _format: ProofFormat,
+) -> Result<(ProgramOutput, Duration), Box<dyn std::error::Error>> {
+    warn!("\"exec\" prover backend generates no proof, only executes");
+    let now = Instant::now();
+    let output = execution_program(input)?;
+    let duration = now.elapsed();
+
+    Ok((output, duration))
 }
 
 pub fn verify(_proof: &ProgramOutput) -> Result<(), Box<dyn std::error::Error>> {
@@ -40,7 +60,7 @@ fn to_calldata(proof: ProgramOutput) -> ProofCalldata {
 
 pub fn to_batch_proof(
     proof: ProgramOutput,
-    _aligned_mode: bool,
+    _format: ProofFormat,
 ) -> Result<BatchProof, Box<dyn std::error::Error>> {
     Ok(BatchProof::ProofCalldata(to_calldata(proof)))
 }

@@ -9,10 +9,10 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{Address, U256};
 use ethrex_common::{H256, types::Code};
-use std::{
-    collections::{BTreeMap, HashMap},
-    fmt,
-};
+use std::{collections::HashMap, fmt, hint::assert_unchecked};
+
+/// [`u64`]s that make up a [`U256`]
+const U64_PER_U256: usize = U256::MAX.0.len();
 
 #[derive(Clone, PartialEq, Eq)]
 /// The EVM uses a stack-based architecture and does not use registers like some other VMs.
@@ -71,38 +71,9 @@ impl Stack {
         Ok(value)
     }
 
-    #[inline]
-    pub fn push<const N: usize>(&mut self, values: &[U256; N]) -> Result<(), ExceptionalHalt> {
-        // Since the stack grows downwards, when an offset underflow is detected the stack is
-        // overflowing.
-        let next_offset = self
-            .offset
-            .checked_sub(N)
-            .ok_or(ExceptionalHalt::StackOverflow)?;
-
-        // The following index cannot fail because `next_offset` has already been checked and
-        // `self.offset` is known to be within `STACK_LIMIT`.
-        #[expect(
-            unsafe_code,
-            reason = "self.offset < STACK_LIMIT and next_offset == self.offset - N >= 0"
-        )]
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                values.as_ptr(),
-                self.values
-                    .get_unchecked_mut(next_offset..self.offset)
-                    .as_mut_ptr(),
-                N,
-            );
-        }
-        self.offset = next_offset;
-
-        Ok(())
-    }
-
     /// Push a single U256 value to the stack, faster than the generic push.
     #[inline]
-    pub fn push1(&mut self, value: U256) -> Result<(), ExceptionalHalt> {
+    pub fn push(&mut self, value: U256) -> Result<(), ExceptionalHalt> {
         // Since the stack grows downwards, when an offset underflow is detected the stack is
         // overflowing.
         let next_offset = self
@@ -117,7 +88,7 @@ impl Stack {
             std::ptr::copy_nonoverlapping(
                 value.0.as_ptr(),
                 self.values.get_unchecked_mut(next_offset).0.as_mut_ptr(),
-                4,
+                U64_PER_U256,
             );
         }
         self.offset = next_offset;
@@ -143,7 +114,7 @@ impl Stack {
                 .get_unchecked_mut(next_offset)
                 .0
                 .as_mut_ptr()
-                .cast() = [0u64; 4];
+                .cast() = [0u64; U64_PER_U256];
         }
         self.offset = next_offset;
 
@@ -163,27 +134,24 @@ impl Stack {
         self.offset == self.values.len()
     }
 
-    pub fn get(&self, index: usize) -> Result<&U256, ExceptionalHalt> {
-        // The following index cannot fail because `self.offset` is known to be within
-        // `STACK_LIMIT`.
-        #[expect(unsafe_code)]
-        unsafe {
-            self.values
-                .get_unchecked(self.offset..)
-                .get(index)
-                .ok_or(ExceptionalHalt::StackUnderflow)
-        }
-    }
-
     #[inline(always)]
-    pub fn swap(&mut self, index: usize) -> Result<(), ExceptionalHalt> {
-        let index = self
-            .offset
-            .checked_add(index)
-            .ok_or(ExceptionalHalt::StackUnderflow)?;
+    pub fn swap<const N: usize>(&mut self) -> Result<(), ExceptionalHalt> {
+        // Compile-time check that ensures `self.offset + N` is safe,
+        // since self.offset is bounded by STACK_LIMIT
+        const {
+            assert!(STACK_LIMIT.checked_add(N).is_some());
+        }
+        #[expect(clippy::arithmetic_side_effects)]
+        let index = self.offset + N;
+
         if index >= self.values.len() {
             return Err(ExceptionalHalt::StackUnderflow);
         }
+
+        #[expect(unsafe_code, reason = "self.offset always < STACK_LIMIT")]
+        unsafe {
+            assert_unchecked(self.offset < STACK_LIMIT)
+        };
 
         self.values.swap(self.offset, index);
         Ok(())
@@ -191,6 +159,36 @@ impl Stack {
 
     pub fn clear(&mut self) {
         self.offset = STACK_LIMIT;
+    }
+
+    /// Pushes a copy of the value at depth N
+    #[inline]
+    pub fn dup<const N: usize>(&mut self) -> Result<(), ExceptionalHalt> {
+        // Compile-time check that ensures `self.offset + N` is safe,
+        // since self.offset is bounded by STACK_LIMIT
+        const {
+            assert!(STACK_LIMIT.checked_add(N).is_some());
+        }
+        #[expect(clippy::arithmetic_side_effects)]
+        let index = self.offset + N;
+        if index >= self.values.len() {
+            return Err(ExceptionalHalt::StackUnderflow);
+        }
+
+        self.offset = self
+            .offset
+            .checked_sub(1)
+            .ok_or(ExceptionalHalt::StackOverflow)?;
+
+        #[expect(unsafe_code, reason = "index < size, offset-1 >= 0")]
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                self.values.get_unchecked_mut(index).0.as_mut_ptr(),
+                self.values.get_unchecked_mut(self.offset).0.as_mut_ptr(),
+                U64_PER_U256,
+            );
+        }
+        Ok(())
     }
 }
 
@@ -242,7 +240,9 @@ pub struct CallFrame {
     pub to: Address,
     /// Address of the code to execute. Usually the same as `to`, but can be different
     pub code_address: Address,
-    /// Bytecode to execute
+    /// Bytecode to execute.
+    /// Its hash field will be bogus for initcodes, as it is inaccessible to the VM
+    /// unless associated to an account, which doesn't happen for its initcode.
     pub bytecode: Code,
     /// Value sent along the transaction
     pub msg_value: U256,
@@ -286,7 +286,7 @@ impl CallFrameBackup {
             .entry(address)
             .or_insert_with(|| LevmAccount {
                 info: account.info.clone(),
-                storage: BTreeMap::new(),
+                storage: Default::default(),
                 status: account.status.clone(),
                 has_storage: account.has_storage,
             });

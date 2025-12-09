@@ -61,8 +61,7 @@ pub struct Metrics {
     pub current_step: Arc<CurrentStep>,
 
     // Headers
-    pub headers_to_download: AtomicU64,
-    pub downloaded_headers: AtomicU64,
+    pub downloaded_headers: IntCounter,
     pub time_to_retrieve_sync_head_block: Arc<Mutex<Option<Duration>>>,
     pub headers_download_start_time: Arc<Mutex<Option<SystemTime>>>,
 
@@ -230,17 +229,37 @@ impl Metrics {
 
         self.peers.fetch_add(1, Ordering::Relaxed);
 
+        let client_type = client_version.split('/').next().unwrap_or("unknown");
+
+        // TODO (#4240): This module expose metrics to be used in the snapsync logs, to actually
+        // expose them in prometheus we need to call the metrics crate instead, so we do it here.
+        // In the future this module will be rewritten as part of the snapsync rewrite and all
+        // the metrics calls will be done directly using the metrics crate.
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_peer_count();
+            METRICS_P2P.inc_peer_client(client_type);
+        }
+
         self.update_rate(&mut events, &self.new_connection_establishments_rate)
             .await;
 
         let mut clients = self.peers_by_client_type.lock().await;
-        let split = client_version.split('/').collect::<Vec<&str>>();
-        let client_type = split.first().expect("Split always returns 1 element");
-
         clients
             .entry(client_type.to_string())
             .and_modify(|count| *count += 1)
-            .or_insert(1);
+            .or_insert_with(|| {
+                // First time seeing this client type, initialize disconnection metrics
+                #[cfg(feature = "metrics")]
+                {
+                    use ethrex_metrics::p2p::METRICS_P2P;
+                    for reason in DisconnectReason::all() {
+                        METRICS_P2P.init_disconnection(&reason.to_string(), client_type);
+                    }
+                }
+                1
+            });
     }
 
     pub async fn record_ping_sent(&self) {
@@ -258,11 +277,18 @@ impl Metrics {
         client_version: &str,
         reason: DisconnectReason,
     ) {
-        self.peers.fetch_add(1, Ordering::Relaxed);
+        self.peers.fetch_sub(1, Ordering::Relaxed);
+
+        let client_type = client_version.split('/').next().unwrap_or("unknown");
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.dec_peer_count();
+            METRICS_P2P.dec_peer_client(client_type);
+            METRICS_P2P.inc_disconnection(&reason.to_string(), client_type);
+        }
 
         let mut clients = self.peers_by_client_type.lock().await;
-        let split = client_version.split('/').collect::<Vec<&str>>();
-        let client_type = split.first().expect("Split always returns 1 element");
 
         let mut disconnection_by_client = self.disconnections_by_client_type.lock().await;
         disconnection_by_client
@@ -632,6 +658,16 @@ impl Default for Metrics {
             .register(Box::new(storage_leaves_inserted.clone()))
             .expect("Failed to register storage_leaves_inserted counter");
 
+        let downloaded_headers = IntCounter::new(
+            "downloaded_headers",
+            "Total number of headers already download",
+        )
+        .expect("Failed to create downloaded_headers counter");
+
+        registry
+            .register(Box::new(downloaded_headers.clone()))
+            .expect("Failed to register downloaded_headers counter");
+
         let storage_leaves_downloaded = IntCounter::new(
             "storage_leaves_downloaded",
             "Total number of storage leaves downloaded",
@@ -679,8 +715,7 @@ impl Default for Metrics {
             current_step: Arc::new(CurrentStep(AtomicU8::new(0))),
 
             // Headers
-            headers_to_download: AtomicU64::new(0),
-            downloaded_headers: AtomicU64::new(0),
+            downloaded_headers,
             time_to_retrieve_sync_head_block: Arc::new(Mutex::new(None)),
             headers_download_start_time: Arc::new(Mutex::new(None)),
 

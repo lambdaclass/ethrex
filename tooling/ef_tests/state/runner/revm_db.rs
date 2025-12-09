@@ -210,23 +210,22 @@ impl RevmState {
             // Apply account changes to DB
             let mut account_update = AccountUpdate::new(address);
             // If the account was changed then both original and current info will be present in the bundle account
-            if account.is_info_changed() {
-                if let Some(new_acc_info) = account.account_info() {
-                    // Update account info in DB
-                    let code_hash = H256::from_slice(new_acc_info.code_hash.as_slice());
-                    let account_info = AccountInfo {
-                        code_hash,
-                        balance: U256::from_little_endian(new_acc_info.balance.as_le_slice()),
-                        nonce: new_acc_info.nonce,
-                    };
-                    account_update.info = Some(account_info);
-                    // Update code in db
-                    if account.is_contract_changed() {
-                        if let Some(code) = new_acc_info.code {
-                            account_update.code =
-                                Some(Code::from_bytecode(code.original_bytes().0));
-                        }
-                    }
+            if account.is_info_changed()
+                && let Some(new_acc_info) = account.account_info()
+            {
+                // Update account info in DB
+                let code_hash = H256::from_slice(new_acc_info.code_hash.as_slice());
+                let account_info = AccountInfo {
+                    code_hash,
+                    balance: U256::from_little_endian(new_acc_info.balance.as_le_slice()),
+                    nonce: new_acc_info.nonce,
+                };
+                account_update.info = Some(account_info);
+                // Update code in db
+                if account.is_contract_changed()
+                    && let Some(code) = new_acc_info.code
+                {
+                    account_update.code = Some(Code::from_bytecode(code.original_bytes().0));
                 }
             }
             // Update account storage in DB
