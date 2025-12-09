@@ -189,6 +189,10 @@ pub struct Established {
     pub(crate) l2_state: L2ConnState,
     pub(crate) tx_broadcaster: GenServerHandle<TxBroadcaster>,
     pub(crate) current_requests: HashMap<u64, (String, oneshot::Sender<Message>)>,
+    // We store the disconnection reason to handle it in the teardown
+    pub(crate) disconnect_reason: Option<DisconnectReason>,
+    // Indicates if the peer has been validated (ie. the connection was established successfully)
+    pub(crate) is_validated: bool,
 }
 
 impl Established {
@@ -297,6 +301,7 @@ impl GenServer for PeerConnectionServer {
                                 .unwrap_or("Unknown".to_string()),
                         )
                         .await;
+                    established_state.is_validated = true;
                     // New state
                     self.state = ConnectionState::Established(Box::new(established_state));
                     Ok(Success(self))
@@ -325,7 +330,7 @@ impl GenServer for PeerConnectionServer {
                     trace!(
                         peer=%established_state.node,
                         %message,
-                        "Received incomming message",
+                        "Received incoming message",
                     );
                     handle_incoming_message(established_state, message).await
                 }
@@ -469,6 +474,22 @@ impl GenServer for PeerConnectionServer {
         match self.state {
             ConnectionState::Established(mut established_state) => {
                 trace!(peer=%established_state.node, "Closing connection with established peer");
+                if established_state.is_validated {
+                    // If its validated the peer was connected, so we record the disconnection.
+                    let reason = established_state
+                        .disconnect_reason
+                        .unwrap_or(DisconnectReason::NetworkError);
+                    METRICS
+                        .record_new_rlpx_conn_disconnection(
+                            &established_state
+                                .node
+                                .version
+                                .clone()
+                                .unwrap_or("Unknown".to_string()),
+                            reason,
+                        )
+                        .await;
+                }
                 established_state
                     .peer_table
                     .remove_peer(established_state.node.node_id())
@@ -890,14 +911,7 @@ async fn handle_incoming_message(
                 ?reason,
                 "Received Disconnect"
             );
-            METRICS
-                .record_new_rlpx_conn_disconnection(
-                    &state.node.version.clone().unwrap_or("Unknown".to_string()),
-                    reason,
-                )
-                .await;
-
-            state.peer_table.remove_peer(state.node.node_id()).await?;
+            state.disconnect_reason = Some(reason);
 
             // TODO handle the disconnection request
 
