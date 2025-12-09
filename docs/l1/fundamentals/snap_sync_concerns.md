@@ -28,6 +28,10 @@ Request storages is a very hard function to read, as the data structures we're c
 
 This function also has a lot of numeric constants inserted in the code directly, and should be handled better by having defined consts with explantions.
 
+### Healing
+
+There are two healing challenges. We should have a single main algorithm for healing, not have the code duplicated across two files. On top of that, the Membatch structure should be replaced with "PendingNodes" as it's a far more descriptive name.
+
 ## Memory Concerns
 
 ### Sotrage accounts

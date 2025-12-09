@@ -3,20 +3,18 @@
 API reference: https://github.com/ethereum/devp2p/blob/master/caps/snap.md
 
 Terminology: 
- - Peers: other ethereum execution clients we are connected which can respond to snap requests.
- - Pivot: The block we have chosen to snap sync to.
+ - Peers: Other Ethereum execution clients we are connected to, and which can respond to snap requests.
+ - Pivot: The block we have chosen to snap-sync to.
 
 
 ## Concept
 ### What
 
-Executing all blocks to rebuild the state is slow. It's also not possible on ethrex, because we don't support pre merge execution. So we need to download the state from our peers as it currently exists.
-
-The largest challenge in snapsync concerns the download from the state (account state trie and storage state tries). Secondary concerns are the downloading of headers and bytecods. Fast-sync and snap-sync work the same for both the account trie and storage tries.
+Executing all blocks to rebuild the state is slow. It is also not possible on ethrex, because we don’t support pre-merge execution. Therefore, we need to download the current state from our peers. The largest challenge in snap sync is downloading the state (the account state trie and storage state tries). Secondary concerns are downloading headers and bytecodes. 
 
 ### First solution: Fast-Sync
 
-Fast sync is a method to download a patricia merkle trie, and the first one implemented in Ethereum. The idea is to download the trie top to bottom, starting at the root, and then downloading the child nodes recursively until all nodes on the trie are downloaded.
+Fast-sync is the original method used in Ethereum to download a Patricia Merkle trie. The idea is to download the trie top-down, starting from the root, then recursively downloading child nodes until the entire trie is obtained.
 
 ![Initial state of simple fast sync](snap_sync/Fast%20Sync%20-%201.png)
 ![Root download of simple fast sync](snap_sync/Fast%20Sync%20-%202.png)
@@ -25,28 +23,28 @@ Fast sync is a method to download a patricia merkle trie, and the first one impl
 
 There are two problems with this:
 
-- Peers will stop responding to node requests at a certain point. When you ask for a trie node, you speficy **at which state root** you want it. If the root is 128 or more blocks behind, nodes will not satisfy your request.
-- Going through the entire trie to find the nodes you do not have is very slow.
+- Peers stop responding to node requests at some point. When requesting a trie node, you specify the state root for which you want the node. If the root is 128 or more blocks old, peers will not serve the request.
+- Scanning the entire trie to find missing nodes is slow.
 
-For the first problem, once the nodes would no longer respond to the requests[^1], we stop the process of fast sync, update the pivot, and restart the process. The naive solution would be to download the new root, and for each child recursively download them first checking if they are already present in the db.
+For the first problem: once peers stop serving nodes for a given root[^1], we stop fast-syncing, update the pivot, and restart the process. The naïve approach would be to download the new root and recursively fetch all its children, checking each time whether they already exist in the DB.
 
-[^1]: We update pivots based only on the timestamp, not the response of the nodes. According to the specification, the nodes return empty response when the state root is stale, but due to byzantine nodes, a node may return empty whenever for any reason. As such we rely on the spec rule that nodes have to keep at least 128 blocks, and once the `time > timestamp + 128 * 12` mark the pivot as stale.
+[^1]: We update pivots based only on the timestamp, not on the peer response. According to the spec, stale roots return empty responses, but Byzantine peers may return empty responses at arbitrary times. Therefore, we rely on the rule that nodes must keep at least 128 blocks. Once `time > timestamp + 128 * 12` we mark the pivot as stale.
 
 Example of a possible state after stoping fast sync due to staleness.
 
 ![Fast Sync Retaking Example - 1](snap_sync/Fast%20Sync%20Retaking%20Example%20-%201.png)
 
-In this example, when we find that the node { hash: 0x317f, path:0 } is correct, we still need to check all it's children to see if they are present in the db (in this case they're all missing).
+In the example, even if we find that node { hash: 0x317f, path: 0 } is correct, we still need to check all its children in the DB (in this case none are present).
 
-To solve the second problem, we introduce an optimization, which is called the "Membatch"[^2]. This structure is helped to create a new invariant, which is that we make sure that if a node is present in the db, it and all it's children are present.
+To solve the second problem, we introduce an optimization, which is called the "Membatch". This allows us to maintain a new invariant:
 
-[^2]: This structure should be renamed to "PendingNodes" as it's a more descriptive name.
+> If a node is present in the DB, then that node and all its children must be present.
 
-This makes the second problem disappear: while going down the tree, if a node is in the database, the entire subtree does not need to be followed.
+This removes the need to explore entire subtrees: when walking down the trie, if a node is in the DB, the whole subtree can be skipped.
 
 To maintain this invariant, we do the following:
 
-- When we get a new node, we don't immediately store it in the database. We keep track of the amount of every node's children that are not yet in the database. As long as it's not zero, we keep it in a separate in-memory structure instead of on the db.
+- When we get a new node, we don't immediately store it in the database. We keep track of the amount of every node's children that are not yet in the database. As long as it's not zero, we keep it in a separate in-memory structure "Membatch" instead of on the db.
 - When a node has all of its children in the db, we commit it and recursively go up the tree to see if its parent needs to be commited, etc.
 
 Example of a possible state after stoping fast sync due to staleness with membatch.
@@ -55,7 +53,14 @@ Example of a possible state after stoping fast sync due to staleness with membat
 
 ### Speeding up: Snap-Sync
 
-Fast-Sync as a process is quite slow (current ethrex speed for fast-sync hoodi is ~45 minutes, 4.5x times slower than snap sync). To speed it up, we can use a property from fast-sync, which is that it can take any trie that respects the invariant and update it, even if the trie as presented isn't consistent with any single state. The idea would be to download the leaves of the values from any given state, build a trie from those values and apply fast-sync to the resulting trie to "heal" it to a consistent state. 
+Fast-sync is slow (ethrex fast-sync of a fresh “hoodi” state takes ~45 minutes—4.5× slower than snap-sync). To accelerate it, we use a key property of fast-sync:
+> Fast-sync can “heal” any partial trie that obeys the invariant, even if that trie is not consistent with any real on-chain state.
+
+Snap-sync exploits this:
+
+- download only the leaves (the accounts and storage slots) from any recent state,
+- assemble a trie from these leaves,
+- run fast-sync (“healing”) to repair it into a consistent trie.
 
 For our code, we call the fast-sync the healing step.
 
