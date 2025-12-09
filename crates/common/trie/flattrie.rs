@@ -209,7 +209,7 @@ impl FlatTrie {
                 NodeChilds::Branch { childs } => {
                     if let Some(choice) = path.next_choice() {
                         let Some(child_view_index) = childs[choice] else {
-                            panic!("child is not present / inconsistent trie")
+                            return Ok(None);
                         };
                         let child_view = trie.views[child_view_index];
                         recursive(trie, path, &child_view)
