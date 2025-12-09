@@ -1,5 +1,3 @@
-use std::fmt;
-
 use crc32fast::Hasher;
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -20,12 +18,6 @@ const TIMESTAMP_THRESHOLD: u64 = 1438269973;
 pub struct ForkId {
     pub fork_hash: H32,
     pub fork_next: BlockNumber,
-}
-
-impl fmt::Display for ForkId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}/{}", self.fork_hash, self.fork_next)
-    }
 }
 
 impl ForkId {
