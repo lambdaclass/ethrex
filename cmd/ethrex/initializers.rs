@@ -396,9 +396,9 @@ pub async fn init_l1(
 
     let store = match init_store(datadir, genesis).await {
         Ok(store) => store,
-        Err(StoreError::IncompatibleDBVersion) => {
+        Err(err @ StoreError::IncompatibleDBVersion { .. }) => {
             return Err(eyre::eyre!(
-                "Incompatible DB version. Please run `ethrex removedb` and restart node"
+                "{err}. Please run `ethrex removedb` and restart node"
             ));
         }
         Err(error) => return Err(eyre::eyre!("Failed to create Store: {error}")),

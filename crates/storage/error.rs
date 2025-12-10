@@ -40,6 +40,10 @@ pub enum StoreError {
     UpdateBatchNoBlocks,
     #[error("Pivot changed")]
     PivotChanged,
-    #[error("Incompatible DB Version")]
-    IncompatibleDBVersion,
+    #[error("Error reading from disk: {0}")]
+    IoError(#[from] std::io::Error),
+    #[error("Error serializing metadata: {0}")]
+    DbMetadataError(#[from] serde_json::Error),
+    #[error("Incompatible DB Version: found {found}, expected {expected}")]
+    IncompatibleDBVersion { found: u64, expected: u64 },
 }

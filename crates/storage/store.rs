@@ -18,6 +18,7 @@ use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeRLP, Trie, TrieLogger, TrieNode, TrieWitness};
+use serde::{Deserialize, Serialize};
 use std::{collections::hash_map::Entry, path::PathBuf, sync::Arc};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -83,6 +84,10 @@ impl Store {
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
         let path = path.as_ref();
         info!(engine = ?engine_type, ?path, "Opening storage engine");
+
+        // Check that the last used DB version matches the current version
+        validate_store_schema_version(path)?;
+
         let store = match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => Self {
@@ -96,15 +101,6 @@ impl Store {
                 latest_block_header: Default::default(),
             },
         };
-
-        // Check that the last used DB version matches the current version
-        if let Some(latest_store_schema_version) = store.get_store_schema_version()?
-            && latest_store_schema_version != STORE_SCHEMA_VERSION
-        {
-            return Err(StoreError::IncompatibleDBVersion);
-        }
-        store.set_store_schema_version()?;
-
         Ok(store)
     }
 
@@ -1271,16 +1267,6 @@ impl Store {
         self.engine.get_storage_trie_rebuild_pending().await
     }
 
-    /// Save the current store schema version
-    pub fn set_store_schema_version(&self) -> Result<(), StoreError> {
-        self.engine.set_store_schema_version()
-    }
-
-    /// Obtain the latest used store schema version
-    pub fn get_store_schema_version(&self) -> Result<Option<u64>, StoreError> {
-        self.engine.get_store_schema_version()
-    }
-
     /// Clears all checkpoint data created during the last snap sync
     pub async fn clear_snap_state(&self) -> Result<(), StoreError> {
         self.engine.clear_snap_state().await
@@ -1460,6 +1446,41 @@ impl LatestBlockHeaderCache {
         let new = Arc::new(header);
         *self.current.lock().expect("poisoned mutex") = new;
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct StoreMetadata {
+    schema_version: u64,
+}
+
+impl StoreMetadata {
+    fn new(schema_version: u64) -> Self {
+        Self { schema_version }
+    }
+}
+
+fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
+    let metadata_path = path.join("metadata.json");
+    if !metadata_path.exists() {
+        let metadata = StoreMetadata::new(STORE_SCHEMA_VERSION);
+        let serialized_metadata = serde_json::to_string_pretty(&metadata)?;
+        std::fs::write(metadata_path, serialized_metadata)?;
+        return Ok(());
+    } else if !metadata_path.is_file() {
+        return Err(StoreError::Custom(
+            "store schema path exists but is not a file".to_string(),
+        ));
+    }
+    let file_contents = std::fs::read_to_string(metadata_path)?;
+    let metadata: StoreMetadata = serde_json::from_str(&file_contents)?;
+
+    if metadata.schema_version != STORE_SCHEMA_VERSION {
+        return Err(StoreError::IncompatibleDBVersion {
+            found: metadata.schema_version,
+            expected: STORE_SCHEMA_VERSION,
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
