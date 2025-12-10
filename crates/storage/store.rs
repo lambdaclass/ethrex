@@ -1464,6 +1464,9 @@ impl StoreMetadata {
 fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
     let metadata_path = path.join("metadata.json");
     if !metadata_path.exists() {
+        if !path.exists() {
+            std::fs::create_dir_all(path)?;
+        }
         let metadata = StoreMetadata::new(STORE_SCHEMA_VERSION);
         let serialized_metadata = serde_json::to_string_pretty(&metadata)?;
         let mut new_file = std::fs::File::create_new(metadata_path)?;
