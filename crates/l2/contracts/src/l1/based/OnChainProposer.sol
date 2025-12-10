@@ -151,7 +151,8 @@ contract OnChainProposer is
             bytes32(0),
             bytes32(0),
             bytes32(0),
-            bytes32(0)
+            bytes32(0),
+            0
         );
 
         // Set the SequencerRegistry address
@@ -320,8 +321,9 @@ contract OnChainProposer is
             ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() &&
             batchCommitments[batchNumber].nonPrivilegedTransactions != 0
         ) {
-            return
-                "exceeded privileged transaction inclusion deadline, can't include non-privileged transactions";
+            revert(
+                "exceeded privileged transaction inclusion deadline, can't include non-privileged transactions"
+            );
         }
 
         if (REQUIRE_RISC0_PROOF) {
