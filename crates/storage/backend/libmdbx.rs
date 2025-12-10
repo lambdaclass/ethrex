@@ -87,30 +87,29 @@ impl StorageReadView for LibmdbxReadTx {
             .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
     }
 
-    fn prefix_iterator(
-        &self,
+    fn prefix_iterator<'a>(
+        &'a self,
         table: &'static str,
-        prefix: &[u8],
-    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
-        todo!()
-        // let tx = self.db.begin_ro_txn().unwrap();
-        // let table_handle = tx.open_table(Some(table)).unwrap();
-        // let iter = tx
-        //     .cursor(&table_handle)
-        //     .unwrap()
-        //     .into_iter_from(prefix)
-        //     .map(|result: Result<(Vec<u8>, Vec<u8>), _>| {
-        //         result
-        //             .map(|(k, v)| (k.into_boxed_slice(), v.into_boxed_slice()))
-        //             .map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
-        //     })
-        //     .take_while(|result| {
-        //         result
-        //             .as_ref()
-        //             .map(|(k, _)| k.starts_with(prefix))
-        //             .unwrap_or(true)
-        //     });
-        // Ok(Box::new(iter))
+        prefix: &'a [u8],
+    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + 'a>, StoreError> {
+        let tx = self.db.begin_ro_txn().unwrap();
+        let table_handle = tx.open_table(Some(table)).unwrap();
+        let iter = tx
+            .cursor(&table_handle)
+            .unwrap()
+            .into_iter_from(prefix)
+            .map(|result: Result<(Vec<u8>, Vec<u8>), _>| {
+                result
+                    .map(|(k, v)| (k.into_boxed_slice(), v.into_boxed_slice()))
+                    .map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
+            })
+            .take_while(|result| {
+                result
+                    .as_ref()
+                    .map(|(k, _)| k.starts_with(prefix))
+                    .unwrap_or(true)
+            });
+        Ok(Box::new(iter))
     }
 }
 
