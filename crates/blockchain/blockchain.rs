@@ -463,7 +463,7 @@ impl Blockchain {
             state_trie
                 .root_node()?
                 .map(Arc::unwrap_or_clone)
-                .unwrap_or_default(),
+                .unwrap_or_else(|| Node::Branch(Box::default())),
         );
         let mut state_updates = Vec::new();
         for (_prefix, index, subroot, nodes) in gatherer_rx {
@@ -596,7 +596,7 @@ impl Blockchain {
                         let root = branchify(
                             trie.root_node()?
                                 .map(Arc::unwrap_or_clone)
-                                .unwrap_or_default(),
+                                .unwrap_or_else(|| Node::Branch(Box::default())),
                         );
                         trie.root = Node::Branch(Box::new(root.clone())).into();
                         let (_, mut nodes) = trie.collect_changes_since_last_hash();
