@@ -178,9 +178,9 @@ contract CommonBridge is
             chainId
         ];
         bytes32[] memory buffer = new bytes32[](
-            pendinL2MessagesLength(chainId)
+            pendingL2MessagesLength(chainId)
         );
-        for (uint256 i = 0; i < pendinL2MessagesLength(chainId); i++) {
+        for (uint256 i = 0; i < pendingL2MessagesLength(chainId); i++) {
             buffer[i] = pendingMessagesHashes[i + pendingMessageIndex];
         }
 
@@ -335,7 +335,7 @@ contract CommonBridge is
     ) public view returns (bytes32) {
         require(number > 0, "CommonBridge: number is zero (get)");
         require(
-            uint256(number) <= pendinL2MessagesLength(chainId),
+            uint256(number) <= pendingL2MessagesLength(chainId),
             "CommonBridge: number is greater than the length of pendingL2Messages (get)"
         );
 
@@ -375,7 +375,7 @@ contract CommonBridge is
         uint16 number
     ) public onlyOnChainProposer {
         require(
-            number <= pendinL2MessagesLength(chainId),
+            number <= pendingL2MessagesLength(chainId),
             "CommonBridge: number is greater than the length of pendingL2Messages (remove)"
         );
 
@@ -585,7 +585,7 @@ contract CommonBridge is
     function pendingTxHashesLength() private view returns (uint256) {
         return pendingTxHashes.length - pendingPrivilegedTxIndex;
     }
-    function pendinL2MessagesLength(
+    function pendingL2MessagesLength(
         uint256 chainId
     ) private view returns (uint256) {
         return

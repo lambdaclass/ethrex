@@ -62,6 +62,7 @@ services:
       - COMPILE_CONTRACTS=true
       - ETHREX_USE_COMPILED_GENESIS=true
       - ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER
+      - ETHREX_ON_CHAIN_PROPOSER_INCLUSION_MAX_WAIT
     depends_on:
       - ethrex_l1
     entrypoint:

@@ -233,13 +233,13 @@ contract OnChainProposer is
 
         for (uint256 i = 0; i < l2MessageRollingHashes.length; i++) {
             bytes32 receivedRollingHash = l2MessageRollingHashes[i].rollingHash;
-            bytes32 expextedRollingHash = ICommonBridge(BRIDGE)
+            bytes32 expectedRollingHash = ICommonBridge(BRIDGE)
                 .getPendingL2MessagesVersionedHash(
                     l2MessageRollingHashes[i].chainId,
                     uint16(bytes2(receivedRollingHash))
                 );
             require(
-                expextedRollingHash == receivedRollingHash,
+                expectedRollingHash == receivedRollingHash,
                 "012" // OnChainProposer: invalid L2 message rolling hash
             );
         }

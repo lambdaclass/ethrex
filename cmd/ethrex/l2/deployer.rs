@@ -332,7 +332,7 @@ pub struct DeployerOptions {
     #[arg(
         long,
         default_value = "3000",
-        env = "ETHREX_ON_CHAIN_PROPOSER_INCUSION_MAX_WAIT",
+        env = "ETHREX_ON_CHAIN_PROPOSER_INCLUSION_MAX_WAIT",
         help_heading = "Deployer options",
         help = "Deadline in seconds for the sequencer to process a privileged transaction."
     )]

@@ -270,6 +270,8 @@ async fn test_forced_inclusion() {
         .await
         .expect("Error getting balance");
 
+    println!("Initial balances: receiver: {receiver_balance}, sender: {sender_balance}");
+
     let private_key = SecretKey::from_str(SENDER_PRIVATE_KEY).unwrap();
     let value = U256::from(VALUE);
     let to = Address::from_str(COMMON_BRIDGE_ADDRESS).unwrap();
