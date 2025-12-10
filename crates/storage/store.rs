@@ -1,7 +1,7 @@
-use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "rocksdb")]
 use crate::store_db::rocksdb::Store as RocksDBStore;
+use crate::{STORE_METADATA_FILENAME, error::StoreError};
 use crate::{STORE_SCHEMA_VERSION, api::StoreEngine};
 
 use ethereum_types::{Address, H256, U256};
@@ -1462,7 +1462,7 @@ impl StoreMetadata {
 }
 
 fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
-    let metadata_path = path.join("metadata.json");
+    let metadata_path = path.join(STORE_METADATA_FILENAME);
     if !metadata_path.exists() {
         if !path.exists() {
             std::fs::create_dir_all(path)?;
