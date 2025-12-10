@@ -40,10 +40,10 @@ pub use ethrex_sdk_contract_utils::*;
 
 use calldata::from_hex_string_to_h256_array;
 
-// 0x7b90db056a46a4b3b9568932f2c7fb64a9e8ef0a
+// 0xaf1c2131d13d7cf44c9fb3bc76f2df0888ef116e
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
-    0x7b, 0x90, 0xdb, 0x05, 0x6a, 0x46, 0xa4, 0xb3, 0xb9, 0x56, 0x89, 0x32, 0xf2, 0xc7, 0xfb, 0x64,
-    0xa9, 0xe8, 0xef, 0x0a,
+    0xaf, 0x1c, 0x21, 0x31, 0xd1, 0x3d, 0x7c, 0xf4, 0x4c, 0x9f, 0xb3, 0xbc, 0x76, 0xf2, 0xdf, 0x08,
+    0x88, 0xef, 0x11, 0x6e,
 ]);
 
 // 0x000000000000000000000000000000000000ffff
@@ -89,7 +89,7 @@ pub enum SdkError {
     FailedToParseAddressFromHex,
 }
 
-/// BRIDGE_ADDRESS or 0x39b37222708e21491b9126e0969a043baa09d5a7
+/// BRIDGE_ADDRESS or 0xaf1c2131d13d7cf44c9fb3bc76f2df0888ef116e
 pub fn bridge_address() -> Result<Address, SdkError> {
     std::env::var("ETHREX_WATCHER_BRIDGE_ADDRESS")
         .unwrap_or(format!("{DEFAULT_BRIDGE_ADDRESS:#x}"))
