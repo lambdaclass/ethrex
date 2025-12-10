@@ -60,11 +60,11 @@ pub trait StorageReadView {
     fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
 
     /// Returns an iterator over all key-value pairs with the given prefix.
-    fn prefix_iterator(
-        &self,
+    fn prefix_iterator<'a>(
+        &'a self,
         table: &'static str,
-        prefix: &[u8],
-    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError>;
+        prefix: &'a [u8],
+    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + 'a>, StoreError>;
 }
 
 /// Write transaction interface.
