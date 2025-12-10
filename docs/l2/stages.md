@@ -4,15 +4,16 @@ This document relates the L2Beat rollup stage definitions to the current ethrex 
 
 In this docs, when we talk about **Ethrex L2** we are referring to Ethrex in **Rollup mode**, not Validium, the main difference is that the former uses Ethereum L1 as the Data Availability layer whereas the latter doesn't.
 
-Below are the answers to every question in each Stage.
+Below are the answers to every question or requirement of each Stage.
 
 ## Stage 0
 
 ### Does the project call itself a rollup?
 
-Yes, as pointed in [the introduction](./introduction.md), "Ethrex is a framework that lets you launch your own L2 rollup or blockchain".
+Yes. 
 
-As said before, whether a specific chain built with ethrex should call itself a rollup depends on how it is configured (e.g. rollups vs validium).
+As pointed in [the introduction](./introduction.md)
+> Ethrex is a framework that lets you launch your own L2 rollup or blockchain.
 
 ### Are L2 state roots posted on L1?
 
@@ -26,12 +27,10 @@ Yes.
 
 When committing a batch in non-validium mode it will always require a blob hash different than zero, so a blob MUST be sent in the transaction to the `OnChainProposer` in the L1.
 
-- The architecture docs state that the blob contains the **RLP‑encoded L2 blocks and fee configuration**:
-  - See [“Reconstructing state or Data Availability”](./fundamentals/data_availability.md#reconstructing-state-or-data-availability).
-  - See [“Transition to RLP‑encoded Blocks”](./architecture/overview.md#transition-to-rlp-encoded-blocks) and [“L1 contract checks”](./architecture/overview.md#l1-contract-checks).
+- The [architecture docs](./architecture/overview.md) state that the blob contains the **RLP‑encoded L2 blocks and fee configuration**:
 - The blob commitment (`blobKZGVersionedHash` / `blobVersionedHash`) is included in the batch commitment and re‑checked during proof verification.
 
-This means that, in rollup mode, all data needed to reconstruct the L2 (transactions and state) is published on L1 as blobs.
+This means that all data needed to reconstruct the L2 (transactions and state) is published on L1 as blobs.
 
 ### Is software capable of reconstructing the rollup’s state available?
 
@@ -58,102 +57,44 @@ Ethrex uses **validity proofs**, not fraud proofs. There is no on‑chain “cha
 
 ## Stage 1
 
-Stage 1 is mostly about **governance and upgrades**: who can block/alter L2→L1 messages, under what assumptions, and with what exit windows.
+The main requirement for Ethrex L2 to belong to stage 1 is:
 
-### Is the Security Council properly set up?
+Compromising ≥75% of the Security Council should be the only way (other than bugs) for the rollup to indefinitely block an L2→L1 message (e.g. a withdrawal) or push an invalid L2→L1 message (e.g. an invalid withdrawal) with an exit window shorter than 7 days. Any other mechanism that can affect such messages must give users at least a 7‑day exit window.
 
-No Security Council is encoded in the contracts; governance is left to deployments.
+In the current ethrex contracts:
 
-- The main L1 contracts (`CommonBridge`, `OnChainProposer`, `Router`) and L2 system contracts are **UUPS proxies** controlled by a single `owner` (see [contracts fundamentals](./fundamentals/contracts.md)).
-- Ownership uses `Ownable2StepUpgradeable`, but there is no built‑in notion of:
-  - “Security Council” with ≥8 members.
-  - A 75% signer threshold at the contract level.
-  - Entity‑level de‑duplication or geographical / organizational diversity.
-- The docs describe generic upgrade and ownership‑transfer procedures, not a specific governance setup or published council identities.
+- Both `OnChainProposer` and `CommonBridge` are **UUPS upgradeable** and **Ownable2Step**. Upgrades are authorized by a single `owner` address (which can itself be a multisig, but that is outside this repo).
+- The contracts expose `pause` / `unpause` and `_authorizeUpgrade` gated by `onlyOwner`, with **no built‑in timelock, exit window, or dedicated Security Council logic**.
+- Nothing in the contracts enforces a specific number of council members, a 75% threshold, or entity‑level decentralization; this must be provided by how the `owner` is chosen (e.g. a Safe or custom governance system).
 
-In practice, a project deploying an ethrex‑based chain can point the `owner` of these proxies to a multi‑sig that implements the Stage‑1 Security Council semantics, but that happens outside this codebase.
+Out of the box, ethrex therefore **does not satisfy Stage 1’s Security Council and exit‑window requirements**. A network built on ethrex could meet them by:
 
-### Can only compromise of ≥75% of the Security Council censor or forge L2→L1 messages?
+- Pointing the proxy `owner` to an appropriately configured multisig / governance system, and
+- Introducing timelocks / exit windows around contract upgrades at the governance layer.
 
-Out of the box, no; the contracts give broader powers to the owner and to sequencers.
-
-Some relevant facts from the current implementation:
-
-- `CommonBridge` can be **paused** by `owner`, which immediately blocks withdrawals and generic L2→L1 messages, indefinitely if desired.
-- `CommonBridge` exposes `upgradeL2Contract`, which lets the owner upgrade L2 system contracts (including the bridge and messenger) without any enforced delay, via privileged transactions.
-- `OnChainProposer` and `CommonBridge` are upgradeable; a new implementation can arbitrarily change how commitments, proofs, and withdrawal Merkle roots are handled.
-- Sequencers (or in the based model, the leader sequencer) control which batches are committed and when; censorship at the sequencing layer is mitigated by design (escape‑hatch ideas are mentioned but not fully specified yet in [“What the sequencer can do”](./architecture/overview.md#what-the-sequencer-can-do)), but not eliminated.
-
-There is no protocol‑level guarantee that “the only way to block a withdrawal indefinitely or to push an invalid withdrawal is compromising ≥75% of a Security Council.” Achieving that property would require:
-
-- Putting all upgrade and pause powers behind a suitably structured council / multi‑sig.
-- Adding on‑chain constraints (e.g. timelocks, limited emergency powers) that the current contracts do not enforce by themselves.
-
-### 7‑day challenge / exit windows
-
-Ethrex’s contracts do not implement:
-
-- A mandatory **7‑day (or longer) challenge period** for proving batches.
-- A guaranteed **exit window** before upgrades take effect.
-
-Batch verification is immediate once a valid proof is provided and accepted, and upgrades are governed only by the UUPS owner. A deployment could wrap these contracts with timelocks or additional governance contracts to approximate Stage‑1 behaviour, but that is not present in this repository.
-
-## Stage 2 questions
+## Stage 2
 
 Stage 2 focuses on **fully permissionless proving / challenging** and on tightly constraining emergency upgrade powers.
 
-### Is the fraud / validity proof system permissionless?
+### Is the validity proof system permissionless?
 
-It depends on which `OnChainProposer` variant is deployed:
+No.
 
-- **Standard OnChainProposer** (`crates/l2/contracts/src/l1/OnChainProposer.sol`):
-  - `commitBatch` and `verifyBatch` are restricted to `authorizedSequencerAddresses` via `onlySequencer`.
-  - Submitting proofs is *not* permissionless; it is tied to the sequencer set.
-- **Based OnChainProposer** (`crates/l2/contracts/src/l1/based/OnChainProposer.sol`):
-  - `commitBatch` is restricted to the leader sequencer (`onlyLeaderSequencer`), but
-  - `verifyBatch` and `verifyBatchesAligned` are externally callable without role checks.
-  - Anyone can submit a validity proof for a committed batch and cause it to be verified, provided the proof is correct.
-
-So:
-
-- The framework supports a **permissionless validity‑proof submission** model in the based variant.
-- The non‑based variant uses an allowlisted sequencer set and does **not** meet the Stage‑2 “permissionless” requirement.
-
-In both cases, this is a validity‑proof system, not a fraud‑proof system.
+In the **Standard OnChainProposer** (`crates/l2/contracts/src/l1/OnChainProposer.sol`) committing and verifying batches are restricted to the authorized sequenced addresses only. So submitting proofs is not permissionless.
 
 ### Do users have at least 30 days to exit in case of unwanted upgrades?
 
-No, not at the protocol level.
+No.
 
-- UUPS proxies for `CommonBridge`, `OnChainProposer`, and other core contracts can be upgraded by the `owner` **without any on‑chain delay or exit window**.
-- There is no built‑in mechanism that:
-  - Announces upgrades in advance.
-  - Enforces a 30‑day grace period where withdrawals remain possible under the old rules.
-  - Forces upgrades initiated by non‑council actors to include an exit window.
-
-Any such guarantees would need to be provided by off‑chain governance processes or additional contracts not present here.
+There is **no protocol‑level exit window** tied to contract upgrades; UUPS upgrades can be executed by the `owner` without a mandatory delay.
 
 ### Is the Security Council restricted to act only due to errors detected on‑chain?
 
-No, because there is no dedicated Security Council and no restriction on how upgrade powers are used.
+No.
 
-- `CommonBridge`, `OnChainProposer`, `Router`, and related contracts expose:
-  - `pause` / `unpause` functionality.
-  - Upgrade hooks (`_authorizeUpgrade`) guarded only by `onlyOwner`.
-  - In `CommonBridge`, the ability to upgrade L2 system contracts via privileged messages (`upgradeL2Contract`).
-- These powers are *general*: they can be used for bug fixes, parameter changes, or arbitrary logic changes, and are not gated by any on‑chain bug detector.
-
-To meet the Stage‑2 requirement, an ethrex‑based deployment would need additional constraints such as:
-
-- Limiting the scope of emergency functions to well‑defined on‑chain conditions (e.g. contradictory proofs).
-- Separating routine governance from hardened emergency‑only keys.
+There is **no built‑in Security Council role** that is restricted to on‑chain bug responses; the `owner` can pause or upgrade contracts for any reason allowed by the implementation.
 
 ## Summary
 
-- Ethrex provides the **core technical ingredients for a zk rollup**: state commitments on L1, DA via blobs in rollup mode, open‑source node software capable of reconstructing state, and a validity‑proof system that ties execution, messaging, and DA together.
+- Ethrex L2 provides the **core technical ingredients for a zk rollup**: state commitments on L1, DA via blobs, open‑source node software capable of reconstructing state, and a validity‑proof system that ties execution, messaging, and DA together.
 - The framework **does not prescribe or implement** the Security Council, timelocks, or exit‑window mechanisms that dominate the Stage‑1 and Stage‑2 definitions; those are left to each deployment’s governance and contract wiring.
-- An individual ethrex‑based chain can likely achieve Stage‑0 (zk‑rollup path) by:
-  - Running in rollup mode with DA on L1.
-  - Enforcing validity proofs on L1 in production.
-  - Publishing and supporting reconstruction tooling.
-- Reaching Stage‑1 or Stage‑2 would require **additional contracts and governance layers** around the primitives defined in this repository.
