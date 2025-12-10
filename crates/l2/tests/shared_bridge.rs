@@ -348,14 +348,15 @@ async fn test_forced_inclusion() {
         .await
         .expect("Failed to get last verified batch");
 
+    let batch_number = batch.unwrap().batch.number;
+
     println!(
         "Last verified batch: {}, transaction batch number: {}",
-        last_verified_batch,
-        batch.unwrap().batch.number
+        last_verified_batch, batch_number
     );
 
     assert!(
-        last_verified_batch < batch.unwrap().batch.number,
+        last_verified_batch < batch_number,
         "L2A should not have verified the batch from L2B"
     );
 }

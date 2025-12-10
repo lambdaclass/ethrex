@@ -62,13 +62,11 @@ Keep in mind that since you are not the owner of that source L2, the chain will 
 ### Forced Inclusion
 
 Once a cross-chain message is settled, each target `commonBridge` receives, along with the resulting ETH value, a list of all message hashes with their associated timestamps. When a batch is verified, the prover outputs the rolling hash of the received messages processed in the batch, and the included message hashes are removed from the bridge after verification.
-After a certain deadline is reached, a message is considered expired, and the `commonBridge` prevents the sequencer from committing batches that contain non-privileged transactions (deposits and received messages) until all expired messages are included.
-
+A message is considered expired if a certain deadline is reached and it has not yet been included in a batch on the destination chain. The `commonBridge` then prevents the sequencer from committing batches that contain non-privileged transactions (deposits and received messages) until all expired messages are included.
 
 ### Rollbacks
 
-Once a cross-chain message is settled, there is no rollback mechanism in scenarios where the destination L2 either cannot or chooses not to execute the transaction. [Forced Inclusion](#forced-inclusion) guarantees that the destination sequencer will eventually have to execute the received message in order to include non-privileged transactions in a batch. Therefore, once a message is settled, the user depends on the destination L2 to include the message, just as when the user performs a deposit to that L2.
-
+Once a cross-chain message is settled, there is no rollback mechanism in scenarios where the destination L2 either cannot or chooses not to execute the transaction. [Forced Inclusion](#forced-inclusion) guarantees that the destination sequencer will eventually have to execute the received message in order to include non-privileged transactions in a batch. Therefore, once a message is settled, the user waits for the destination L2 to include the message, just as when the user performs a deposit to that L2.
 
 ## Recommendations
 
