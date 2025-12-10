@@ -1469,7 +1469,8 @@ fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
         let mut new_file = std::fs::File::create_new(metadata_path)?;
         new_file.write_all(serialized_metadata.as_bytes())?;
         return Ok(());
-    } else if !metadata_path.is_file() {
+    }
+    if !metadata_path.is_file() {
         return Err(StoreError::Custom(
             "store schema path exists but is not a file".to_string(),
         ));
