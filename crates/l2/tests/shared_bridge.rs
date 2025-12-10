@@ -134,7 +134,7 @@ async fn test_shared_bridge() {
     .expect("Error sending shared bridge transaction");
 
     println!("Waiting 3 minutes for message to be processed...");
-    sleep(Duration::from_secs(180)).await;
+    sleep(Duration::from_secs(180)).await; // Wait for the message to be processed
 
     println!("Getting final balances...");
     let receiver_balance_after = l2a_client
@@ -294,7 +294,7 @@ async fn test_forced_inclusion() {
     .expect("Error sending shared bridge transaction");
 
     println!("Waiting 5 minutes for message to be expired...");
-    sleep(Duration::from_secs(300)).await; // Wait for the message to be processed
+    sleep(Duration::from_secs(300)).await;
 
     println!("Getting final balances...");
     let receiver_balance_after = l2a_client
@@ -347,6 +347,12 @@ async fn test_forced_inclusion() {
     let last_verified_batch = get_last_verified_batch(&l2a_client, on_chain_proposer_address())
         .await
         .expect("Failed to get last verified batch");
+
+    println!(
+        "Last verified batch: {}, transaction batch number: {}",
+        last_verified_batch,
+        batch.unwrap().batch.number
+    );
 
     assert!(
         last_verified_batch < batch.unwrap().batch.number,
