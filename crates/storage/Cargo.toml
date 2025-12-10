@@ -33,7 +33,7 @@ libmdbx = { version = "0.6.4", optional = true }
 
 [features]
 default = []
-rocksdb = ["dep:rocksdb", "ethrex-trie/rocksdb"]
+rocksdb = ["dep:rocksdb"]
 libmdbx = ["dep:libmdbx"]
 
 [dev-dependencies]
