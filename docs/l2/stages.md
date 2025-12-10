@@ -96,5 +96,4 @@ There is **no built‑in Security Council role** that is restricted to on‑chai
 
 ## Summary
 
-- Ethrex L2 provides the **core technical ingredients for a zk rollup**: state commitments on L1, DA via blobs, open‑source node software capable of reconstructing state, and a validity‑proof system that ties execution, messaging, and DA together.
-- The framework **does not prescribe or implement** the Security Council, timelocks, or exit‑window mechanisms that dominate the Stage‑1 and Stage‑2 definitions; those are left to each deployment’s governance and contract wiring.
+Ethrex L2 currently satisfies all Stage 0 requirements, in order to become a Stage 1 rollup it should at least incorporate the notion of a Security Council and an exit window mechanism in case of contract upgrades.
