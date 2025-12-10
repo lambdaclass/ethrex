@@ -36,11 +36,11 @@ use tokio::time::sleep;
 const L2A_RPC_URL: &str = "http://localhost:1729";
 const L2B_RPC_URL: &str = "http://localhost:1730";
 
-const RECEIVER_ADDRESS: &str = "0xe25583099ba105d9ec0a67f5ae86d90e50036425";
-const SENDER_ADDRESS: &str = "0x8943545177806ed17b9f23f0a21ee5948ecaa776";
+const RECEIVER_ADDRESS: &str = "0x000a523148845bee3ee1e9f83df8257a1191c85b";
+const SENDER_ADDRESS: &str = "0x000130bade00212be1aa2f4acfe965934635c9cd";
 const COMMON_BRIDGE_ADDRESS: &str = "0x000000000000000000000000000000000000FFFF";
 
-const SENDER_PRIVATE_KEY: &str = "bcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31";
+const SENDER_PRIVATE_KEY: &str = "029227c59d8967cbfec97cffa4bcfb985852afbd96b7b5da7c9a9a42f92e9166";
 
 const VALUE: u64 = 10000000000000001u64;
 
