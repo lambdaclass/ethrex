@@ -309,7 +309,7 @@ contract OnChainProposer is
         }
 
         // Validate commit hash and corresponding verification keys are valid
-        require(commitHash != bytes32(0), "012"); // TODO: update numbers errors commit hash is required
+        require(commitHash != bytes32(0), "012");
         require(
             (!REQUIRE_SP1_PROOF ||
                 verificationKeys[commitHash][VK_SP1] != bytes32(0)) &&
@@ -389,13 +389,13 @@ contract OnChainProposer is
                     )
                 );
             }
-            bytes32 ch = batchCommitments[batchNumber].commitHash;
-            bytes32 rvk = verificationKeys[ch][VK_RISC0];
+            bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
+            bytes32 risc0Vk = verificationKeys[batchCommitHash][VK_RISC0];
             try
                 IRiscZeroVerifier(RISC0_VERIFIER_ADDRESS).verify(
                     risc0BlockProof,
                     // we use the same vk as the one set for the commit of the batch
-                    rvk,
+                    risc0Vk,
                     sha256(risc0Journal)
                 )
             {} catch {
@@ -419,11 +419,11 @@ contract OnChainProposer is
                     )
                 );
             }
-            bytes32 ch = batchCommitments[batchNumber].commitHash;
-            bytes32 svk = verificationKeys[ch][VK_SP1];
+            bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
+            bytes32 sp1Vk = verificationKeys[batchCommitHash][VK_SP1];
             try
                 ISP1Verifier(SP1_VERIFIER_ADDRESS).verifyProof(
-                    svk,
+                    sp1Vk,
                     sp1PublicValues,
                     sp1ProofBytes
                 )
