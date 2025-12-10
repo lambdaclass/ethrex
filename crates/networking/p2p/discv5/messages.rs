@@ -1,244 +1,118 @@
-use crate::{
-    types::{Endpoint, Node, NodeRecord},
-    utils::{current_unix_time, node_id},
-};
+use aes::cipher::KeyIvInit;
 use bytes::BufMut;
-use ethrex_common::{H256, H512, H520, utils::keccak};
-use ethrex_crypto::keccak::keccak_hash;
-use ethrex_rlp::{
-    decode::RLPDecode,
-    encode::RLPEncode,
-    error::RLPDecodeError,
-    structs::{self, Decoder, Encoder},
-};
-use secp256k1::{
-    SecretKey,
-    ecdsa::{RecoverableSignature, RecoveryId},
-};
-use std::{convert::Into, io::ErrorKind};
+use secp256k1::SecretKey;
+
+type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PacketDecodeErr {
-    #[error("RLP decoding error")]
-    RLPDecodeError(#[from] RLPDecodeError),
     #[error("Invalid packet size")]
     InvalidSize,
-    #[error("Hash mismatch")]
-    HashMismatch,
-    #[error("Invalid signature")]
-    InvalidSignature,
-    #[error("Discv4 decoding error: {0}")]
-    Discv4DecodingError(String),
-    #[error("Io Error: {0}")]
-    IoError(#[from] std::io::Error),
-}
-
-impl From<PacketDecodeErr> for std::io::Error {
-    fn from(error: PacketDecodeErr) -> Self {
-        std::io::Error::new(ErrorKind::InvalidData, error.to_string())
-    }
 }
 
 #[derive(Debug, Clone)]
 pub struct Packet {
-    hash: H256,
-    signature: H520,
     message: Message,
-    public_key: H512,
 }
 
 impl Packet {
-    pub fn decode(encoded_packet: &[u8]) -> Result<Packet, PacketDecodeErr> {
+    pub fn decode(signer: &SecretKey, encoded_packet: &[u8]) -> Result<Packet, PacketDecodeErr> {
         // the packet structure is
-        // hash || signature || packet-type || packet-data
-        let hash_len = 32;
-        let signature_len = 65;
-        let header_size = hash_len + signature_len; // 97
+        // masking-iv || masked-header || message
 
-        if encoded_packet.len() < header_size + 1 {
-            return Err(PacketDecodeErr::InvalidSize);
-        };
+        // 16 bytes for an u128
+        let masking_iv = &encoded_packet[..16];
+        // 23 bytes for static header
+        let _static_header = &encoded_packet[16..39];
 
-        let hash = H256::from_slice(&encoded_packet[..hash_len]);
-        let signature_bytes = &encoded_packet[hash_len..header_size];
-        let packet_type = encoded_packet[header_size];
-        let encoded_msg = &encoded_packet[header_size..];
+        let public_key = signer.public_key(secp256k1::SECP256K1);
 
-        let header_hash = keccak(&encoded_packet[hash_len..]);
-
-        if hash != header_hash {
-            return Err(PacketDecodeErr::HashMismatch);
-        }
-
-        let digest: [u8; 32] = keccak_hash(encoded_msg);
-
-        let rid = RecoveryId::try_from(Into::<i32>::into(signature_bytes[64]))
-            .map_err(|_| PacketDecodeErr::InvalidSignature)?;
-
-        let peer_pk = secp256k1::SECP256K1
-            .recover_ecdsa(
-                &secp256k1::Message::from_digest(digest),
-                &RecoverableSignature::from_compact(&signature_bytes[0..64], rid)
-                    .map_err(|_| PacketDecodeErr::InvalidSignature)?,
-            )
-            .map_err(|_| PacketDecodeErr::InvalidSignature)?;
-
-        let encoded = peer_pk.serialize_uncompressed();
-
-        let public_key = H512::from_slice(&encoded[1..]);
-        let signature = H520::from_slice(signature_bytes);
-        let message = Message::decode_with_type(packet_type, &encoded_msg[1..])
-            .map_err(PacketDecodeErr::RLPDecodeError)?;
+        // TODO: implement proper decoding
+        let _cipher = <Aes256Ctr64BE as KeyIvInit>::new(
+            public_key.serialize_uncompressed()[..16].into(),
+            masking_iv.into(),
+        );
 
         Ok(Self {
-            hash,
-            signature,
-            message,
-            public_key,
+            message: Message::Ping(PingMessage {
+                req_id: 1,
+                enr_seq: 1,
+            }),
         })
     }
 
-    pub fn get_hash(&self) -> H256 {
-        self.hash
-    }
-
-    pub fn get_message(&self) -> &Message {
-        &self.message
-    }
-
-    #[allow(unused)]
-    pub fn get_signature(&self) -> H520 {
-        self.signature
-    }
-
-    pub fn get_public_key(&self) -> H512 {
-        self.public_key
-    }
-
-    pub fn get_node_id(&self) -> H256 {
-        node_id(&self.public_key)
+    pub fn encode(&self, buf: &mut dyn BufMut, signer: &SecretKey) {
+        self.message.encode(buf, signer);
     }
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Message {
     Ping(PingMessage),
+    // TODO: add the other messages
 }
 
 impl Message {
-    pub fn encode_with_header(&self, buf: &mut dyn BufMut, node_signer: &SecretKey) {
-        let signature_size = 65_usize;
-        let mut data: Vec<u8> = Vec::with_capacity(signature_size.next_power_of_two());
-        data.resize(signature_size, 0);
-
-        self.encode_with_type(&mut data);
-
-        let digest: [u8; 32] = keccak_hash(&data[signature_size..]);
-
-        let (recovery_id, signature) = secp256k1::SECP256K1
-            .sign_ecdsa_recoverable(&secp256k1::Message::from_digest(digest), node_signer)
-            .serialize_compact();
-
-        data[..signature_size - 1].copy_from_slice(&signature);
-        data[signature_size - 1] = Into::<i32>::into(recovery_id) as u8;
-
-        let hash = keccak_hash(&data[..]);
-        buf.put_slice(&hash);
-        buf.put_slice(&data[..]);
-    }
-
-    fn encode_with_type(&self, buf: &mut dyn BufMut) {
-        buf.put_u8(self.packet_type());
-        match self {
-            Message::Ping(msg) => msg.encode(buf),
-        }
-    }
-
-    pub fn decode_with_type(packet_type: u8, msg: &[u8]) -> Result<Message, RLPDecodeError> {
-        // NOTE: extra elements inside the message should be ignored, along with extra data
-        // after the message.
-        match packet_type {
-            0x01 => {
-                let (ping, _rest) = PingMessage::decode_unfinished(msg)?;
-                Ok(Message::Ping(ping))
-            }
-            _ => Err(RLPDecodeError::MalformedData),
-        }
-    }
-
-    fn packet_type(&self) -> u8 {
-        match self {
-            Message::Ping(_) => 0x01,
-        }
+    pub fn encode(&self, _buf: &mut dyn BufMut, _signer: &SecretKey) {
+        //TODO
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PingMessage {
-    /// The Ping message version. Should be set to 4, but mustn't be enforced.
-    pub version: u8,
-    /// The endpoint of the sender.
-    pub from: Endpoint,
-    /// The endpoint of the receiver.
-    pub to: Endpoint,
-    /// The expiration time of the message. If the message is older than this time,
-    /// it shouldn't be responded to.
-    pub expiration: u64,
-    /// The ENR sequence number of the sender. This field is optional.
-    pub enr_seq: Option<u64>,
+    /// The request id of the sender.
+    pub req_id: u64,
+    /// The ENR sequence number of the sender.
+    pub enr_seq: u64,
 }
 
 impl PingMessage {
-    pub fn new(from: Endpoint, to: Endpoint, expiration: u64) -> Self {
-        Self {
-            version: 4,
-            from,
-            to,
-            expiration,
-            enr_seq: None,
-        }
-    }
-
-    // TODO: remove when used
-    #[allow(unused)]
-    pub fn with_enr_seq(self, enr_seq: u64) -> Self {
-        Self {
-            enr_seq: Some(enr_seq),
-            ..self
-        }
+    pub fn new(req_id: u64, enr_seq: u64) -> Self {
+        Self { req_id, enr_seq }
     }
 }
 
-impl RLPEncode for PingMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        structs::Encoder::new(buf)
-            .encode_field(&self.version)
-            .encode_field(&self.from)
-            .encode_field(&self.to)
-            .encode_field(&self.expiration)
-            .encode_optional_field(&self.enr_seq)
-            .finish();
+#[cfg(test)]
+mod tests {
+    use crate::discv5::messages::{Message, Packet, PingMessage};
+    use hex_literal::hex;
+    use secp256k1::SecretKey;
+
+    // node-a-key = 0xeef77acb6c6a6eebc5b363a475ac583ec7eccdb42b6481424c60f59aa326547f
+    // node-b-key = 0x66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628
+
+    #[test]
+    fn test_encode_ping_message() {
+        // TODO
     }
-}
 
-impl RLPDecode for PingMessage {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (version, decoder): (u8, Decoder) = decoder.decode_field("version")?;
-        let (from, decoder) = decoder.decode_field("from")?;
-        let (to, decoder) = decoder.decode_field("to")?;
-        let (expiration, decoder) = decoder.decode_field("expiration")?;
-        let (enr_seq, decoder) = decoder.decode_optional_field();
+    #[test]
+    fn test_decode_ping_packet() {
+        // # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
+        // # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
+        // # nonce = 0xffffffffffffffffffffffff
+        // # read-key = 0x00000000000000000000000000000000
+        // # ping.req-id = 0x00000001
+        // # ping.enr-seq = 2
+        //
+        // 00000000000000000000000000000000088b3d4342774649325f313964a39e55
+        // ea96c005ad52be8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d3
+        // 4c4f53245d08dab84102ed931f66d1492acb308fa1c6715b9d139b81acbdcc
+        let node_b_key = SecretKey::from_slice(&hex!(
+            "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
+        ))
+        .unwrap();
 
-        let ping = PingMessage {
-            version,
-            from,
-            to,
-            expiration,
-            enr_seq,
-        };
-        // NOTE: as per the spec, any additional elements should be ignored.
-        let remaining = decoder.finish_unchecked();
-        Ok((ping, remaining))
+        let encoded = &hex!(
+            "00000000000000000000000000000000088b3d4342774649325f313964a39e55ea96c005ad52be8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08dab84102ed931f66d1492acb308fa1c6715b9d139b81acbdcc"
+        );
+        let decoded = Packet::decode(&node_b_key, encoded).unwrap();
+        let message = decoded.message;
+        let expected = Message::Ping(PingMessage {
+            req_id: 0x00000001,
+            enr_seq: 2,
+        });
+
+        assert_eq!(message, expected);
     }
 }
