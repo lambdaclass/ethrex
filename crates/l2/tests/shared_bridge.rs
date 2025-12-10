@@ -155,6 +155,7 @@ async fn deploy_l1_erc20(
 
     let (tx_hash, l1_erc20_contract_address) =
         create_deploy(l1_client, signer, init_code_l1.into(), Overrides::default()).await?;
+    wait_for_transaction_receipt(tx_hash, l1_client, 100).await?;
     println!("Deployed L1 ERC20 at {l1_erc20_contract_address:?} in hash {tx_hash:?}");
     let l1_balance = test_balance_of(l1_client, l1_erc20_contract_address, sender_address).await;
     assert_eq!(
@@ -211,6 +212,7 @@ async fn deploy_l2_erc20(
         Overrides::default(),
     )
     .await?;
+    wait_for_transaction_receipt(tx_hash, client, 100).await?;
     println!("Deployed {display_label} ERC20 at {l2_erc20_contract_address:?} in hash {tx_hash:?}");
     let balance = test_balance_of(client, l2_erc20_contract_address, sender_address).await;
     assert_eq!(
