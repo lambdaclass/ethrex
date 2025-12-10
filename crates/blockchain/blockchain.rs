@@ -34,7 +34,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
-use ethrex_trie::node::{BranchNode, ExtensionNode};
+use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieNode};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
@@ -344,7 +344,8 @@ impl Blockchain {
                 let prefix = keccak(update.address);
                 if update.removed_storage | update.removed {
                     for tx in &workers_tx {
-                        tx.send(MerklizationRequest::Delete(prefix)).unwrap();
+                        tx.send(MerklizationRequest::Delete(prefix))
+                            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                     }
                 }
                 for (key, value) in update.added_storage {
@@ -360,7 +361,7 @@ impl Blockchain {
                                 value.encode_to_vec()
                             },
                         })
-                        .unwrap();
+                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                 }
             }
         }
@@ -370,7 +371,7 @@ impl Blockchain {
             tx.send(MerklizationRequest::Collect {
                 tx: gatherer_tx.clone(),
             })
-            .unwrap();
+            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
         }
         drop(gatherer_tx);
 
@@ -393,7 +394,9 @@ impl Blockchain {
         let mut storage_roots: FxHashMap<H256, H256> = Default::default();
         let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
         for (hashed_account, (root, mut nodes)) in storage_state {
-            if let Some(root) = self.collapse_root_node(parent_header, Some(hashed_account), root)? {
+            if let Some(root) =
+                self.collapse_root_node(parent_header, Some(hashed_account), root)?
+            {
                 let mut root = NodeRef::from(root);
                 let hash = root.commit(Nibbles::default(), &mut nodes);
                 storage_roots.insert(hashed_account, hash.finalize());
@@ -412,13 +415,10 @@ impl Blockchain {
             let hashed_address = keccak(update.address);
             let mut state = match account_state.get(&hashed_address) {
                 Some(value) => value.clone().unwrap_or_default(),
-                None => {
-                    let state = match state_trie.get(&hashed_address.0.to_vec())? {
-                        Some(rlp) => AccountState::decode(&rlp)?,
-                        None => AccountState::default(),
-                    };
-                    state
-                }
+                None => match state_trie.get(&hashed_address.0.to_vec())? {
+                    Some(rlp) => AccountState::decode(&rlp)?,
+                    None => AccountState::default(),
+                },
             };
             if let Some(info) = update.info {
                 if let Some(code) = update.code {
@@ -446,7 +446,7 @@ impl Blockchain {
                         state.encode_to_vec()
                     },
                 })
-                .unwrap();
+                .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
         }
 
         let (gatherer_tx, gatherer_rx) = channel();
@@ -454,7 +454,7 @@ impl Blockchain {
             tx.send(MerklizationRequest::Collect {
                 tx: gatherer_tx.clone(),
             })
-            .unwrap();
+            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
         }
         drop(gatherer_tx);
 
@@ -463,21 +463,22 @@ impl Blockchain {
             state_trie
                 .root_node()?
                 .map(Arc::unwrap_or_clone)
-                .unwrap_or_else(|| Node::Branch(Box::new(BranchNode::default()))),
+                .unwrap_or_default(),
         );
         let mut state_updates = Vec::new();
         for (_prefix, index, subroot, nodes) in gatherer_rx {
             state_updates.extend(nodes);
             root.choices[index as usize] = subroot.choices[index as usize].clone();
         }
-        let state_trie_hash = if let Some(root) = self.collapse_root_node(parent_header, None, root)? {
-            let mut root = NodeRef::from(root);
-            let hash = root.commit(Nibbles::default(), &mut state_updates);
-            hash.finalize()
-        } else {
-            state_updates.push((Nibbles::default(), vec![RLP_NULL]));
-            *EMPTY_TRIE_HASH
-        };
+        let state_trie_hash =
+            if let Some(root) = self.collapse_root_node(parent_header, None, root)? {
+                let mut root = NodeRef::from(root);
+                let hash = root.commit(Nibbles::default(), &mut state_updates);
+                hash.finalize()
+            } else {
+                state_updates.push((Nibbles::default(), vec![RLP_NULL]));
+                *EMPTY_TRIE_HASH
+            };
 
         Ok(AccountUpdatesList {
             state_trie_hash,
@@ -515,47 +516,54 @@ impl Blockchain {
     /// Returns None if there are no valid children.
     ///
     /// Precondition: the branch node's reference to their children are of type NodeRef::Node
-fn collapse_root_node(&self, parent_header: &BlockHeader, prefix: Option<H256>, mut root: BranchNode) -> Result<Option<Node>, StoreError> {
-    root.choices.iter_mut().for_each(|choice| {
-        choice.clear_hash();
-    });
-    let mut valid_children_iter = root
-        .choices
-        .iter()
-        .enumerate()
-        .filter(|(_, choice)| choice.is_valid());
-    let child_a = valid_children_iter.next();
-    let child_b = valid_children_iter.next();
-    let (choice, only_child) = match (child_a, child_b) {
-        (None, None) => return Ok(None),
-        (None, Some(child)) => child,
-        (Some(child), None) => child,
-        (Some(_), Some(_)) => return Ok(Some(Node::Branch(Box::from(root)))),
-    };
-    let only_child = Arc::unwrap_or_clone(match only_child {
-        NodeRef::Node(node, _) => node.clone(),
-        noderef @ NodeRef::Hash(_) => {
-            let trie = self.load_trie(parent_header, prefix)?;
-            let Some(node) = noderef.get_node(trie.db(), Nibbles::from_hex(vec![choice as u8]))? else {
-                return Ok(None)
-            };
-            node
-        },
-    });
-    Ok(Some(match only_child {
-        Node::Branch(_) => {
-            ExtensionNode::new(Nibbles::from_hex(vec![choice as u8]), only_child.into()).into()
-        }
-        Node::Extension(mut extension_node) => {
-            extension_node.prefix.prepend(choice as u8);
-            extension_node.into()
-        }
-        Node::Leaf(mut leaf) => {
-            leaf.partial.prepend(choice as u8);
-            leaf.into()
-        }
-    }))
-}
+    fn collapse_root_node(
+        &self,
+        parent_header: &BlockHeader,
+        prefix: Option<H256>,
+        mut root: BranchNode,
+    ) -> Result<Option<Node>, StoreError> {
+        root.choices.iter_mut().for_each(|choice| {
+            choice.clear_hash();
+        });
+        let mut valid_children_iter = root
+            .choices
+            .iter()
+            .enumerate()
+            .filter(|(_, choice)| choice.is_valid());
+        let child_a = valid_children_iter.next();
+        let child_b = valid_children_iter.next();
+        let (choice, only_child) = match (child_a, child_b) {
+            (None, None) => return Ok(None),
+            (None, Some(child)) => child,
+            (Some(child), None) => child,
+            (Some(_), Some(_)) => return Ok(Some(Node::Branch(Box::from(root)))),
+        };
+        let only_child = Arc::unwrap_or_clone(match only_child {
+            NodeRef::Node(node, _) => node.clone(),
+            noderef @ NodeRef::Hash(_) => {
+                let trie = self.load_trie(parent_header, prefix)?;
+                let Some(node) =
+                    noderef.get_node(trie.db(), Nibbles::from_hex(vec![choice as u8]))?
+                else {
+                    return Ok(None);
+                };
+                node
+            }
+        });
+        Ok(Some(match only_child {
+            Node::Branch(_) => {
+                ExtensionNode::new(Nibbles::from_hex(vec![choice as u8]), only_child.into()).into()
+            }
+            Node::Extension(mut extension_node) => {
+                extension_node.prefix.prepend(choice as u8);
+                extension_node.into()
+            }
+            Node::Leaf(mut leaf) => {
+                leaf.partial.prepend(choice as u8);
+                leaf.into()
+            }
+        }))
+    }
 
     fn handle_merkleization_subtrie(
         &self,
@@ -571,7 +579,7 @@ fn collapse_root_node(&self, parent_header: &BlockHeader, prefix: Option<H256>, 
                     tree.insert(Some(prefix), trie);
                 }
                 MerklizationRequest::Merklize { prefix, key, value } => {
-                    let trie = match tree.entry(prefix.clone()) {
+                    let trie = match tree.entry(prefix) {
                         Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
                         Entry::Vacant(vacant_entry) => {
                             vacant_entry.insert(self.load_trie(parent_header, prefix)?)
@@ -588,13 +596,14 @@ fn collapse_root_node(&self, parent_header: &BlockHeader, prefix: Option<H256>, 
                         let root = branchify(
                             trie.root_node()?
                                 .map(Arc::unwrap_or_clone)
-                                .unwrap_or_else(|| Node::Branch(Box::new(BranchNode::default()))),
+                                .unwrap_or_default(),
                         );
                         trie.root = Node::Branch(Box::new(root.clone())).into();
                         let (_, mut nodes) = trie.collect_changes_since_last_hash();
                         nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
 
-                        tx.send((prefix, index, root, nodes)).unwrap();
+                        tx.send((prefix, index, root, nodes))
+                            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                     }
                 }
             }
@@ -1828,21 +1837,24 @@ pub fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
 fn branchify(node: Node) -> BranchNode {
     match node {
         Node::Branch(branch_node) => *branch_node,
-        Node::Extension(mut extension_node) => {
-            let (index, noderef) = if extension_node.prefix.len() == 1 {
-                (extension_node.prefix.as_ref()[0], extension_node.child)
+        Node::Extension(extension_node) => {
+            let index = extension_node.prefix.as_ref()[0];
+            let noderef = if extension_node.prefix.len() == 1 {
+                extension_node.child
             } else {
-                let index = extension_node.prefix.next().unwrap();
-                (index, NodeRef::from(Arc::new(extension_node.into())))
+                let prefix = extension_node.prefix.offset(1);
+                let node = ExtensionNode::new(prefix, extension_node.child);
+                NodeRef::from(Arc::new(node.into()))
             };
             let mut choices = BranchNode::EMPTY_CHOICES;
             choices[index as usize] = noderef;
             BranchNode::new(choices)
         }
-        Node::Leaf(mut leaf_node) => {
-            let index = leaf_node.partial.next().unwrap();
+        Node::Leaf(leaf_node) => {
+            let index = leaf_node.partial.as_ref()[0];
+            let node = LeafNode::new(leaf_node.partial.offset(1), leaf_node.value);
             let mut choices = BranchNode::EMPTY_CHOICES;
-            choices[index as usize] = NodeRef::from(Arc::new(leaf_node.into()));
+            choices[index as usize] = NodeRef::from(Arc::new(node.into()));
             BranchNode::new(choices)
         }
     }
