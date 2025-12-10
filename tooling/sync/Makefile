@@ -2,7 +2,8 @@
 flamegraph-branch flamegraph-inner flamegraph-mainnet flamegraph-sepolia flamegraph-holesky \
 flamegraph-hoodi start-lighthouse start-ethrex backup-db start-mainnet-metrics-docker \
 start-sepolia-metrics-docker start-holesky-metrics-docker start-hoodi-metrics-docker \
-start-metrics-docker tail-syncing-logs tail-metrics-logs copy_flamegraph import-with-metrics
+start-metrics-docker tail-syncing-logs tail-metrics-logs copy_flamegraph import-with-metrics \
+snapsync-docker-up snapsync-docker-down snapsync-docker-clean snapsync-docker-logs snapsync-docker-status
 
 ETHREX_DIR ?= "../.."
 EVM ?= levm
@@ -200,6 +201,7 @@ endif
 
 LOGS_FILE ?= output.log
 
+
 # Use make server-sync SERVER_SYNC_BRANCH=branch_name SERVER_SYNC_NETWORK=network_name LOGS_FILE=logs_file_name  HEALING=1 MEMORY=1 FULL_SYNC=1
 # SERVER_SYNC_BRANCH is the branch to checkout before syncing, SERVER_SYNC_NETWORK is the network to sync, LOGS_FILE is the file to output logs to, HEALING enables healing mode, MEMORY uses memory datadir, FULL_SYNC switches to full-sync mode.
 server-sync:
@@ -220,3 +222,41 @@ server-sync:
 	sleep 0.2
 
 	tmux new-window -t sync:2 -n ethrex "cd ../../metrics && docker stop metrics-ethereum-metrics-exporter-1 || true && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d && cd .. && ulimit -n 1000000 && rm -rf ~/.local/share/ethrex && RUST_LOG=info,ethrex_p2p::sync=debug $(if $(DEBUG_ASSERT),RUSTFLAGS='-C debug-assertions=yes') $(if $(HEALING),SKIP_START_SNAP_SYNC=1) cargo run --release --bin ethrex --features rocksdb --  --http.addr 0.0.0.0 --metrics --metrics.port 3701 --network $(SERVER_SYNC_NETWORK) $(if $(MEMORY),--datadir memory) --authrpc.jwtsecret ~/secrets/jwt.hex $(if $(or $(FULL_SYNC),$(HEALING)),--syncmode full)  2>&1 | tee $(LOGS_FILE)"
+
+# ==============================================================================
+# Test with 2 Hoodi instances
+# ==============================================================================
+
+SNAPSYNC_TEST_COMPOSE = docker compose -f docker-compose.snapsync-test.yaml
+
+snapsync-test-up: ## Start 2 hoodi instances for testing.
+	$(SNAPSYNC_TEST_COMPOSE) up -d
+
+snapsync-test-down: ## Stop test containers.
+	$(SNAPSYNC_TEST_COMPOSE) down
+
+snapsync-test-clean: ## Stop and remove test volumes.
+	$(SNAPSYNC_TEST_COMPOSE) down -v
+
+snapsync-test-logs: ## Tail logs from test instances.
+	$(SNAPSYNC_TEST_COMPOSE) logs -f
+
+snapsync-test-status: ## Check sync status of test instances.
+	@echo "=== Container Status ==="
+	@$(SNAPSYNC_TEST_COMPOSE) ps
+	@echo ""
+	@echo "=== Sync Status ==="
+	@for port in 8545:hoodi-1 8546:hoodi-2; do \
+		name=$${port#*:}; \
+		p=$${port%:*}; \
+		result=$$(curl -s -X POST -H "Content-Type: application/json" \
+			--data '{"jsonrpc":"2.0","method":"eth_syncing","params":[],"id":1}' \
+			http://localhost:$$p 2>/dev/null | grep -o '"result":[^,}]*' || echo '"result":null'); \
+		if echo "$$result" | grep -q "false"; then \
+			echo "✅ $$name (port $$p): synced"; \
+		elif echo "$$result" | grep -q "null"; then \
+			echo "⏳ $$name (port $$p): not reachable"; \
+		else \
+			echo "🔄 $$name (port $$p): syncing"; \
+		fi; \
+	done
