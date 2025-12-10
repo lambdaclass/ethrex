@@ -220,6 +220,10 @@ async fn handle_forkchoice(
         ));
     }
 
+    // Ignore any FCU during snap-sync.
+    // Processing the FCU while snap-syncing can result in reading inconsistent data
+    // from the DB, and the later head update can overwrite changes made by the syncer
+    // process, corrupting the forkchoice state (see #5547)
     if syncer.sync_mode() == SyncMode::Snap {
         syncer.sync_to_head(fork_choice_state.head_block_hash);
         return Ok((None, PayloadStatus::syncing().into()));
