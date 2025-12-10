@@ -15,6 +15,10 @@ inputs:
     description: Ethrex Docker image tag.
     required: false
     default: main
+  cl_type:
+    description: Consensus layer type (lighthouse, prysm, etc).
+    required: false
+    default: lighthouse
   cl_image:
     description: Consensus layer Docker image and tag.
     required: false
@@ -37,6 +41,7 @@ runs:
         TIMEOUT: ${{ inputs.timeout }}
         ETHREX_IMAGE: ${{ inputs.ethrex_image }}
         ETHREX_TAG: ${{ inputs.ethrex_tag }}
+        CL_TYPE: ${{ inputs.cl_type }}
         CL_IMAGE: ${{ inputs.cl_image }}
       run: |
         cat > .github/config/assertoor/network_params.generated.yaml <<YAML
@@ -46,7 +51,7 @@ runs:
             el_extra_params:
               - "--syncmode=snap"
               - "--log.level=info"
-            cl_type: lighthouse
+            cl_type: ${CL_TYPE}
             cl_image: ${CL_IMAGE}
             count: 1
 
