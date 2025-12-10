@@ -109,16 +109,6 @@ contract OnChainProposer is
     mapping(bytes32 commitHash => mapping(uint8 verifierId => bytes32 vk))
         public verificationKeys;
 
-    /// @notice Verification keys updated for a commit hash.
-    /// @param commitHash git commit hash identifier.
-    /// @param verifierId Verifier type identifier (1=SP1, 2=RISC0).
-    /// @param newVerificationKey The new verification key.
-    event VerificationKeysUpdated(
-        bytes32 indexed commitHash,
-        uint8 indexed verifierId,
-        bytes32 newVerificationKey
-    );
-
     modifier onlySequencer() {
         require(
             authorizedSequencerAddresses[msg.sender],
@@ -208,8 +198,8 @@ contract OnChainProposer is
 
         OwnableUpgradeable.__Ownable_init(owner);
 
-        emit VerificationKeysUpdated(commitHash, VK_SP1, sp1Vk);
-        emit VerificationKeysUpdated(commitHash, VK_RISC0, risc0Vk);
+        emit VerificationKeyUpgraded("SP1", commitHash, sp1Vk);
+        emit VerificationKeyUpgraded("RISC0", commitHash, risc0Vk);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -233,7 +223,7 @@ contract OnChainProposer is
         require(new_vk != bytes32(0), "OnChainProposer: vk is zero");
         verificationKeys[commit_hash][VK_SP1] = new_vk;
         SP1_VERIFICATION_KEY = new_vk;
-        emit VerificationKeyUpgraded("SP1", new_vk);
+        emit VerificationKeyUpgraded("SP1", commit_hash, new_vk);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -248,7 +238,7 @@ contract OnChainProposer is
         require(new_vk != bytes32(0), "OnChainProposer: vk is zero");
         verificationKeys[commit_hash][VK_RISC0] = new_vk;
         RISC0_VERIFICATION_KEY = new_vk;
-        emit VerificationKeyUpgraded("RISC0", new_vk);
+        emit VerificationKeyUpgraded("RISC0", commit_hash, new_vk);
     }
 
     /// @inheritdoc IOnChainProposer

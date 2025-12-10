@@ -26,8 +26,13 @@ interface IOnChainProposer {
     /// @notice A verification key has been upgraded.
     /// @dev Event emitted when a verification key is upgraded.
     /// @param verifier The name of the verifier whose key was upgraded.
+    /// @param commitHash The git commit hash associated to the verification key.
     /// @param newVerificationKey The new verification key.
-    event VerificationKeyUpgraded(string verifier, bytes32 newVerificationKey);
+    event VerificationKeyUpgraded(
+        string verifier,
+        bytes32 commitHash,
+        bytes32 newVerificationKey
+    );
 
     /// @notice Set the bridge address for the first time.
     /// @dev This method is separated from initialize because both the CommonBridge
