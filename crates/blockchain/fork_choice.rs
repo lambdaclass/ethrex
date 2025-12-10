@@ -4,6 +4,7 @@ use ethrex_common::{
 };
 use ethrex_metrics::metrics;
 use ethrex_storage::{Store, error::StoreError};
+use tracing::warn;
 
 use crate::{
     error::{self, InvalidForkChoice},
@@ -67,9 +68,9 @@ pub async fn apply_fork_choice(
         return Err(InvalidForkChoice::UnlinkedHead);
     };
 
-    let link_block_number = match new_canonical_blocks.last() {
-        Some((number, _)) => *number,
-        None => head.number,
+    let (link_block_number, link_block_hash) = match new_canonical_blocks.last() {
+        Some((number, hash)) => (*number, *hash),
+        None => (head.number, head_hash),
     };
 
     // Check that finalized and safe blocks are part of the new canonical chain.
@@ -95,6 +96,19 @@ pub async fn apply_fork_choice(
             error::ForkChoiceElement::Head,
             error::ForkChoiceElement::Safe,
         ));
+    }
+
+    let Some(link_header) = store.get_block_header_by_hash(link_block_hash)? else {
+        // Probably unreachable, but we return this error just in case.
+        warn!("Link block not found although it was just retrieved from the DB");
+        return Err(InvalidForkChoice::UnlinkedHead);
+    };
+
+    // If the state can't be constructed from the DB, we ignore it.
+    // TODO: we should trigger a snap sync in this case.
+    if !store.has_state_root(link_header.state_root)? {
+        warn!(link_block=%link_block_hash, link_number=%link_header.number, head_number=%head.number, "FCU head state not reachable from DB state. Ignoring fork choice update. In case this keeps happening, consider resyncing.");
+        return Err(InvalidForkChoice::Syncing);
     }
 
     // Finished all validations.
