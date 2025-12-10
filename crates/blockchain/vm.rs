@@ -25,6 +25,10 @@ pub struct StoreVmDatabase {
 
 impl StoreVmDatabase {
     pub fn new(store: Store, block_header: BlockHeader) -> Result<Self, EvmError> {
+        // If we don't have the state for the base, we want to fail in a clear way
+        // instead of eventually erroring due to one of the several errors that may
+        // happen as a result of executing from the wrong state
+        // This lets one easily tell apart an inconsistent state from a syncing issue
         if !store
             .has_state_root(block_header.state_root)
             .map_err(|e| EvmError::DB(e.to_string()))?
@@ -44,6 +48,7 @@ impl StoreVmDatabase {
         block_header: BlockHeader,
         block_hash_cache: BTreeMap<BlockNumber, BlockHash>,
     ) -> Result<Self, EvmError> {
+        // Fail clearly if prestate is missing. See `StoreVmDatabase::new` for details on why we want this
         if !store
             .has_state_root(block_header.state_root)
             .map_err(|e| EvmError::DB(e.to_string()))?
