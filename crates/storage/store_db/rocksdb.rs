@@ -11,7 +11,7 @@ use ethrex_common::{
     H256,
     types::{
         AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code,
-        Index, Receipt, Transaction,
+        Index, Receipt,
     },
 };
 use ethrex_trie::{Nibbles, Node, Trie};
@@ -1502,43 +1502,6 @@ impl StoreEngine for Store {
         }
 
         Ok(Some(code))
-    }
-
-    async fn get_transaction_by_hash(
-        &self,
-        transaction_hash: H256,
-    ) -> Result<Option<Transaction>, StoreError> {
-        let (_block_number, block_hash, index) =
-            match self.get_transaction_location(transaction_hash).await? {
-                Some(location) => location,
-                None => return Ok(None),
-            };
-        self.get_transaction_by_location(block_hash, index).await
-    }
-
-    async fn get_transaction_by_location(
-        &self,
-        block_hash: H256,
-        index: u64,
-    ) -> Result<Option<Transaction>, StoreError> {
-        let block_body = match self.get_block_body_by_hash(block_hash).await? {
-            Some(body) => body,
-            None => return Ok(None),
-        };
-        let index: usize = index.try_into()?;
-        Ok(block_body.transactions.get(index).cloned())
-    }
-
-    async fn get_block_by_hash(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
-        let header = match self.get_block_header_by_hash(block_hash)? {
-            Some(header) => header,
-            None => return Ok(None),
-        };
-        let body = match self.get_block_body_by_hash(block_hash).await? {
-            Some(body) => body,
-            None => return Ok(None),
-        };
-        Ok(Some(Block::new(header, body)))
     }
 
     async fn get_canonical_block_hash(
