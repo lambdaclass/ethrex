@@ -104,11 +104,16 @@ pub async fn apply_fork_choice(
         return Err(InvalidForkChoice::UnlinkedHead);
     };
 
-    // If the state can't be constructed from the DB, we ignore it.
-    // TODO: we should trigger a snap sync in this case.
+    // If the state can't be constructed from the DB, we ignore it and log a warning.
+    // TODO(#5564): handle arbitrary reorgs
     if !store.has_state_root(link_header.state_root)? {
-        warn!(link_block=%link_block_hash, link_number=%link_header.number, head_number=%head.number, "FCU head state not reachable from DB state. Ignoring fork choice update. In case this keeps happening, consider resyncing.");
-        return Err(InvalidForkChoice::Syncing);
+        warn!(
+            link_block=%link_block_hash,
+            link_number=%link_header.number,
+            head_number=%head.number,
+            "FCU head state not reachable from DB state. Ignoring fork choice update. In case this keeps happening, consider resyncing."
+        );
+        return Err(InvalidForkChoice::StateNotReachable);
     }
 
     // Finished all validations.

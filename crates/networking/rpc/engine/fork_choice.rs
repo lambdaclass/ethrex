@@ -286,6 +286,11 @@ async fn handle_forkchoice(
                     syncer.sync_to_head(fork_choice_state.head_block_hash);
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
+                // TODO(#5564): handle arbitrary reorgs
+                InvalidForkChoice::StateNotReachable => {
+                    // Ignore the FCU
+                    ForkChoiceResponse::from(PayloadStatus::syncing())
+                }
                 InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {
                     warn!("Invalid fork choice state. Reason: {:?}", forkchoice_error);
                     return Err(RpcErr::InvalidForkChoiceState(forkchoice_error.to_string()));
