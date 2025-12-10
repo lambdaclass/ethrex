@@ -78,6 +78,7 @@ contract OnChainProposer is
     address public RISC0_VERIFIER_ADDRESS;
     address public SP1_VERIFIER_ADDRESS;
 
+    /// @dev Deprecated variable.
     bytes32 public SP1_VERIFICATION_KEY;
 
     /// @notice Indicates whether the contract operates in validium mode.Add commentMore actions
@@ -90,6 +91,7 @@ contract OnChainProposer is
     /// @dev This address is set during contract initialization and is used to verify aligned proofs.
     address public ALIGNEDPROOFAGGREGATOR;
 
+    /// @dev Deprecated variable.
     bytes32 public RISC0_VERIFICATION_KEY;
 
     /// @notice Chain ID of the network
@@ -147,12 +149,10 @@ contract OnChainProposer is
         // Risc0 constants
         REQUIRE_RISC0_PROOF = requireRisc0Proof;
         RISC0_VERIFIER_ADDRESS = r0verifier;
-        RISC0_VERIFICATION_KEY = risc0Vk;
 
         // SP1 constants
         REQUIRE_SP1_PROOF = requireSp1Proof;
         SP1_VERIFIER_ADDRESS = sp1verifier;
-        SP1_VERIFICATION_KEY = sp1Vk;
 
         // TDX constants
         REQUIRE_TDX_PROOF = requireTdxProof;
@@ -176,8 +176,6 @@ contract OnChainProposer is
         );
         verificationKeys[commitHash][VK_SP1] = sp1Vk;
         verificationKeys[commitHash][VK_RISC0] = risc0Vk;
-        SP1_VERIFICATION_KEY = sp1Vk;
-        RISC0_VERIFICATION_KEY = risc0Vk;
 
         batchCommitments[0] = BatchCommitmentInfo(
             genesisStateRoot,
@@ -222,7 +220,6 @@ contract OnChainProposer is
         );
         require(new_vk != bytes32(0), "OnChainProposer: vk is zero");
         verificationKeys[commit_hash][VK_SP1] = new_vk;
-        SP1_VERIFICATION_KEY = new_vk;
         emit VerificationKeyUpgraded("SP1", commit_hash, new_vk);
     }
 
@@ -237,7 +234,6 @@ contract OnChainProposer is
         );
         require(new_vk != bytes32(0), "OnChainProposer: vk is zero");
         verificationKeys[commit_hash][VK_RISC0] = new_vk;
-        RISC0_VERIFICATION_KEY = new_vk;
         emit VerificationKeyUpgraded("RISC0", commit_hash, new_vk);
     }
 
