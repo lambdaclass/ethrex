@@ -203,7 +203,8 @@ jobs:
           ./target/release/ethrex \
             l2 --dev \
             --osaka-activation-time 1761677592 \
-            --no-monitor > /tmp/ethrex.log 2>&1 &
+            --no-monitor \
+            --log.level debug > /tmp/ethrex.log 2>&1 &
           ETHREX_PID=$!
 
           trap 'kill "$ETHREX_PID" 2>/dev/null || true' EXIT
@@ -257,7 +258,7 @@ jobs:
         run: |
           echo "===== ethrex logs (/tmp/ethrex.log) ====="
           if [ -f /tmp/ethrex.log ]; then
-            cat /tmp/ethrex.log
+            cat /tmp/ethrex.log | grep -E "INFO|WARN|ERROR"
           else
             echo "Log file /tmp/ethrex.log not found"
           fi
@@ -342,7 +343,7 @@ jobs:
       - name: Start L1
         run: |
           cd crates/l2
-          docker compose up --detach ethrex_l1
+          LOG_LEVEL=debug docker compose up --detach ethrex_l1
 
       - name: Install rex
         if: ${{ matrix.based }}
@@ -417,6 +418,7 @@ jobs:
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_COMMITTER_COMMIT_TIME=15000 \
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
+          LOG_LEVEL=debug \
           docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach --no-deps ethrex_l2
 
       - name: Run test
@@ -424,8 +426,8 @@ jobs:
           sudo chmod -R a+rw crates/l2
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec &
-          docker logs --follow ethrex_l2 &
-          docker logs --follow ethrex_l1 &
+          docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow ethrex_l1 | grep -E "INFO|WARN|ERROR" &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
 
@@ -516,6 +518,7 @@ jobs:
           ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=1000000000 \
           ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=0x45681AE1768a8936FB87aB11453B4755e322ceec \
           ETHREX_PROOF_COORDINATOR_ADDRESS=0.0.0.0 \
+          LOG_LEVEL=debug \
           docker compose -f docker-compose.yaml -f docker-compose-l2-tdx.yaml up --detach --no-deps ethrex_l2
 
       - name: Run test
@@ -533,7 +536,7 @@ jobs:
             -device ide-hd,bus=ide.0,drive=main,bootindex=0 -drive "if=none,media=disk,id=main,file.filename=./image.raw,discard=unmap,detect-zeroes=unmap"
           tail -f tdx_prover.log &
           cd ../../
-          docker logs --follow ethrex_l2 &
+          docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           pkill -9 -f ethrex_tdx_prover
 
@@ -657,7 +660,7 @@ jobs:
       - name: Start L1
         run: |
           cd crates/l2
-          docker compose up --detach ethrex_l1
+          LOG_LEVEL=debug docker compose up --detach ethrex_l1
 
       - name: Deploy contracts L2A
         run: |
@@ -733,6 +736,7 @@ jobs:
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_COMMITTER_COMMIT_TIME=15000 \
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
+          LOG_LEVEL=debug \
           ETHREX_WATCHER_ROUTER_ADDRESS=$ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS \
           docker compose -f docker-compose.yaml up --detach --no-deps ethrex_l2
 
@@ -751,6 +755,7 @@ jobs:
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
           ETHREX_WATCHER_L2_RPCS=http://ethrex_l2:1729 \
           ETHREX_WATCHER_L2_CHAIN_IDS=65536999 \
+          LOG_LEVEL=debug \
           ETHREX_WATCHER_ROUTER_ADDRESS=$ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS \
           docker compose -f docker-compose.yaml -f docker-compose-l2-shared-bridge.overrides.yaml up --detach --no-deps ethrex_l2_b
 
@@ -763,9 +768,9 @@ jobs:
           l2 prover \
           --proof-coordinators tcp://127.0.0.1:3900 tcp://127.0.0.1:3901 \
           --backend exec &
-          docker logs --follow ethrex_l2 &
-          docker logs --follow ethrex_l2_b &
-          docker logs --follow ethrex_l1 &
+          docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow ethrex_l2_b | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow ethrex_l1 | grep -E "INFO|WARN|ERROR" &
           cargo test shared_bridge --release -- --nocapture --test-threads=1
           cp ../../cmd/.env_l2a ../../cmd/.env
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH=true cargo test l2 --release -- --nocapture --test-threads=1
@@ -783,9 +788,9 @@ jobs:
           l2 prover \
           --proof-coordinators tcp://127.0.0.1:3900 tcp://127.0.0.1:3901 \
           --backend exec &
-          docker logs --follow ethrex_l2 &
-          docker logs --follow ethrex_l2_b &
-          docker logs --follow ethrex_l1 &
+          docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow ethrex_l2_b | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow ethrex_l1 | grep -E "INFO|WARN|ERROR" &
           cp ../../cmd/.env_l2a ../../cmd/.env
           cargo test forced_inclusion --release -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
