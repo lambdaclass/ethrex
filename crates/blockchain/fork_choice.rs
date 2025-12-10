@@ -4,7 +4,7 @@ use ethrex_common::{
 };
 use ethrex_metrics::metrics;
 use ethrex_storage::{Store, error::StoreError};
-use tracing::warn;
+use tracing::{error, warn};
 
 use crate::{
     error::{self, InvalidForkChoice},
@@ -100,7 +100,7 @@ pub async fn apply_fork_choice(
 
     let Some(link_header) = store.get_block_header_by_hash(link_block_hash)? else {
         // Probably unreachable, but we return this error just in case.
-        warn!("Link block not found although it was just retrieved from the DB");
+        error!("Link block not found although it was just retrieved from the DB");
         return Err(InvalidForkChoice::UnlinkedHead);
     };
 
@@ -111,7 +111,7 @@ pub async fn apply_fork_choice(
             link_block=%link_block_hash,
             link_number=%link_header.number,
             head_number=%head.number,
-            "FCU head state not reachable from DB state. Ignoring fork choice update. In case this keeps happening, consider resyncing."
+            "FCU head state not reachable from DB state. Ignoring fork choice update. This is expected if the consensus client is currently syncing. Otherwise, it can be fixed by removing the DB and re-syncing the execution client."
         );
         return Err(InvalidForkChoice::StateNotReachable);
     }
