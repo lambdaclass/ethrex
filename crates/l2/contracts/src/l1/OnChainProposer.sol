@@ -186,6 +186,8 @@ contract OnChainProposer is
         );
         verificationKeys[commitHash][VK_SP1] = sp1Vk;
         verificationKeys[commitHash][VK_RISC0] = risc0Vk;
+        SP1_VERIFICATION_KEY = sp1Vk;
+        RISC0_VERIFICATION_KEY = risc0Vk;
 
         batchCommitments[0] = BatchCommitmentInfo(
             genesisStateRoot,
@@ -387,13 +389,13 @@ contract OnChainProposer is
                     )
                 );
             }
+            bytes32 ch = batchCommitments[batchNumber].commitHash;
+            bytes32 rvk = verificationKeys[ch][VK_RISC0];
             try
                 IRiscZeroVerifier(RISC0_VERIFIER_ADDRESS).verify(
                     risc0BlockProof,
                     // we use the same vk as the one set for the commit of the batch
-                    verificationKeys[batchCommitments[batchNumber].commitHash][
-                        VK_RISC0
-                    ],
+                    rvk,
                     sha256(risc0Journal)
                 )
             {} catch {
@@ -417,11 +419,11 @@ contract OnChainProposer is
                     )
                 );
             }
+            bytes32 ch = batchCommitments[batchNumber].commitHash;
+            bytes32 svk = verificationKeys[ch][VK_SP1];
             try
                 ISP1Verifier(SP1_VERIFIER_ADDRESS).verifyProof(
-                    verificationKeys[batchCommitments[batchNumber].commitHash][
-                        VK_SP1
-                    ],
+                    svk,
                     sp1PublicValues,
                     sp1ProofBytes
                 )
