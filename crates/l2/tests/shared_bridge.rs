@@ -344,7 +344,9 @@ async fn test_forced_inclusion() {
     }
     println!("Waiting 10 minutes for L2A to try to verify the batch...");
     sleep(Duration::from_secs(600)).await; // Wait for the batch to be verified
-    let last_verified_batch = get_last_verified_batch(&l2a_client, on_chain_proposer_address())
+    let on_chain_proposer_address = on_chain_proposer_address();
+    println!("Using onChainProposer address: {on_chain_proposer_address:?}");
+    let last_verified_batch = get_last_verified_batch(&l2a_client, on_chain_proposer_address)
         .await
         .expect("Failed to get last verified batch");
 

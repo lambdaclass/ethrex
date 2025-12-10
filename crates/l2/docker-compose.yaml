@@ -9,7 +9,7 @@ services:
     ports:
       - 127.0.0.1:8545:8545
     environment:
-      - LOG_LEVEL
+      - ETHREX_LOG_LEVEL
     volumes:
       - ../../fixtures/genesis/l1-dev.json:/genesis/l1-dev.json
     command: --network /genesis/l1-dev.json --http.addr 0.0.0.0 --http.port 8545 --dev
@@ -103,7 +103,7 @@ services:
       - ETHREX_WATCHER_L2_RPCS
       - ETHREX_WATCHER_L2_CHAIN_IDS
       - ETHREX_WATCHER_ROUTER_ADDRESS
-      - LOG_LEVEL
+      - ETHREX_LOG_LEVEL
     volumes:
       - ../../fixtures/genesis/l2.json:/genesis/l2.json
       - env:/env/

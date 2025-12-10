@@ -343,7 +343,7 @@ jobs:
       - name: Start L1
         run: |
           cd crates/l2
-          LOG_LEVEL=debug docker compose up --detach ethrex_l1
+          ETHREX_LOG_LEVEL=debug docker compose up --detach ethrex_l1
 
       - name: Install rex
         if: ${{ matrix.based }}
@@ -418,7 +418,7 @@ jobs:
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_COMMITTER_COMMIT_TIME=15000 \
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
-          LOG_LEVEL=debug \
+          ETHREX_LOG_LEVEL=debug \
           docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach --no-deps ethrex_l2
 
       - name: Run test
@@ -518,7 +518,7 @@ jobs:
           ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=1000000000 \
           ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=0x45681AE1768a8936FB87aB11453B4755e322ceec \
           ETHREX_PROOF_COORDINATOR_ADDRESS=0.0.0.0 \
-          LOG_LEVEL=debug \
+          ETHREX_LOG_LEVEL=debug \
           docker compose -f docker-compose.yaml -f docker-compose-l2-tdx.yaml up --detach --no-deps ethrex_l2
 
       - name: Run test
@@ -660,7 +660,7 @@ jobs:
       - name: Start L1
         run: |
           cd crates/l2
-          LOG_LEVEL=debug docker compose up --detach ethrex_l1
+          ETHREX_LOG_LEVEL=debug docker compose up --detach ethrex_l1
 
       - name: Deploy contracts L2A
         run: |
@@ -736,7 +736,7 @@ jobs:
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_COMMITTER_COMMIT_TIME=15000 \
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
-          LOG_LEVEL=debug \
+          ETHREX_LOG_LEVEL=debug \
           ETHREX_WATCHER_ROUTER_ADDRESS=$ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS \
           docker compose -f docker-compose.yaml up --detach --no-deps ethrex_l2
 
@@ -755,7 +755,7 @@ jobs:
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
           ETHREX_WATCHER_L2_RPCS=http://ethrex_l2:1729 \
           ETHREX_WATCHER_L2_CHAIN_IDS=65536999 \
-          LOG_LEVEL=debug \
+          ETHREX_LOG_LEVEL=debug \
           ETHREX_WATCHER_ROUTER_ADDRESS=$ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS \
           docker compose -f docker-compose.yaml -f docker-compose-l2-shared-bridge.overrides.yaml up --detach --no-deps ethrex_l2_b
 
