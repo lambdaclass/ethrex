@@ -85,7 +85,7 @@ impl Store {
         let path = path.as_ref();
         info!(engine = ?engine_type, ?path, "Opening storage engine");
 
-        if !matches!(engine_type, EngineType::InMemory) {
+        if engine_type != EngineType::InMemory {
             // Check that the last used DB version matches the current version
             validate_store_schema_version(path)?;
         }
