@@ -34,6 +34,7 @@ contract OnChainProposer is
         bytes32 processedPrivilegedTransactionsRollingHash;
         bytes32 withdrawalsLogsMerkleRoot;
         bytes32 lastBlockHash;
+        uint256 nonPrivilegedTransactions;
     }
 
     /// @notice The commitments of the committed batches.
@@ -209,6 +210,7 @@ contract OnChainProposer is
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash,
+        uint256 nonPrivilegedTransactions,
         bytes[] calldata //rlpEncodedBlocks
     ) external override onlyLeaderSequencer {
         // TODO: Refactor validation
@@ -264,7 +266,8 @@ contract OnChainProposer is
             blobVersionedHash,
             processedPrivilegedTransactionsRollingHash,
             withdrawalsLogsMerkleRoot,
-            lastBlockHash
+            lastBlockHash,
+            nonPrivilegedTransactions
         );
         emit BatchCommitted(batchNumber, newStateRoot);
 
@@ -311,6 +314,14 @@ contract OnChainProposer is
             ICommonBridge(BRIDGE).removePendingTransactionHashes(
                 privileged_transaction_count
             );
+        }
+
+        if (
+            ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() &&
+            batchCommitments[batchNumber].nonPrivilegedTransactions != 0
+        ) {
+            return
+                "exceeded privileged transaction inclusion deadline, can't include non-privileged transactions";
         }
 
         if (REQUIRE_RISC0_PROOF) {
@@ -534,11 +545,11 @@ contract OnChainProposer is
             bytes32(publicData[192:224])
         );
         if (
-            ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() &&
-            nonPrivilegedTransactions != 0
+            batchCommitments[batchNumber].nonPrivilegedTransactions !=
+            nonPrivilegedTransactions
         ) {
             return
-                "exceeded privileged transaction inclusion deadline, can't include non-privileged transactions";
+                "non-privileged transactions public input does not match with committed transactions";
         }
         return "";
     }

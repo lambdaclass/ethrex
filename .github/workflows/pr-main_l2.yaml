@@ -600,14 +600,14 @@ jobs:
           make state-diff-test
 
   integration-test-shared-bridge:
-    name: Integration Test Shared Bridge
+    name: Integration Test Shared Bridge - ${{ matrix.name }}
     runs-on: ubuntu-latest
     needs: [detect-changes, build-docker, build-docker-l2]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     strategy:
       matrix:
         include:
-          - name: "Shared Bridge"
+          - name: "Normal"
             forced_inclusion: false
           - name: "Forced Inclusion"
             forced_inclusion: true
@@ -754,8 +754,8 @@ jobs:
           ETHREX_WATCHER_ROUTER_ADDRESS=$ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS \
           docker compose -f docker-compose.yaml -f docker-compose-l2-shared-bridge.overrides.yaml up --detach --no-deps ethrex_l2_b
 
-      - name: Run shared bridge tests
-        if: matrix.forced_inclusion == 'false'
+      - name: Run Shared Bridge Tests
+        if: matrix.forced_inclusion == false
         run: |
           sudo chmod -R a+rw crates/l2
           cd crates/l2
@@ -774,7 +774,7 @@ jobs:
           cargo test shared_bridge --release -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
 
-      - name: Run forced_inclusion
+      - name: Run Forced Inclusion Test
         if: matrix.forced_inclusion
         run: |
           sudo chmod -R a+rw crates/l2
