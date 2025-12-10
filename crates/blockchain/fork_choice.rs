@@ -111,7 +111,7 @@ pub async fn apply_fork_choice(
             link_block=%link_block_hash,
             link_number=%link_header.number,
             head_number=%head.number,
-            "FCU head state not reachable from DB state. Ignoring fork choice update. This is expected if the consensus client is currently syncing. Otherwise, it can be fixed by removing the DB and re-syncing the execution client."
+            "FCU head state not reachable from DB state. Ignoring fork choice update. This is expected if the consensus client is currently syncing. Otherwise, if consensus is synced and this is a consistent message it can be fixed by removing the DB and re-syncing the execution client."
         );
         return Err(InvalidForkChoice::StateNotReachable);
     }
