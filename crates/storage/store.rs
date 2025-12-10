@@ -19,7 +19,7 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeRLP, Trie, TrieLogger, TrieNode, TrieWitness};
 use serde::{Deserialize, Serialize};
-use std::{collections::hash_map::Entry, path::PathBuf, sync::Arc};
+use std::{collections::hash_map::Entry, io::Write, path::PathBuf, sync::Arc};
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Mutex,
@@ -1466,7 +1466,8 @@ fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
     if !metadata_path.exists() {
         let metadata = StoreMetadata::new(STORE_SCHEMA_VERSION);
         let serialized_metadata = serde_json::to_string_pretty(&metadata)?;
-        std::fs::write(metadata_path, serialized_metadata)?;
+        let mut new_file = std::fs::File::create_new(metadata_path)?;
+        new_file.write_all(serialized_metadata.as_bytes())?;
         return Ok(());
     } else if !metadata_path.is_file() {
         return Err(StoreError::Custom(
