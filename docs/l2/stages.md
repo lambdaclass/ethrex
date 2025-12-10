@@ -1,6 +1,6 @@
 # Rollup stages and ethrex
 
-This document relates the L2Beat rollup stage definitions to the current ethrex L2 stack as described in [their page](https://l2beat.com/stages). Stages are properties of a **deployed** L2, whereas Ethrex is a framework that different projects may configure and govern their own way. 
+This document relates the L2Beat rollup stage definitions to the current ethrex L2 stack. Stages are properties of a **deployed** L2, whereas Ethrex is a framework that different projects may configure and govern their own way. We are going to assume that if Ethrex provides the functionality to deploy a Stage X rollup then it's enough to consider Ethrex to be in that Stage, but remember that one could deploy an L2 with Ethrex and maybe choosing not to have certain properties that are available, and therefore be at a lower stage than the maximum potential (e.g. choosing not to have a Security Council).
 
 In this docs, when we talk about **Ethrex L2** we are referring to Ethrex in **Rollup mode**, not Validium, the main difference is that the former uses Ethereum L1 as the Data Availability layer whereas the latter doesn't.
 
@@ -37,9 +37,7 @@ This means that all data needed to reconstruct the L2 (transactions and state) i
 Yes.
 
 - The L2 node can follow the L1 commitments and blobs to reconstruct the L2 state.
-- The state‑reconstruction path is actively tested:
-  - `crates/l2/tests/state_reconstruct.rs` replays a fixed set of blobs to reconstruct a known final state.
-  - [State reconstruction blobs](../developers/l2/state-reconstruction-blobs.md) documents how to generate and use blobs for this test.
+- [State reconstruction blobs](../developers/l2/state-reconstruction-blobs.md) documents how to generate and use blobs for a test that replays a fixed set of blobs to reconstruct a known final state.
 - The [“Reconstructing state or Data Availability”](./fundamentals/data_availability.md#reconstructing-state-or-data-availability) and [“EIP‑4844 (a.k.a. Blobs)”](./fundamentals/data_availability.md#eip-4844-aka-blobs) sections and the [prover docs](../prover/prover.md) describe how the published data is used to reconstruct and verify state.
 
 ### Does the project use a proper proof system?
@@ -57,20 +55,17 @@ Ethrex uses **validity proofs**, not fraud proofs. There is no on‑chain “cha
 
 ## Stage 1
 
-The main requirement for Ethrex L2 to belong to stage 1 is:
-
+The main requirement for Ethrex L2 in order to belong to stage 1 is:
 Compromising ≥75% of the Security Council should be the only way (other than bugs) for the rollup to indefinitely block an L2→L1 message (e.g. a withdrawal) or push an invalid L2→L1 message (e.g. an invalid withdrawal) with an exit window shorter than 7 days. Any other mechanism that can affect such messages must give users at least a 7‑day exit window.
 
-In the current ethrex contracts:
+Both `OnChainProposer` and `CommonBridge` are upgradeable contracts, and these are authorized by a single `owner` address. Ethrex itself does not explicitly define a Security Council but it could have one if the owner was a multisig of each member. According to L2Beat requirements this Council should have at least 8 members, which has to be taken into account. Note that if the owner is treated as a Security Council there would be no other actors with more power than this one.
 
-- Both `OnChainProposer` and `CommonBridge` are **UUPS upgradeable** and **Ownable2Step**. Upgrades are authorized by a single `owner` address (which can itself be a multisig, but that is outside this repo).
-- The contracts expose `pause` / `unpause` and `_authorizeUpgrade` gated by `onlyOwner`, with **no built‑in timelock, exit window, or dedicated Security Council logic**.
-- Nothing in the contracts enforces a specific number of council members, a 75% threshold, or entity‑level decentralization; this must be provided by how the `owner` is chosen (e.g. a Safe or custom governance system).
+- The sequencer could indefinitely block/censor an L2->L1 message because it could just not include the withdrawal transaction in an L2 block.
+- The sequencer cannot unilaterally make L1 accept an invalid L2→L1 message, this would require a change in the code, which would then require updating the Verifying Key in the OnChainProposer, and only the Security Council (owner) is capable of updating the VK.
 
-Out of the box, ethrex therefore **does not satisfy Stage 1’s Security Council and exit‑window requirements**. A network built on ethrex could meet them by:
+Note that in the mentioned contracts there is no concept of exit window, but neither are entities other than the Security Council that can update them.
 
-- Pointing the proxy `owner` to an appropriately configured multisig / governance system, and
-- Introducing timelocks / exit windows around contract upgrades at the governance layer.
+Ethrex L2 doesn't fully satisfy the requirements to be Stage 1 because the sequencer can indefinitely block an L2->L1 message (withdrawal), so it's not censorship resistant. We can avoid this by implementing forced inclusion of withdrawals enforced by the contracts in L1, in which the user of the L2 can send their withdrawal to the contract on L1 and the sequencer must include it in a subsequent batch, otherwise they cannot keep on sequencing.
 
 ## Stage 2
 
@@ -96,4 +91,4 @@ There is **no built‑in Security Council role** that is restricted to on‑chai
 
 ## Summary
 
-Ethrex L2 currently satisfies all Stage 0 requirements, in order to become a Stage 1 rollup it should at least incorporate the notion of a Security Council and an exit window mechanism in case of contract upgrades.
+Ethrex L2 currently satisfies all Stage 0 requirements and it's very close to becoming a Stage 1 rollup, it just needs to be censorship-resistant regarding messages L2->L1 (e.g. withdrawals), because currently the sequencer could ignore withdrawal transactions.
