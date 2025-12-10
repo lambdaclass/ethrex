@@ -15,6 +15,10 @@ inputs:
     description: Ethrex Docker image tag.
     required: false
     default: main
+  cl_image:
+    description: Consensus layer Docker image and tag.
+    required: false
+    default: sigp/lighthouse:v8.0.1
 
 runs:
   using: composite
@@ -33,6 +37,7 @@ runs:
         TIMEOUT: ${{ inputs.timeout }}
         ETHREX_IMAGE: ${{ inputs.ethrex_image }}
         ETHREX_TAG: ${{ inputs.ethrex_tag }}
+        CL_IMAGE: ${{ inputs.cl_image }}
       run: |
         cat > .github/config/assertoor/network_params.generated.yaml <<YAML
         participants:
@@ -42,7 +47,7 @@ runs:
               - "--syncmode=snap"
               - "--log.level=info"
             cl_type: lighthouse
-            cl_image: sigp/lighthouse:v8.0.1
+            cl_image: ${CL_IMAGE}
             count: 1
 
         network_params:

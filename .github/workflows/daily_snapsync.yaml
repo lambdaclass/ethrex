@@ -53,9 +53,9 @@ jobs:
           fi
           echo "matrix=$json" >> "$GITHUB_OUTPUT"
 
-  sync:
+  sync-lighthouse:
     needs: prepare
-    name: Sync ${{ matrix.network }}
+    name: Sync ${{ matrix.network }} - Lighthouse
     runs-on: ethrex-sync
     strategy:
       fail-fast: false
@@ -70,3 +70,23 @@ jobs:
         with:
           network: ${{ matrix.network }}
           timeout: ${{ matrix.timeout }}
+          cl_image: "sigp/lighthouse:v8.0.1"
+
+  sync-prysm:
+    needs: prepare
+    name: Sync ${{ matrix.network }} - Prysm
+    runs-on: ethrex-sync
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Run Snapsync Test
+        uses: ./.github/actions/snapsync-run
+        with:
+          network: ${{ matrix.network }}
+          timeout: ${{ matrix.timeout }}
+          cl_image: "gcr.io/offchainlabs/prysm/beacon-chain:v7.1.0"
