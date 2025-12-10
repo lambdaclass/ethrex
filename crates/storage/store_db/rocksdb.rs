@@ -22,7 +22,7 @@ use rocksdb::{
 };
 use rustc_hash::FxBuildHasher;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -45,9 +45,6 @@ use ethrex_rlp::{
     encode::RLPEncode,
 };
 use std::fmt::Debug;
-
-// TODO: use finalized hash to determine when to commit
-const COMMIT_THRESHOLD: usize = 128;
 
 /// Canonical block hashes column family: [`u8;_`] => [`Vec<u8>`]
 /// - [`u8;_`] = `block_number.to_le_bytes()`
@@ -160,7 +157,7 @@ type CodeCache = LruCache<H256, Code, FxBuildHasher>;
 #[derive(Debug)]
 pub struct Store {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
-    trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
+    trie_cache: Arc<Mutex<HashMap<H256, Arc<TrieLayerCache>>>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     trie_update_worker_tx: TriedUpdateWorkerTx,
     last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
@@ -502,9 +499,9 @@ impl Store {
                         // FIXME: what should we do on error?
                         let _ = store_clone
                             .apply_trie_updates(
-                                notify,
                                 parent_state_root,
                                 child_state_root,
+                                notify,
                                 account_updates,
                                 storage_updates,
                             )
@@ -801,9 +798,9 @@ impl Store {
 
     fn apply_trie_updates(
         &self,
+        prev_state_root: H256,
+        curr_state_root: H256,
         notify: SyncSender<Result<(), StoreError>>,
-        parent_state_root: H256,
-        child_state_root: H256,
         account_updates: Vec<(Nibbles, Vec<u8>)>,
         storage_updates: StorageUpdates,
     ) -> Result<(), StoreError> {
@@ -812,38 +809,39 @@ impl Store {
         let trie_cache = &self.trie_cache;
 
         // Phase 1: update the in-memory diff-layers only, then notify block production.
-        let new_layer = storage_updates
-            .into_iter()
-            .flat_map(|(account_hash, nodes)| {
-                nodes
+        let commit_data = {
+            let mut trie_caches = trie_cache.lock().map_err(|_| StoreError::LockError)?;
+
+            let mut trie_cache = Arc::clone(trie_caches.get(&prev_state_root).unwrap());
+            let commit_data = trie_cache.commit_and_put_iter(
+                storage_updates
                     .into_iter()
-                    .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
-            })
-            .chain(account_updates)
-            .collect();
-        // Read-Copy-Update the trie cache with a new layer.
-        let trie = trie_cache
-            .lock()
-            .map_err(|_| StoreError::LockError)?
-            .clone();
-        let mut trie_mut = (*trie).clone();
-        trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
-        let trie = Arc::new(trie_mut);
-        *trie_cache.lock().map_err(|_| StoreError::LockError)? = trie.clone();
+                    .flat_map(|(account_hash, nodes)| {
+                        nodes
+                            .into_iter()
+                            .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+                    })
+                    .chain(account_updates)
+                    .map(|(key, value)| (key.into_vec().into(), value.into())),
+            );
+            trie_caches.insert(curr_state_root, trie_cache);
+
+            commit_data
+        };
+
         // Update finished, signal block processing.
         notify.send(Ok(())).map_err(|_| StoreError::LockError)?;
 
         // Phase 2: update disk layer.
-        let Some(root) = trie.get_commitable(parent_state_root, COMMIT_THRESHOLD) else {
-            // Nothing to commit to disk, move on.
+        if commit_data.is_empty() {
             return Ok(());
-        };
+        }
+
         // Stop the flat-key-value generator thread, as the underlying trie is about to change.
         // Ignore the error, if the channel is closed it means there is no worker to notify.
         let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
 
         // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
-        let mut trie_mut = (*trie).clone();
         let mut batch = WriteBatch::default();
         let [
             cf_accounts_trie_nodes,
@@ -868,12 +866,11 @@ impl Store {
         // the account address (32 bytes) + storage path (up to 32 bytes).
 
         // Commit removes the bottom layer and returns it, this is the mutation step.
-        let nodes = trie_mut.commit(root).unwrap_or_default();
-        for (key, value) in nodes {
+        for (key, value) in commit_data {
             let is_leaf = key.len() == 65 || key.len() == 131;
             let is_account = key.len() <= 65;
 
-            if is_leaf && key > last_written {
+            if is_leaf && &*key > last_written.as_slice() {
                 continue;
             }
             let cf = if is_leaf {
@@ -897,8 +894,7 @@ impl Store {
         // We want to send this message even if there was an error during the batch write
         let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
         result?;
-        // Phase 3: update diff layers with the removal of bottom layer.
-        *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
+
         Ok(())
     }
 
@@ -1670,6 +1666,8 @@ impl StoreEngine for Store {
                 .trie_cache
                 .lock()
                 .map_err(|_| StoreError::LockError)?
+                .entry(state_root)
+                .or_default()
                 .clone(),
             db,
             prefix: Some(hashed_address),
@@ -1692,6 +1690,8 @@ impl StoreEngine for Store {
                 .trie_cache
                 .lock()
                 .map_err(|_| StoreError::LockError)?
+                .entry(state_root)
+                .or_default()
                 .clone(),
             db,
             prefix: None,
@@ -1739,6 +1739,8 @@ impl StoreEngine for Store {
                 .trie_cache
                 .lock()
                 .map_err(|_| StoreError::LockError)?
+                .entry(state_root)
+                .or_default()
                 .clone(),
             db,
             prefix: None,
@@ -1765,6 +1767,8 @@ impl StoreEngine for Store {
                 .trie_cache
                 .lock()
                 .map_err(|_| StoreError::LockError)?
+                .entry(state_root)
+                .or_default()
                 .clone(),
             db,
             prefix: Some(hashed_address),
