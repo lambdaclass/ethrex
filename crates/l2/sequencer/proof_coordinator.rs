@@ -52,7 +52,7 @@ pub enum ProofData {
     /// 4.
     /// The Server responds with a NoBatchForVersion if the code version is not the same as the one
     /// generated in the batch.
-    /// The Client can only prove bathces of its own version.
+    /// The Client can only prove batches of its own version.
     NoBatchForVersion { commit_hash: String },
 
     /// 5.
