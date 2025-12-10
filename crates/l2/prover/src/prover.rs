@@ -104,7 +104,7 @@ impl Prover {
             } => (batch_number, input, format),
             ProofData::NoBatchForVersion { commit_hash } => {
                 warn!(
-                    "Received no batch available to prove for current version: {}. The prover may be older or newer to the nex batch to prove",
+                    "Received no batch available to prove for current version: {}. The prover may be older or newer to the next batch to prove",
                     commit_hash,
                 );
                 return Ok(None);
