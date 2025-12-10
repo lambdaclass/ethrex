@@ -258,7 +258,7 @@ jobs:
         run: |
           echo "===== ethrex logs (/tmp/ethrex.log) ====="
           if [ -f /tmp/ethrex.log ]; then
-            cat /tmp/ethrex.log | grep -E "INFO|WARN|ERROR"
+            grep -E "INFO|WARN|ERROR" /tmp/ethrex.log
           else
             echo "Log file /tmp/ethrex.log not found"
           fi
