@@ -43,9 +43,9 @@ use tracing_subscriber::{
 };
 
 // Compile-time check to ensure that at least one of the database features is enabled.
-#[cfg(not(feature = "rocksdb"))]
+#[cfg(all(not(feature = "rocksdb"), not(feature = "libmdbx")))]
 const _: () = {
-    compile_error!("Database feature must be enabled (Available: `rocksdb`).");
+    compile_error!("Database feature must be enabled (Available: `rocksdb`, `libmdbx`).");
 };
 
 pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
@@ -114,6 +114,8 @@ pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
     if datadir.ends_with("memory") {
         Store::new(datadir, EngineType::InMemory)
     } else {
+        #[cfg(feature = "libmdbx")]
+        let engine_type = EngineType::Libmdbx;
         #[cfg(feature = "rocksdb")]
         let engine_type = EngineType::RocksDB;
         #[cfg(feature = "metrics")]

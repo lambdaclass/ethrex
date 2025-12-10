@@ -152,6 +152,8 @@ pub enum EngineType {
     InMemory,
     #[cfg(feature = "rocksdb")]
     RocksDB,
+    #[cfg(feature = "libmdbx")]
+    Libmdbx,
 }
 
 pub struct UpdateBatch {
@@ -1372,6 +1374,11 @@ impl Store {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
                 let backend = Arc::new(RocksDBBackend::open(path)?);
+                Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
+            }
+            #[cfg(feature = "libmdbx")]
+            EngineType::Libmdbx => {
+                let backend = Arc::new(crate::backend::libmdbx::LibmdbxBackend::open(path)?);
                 Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
             }
             EngineType::InMemory => {
@@ -2894,6 +2901,12 @@ mod tests {
     #[tokio::test]
     async fn test_rocksdb_store() {
         test_store_suite(EngineType::RocksDB).await;
+    }
+
+    #[cfg(feature = "libmdbx")]
+    #[tokio::test]
+    async fn test_libmdbx_store() {
+        test_store_suite(EngineType::Libmdbx).await;
     }
 
     // Creates an empty store, runs the test and then removes the store (if needed)

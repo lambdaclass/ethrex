@@ -40,9 +40,9 @@ use std::{
 use tracing::{debug, info};
 
 // Compile-time check to ensure that at least one of the database features is enabled.
-#[cfg(not(feature = "rocksdb"))]
+#[cfg(all(not(feature = "rocksdb"), not(feature = "libmdbx")))]
 const _: () = {
-    compile_error!("Database feature must be enabled (Available: `rocksdb`).");
+    compile_error!("Database feature must be enabled (Available: `rocksdb`, `libmdbx`).");
 };
 
 const PAUSE_CONTRACT_SELECTOR: &str = "pause()";
