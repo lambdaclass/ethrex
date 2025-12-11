@@ -10,6 +10,6 @@ This eliminates code duplication and makes adding new database backends trivial.
 
 The API differentiates between three types of database access:
 
-- Read views ([`StorageReadView`]): Read-only views of the database, with no atomicity guarantees between operations.
-- Write batches ([`StorageWriteBatch`]): Write batch functionality, with atomicity guarantees at commit time.
-- Locked views ([`StorageLockedView`]): Read-only views of a point in time (snapshots), right now it's only used during snap-sync.
+- Read views `StorageReadView`: read-only views of the database, with no atomicity guarantees between operations.
+- Write batches `StorageWriteBatch`: write batch functionality, with atomicity guarantees at commit time.
+- Locked views `StorageLockedView`: read-only views of a point in time (snapshots), right now it's only used during snap-sync.
