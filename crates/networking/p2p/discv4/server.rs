@@ -182,7 +182,8 @@ impl DiscoveryServer {
                     return Ok(());
                 }
 
-                self.handle_find_node(sender_public_key, from).await?;
+                self.handle_find_node(sender_public_key, find_node_message.target, from)
+                    .await?;
             }
             Message::Neighbors(neighbors_message) => {
                 trace!(received = "Neighbors", msg = ?neighbors_message, from = %format!("{sender_public_key:#x}"));
@@ -425,14 +426,18 @@ impl DiscoveryServer {
     async fn handle_find_node(
         &mut self,
         sender_public_key: H512,
+        target: H512,
         from: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
-        let node_id = node_id(&sender_public_key);
+        let sender_id = node_id(&sender_public_key);
         if let Ok(contact) = self
-            .validate_contact(sender_public_key, node_id, from, "FindNode")
+            .validate_contact(sender_public_key, sender_id, from, "FindNode")
             .await
         {
-            let neighbors = self.peer_table.get_closest_nodes(&node_id).await?;
+            // According to https://github.com/ethereum/devp2p/blob/master/discv4.md#findnode-packet-0x03
+            // reply closest 16 nodes to target
+            let target_id = node_id(&target);
+            let neighbors = self.peer_table.get_closest_nodes(&target_id).await?;
 
             // A single node encodes to at most 89B, so 8 of them are at most 712B plus
             // recursive length and expiration time, well within bound of 1280B per packet.
