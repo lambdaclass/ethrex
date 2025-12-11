@@ -565,23 +565,15 @@ contract OnChainProposer is
 
         uint256 offset = 288;
         for (uint256 i = 0; i < registered_chains; i++) {
-            if (publicData.length < offset + 32) {
-                return "00x"; // invalid public data length
-            }
-
             uint256 chainId = uint256(bytes32(publicData[offset:offset + 32]));
             offset += 32;
 
             if (balanceDiffs[i].chainId != chainId) {
-                return "00y"; // balance diffs public inputs don't match with committed balance diffs
+                return "00x"; // balance diffs public inputs don't match with committed balance diffs
             }
 
             // Validate each token entry
             for (uint256 j = 0; j < balanceDiffs[i].valuePerToken.length; j++) {
-                if (publicData.length < offset + 128) {
-                    return "00z"; // invalid public data length
-                }
-
                 (
                     address tokenL1,
                     address tokenL2,
@@ -613,12 +605,9 @@ contract OnChainProposer is
                     balanceDiffs[i].valuePerToken[j].otherChainTokenL2 ||
                     tokenValue != balanceDiffs[i].valuePerToken[j].value
                 ) {
-                    return "010"; // balance diffs public inputs don't match with committed balance diffs
+                    return "00z"; // balance diffs public inputs don't match with committed balance diffs
                 }
             }
-        }
-        if (offset != publicData.length) {
-            return "011"; // invalid public data length
         }
         return "";
     }
@@ -638,12 +627,12 @@ contract OnChainProposer is
             .staticcall(callData);
         require(
             callResult,
-            "012" // OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed
+            "010" // OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed
         );
         bool proofVerified = abi.decode(response, (bool));
         require(
             proofVerified,
-            "013" // OnChainProposer: Aligned proof verification failed
+            "011" // OnChainProposer: Aligned proof verification failed
         );
     }
 
@@ -653,11 +642,11 @@ contract OnChainProposer is
     ) external override onlySequencer whenPaused {
         require(
             batchNumber >= lastVerifiedBatch,
-            "014" // OnChainProposer: can't revert verified batch
+            "012" // OnChainProposer: can't revert verified batch
         );
         require(
             batchNumber < lastCommittedBatch,
-            "015" // OnChainProposer: no batches are being reverted
+            "013" // OnChainProposer: no batches are being reverted
         );
 
         // Remove old batches
