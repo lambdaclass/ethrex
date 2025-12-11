@@ -175,4 +175,8 @@ pub enum InvalidForkChoice {
     InvalidAncestor(BlockHash),
     #[error("Cannot find link between Head and the canonical chain")]
     UnlinkedHead,
+
+    // TODO(#5564): handle arbitrary reorgs
+    #[error("State root of the new head is not reachable from the database")]
+    StateNotReachable,
 }
