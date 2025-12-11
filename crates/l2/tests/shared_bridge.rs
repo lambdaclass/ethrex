@@ -124,7 +124,10 @@ async fn test_transfer_erc_20() -> Result<()> {
         COMMON_BRIDGE_L2_ADDRESS,
         sender_address,
         transfer_calldata.into(),
-        Overrides::default(),
+        Overrides {
+            gas_limit: Some(21000 * 5),
+            ..Default::default()
+        },
     )
     .await?;
     let tx_hash = send_generic_transaction(&l2a_client, transfer_tx, &signer).await?;
@@ -231,7 +234,7 @@ async fn approve_and_deposit(
     l2_erc20_contract_address: Address,
     sender_address: Address,
 ) -> Result<()> {
-    let bridge_address = DEFAULT_BRIDGE_ADDRESS;
+    let bridge_address = bridge_address()?;
     let approve_calldata = encode_calldata(
         "approve(address,uint256)",
         &[
