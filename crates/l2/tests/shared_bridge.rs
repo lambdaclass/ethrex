@@ -50,7 +50,7 @@ const GAS_PRICE: u64 = 3946771033u64;
 
 #[tokio::test]
 async fn test_shared_bridge() -> Result<()> {
-    // test_counter().await?;
+    test_counter().await?;
 
     test_transfer_erc_20().await?;
 
