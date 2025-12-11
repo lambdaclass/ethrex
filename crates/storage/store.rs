@@ -1464,7 +1464,12 @@ impl StoreMetadata {
 fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
     let metadata_path = path.join(STORE_METADATA_FILENAME);
     if !metadata_path.exists() {
-        if !path.exists() {
+        if path.exists() {
+            return Err(StoreError::IncompatibleDBVersion {
+                found: 0,
+                expected: STORE_SCHEMA_VERSION,
+            });
+        } else {
             std::fs::create_dir_all(path)?;
         }
         let metadata = StoreMetadata::new(STORE_SCHEMA_VERSION);
