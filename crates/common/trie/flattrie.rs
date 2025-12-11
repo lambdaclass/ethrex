@@ -1,10 +1,15 @@
+use ethereum_types::H256;
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
-    decode::{RLPDecode, decode_bytes}, encode::RLPEncode, error::RLPDecodeError, structs::Decoder,
+    constants::RLP_NULL,
+    decode::{RLPDecode, decode_bytes},
+    encode::{RLPEncode, encode_length},
+    error::RLPDecodeError,
+    structs::{Decoder, Encoder},
 };
 use rkyv::with::Skip;
 
-use crate::{Nibbles, Node, NodeRef};
+use crate::{Nibbles, Node, NodeHash, NodeRef, rlp::decode_child};
 
 /// A trie implementation that is non recursive, POD and avoids copying and encoding
 /// nodes by providing views into a RLP flat buffer
@@ -27,7 +32,7 @@ pub struct FlatTrie {
     /// Root hash that gets initialized when calling `Self::authenticate`
     #[serde(skip)]
     #[rkyv(with = Skip)]
-    root_hash: Option<[u8; 32]>,
+    root_hash: Option<NodeHash>,
 }
 
 /// A view into a particular node
@@ -44,7 +49,7 @@ pub struct NodeView {
     /// Indices to the RLP code of this node over the flat data buffer
     pub data_range: (usize, usize),
     /// Handle into this node's childs
-    pub childs: NodeChilds,
+    pub node_type: NodeType,
 }
 
 /// Contains indices to the `handles` list for each child of a node
@@ -57,14 +62,20 @@ pub struct NodeView {
     rkyv::Deserialize,
     rkyv::Archive,
 )]
-pub enum NodeChilds {
+pub enum NodeType {
     /// A leaf node doesn't have any childs
     Leaf,
     /// An extension node always has a branch as a child
     Extension { child: Option<usize> },
     /// A branch node can have any node type as any of its 16 childs
     /// TODO: This can be optimized to a bitmap if the data vec is ordered (contiguous childs)
-    Branch { childs: [Option<usize>; 16] },
+    Branch { children: [Option<usize>; 16] },
+}
+
+pub enum NodeData {
+    Leaf { partial: Nibbles, value: Vec<u8> },
+    Extension { path: Nibbles, child: NodeHash },
+    Branch { children: [Option<NodeHash>; 16] },
 }
 
 impl From<&Node> for FlatTrie {
@@ -81,7 +92,7 @@ impl From<&Node> for FlatTrie {
                             childs[i] = Some(trie.views.len() - 1);
                         }
                     }
-                    NodeChilds::Branch { childs }
+                    NodeType::Branch { children: childs }
                 }
                 Node::Extension(node) => {
                     let mut child = None;
@@ -89,16 +100,16 @@ impl From<&Node> for FlatTrie {
                         recursive(child_node, trie);
                         child = Some(trie.views.len() - 1);
                     }
-                    NodeChilds::Extension { child }
+                    NodeType::Extension { child }
                 }
-                Node::Leaf(_) => NodeChilds::Leaf,
+                Node::Leaf(_) => NodeType::Leaf,
             };
 
             let offset = trie.data.len();
             trie.data.extend(value.encode_to_vec());
             trie.views.push(NodeView {
                 data_range: (offset, trie.data.len()),
-                childs,
+                node_type: childs,
             });
         }
 
@@ -109,8 +120,8 @@ impl From<&Node> for FlatTrie {
 }
 
 impl FlatTrie {
-    pub fn root_hash(&self) -> Option<[u8; 32]> {
-        self.root_hash
+    pub fn root_hash(&self) -> Option<NodeHash> {
+        self.root_hash.clone()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -125,10 +136,10 @@ impl FlatTrie {
         fn recursive<'a>(
             trie: &'a FlatTrie,
             view: &NodeView,
-        ) -> Result<Option<[u8; 32]>, RLPDecodeError> {
-            match view.childs {
-                NodeChilds::Leaf => {}
-                NodeChilds::Extension { child } => {
+        ) -> Result<Option<NodeHash>, RLPDecodeError> {
+            match view.node_type {
+                NodeType::Leaf => {}
+                NodeType::Extension { child } => {
                     if let Some(child) = child {
                         let Some(child_hash) = recursive(trie, &trie.views[child])? else {
                             return Ok(None);
@@ -136,13 +147,13 @@ impl FlatTrie {
                         let Some(items) = trie.get_encoded_items(view)? else {
                             panic!(); // TODO: err
                         };
-                        let (child_data_hash, _) = decode_bytes(items[1])?;
-                        if &child_hash != child_data_hash {
+                        let child_data_hash = decode_child(items[1]);
+                        if child_hash != child_data_hash {
                             return Ok(None);
                         }
                     }
                 }
-                NodeChilds::Branch { childs } => {
+                NodeType::Branch { children: childs } => {
                     // TODO: we can decode just the Some(_) childs
                     let Some(items) = trie.get_encoded_items(view)? else {
                         panic!(); // TODO: err
@@ -153,18 +164,18 @@ impl FlatTrie {
                             let Some(child_hash) = recursive(trie, child_view)? else {
                                 return Ok(None);
                             };
-                            let (child_data_hash, _) = decode_bytes(items[i])?;
-                            if &child_hash != child_data_hash {
+                            let child_data_hash = NodeHash::decode(items[i])?;
+                            if child_hash != child_data_hash {
                                 return Ok(None);
                             }
                         }
                     }
                 }
             }
-            Ok(Some(keccak_hash(trie.get_view_data(view))))
+            Ok(Some(trie.get_hash_view(view)))
         }
 
-        let Some(root_view) = self.views.get(self.root_index) else {
+        let Some(root_view) = self.get_root_view() else {
             panic!(); // TODO: err
         };
         let Some(root_hash) = recursive(&self, root_view)? else {
@@ -180,8 +191,8 @@ impl FlatTrie {
             path: &mut Nibbles,
             view: &NodeView,
         ) -> Result<Option<&'a [u8]>, RLPDecodeError> {
-            match view.childs {
-                NodeChilds::Leaf => {
+            match view.node_type {
+                NodeType::Leaf => {
                     let Some(items) = trie.get_encoded_items(view)? else {
                         panic!(); // TODO: err
                     };
@@ -194,11 +205,10 @@ impl FlatTrie {
                         let (value, _) = decode_bytes(items[1])?;
                         return Ok(Some(value));
                     } else {
-                        dbg!("none for leaf");
                         return Ok(None);
                     }
                 }
-                NodeChilds::Extension { child } => {
+                NodeType::Extension { child } => {
                     let Some(items) = trie.get_encoded_items(view)? else {
                         panic!(); // TODO: err
                     };
@@ -210,14 +220,12 @@ impl FlatTrie {
                     if path.skip_prefix(prefix) {
                         recursive(trie, path, &trie.views[child.unwrap()])
                     } else {
-                        dbg!("none for ext");
                         Ok(None)
                     }
                 }
-                NodeChilds::Branch { childs } => {
+                NodeType::Branch { children: childs } => {
                     if let Some(choice) = path.next_choice() {
                         let Some(child_view_index) = childs[choice] else {
-                            dbg!("none for branch");
                             return Ok(None);
                         };
                         let child_view = trie.views[child_view_index];
@@ -227,7 +235,6 @@ impl FlatTrie {
                             panic!(); // TODO: err
                         };
                         let (value, _) = decode_bytes(items[16])?;
-                        dbg!("branch value");
                         Ok((!value.is_empty()).then_some(value))
                     }
                 }
@@ -240,9 +247,277 @@ impl FlatTrie {
         recursive(&self, &mut path, root_view)
     }
 
+    pub fn put(&mut self, node_type: NodeType, data: NodeData) -> usize {
+        // TODO: check that both match
+
+        let start = self.data.len();
+        let mut encoder = Encoder::new(&mut self.data);
+        match data {
+            NodeData::Leaf { partial, value } => {
+                encoder = encoder
+                    .encode_bytes(&partial.encode_compact())
+                    .encode_bytes(&value)
+            }
+            NodeData::Extension { path, child } => {
+                dbg!(&child);
+                encoder = encoder.encode_bytes(&path.encode_compact());
+                dbg!(&encoder);
+                encoder = child.encode(encoder);
+                dbg!(&encoder);
+            }
+            NodeData::Branch { children } => {
+                for child in children {
+                    if let Some(child) = child {
+                        encoder = encoder.encode_field(&child)
+                    } else {
+                        encoder = encoder.encode_raw(&[RLP_NULL])
+                    }
+                }
+            }
+        }
+        encoder.finish();
+        let end = self.data.len();
+
+        let data_range = (start, end);
+
+        let view = NodeView {
+            data_range,
+            node_type,
+        };
+        self.views.push(view);
+        self.views.len() - 1
+    }
+
+    pub fn insert(&mut self, path: Vec<u8>, value: Vec<u8>) -> Result<(), RLPDecodeError> {
+        let path = Nibbles::from_bytes(&path);
+        if let None = self.get_root_view() {
+            self.root_index = self.put(
+                NodeType::Leaf,
+                NodeData::Leaf {
+                    partial: path,
+                    value,
+                },
+            );
+        } else {
+            self.root_index = self.insert_inner(self.root_index, path, value)?;
+        }
+        self.root_hash = None;
+        Ok(())
+    }
+
+    fn insert_inner(
+        &mut self,
+        self_view_index: usize,
+        mut path: Nibbles,
+        value: Vec<u8>,
+    ) -> Result<usize, RLPDecodeError> {
+        dbg!("a");
+        let self_view = self.views[self_view_index];
+        match self_view.node_type {
+            NodeType::Leaf => {
+                dbg!("b");
+                let Some(items) = self.get_encoded_items(&self_view)? else {
+                    panic!();
+                };
+
+                let (partial, _) = decode_bytes(items[0])?;
+                let partial = Nibbles::decode_compact(partial);
+                debug_assert!(partial.is_leaf());
+
+                if partial == path {
+                    dbg!("c");
+                    Ok(self.put(self_view.node_type, NodeData::Leaf { partial, value }))
+                } else {
+                    dbg!("d");
+                    // Current node will be replaced with a branch or extension node
+                    let match_index = path.count_prefix(&partial);
+                    let self_choice_idx = partial.at(match_index);
+                    let new_leaf_choice_idx = path.at(match_index);
+
+                    let branch_view_index = if self_choice_idx == 16 {
+                        // Yields a new leaf node with the new value, and a parent branch node
+                        // with the old value. We disallow branches with values.
+                        unreachable!("leaf insertion yielded branch with old value");
+                    } else if new_leaf_choice_idx == 16 {
+                        // Yields a new branch node with the current leaf as child, and the new
+                        // value in the branch. We disallow branches with values.
+                        unreachable!("leaf insertion yielded branch with new value")
+                    } else {
+                        // Yields a new leaf with the path and value in it, and a new branch
+                        // with the new and old leaf as children.
+                        let new_leaf_view_index =
+                            self.put_leaf(path.offset(match_index + 1), value);
+                        self.put_branch(vec![
+                            (new_leaf_choice_idx, new_leaf_view_index),
+                            (self_choice_idx, self_view_index),
+                        ])
+                    };
+
+                    if match_index == 0 {
+                        dbg!("e");
+                        Ok(branch_view_index)
+                    } else {
+                        dbg!("f");
+                        // Yields an extension node with the branch as child
+                        Ok(self.put_extension(path.slice(0, match_index), branch_view_index))
+                    }
+                }
+            }
+            NodeType::Extension { child } => {
+                let Some(items) = self.get_encoded_items(&self_view)? else {
+                    panic!();
+                };
+
+                let (prefix, _) = decode_bytes(items[0])?;
+                let prefix = Nibbles::decode_compact(prefix);
+                debug_assert!(!prefix.is_leaf());
+
+                let match_index = path.count_prefix(&prefix);
+                if match_index == prefix.len() {
+                    let path = path.offset(match_index);
+                    self.insert_inner(child.expect("missing child of extension node"), path, value)
+                } else if match_index == 0 {
+                    let new_node_view_index = if prefix.len() == 1 {
+                        child.expect("missing child of extension node")
+                    } else {
+                        // New extension with self_node as a child
+                        let node_children = NodeType::Extension { child };
+                        let child_hash = NodeHash::decode(
+                            self.get_encoded_items(&self_view)?
+                                .expect("missing data of self ext")[1],
+                        )?;
+
+                        let node_data = NodeData::Extension {
+                            path: prefix.offset(1),
+                            child: child_hash,
+                        };
+                        self.put(node_children, node_data)
+                    };
+
+                    let branch_view_index = if prefix.at(0) == 16 {
+                        // Yields a branch with a value
+                        unreachable!("extension inserting yielded a branch with a value")
+                    } else {
+                        // New branch with the new node as a child
+                        self.put_branch(vec![(prefix.at(0), new_node_view_index)])
+                    };
+                    self.insert_inner(branch_view_index, path, value)
+                } else {
+                    let extension_children = NodeType::Extension { child };
+                    let child_hash = NodeHash::decode(
+                        self.get_encoded_items(&self_view)?
+                            .expect("missing data of self ext")[1],
+                    )?;
+                    let extension_data = NodeData::Extension {
+                        path: prefix.offset(match_index),
+                        child: child_hash,
+                    };
+                    let new_extension_view_index = self.put(extension_children, extension_data);
+                    let new_node_view_index = self.insert_inner(
+                        new_extension_view_index,
+                        path.offset(match_index),
+                        value,
+                    )?;
+
+                    Ok(self.put_extension(prefix.slice(0, match_index), new_node_view_index))
+                }
+            }
+            NodeType::Branch { children } => {
+                // let Some(items) = self.get_encoded_items(&self_view)? else {
+                //     panic!();
+                // };
+
+                // let children: [_; 16] = std::array::from_fn(|i| {
+                //     let (child, _) = decode_bytes(items[i]).unwrap();
+                //     if child.is_empty() {
+                //         None
+                //     } else {
+                //         Some(child.to_vec())
+                //     }
+                // });
+
+                if let Some(choice) = path.next_choice() {
+                    match children[choice] {
+                        // como diferencio entre un child que no esta en la data vs un child vacio?
+                        // tendria que desencodear el rlp y chusmear
+                        // o se podria incluir esa informacion en el view
+                        // por ahora asumimos que la data es completa
+                        None => Ok(self.put_leaf(path, value)),
+                        Some(view_index) => self.insert_inner(view_index, path, value),
+                    }
+                } else {
+                    // We disallow values in branchs
+                    unreachable!("wanted to insert value in a branch");
+                }
+            }
+        }
+    }
+
+    /// Puts a new leaf node from a prefix and a value.
+    ///
+    /// Returns the new node's view index.
+    pub fn put_leaf(&mut self, partial: Nibbles, value: Vec<u8>) -> usize {
+        let data = NodeData::Leaf { partial, value };
+        let children = NodeType::Leaf;
+        self.put(children, data)
+    }
+
+    /// Puts a new extension node from a path and a child. The child needs to exist in the trie's data.
+    ///
+    /// Returns the new node's view index.
+    pub fn put_extension(&mut self, path: Nibbles, child_view_index: usize) -> usize {
+        let data = NodeData::Extension {
+            path,
+            child: self.get_hash(child_view_index),
+        };
+        let children = NodeType::Extension {
+            child: Some(child_view_index),
+        };
+        self.put(children, data)
+    }
+
+    /// Puts a new branch node from a list of children in the form of (choice, view_index). Childrens
+    /// need to exist in the trie's data.
+    ///
+    /// Returns the new node's view index.
+    pub fn put_branch(&mut self, children_views: Vec<(usize, usize)>) -> usize {
+        let data = {
+            let mut children: [_; 16] = std::array::from_fn(|_| None);
+            for (choice, view_index) in &children_views {
+                children[*choice] = Some(self.get_hash(*view_index));
+            }
+            NodeData::Branch { children }
+        };
+        let children = {
+            let mut children = [None; 16];
+            for (choice, view_index) in children_views {
+                children[choice] = Some(view_index);
+            }
+            NodeType::Branch { children }
+        };
+        self.put(children, data)
+    }
+
+    pub fn get_root_view(&self) -> Option<&NodeView> {
+        self.views.get(self.root_index)
+    }
+
+    /// Calculates the hash of a node from a view index of its data.
+    /// TODO: cache? we should cache a range into the hash, because its already stored in its parent
+    pub fn get_hash(&self, view_index: usize) -> NodeHash {
+        NodeHash::from_encoded(self.get_data(view_index))
+    }
+
+    /// Calculates the hash of a node from a view of its data.
+    /// TODO: cache? we should cache a range into the hash, because its already stored in its parent
+    /// TODO: consider changing into a NodeHash or similar
+    pub fn get_hash_view(&self, view: &NodeView) -> NodeHash {
+        NodeHash::from_encoded(self.get_data_view(view))
+    }
+
     // TODO: cache decoded view?
     pub fn get_encoded_items(&self, view: &NodeView) -> Result<Option<Vec<&[u8]>>, RLPDecodeError> {
-        let data = self.get_view_data(view);
+        let data = self.get_data_view(view);
         let mut decoder = Decoder::new(data)?;
 
         let mut rlp_items = Vec::with_capacity(17);
@@ -255,7 +530,126 @@ impl FlatTrie {
         Ok(Some(rlp_items))
     }
 
-    pub fn get_view_data(&self, view: &NodeView) -> &[u8] {
+    pub fn get_data(&self, view_index: usize) -> &[u8] {
+        self.get_data_view(&self.views[view_index])
+    }
+
+    pub fn get_data_view(&self, view: &NodeView) -> &[u8] {
         &self.data[view.data_range.0..view.data_range.1]
+    }
+}
+
+// fn encode_leaf(partial: &[u8], value: &[u8]) -> Vec<u8> {
+//     // TODO: fix headroom
+//     let mut buf = Vec::with_capacity(partial.len() + value.len() + 3); //  3 byte headroom
+//     Encoder::new(&mut buf)
+//         .encode_bytes(partial)
+//         .encode_bytes(value)
+//         .finish();
+//     buf
+// }
+//
+// fn encode_leaf_raw(raw_partial: &[u8], value: &[u8]) -> Vec<u8> {
+//     // TODO: fix headroom
+//     let mut buf = Vec::with_capacity(raw_partial.len() + value.len() + 3); //  3 byte headroom
+//     Encoder::new(&mut buf)
+//         .encode_raw(raw_partial)
+//         .encode_bytes(value)
+//         .finish();
+//     buf
+// }
+//
+// fn encode_branch(choices: [Option<[u8; 32]>; 16]) -> Vec<u8> {
+//     let value_len = 1;
+//     let choices_len = choices.iter().fold(0, |acc, choice| {
+//         acc + choice.map(|h| RLPEncode::length(&h)).unwrap_or(0)
+//     });
+//     let payload_len = choices_len + value_len;
+//
+//     let mut buf: Vec<u8> = Vec::with_capacity(choices_len + 3); // 3 byte prefix headroom
+//
+//     encode_length(payload_len, &mut buf);
+//     for choice in choices {
+//         if let Some(choice) = choice {
+//             choice.encode(&mut buf);
+//         } else {
+//             buf.push(RLP_NULL);
+//         }
+//     }
+//     buf
+// }
+
+#[cfg(test)]
+mod test {
+    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+    use proptest::{
+        collection::{btree_set, vec},
+        prelude::*,
+    };
+
+    use crate::{Nibbles, Node, Trie, flattrie::FlatTrie};
+
+    #[test]
+    fn test_failing_case() {
+        let mut trie = Trie::new_temp();
+        let mut flat_trie = FlatTrie::default();
+
+        let data = [vec![0], vec![1]];
+
+        for val in data.iter() {
+            dbg!("trie inserting");
+            trie.insert(val.clone(), val.clone()).unwrap();
+            dbg!("flat trie inserting");
+            flat_trie.insert(val.clone(), val.clone()).unwrap();
+        }
+
+        let hash = trie.hash_no_commit();
+
+        dbg!("auth");
+        assert!(flat_trie.authenticate().unwrap());
+        dbg!("hash");
+        let flat_trie_hash = flat_trie.root_hash().unwrap();
+
+        dbg!("encode flat");
+        let encoded_flat_node = flat_trie.get_data_view(flat_trie.get_root_view().unwrap());
+        dbg!("encode trie");
+        let encoded_node = trie
+            .get_root_node(Nibbles::default())
+            .unwrap()
+            .encode_to_vec();
+        dbg!(&encoded_flat_node);
+        dbg!(&encoded_node);
+
+        dbg!("decode flaat");
+        dbg!(Node::decode(&encoded_flat_node).unwrap());
+        dbg!(&encoded_node);
+        dbg!("decode trie");
+        dbg!(Node::decode(&encoded_node).unwrap());
+
+        dbg!("finalize");
+        assert_eq!(hash, flat_trie_hash.finalize());
+    }
+
+    proptest! {
+        #[test]
+        fn proptest_compare_hash(data in btree_set(vec(any::<u8>(), 1), 1..100)) {
+            let mut trie = Trie::new_temp();
+            let mut flat_trie = FlatTrie::default();
+
+            for val in data.iter(){
+                trie.insert(val.clone(), val.clone()).unwrap();
+                flat_trie.insert(val.clone(), val.clone()).unwrap();
+            }
+
+            let hash = trie.hash_no_commit();
+
+            prop_assert!(flat_trie.authenticate().unwrap());
+            let flat_trie_hash = flat_trie.root_hash().unwrap();
+
+            dbg!(flat_trie.get_data_view(flat_trie.get_root_view().unwrap()));
+            dbg!(trie.get_root_node(Nibbles::default()).unwrap());
+
+            prop_assert_eq!(hash, flat_trie_hash.finalize());
+        }
     }
 }

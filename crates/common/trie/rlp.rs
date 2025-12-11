@@ -86,18 +86,21 @@ impl RLPEncode for Node {
 
 impl RLPDecode for Node {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        dbg!("1");
         let mut rlp_items_len = 0;
         let mut rlp_items: [Option<&[u8]>; 17] = Default::default();
         let mut decoder = Decoder::new(rlp)?;
         let mut item;
         // Get encoded fields
 
+        dbg!("2");
         // Check if we reached the end or if we decoded more items than the ones we need
         while !decoder.is_done() && rlp_items_len < 17 {
             (item, decoder) = decoder.get_encoded_item_ref()?;
             rlp_items[rlp_items_len] = Some(item);
             rlp_items_len += 1;
         }
+        dbg!("3");
         if !decoder.is_done() {
             return Err(RLPDecodeError::Custom(
                 "Invalid arg count for Node, expected 2 or 17, got more than 17".to_string(),
@@ -107,9 +110,11 @@ impl RLPDecode for Node {
         let node = match rlp_items_len {
             // Leaf or Extension Node
             2 => {
+                dbg!("4");
                 let (path, _) = decode_bytes(rlp_items[0].expect("we already checked the length"))?;
                 let path = Nibbles::decode_compact(path);
                 if path.is_leaf() {
+                dbg!("5");
                     // Decode as Leaf
                     let (value, _) =
                         decode_bytes(rlp_items[1].expect("we already checked the length"))?;
@@ -119,6 +124,7 @@ impl RLPDecode for Node {
                     }
                     .into()
                 } else {
+                    dbg!("6");
                     // Decode as Extension
                     ExtensionNode {
                         prefix: path,
@@ -130,6 +136,7 @@ impl RLPDecode for Node {
             }
             // Branch Node
             17 => {
+            dbg!("7");
                 let choices = array::from_fn(|i| {
                     decode_child(rlp_items[i].expect("we already checked the length")).into()
                 });
@@ -151,10 +158,19 @@ impl RLPDecode for Node {
     }
 }
 
-fn decode_child(rlp: &[u8]) -> NodeHash {
+pub fn decode_child(rlp: &[u8]) -> NodeHash {
+    dbg!("decode child");
     match decode_bytes(rlp) {
-        Ok((hash, &[])) if hash.len() == 32 => NodeHash::from_slice(hash),
-        Ok((&[], &[])) => NodeHash::default(),
-        _ => NodeHash::from_slice(rlp),
+        Ok((hash, &[])) if hash.len() == 32 => {
+            dbg!(hash);
+            NodeHash::from_slice(hash)
+        },
+        Ok((&[], &[])) => {
+
+            dbg!("default");
+         NodeHash::default()},
+        _ => {
+            dbg!(rlp);
+            NodeHash::from_slice(rlp)},
     }
 }
