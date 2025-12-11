@@ -33,10 +33,10 @@ pub trait StorageBackend: Debug + Send + Sync {
     /// Removes all data from the specified table.
     fn clear_table(&self, table: &'static str) -> Result<(), StoreError>;
 
-    /// Begins a new read transaction.
+    /// Opens a new read view.
     fn begin_read(&self) -> Result<Box<dyn StorageReadView + '_>, StoreError>;
 
-    /// Begins a new write transaction.
+    /// Creates a new write batch.
     fn begin_write(&self) -> Result<Box<dyn StorageWriteBatch + 'static>, StoreError>;
 
     /// Creates a locked snapshot for a specific table.
