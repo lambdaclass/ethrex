@@ -98,8 +98,12 @@ pub fn default_datadir() -> PathBuf {
 /// Panics if the path points to something different than a directory, or
 /// if the directory cannot be created.
 pub fn init_datadir(datadir: &Path) {
-    if datadir.exists() && !datadir.is_dir() {
-        panic!("Datadir {datadir:?} exists but is not a directory");
+    if datadir.exists() {
+        if !datadir.is_dir() {
+            panic!("Datadir {datadir:?} exists but is not a directory");
+        }
+    } else {
+        std::fs::create_dir_all(datadir).expect("Failed to create data directory");
     }
 }
 

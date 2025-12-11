@@ -1471,8 +1471,6 @@ fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
             return Err(StoreError::NotFoundDBVersion {
                 expected: STORE_SCHEMA_VERSION,
             });
-        } else {
-            std::fs::create_dir_all(path)?;
         }
         let metadata = StoreMetadata::new(STORE_SCHEMA_VERSION);
         let serialized_metadata = serde_json::to_string_pretty(&metadata)?;
