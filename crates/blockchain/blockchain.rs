@@ -520,11 +520,8 @@ impl Blockchain {
         &self,
         parent_header: &BlockHeader,
         prefix: Option<H256>,
-        mut root: BranchNode,
+        root: BranchNode,
     ) -> Result<Option<Node>, StoreError> {
-        root.choices.iter_mut().for_each(|choice| {
-            choice.clear_hash();
-        });
         let mut valid_children_iter = root
             .choices
             .iter()
