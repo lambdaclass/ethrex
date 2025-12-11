@@ -102,8 +102,6 @@ pub fn init_datadir(datadir: &Path) {
         if !datadir.is_dir() {
             panic!("Datadir {datadir:?} exists but is not a directory");
         }
-    } else {
-        std::fs::create_dir_all(datadir).expect("Failed to create data directory");
     }
 }
 
