@@ -129,7 +129,7 @@ pub struct Store {
     trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     trie_update_worker_tx: std::sync::mpsc::SyncSender<TrieUpdate>,
-    /// Keeps the latest canonical block hash
+    /// Keeps the latest canonical block header
     /// It's wrapped in an Arc to allow for cheap reads with infrequent writes
     /// Reading an out-of-date value is acceptable, since it's only used as:
     /// - a cache of the (frequently requested) header
