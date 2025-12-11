@@ -75,7 +75,7 @@ contract Router is
         uint256 senderChainId,
         uint256 chainId,
         address tokenL1,
-        address otherChainTokenL2,
+        address destTokenL2,
         uint256 amount
     ) public payable override {
         if (bridges[senderChainId] != msg.sender) {
@@ -86,7 +86,7 @@ contract Router is
         } else {
             ICommonBridge(bridges[chainId]).receiveERC20FromSharedBridge(
                 tokenL1,
-                otherChainTokenL2,
+                destTokenL2,
                 amount
             );
             IERC20(tokenL1).safeTransfer(bridges[chainId], amount);

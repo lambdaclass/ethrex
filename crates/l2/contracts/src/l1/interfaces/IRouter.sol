@@ -21,13 +21,13 @@ interface IRouter {
     /// @param senderChainId The ID of the source chain.
     /// @param chainId The ID of the destination chain.
     /// @param tokenL1 The address of the ERC20 L1 token to send.
-    /// @param otherChainTokenL2 The address of the ERC20 token on the other chain.
+    /// @param destTokenL2 The address of the ERC20 token on the other chain.
     /// @param amount The amount of the ERC20 L1 token to send.
     function sendERC20Message(
         uint256 senderChainId,
         uint256 chainId,
         address tokenL1,
-        address otherChainTokenL2,
+        address destTokenL2,
         uint256 amount
     ) external payable;
 

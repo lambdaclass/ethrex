@@ -108,7 +108,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         address to,
         uint256 amount,
         address tokenL2,
-        address otherChainTokenL2,
+        address destTokenL2,
         uint256 destGasLimit
     ) external override {
         IERC20L2 token = IERC20L2(tokenL2);
@@ -116,7 +116,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         address tokenL1 = token.l1Address();
         bytes memory data = abi.encodeCall(
             ICommonBridgeL2.crosschainMintERC20,
-            (tokenL1, tokenL2, otherChainTokenL2, to, amount)
+            (tokenL1, tokenL2, destTokenL2, to, amount)
         );
         this.sendToL2(chainId, address(this), destGasLimit, data);
     }
@@ -124,11 +124,11 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
     function crosschainMintERC20(
         address tokenL1,
         address tokenL2,
-        address otherChainTokenL2,
+        address destTokenL2,
         address to,
         uint256 amount
     ) external onlySelf {
-        this.tryMintERC20(tokenL1, otherChainTokenL2, to, amount);
+        this.tryMintERC20(tokenL1, destTokenL2, to, amount);
     }
 
     /// @inheritdoc ICommonBridgeL2

@@ -59,7 +59,7 @@ interface ICommonBridge {
     struct TokenValue {
         address tokenL1;
         address tokenL2;
-        address otherChainTokenL2;
+        address destTokenL2;
         uint256 value;
     }
 

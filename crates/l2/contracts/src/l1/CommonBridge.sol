@@ -387,7 +387,7 @@ contract CommonBridge is
                         block.chainid,
                         balanceDiffs[i].chainId,
                         tv.tokenL1,
-                        tv.otherChainTokenL2,
+                        tv.destTokenL2,
                         tv.value
                     );
                 }

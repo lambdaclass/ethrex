@@ -577,7 +577,7 @@ contract OnChainProposer is
                 (
                     address tokenL1,
                     address tokenL2,
-                    address otherChainTokenL2,
+                    address destTokenL2,
                     uint256 tokenValue
                 ) = (
                         address(
@@ -601,8 +601,8 @@ contract OnChainProposer is
                 if (
                     tokenL1 != balanceDiffs[i].valuePerToken[j].tokenL1 ||
                     tokenL2 != balanceDiffs[i].valuePerToken[j].tokenL2 ||
-                    otherChainTokenL2 !=
-                    balanceDiffs[i].valuePerToken[j].otherChainTokenL2 ||
+                    destTokenL2 !=
+                    balanceDiffs[i].valuePerToken[j].destTokenL2 ||
                     tokenValue != balanceDiffs[i].valuePerToken[j].value
                 ) {
                     return "00z"; // balance diffs public inputs don't match with committed balance diffs
