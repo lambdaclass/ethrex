@@ -40,10 +40,10 @@ impl From<StreamCipherError> for PacketDecodeErr {
     }
 }
 
-#[derive(Debug, Clone)]
-enum Packet {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Packet {
     Ordinary(Ordinary),
-    // WhoAreYou(WhoAreYou),
+    WhoAreYou(WhoAreYou),
     // Handshake(Handshake),
 }
 
@@ -64,12 +64,18 @@ impl Packet {
             Packet::decode_header(&mut cipher, encoded_packet)?;
 
         match flag {
-            0x01 => Ok(Packet::Ordinary(Ordinary::decode(
+            0x00 => Ok(Packet::Ordinary(Ordinary::decode(
                 masking_iv,
                 static_header,
                 authdata,
                 nonce,
-                encoded_packet,
+                &encoded_packet[authdata_end..],
+            )?)),
+            0x01 => Ok(Packet::WhoAreYou(WhoAreYou::decode(
+                masking_iv,
+                static_header,
+                authdata,
+                nonce,
             )?)),
             _ => Err(RLPDecodeError::MalformedData)?,
         }
@@ -114,8 +120,8 @@ impl Packet {
     }
 }
 
-#[derive(Debug, Clone)]
-struct Ordinary {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ordinary {
     message: Message,
 }
 
@@ -125,10 +131,44 @@ impl Ordinary {
         static_header: Vec<u8>,
         authdata: Vec<u8>,
         nonce: Vec<u8>,
-        encoded_packet: &[u8],
+        encrypted_message: &[u8],
     ) -> Result<Ordinary, PacketDecodeErr> {
-        let message = Message::decode_with_type(1, encoded_packet)?;
+        // message    = aesgcm_encrypt(initiator-key, nonce, message-pt, message-ad)
+        // message-pt = message-type || message-data
+        // message-ad = masking-iv || header
+        let mut message_ad = masking_iv.to_vec();
+        message_ad.extend_from_slice(&static_header);
+        message_ad.extend_from_slice(&authdata);
+
+        let message = Message::decode_with_type(1, encrypted_message)?;
         Ok(Ordinary { message })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WhoAreYou {
+    pub id_nonce: Vec<u8>,
+    pub enr_seq: u64,
+}
+
+impl WhoAreYou {
+    pub fn decode(
+        masking_iv: &[u8],
+        static_header: Vec<u8>,
+        authdata: Vec<u8>,
+        nonce: Vec<u8>,
+    ) -> Result<WhoAreYou, PacketDecodeErr> {
+        // message    = aesgcm_encrypt(initiator-key, nonce, message-pt, message-ad)
+        // message-pt = message-type || message-data
+        // message-ad = masking-iv || header
+        let mut message_ad = masking_iv.to_vec();
+        message_ad.extend_from_slice(&static_header);
+        message_ad.extend_from_slice(&authdata);
+
+        let id_nonce = vec![];
+        let enr_seq = 0;
+
+        Ok(WhoAreYou { id_nonce, enr_seq })
     }
 }
 
@@ -204,7 +244,7 @@ impl RLPDecode for PingMessage {
 #[cfg(test)]
 mod tests {
     use crate::{
-        discv5::messages::{Message, Ordinary, Packet, PingMessage},
+        discv5::messages::{Message, Ordinary, Packet, PingMessage, WhoAreYou},
         utils::{node_id, public_key_from_signing_key},
     };
     use hex_literal::hex;
@@ -248,12 +288,44 @@ mod tests {
         let encoded = &hex!(
             "00000000000000000000000000000000088b3d4342774649325f313964a39e55ea96c005ad52be8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08dab84102ed931f66d1492acb308fa1c6715b9d139b81acbdcc"
         );
-        let Packet::Ordinary(Ordinary { message }) = Packet::decode(&dest_id, encoded).unwrap();
-        let expected = Message::Ping(PingMessage {
-            req_id: 0x00000001,
-            enr_seq: 2,
+        let packet = Packet::decode(&dest_id, encoded).unwrap();
+        let expected = Packet::Ordinary(Ordinary {
+            message: Message::Ping(PingMessage {
+                req_id: 0x00000001,
+                enr_seq: 2,
+            }),
         });
 
-        assert_eq!(message, expected);
+        assert_eq!(packet, expected);
+    }
+
+    #[test]
+    fn test_decode_whoareyou_packet() {
+        // # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
+        // # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
+        // # whoareyou.challenge-data = 0x000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000
+        // # whoareyou.request-nonce = 0x0102030405060708090a0b0c
+        // # whoareyou.id-nonce = 0x0102030405060708090a0b0c0d0e0f10
+        // # whoareyou.enr-seq = 0
+        //
+        // 00000000000000000000000000000000088b3d434277464933a1ccc59f5967ad
+        // 1d6035f15e528627dde75cd68292f9e6c27d6b66c8100a873fcbaed4e16b8d
+        let node_b_key = SecretKey::from_byte_array(&hex!(
+            "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
+        ))
+        .unwrap();
+
+        let dest_id = node_id(&public_key_from_signing_key(&node_b_key));
+
+        let encoded = &hex!(
+            "00000000000000000000000000000000088b3d434277464933a1ccc59f5967ad1d6035f15e528627dde75cd68292f9e6c27d6b66c8100a873fcbaed4e16b8d"
+        );
+        let packet = Packet::decode(&dest_id, encoded).unwrap();
+        let expected = Packet::WhoAreYou(WhoAreYou {
+            id_nonce: (&hex!("0102030405060708090a0b0c0d0e0f10")).to_vec(),
+            enr_seq: 0,
+        });
+
+        assert_eq!(packet, expected);
     }
 }
