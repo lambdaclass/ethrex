@@ -15,6 +15,7 @@ const MIN_PACKET_SIZE: usize = 63;
 const MAX_PACKET_SIZE: usize = 1280;
 // protocol id for validation
 const PROTOCOL_ID: &[u8] = b"discv5";
+const PROTOCOL_VERSION: u16 = 0x0001;
 // masking-iv size for a u128
 const IV_MASKING_SIZE: usize = 16;
 // static_header end limit: 23 bytes from static_header + 16 from iv_masking
@@ -71,12 +72,32 @@ impl Packet {
                 nonce,
                 &encoded_packet[authdata_end..],
             )?)),
-            0x01 => Ok(Packet::WhoAreYou(WhoAreYou::decode(authdata)?)),
+            0x01 => Ok(Packet::WhoAreYou(WhoAreYou::decode(&authdata)?)),
             _ => Err(RLPDecodeError::MalformedData)?,
         }
     }
 
-    pub fn decode_header<T: StreamCipher>(
+    pub fn encode(
+        &self,
+        buf: &mut dyn BufMut,
+        masking_iv: &[u8],
+        nonce: Vec<u8>,
+        dest_id: &H256,
+    ) -> Result<(), PacketDecodeErr> {
+        buf.put_slice(masking_iv);
+
+        let mut cipher = <Aes128Ctr64BE as KeyIvInit>::new(dest_id[..16].into(), masking_iv.into());
+
+        match self {
+            Packet::Ordinary(_ordinary) => todo!(),
+            Packet::WhoAreYou(who_are_you) => {
+                who_are_you.encode_header(buf, &mut cipher, nonce)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn decode_header<T: StreamCipher>(
         cipher: &mut T,
         encoded_packet: &[u8],
     ) -> Result<(Vec<u8>, u8, Vec<u8>, Vec<u8>, usize), PacketDecodeErr> {
@@ -86,7 +107,6 @@ impl Packet {
         cipher.try_apply_keystream(&mut static_header)?;
 
         // static-header = protocol-id || version || flag || nonce || authdata-size
-
         //protocol_id check
         let protocol_id = &static_header[..6];
         if protocol_id != PROTOCOL_ID {
@@ -106,12 +126,7 @@ impl Packet {
         let authdata = &mut encoded_packet[STATIC_HEADER_END..authdata_end].to_vec();
 
         cipher.try_apply_keystream(authdata)?;
-
         Ok((static_header, flag, nonce, authdata.to_vec(), authdata_end))
-    }
-
-    pub fn encode(&self, buf: &mut dyn BufMut, signer: &SecretKey) {
-        //self.message.encode(buf, signer);
     }
 }
 
@@ -125,7 +140,7 @@ impl Ordinary {
         masking_iv: &[u8],
         static_header: Vec<u8>,
         authdata: Vec<u8>,
-        nonce: Vec<u8>,
+        _nonce: Vec<u8>,
         encrypted_message: &[u8],
     ) -> Result<Ordinary, PacketDecodeErr> {
         // message    = aesgcm_encrypt(initiator-key, nonce, message-pt, message-ad)
@@ -142,13 +157,41 @@ impl Ordinary {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WhoAreYou {
-    pub id_nonce: Vec<u8>,
+    pub id_nonce: u128,
     pub enr_seq: u64,
 }
 
 impl WhoAreYou {
-    pub fn decode(authdata: Vec<u8>) -> Result<WhoAreYou, PacketDecodeErr> {
-        let id_nonce = authdata[..16].to_vec();
+    fn encode_header<T: StreamCipher>(
+        &self,
+        buf: &mut dyn BufMut,
+        cipher: &mut T,
+        nonce: Vec<u8>,
+    ) -> Result<(), PacketDecodeErr> {
+        let mut static_header = Vec::new();
+        static_header.put_slice(PROTOCOL_ID);
+        static_header.put_slice(&PROTOCOL_VERSION.to_be_bytes());
+        static_header.put_u8(0x01);
+        static_header.put_slice(&nonce);
+        static_header.put_slice(&24u16.to_be_bytes());
+        cipher.try_apply_keystream(&mut static_header)?;
+        buf.put_slice(&static_header);
+
+        let mut authdata = Vec::new();
+        self.encode(&mut authdata);
+        cipher.try_apply_keystream(&mut authdata)?;
+        buf.put_slice(&authdata);
+
+        Ok(())
+    }
+
+    fn encode(&self, buf: &mut dyn BufMut) {
+        buf.put_slice(&self.id_nonce.to_be_bytes());
+        buf.put_slice(&self.enr_seq.to_be_bytes());
+    }
+
+    pub fn decode(authdata: &Vec<u8>) -> Result<WhoAreYou, PacketDecodeErr> {
+        let id_nonce = u128::from_be_bytes(authdata[..16].try_into()?);
         let enr_seq = u64::from_be_bytes(authdata[16..].try_into()?);
 
         Ok(WhoAreYou { id_nonce, enr_seq })
@@ -245,6 +288,48 @@ mod tests {
     // .unwrap();
 
     #[test]
+    fn test_encode_whoareyou_packet() {
+        // # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
+        // # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
+        // # whoareyou.challenge-data = 0x000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000
+        // # whoareyou.request-nonce = 0x0102030405060708090a0b0c
+        // # whoareyou.id-nonce = 0x0102030405060708090a0b0c0d0e0f10
+        // # whoareyou.enr-seq = 0
+        //
+        // 00000000000000000000000000000000088b3d434277464933a1ccc59f5967ad
+        // 1d6035f15e528627dde75cd68292f9e6c27d6b66c8100a873fcbaed4e16b8d
+        let node_b_key = SecretKey::from_byte_array(&hex!(
+            "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
+        ))
+        .unwrap();
+
+        let packet = Packet::WhoAreYou(WhoAreYou {
+            id_nonce: u128::from_be_bytes(
+                (&hex!("0102030405060708090a0b0c0d0e0f10"))
+                    .to_vec()
+                    .try_into()
+                    .unwrap(),
+            ),
+            enr_seq: 0,
+        });
+
+        let dest_id = node_id(&public_key_from_signing_key(&node_b_key));
+        let mut buf = Vec::new();
+
+        let _ = packet.encode(
+            &mut buf,
+            &hex!("00000000000000000000000000000000"),
+            hex!("0102030405060708090a0b0c").to_vec(),
+            &dest_id,
+        );
+        let expected = &hex!(
+            "00000000000000000000000000000000088b3d434277464933a1ccc59f5967ad1d6035f15e528627dde75cd68292f9e6c27d6b66c8100a873fcbaed4e16b8d"
+        );
+
+        assert_eq!(buf, expected);
+    }
+
+    #[test]
     fn test_decode_whoareyou_packet() {
         // # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
         // # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
@@ -267,7 +352,12 @@ mod tests {
         );
         let packet = Packet::decode(&dest_id, encoded).unwrap();
         let expected = Packet::WhoAreYou(WhoAreYou {
-            id_nonce: (&hex!("0102030405060708090a0b0c0d0e0f10")).to_vec(),
+            id_nonce: u128::from_be_bytes(
+                (&hex!("0102030405060708090a0b0c0d0e0f10"))
+                    .to_vec()
+                    .try_into()
+                    .unwrap(),
+            ),
             enr_seq: 0,
         });
 
