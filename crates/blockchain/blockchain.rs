@@ -575,7 +575,8 @@ impl Blockchain {
         for msg in rx {
             match msg {
                 MerklizationRequest::Delete(prefix) => {
-                    let trie = Trie::new_temp();
+                    let mut trie = Trie::new_temp();
+                    trie.root = Node::Branch(Box::default()).into();
                     tree.insert(Some(prefix), trie);
                 }
                 MerklizationRequest::Merklize { prefix, key, value } => {
