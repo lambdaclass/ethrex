@@ -413,6 +413,10 @@ fn execute_stateless(
     let mut non_privileged_count = 0;
 
     for (i, block) in blocks.iter().enumerate() {
+        // Validate header and body match
+        validate_block_body(&block.header, &block.body)
+            .map_err(StatelessExecutionError::BlockBodyValidationError)?;
+
         // Validate the block
         validate_block_pre_execution(
             block,
