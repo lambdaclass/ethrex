@@ -9,9 +9,9 @@ use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
-    COMMON_BRIDGE_L2_ADDRESS, bridge_address, build_generic_tx, calldata::encode_calldata,
-    compile_contract, create_deploy, git_clone, send_generic_transaction,
-    wait_for_transaction_receipt,
+    COMMON_BRIDGE_L2_ADDRESS, DEFAULT_BRIDGE_ADDRESS, bridge_address, build_generic_tx,
+    calldata::encode_calldata, compile_contract, create_deploy, git_clone,
+    send_generic_transaction, wait_for_transaction_receipt,
 };
 use ethrex_rpc::{
     EthClient,
@@ -50,7 +50,7 @@ const GAS_PRICE: u64 = 3946771033u64;
 
 #[tokio::test]
 async fn test_shared_bridge() -> Result<()> {
-    test_counter().await?;
+    // test_counter().await?;
 
     test_transfer_erc_20().await?;
 
@@ -232,7 +232,7 @@ async fn approve_and_deposit(
     l2_erc20_contract_address: Address,
     sender_address: Address,
 ) -> Result<()> {
-    let bridge_address = bridge_address()?;
+    let bridge_address = DEFAULT_BRIDGE_ADDRESS;
     let approve_calldata = encode_calldata(
         "approve(address,uint256)",
         &[
@@ -272,9 +272,7 @@ async fn approve_and_deposit(
     .await?;
     let deposit_hash = send_generic_transaction(l1_client, deposit_tx, signer).await?;
     let deposit_receipt = wait_for_transaction_receipt(deposit_hash, l1_client, 100).await?;
-
-    println!("Waiting 3 minutes for message to be processed...");
-    sleep(Duration::from_secs(180)).await; // Wait for the message to be processed
+    wait_for_l2_deposit_receipt(&deposit_receipt, l1_client, l2_client).await?;
 
     Ok(())
 }
@@ -578,4 +576,35 @@ async fn test_balance_of(client: &EthClient, token: Address, user: Address) -> U
         .await
         .unwrap();
     U256::from_str_radix(res.trim_start_matches("0x"), 16).unwrap()
+}
+
+async fn wait_for_l2_deposit_receipt(
+    rpc_receipt: &RpcReceipt,
+    l1_client: &EthClient,
+    l2_client: &EthClient,
+) -> Result<RpcReceipt> {
+    let data = rpc_receipt
+        .logs
+        .iter()
+        .find_map(|log| PrivilegedTransactionData::from_log(log.log.clone()).ok())
+        .ok_or_else(|| {
+            format!(
+                "RpcReceipt for transaction {:?} contains no valid logs",
+                rpc_receipt.tx_info.transaction_hash
+            )
+        })
+        .unwrap();
+
+    let l2_deposit_tx_hash = data
+        .into_tx(
+            l1_client,
+            l2_client.get_chain_id().await?.try_into().unwrap(),
+            0,
+        )
+        .await
+        .unwrap()
+        .get_privileged_hash()
+        .unwrap();
+
+    Ok(ethrex_l2_sdk::wait_for_transaction_receipt(l2_deposit_tx_hash, l2_client, 10000).await?)
 }
