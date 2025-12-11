@@ -356,6 +356,7 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function publishL2Messages(
+        uint256 chainId,
         uint256 l2MessagesBatchNumber,
         bytes32 l2MessagesMerkleRoot,
         BalanceDiff[] calldata balanceDiffs
@@ -384,7 +385,7 @@ contract CommonBridge is
                         tv.value
                     );
                     IRouter(SHARED_BRIDGE_ROUTER).sendERC20Message(
-                        block.chainid,
+                        chainId,
                         balanceDiffs[i].chainId,
                         tv.tokenL1,
                         tv.destTokenL2,

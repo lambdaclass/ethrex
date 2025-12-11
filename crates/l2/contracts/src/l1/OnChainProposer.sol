@@ -386,6 +386,7 @@ contract OnChainProposer is
 
         if (batchCommitments[batchNumber].l2MessagesMerkleRoot != bytes32(0)) {
             ICommonBridge(BRIDGE).publishL2Messages(
+                CHAIN_ID,
                 batchNumber,
                 batchCommitments[batchNumber].l2MessagesMerkleRoot,
                 batchCommitments[batchNumber].balanceDiffs
