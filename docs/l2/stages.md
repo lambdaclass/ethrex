@@ -1,10 +1,13 @@
 # Rollup stages and Ethrex
 
-This document relates the [L2Beat rollup stage definitions](https://l2beat.com/stages) to the current Ethrex L2 stack. Stages are properties of a **deployed** L2, whereas Ethrex is a framework that different projects may configure and govern in their own way. We are going to assume that if Ethrex provides the functionality to deploy a Stage X rollup, then it's enough to consider Ethrex to be in that Stage. However, note that one could deploy an L2 with Ethrex while choosing not to enable certain available properties, and therefore end up at a lower stage than the maximum potential (e.g. choosing not to have a Security Council).
+This document explains how the [L2Beat rollup stage definitions](https://l2beat.com/stages) map to the current Ethrex L2 stack.
 
-In this document, when we talk about **Ethrex L2** we are referring to Ethrex in **Rollup mode**, not Validium. The main difference is that the former uses Ethereum L1 as the Data Availability layer whereas the latter does not.
+Stages are properties of a **deployed** L2, whereas Ethrex is a framework that different projects may configure and govern in their own way. In what follows we make two simplifying assumptions:
 
-Below are the answers to every question or requirement of each Stage.
+- If Ethrex provides the functionality required to deploy a Stage X rollup, we consider Ethrex capable of achieving Stage X, even if a particular deployment chooses not to enable some of these features (for example, not using a Security Council).
+- When we talk about **Ethrex L2** we are referring to Ethrex in **rollup mode**, not Validium. In rollup mode, Ethereum L1 is the data availability layer; in Validium mode it is not.
+
+The sections below answer every question or requirement of each Stage from the perspective of Ethrex’s default rollup configuration.
 
 ## Stage 0
 
@@ -16,26 +19,27 @@ Below are the answers to every question or requirement of each Stage.
 | L2 state roots posted on L1 | ✅ | Each committed batch stores `newStateRoot` in `OnChainProposer` on L1. |
 | Data availability on L1 | ✅ | In rollup mode every batch must publish a non‑zero EIP‑4844 blob hash. |
 | Software to reconstruct state | ✅ | Node, blobs tooling, and prover docs describe how to replay blobs and rebuild state. |
-| Proper proof system used | ✅ | Batches are verified using validity proofs (SP1/RISC0/TDX/Aligned) that must match committed data. |
+| Proper proof system used | ✅ | Batches can be verified using zkVM validity proofs (SP1/RISC0) or TDX attestations, and zk proofs can optionally be aggregated via Aligned. |
 
 ### Does the project call itself a rollup?
 
-Yes. 
+Yes.
 
-As pointed out in [the introduction](./introduction.md)
+As pointed out in [the introduction](./introduction.md):
+
 > Ethrex is a framework that lets you launch your own L2 rollup or blockchain.
 
 ### Are L2 state roots posted on L1?
 
 Yes.
 
-Every time that a batch is committed to the `OnChainProposer` in L1, the new state root of the L2 is sent and stored in a mapping that holds information about each batch; among that information is the `newStateRoot`.
+Every time a batch is committed to the `OnChainProposer` on L1, the new L2 state root is sent and stored in the `batchCommitments` mapping as `newStateRoot` for that batch.
 
 ### Does the project provide data availability on L1?
 
 Yes.
 
-When committing a batch in non‑validium mode it always requires a non‑zero blob hash, so a blob MUST be sent in the transaction to the `OnChainProposer` on L1.
+When committing a batch in non‑validium (rollup) mode the transaction must include a non‑zero blob hash, so a blob MUST be sent in the transaction to the `OnChainProposer` on L1.
 
 - The [architecture docs](./architecture/overview.md) state that the blob contains the **RLP‑encoded L2 blocks and fee configuration**.
 - The blob commitment (`blobKZGVersionedHash` / `blobVersionedHash`) is included in the batch commitment and re‑checked during proof verification.
@@ -54,8 +58,7 @@ Yes.
 
 Yes, assuming proofs are enabled.
 
-Ethrex supports multiple proving systems, such as SP1 and RISC0.
-The `OnChainProposer` contract can be configured to require any combination of these proofs when verifying. A batch is only verified on L1 if all configured proofs pass and their public inputs match the committed data (state roots, withdrawals, blobs, etc.).
+Ethrex supports multiple proving mechanisms: zkVM-based validity proofs (for example SP1 and RISC0) and TDX-based attestations. ZK proofs can optionally be aggregated and verified via Aligned. The `OnChainProposer` contract can be configured to require any combination of these mechanisms when verifying. A batch is only verified on L1 if all configured proofs pass and their public inputs match the committed data (state roots, withdrawals, blobs, etc.).
 
 ### Are there at least 5 external actors that can submit a fraud proof?
 
@@ -73,19 +76,18 @@ Ethrex uses **validity proofs**, not fraud proofs. There is no on‑chain “cha
 | Sequencer cannot push invalid L2→L1 messages | ✅ | Sequencer alone cannot make L1 accept an invalid withdrawal; this would require a contract change and VK update controlled by the Security Council (`owner`). |
 | ≥7‑day exit window for non‑SC upgrades | ✅ | Only the Security Council (`owner`) can upgrade contracts; there is no upgrade path from entities outside the Council. |
 
-Ethrex L2 does not fully satisfy the requirements to be Stage 1 because the sequencer can indefinitely block an L2→L1 message (withdrawal), so it is not censorship‑resistant. This could be avoided by implementing forced inclusion of withdrawals enforced by the contracts on L1, in which the user of the L2 can send their withdrawal to the contract on L1 and the sequencer must include it in a subsequent batch in a limited time frame; otherwise they cannot continue sequencing.
-
 ### The only way (other than bugs) for a rollup to indefinitely block an L2→L1 message (e.g. a withdrawal) or push an invalid L2→L1 message (e.g. an invalid withdrawal) is by compromising ≥75% of the Security Council.
 
-Both `OnChainProposer` and `CommonBridge` are upgradeable contracts, and these are authorized by a single `owner` address. Ethrex itself does not explicitly define a Security Council, but it could have one if the owner were a multisig composed of all members. According to L2Beat requirements this Council should have at least 8 members. Note that if the owner is treated as a Security Council there would be no other actors with more power than this one.
+Ethrex does **not** meet this requirement today.
 
-- The sequencer could indefinitely block/censor an L2→L1 message by simply not including the withdrawal transaction in an L2 block.
-- The sequencer cannot unilaterally make L1 accept an invalid L2→L1 message; this would require a change in the code, which would then require updating the Verifying Key in the `OnChainProposer`, and only the Security Council (owner) is capable of updating the VK.
+Both `OnChainProposer` and `CommonBridge` are upgradeable contracts, and both are controlled by a single `owner` address. Ethrex itself does not hard‑code a Security Council, but a deployment can introduce one by making the `owner` a multisig. According to L2Beat requirements this Council should have at least 8 members. If the owner is treated as a Security Council there are no actors with more authority than this multisig.
 
+- The sequencer can indefinitely block/censor an L2→L1 message by simply not including the withdrawal transaction in an L2 block. This does not require compromising the owner / Security Council. This could be addressed by implementing forced inclusion of withdrawals enforced by L1 contracts, where a user can submit their withdrawal directly on L1 and the sequencer must include it in a subsequent batch within a bounded time window or lose the ability to continue sequencing.
+- The sequencer cannot unilaterally make L1 accept an invalid L2→L1 message; this would require changing contract code and updating the verifying key in `OnChainProposer`, and only the Security Council (owner) is capable of performing those upgrades.
 
 ### Upgrades initiated by entities outside of the Security Council are allowed if they provide at least a 7‑day exit window.
 
-In Ethrex L2 contracts there is no concept of an exit window, but there are also no entities other than the Security Council that can update them. So these kinds of upgrades are not allowed.
+In Ethrex L2 contracts there is no concept of an exit window, but there are also no entities other than the Security Council (`owner`) that can update them. Therefore, upgrades initiated by entities outside the Security Council are not possible; if such an upgrade path were introduced, it would need to provide the required exit window.
 
 ## Stage 2
 
@@ -103,7 +105,7 @@ Stage 2 focuses on **fully permissionless proving / challenging** and on tightly
 
 No.
 
-In the **Standard OnChainProposer** (`crates/l2/contracts/src/l1/OnChainProposer.sol`) committing and verifying batches are restricted to the authorized sequencer addresses only, so submitting proofs is not permissionless.
+In the standard `OnChainProposer` implementation (`crates/l2/contracts/src/l1/OnChainProposer.sol`), committing and verifying batches are restricted to the authorized sequencer addresses only, so submitting proofs is not permissionless.
 
 ### Do users have at least 30 days to exit in case of unwanted upgrades?
 
@@ -119,4 +121,4 @@ There is **no built‑in Security Council role** that is restricted to on‑chai
 
 ## Conclusion
 
-Ethrex L2 currently satisfies all Stage 0 requirements and is very close to becoming a Stage 1 rollup. It just needs to be censorship‑resistant regarding L2→L1 messages (e.g. withdrawals), because currently the sequencer could ignore withdrawal transactions.
+Ethrex L2 currently satisfies all Stage 0 requirements and is very close to becoming a Stage 1 rollup. The main missing piece is censorship‑resistant L2→L1 messages (for example withdrawals): today the sequencer can ignore withdrawal transactions indefinitely, and there is no forced‑inclusion mechanism for them (unlike the existing forced‑inclusion mechanism for deposits).
