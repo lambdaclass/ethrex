@@ -398,7 +398,6 @@ pub async fn init_l1(
         Ok(store) => store,
         Err(err @ StoreError::IncompatibleDBVersion { .. })
         | Err(err @ StoreError::NotFoundDBVersion { .. }) => {
-            // Error: Incompatible DB Version: not found, expected v1. Please erase your DB by running `ethrex removedb` and restart node to resync. Note that this will take a while.
             return Err(eyre::eyre!(
                 "{err}. Please erase your DB by running `ethrex removedb` and restart node to resync. Note that this will take a while."
             ));
