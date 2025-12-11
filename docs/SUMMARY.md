@@ -104,8 +104,8 @@
   - [FAQ](./ethrex_replay/faq.md)
 - [CLI reference](./CLI.md)
 - [Release Process](./developers/release-process/README.md)
-  - [Overview](./developers/release-process/release-process.md)
-  - [Release checklist](./developers/release-process/pre-release-checklist.md)
+  - [How to Release](./developers/release-process/release-process.md)
+  - [Pre-Release Checklist](./developers/release-process/pre-release-checklist.md)
 - [Troubleshooting]()
 
 # Roadmap

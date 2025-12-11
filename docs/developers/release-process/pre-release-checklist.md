@@ -1,4 +1,4 @@
-# Ethrex Pre-Release Checklist (Draft)
+# Ethrex Pre-Release Checklist
 
 This checklist helps ensure a smooth pre-release process for ethrex. Before proceeding, replace placeholders like `X.Y.Z-rc.N` with the actual version number (e.g., `1.2.3-rc.1`). Mark each test as completed by checking the box (e.g., `- [x]`) or adding a ✅ or notes in the table cells. If a test doesn't apply, note "N/A" with a brief reason.
 
@@ -13,7 +13,7 @@ Before testing, download the [pre-release binaries from the release artifacts](h
 ### Running the Tests
 
 - **Snapsync Hoodi**: Follow the [snap sync guide for Hoodi](https://docs.ethrex.xyz/l1/running/index.html) to initialize and sync a test network.
-- **L2 Integration Tests**: Follow the [L2 integrations tests guide](https://docs.ethrex.xyz/developers/l2/integration-tests.html).
+- **L2 Integration Tests**: Follow the [L2 integration tests guide](https://docs.ethrex.xyz/developers/l2/integration-tests.html).
 
 | Binary                        | Snapsync Hoodi | L2 Integration Tests |
 |-------------------------------|----------------|----------------------|
