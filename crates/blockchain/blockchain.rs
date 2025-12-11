@@ -334,7 +334,9 @@ impl Blockchain {
             workers_tx.push(tx);
         }
 
+        let state_trie = self.storage.open_state_trie(parent_header.state_root)?;
         let mut account_updates = Vec::new();
+        let mut account_state: FxHashMap<H256, Option<AccountState>> = Default::default();
 
         for updates in rx {
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
@@ -363,6 +365,12 @@ impl Blockchain {
                         })
                         .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                 }
+                if !account_state.contains_key(&prefix) {
+                    account_state.insert(prefix, Some(match state_trie.get(&prefix.0.to_vec())? {
+                        Some(rlp) => AccountState::decode(&rlp)?,
+                        None => AccountState::default(),
+                    }));
+                };
             }
         }
 
@@ -408,8 +416,6 @@ impl Blockchain {
         }
 
         let mut code_updates: FxHashMap<H256, Code> = Default::default();
-        let mut account_state: FxHashMap<H256, Option<AccountState>> = Default::default();
-        let state_trie = self.storage.open_state_trie(parent_header.state_root)?;
 
         for update in account_updates {
             let hashed_address = keccak(update.address);
