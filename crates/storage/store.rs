@@ -1463,8 +1463,11 @@ impl StoreMetadata {
 
 fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
     let metadata_path = path.join(STORE_METADATA_FILENAME);
+    // If metadata file does not exist, try to create it
     if !metadata_path.exists() {
-        if path.exists() {
+        // If datadir exists but is not empty, this is probably a DB for an
+        // old ethrex version and we should return an error
+        if path.exists() && !dir_is_empty(path)? {
             return Err(StoreError::NotFoundDBVersion {
                 expected: STORE_SCHEMA_VERSION,
             });
@@ -1485,6 +1488,7 @@ fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
     let file_contents = std::fs::read_to_string(metadata_path)?;
     let metadata: StoreMetadata = serde_json::from_str(&file_contents)?;
 
+    // Check schema version matches the expected one
     if metadata.schema_version != STORE_SCHEMA_VERSION {
         return Err(StoreError::IncompatibleDBVersion {
             found: metadata.schema_version,
@@ -1492,6 +1496,11 @@ fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
         });
     }
     Ok(())
+}
+
+fn dir_is_empty(path: &Path) -> Result<bool, StoreError> {
+    let is_empty = std::fs::read_dir(path)?.next().is_none();
+    Ok(is_empty)
 }
 
 #[cfg(test)]
