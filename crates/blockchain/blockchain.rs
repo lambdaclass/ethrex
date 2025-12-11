@@ -1763,6 +1763,8 @@ pub fn find_parent_header(
 ///
 /// This doesn't validate that the transactions or withdrawals root of the header matches the body
 /// contents, since we assume the caller already did it. And, in any case, that wouldn't invalidate the block header.
+///
+/// To validate it, use [`ethrex_common::types::block::validate_block_body`]
 pub fn validate_block_pre_execution(
     block: &Block,
     parent_header: &BlockHeader,
