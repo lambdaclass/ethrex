@@ -3591,7 +3591,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spawned-concurrency",
- "spawned-rt",
+ "spawned-rt 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.17",
  "tikv-jemallocator",
  "tokio",
@@ -3760,7 +3760,7 @@ dependencies = [
  "serde_json",
  "serde_with",
  "spawned-concurrency",
- "spawned-rt",
+ "spawned-rt 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "tabwriter",
  "thiserror 2.0.17",
  "tokio",
@@ -3912,7 +3912,7 @@ dependencies = [
  "sha2",
  "snap",
  "spawned-concurrency",
- "spawned-rt",
+ "spawned-rt 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
@@ -4004,7 +4004,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "spawned-concurrency",
- "spawned-rt",
+ "spawned-rt 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
@@ -4054,6 +4054,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bytes",
+ "crossbeam 0.8.4",
  "ethereum-types 0.15.1",
  "ethrex-common",
  "ethrex-crypto",
@@ -4068,6 +4069,8 @@ dependencies = [
  "rustc-hash 2.1.1",
  "serde",
  "serde_json",
+ "spawned-concurrency",
+ "spawned-rt 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
@@ -12399,12 +12402,11 @@ dependencies = [
 [[package]]
 name = "spawned-concurrency"
 version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d99b97ba5429336b6fa8b6e8ecbe09a1c7324f8b9fa63a11262dbd3a44e577b"
+source = "git+https://github.com/lakshya-sky/spawned?branch=no_state_clone#a944f0bbac0bd1f395daf4d42b116e1249f5af9c"
 dependencies = [
  "futures",
  "pin-project-lite",
- "spawned-rt",
+ "spawned-rt 0.4.3 (git+https://github.com/lakshya-sky/spawned?branch=no_state_clone)",
  "thiserror 2.0.17",
  "tracing",
 ]
@@ -12414,6 +12416,19 @@ name = "spawned-rt"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d58e8d7224fbcd3dbc39f7bacf958ae0882c95b5431353445be5a86b80cedcaf"
+dependencies = [
+ "crossbeam 0.7.3",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber 0.3.21",
+]
+
+[[package]]
+name = "spawned-rt"
+version = "0.4.3"
+source = "git+https://github.com/lakshya-sky/spawned?branch=no_state_clone#a944f0bbac0bd1f395daf4d42b116e1249f5af9c"
 dependencies = [
  "crossbeam 0.7.3",
  "tokio",
