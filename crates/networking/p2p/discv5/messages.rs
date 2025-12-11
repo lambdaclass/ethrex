@@ -13,7 +13,7 @@ type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 // Used for package validation
 const MIN_PACKET_SIZE: usize = 63;
 const MAX_PACKET_SIZE: usize = 1280;
-// protocol id for validation
+// protocol data
 const PROTOCOL_ID: &[u8] = b"discv5";
 const PROTOCOL_VERSION: u16 = 0x0001;
 // masking-iv size for a u128
@@ -27,8 +27,8 @@ pub enum PacketDecodeErr {
     RLPDecodeError(#[from] RLPDecodeError),
     #[error("Invalid packet size")]
     InvalidSize,
-    #[error("Invalid protocol id: {0}")]
-    InvalidProtocolId(String),
+    #[error("Invalid protocol: {0}")]
+    InvalidProtocol(String),
     #[error("Stream Cipher Error: {0}")]
     ChipherError(String),
     #[error("TryFromSliceError: {0}")]
@@ -107,18 +107,18 @@ impl Packet {
         cipher.try_apply_keystream(&mut static_header)?;
 
         // static-header = protocol-id || version || flag || nonce || authdata-size
-        //protocol_id check
+        //protocol check
         let protocol_id = &static_header[..6];
-        if protocol_id != PROTOCOL_ID {
-            return Err(PacketDecodeErr::InvalidProtocolId(
+        let version = u16::from_be_bytes(static_header[6..8].try_into()?);
+        if protocol_id != PROTOCOL_ID || version != PROTOCOL_VERSION {
+            return Err(PacketDecodeErr::InvalidProtocol(
                 match str::from_utf8(&protocol_id) {
-                    Ok(result) => result.to_string(),
-                    Err(_) => format!("{:?}", protocol_id),
+                    Ok(result) => format!("{} v{}", result, version),
+                    Err(_) => format!("{:?} v{}", protocol_id, version),
                 },
             ));
         }
 
-        //let version = &static_header[6..8];
         let flag = static_header[8];
         let nonce = static_header[9..21].to_vec();
         let authdata_size = u16::from_be_bytes(static_header[21..23].try_into()?) as usize;
