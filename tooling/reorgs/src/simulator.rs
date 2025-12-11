@@ -83,6 +83,9 @@ impl Simulator {
     pub async fn start_node(&mut self) -> Node {
         let n = self.configs.len();
         let test_name = &self.test_name;
+
+        std::fs::create_dir_all(format!("data/{test_name}")).unwrap();
+
         info!(node = n, "Starting node");
         let mut opts = self.base_opts.clone();
         opts.datadir = format!("data/{test_name}/node{n}").into();
@@ -98,7 +101,6 @@ impl Simulator {
         opts.syncmode = SyncMode::Full;
 
         let _ = std::fs::remove_dir_all(&opts.datadir);
-        std::fs::create_dir_all(&opts.datadir).expect("Failed to create data directory");
 
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
