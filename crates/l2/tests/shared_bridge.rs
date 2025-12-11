@@ -8,7 +8,7 @@ use ethrex_common::{Address, U256, types::TxType};
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
-    COMMON_BRIDGE_L2_ADDRESS, DEFAULT_BRIDGE_ADDRESS, bridge_address, build_generic_tx,
+    COMMON_BRIDGE_L2_ADDRESS, bridge_address, build_generic_tx,
     calldata::encode_calldata, compile_contract, create_deploy, git_clone,
     send_generic_transaction, wait_for_l2_deposit_receipt, wait_for_transaction_receipt,
 };
@@ -125,7 +125,8 @@ async fn test_transfer_erc_20() -> Result<()> {
         sender_address,
         transfer_calldata.into(),
         Overrides {
-            gas_limit: Some(21000 * 5),
+            max_fee_per_gas: Some(GAS_PRICE),
+            max_priority_fee_per_gas: Some(GAS_PRICE),
             ..Default::default()
         },
     )
