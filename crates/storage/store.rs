@@ -628,16 +628,7 @@ impl Store {
     /// Add account code
     pub async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
         let hash_key = code.hash.0.to_vec();
-        let mut buf = Vec::with_capacity(
-            6 + code.bytecode.len()
-                + code
-                    .jump_targets
-                    .iter()
-                    .map(std::mem::size_of_val)
-                    .sum::<usize>(),
-        );
-        code.bytecode.encode(&mut buf);
-        code.jump_targets.encode(&mut buf);
+        let buf = encode_code(&code);
         self.write_async(ACCOUNT_CODES, hash_key, buf).await
     }
 
@@ -1114,16 +1105,7 @@ impl Store {
     ) -> Result<(), StoreError> {
         let mut batch_items = Vec::new();
         for (code_hash, code) in account_codes {
-            let mut buf = Vec::with_capacity(
-                6 + code.bytecode.len()
-                    + code
-                        .jump_targets
-                        .iter()
-                        .map(std::mem::size_of_val)
-                        .sum::<usize>(),
-            );
-            code.bytecode.encode(&mut buf);
-            code.jump_targets.encode(&mut buf);
+            let buf = encode_code(&code);
             batch_items.push((code_hash.as_bytes().to_vec(), buf));
         }
 
@@ -1341,16 +1323,7 @@ impl Store {
         }
 
         for (code_hash, code) in update_batch.code_updates {
-            let mut buf = Vec::with_capacity(
-                6 + code.bytecode.len()
-                    + code
-                        .jump_targets
-                        .iter()
-                        .map(std::mem::size_of_val)
-                        .sum::<usize>(),
-            );
-            code.bytecode.encode(&mut buf);
-            code.jump_targets.encode(&mut buf);
+            let buf = encode_code(&code);
             tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
         }
 
@@ -2852,6 +2825,15 @@ fn check_schema_version(backend: &dyn StorageBackend) -> Result<(), StoreError> 
     )?;
     tx.commit()?;
     Ok(())
+}
+
+fn encode_code(code: &Code) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(
+        6 + code.bytecode.len() + std::mem::size_of_val(code.jump_targets.as_slice()),
+    );
+    code.bytecode.encode(&mut buf);
+    code.jump_targets.encode(&mut buf);
+    buf
 }
 
 #[derive(Debug, Default, Clone)]
