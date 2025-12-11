@@ -8,9 +8,9 @@ use ethrex_common::{Address, U256, types::TxType};
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
-    COMMON_BRIDGE_L2_ADDRESS, bridge_address, build_generic_tx,
-    calldata::encode_calldata, compile_contract, create_deploy, git_clone,
-    send_generic_transaction, wait_for_l2_deposit_receipt, wait_for_transaction_receipt,
+    COMMON_BRIDGE_L2_ADDRESS, bridge_address, build_generic_tx, calldata::encode_calldata,
+    compile_contract, create_deploy, git_clone, send_generic_transaction,
+    wait_for_l2_deposit_receipt, wait_for_transaction_receipt,
 };
 use ethrex_rpc::{
     EthClient,
