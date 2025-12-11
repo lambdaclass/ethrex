@@ -5,13 +5,12 @@
 
 use anyhow::{Context, Result};
 use ethrex_common::{Address, U256, types::TxType};
-use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
     COMMON_BRIDGE_L2_ADDRESS, DEFAULT_BRIDGE_ADDRESS, bridge_address, build_generic_tx,
     calldata::encode_calldata, compile_contract, create_deploy, git_clone,
-    send_generic_transaction, wait_for_transaction_receipt,
+    send_generic_transaction, wait_for_l2_deposit_receipt, wait_for_transaction_receipt,
 };
 use ethrex_rpc::{
     EthClient,
@@ -576,35 +575,4 @@ async fn test_balance_of(client: &EthClient, token: Address, user: Address) -> U
         .await
         .unwrap();
     U256::from_str_radix(res.trim_start_matches("0x"), 16).unwrap()
-}
-
-async fn wait_for_l2_deposit_receipt(
-    rpc_receipt: &RpcReceipt,
-    l1_client: &EthClient,
-    l2_client: &EthClient,
-) -> Result<RpcReceipt> {
-    let data = rpc_receipt
-        .logs
-        .iter()
-        .find_map(|log| PrivilegedTransactionData::from_log(log.log.clone()).ok())
-        .ok_or_else(|| {
-            format!(
-                "RpcReceipt for transaction {:?} contains no valid logs",
-                rpc_receipt.tx_info.transaction_hash
-            )
-        })
-        .unwrap();
-
-    let l2_deposit_tx_hash = data
-        .into_tx(
-            l1_client,
-            l2_client.get_chain_id().await?.try_into().unwrap(),
-            0,
-        )
-        .await
-        .unwrap()
-        .get_privileged_hash()
-        .unwrap();
-
-    Ok(ethrex_l2_sdk::wait_for_transaction_receipt(l2_deposit_tx_hash, l2_client, 10000).await?)
 }

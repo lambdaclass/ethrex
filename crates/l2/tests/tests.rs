@@ -11,7 +11,6 @@ use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H160, H256, U256};
 use ethrex_l2::monitor::widget::l2_to_l1_messages::{L2ToL1MessageKind, L2ToL1MessageStatus};
 use ethrex_l2::monitor::widget::{L2ToL1MessagesTable, l2_to_l1_messages::L2ToL1MessageRow};
-use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_common::messages::L1MessageProof;
 use ethrex_l2_common::utils::get_address_from_secret_key;
@@ -29,6 +28,7 @@ use ethrex_l2_sdk::{
 use ethrex_l2_sdk::{
     FEE_TOKEN_REGISTRY_ADDRESS, L2_WITHDRAW_SIGNATURE, REGISTER_FEE_TOKEN_SIGNATURE,
     build_generic_tx, get_last_verified_batch, send_generic_transaction, wait_for_l1_message_proof,
+    wait_for_l2_deposit_receipt,
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
@@ -2433,37 +2433,6 @@ async fn get_fee_vault_balance(l2_client: &EthClient, vault_address: Option<Addr
         .get_balance(addr, BlockIdentifier::Tag(BlockTag::Latest))
         .await
         .unwrap()
-}
-
-async fn wait_for_l2_deposit_receipt(
-    rpc_receipt: &RpcReceipt,
-    l1_client: &EthClient,
-    l2_client: &EthClient,
-) -> Result<RpcReceipt> {
-    let data = rpc_receipt
-        .logs
-        .iter()
-        .find_map(|log| PrivilegedTransactionData::from_log(log.log.clone()).ok())
-        .ok_or_else(|| {
-            format!(
-                "RpcReceipt for transaction {:?} contains no valid logs",
-                rpc_receipt.tx_info.transaction_hash
-            )
-        })
-        .unwrap();
-
-    let l2_deposit_tx_hash = data
-        .into_tx(
-            l1_client,
-            l2_client.get_chain_id().await?.try_into().unwrap(),
-            0,
-        )
-        .await
-        .unwrap()
-        .get_privileged_hash()
-        .unwrap();
-
-    Ok(ethrex_l2_sdk::wait_for_transaction_receipt(l2_deposit_tx_hash, l2_client, 10000).await?)
 }
 
 pub fn read_env_file_by_config() {
