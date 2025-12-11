@@ -30,6 +30,13 @@ participants:
 
 ethereum_metrics_exporter_enabled: true
 
+network_params:
+  electra_fork_epoch: 0
+  bpo_1_epoch: 0
+  bpo_1_max_blobs: 15
+  bpo_1_target_blobs: 10
+  bpo_1_base_fee_update_fraction: 8346193
+
 additional_services:
   - dora
   - spamoor
