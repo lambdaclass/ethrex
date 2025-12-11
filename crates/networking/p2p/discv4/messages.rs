@@ -764,7 +764,7 @@ mod tests {
         let node_record = NodeRecord::new(
             signature,
             seq,
-            NodeRecordPairs::decode_pairs(&pairs).unwrap(),
+            NodeRecordPairs::try_from_raw_pairs(&pairs).unwrap(),
         );
         let msg = Message::ENRResponse(ENRResponseMessage {
             request_hash,
@@ -890,7 +890,7 @@ mod tests {
         let node_record = NodeRecord::new(
             signature,
             seq,
-            NodeRecordPairs::decode_pairs(&pairs).unwrap(),
+            NodeRecordPairs::try_from_raw_pairs(&pairs).unwrap(),
         );
         let expected = Message::ENRResponse(ENRResponseMessage {
             request_hash,

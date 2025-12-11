@@ -282,7 +282,9 @@ pub struct NodeRecordPairs {
 }
 
 impl NodeRecordPairs {
-    pub fn decode_pairs(pairs: &Vec<(Bytes, Bytes)>) -> Result<NodeRecordPairs, RLPDecodeError> {
+    pub fn try_from_raw_pairs(
+        pairs: &Vec<(Bytes, Bytes)>,
+    ) -> Result<NodeRecordPairs, RLPDecodeError> {
         let mut decoded_pairs = NodeRecordPairs::default();
         for (key, value) in pairs {
             let Ok(key) = String::from_utf8(key.to_vec()) else {
@@ -299,7 +301,7 @@ impl NodeRecordPairs {
                     let bytes = Bytes::decode(&value)?;
                     if bytes.len() < 33 {
                         return Err(RLPDecodeError::Custom(format!(
-                            "Invalid signature length {}",
+                            "Invalid secp256k1 public key length: expected at least 33 bytes, got {}",
                             bytes.len()
                         )));
                     }
@@ -367,7 +369,7 @@ impl NodeRecordPairs {
 pub struct NodeRecord {
     pub signature: H512,
     pub seq: u64,
-    /// The remainder of the record consists of arbitrary key/value pairs
+    /// The remainder of the record consists of key/value pairs represented as NodeRecordPairs
     pairs: NodeRecordPairs,
 }
 
@@ -420,8 +422,8 @@ impl NodeRecord {
         self.update(signer)
     }
 
-    pub fn get_fork_id(&self) -> Option<ForkId> {
-        self.pairs.eth.clone()
+    pub fn get_fork_id(&self) -> Option<&ForkId> {
+        self.pairs.eth.as_ref()
     }
 
     fn update(&mut self, signer: &SecretKey) -> Result<(), NodeError> {
@@ -450,8 +452,8 @@ impl NodeRecord {
         keccak_hash(&rlp)
     }
 
-    pub fn pairs(&self) -> NodeRecordPairs {
-        self.pairs.clone()
+    pub fn pairs(&self) -> &NodeRecordPairs {
+        &self.pairs
     }
 }
 
@@ -474,7 +476,7 @@ impl RLPDecode for NodeRecord {
         // all fields in pairs are optional except for id
         let id_pair = pairs.iter().find(|(k, _v)| k.eq("id".as_bytes()));
         if id_pair.is_some() {
-            let pairs = NodeRecordPairs::decode_pairs(&pairs)?;
+            let pairs = NodeRecordPairs::try_from_raw_pairs(&pairs)?;
             let node_record = NodeRecord {
                 signature,
                 seq,
