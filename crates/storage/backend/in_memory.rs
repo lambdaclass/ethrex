@@ -174,7 +174,6 @@ impl StorageWriteBatch for InMemoryWriteTx {
     }
 
     fn commit(&mut self) -> Result<(), StoreError> {
-        // We don't need to commit for in-memory backend
         // FIXME: in-memory writes aren't atomic
         Ok(())
     }
