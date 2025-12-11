@@ -85,18 +85,13 @@ pub fn get_block_l1_messages(receipts: &[Receipt]) -> Vec<L1Message> {
         .collect()
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct L2MessageProof {
-    pub batch_number: u64,
-    pub message_hash: H256,
-    pub merkle_proof: Vec<H256>,
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 /// Represents a message from the L2 to another L2
 pub struct L2Message {
     /// Chain id of the destination chain
-    pub chain_id: U256,
+    pub dest_chain_id: U256,
+    /// Chain id of the source chain
+    pub source_chain_id: u64,
     /// Address that originated the transaction
     pub from: Address,
     /// Address of the recipient in the destination chain
@@ -113,17 +108,19 @@ pub struct L2Message {
 
 impl L2Message {
     pub fn encode(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&self.chain_id.to_big_endian());
-        bytes.extend_from_slice(&self.from.to_fixed_bytes());
-        bytes.extend_from_slice(&self.to.to_fixed_bytes());
-        bytes.extend_from_slice(&self.value.to_big_endian());
-        bytes.extend_from_slice(&self.gas_limit.to_big_endian());
-        bytes.extend_from_slice(&self.data);
-        bytes
+        [
+            U256::from(self.source_chain_id).to_big_endian().as_ref(),
+            self.from.as_bytes(),
+            self.to.as_bytes(),
+            &self.tx_id.to_big_endian(),
+            &self.value.to_big_endian(),
+            &self.gas_limit.to_big_endian(),
+            keccak(&self.data).as_bytes(),
+        ]
+        .concat()
     }
-    pub fn from_log(log: &ethrex_common::types::Log) -> Option<L2Message> {
-        let chain_id = U256::from_big_endian(&log.topics.get(1)?.0);
+    pub fn from_log(log: &ethrex_common::types::Log, source_chain_id: u64) -> Option<L2Message> {
+        let dest_chain_id = U256::from_big_endian(&log.topics.get(1)?.0);
         let from = H256::from_slice(log.data.get(0..32)?);
         let from = Address::from_slice(&from.as_fixed_bytes()[12..]);
         let to = H256::from_slice(log.data.get(32..64)?);
@@ -136,7 +133,8 @@ impl L2Message {
         let calldata = log.data.get(224..224 + calldata_len.as_usize())?;
 
         Some(L2Message {
-            chain_id,
+            dest_chain_id,
+            source_chain_id,
             from,
             to,
             value,
@@ -147,7 +145,7 @@ impl L2Message {
     }
 }
 
-pub fn get_block_l2_messages(receipts: &[Receipt]) -> Vec<L2Message> {
+pub fn get_block_l2_out_messages(receipts: &[Receipt], source_chain_id: u64) -> Vec<L2Message> {
     receipts
         .iter()
         .flat_map(|receipt| {
@@ -159,7 +157,7 @@ pub fn get_block_l2_messages(receipts: &[Receipt]) -> Vec<L2Message> {
                         && log.topics.first() == Some(&*L2MESSAGE_EVENT_SELECTOR)
                         && log.topics.len() >= 2 // need chainId
                 })
-                .filter_map(L2Message::from_log)
+                .filter_map(|log| L2Message::from_log(log, source_chain_id))
         })
         .collect()
 }
@@ -167,16 +165,20 @@ pub fn get_block_l2_messages(receipts: &[Receipt]) -> Vec<L2Message> {
 pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
     let mut balance_diffs: BTreeMap<U256, BalanceDiff> = BTreeMap::new();
     for message in messages {
+        let mut value = message.value;
         if message.to == BRIDGE_ADDRESS && message.from == BRIDGE_ADDRESS {
-            continue;
+            // This is the mint transaction, ignore the value
+            value = U256::zero();
         }
         let entry = balance_diffs
-            .entry(message.chain_id)
+            .entry(message.dest_chain_id)
             .or_insert(BalanceDiff {
-                chain_id: message.chain_id,
+                chain_id: message.dest_chain_id,
                 value: U256::zero(),
+                message_hashes: Vec::new(),
             });
-        entry.value += message.value;
+        entry.value += value;
+        entry.message_hashes.push(get_l2_message_hash(message));
     }
     balance_diffs.into_values().collect()
 }
