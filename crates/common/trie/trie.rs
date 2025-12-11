@@ -503,7 +503,11 @@ impl Trie {
     }
 
     pub fn root_node(&self) -> Result<Option<Arc<Node>>, TrieError> {
-        self.root.get_node(self.db.as_ref(), Nibbles::default())
+        if self.root.is_valid() {
+            self.root.get_node(self.db.as_ref(), Nibbles::default())
+        } else {
+            Ok(None)
+        }
     }
 
     /// Creates a new Trie based on a temporary InMemory DB
