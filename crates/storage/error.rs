@@ -44,6 +44,8 @@ pub enum StoreError {
     IoError(#[from] std::io::Error),
     #[error("Error serializing metadata: {0}")]
     DbMetadataError(#[from] serde_json::Error),
-    #[error("Incompatible DB Version: found {found}, expected {expected}")]
+    #[error("Incompatible DB Version: not found, expected v{expected}")]
+    NotFoundDBVersion { expected: u64 },
+    #[error("Incompatible DB Version: found v{found}, expected v{expected}")]
     IncompatibleDBVersion { found: u64, expected: u64 },
 }

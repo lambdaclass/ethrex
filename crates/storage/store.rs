@@ -1465,8 +1465,7 @@ fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
     let metadata_path = path.join(STORE_METADATA_FILENAME);
     if !metadata_path.exists() {
         if path.exists() {
-            return Err(StoreError::IncompatibleDBVersion {
-                found: 0,
+            return Err(StoreError::NotFoundDBVersion {
                 expected: STORE_SCHEMA_VERSION,
             });
         } else {
