@@ -172,7 +172,7 @@ impl Blockchain {
         let chain_config = self.storage.get_chain_config();
 
         // Validate the block pre-execution
-        validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        validate_block_pre_execution(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header);
         let mut vm = self.new_evm(vm_db)?;
@@ -219,7 +219,7 @@ impl Blockchain {
         let chain_config = self.storage.get_chain_config();
 
         // Validate the block pre-execution
-        validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        validate_block_pre_execution(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         let block_validated_instant = Instant::now();
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone());
@@ -673,7 +673,7 @@ impl Blockchain {
         vm: &mut Evm,
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
-        validate_block(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
+        validate_block_pre_execution(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
         let execution_result = vm.execute_block(block)?;
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
@@ -1759,9 +1759,11 @@ pub fn find_parent_header(
 /// Verifies that blob gas fields in the header are correct in reference to the block's body.
 /// If a block passes this check, execution will still fail with execute_block when a transaction runs out of gas
 ///
-/// Note that this doesn't validate that the transactions or withdrawals root of the header matches the body
+/// # WARNING
+///
+/// This doesn't validate that the transactions or withdrawals root of the header matches the body
 /// contents, since we assume the caller already did it. And, in any case, that wouldn't invalidate the block header.
-pub fn validate_block(
+pub fn validate_block_pre_execution(
     block: &Block,
     parent_header: &BlockHeader,
     chain_config: &ChainConfig,
