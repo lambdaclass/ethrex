@@ -208,3 +208,7 @@ update-cargo-lock: ## 📦 Update Cargo.lock files
 	cargo tree --manifest-path crates/l2/prover/src/guest_program/src/zisk/Cargo.toml
 	cargo tree --manifest-path crates/l2/prover/src/guest_program/src/openvm/Cargo.toml
 	cargo tree --manifest-path crates/l2/tee/quote-gen/Cargo.toml
+
+test-reorgs: ## 🧪 Test reorg scenarios
+	cargo build --bin ethrex
+	cd tooling/reorgs && cargo run
