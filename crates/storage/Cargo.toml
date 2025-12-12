@@ -28,6 +28,9 @@ tokio = { workspace = true, features = ["rt"] }
 qfilter = "0.2.5"
 rayon.workspace = true
 lru = "0.16.2"
+spawned-rt.workspace = true
+spawned-concurrency.workspace = true
+crossbeam.workspace = true
 
 [features]
 default = []
