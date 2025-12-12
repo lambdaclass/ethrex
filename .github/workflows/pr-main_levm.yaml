@@ -8,6 +8,7 @@ on:
     paths:
       - "tooling/ef_tests/state/**"
       - "crates/vm/levm/**"
+      - "tooling/levm/**"
       - ".github/workflows/pr-main_levm.yaml"
       - "tooling/ef_tests/state"
   workflow_dispatch:
@@ -206,8 +207,7 @@ jobs:
 
       - name: Run tests
         run: |
-          cd crates/vm/levm
-          make test
+          make -C tooling/levm test
   bench:
     name: Benchmarks (LEVM vs REVM)
     runs-on: ubuntu-latest
@@ -231,5 +231,4 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          cd crates/vm/levm
-          make revm-comparison
+          make -C tooling/levm revm-comparison

@@ -1,10 +1,12 @@
 [package]
 name = "runner"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 [dependencies]
-ethrex-levm = { path = "../" }
+ethrex-levm.workspace = true
 ethrex-vm.workspace = true
 ethrex-common.workspace = true
 ethrex-storage.workspace = true

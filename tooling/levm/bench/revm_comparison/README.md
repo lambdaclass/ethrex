@@ -1,10 +1,10 @@
 # Benchmarks
 This README explains how to run benchmarks to compare the performance of `levm` and `revm` when running different contracts. The benchmarking tool used to gather performance metrics is [hyperfine](https://github.com/sharkdp/hyperfine), and the obtained results will be included for reference.
 
-To run the benchmarks (from `levm`'s root):
+To run the benchmarks (from the repo root):
 
 ```bash
-make revm-comparison
+make -C tooling/levm revm-comparison
 ```
 
 Note that first you will need to install the solidity compiler

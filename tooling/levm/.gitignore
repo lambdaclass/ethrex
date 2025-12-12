@@ -1,0 +1,5 @@
+bench-results/
+flamegraph_levm_benchmark/
+report.html
+target/
+*.svg

@@ -5,6 +5,7 @@ on:
     branches: ["**"]
     paths:
       - "crates/vm/levm/**"
+      - "tooling/levm/**"
       - ".github/workflows/pr_perf_levm.yaml"
   workflow_dispatch:
 
@@ -28,13 +29,12 @@ jobs:
 
       - name: Build main benchmark
         run: |
-          cd crates/vm/levm
-          make build-revm-comparison
+          make -C tooling/levm build-revm-comparison
       - name: Upload main benchmark binary
         uses: actions/upload-artifact@v4
         with:
           name: pr-binary
-          path: crates/vm/levm/target/release/benchmark
+          path: tooling/levm/target/release/benchmark
 
   benchmark-main:
     name: Benchmark for Main
@@ -49,13 +49,12 @@ jobs:
 
       - name: Build main benchmark
         run: |
-          cd crates/vm/levm
-          make build-revm-comparison
+          make -C tooling/levm build-revm-comparison
       - name: Upload main benchmark binary
         uses: actions/upload-artifact@v4
         with:
           name: main-binary
-          path: crates/vm/levm/target/release/benchmark
+          path: tooling/levm/target/release/benchmark
 
   combine-results:
     name: Combine Benchmark Results
@@ -92,8 +91,8 @@ jobs:
         run: |
           chmod +x ./main/benchmark
           chmod +x ./pr/benchmark
-          cd crates/vm/levm
-          make revm-comparison-ci
+          make -C tooling/levm revm-comparison-ci
+          cd tooling/levm/bench
           bash ../../../.github/scripts/compare_levm_and_revm_benchmarks.sh
 
       - name: Find comment
