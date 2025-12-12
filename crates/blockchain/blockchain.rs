@@ -26,7 +26,7 @@ use ethrex_common::types::{
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
-use ethrex_common::{Address, H256, TrieLogger};
+use ethrex_common::{Address, H256, TrieLogger, U256};
 use ethrex_metrics::metrics;
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
@@ -140,7 +140,7 @@ enum MerklizationRequest {
     MerklizeAccount {
         hashed_account: H256,
         storage_root_node: Option<BranchNode>,
-        state: Option<AccountState>,
+        state: Option<PartialAccountState>,
     },
     CollectStorages {
         tx: Sender<(H256, u8, BranchNode, Vec<TrieNode>)>,
@@ -148,6 +148,13 @@ enum MerklizationRequest {
     CollectState {
         tx: Sender<(u8, BranchNode, Vec<TrieNode>, Vec<(H256, Vec<TrieNode>)>)>,
     },
+}
+
+#[derive(Default, Clone)]
+struct PartialAccountState {
+    pub nonce: Option<u64>,
+    pub balance: Option<U256>,
+    pub code_hash: Option<H256>,
 }
 
 impl Blockchain {
@@ -342,9 +349,8 @@ impl Blockchain {
             workers_tx.push(tx);
         }
 
-        let state_trie = self.storage.open_state_trie(parent_header.state_root)?;
         let mut account_updates = Vec::new();
-        let mut account_state: FxHashMap<H256, Option<AccountState>> = Default::default();
+        let mut account_state: FxHashMap<H256, Option<PartialAccountState>> = Default::default();
         let mut code_updates: FxHashMap<H256, Code> = Default::default();
 
         for updates in rx {
@@ -374,25 +380,23 @@ impl Blockchain {
                         })
                         .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                 }
-                let mut state = match account_state.get(&hashed_address) {
-                    Some(value) => value.clone().unwrap_or_default(),
-                    None => match state_trie.get(&hashed_address.0.to_vec())? {
-                        Some(rlp) => AccountState::decode(&rlp)?,
-                        None => AccountState::default(),
-                    },
-                };
+                let mut state = account_state
+                    .entry(hashed_address)
+                    .or_default()
+                    .clone()
+                    .unwrap_or_default();
                 if let Some(info) = update.info {
                     if let Some(code) = update.code {
                         code_updates.insert(info.code_hash, code);
                     }
-                    state.balance = info.balance;
-                    state.nonce = info.nonce;
-                    state.code_hash = info.code_hash;
+                    state.balance = Some(info.balance);
+                    state.nonce = Some(info.nonce);
+                    state.code_hash = Some(info.code_hash);
                 }
                 if update.removed {
                     account_state.insert(hashed_address, None);
                 } else {
-                    account_state.insert(hashed_address, Some(state.clone()));
+                    account_state.insert(hashed_address, Some(state));
                 }
             }
         }
@@ -597,14 +601,25 @@ impl Blockchain {
                         storage_nodes.push((hashed_account, nodes));
                     }
                     match state {
-                        Some(mut state) => {
+                        Some(state) => {
+                            let pathrlp = hashed_account.as_bytes().to_vec();
+                            let mut old_state = match state_trie.get(&pathrlp)? {
+                                Some(rlp) => AccountState::decode(&rlp)?,
+                                None => AccountState::default(),
+                            };
                             if let Some(storage_root) = storage_root {
-                                state.storage_root = storage_root;
+                                old_state.storage_root = storage_root;
                             }
-                            state_trie.insert(
-                                hashed_account.as_bytes().to_vec(),
-                                state.encode_to_vec(),
-                            )?;
+                            if let Some(nonce) = state.nonce {
+                                old_state.nonce = nonce;
+                            }
+                            if let Some(balance) = state.balance {
+                                old_state.balance = balance;
+                            }
+                            if let Some(code_hash) = state.code_hash {
+                                old_state.code_hash = code_hash;
+                            }
+                            state_trie.insert(pathrlp, old_state.encode_to_vec())?;
                         }
                         None => {
                             state_trie.remove(&hashed_account.as_bytes().to_vec())?;
