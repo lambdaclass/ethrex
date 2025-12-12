@@ -264,6 +264,13 @@ impl StorageBackend for RocksDBBackend {
     }
 }
 
+impl Drop for RocksDBBackend {
+    fn drop(&mut self) {
+        // Wait for all background work to finish before dropping the DB
+        self.db.cancel_all_background_work(true);
+    }
+}
+
 /// Read-only view for RocksDB
 pub struct RocksDBReadTx {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
