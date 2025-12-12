@@ -316,10 +316,14 @@ impl Node {
     ) -> Result<(), TrieError> {
         let new_node = match self {
             Node::Branch(n) => {
+                dbg!("a");
                 n.insert(db, path, value.into())?;
                 Ok(None)
             }
-            Node::Extension(n) => n.insert(db, path, value.into()),
+            Node::Extension(n) => {
+                dbg!("g");
+                n.insert(db, path, value.into())
+            },
             Node::Leaf(n) => n.insert(path, value.into()),
         };
         if let Some(new_node) = new_node? {

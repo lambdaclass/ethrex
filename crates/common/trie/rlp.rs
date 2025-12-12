@@ -67,10 +67,14 @@ impl RLPEncode for ExtensionNode {
 
 impl RLPEncode for LeafNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_bytes(&self.partial.encode_compact())
-            .encode_bytes(&self.value)
-            .finish()
+        let mut encoder = Encoder::new(buf);
+        dbg!(&encoder);
+        dbg!(&self.partial.encode_compact());
+        encoder = encoder.encode_bytes(&self.partial.encode_compact());
+        dbg!(&encoder);
+        encoder = encoder.encode_bytes(&self.value);
+        dbg!(&encoder);
+        encoder.finish()
     }
 }
 
@@ -114,7 +118,7 @@ impl RLPDecode for Node {
                 let (path, _) = decode_bytes(rlp_items[0].expect("we already checked the length"))?;
                 let path = Nibbles::decode_compact(path);
                 if path.is_leaf() {
-                dbg!("5");
+                    dbg!("5");
                     // Decode as Leaf
                     let (value, _) =
                         decode_bytes(rlp_items[1].expect("we already checked the length"))?;
@@ -136,7 +140,7 @@ impl RLPDecode for Node {
             }
             // Branch Node
             17 => {
-            dbg!("7");
+                dbg!("7");
                 let choices = array::from_fn(|i| {
                     decode_child(rlp_items[i].expect("we already checked the length")).into()
                 });
@@ -164,13 +168,14 @@ pub fn decode_child(rlp: &[u8]) -> NodeHash {
         Ok((hash, &[])) if hash.len() == 32 => {
             dbg!(hash);
             NodeHash::from_slice(hash)
-        },
+        }
         Ok((&[], &[])) => {
-
             dbg!("default");
-         NodeHash::default()},
+            NodeHash::default()
+        }
         _ => {
             dbg!(rlp);
-            NodeHash::from_slice(rlp)},
+            NodeHash::from_slice(rlp)
+        }
     }
 }

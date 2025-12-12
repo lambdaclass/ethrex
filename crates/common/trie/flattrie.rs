@@ -164,7 +164,7 @@ impl FlatTrie {
                             let Some(child_hash) = recursive(trie, child_view)? else {
                                 return Ok(None);
                             };
-                            let child_data_hash = NodeHash::decode(items[i])?;
+                            let child_data_hash = decode_child(items[i]);
                             if child_hash != child_data_hash {
                                 return Ok(None);
                             }
@@ -254,25 +254,22 @@ impl FlatTrie {
         let mut encoder = Encoder::new(&mut self.data);
         match data {
             NodeData::Leaf { partial, value } => {
-                encoder = encoder
-                    .encode_bytes(&partial.encode_compact())
-                    .encode_bytes(&value)
+                encoder = encoder.encode_bytes(&partial.encode_compact());
+                encoder = encoder.encode_bytes(&value);
             }
             NodeData::Extension { path, child } => {
-                dbg!(&child);
                 encoder = encoder.encode_bytes(&path.encode_compact());
-                dbg!(&encoder);
                 encoder = child.encode(encoder);
-                dbg!(&encoder);
             }
             NodeData::Branch { children } => {
                 for child in children {
                     if let Some(child) = child {
-                        encoder = encoder.encode_field(&child)
+                        encoder = child.encode(encoder);
                     } else {
                         encoder = encoder.encode_raw(&[RLP_NULL])
                     }
                 }
+                encoder = encoder.encode_raw(&[RLP_NULL])
             }
         }
         encoder.finish();
@@ -291,13 +288,7 @@ impl FlatTrie {
     pub fn insert(&mut self, path: Vec<u8>, value: Vec<u8>) -> Result<(), RLPDecodeError> {
         let path = Nibbles::from_bytes(&path);
         if let None = self.get_root_view() {
-            self.root_index = self.put(
-                NodeType::Leaf,
-                NodeData::Leaf {
-                    partial: path,
-                    value,
-                },
-            );
+            self.root_index = self.put_leaf(path, value);
         } else {
             self.root_index = self.insert_inner(self.root_index, path, value)?;
         }
@@ -311,11 +302,10 @@ impl FlatTrie {
         mut path: Nibbles,
         value: Vec<u8>,
     ) -> Result<usize, RLPDecodeError> {
-        dbg!("a");
         let self_view = self.views[self_view_index];
         match self_view.node_type {
             NodeType::Leaf => {
-                dbg!("b");
+                dbg!("a");
                 let Some(items) = self.get_encoded_items(&self_view)? else {
                     panic!();
                 };
@@ -325,14 +315,19 @@ impl FlatTrie {
                 debug_assert!(partial.is_leaf());
 
                 if partial == path {
-                    dbg!("c");
+                    dbg!("b");
                     Ok(self.put(self_view.node_type, NodeData::Leaf { partial, value }))
                 } else {
-                    dbg!("d");
+                    dbg!("c");
                     // Current node will be replaced with a branch or extension node
                     let match_index = path.count_prefix(&partial);
                     let self_choice_idx = partial.at(match_index);
                     let new_leaf_choice_idx = path.at(match_index);
+
+                    // Modify the partial of self
+                    let (self_value, _) = decode_bytes(items[1])?;
+                    let new_self_view_index =
+                        self.put_leaf(partial.offset(match_index + 1), self_value.to_vec());
 
                     let branch_view_index = if self_choice_idx == 16 {
                         // Yields a new leaf node with the new value, and a parent branch node
@@ -343,13 +338,14 @@ impl FlatTrie {
                         // value in the branch. We disallow branches with values.
                         unreachable!("leaf insertion yielded branch with new value")
                     } else {
+                        dbg!("d");
                         // Yields a new leaf with the path and value in it, and a new branch
                         // with the new and old leaf as children.
                         let new_leaf_view_index =
                             self.put_leaf(path.offset(match_index + 1), value);
                         self.put_branch(vec![
                             (new_leaf_choice_idx, new_leaf_view_index),
-                            (self_choice_idx, self_view_index),
+                            (self_choice_idx, new_self_view_index),
                         ])
                     };
 
@@ -364,6 +360,7 @@ impl FlatTrie {
                 }
             }
             NodeType::Extension { child } => {
+                dbg!("g");
                 let Some(items) = self.get_encoded_items(&self_view)? else {
                     panic!();
                 };
@@ -374,12 +371,16 @@ impl FlatTrie {
 
                 let match_index = path.count_prefix(&prefix);
                 if match_index == prefix.len() {
+                    dbg!("h");
                     let path = path.offset(match_index);
                     self.insert_inner(child.expect("missing child of extension node"), path, value)
                 } else if match_index == 0 {
+                    dbg!("i");
                     let new_node_view_index = if prefix.len() == 1 {
+                        dbg!("j");
                         child.expect("missing child of extension node")
                     } else {
+                        dbg!("k");
                         // New extension with self_node as a child
                         let node_children = NodeType::Extension { child };
                         let child_hash = NodeHash::decode(
@@ -403,6 +404,7 @@ impl FlatTrie {
                     };
                     self.insert_inner(branch_view_index, path, value)
                 } else {
+                    dbg!("l");
                     let extension_children = NodeType::Extension { child };
                     let child_hash = NodeHash::decode(
                         self.get_encoded_items(&self_view)?
@@ -422,7 +424,8 @@ impl FlatTrie {
                     Ok(self.put_extension(prefix.slice(0, match_index), new_node_view_index))
                 }
             }
-            NodeType::Branch { children } => {
+            NodeType::Branch { mut children } => {
+                dbg!("m");
                 // let Some(items) = self.get_encoded_items(&self_view)? else {
                 //     panic!();
                 // };
@@ -437,14 +440,27 @@ impl FlatTrie {
                 // });
 
                 if let Some(choice) = path.next_choice() {
-                    match children[choice] {
+                    let new_child_view_index = match children[choice] {
                         // como diferencio entre un child que no esta en la data vs un child vacio?
                         // tendria que desencodear el rlp y chusmear
                         // o se podria incluir esa informacion en el view
                         // por ahora asumimos que la data es completa
-                        None => Ok(self.put_leaf(path, value)),
-                        Some(view_index) => self.insert_inner(view_index, path, value),
-                    }
+                        None => {
+                            dbg!("n");
+                            self.put_leaf(path, value)
+                        }
+                        Some(view_index) => {
+                            dbg!("o");
+                            self.insert_inner(view_index, path, value)?
+                        }
+                    };
+                    children[choice] = Some(new_child_view_index);
+                    let children = children
+                        .into_iter()
+                        .enumerate()
+                        .filter_map(|(i, child)| Some((i, child?)))
+                        .collect();
+                    Ok(self.put_branch(children))
                 } else {
                     // We disallow values in branchs
                     unreachable!("wanted to insert value in a branch");
@@ -594,7 +610,7 @@ mod test {
         let mut trie = Trie::new_temp();
         let mut flat_trie = FlatTrie::default();
 
-        let data = [vec![0], vec![1]];
+        let data = [vec![0], vec![1], vec![2]];
 
         for val in data.iter() {
             dbg!("trie inserting");
@@ -617,14 +633,14 @@ mod test {
             .get_root_node(Nibbles::default())
             .unwrap()
             .encode_to_vec();
-        dbg!(&encoded_flat_node);
-        dbg!(&encoded_node);
+        //dbg!(&encoded_flat_node);
+        //dbg!(&encoded_node);
 
         dbg!("decode flaat");
-        dbg!(Node::decode(&encoded_flat_node).unwrap());
+        //dbg!(Node::decode(&encoded_flat_node).unwrap());
         dbg!(&encoded_node);
         dbg!("decode trie");
-        dbg!(Node::decode(&encoded_node).unwrap());
+        //dbg!(Node::decode(&encoded_node).unwrap());
 
         dbg!("finalize");
         assert_eq!(hash, flat_trie_hash.finalize());
@@ -646,8 +662,8 @@ mod test {
             prop_assert!(flat_trie.authenticate().unwrap());
             let flat_trie_hash = flat_trie.root_hash().unwrap();
 
-            dbg!(flat_trie.get_data_view(flat_trie.get_root_view().unwrap()));
-            dbg!(trie.get_root_node(Nibbles::default()).unwrap());
+            //dbg!(flat_trie.get_data_view(flat_trie.get_root_view().unwrap()));
+            //dbg!(trie.get_root_node(Nibbles::default()).unwrap());
 
             prop_assert_eq!(hash, flat_trie_hash.finalize());
         }

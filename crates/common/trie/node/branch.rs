@@ -91,11 +91,13 @@ impl BranchNode {
             match (&mut self.choices[choice], value) {
                 // Create new child (leaf node)
                 (choice_ref, ValueOrHash::Value(value)) if !choice_ref.is_valid() => {
+                    dbg!("n");
                     let new_leaf = LeafNode::new(path, value);
                     *choice_ref = Node::from(new_leaf).into()
                 }
                 // Insert into existing child and then update it
                 (choice_ref, ValueOrHash::Value(value)) => {
+                    dbg!("o");
                     let Some(choice_node) = choice_ref.get_node_mut(db, path.current())? else {
                         return Err(TrieError::InconsistentTree(Box::new(
                             InconsistentTreeError::NodeNotFoundOnBranchNode(
