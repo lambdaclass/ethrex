@@ -57,7 +57,11 @@ pub enum Packet {
 }
 
 impl Packet {
-    pub fn decode(dest_id: &H256, decrypt_key: &Vec<u8>, encoded_packet: &[u8]) -> Result<Packet, PacketDecodeErr> {
+    pub fn decode(
+        dest_id: &H256,
+        decrypt_key: &Vec<u8>,
+        encoded_packet: &[u8],
+    ) -> Result<Packet, PacketDecodeErr> {
         if encoded_packet.len() < MIN_PACKET_SIZE || encoded_packet.len() > MAX_PACKET_SIZE {
             return Err(PacketDecodeErr::InvalidSize);
         }
@@ -164,7 +168,7 @@ impl Ordinary {
 
         let mut message = (&encrypted_message).to_vec();
         Self::decrypt(decrypt_key, nonce, &mut message, message_ad)?;
-        
+
         let message = Message::decode(&message)?;
         Ok(Ordinary { message })
     }
@@ -234,9 +238,7 @@ pub enum Message {
 }
 
 impl Message {
-    pub fn decode(
-        encrypted_message: &[u8],
-    ) -> Result<Message, RLPDecodeError> {
+    pub fn decode(encrypted_message: &[u8]) -> Result<Message, RLPDecodeError> {
         let message_type = encrypted_message[0];
         match message_type {
             0x01 => {
@@ -289,7 +291,7 @@ impl PingMessage {
 impl RLPEncode for PingMessage {
     fn encode(&self, buf: &mut dyn BufMut) {
         Encoder::new(buf)
-            .encode_field(&self.req_id)
+            .encode_field(&Bytes::from(self.req_id.clone()))
             .encode_field(&self.enr_seq)
             .finish();
     }
@@ -297,8 +299,12 @@ impl RLPEncode for PingMessage {
 
 impl RLPDecode for PingMessage {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let ((req_id, enr_seq), remaining): ((Bytes, u64), &[u8]) = RLPDecode::decode_unfinished(rlp)?;
-        let ping = PingMessage { req_id: req_id.to_vec(), enr_seq };
+        let ((req_id, enr_seq), remaining): ((Bytes, u64), &[u8]) =
+            RLPDecode::decode_unfinished(rlp)?;
+        let ping = PingMessage {
+            req_id: req_id.to_vec(),
+            enr_seq,
+        };
         Ok((ping, remaining))
     }
 }
@@ -471,7 +477,7 @@ mod tests {
             "00000000000000000000000000000000088b3d4342774649325f313964a39e55ea96c005ad52be8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08dab84102ed931f66d1492acb308fa1c6715b9d139b81acbdcc"
         );
         // # read-key = 0x00000000000000000000000000000000
-        let read_key = [0;16].to_vec();
+        let read_key = [0; 16].to_vec();
         let packet = Packet::decode(&dest_id, &read_key, encoded).unwrap();
         let expected = Packet::Ordinary(Ordinary {
             message: Message::Ping(PingMessage {
@@ -486,7 +492,7 @@ mod tests {
     #[test]
     fn ping_packet_codec_roundtrip() {
         let pkt = PingMessage {
-            req_id: [1,2,3,4].to_vec(),
+            req_id: [1, 2, 3, 4].to_vec(),
             enr_seq: 4321,
         };
 
