@@ -1412,6 +1412,17 @@ pub fn recover_address_from_message(
     recover_address(signature, payload).map_err(EcdsaError::from)
 }
 
+const SECP256K1_N_HALF: [u8; 32] = [
+    0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b, 0x20, 0xa0,
+];
+
+fn signature_has_high_s(signature_bytes: &[u8; 65]) -> bool {
+    let mut s = [0u8; 32];
+    s.copy_from_slice(&signature_bytes[32..64]);
+    s > SECP256K1_N_HALF
+}
+
 #[cfg(all(
     not(feature = "zisk"),
     not(feature = "risc0"),
@@ -1421,6 +1432,9 @@ pub fn recover_address_from_message(
 pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, secp256k1::Error> {
     // Create signature
     let signature_bytes = signature.to_fixed_bytes();
+    if signature_has_high_s(&signature_bytes) {
+        return Err(secp256k1::Error::InvalidSignature);
+    }
     let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
         &signature_bytes[..64],
         secp256k1::ecdsa::RecoveryId::try_from(signature_bytes[64] as i32)?,
@@ -1447,16 +1461,17 @@ pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, k
 
     // Create signature
     let signature_bytes = signature.to_fixed_bytes();
-
-    let mut signature = k256::ecdsa::Signature::from_slice(&signature_bytes[..64])?;
-
-    let mut recovery_id_byte = signature_bytes[64];
-
-    if let Some(low_s) = signature.normalize_s() {
-        signature = low_s;
-        recovery_id_byte ^= 1;
+    // Standard k256 rejects high-s signatures by default but it's best to leave this for 3 reasons:
+    // 1. Make it more explicit
+    // 2. Sometimes it can happen that the zkVM patch can have a different behavior than the original crate (shouldn't happen, but has happened). So we put this just in case.
+    // 3. Fail fast
+    if signature_has_high_s(&signature_bytes) {
+        return Err(k256::ecdsa::Error::from_source("High-s signature"));
     }
 
+    let signature = k256::ecdsa::Signature::from_slice(&signature_bytes[..64])?;
+
+    let recovery_id_byte = signature_bytes[64];
     let recovery_id = k256::ecdsa::RecoveryId::from_byte(recovery_id_byte).ok_or(
         k256::ecdsa::Error::from_source("Failed to parse recovery id"),
     )?;
@@ -3553,6 +3568,59 @@ mod tests {
         assert_eq!(generic_tx.access_list.len(), 1);
         assert_eq!(generic_tx.access_list[0].address, access_list[0].0);
         assert_eq!(generic_tx.access_list[0].storage_keys, access_list[0].1);
+    }
+
+    #[test]
+    fn recover_address_rejects_high_s_signatures() {
+        use k256::ecdsa::SigningKey;
+
+        let private_key = hex!("4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318");
+        let signing_key = SigningKey::from_bytes(&private_key.into()).unwrap();
+
+        let msg = hex!(
+            "e9808504e3b29200831e848094f0109fc8df283027b6285cc889f5aa624eac1f55\
+             843b9aca0080018080"
+        );
+        let payload = keccak(msg);
+
+        let uncompressed = signing_key.verifying_key().to_encoded_point(false);
+        let uncompressed = uncompressed.to_bytes();
+        let hash = keccak_hash(&uncompressed[1..65]);
+        let expected_address = Address::from_slice(&hash[12..]);
+
+        let mut sig_low = [0u8; 65];
+        sig_low[..64].copy_from_slice(&hex!(
+            "c9cf86333bcb065d140032ecaab5d9281bde80f21b9687b3e94161de42d51895\
+             727a108a0b8d101465414033c3f705a9c7b826e596766046ee1183dbc8aeaa68"
+        ));
+        sig_low[64] = 0;
+
+        let recovered =
+            recover_address(Signature::from_slice(&sig_low), payload).expect("low-s accepted");
+        assert_eq!(recovered, expected_address);
+
+        // Convert the low-s signature into a high-s signature: s' = N - s, flip y-parity bit.
+        let n = U256::from_big_endian(&hex!(
+            "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141"
+        ));
+        let half_n = U256::from_big_endian(&hex!(
+            "7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0"
+        ));
+
+        let s_low = U256::from_big_endian(&sig_low[32..64]);
+        assert!(s_low <= half_n, "test vector must be low-s");
+
+        let s_high = n - s_low;
+        assert!(s_high > half_n, "constructed signature must be high-s");
+
+        let mut sig_high = sig_low;
+        sig_high[32..64].copy_from_slice(&s_high.to_big_endian());
+        sig_high[64] ^= 1;
+
+        assert!(
+            recover_address(Signature::from_slice(&sig_high), payload).is_err(),
+            "high-s signatures must be rejected"
+        );
     }
 
     #[test]
