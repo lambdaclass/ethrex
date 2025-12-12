@@ -118,7 +118,7 @@ async fn test_transfer_erc_20() -> Result<()> {
             Value::Uint(U256::from(210000)),
         ],
     )?;
-    let transfer_tx = build_generic_tx(
+    let mut transfer_tx = build_generic_tx(
         &l2a_client,
         TxType::EIP1559,
         COMMON_BRIDGE_L2_ADDRESS,
@@ -131,6 +131,8 @@ async fn test_transfer_erc_20() -> Result<()> {
         },
     )
     .await?;
+    transfer_tx.gas = transfer_tx.gas.map(|g| g * 6 / 5); // (+20%) tx reverts in some cases otherwise
+
     let tx_hash = send_generic_transaction(&l2a_client, transfer_tx, &signer).await?;
     wait_for_transaction_receipt(tx_hash, &l2a_client, 100).await?;
     sleep(Duration::from_secs(180)).await; // Wait for the message to be processed
