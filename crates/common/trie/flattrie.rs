@@ -347,8 +347,20 @@ impl FlatTrie {
                         let new_leaf_view_index =
                             self.put_leaf(path.offset(match_index + 1), value);
                         self.put_branch(vec![
-                            (new_leaf_choice_idx, new_leaf_view_index),
-                            (self_choice_idx, new_self_view_index),
+                            (
+                                new_leaf_choice_idx,
+                                (
+                                    Some(new_leaf_view_index),
+                                    self.get_hash(new_leaf_view_index),
+                                ),
+                            ),
+                            (
+                                self_choice_idx,
+                                (
+                                    Some(new_self_view_index),
+                                    self.get_hash(new_self_view_index),
+                                ),
+                            ),
                         ])
                     };
 
@@ -401,8 +413,13 @@ impl FlatTrie {
                             child,
                         )
                     };
-                    let branch_view_index =
-                        self.put_branch(vec![(prefix.at(0), new_node_view_index)]);
+                    let branch_view_index = self.put_branch(vec![(
+                        prefix.at(0),
+                        (
+                            Some(new_node_view_index),
+                            self.get_hash(new_node_view_index),
+                        ),
+                    )]);
                     self.insert_inner(branch_view_index, path, value)
                 } else {
                     let new_extension_view_index = self.put_extension(
@@ -449,7 +466,7 @@ impl FlatTrie {
                     let children = children
                         .into_iter()
                         .enumerate()
-                        .filter_map(|(i, child)| Some((i, child?)))
+                        .filter_map(|(i, child)| Some((i, (Some(child?), self.get_hash(child?)))))
                         .collect();
                     Ok(self.put_branch(children))
                 } else {
@@ -547,16 +564,17 @@ impl FlatTrie {
                 let new_child_index = self.remove_inner(child_view_index, path)?;
                 children[choice] = new_child_index;
 
-                let children: Vec<(usize, usize)> = children
+                let children: Vec<(_, _)> = children
                     .into_iter()
                     .enumerate()
-                    .filter_map(|(i, child)| Some((i, child?)))
+                    .filter_map(|(i, child)| Some((i, (Some(child?), self.get_hash(child?)))))
                     .collect();
 
                 match children.len() {
                     0 => Ok(None),
                     1 => {
-                        let (choice_idx, child_idx) = children[0];
+                        let (choice_idx, (child_idx, _)) = children[0];
+                        let child_idx = child_idx.expect("missing child of branch at remove");
                         let child_view = self
                             .get_view(child_idx)
                             .expect("missing child view of branch choice at remove");
@@ -627,18 +645,18 @@ impl FlatTrie {
     /// need to exist in the trie's data.
     ///
     /// Returns the new node's view index.
-    pub fn put_branch(&mut self, children_views: Vec<(usize, usize)>) -> usize {
+    pub fn put_branch(&mut self, children_views: Vec<(usize, (Option<usize>, NodeHash))>) -> usize {
         let data = {
             let mut children: [_; 16] = std::array::from_fn(|_| None);
-            for (choice, view_index) in &children_views {
-                children[*choice] = Some(self.get_hash(*view_index));
+            for (choice, child) in &children_views {
+                children[*choice] = Some(child.1);
             }
             NodeData::Branch { children }
         };
         let children = {
             let mut children = [None; 16];
-            for (choice, view_index) in children_views {
-                children[choice] = Some(view_index);
+            for (choice, child) in children_views {
+                children[choice] = child.0;
             }
             NodeType::Branch { children }
         };
