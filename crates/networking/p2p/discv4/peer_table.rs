@@ -427,6 +427,19 @@ impl PeerTable {
         }
     }
 
+    /// Get a contact using node_id
+    pub async fn get_contact(&mut self, node_id: H256) -> Result<Option<Contact>, PeerTableError> {
+        match self
+            .handle
+            .call(CallMessage::GetContact { node_id })
+            .await?
+        {
+            OutMessage::Contact(contact) => Ok(Some(*contact)),
+            OutMessage::NotFound => Ok(None),
+            _ => unreachable!(),
+        }
+    }
+
     /// Get all contacts available to revalidate
     pub async fn get_contacts_to_revalidate(
         &mut self,
@@ -921,6 +934,7 @@ enum CallMessage {
     GetContactToInitiate,
     GetContactForLookup,
     GetContactForEnrLookup,
+    GetContact { node_id: H256 },
     GetContactsToRevalidate(Duration),
     GetBestPeer { capabilities: Vec<Capability> },
     GetScore { node_id: H256 },
@@ -1007,6 +1021,13 @@ impl GenServer for PeerTableServer {
             ),
             CallMessage::GetContactForEnrLookup => CallResponse::Reply(
                 self.get_contact_for_enr_lookup()
+                    .map(Box::new)
+                    .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
+            ),
+            CallMessage::GetContact { node_id } => CallResponse::Reply(
+                self.contacts
+                    .get(&node_id)
+                    .cloned()
                     .map(Box::new)
                     .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
             ),
