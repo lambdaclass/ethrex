@@ -6,8 +6,8 @@ on:
     paths:
       - ".github/workflows/daily_snapsync.yaml"
   schedule:
-    # Every 4 hours
-    - cron: "0 */4 * * *"
+    # Every 6 hours
+    - cron: "0 */6 * * *"
   workflow_dispatch:
     inputs:
       network:
