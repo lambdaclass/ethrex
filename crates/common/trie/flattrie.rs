@@ -32,7 +32,7 @@ pub struct FlatTrie {
     /// Root hash that gets initialized when calling `Self::authenticate`
     #[serde(skip)]
     #[rkyv(with = Skip)]
-    root_hash: Option<NodeHash>,
+    pub root_hash: Option<NodeHash>,
 }
 
 /// A view into a particular node
@@ -120,8 +120,12 @@ impl From<&Node> for FlatTrie {
 }
 
 impl FlatTrie {
-    pub fn root_hash(&self) -> Option<NodeHash> {
-        self.root_hash.clone()
+    // TODO: authentication should be done just once, when creating the trie.
+    pub fn root_hash(&mut self) -> Result<Option<NodeHash>, RLPDecodeError> {
+        if self.root_hash.is_none() && !self.authenticate()? {
+            return Ok(None);
+        }
+        Ok(self.root_hash)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -185,7 +189,8 @@ impl FlatTrie {
         Ok(true)
     }
 
-    pub fn get(&self, mut path: Nibbles) -> Result<Option<&[u8]>, RLPDecodeError> {
+    pub fn get(&self, path: &[u8]) -> Result<Option<&[u8]>, RLPDecodeError> {
+        let mut path = Nibbles::from_bytes(path);
         fn recursive<'a>(
             trie: &'a FlatTrie,
             path: &mut Nibbles,
@@ -607,7 +612,7 @@ mod test {
                 let hash = trie.hash_no_commit();
 
                 prop_assert!(flat_trie.authenticate().unwrap());
-                let flat_trie_hash = flat_trie.root_hash().unwrap();
+                let flat_trie_hash = flat_trie.root_hash().unwrap().unwrap();
                 prop_assert_eq!(hash, flat_trie_hash.finalize());
             }
         }
