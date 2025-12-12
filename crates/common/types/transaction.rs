@@ -7,7 +7,9 @@ use ethrex_crypto::keccak::keccak_hash;
 pub use mempool::MempoolTransaction;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Serialize, ser::SerializeStruct};
-pub use serde_impl::{AccessListEntry, GenericTransaction, GenericTransactionError};
+pub use serde_impl::{
+    AccessListEntry, AuthorizationTupleEntry, GenericTransaction, GenericTransactionError,
+};
 
 /// The serialized length of a default eip1559 transaction
 pub const EIP1559_DEFAULT_SERIALIZED_LENGTH: usize = 15;
@@ -294,7 +296,6 @@ pub struct EIP7702Transaction {
     #[rkyv(with=rkyv::with::Skip)]
     pub inner_hash: OnceCell<H256>,
 }
-
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct PrivilegedL2Transaction {
     pub chain_id: u64,
@@ -600,11 +601,6 @@ impl EIP4844Transaction {
         let mut buf = Vec::new();
         self.rlp_encode_as_pooled_tx(&mut buf, blobs_bundle);
         buf.len()
-    }
-    pub fn rlp_encode_as_pooled_tx_to_vec(&self, blobs_bundle: &BlobsBundle) -> Vec<u8> {
-        let mut buf = Vec::new();
-        self.rlp_encode_as_pooled_tx(&mut buf, blobs_bundle);
-        buf
     }
 }
 
@@ -2452,8 +2448,8 @@ mod serde_impl {
         InvalidTxType(TxType),
         #[error("Blob bundle error: {0}")]
         BlobBundleError(#[from] BlobsBundleError),
-        #[error("Missing fee token address")]
-        MissingFeeToken,
+        #[error("Missing field: {0}")]
+        MissingField(String),
     }
 
     /// Unsigned Transaction struct generic to all types which may not contain all required transaction fields
@@ -2708,6 +2704,41 @@ mod serde_impl {
         }
     }
 
+    impl TryFrom<GenericTransaction> for EIP7702Transaction {
+        type Error = GenericTransactionError;
+
+        fn try_from(value: GenericTransaction) -> Result<Self, Self::Error> {
+            if value.r#type != TxType::EIP7702 {
+                return Err(GenericTransactionError::InvalidTxType(value.r#type));
+            }
+            let TxKind::Call(to) = value.to else {
+                return Err(GenericTransactionError::MissingField("to".to_owned()));
+            };
+            Ok(Self {
+                chain_id: value.chain_id.unwrap_or_default(),
+                nonce: value.nonce.unwrap_or_default(),
+                max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
+                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
+                gas_limit: value.gas.unwrap_or_default(),
+                to,
+                value: value.value,
+                data: value.input,
+                access_list: value
+                    .access_list
+                    .into_iter()
+                    .map(|v| (v.address, v.storage_keys))
+                    .collect::<Vec<_>>(),
+                authorization_list: value
+                    .authorization_list
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(AuthorizationTuple::from)
+                    .collect(),
+                ..Default::default()
+            })
+        }
+    }
+
     impl From<PrivilegedL2Transaction> for GenericTransaction {
         fn from(value: PrivilegedL2Transaction) -> Self {
             Self {
@@ -2816,7 +2847,9 @@ mod serde_impl {
                     .collect::<Vec<_>>(),
                 fee_token: value
                     .fee_token
-                    .ok_or(GenericTransactionError::MissingFeeToken)?,
+                    .ok_or(GenericTransactionError::MissingField(
+                        "fee token".to_owned(),
+                    ))?,
                 chain_id: value.chain_id.unwrap_or_default(),
                 ..Default::default()
             })
@@ -3443,10 +3476,12 @@ mod tests {
 
         let encoded = PrivilegedL2Transaction::encode_to_vec(&privileged_l2);
         println!("encoded length: {}", encoded.len());
+        assert_eq!(encoded.len(), privileged_l2.length());
 
         let deserialized_tx = PrivilegedL2Transaction::decode(&encoded)?;
 
         assert_eq!(deserialized_tx, privileged_l2);
+
         Ok(())
     }
 

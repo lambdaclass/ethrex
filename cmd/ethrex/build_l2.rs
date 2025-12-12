@@ -97,6 +97,10 @@ pub fn download_script() {
             &Path::new("../../crates/l2/contracts/src/l1/CommonBridge.sol"),
             "CommonBridge",
         ),
+        (
+            &Path::new("../../crates/l2/contracts/src/l1/Router.sol"),
+            "Router",
+        ),
     ];
     for (path, name) in l1_contracts {
         compile_contract_to_bytecode(
@@ -116,8 +120,8 @@ pub fn download_script() {
             "CommonBridgeL2",
         ),
         (
-            &Path::new("../../crates/l2/contracts/src/l2/L2ToL1Messenger.sol"),
-            "L2ToL1Messenger",
+            &Path::new("../../crates/l2/contracts/src/l2/Messenger.sol"),
+            "Messenger",
         ),
         (
             &Path::new("../../crates/l2/contracts/src/l2/L2Upgradeable.sol"),
@@ -157,6 +161,7 @@ pub fn download_script() {
         false,
         Some(&remappings),
         &[contracts_path],
+        Some(999999),
     )
     .unwrap();
 
@@ -225,6 +230,7 @@ fn compile_contract_to_bytecode(
         abi_json,
         remappings,
         allow_paths,
+        Some(999999),
     )
     .expect("Failed to compile contract");
     println!("Successfully compiled {contract_name} contract");
@@ -307,9 +313,9 @@ fn common_bridge_l2_runtime(out_dir: &Path) -> Vec<u8> {
     fs::read(path).expect("Failed to read bytecode file")
 }
 
-/// Bytecode of the L2ToL1Messenger contract.
+/// Bytecode of the Messenger contract.
 fn l2_to_l1_messenger_runtime(out_dir: &Path) -> Vec<u8> {
-    let path = out_dir.join("contracts/solc_out/L2ToL1Messenger.bytecode");
+    let path = out_dir.join("contracts/solc_out/Messenger.bytecode");
     fs::read(path).expect("Failed to read bytecode file")
 }
 

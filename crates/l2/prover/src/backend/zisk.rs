@@ -36,6 +36,34 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+pub fn execute_timed(
+    input: ProgramInput,
+) -> Result<std::time::Duration, Box<dyn std::error::Error>> {
+    write_elf_file()?;
+
+    let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?;
+    std::fs::write(INPUT_PATH, input_bytes.as_slice())?;
+
+    let start = std::time::Instant::now();
+    let args = vec!["--elf", ELF_PATH, "--inputs", INPUT_PATH];
+    let output = Command::new("ziskemu")
+        .args(args)
+        .stdin(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .output()?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "ZisK execution failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    let duration = start.elapsed();
+
+    Ok(duration)
+}
+
 pub fn prove(
     input: ProgramInput,
     format: ProofFormat,
@@ -82,6 +110,30 @@ pub fn prove(
     ))?;
     let output = ProveOutput(proof_bytes);
     Ok(output)
+}
+
+pub fn prove_timed(
+    input: ProgramInput,
+    format: ProofFormat,
+) -> Result<(ProveOutput, std::time::Duration), Box<dyn std::error::Error>> {
+    let proof = prove(input, format)?;
+
+    #[derive(serde::Deserialize)]
+    struct ZisKResult {
+        #[serde(rename = "cycles")]
+        _cycles: u64,
+        #[serde(rename = "id")]
+        _id: String,
+        time: f64,
+    }
+
+    let zisk_result_bytes = std::fs::read(format!("{OUTPUT_DIR_PATH}/result.json"))?;
+
+    let zisk_result: ZisKResult = serde_json::from_slice(&zisk_result_bytes)?;
+
+    let duration = std::time::Duration::from_secs_f64(zisk_result.time);
+
+    Ok((proof, duration))
 }
 
 pub fn verify(_output: &ProgramOutput) -> Result<(), Box<dyn std::error::Error>> {

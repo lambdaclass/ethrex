@@ -80,9 +80,7 @@ impl RLPDecode for Block {
 }
 
 /// Header part of a block on the chain.
-#[derive(
-    Clone, Debug, PartialEq, Eq, Serialize, Default, Deserialize, RSerialize, RDeserialize, Archive,
-)]
+#[derive(Clone, Debug, Serialize, Default, Deserialize, RSerialize, RDeserialize, Archive, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockHeader {
     #[serde(skip)]
@@ -144,6 +142,58 @@ pub struct BlockHeader {
     #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
     #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
     pub requests_hash: Option<H256>,
+}
+
+// Needs a explicit impl due to the hash OnceLock.
+impl PartialEq for BlockHeader {
+    fn eq(&self, other: &Self) -> bool {
+        let BlockHeader {
+            hash: _,
+            parent_hash,
+            ommers_hash,
+            coinbase,
+            state_root,
+            transactions_root,
+            receipts_root,
+            logs_bloom,
+            difficulty,
+            number,
+            gas_limit,
+            gas_used,
+            timestamp,
+            extra_data,
+            prev_randao,
+            nonce,
+            base_fee_per_gas,
+            withdrawals_root,
+            blob_gas_used,
+            excess_blob_gas,
+            parent_beacon_block_root,
+            requests_hash,
+        } = self;
+
+        parent_hash == &other.parent_hash
+            && number == &other.number
+            && timestamp == &other.timestamp
+            && nonce == &other.nonce
+            && gas_used == &other.gas_used
+            && gas_limit == &other.gas_limit
+            && base_fee_per_gas == &other.base_fee_per_gas
+            && blob_gas_used == &other.blob_gas_used
+            && excess_blob_gas == &other.excess_blob_gas
+            && parent_beacon_block_root == &other.parent_beacon_block_root
+            && prev_randao == &other.prev_randao
+            && coinbase == &other.coinbase
+            && state_root == &other.state_root
+            && transactions_root == &other.transactions_root
+            && receipts_root == &other.receipts_root
+            && withdrawals_root == &other.withdrawals_root
+            && difficulty == &other.difficulty
+            && ommers_hash == &other.ommers_hash
+            && requests_hash == &other.requests_hash
+            && logs_bloom == &other.logs_bloom
+            && extra_data == &other.extra_data
+    }
 }
 
 impl RLPEncode for BlockHeader {
@@ -896,7 +946,9 @@ mod test {
             requests_hash: Some(*EMPTY_KECCACK_HASH),
             ..Default::default()
         };
-        assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok())
+        assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok());
+        assert_eq!(parent_block.encode_to_vec().len(), parent_block.length());
+        assert_eq!(block.encode_to_vec().len(), block.length());
     }
 
     #[test]

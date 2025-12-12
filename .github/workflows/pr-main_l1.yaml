@@ -159,6 +159,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [detect-changes, docker_build]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
+    env:
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
@@ -233,6 +235,13 @@ jobs:
             FLAGS+=" --sim.buildarg $SIM_BUILDARG"
           fi
           echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to the Container registry
+        if: ${{ env.DOCKERHUB_TOKEN != '' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
 
       - name: Run Hive Simulation
         id: run-hive-action

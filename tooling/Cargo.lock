@@ -310,10 +310,10 @@ dependencies = [
  "clap 4.5.51",
  "clap_complete",
  "ethrex",
- "ethrex-common 6.0.0",
- "ethrex-rlp 6.0.0",
+ "ethrex-common 7.0.0",
+ "ethrex-rlp 7.0.0",
  "ethrex-rpc",
- "ethrex-storage 6.0.0",
+ "ethrex-storage 7.0.0",
  "eyre",
  "hex",
  "lazy_static",
@@ -2569,10 +2569,10 @@ dependencies = [
  "bytes",
  "datatest-stable",
  "ethrex-blockchain",
- "ethrex-common 6.0.0",
+ "ethrex-common 7.0.0",
  "ethrex-prover",
- "ethrex-rlp 6.0.0",
- "ethrex-storage 6.0.0",
+ "ethrex-rlp 7.0.0",
+ "ethrex-storage 7.0.0",
  "ethrex-vm",
  "guest_program",
  "hex",
@@ -2593,10 +2593,10 @@ dependencies = [
  "clap_complete",
  "colored",
  "ethrex-blockchain",
- "ethrex-common 6.0.0",
+ "ethrex-common 7.0.0",
  "ethrex-levm",
- "ethrex-rlp 6.0.0",
- "ethrex-storage 6.0.0",
+ "ethrex-rlp 7.0.0",
+ "ethrex-storage 7.0.0",
  "ethrex-vm",
  "hex",
  "itertools 0.13.0",
@@ -2621,11 +2621,11 @@ dependencies = [
  "clap_complete",
  "colored",
  "ethrex-blockchain",
- "ethrex-common 6.0.0",
+ "ethrex-common 7.0.0",
  "ethrex-l2-rpc",
  "ethrex-levm",
- "ethrex-rlp 6.0.0",
- "ethrex-storage 6.0.0",
+ "ethrex-rlp 7.0.0",
+ "ethrex-storage 7.0.0",
  "ethrex-vm",
  "hex",
  "prettytable-rs",
@@ -3168,7 +3168,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3176,7 +3176,7 @@ dependencies = [
  "clap_complete",
  "directories",
  "ethrex-blockchain",
- "ethrex-common 6.0.0",
+ "ethrex-common 7.0.0",
  "ethrex-config",
  "ethrex-crypto",
  "ethrex-dev",
@@ -3186,10 +3186,10 @@ dependencies = [
  "ethrex-metrics",
  "ethrex-p2p",
  "ethrex-prover",
- "ethrex-rlp 6.0.0",
+ "ethrex-rlp 7.0.0",
  "ethrex-rpc",
  "ethrex-sdk",
- "ethrex-storage 6.0.0",
+ "ethrex-storage 7.0.0",
  "ethrex-storage-rollup",
  "ethrex-vm",
  "eyre",
@@ -3218,19 +3218,18 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
- "ethrex-common 6.0.0",
+ "ethrex-common 7.0.0",
  "ethrex-crypto",
  "ethrex-metrics",
- "ethrex-rlp 6.0.0",
- "ethrex-storage 6.0.0",
- "ethrex-trie 6.0.0",
+ "ethrex-rlp 7.0.0",
+ "ethrex-storage 7.0.0",
+ "ethrex-trie 7.0.0",
  "ethrex-vm",
  "hex",
  "rustc-hash 2.1.1",
- "secp256k1 0.30.0",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
@@ -3266,15 +3265,16 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
  "ethereum-types 0.15.1",
  "ethrex-crypto",
- "ethrex-rlp 6.0.0",
- "ethrex-trie 6.0.0",
+ "ethrex-rlp 7.0.0",
+ "ethrex-trie 7.0.0",
  "hex",
+ "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "kzg-rs",
  "lazy_static",
  "libc",
@@ -3286,6 +3286,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "sha3",
  "thiserror 2.0.17",
  "tinyvec",
  "tracing",
@@ -3294,9 +3295,9 @@ dependencies = [
 
 [[package]]
 name = "ethrex-config"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
- "ethrex-common 6.0.0",
+ "ethrex-common 7.0.0",
  "ethrex-p2p",
  "hex",
  "serde",
@@ -3305,7 +3306,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "c-kzg",
  "kzg-rs",
@@ -3315,7 +3316,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-dev"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "envy",
@@ -3334,7 +3335,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "aligned-sdk",
  "axum 0.8.6",
@@ -3349,7 +3350,7 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethers",
  "ethrex-blockchain",
- "ethrex-common 6.0.0",
+ "ethrex-common 7.0.0",
  "ethrex-config",
  "ethrex-dev",
  "ethrex-l2-common",
@@ -3357,12 +3358,12 @@ dependencies = [
  "ethrex-levm",
  "ethrex-metrics",
  "ethrex-p2p",
- "ethrex-rlp 6.0.0",
+ "ethrex-rlp 7.0.0",
  "ethrex-rpc",
  "ethrex-sdk",
- "ethrex-storage 6.0.0",
+ "ethrex-storage 7.0.0",
  "ethrex-storage-rollup",
- "ethrex-trie 6.0.0",
+ "ethrex-trie 7.0.0",
  "ethrex-vm",
  "futures",
  "guest_program",
@@ -3391,39 +3392,41 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
- "ethrex-common 6.0.0",
+ "ethrex-common 7.0.0",
  "ethrex-crypto",
- "ethrex-rlp 6.0.0",
- "ethrex-storage 6.0.0",
- "ethrex-trie 6.0.0",
+ "ethrex-rlp 7.0.0",
+ "ethrex-storage 7.0.0",
+ "ethrex-trie 7.0.0",
  "ethrex-vm",
  "hex",
+ "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "lambdaworks-crypto 0.13.0",
  "rkyv",
  "secp256k1 0.30.0",
  "serde",
  "serde_with",
+ "sha3",
  "thiserror 2.0.17",
 ]
 
 [[package]]
 name = "ethrex-l2-rpc"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "axum 0.8.6",
  "bytes",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
- "ethrex-common 6.0.0",
+ "ethrex-common 7.0.0",
  "ethrex-l2-common",
  "ethrex-p2p",
- "ethrex-rlp 6.0.0",
+ "ethrex-rlp 7.0.0",
  "ethrex-rpc",
- "ethrex-storage 6.0.0",
+ "ethrex-storage 7.0.0",
  "ethrex-storage-rollup",
  "hex",
  "reqwest 0.12.24",
@@ -3441,7 +3444,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -3451,9 +3454,9 @@ dependencies = [
  "bytes",
  "datatest-stable",
  "derive_more 1.0.0",
- "ethrex-common 6.0.0",
+ "ethrex-common 7.0.0",
  "ethrex-crypto",
- "ethrex-rlp 6.0.0",
+ "ethrex-rlp 7.0.0",
  "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "lambdaworks-math 0.13.0",
  "lazy_static",
@@ -3465,6 +3468,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "sha3",
  "strum 0.27.2",
  "thiserror 2.0.17",
  "walkdir",
@@ -3472,10 +3476,10 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "axum 0.8.6",
- "ethrex-common 6.0.0",
+ "ethrex-common 7.0.0",
  "prometheus 0.13.4",
  "serde",
  "serde_json",
@@ -3487,7 +3491,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-p2p"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "aes",
  "async-trait",
@@ -3497,13 +3501,13 @@ dependencies = [
  "ctr",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
- "ethrex-common 6.0.0",
+ "ethrex-common 7.0.0",
  "ethrex-crypto",
- "ethrex-rlp 6.0.0",
- "ethrex-storage 6.0.0",
+ "ethrex-rlp 7.0.0",
+ "ethrex-storage 7.0.0",
  "ethrex-storage-rollup",
  "ethrex-threadpool",
- "ethrex-trie 6.0.0",
+ "ethrex-trie 7.0.0",
  "futures",
  "hex",
  "hmac",
@@ -3529,7 +3533,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-prover"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -3537,12 +3541,12 @@ dependencies = [
  "clap 4.5.51",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
- "ethrex-common 6.0.0",
+ "ethrex-common 7.0.0",
  "ethrex-l2",
  "ethrex-l2-common",
- "ethrex-rlp 6.0.0",
+ "ethrex-rlp 7.0.0",
  "ethrex-sdk",
- "ethrex-storage 6.0.0",
+ "ethrex-storage 7.0.0",
  "ethrex-vm",
  "guest_program",
  "hex",
@@ -3576,7 +3580,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -3589,7 +3593,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rpc"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "axum 0.8.6",
  "axum-extra",
@@ -3597,12 +3601,13 @@ dependencies = [
  "envy",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
- "ethrex-common 6.0.0",
+ "ethrex-common 7.0.0",
  "ethrex-crypto",
+ "ethrex-metrics",
  "ethrex-p2p",
- "ethrex-rlp 6.0.0",
- "ethrex-storage 6.0.0",
- "ethrex-trie 6.0.0",
+ "ethrex-rlp 7.0.0",
+ "ethrex-storage 7.0.0",
+ "ethrex-trie 7.0.0",
  "ethrex-vm",
  "hex",
  "hex-literal",
@@ -3626,14 +3631,14 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
- "ethrex-common 6.0.0",
+ "ethrex-common 7.0.0",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
- "ethrex-rlp 6.0.0",
+ "ethrex-rlp 7.0.0",
  "ethrex-rpc",
  "ethrex-sdk-contract-utils",
  "eyre",
@@ -3651,7 +3656,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk-contract-utils"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "thiserror 2.0.17",
  "tracing",
@@ -3682,18 +3687,18 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "bincode",
  "bytes",
  "ethereum-types 0.15.1",
- "ethrex-common 6.0.0",
+ "ethrex-common 7.0.0",
  "ethrex-crypto",
- "ethrex-rlp 6.0.0",
- "ethrex-trie 6.0.0",
+ "ethrex-rlp 7.0.0",
+ "ethrex-trie 7.0.0",
  "hex",
+ "lru 0.16.2",
  "qfilter",
  "rayon",
  "rocksdb",
@@ -3707,17 +3712,17 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage-rollup"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "bincode",
  "ethereum-types 0.15.1",
- "ethrex-common 6.0.0",
+ "ethrex-common 7.0.0",
  "ethrex-l2-common",
- "ethrex-rlp 6.0.0",
- "ethrex-storage 6.0.0",
- "ethrex-trie 6.0.0",
+ "ethrex-rlp 7.0.0",
+ "ethrex-storage 7.0.0",
+ "ethrex-trie 7.0.0",
  "futures",
  "rkyv",
  "thiserror 2.0.17",
@@ -3754,7 +3759,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3762,7 +3767,7 @@ dependencies = [
  "digest 0.10.7",
  "ethereum-types 0.15.1",
  "ethrex-crypto",
- "ethrex-rlp 6.0.0",
+ "ethrex-rlp 7.0.0",
  "ethrex-threadpool",
  "hex",
  "lazy_static",
@@ -3778,19 +3783,18 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "bincode",
  "bytes",
  "derive_more 1.0.0",
  "dyn-clone",
  "ethereum-types 0.15.1",
- "ethrex-common 6.0.0",
+ "ethrex-common 7.0.0",
  "ethrex-crypto",
  "ethrex-levm",
- "ethrex-rlp 6.0.0",
- "ethrex-trie 6.0.0",
- "hex",
+ "ethrex-rlp 7.0.0",
+ "ethrex-trie 7.0.0",
  "lazy_static",
  "rkyv",
  "serde",
@@ -4302,16 +4306,17 @@ dependencies = [
 
 [[package]]
 name = "guest_program"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
+ "bincode",
  "bytes",
  "ethrex-blockchain",
- "ethrex-common 6.0.0",
+ "ethrex-common 7.0.0",
  "ethrex-crypto",
  "ethrex-l2-common",
- "ethrex-rlp 6.0.0",
- "ethrex-storage 6.0.0",
- "ethrex-trie 6.0.0",
+ "ethrex-rlp 7.0.0",
+ "ethrex-storage 7.0.0",
+ "ethrex-trie 7.0.0",
  "ethrex-vm",
  "hex",
  "rkyv",
@@ -4439,6 +4444,8 @@ version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5419bdc4f6a9207fbeba6d11b604d481addf78ecd10c11ad51e76c2f6482748d"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash 0.2.0",
  "serde",
 ]
@@ -5454,6 +5461,7 @@ dependencies = [
  "cc",
  "libc",
  "libz-sys",
+ "lz4-sys",
 ]
 
 [[package]]
@@ -5557,7 +5565,7 @@ dependencies = [
  "clap 4.5.51",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
- "ethrex-common 6.0.0",
+ "ethrex-common 7.0.0",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
  "ethrex-rpc",
@@ -5621,10 +5629,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "lru"
+version = "0.16.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96051b46fc183dc9cd4a223960ef37b9af631b55191852a8274bfef064cda20f"
+dependencies = [
+ "hashbrown 0.16.0",
+]
+
+[[package]]
 name = "lru-slab"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
+
+[[package]]
+name = "lz4-sys"
+version = "1.11.1+lz4-1.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bd8c0d6c6ed0cd30b3652886bb8711dc4bb01d637a68105a3d5158039b418e6"
+dependencies = [
+ "cc",
+ "libc",
+]
 
 [[package]]
 name = "malachite"
@@ -5757,9 +5784,9 @@ dependencies = [
  "clap 4.5.51",
  "ethrex-blockchain",
  "ethrex-common 1.0.0",
- "ethrex-common 6.0.0",
+ "ethrex-common 7.0.0",
  "ethrex-storage 1.0.0",
- "ethrex-storage 6.0.0",
+ "ethrex-storage 7.0.0",
  "tokio",
 ]
 
@@ -7336,7 +7363,7 @@ dependencies = [
  "indoc",
  "instability",
  "itertools 0.13.0",
- "lru",
+ "lru 0.12.5",
  "paste",
  "strum 0.26.3",
  "unicode-segmentation",
@@ -7466,7 +7493,7 @@ version = "4.0.0"
 dependencies = [
  "ethrex",
  "ethrex-blockchain",
- "ethrex-common 6.0.0",
+ "ethrex-common 7.0.0",
  "ethrex-config",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
@@ -9027,7 +9054,7 @@ dependencies = [
  "hashbrown 0.14.5",
  "hex",
  "itertools 0.13.0",
- "lru",
+ "lru 0.12.5",
  "num-bigint 0.4.6",
  "p3-baby-bear",
  "p3-bn254-fr",
