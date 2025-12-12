@@ -332,10 +332,15 @@ P2P options:
 
           [default: 1000]
 
-      --target.peers &lt;MAX_PEERS&gt;
-          Max amount of connected peers.
-
-          [default: 100]
+      --p2p.target-peers &lt;MAX_PEERS&gt;
+           Max amount of connected peers.
+ 
+           [default: 100]
+ 
+      --p2p.lookup-interval &lt;INITIAL_LOOKUP_INTERVAL&gt;
+          Initial Lookup Time Interval (ms) to trigger each Discovery lookup message and RLPx connection attempt.
+          
+         [default: 100]
 
 RPC options:
       --http.addr &lt;ADDRESS&gt;
