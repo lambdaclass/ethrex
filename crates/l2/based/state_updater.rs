@@ -8,8 +8,7 @@ use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use spawned_concurrency::{
     error::GenServerError,
-    messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
+    tasks::{CallResponse, CastResponse, GenServer, GenServerHandle, send_after},
 };
 use tracing::{debug, error, info, warn};
 
@@ -48,6 +47,12 @@ pub enum InMessage {
 #[derive(Clone, PartialEq)]
 pub enum OutMessage {
     Done,
+    Set,
+}
+
+#[derive(Clone)]
+pub enum CallMessage {
+    StopAt(u64),
 }
 
 pub struct StateUpdater {
@@ -252,10 +257,15 @@ impl StateUpdater {
 
         Ok(())
     }
+
+    fn set_stop_at(&mut self, block_number: u64) -> CallResponse<Self> {
+        self.stop_at = Some(block_number);
+        CallResponse::Reply(OutMessage::Set)
+    }
 }
 
 impl GenServer for StateUpdater {
-    type CallMsg = Unused;
+    type CallMsg = CallMessage;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type Error = StateUpdaterError;
@@ -275,6 +285,16 @@ impl GenServer for StateUpdater {
             Self::CastMsg::UpdateState,
         );
         CastResponse::NoReply
+    }
+
+    async fn handle_call(
+        &mut self,
+        message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+    ) -> spawned_concurrency::tasks::CallResponse<Self> {
+        match message {
+            CallMessage::StopAt(block_number) => self.set_stop_at(block_number),
+        }
     }
 }
 
