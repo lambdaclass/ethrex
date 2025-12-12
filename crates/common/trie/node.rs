@@ -319,9 +319,7 @@ impl Node {
                 n.insert(db, path, value.into())?;
                 Ok(None)
             }
-            Node::Extension(n) => {
-                n.insert(db, path, value.into())
-            },
+            Node::Extension(n) => n.insert(db, path, value.into()),
             Node::Leaf(n) => n.insert(path, value.into()),
         };
         if let Some(new_node) = new_node? {
