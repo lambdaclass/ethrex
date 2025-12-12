@@ -7,7 +7,6 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ethrex_trie::flattrie::FlatTrie;
 use ::tracing::{debug, info, instrument, trace};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
@@ -35,6 +34,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
+use ethrex_trie::flattrie::FlatTrie;
 use ethrex_trie::node::{BranchNode, ExtensionNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
 use ethrex_vm::backends::levm::db::DatabaseLogger;

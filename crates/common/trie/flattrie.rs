@@ -808,48 +808,70 @@ mod test {
 
     use crate::{Nibbles, Trie, flattrie::FlatTrie};
 
+    fn kv_pairs_strategy() -> impl Strategy<Value = (Vec<(Vec<u8>, Vec<u8>)>, Vec<usize>)> {
+        // create random key-values, with keys all the same size, and a random permutation of indices
+        (1usize..32).prop_flat_map(|key_len| {
+            prop::collection::vec(
+                (
+                    vec(any::<u8>(), key_len),
+                    vec(any::<u8>(), 0..256),
+                ),
+                1..2,
+            )
+            .prop_flat_map(|kvs| {
+                let len = kvs.len();
+                let shuffle = vec(..len, ..len).prop_shuffle();
+                (Just(kvs), shuffle)
+            })
+        })
+    }
+
     proptest! {
         #[test]
-        fn proptest_insert_compare_hash(data in btree_set(vec(any::<u8>(), 32), 1..100)) {
+        fn proptest_insert_compare_hash((kv, _) in kv_pairs_strategy()) {
             let mut trie = Trie::new_temp();
             let mut flat_trie = FlatTrie::default();
 
-            for val in data.iter(){
-                trie.insert(val.clone(), val.clone()).unwrap();
-                flat_trie.insert(val.clone(), val.clone()).unwrap();
+            for (key, value) in kv.iter(){
+                trie.insert(key.clone(), value.clone()).unwrap();
+                flat_trie.insert(key.clone(), value.clone()).unwrap();
 
                 let hash = trie.hash_no_commit();
 
                 prop_assert!(flat_trie.authenticate().unwrap());
                 let flat_trie_hash = flat_trie.root_hash().unwrap().unwrap();
+
                 prop_assert_eq!(hash, flat_trie_hash.finalize());
             }
         }
 
         #[test]
-        fn proptest_insert_remove_compare_hash(data in btree_set(vec(any::<u8>(), 32), 1..100)) {
+        fn proptest_insert_remove_compare_hash((kv, shuffle) in kv_pairs_strategy()) {
             let mut trie = Trie::new_temp();
             let mut flat_trie = FlatTrie::default();
 
-            for val in data.iter() {
-                trie.insert(val.clone(), val.clone()).unwrap();
-                flat_trie.insert(val.clone(), val.clone()).unwrap();
+            for (key, value) in kv.iter() {
+                trie.insert(key.clone(), value.clone()).unwrap();
+                flat_trie.insert(key.clone(), value.clone()).unwrap();
 
                 let hash = trie.hash_no_commit();
 
                 prop_assert!(flat_trie.authenticate().unwrap());
                 let flat_trie_hash = flat_trie.root_hash().unwrap().unwrap();
+
                 prop_assert_eq!(hash, flat_trie_hash.finalize());
             }
 
-            for val in data.iter().rev() {
-                trie.remove(val).unwrap();
-                flat_trie.remove(val).unwrap();
+            for i in shuffle.iter() {
+                let key = &kv[*i].0;
+                trie.remove(key).unwrap();
+                flat_trie.remove(key).unwrap();
 
                 let hash = trie.hash_no_commit();
 
                 prop_assert!(flat_trie.authenticate().unwrap());
                 let flat_trie_hash = flat_trie.root_hash().unwrap().unwrap();
+
                 prop_assert_eq!(hash, flat_trie_hash.finalize());
             }
         }
