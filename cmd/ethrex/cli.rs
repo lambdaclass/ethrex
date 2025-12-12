@@ -9,8 +9,11 @@ use std::{
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
-use ethrex_blockchain::{BlockchainOptions, BlockchainType, L2Config, error::ChainError};
-use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis};
+use ethrex_blockchain::{
+    BlockchainOptions, BlockchainType, L2Config,
+    error::{ChainError, InvalidBlockError},
+};
+use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
 use ethrex_p2p::{
     discv4::peer_table::TARGET_PEERS, sync::SyncMode, tx_broadcaster::BROADCAST_INTERVAL_MS,
     types::Node,
@@ -18,7 +21,7 @@ use ethrex_p2p::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use tokio_util::sync::CancellationToken;
-use tracing::{Level, info, warn};
+use tracing::{Level, error, info, warn};
 
 use crate::{
     initializers::{
@@ -202,7 +205,7 @@ pub struct Options {
         help_heading = "RPC options"
     )]
     pub authrpc_jwtsecret: String,
-    #[arg(long = "p2p.disabled", default_value = "false", value_name = "P2P_DISABLED", action = ArgAction::SetFalse, help_heading = "P2P options")]
+    #[arg(long = "p2p.disabled", default_value = "false", value_name = "P2P_DISABLED", action = ArgAction::SetTrue, help_heading = "P2P options")]
     pub p2p_disabled: bool,
     #[arg(
         long = "p2p.addr",
@@ -568,7 +571,7 @@ pub async fn import_blocks(
     const MIN_FULL_BLOCKS: usize = 132;
     let start_time = Instant::now();
     init_datadir(datadir);
-    let store = init_store(datadir, genesis).await;
+    let store = init_store(datadir, genesis).await?;
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
     let path_metadata = metadata(path).expect("Failed to read path");
 
@@ -630,6 +633,9 @@ pub async fn import_blocks(
                 continue;
             }
 
+            validate_block_body(&block.header, &block.body)
+                .map_err(InvalidBlockError::InvalidBody)?;
+
             if index + MIN_FULL_BLOCKS < size {
                 block_batch.push(block);
                 if block_batch.len() >= IMPORT_BATCH_SIZE || index + MIN_FULL_BLOCKS + 1 == size {
@@ -683,7 +689,7 @@ pub async fn import_blocks_bench(
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
     init_datadir(datadir);
-    let store = init_store(datadir, genesis).await;
+    let store = init_store(datadir, genesis).await?;
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
     regenerate_head_state(&store, &blockchain).await.unwrap();
     let path_metadata = metadata(path).expect("Failed to read path");
@@ -745,6 +751,9 @@ pub async fn import_blocks_bench(
                 continue;
             }
 
+            validate_block_body(&block.header, &block.body)
+                .map_err(InvalidBlockError::InvalidBody)?;
+
             blockchain
                 .add_block_pipeline(block)
                 .inspect_err(|err| match err {
@@ -794,7 +803,13 @@ pub async fn export_blocks(
     last_number: Option<u64>,
 ) {
     init_datadir(datadir);
-    let store = load_store(datadir).await;
+    let store = match load_store(datadir).await {
+        Err(err) => {
+            error!("Failed to load Store due to: {err}");
+            return;
+        }
+        Ok(store) => store,
+    };
     let start = first_number.unwrap_or_default();
     // If we have no latest block then we don't have any blocks to export
     let latest_number = match store.get_latest_block_number().await {

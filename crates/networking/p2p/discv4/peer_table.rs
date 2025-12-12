@@ -58,6 +58,8 @@ pub struct Contact {
     pub knows_us: bool,
     // This is a known-bad peer (on another network, no matching capabilities, etc)
     pub unwanted: bool,
+    /// Whether the last known fork ID is valid, None if unknown.
+    pub is_fork_id_valid: Option<bool>,
 }
 
 impl Contact {
@@ -106,6 +108,7 @@ impl From<Node> for Contact {
             disposable: false,
             knows_us: true,
             unwanted: false,
+            is_fork_id_valid: None,
         }
     }
 }
@@ -217,6 +220,21 @@ impl PeerTable {
     pub async fn set_unwanted(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
         self.handle
             .cast(CastMessage::SetUnwanted { node_id: *node_id })
+            .await?;
+        Ok(())
+    }
+
+    /// Set whether the contact fork id is valid.
+    pub async fn set_is_fork_id_valid(
+        &mut self,
+        node_id: &H256,
+        valid: bool,
+    ) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::SetIsForkIdValid {
+                node_id: *node_id,
+                valid,
+            })
             .await?;
         Ok(())
     }
@@ -401,6 +419,19 @@ impl PeerTable {
         match self
             .handle
             .call(CallMessage::GetContactForEnrLookup)
+            .await?
+        {
+            OutMessage::Contact(contact) => Ok(Some(*contact)),
+            OutMessage::NotFound => Ok(None),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Get a contact using node_id
+    pub async fn get_contact(&mut self, node_id: H256) -> Result<Option<Contact>, PeerTableError> {
+        match self
+            .handle
+            .call(CallMessage::GetContact { node_id })
             .await?
         {
             OutMessage::Contact(contact) => Ok(Some(*contact)),
@@ -662,7 +693,11 @@ impl PeerTableServer {
     fn get_contact_for_lookup(&self) -> Option<Contact> {
         self.contacts
             .values()
-            .filter(|c| c.n_find_node_sent < MAX_FIND_NODE_PER_PEER && !c.disposable)
+            .filter(|c| {
+                c.n_find_node_sent < MAX_FIND_NODE_PER_PEER
+                    && !c.disposable
+                    && c.is_fork_id_valid != Some(false)
+            })
             .collect::<Vec<_>>()
             .choose(&mut rand::rngs::OsRng)
             .cloned()
@@ -847,6 +882,10 @@ enum CastMessage {
     SetUnwanted {
         node_id: H256,
     },
+    SetIsForkIdValid {
+        node_id: H256,
+        valid: bool,
+    },
     RecordSuccess {
         node_id: H256,
     },
@@ -895,6 +934,7 @@ enum CallMessage {
     GetContactToInitiate,
     GetContactForLookup,
     GetContactForEnrLookup,
+    GetContact { node_id: H256 },
     GetContactsToRevalidate(Duration),
     GetBestPeer { capabilities: Vec<Capability> },
     GetScore { node_id: H256 },
@@ -984,6 +1024,13 @@ impl GenServer for PeerTableServer {
                     .map(Box::new)
                     .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
             ),
+            CallMessage::GetContact { node_id } => CallResponse::Reply(
+                self.contacts
+                    .get(&node_id)
+                    .cloned()
+                    .map(Box::new)
+                    .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
+            ),
             CallMessage::GetContactsToRevalidate(revalidation_interval) => CallResponse::Reply(
                 Self::OutMsg::Contacts(self.get_contacts_to_revalidate(revalidation_interval)),
             ),
@@ -1032,6 +1079,7 @@ impl GenServer for PeerTableServer {
                 match self.contacts.entry(node.node_id()) {
                     Entry::Occupied(_) => false,
                     Entry::Vacant(entry) => {
+                        METRICS.record_new_discovery().await;
                         entry.insert(Contact::from(node));
                         true
                     }
@@ -1097,6 +1145,11 @@ impl GenServer for PeerTableServer {
                 self.contacts
                     .entry(node_id)
                     .and_modify(|contact| contact.unwanted = true);
+            }
+            CastMessage::SetIsForkIdValid { node_id, valid } => {
+                self.contacts
+                    .entry(node_id)
+                    .and_modify(|contact| contact.is_fork_id_valid = Some(valid));
             }
             CastMessage::RecordSuccess { node_id } => {
                 self.peers

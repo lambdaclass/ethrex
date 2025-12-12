@@ -4,6 +4,7 @@ use ethrex_blockchain::{
     payload::{BuildPayloadArgs, create_payload},
 };
 use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
+use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
 use tracing::{info, warn};
 
@@ -219,22 +220,14 @@ async fn handle_forkchoice(
         ));
     }
 
-    /*   Revert #4985
-    if context.syncer.sync_mode() == SyncMode::Snap {
-        // Don't trigger a sync if the block is already canonical
-        if context
-            .storage
-            .is_canonical_sync(fork_choice_state.head_block_hash)?
-        {
-            // Disable snapsync mode so we can process incoming payloads
-            context.syncer.disable_snap();
-        } else {
-            context
-                .syncer
-                .sync_to_head(fork_choice_state.head_block_hash);
-            return Ok((None, PayloadStatus::syncing().into()));
-        }
-    } */
+    // Ignore any FCU during snap-sync.
+    // Processing the FCU while snap-syncing can result in reading inconsistent data
+    // from the DB, and the later head update can overwrite changes made by the syncer
+    // process, corrupting the forkchoice state (see #5547)
+    if syncer.sync_mode() == SyncMode::Snap {
+        syncer.sync_to_head(fork_choice_state.head_block_hash);
+        return Ok((None, PayloadStatus::syncing().into()));
+    }
 
     match apply_fork_choice(
         &context.storage,
@@ -284,6 +277,11 @@ async fn handle_forkchoice(
                 InvalidForkChoice::Syncing => {
                     // Start sync
                     syncer.sync_to_head(fork_choice_state.head_block_hash);
+                    ForkChoiceResponse::from(PayloadStatus::syncing())
+                }
+                // TODO(#5564): handle arbitrary reorgs
+                InvalidForkChoice::StateNotReachable => {
+                    // Ignore the FCU
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
                 InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {
