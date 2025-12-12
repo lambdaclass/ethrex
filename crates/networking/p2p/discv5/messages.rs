@@ -1,9 +1,14 @@
-use std::array::TryFromSliceError;
+use std::{array::TryFromSliceError, net::IpAddr};
 
 use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherError};
 use bytes::BufMut;
 use ethrex_common::H256;
-use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError, structs::Decoder};
+use ethrex_rlp::{
+    decode::RLPDecode,
+    encode::RLPEncode,
+    error::RLPDecodeError,
+    structs::{Decoder, Encoder},
+};
 use secp256k1::SecretKey;
 
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
@@ -205,6 +210,7 @@ impl WhoAreYou {
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Message {
     Ping(PingMessage),
+    Pong(PongMessage),
     // TODO: add the other messages
 }
 
@@ -218,10 +224,10 @@ impl Message {
                 let (ping, _rest) = PingMessage::decode_unfinished(encrypted_message)?;
                 Ok(Message::Ping(ping))
             }
-            // 0x02 => {
-            //     let (pong, _rest) = PongMessage::decode_unfinished(msg)?;
-            //     Ok(Message::Pong(pong))
-            // }
+            0x02 => {
+                let (pong, _rest) = PongMessage::decode_unfinished(encrypted_message)?;
+                Ok(Message::Pong(pong))
+            }
             // 0x03 => {
             //     let (find_node_msg, _rest) = FindNodeMessage::decode_unfinished(msg)?;
             //     Ok(Message::FindNode(find_node_msg))
@@ -274,8 +280,47 @@ impl RLPDecode for PingMessage {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PongMessage {
+    pub req_id: u64,
+    pub enr_seq: u64,
+    pub recipient_addr: IpAddr,
+}
+
+impl RLPEncode for PongMessage {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.req_id)
+            .encode_field(&self.enr_seq)
+            .encode_field(&self.recipient_addr)
+            .finish();
+    }
+}
+
+impl RLPDecode for PongMessage {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (req_id, decoder) = decoder.decode_field("req_id")?;
+        let (enr_seq, decoder) = decoder.decode_field("enr_seq")?;
+        let (recipient_addr, decoder) = decoder.decode_field("recipient_addr")?;
+
+        Ok((
+            Self {
+                req_id,
+                enr_seq,
+                recipient_addr,
+            },
+            decoder.finish()?,
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use hex_literal::hex;
+    use secp256k1::SecretKey;
+    use std::net::Ipv4Addr;
     use crate::{
         discv5::{
             codec::Discv5Codec,
@@ -284,8 +329,6 @@ mod tests {
         utils::{node_id, public_key_from_signing_key},
     };
     use bytes::BytesMut;
-    use hex_literal::hex;
-    use secp256k1::SecretKey;
     use tokio_util::codec::Decoder as _;
 
     // node-a-key = 0xeef77acb6c6a6eebc5b363a475ac583ec7eccdb42b6481424c60f59aa326547f
@@ -413,5 +456,19 @@ mod tests {
         });
 
         assert_eq!(packet, expected);
+    }
+
+    // TODO: Test encode pong packet (with known good encoding).
+    // TODO: Test decode pong packet (from known good encoding).
+    #[test]
+    fn pong_packet_codec_roundtrip() {
+        let pkt = PongMessage {
+            req_id: 1234,
+            enr_seq: 4321,
+            recipient_addr: Ipv4Addr::BROADCAST.into(),
+        };
+
+        let buf = pkt.encode_to_vec();
+        assert_eq!(PongMessage::decode(&buf).unwrap(), pkt);
     }
 }
