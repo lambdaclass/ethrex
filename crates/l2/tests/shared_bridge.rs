@@ -107,34 +107,26 @@ async fn test_transfer_erc_20() -> Result<()> {
 
     // send ERC20 from L2a to L2b
     let transfer_amount = U256::from(999999u64);
-    let transfer_calldata = encode_calldata(
-        "transferERC20(uint256,address,uint256,address,address,uint256)",
-        &[
-            Value::Uint(U256::from(1730)),
-            Value::Address(sender_address),
-            Value::Uint(transfer_amount),
-            Value::Address(l2a_erc20_contract_address),
-            Value::Address(l2b_erc20_contract_address),
-            Value::Uint(U256::from(210000)),
-        ],
-    )?;
-    let mut transfer_tx = build_generic_tx(
+    let signature = "transferERC20(uint256,address,uint256,address,address,uint256)";
+    let values = [
+        Value::Uint(U256::from(1730)),
+        Value::Address(sender_address),
+        Value::Uint(transfer_amount),
+        Value::Address(l2a_erc20_contract_address),
+        Value::Address(l2b_erc20_contract_address),
+        Value::Uint(U256::from(210000)),
+    ];
+    test_send(
         &l2a_client,
-        TxType::EIP1559,
+        &private_key,
+        U256::zero(),
+        GAS_PRICE,
         COMMON_BRIDGE_L2_ADDRESS,
-        sender_address,
-        transfer_calldata.into(),
-        Overrides {
-            max_fee_per_gas: Some(GAS_PRICE),
-            max_priority_fee_per_gas: Some(GAS_PRICE),
-            ..Default::default()
-        },
+        signature,
+        &values,
+        "erc20_shared_bridge",
     )
     .await?;
-    transfer_tx.gas = transfer_tx.gas.map(|g| g * 6 / 5); // (+20%) tx reverts in some cases otherwise
-
-    let tx_hash = send_generic_transaction(&l2a_client, transfer_tx, &signer).await?;
-    wait_for_transaction_receipt(tx_hash, &l2a_client, 100).await?;
     sleep(Duration::from_secs(180)).await; // Wait for the message to be processed
 
     let l2b_new_balance =
@@ -192,6 +184,7 @@ fn build_fee_token_bytecode(l1_erc20_contract_address: Address) -> Result<Vec<u8
         false,
         Some(&remappings),
         &allow_paths,
+        None,
     )?;
 
     let mut fee_token_contract =
