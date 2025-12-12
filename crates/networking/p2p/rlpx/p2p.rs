@@ -192,6 +192,30 @@ pub enum DisconnectReason {
     InvalidReason = 0xff,
 }
 
+impl DisconnectReason {
+    // Returns a vector of all DisconnectReason variants, we need to update this method when we add,
+    // change or remove any DisconnectReason variants which are used in metrics.
+    // A test ensures this method is up to date.
+    pub fn all() -> Vec<DisconnectReason> {
+        vec![
+            DisconnectReason::DisconnectRequested,
+            DisconnectReason::NetworkError,
+            DisconnectReason::ProtocolError,
+            DisconnectReason::UselessPeer,
+            DisconnectReason::TooManyPeers,
+            DisconnectReason::AlreadyConnected,
+            DisconnectReason::IncompatibleVersion,
+            DisconnectReason::InvalidIdentity,
+            DisconnectReason::ClientQuitting,
+            DisconnectReason::UnexpectedIdentity,
+            DisconnectReason::SelfIdentity,
+            DisconnectReason::PingTimeout,
+            DisconnectReason::SubprotocolError,
+            DisconnectReason::InvalidReason,
+        ]
+    }
+}
+
 // impl display for disconnectreason
 impl std::fmt::Display for DisconnectReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -385,5 +409,35 @@ mod tests {
         let capability = Capability::eth(68);
 
         assert_eq!(capability.protocol(), "eth");
+    }
+
+    #[test]
+    fn test_disconnect_reason_all() {
+        use crate::rlpx::p2p::DisconnectReason;
+
+        let all_reasons = DisconnectReason::all();
+
+        assert_eq!(all_reasons.len(), 14);
+
+        // This exhaustive match ensures we check all variants exist in all()
+        // If a new variant is added to the enum, this match will fail to compile
+        for reason in &all_reasons {
+            match reason {
+                DisconnectReason::DisconnectRequested
+                | DisconnectReason::NetworkError
+                | DisconnectReason::ProtocolError
+                | DisconnectReason::UselessPeer
+                | DisconnectReason::TooManyPeers
+                | DisconnectReason::AlreadyConnected
+                | DisconnectReason::IncompatibleVersion
+                | DisconnectReason::InvalidIdentity
+                | DisconnectReason::ClientQuitting
+                | DisconnectReason::UnexpectedIdentity
+                | DisconnectReason::SelfIdentity
+                | DisconnectReason::PingTimeout
+                | DisconnectReason::SubprotocolError
+                | DisconnectReason::InvalidReason => {}
+            }
+        }
     }
 }

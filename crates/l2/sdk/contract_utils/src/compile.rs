@@ -18,6 +18,7 @@ pub fn compile_contract(
     abi_json: bool,
     remappings: Option<&[(&str, PathBuf)]>,
     allow_paths: &[&Path],
+    optimize_runs: Option<u64>,
 ) -> Result<(), ContractCompilationError> {
     let bin_flag = if runtime_bin {
         "--bin-runtime"
@@ -34,15 +35,18 @@ pub fn compile_contract(
 
     apply_remappings(&mut cmd, remappings)?;
 
+    if let Some(optimize_runs) = optimize_runs {
+        cmd.arg("--optimize")
+            .arg("--optimize-runs")
+            .arg(format!("{optimize_runs}"));
+    }
+
     cmd.arg(
         contract_path
             .to_str()
             .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
     )
     .arg("--via-ir")
-    .arg("--optimize")
-    .arg("--optimize-runs")
-    .arg("50")
     .arg("-o")
     .arg(
         output_dir
