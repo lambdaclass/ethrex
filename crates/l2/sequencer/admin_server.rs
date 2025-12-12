@@ -1,3 +1,4 @@
+use crate::StateUpdater;
 use crate::sequencer::block_producer::{
     BlockProducer, CallMessage as BlockProducerCallMessage, OutMessage as BlockProducerOutMessage,
 };
@@ -38,6 +39,7 @@ pub struct Admin {
     pub l1_watcher: Option<GenServerHandle<L1Watcher>>,
     pub l1_proof_sender: Option<GenServerHandle<L1ProofSender>>,
     pub block_producer: Option<GenServerHandle<BlockProducer>>,
+    pub state_updater: Option<GenServerHandle<StateUpdater>>,
     #[cfg(feature = "metrics")]
     pub metrics_gatherer: Option<GenServerHandle<MetricsGatherer>>,
 }
@@ -74,6 +76,7 @@ pub async fn start_api(
     l1_watcher: Option<GenServerHandle<L1Watcher>>,
     l1_proof_sender: Option<GenServerHandle<L1ProofSender>>,
     block_producer: Option<GenServerHandle<BlockProducer>>,
+    state_updater: Option<GenServerHandle<StateUpdater>>,
     #[cfg(feature = "metrics")] metrics_gatherer: Option<GenServerHandle<MetricsGatherer>>,
 ) -> Result<WithGracefulShutdown<TcpListener, Router, Router, impl Future<Output = ()>>, AdminError>
 {
@@ -82,6 +85,7 @@ pub async fn start_api(
         l1_watcher,
         l1_proof_sender,
         block_producer,
+        state_updater,
         #[cfg(feature = "metrics")]
         metrics_gatherer,
     };

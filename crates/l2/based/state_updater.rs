@@ -93,7 +93,7 @@ impl StateUpdater {
         blockchain: Arc<Blockchain>,
         store: Store,
         rollup_store: StoreRollup,
-    ) -> Result<(), StateUpdaterError> {
+    ) -> Result<GenServerHandle<StateUpdater>, StateUpdaterError> {
         let mut state_updater = Self::new(
             sequencer_cfg,
             sequencer_state,
@@ -105,7 +105,8 @@ impl StateUpdater {
         state_updater
             .cast(InMessage::UpdateState)
             .await
-            .map_err(StateUpdaterError::InternalError)
+            .map_err(StateUpdaterError::InternalError)?;
+        Ok(state_updater)
     }
 
     pub async fn update_state(&mut self) -> Result<(), StateUpdaterError> {
