@@ -57,6 +57,12 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install solc
+        uses: lambdaclass/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
+
       - name: Run tooling cargo check
         run: cargo check --workspace --all-targets
         working-directory: tooling
