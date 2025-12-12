@@ -238,7 +238,7 @@
 
 </style>
 <h1 id="databases"><a class="header" href="#databases">Databases</a></h1>
-<p>Ethrex uses a <code>StoreEngine</code> trait to abstract database behaviour and allow for multiple opt-in backends. It also uses a versioning system to ensure we don't run on invalid data if we restart the node after a breaking change to the DB structure. This system consists of a <code>STORE_SCHEMA_VERSION</code> constant, defined in <code>crates/storage/lib.rs</code> that must be updated after any breaking change and that is checked every time we start the node.</p>
+<p>Ethrex uses a versioning system to ensure we don't run on invalid data if we restart the node after a breaking change to the DB structure. This system consists of a <code>STORE_SCHEMA_VERSION</code> constant, defined in <code>crates/storage/lib.rs</code> that must be increased after any breaking change and that is checked every time we start the node.</p>
 
                     </main>
 
