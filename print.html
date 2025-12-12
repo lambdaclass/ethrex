@@ -12306,14 +12306,18 @@ Prover client options:
 <ul>
 <li><code>crates/l2/prover/src/guest_program/src/sp1/Cargo.toml</code></li>
 <li><code>crates/l2/prover/src/guest_program/src/risc0/Cargo.toml</code></li>
+<li><code>crates/l2/prover/src/guest_program/src/zisk/Cargo.toml</code></li>
+<li><code>crates/l2/prover/src/guest_program/src/openvm/Cargo.toml</code></li>
 <li><code>crates/l2/tee/quote-gen/Cargo.toml</code></li>
 </ul>
-<p>After updating the version in the <code>Cargo.toml</code> files, we need to update the <code>Cargo.lock</code> files to reflect the new versions. Run <code>cargo tree</code> in their respective directories:</p>
+<p>After updating the version in the <code>Cargo.toml</code> files, we need to update the <code>Cargo.lock</code> files to reflect the new versions. Run <code>make update-cargo-lock</code> from the root directory to update all the <code>Cargo.lock</code> files in the repository. You should see changes in at most the following paths:</p>
 <ul>
 <li>In the root directory</li>
-<li><code>crates/l2/prover/src/guest_program/src/sp1</code></li>
-<li><code>crates/l2/prover/src/guest_program/src/risc0</code></li>
-<li><code>crates/l2/tee/quote-gen</code></li>
+<li><code>crates/l2/prover/src/guest_program/src/sp1/Cargo.lock</code></li>
+<li><code>crates/l2/prover/src/guest_program/src/risc0/Cargo.lock</code></li>
+<li><code>crates/l2/prover/src/guest_program/src/zisk/Cargo.lock</code></li>
+<li><code>crates/l2/prover/src/guest_program/src/openvm/Cargo.lock</code></li>
+<li><code>crates/l2/tee/quote-gen/Cargo.lock</code></li>
 </ul>
 <p>Then, go to the <code>CLI.md</code> file located in <code>docs/</code> and update the version of the <code>--builder.extra-data</code> flag default value to match the new version (for both ethrex and ethrex l2 sections).</p>
 <p>Finally, stage and commit the changes to the release branch.</p>
@@ -12328,15 +12332,15 @@ Prover client options:
 git push origin &lt;release_version&gt;
 </code></pre>
 <p>After pushing the tag, a CI job will compile the binaries for different architectures and create a pre-release with the version specified in the tag name. Along with the binaries, a tar file is uploaded with the contracts and the verification keys. The following binaries are built:</p>
-<div class="table-wrapper"><table><thead><tr><th>name</th><th>L2 stack</th><th>Provers</th><th>CUDA support</th></tr></thead><tbody>
-<tr><td>ethrex-linux-x86-64</td><td>❌</td><td>-</td><td>-</td></tr>
-<tr><td>ethrex-linux-aarch64</td><td>❌</td><td>-</td><td>-</td></tr>
-<tr><td>ethrex-linux-macos-aarch64</td><td>❌</td><td>-</td><td>-</td></tr>
-<tr><td>ethrex-l2-linux-x86-64</td><td>✅</td><td>SP1 - RISC0 - Exec</td><td>❌</td></tr>
-<tr><td>ethrex-l2-linux-x86-64-gpu</td><td>✅</td><td>SP1 - RISC0 - Exec</td><td>✅</td></tr>
-<tr><td>ethrex-l2-linux-aarch64</td><td>✅</td><td>SP1 - Exec</td><td>❌</td></tr>
-<tr><td>ethrex-l2-linux-aarch64-gpu</td><td>✅</td><td>SP1 - Exec</td><td>✅</td></tr>
-<tr><td>ethrex-l2-macos-aarch64</td><td>✅</td><td>Exec</td><td>❌</td></tr>
+<div class="table-wrapper"><table><thead><tr><th>name</th><th>L1</th><th>L2 stack</th><th>Provers</th><th>CUDA support</th></tr></thead><tbody>
+<tr><td>ethrex-linux-x86-64</td><td>✅</td><td>❌</td><td>-</td><td>-</td></tr>
+<tr><td>ethrex-linux-aarch64</td><td>✅</td><td>❌</td><td>-</td><td>-</td></tr>
+<tr><td>ethrex-linux-macos-aarch64</td><td>✅</td><td>❌</td><td>-</td><td>-</td></tr>
+<tr><td>ethrex-l2-linux-x86-64</td><td>✅</td><td>✅</td><td>SP1 - RISC0 - Exec</td><td>❌</td></tr>
+<tr><td>ethrex-l2-linux-x86-64-gpu</td><td>✅</td><td>✅</td><td>SP1 - RISC0 - Exec</td><td>✅</td></tr>
+<tr><td>ethrex-l2-linux-aarch64</td><td>✅</td><td>✅</td><td>SP1 - Exec</td><td>❌</td></tr>
+<tr><td>ethrex-l2-linux-aarch64-gpu</td><td>✅</td><td>✅</td><td>SP1 - Exec</td><td>✅</td></tr>
+<tr><td>ethrex-l2-macos-aarch64</td><td>✅</td><td>✅</td><td>Exec</td><td>❌</td></tr>
 </tbody></table>
 </div>
 <p>Also, two docker images are built and pushed to the Github Container registry:</p>
@@ -12346,12 +12350,25 @@ git push origin &lt;release_version&gt;
 </ul>
 <p>A changelog will be generated based on commit names (using conventional commits) from the last stable tag.</p>
 <h2 id="4th---test--publish-release"><a class="header" href="#4th---test--publish-release">4th - Test &amp; Publish Release</a></h2>
-<p>When you are sure all the binaries and docker images work as expected, you can proceed to publish the release. To do so, edit the last pre-release with the following changes:</p>
-<ul>
-<li>Change the name to <code>ethrex: vX.Y.Z</code></li>
-<li>Change the tag to a new one <code>vX.Y.Z</code>. <strong>IMPORTANT</strong>: Make sure to select the <code>release/vX.Y.Z</code> branch when changing the tag.</li>
-<li>Set the release as the latest release (you will need to uncheck the pre-release first).</li>
-</ul>
+<p>Once the pre-release is created and you want to publish the release, go to the <a href="https://github.com/lambdaclass/ethrex/releases">release page</a> and follow the next steps:</p>
+<ol>
+<li>
+<p>Click on the edit button of the last pre-release created</p>
+<p><img src="developers/../img/publish_release_step_1.png" alt="edit button" /></p>
+</li>
+<li>
+<p>Manually create the tag <code>vX.Y.Z</code></p>
+<p><img src="developers/../img/publish_release_step_2.png" alt="edit tag" /></p>
+</li>
+<li>
+<p>Update the release title</p>
+<p><img src="developers/../img/publish_release_step_3.png" alt="edit title" /></p>
+</li>
+<li>
+<p>Set the release as the latest release (you will need to uncheck the pre-release first). And finally, click on <code>Update release</code></p>
+<p><img src="developers/../img/publish_release_step_4.png" alt="set latest release" /></p>
+</li>
+</ol>
 <p>Once done, the CI will publish new tags for the already compiled docker images:</p>
 <ul>
 <li><code>ghcr.io/lambdaclass/ethrex:X.Y.Z</code>, <code>ghcr.io/lambdaclass/ethrex:latest</code></li>
