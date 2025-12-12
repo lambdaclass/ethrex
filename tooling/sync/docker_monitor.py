@@ -178,9 +178,26 @@ def main():
     
     instances = [Instance(n.strip(), p, c.strip()) for n, p, c in zip(names, ports, containers)]
     
+    # Detect state of already-running containers
     for inst in instances:
         if t := container_start_time(inst.container):
-            inst.start_time, inst.status = t, "syncing"
+            inst.start_time = t
+            # Check if already synced
+            syncing = rpc_call(inst.rpc_url, "eth_syncing")
+            if syncing is False:
+                # Already synced - go straight to block_processing
+                block = rpc_call(inst.rpc_url, "eth_blockNumber")
+                block = int(block, 16) if block else 0
+                inst.status = "block_processing"
+                inst.sync_time = time.time() - t
+                inst.block_check_start = time.time()
+                inst.initial_block = block
+                inst.last_block = block
+                inst.last_block_time = time.time()
+            elif syncing is not None:
+                # Still syncing
+                inst.status = "syncing"
+            # else: node not responding yet, stay in "waiting"
     
     hostname, commit = socket.gethostname(), git_commit()
     print(f"🔍 Monitoring {len(instances)} instances (timeout: {args.timeout}m)", flush=True)
