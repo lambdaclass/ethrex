@@ -15,6 +15,14 @@ inputs:
     description: Ethrex Docker image tag.
     required: false
     default: main
+  cl_type:
+    description: Consensus layer type (lighthouse, prysm, etc).
+    required: false
+    default: lighthouse
+  cl_image:
+    description: Consensus layer Docker image and tag.
+    required: false
+    default: sigp/lighthouse:v8.0.1
 
 runs:
   using: composite
@@ -33,6 +41,8 @@ runs:
         TIMEOUT: ${{ inputs.timeout }}
         ETHREX_IMAGE: ${{ inputs.ethrex_image }}
         ETHREX_TAG: ${{ inputs.ethrex_tag }}
+        CL_TYPE: ${{ inputs.cl_type }}
+        CL_IMAGE: ${{ inputs.cl_image }}
       run: |
         cat > .github/config/assertoor/network_params.generated.yaml <<YAML
         participants:
@@ -41,8 +51,8 @@ runs:
             el_extra_params:
               - "--syncmode=snap"
               - "--log.level=info"
-            cl_type: lighthouse
-            cl_image: sigp/lighthouse:v8.0.1
+            cl_type: ${CL_TYPE}
+            cl_image: ${CL_IMAGE}
             count: 1
 
         network_params:
@@ -72,7 +82,7 @@ runs:
     - name: Run assertoor
       uses: ethpandaops/kurtosis-assertoor-github-action@v1
       with:
-        enclave_name: ethrex-assertoor-${{ inputs.network }}
+        enclave_name: ethrex-assertoor-${{ inputs.network }}-${{ inputs.cl_type }}
         kurtosis_version: 1.10.2
         ethereum_package_url: github.com/ethpandaops/ethereum-package
         ethereum_package_branch: 82e5a7178138d892c0c31c3839c89d53ffd42d9a
