@@ -241,13 +241,13 @@ snapsync-docker-logs: ## Tail logs from all networks.
 	$(SNAPSYNC_COMPOSE) logs -f
 
 snapsync-docker-logs-%: ## Tail logs for a specific network (e.g., snapsync-docker-logs-hoodi).
-	$(SNAPSYNC_COMPOSE) logs -f ethrex-$* lighthouse-$*
+	$(SNAPSYNC_COMPOSE) logs -f ethrex-$* consensus-$*
 
 snapsync-docker-logs-ethrex-%: ## Tail only ethrex logs for a network (e.g., snapsync-docker-logs-ethrex-hoodi).
 	$(SNAPSYNC_COMPOSE) logs -f ethrex-$*
 
-snapsync-docker-logs-lighthouse-%: ## Tail only lighthouse logs for a network (e.g., snapsync-docker-logs-lighthouse-hoodi).
-	$(SNAPSYNC_COMPOSE) logs -f lighthouse-$*
+snapsync-docker-logs-consensus-%: ## Tail only consensus logs for a network (e.g., snapsync-docker-logs-consensus-hoodi).
+	$(SNAPSYNC_COMPOSE) logs -f consensus-$*
 
 snapsync-docker-status: ## Show container status and quick RPC sync check.
 	@echo "=== Container Status ==="
