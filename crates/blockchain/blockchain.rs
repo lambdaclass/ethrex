@@ -493,7 +493,7 @@ impl Blockchain {
                     .map(keccak)
                     .unwrap_or(*EMPTY_TRIE_HASH);
                 self.storage
-                    .open_storage_trie(account_hash, root, parent_header.state_root)?
+                    .open_storage_trie(account_hash, parent_header.state_root, root)?
             }
             None => self.storage.open_state_trie(parent_header.state_root)?,
         })
