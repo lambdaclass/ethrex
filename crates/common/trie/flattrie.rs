@@ -319,7 +319,7 @@ impl FlatTrie {
                 debug_assert!(partial.is_leaf());
 
                 if partial == path {
-                    Ok(self.put(self_view.node_type, NodeData::Leaf { partial, value }))
+                    Ok(self.put_leaf(partial, value))
                 } else {
                     // Current node will be replaced with a branch or extension node
                     let match_index = path.count_prefix(&partial);
@@ -371,14 +371,14 @@ impl FlatTrie {
                 if match_index == prefix.len() {
                     let path = path.offset(match_index);
                     let new_child_view_index = self.insert_inner(
-                        child.expect("missing child of extension node"),
+                        child.expect("missing child of extension node at match_index == prefix"),
                         path,
                         value,
                     )?;
                     Ok(self.put_extension(prefix, new_child_view_index))
                 } else if match_index == 0 {
                     let new_node_view_index = if prefix.len() == 1 {
-                        child.expect("missing child of extension node")
+                        child.expect("missing child of extension node at match_index == 0")
                     } else {
                         // New extension with self_node as a child
                         let node_children = NodeType::Extension { child };
@@ -441,12 +441,8 @@ impl FlatTrie {
                         // TODO: we are not differentiating between a child which is not included in the data
                         // vs an empty choice. We should decode the RLP and get the information from there,
                         // or it could be added to the view.
-                        None => {
-                            self.put_leaf(path, value)
-                        }
-                        Some(view_index) => {
-                            self.insert_inner(view_index, path, value)?
-                        }
+                        None => self.put_leaf(path, value),
+                        Some(view_index) => self.insert_inner(view_index, path, value)?,
                     };
                     children[choice] = Some(new_child_view_index);
                     let children = children
@@ -459,6 +455,81 @@ impl FlatTrie {
                     // We disallow values in branchs
                     unreachable!("wanted to insert value in a branch");
                 }
+            }
+        }
+    }
+
+    pub fn remove(&mut self, path: Vec<u8>) -> Result<(), RLPDecodeError> {
+        let path = Nibbles::from_bytes(&path);
+        if self.get_root_view().is_some() {
+            self.root_index = self.remove_inner(self.root_index, path)?;
+        }
+        self.root_hash = None;
+        Ok(())
+    }
+
+    fn remove_inner(
+        &mut self,
+        self_view_index: usize,
+        mut path: Nibbles,
+    ) -> Result<Option<usize>, RLPDecodeError> {
+        let self_view = self.views[self_view_index];
+        match self_view.node_type {
+            NodeType::Leaf => {
+                let Some(items) = self.get_encoded_items(&self_view)? else {
+                    panic!();
+                };
+
+                let (partial, _) = decode_bytes(items[0])?;
+                let partial = Nibbles::decode_compact(partial);
+                debug_assert!(partial.is_leaf());
+
+                if partial == path {
+                    Ok(None)
+                } else {
+                    Ok(Some(self_view_index))
+                }
+            }
+            NodeType::Extension { child } => {
+                let mut prefix = self.get_extension_prefix(&self_view)?;
+
+                if path.skip_prefix(prefix) {
+                    let new_child_view_index = self.remove_inner(
+                        child.expect("missing child of extension node at remove"),
+                        path,
+                    )?;
+                    let Some(new_child_view_index) = new_child_view_index else {
+                        return Ok(None);
+                    };
+
+                    let new_child_view = self.get_view(new_child_view_index).unwrap();
+                    let new_view_index = match new_child_view.node_type {
+                        NodeType::Branch { .. } => self.put_extension(prefix, new_child_view_index),
+                        NodeType::Extension {
+                            child: new_extension_child,
+                        } => {
+                            let new_child_prefix = self.get_extension_prefix(new_child_view)?;
+                            prefix.extend(&new_child_prefix);
+                            self.put_extension(
+                                prefix,
+                                new_extension_child
+                                    .expect("missing child of new extension at remove"),
+                            )
+                        }
+                        NodeType::Leaf => {
+                            let (partial, value) =
+                                self.get_leaf_partial_and_value(new_child_view)?;
+                            prefix.extend(&partial);
+                            self.put_leaf(prefix, value.to_vec())
+                        }
+                    };
+                    Ok(Some(new_view_index))
+                } else {
+                    Ok(Some(self_view_index))
+                }
+            }
+            NodeType::Branch { mut children } => {
+
             }
         }
     }
@@ -508,8 +579,12 @@ impl FlatTrie {
         self.put(children, data)
     }
 
+    pub fn get_view(&self, index: usize) -> Option<&NodeView> {
+        self.views.get(index)
+    }
+
     pub fn get_root_view(&self) -> Option<&NodeView> {
-        self.views.get(self.root_index)
+        self.get_view(self.root_index)
     }
 
     /// Calculates the hash of a node from a view index of its data.
@@ -546,6 +621,45 @@ impl FlatTrie {
 
     pub fn get_data_view(&self, view: &NodeView) -> &[u8] {
         &self.data[view.data_range.0..view.data_range.1]
+    }
+
+    pub fn get_extension_prefix(&self, view: &NodeView) -> Result<Nibbles, RLPDecodeError> {
+        let Some(items) = self.get_encoded_items(view)? else {
+            panic!();
+        };
+
+        let (prefix, _) = decode_bytes(items[0])?;
+        let prefix = Nibbles::decode_compact(prefix);
+        debug_assert!(!prefix.is_leaf());
+        Ok(prefix)
+    }
+
+    pub fn get_leaf_partial(&self, view: &NodeView) -> Result<Nibbles, RLPDecodeError> {
+        let Some(items) = self.get_encoded_items(view)? else {
+            panic!();
+        };
+
+        let (partial, _) = decode_bytes(items[0])?;
+        let partial = Nibbles::decode_compact(partial);
+        debug_assert!(partial.is_leaf());
+        Ok(partial)
+    }
+
+    pub fn get_leaf_partial_and_value(
+        &self,
+        view: &NodeView,
+    ) -> Result<(Nibbles, &[u8]), RLPDecodeError> {
+        let Some(items) = self.get_encoded_items(view)? else {
+            panic!();
+        };
+
+        let (partial, _) = decode_bytes(items[0])?;
+        let partial = Nibbles::decode_compact(partial);
+        debug_assert!(partial.is_leaf());
+
+        let (value, _) = decode_bytes(items[1])?;
+
+        Ok((partial, value))
     }
 }
 
