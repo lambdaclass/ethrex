@@ -509,6 +509,7 @@ async fn compile_and_deploy_counter(
         false,
         Some(&remappings),
         &[contracts_path],
+        None,
     )?;
     let init_code_l2 = hex::decode(String::from_utf8(std::fs::read(
         "contracts/solc_out/Counter.bin",
