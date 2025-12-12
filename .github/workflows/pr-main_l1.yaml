@@ -87,7 +87,15 @@ jobs:
 
       - name: Run unit tests
         run: |
-          cargo test --workspace --exclude ethrex-l2 ethrex-sdk
+          cargo test --workspace \
+            --exclude ethrex-l2 \
+            --exclude ethrex-l2-common \
+            --exclude ethrex-l2-rpc \
+            --exclude ethrex-sdk \
+            --exclude ethrex-sdk-contract-utils \
+            --exclude ethrex-prover \
+            --exclude ethrex-storage-rollup \
+            --exclude guest_program
 
   docker_build:
     name: Build Docker
