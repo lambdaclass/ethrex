@@ -9,8 +9,11 @@ use std::{
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
-use ethrex_blockchain::{BlockchainOptions, BlockchainType, L2Config, error::ChainError};
-use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis};
+use ethrex_blockchain::{
+    BlockchainOptions, BlockchainType, L2Config,
+    error::{ChainError, InvalidBlockError},
+};
+use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
 use ethrex_p2p::{
     discv4::{peer_table::TARGET_PEERS, server::INITIAL_LOOKUP_INTERVAL_MS},
     sync::SyncMode,
@@ -641,6 +644,9 @@ pub async fn import_blocks(
                 continue;
             }
 
+            validate_block_body(&block.header, &block.body)
+                .map_err(InvalidBlockError::InvalidBody)?;
+
             if index + MIN_FULL_BLOCKS < size {
                 block_batch.push(block);
                 if block_batch.len() >= IMPORT_BATCH_SIZE || index + MIN_FULL_BLOCKS + 1 == size {
@@ -755,6 +761,9 @@ pub async fn import_blocks_bench(
                 info!("Block {} is already in the blockchain", block.hash());
                 continue;
             }
+
+            validate_block_body(&block.header, &block.body)
+                .map_err(InvalidBlockError::InvalidBody)?;
 
             blockchain
                 .add_block_pipeline(block)
