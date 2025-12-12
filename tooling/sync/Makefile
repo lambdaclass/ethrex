@@ -201,7 +201,6 @@ endif
 
 LOGS_FILE ?= output.log
 
-
 # Use make server-sync SERVER_SYNC_BRANCH=branch_name SERVER_SYNC_NETWORK=network_name LOGS_FILE=logs_file_name  HEALING=1 MEMORY=1 FULL_SYNC=1
 # SERVER_SYNC_BRANCH is the branch to checkout before syncing, SERVER_SYNC_NETWORK is the network to sync, LOGS_FILE is the file to output logs to, HEALING enables healing mode, MEMORY uses memory datadir, FULL_SYNC switches to full-sync mode.
 server-sync:
@@ -224,39 +223,61 @@ server-sync:
 	tmux new-window -t sync:2 -n ethrex "cd ../../metrics && docker stop metrics-ethereum-metrics-exporter-1 || true && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d && cd .. && ulimit -n 1000000 && rm -rf ~/.local/share/ethrex && RUST_LOG=info,ethrex_p2p::sync=debug $(if $(DEBUG_ASSERT),RUSTFLAGS='-C debug-assertions=yes') $(if $(HEALING),SKIP_START_SNAP_SYNC=1) cargo run --release --bin ethrex --features rocksdb --  --http.addr 0.0.0.0 --metrics --metrics.port 3701 --network $(SERVER_SYNC_NETWORK) $(if $(MEMORY),--datadir memory) --authrpc.jwtsecret ~/secrets/jwt.hex $(if $(or $(FULL_SYNC),$(HEALING)),--syncmode full)  2>&1 | tee $(LOGS_FILE)"
 
 # ==============================================================================
-# Test with 2 Hoodi instances
+# Docker Compose Multi-Network Snapsync
 # ==============================================================================
 
-SNAPSYNC_TEST_COMPOSE = docker compose -f docker-compose.snapsync-test.yaml
+SNAPSYNC_COMPOSE = docker compose -f docker-compose.snapsync.yaml
 
-snapsync-test-up: ## Start 2 hoodi instances for testing.
-	$(SNAPSYNC_TEST_COMPOSE) up -d
+snapsync-docker-up: ## Start all 3 networks (hoodi, sepolia, mainnet) via Docker Compose.
+	$(SNAPSYNC_COMPOSE) up -d
 
-snapsync-test-down: ## Stop test containers.
-	$(SNAPSYNC_TEST_COMPOSE) down
+snapsync-docker-down: ## Stop and remove all snapsync containers.
+	$(SNAPSYNC_COMPOSE) down
 
-snapsync-test-clean: ## Stop and remove test volumes.
-	$(SNAPSYNC_TEST_COMPOSE) down -v
+snapsync-docker-clean: ## Stop, remove containers AND volumes (full reset).
+	$(SNAPSYNC_COMPOSE) down -v
 
-snapsync-test-logs: ## Tail logs from test instances.
-	$(SNAPSYNC_TEST_COMPOSE) logs -f
+snapsync-docker-logs: ## Tail logs from all networks.
+	$(SNAPSYNC_COMPOSE) logs -f
 
-snapsync-test-status: ## Check sync status of test instances.
+snapsync-docker-logs-%: ## Tail logs for a specific network (e.g., snapsync-docker-logs-hoodi).
+	$(SNAPSYNC_COMPOSE) logs -f ethrex-$* lighthouse-$*
+
+snapsync-docker-logs-ethrex-%: ## Tail only ethrex logs for a network (e.g., snapsync-docker-logs-ethrex-hoodi).
+	$(SNAPSYNC_COMPOSE) logs -f ethrex-$*
+
+snapsync-docker-logs-lighthouse-%: ## Tail only lighthouse logs for a network (e.g., snapsync-docker-logs-lighthouse-hoodi).
+	$(SNAPSYNC_COMPOSE) logs -f lighthouse-$*
+
+snapsync-docker-status: ## Show container status and quick RPC sync check.
 	@echo "=== Container Status ==="
-	@$(SNAPSYNC_TEST_COMPOSE) ps
+	@$(SNAPSYNC_COMPOSE) ps
 	@echo ""
 	@echo "=== Sync Status ==="
-	@for port in 8545:hoodi-1 8546:hoodi-2; do \
-		name=$${port#*:}; \
+	@for port in 8545:hoodi 8546:sepolia 8547:mainnet; do \
+		network=$${port#*:}; \
 		p=$${port%:*}; \
 		result=$$(curl -s -X POST -H "Content-Type: application/json" \
 			--data '{"jsonrpc":"2.0","method":"eth_syncing","params":[],"id":1}' \
 			http://localhost:$$p 2>/dev/null | grep -o '"result":[^,}]*' || echo '"result":null'); \
 		if echo "$$result" | grep -q "false"; then \
-			echo "✅ $$name (port $$p): synced"; \
+			echo "✅ $$network (port $$p): synced"; \
 		elif echo "$$result" | grep -q "null"; then \
-			echo "⏳ $$name (port $$p): not reachable"; \
+			echo "⏳ $$network (port $$p): not reachable"; \
 		else \
-			echo "🔄 $$name (port $$p): syncing"; \
+			echo "🔄 $$network (port $$p): syncing"; \
 		fi; \
 	done
+
+snapsync-docker-restart: ## Restart the cycle (clean volumes + start fresh).
+	$(SNAPSYNC_COMPOSE) down -v
+	$(SNAPSYNC_COMPOSE) up -d
+
+snapsync-docker-monitor: ## Monitor all networks and report success/failure (like server_runner.py).
+	python3 docker_monitor.py --ports 8545,8546,8547 --names hoodi,sepolia,mainnet --exit-on-success
+
+snapsync-docker-run: ## Full run: start all networks + monitor until success/failure.
+	$(SNAPSYNC_COMPOSE) up -d
+	@echo "Waiting 10s for containers to start..."
+	@sleep 10
+	python3 docker_monitor.py --ports 8545,8546,8547 --names hoodi,sepolia,mainnet --exit-on-success
