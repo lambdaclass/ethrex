@@ -470,7 +470,7 @@ impl L1Committer {
 
             // Here we use the checkpoint store because we need the previous
             // state available (i.e. not pruned) for re-execution.
-            let vm_db = StoreVmDatabase::new(one_time_checkpoint_store.clone(), parent_header);
+            let vm_db = StoreVmDatabase::new(one_time_checkpoint_store.clone(), parent_header)?;
 
             let mut vm = Evm::new_for_l2(vm_db, *fee_config)?;
 
@@ -729,7 +729,7 @@ impl L1Committer {
             let l2_messages = get_block_l2_messages(&receipts);
             info!("Got l2 messages: {}", l2_messages.len());
             let privileged_transactions =
-                get_block_l1_privileged_transactions(&txs, self.store.chain_config.chain_id);
+                get_block_l1_privileged_transactions(&txs, self.store.get_chain_config().chain_id);
 
             // Get block account updates.
             let account_updates = if let Some(account_updates) = self
@@ -750,7 +750,7 @@ impl L1Committer {
 
                 // Here we use the checkpoint store because we need the previous
                 // state available (i.e. not pruned) for re-execution.
-                let vm_db = StoreVmDatabase::new(checkpoint_store.clone(), parent_header);
+                let vm_db = StoreVmDatabase::new(checkpoint_store.clone(), parent_header)?;
 
                 let fee_config = self
                     .rollup_store
@@ -1034,7 +1034,7 @@ impl L1Committer {
         path: &Path,
         rollup_store: &StoreRollup,
     ) -> Result<(Store, Arc<Blockchain>), CommitterError> {
-        checkpointee.create_checkpoint(&path).await?;
+        checkpointee.create_checkpoint(path)?;
         Self::get_checkpoint_from_path(
             self.genesis.clone(),
             self.blockchain.options.clone(),
