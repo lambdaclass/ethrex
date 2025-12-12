@@ -31,6 +31,7 @@ STATUS_PRINT_INTERVAL = 30  # seconds - print status every 30s
 class Instance:
     name: str
     port: int
+    container_name: str = ""  # Docker container name
     status: str = "waiting"  # waiting, syncing, synced, block_production, success, failed
     start_time: float = 0
     sync_time: float = 0
@@ -63,6 +64,28 @@ def get_git_commit() -> Optional[str]:
     try:
         return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"]).decode().strip()
     except:
+        return None
+
+
+def get_container_start_time(container_name: str) -> Optional[float]:
+    """Get the start time of a Docker container as Unix timestamp."""
+    try:
+        result = subprocess.check_output([
+            "docker", "inspect", "-f", "{{.State.StartedAt}}", container_name
+        ], stderr=subprocess.DEVNULL).decode().strip()
+        # Parse ISO format: 2024-12-11T10:30:45.123456789Z
+        from datetime import datetime
+        # Handle nanoseconds by truncating to microseconds
+        if '.' in result:
+            base, frac = result.rsplit('.', 1)
+            # Remove 'Z' and truncate to 6 digits for microseconds
+            frac = frac.rstrip('Z')[:6]
+            result = f"{base}.{frac}"
+        else:
+            result = result.rstrip('Z')
+        dt = datetime.fromisoformat(result.replace('Z', '+00:00'))
+        return dt.timestamp()
+    except Exception:
         return None
 
 
@@ -116,6 +139,8 @@ def parse_args():
                         help="Comma-separated RPC ports (default: 8545,8546)")
     parser.add_argument("--names", type=str, default="hoodi-1,hoodi-2",
                         help="Comma-separated instance names (default: hoodi-1,hoodi-2)")
+    parser.add_argument("--containers", type=str, default="",
+                        help="Comma-separated Docker container names (default: ethrex-<name>)")
     parser.add_argument("--timeout", type=int, default=180,
                         help="Sync timeout in minutes (default: 180)")
     parser.add_argument("--no-slack", action="store_true",
@@ -238,7 +263,20 @@ def main():
         print("Error: ports and names must have same length", file=sys.stderr)
         sys.exit(1)
     
-    instances = [Instance(name=n, port=p) for n, p in zip(names, ports)]
+    # Get container names (default: ethrex-<name>)
+    if args.containers:
+        containers = [c.strip() for c in args.containers.split(",")]
+    else:
+        containers = [f"ethrex-{n}" for n in names]
+    
+    instances = [Instance(name=n, port=p, container_name=c) for n, p, c in zip(names, ports, containers)]
+    
+    # Try to get container start times
+    for inst in instances:
+        start_time = get_container_start_time(inst.container_name)
+        if start_time:
+            inst.start_time = start_time
+            inst.status = "syncing"  # Container is running, assume syncing
     
     print(f"🔍 Monitoring {len(instances)} instances...")
     print(f"   Timeout: {args.timeout} minutes")

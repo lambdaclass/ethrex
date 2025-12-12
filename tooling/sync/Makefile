@@ -274,10 +274,10 @@ snapsync-docker-restart: ## Restart the cycle (clean volumes + start fresh).
 	$(SNAPSYNC_COMPOSE) up -d
 
 snapsync-docker-monitor: ## Monitor all networks and report success/failure (like server_runner.py).
-	python3 docker_monitor.py --ports 8545,8546,8547 --names hoodi,sepolia,mainnet --exit-on-success
+	python3 docker_monitor.py --ports 8545,8546,8547 --names hoodi,sepolia,mainnet --containers ethrex-hoodi,ethrex-sepolia,ethrex-mainnet --exit-on-success
 
 snapsync-docker-run: ## Full run: start all networks + monitor until success/failure.
 	$(SNAPSYNC_COMPOSE) up -d
 	@echo "Waiting 10s for containers to start..."
 	@sleep 10
-	python3 docker_monitor.py --ports 8545,8546,8547 --names hoodi,sepolia,mainnet --exit-on-success
+	python3 docker_monitor.py --ports 8545,8546,8547 --names hoodi,sepolia,mainnet --containers ethrex-hoodi,ethrex-sepolia,ethrex-mainnet --exit-on-success
