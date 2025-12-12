@@ -40,8 +40,8 @@ const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12
 /// The initial interval between peer lookups, until the number of peers reaches
 /// [target_peers](DiscoverySideCarState::target_peers), or the number of
 /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
-pub const INITIAL_LOOKUP_INTERVAL: Duration = Duration::from_millis(100); // 10 per second
-pub const LOOKUP_INTERVAL: Duration = Duration::from_millis(600); // 100 per minute
+pub const INITIAL_LOOKUP_INTERVAL_MS: f64 = 100.0; // 10 per second
+pub const LOOKUP_INTERVAL_MS: f64 = 600.0; // 100 per minute
 const CHANGE_FIND_NODE_MESSAGE_INTERVAL: Duration = Duration::from_secs(5);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -90,6 +90,7 @@ pub struct DiscoveryServer {
     /// The last `FindNode` message sent, cached due to message
     /// signatures being expensive.
     find_node_message: BytesMut,
+    initial_lookup_interval: f64,
 }
 
 impl DiscoveryServer {
@@ -100,6 +101,7 @@ impl DiscoveryServer {
         udp_socket: Arc<UdpSocket>,
         mut peer_table: PeerTable,
         bootnodes: Vec<Node>,
+        initial_lookup_interval: f64,
     ) -> Result<(), DiscoveryServerError> {
         info!("Starting Discovery Server");
 
@@ -119,6 +121,7 @@ impl DiscoveryServer {
             store: storage.clone(),
             peer_table: peer_table.clone(),
             find_node_message: Self::random_message(&signer),
+            initial_lookup_interval,
         };
 
         info!(count = bootnodes.len(), "Adding bootnodes");
@@ -274,12 +277,16 @@ impl DiscoveryServer {
     }
 
     async fn get_lookup_interval(&mut self) -> Duration {
-        if !self.peer_table.target_reached().await.unwrap_or(false) {
-            INITIAL_LOOKUP_INTERVAL
-        } else {
-            trace!("Reached target number of peers or contacts. Using longer lookup interval.");
-            LOOKUP_INTERVAL
-        }
+        let peer_completion = self
+            .peer_table
+            .target_peers_completion()
+            .await
+            .unwrap_or_default();
+        lookup_interval_function(
+            peer_completion,
+            self.initial_lookup_interval,
+            LOOKUP_INTERVAL_MS,
+        )
     }
 
     async fn enr_lookup(&mut self) -> Result<(), DiscoveryServerError> {
@@ -346,7 +353,7 @@ impl DiscoveryServer {
 
         self.send(msg, node.udp_addr()).await?;
 
-        debug!(sent = "Neighbors", to = %format!("{:#x}", node.public_key));
+        trace!(sent = "Neighbors", to = %format!("{:#x}", node.public_key));
 
         Ok(())
     }
@@ -788,6 +795,20 @@ impl Discv4Message {
     pub fn get_node_id(&self) -> H256 {
         node_id(&self.sender_public_key)
     }
+}
+
+pub fn lookup_interval_function(progress: f64, lower_limit: f64, upper_limit: f64) -> Duration {
+    // Smooth progression curve
+    // See https://easings.net/#easeInOutCubic
+    let ease_in_out_cubic = if progress < 0.5 {
+        4.0 * progress.powf(3.0)
+    } else {
+        1.0 - ((-2.0 * progress + 2.0).powf(3.0)) / 2.0
+    };
+    Duration::from_micros(
+        // Use `progress` here instead of `ease_in_out_cubic` for a linear function.
+        (1000f64 * (ease_in_out_cubic * (upper_limit - lower_limit) + lower_limit)).round() as u64,
+    )
 }
 
 // TODO: Reimplement tests removed during snap sync refactor

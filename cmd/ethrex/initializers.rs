@@ -446,6 +446,7 @@ pub async fn init_l1(
         get_client_version(),
         None,
         opts.tx_broadcasting_time_interval,
+        opts.lookup_interval,
     )
     .await
     .expect("P2P context could not be created");
