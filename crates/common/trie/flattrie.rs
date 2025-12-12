@@ -384,14 +384,9 @@ impl FlatTrie {
                     } else {
                         // New extension with self_node as a child
                         let node_children = NodeType::Extension { child };
-                        let child_hash = NodeHash::decode(
-                            self.get_encoded_items(&self_view)?
-                                .expect("missing data of self ext")[1],
-                        )?;
-
                         let node_data = NodeData::Extension {
                             path: prefix.offset(1),
-                            child: child_hash,
+                            child: self.get_extension_child(&self_view)?,
                         };
                         self.put(node_children, node_data)
                     };
@@ -406,13 +401,9 @@ impl FlatTrie {
                     self.insert_inner(branch_view_index, path, value)
                 } else {
                     let extension_children = NodeType::Extension { child };
-                    let child_hash = NodeHash::decode(
-                        self.get_encoded_items(&self_view)?
-                            .expect("missing data of self ext")[1],
-                    )?;
                     let extension_data = NodeData::Extension {
                         path: prefix.offset(match_index),
-                        child: child_hash,
+                        child: self.get_extension_child(&self_view)?,
                     };
                     let new_extension_view_index = self.put(extension_children, extension_data);
                     let new_node_view_index = self.insert_inner(
@@ -686,6 +677,13 @@ impl FlatTrie {
         Ok(prefix)
     }
 
+    pub fn get_extension_child(&self, view: &NodeView) -> Result<NodeHash, RLPDecodeError> {
+        let Some(items) = self.get_encoded_items(view)? else {
+            panic!();
+        };
+        Ok(decode_child(items[1]))
+    }
+
     pub fn get_leaf_partial(&self, view: &NodeView) -> Result<Nibbles, RLPDecodeError> {
         let Some(items) = self.get_encoded_items(view)? else {
             panic!();
@@ -757,16 +755,17 @@ impl FlatTrie {
 
 #[cfg(test)]
 mod test {
+    use ethrex_rlp::encode::RLPEncode;
     use proptest::{
         collection::{btree_set, vec},
         prelude::*,
     };
 
-    use crate::{Trie, flattrie::FlatTrie};
+    use crate::{Nibbles, Trie, flattrie::FlatTrie};
 
     proptest! {
         #[test]
-        fn proptest_insert_compare_hash(data in btree_set(vec(any::<u8>(), 1), 1..100)) {
+        fn proptest_insert_compare_hash(data in btree_set(vec(any::<u8>(), 32), 1..100)) {
             let mut trie = Trie::new_temp();
             let mut flat_trie = FlatTrie::default();
 
@@ -783,7 +782,7 @@ mod test {
         }
 
         #[test]
-        fn proptest_insert_remove_compare_hash(data in btree_set(vec(any::<u8>(), 1), 1..100)) {
+        fn proptest_insert_remove_compare_hash(data in btree_set(vec(any::<u8>(), 32), 1..100)) {
             let mut trie = Trie::new_temp();
             let mut flat_trie = FlatTrie::default();
 
