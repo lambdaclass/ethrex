@@ -63,7 +63,7 @@ After pushing the tag, a CI job will compile the binaries for different architec
 | ethrex-l2-linux-x86-64 | ✅ | ✅ | SP1 - RISC0 - Exec | ❌ |
 | ethrex-l2-linux-x86-64-gpu | ✅ | ✅ | SP1 - RISC0 - Exec | ✅ |
 | ethrex-l2-linux-aarch64 | ✅ | ✅ | SP1 - Exec | ❌ |
-| ethrex-l2-linux-aarch64-gpu | ✅ | SP1 - Exec | ✅ |
+| ethrex-l2-linux-aarch64-gpu| ✅ | ✅ | SP1 - Exec | ✅ |
 | ethrex-l2-macos-aarch64 | ✅ | ✅ | Exec | ❌ |
 
 Also, two docker images are built and pushed to the Github Container registry:
@@ -74,13 +74,23 @@ A changelog will be generated based on commit names (using conventional commits)
 
 ## 4th - Test & Publish Release
 
-Once the pre-release is created and you want to publish the release, go to the [release page](https://github.com/lambdaclass/ethrex/releases) and edit the last pre-release name to remove the `-rc.W` post-fix. E.g.: change `ethrex: vX.Y.Z-rc.W` to `ethrex: vX.Y.Z`.
+Once the pre-release is created and you want to publish the release, go to the [release page](https://github.com/lambdaclass/ethrex/releases) and follow the next steps:
 
-When you are sure all the binaries and docker images work as expected, you can proceed to publish the release. To do so, edit the last pre-release with the following changes:
+1. Click on the edit button of the last pre-release created
 
-- Change the name to `ethrex: vX.Y.Z`
-- Change the tag to a new one `vX.Y.Z`. **IMPORTANT**: Make sure to select the `release/vX.Y.Z` branch when changing the tag.
-- Set the release as the latest release (you will need to uncheck the pre-release first).
+    ![edit button](../img/publish_release_step_1.png)
+
+2. Manually create the tag `vX.Y.Z`
+
+    ![edit tag](../img/publish_release_step_2.png)
+
+3. Update the release title
+
+    ![edit title](../img/publish_release_step_3.png)
+
+4. Set the release as the latest release (you will need to uncheck the pre-release first). And finally, click on `Update release`
+
+    ![set latest release](../img/publish_release_step_4.png)
 
 Once done, the CI will publish new tags for the already compiled docker images:
 
