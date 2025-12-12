@@ -621,8 +621,8 @@ impl Blockchain {
                         (
                             storage.open_storage_trie(
                                 hashed_address_h256,
-                                account_state.storage_root,
                                 parent_header.state_root,
+                                account_state.storage_root,
                             ),
                             Default::default(),
                         )
