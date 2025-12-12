@@ -26,6 +26,13 @@ pub struct RocksDBBackend {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
 }
 
+impl Drop for RocksDBBackend {
+    fn drop(&mut self) {
+        // Wait for all background work to finish before dropping the DB
+        self.db.cancel_all_background_work(true);
+    }
+}
+
 impl RocksDBBackend {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
         // Rocksdb optimizations options
@@ -261,13 +268,6 @@ impl StorageBackend for RocksDBBackend {
         })?;
 
         Ok(())
-    }
-}
-
-impl Drop for RocksDBBackend {
-    fn drop(&mut self) {
-        // Wait for all background work to finish before dropping the DB
-        self.db.cancel_all_background_work(true);
     }
 }
 
