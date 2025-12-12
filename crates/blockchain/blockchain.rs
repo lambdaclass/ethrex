@@ -132,13 +132,21 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
 
 enum MerklizationRequest {
     Delete(H256),
-    Merklize {
-        prefix: Option<H256>,
+    MerklizeStorage {
+        prefix: H256,
         key: H256,
         value: Vec<u8>,
     },
-    Collect {
-        tx: Sender<(Option<H256>, u8, BranchNode, Vec<TrieNode>)>,
+    MerklizeAccount {
+        hashed_account: H256,
+        storage_root_node: Option<BranchNode>,
+        state: Option<AccountState>,
+    },
+    CollectStorages {
+        tx: Sender<(H256, u8, BranchNode, Vec<TrieNode>)>,
+    },
+    CollectState {
+        tx: Sender<(u8, BranchNode, Vec<TrieNode>, Vec<(H256, Vec<TrieNode>)>)>,
     },
 }
 
@@ -337,16 +345,17 @@ impl Blockchain {
         let state_trie = self.storage.open_state_trie(parent_header.state_root)?;
         let mut account_updates = Vec::new();
         let mut account_state: FxHashMap<H256, Option<AccountState>> = Default::default();
+        let mut code_updates: FxHashMap<H256, Code> = Default::default();
 
         for updates in rx {
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
             *max_queue_length = current_length.max(*max_queue_length);
             for update in updates {
                 account_updates.push(update.clone());
-                let prefix = keccak(update.address);
+                let hashed_address = keccak(update.address);
                 if update.removed_storage | update.removed {
                     for tx in &workers_tx {
-                        tx.send(MerklizationRequest::Delete(prefix))
+                        tx.send(MerklizationRequest::Delete(hashed_address))
                             .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                     }
                 }
@@ -354,8 +363,8 @@ impl Blockchain {
                     let hashed_key = keccak(key);
                     let bucket = hashed_key.as_fixed_bytes()[0] >> 4;
                     workers_tx[bucket as usize]
-                        .send(MerklizationRequest::Merklize {
-                            prefix: Some(prefix),
+                        .send(MerklizationRequest::MerklizeStorage {
+                            prefix: hashed_address,
                             key: hashed_key,
                             value: if value.is_zero() {
                                 vec![]
@@ -365,18 +374,32 @@ impl Blockchain {
                         })
                         .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                 }
-                if !account_state.contains_key(&prefix) {
-                    account_state.insert(prefix, Some(match state_trie.get(&prefix.0.to_vec())? {
+                let mut state = match account_state.get(&hashed_address) {
+                    Some(value) => value.clone().unwrap_or_default(),
+                    None => match state_trie.get(&hashed_address.0.to_vec())? {
                         Some(rlp) => AccountState::decode(&rlp)?,
                         None => AccountState::default(),
-                    }));
+                    },
                 };
+                if let Some(info) = update.info {
+                    if let Some(code) = update.code {
+                        code_updates.insert(info.code_hash, code);
+                    }
+                    state.balance = info.balance;
+                    state.nonce = info.nonce;
+                    state.code_hash = info.code_hash;
+                }
+                if update.removed {
+                    account_state.insert(hashed_address, None);
+                } else {
+                    account_state.insert(hashed_address, Some(state.clone()));
+                }
             }
         }
 
         let (gatherer_tx, gatherer_rx) = channel();
         for tx in &workers_tx {
-            tx.send(MerklizationRequest::Collect {
+            tx.send(MerklizationRequest::CollectStorages {
                 tx: gatherer_tx.clone(),
             })
             .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
@@ -385,11 +408,6 @@ impl Blockchain {
 
         let mut storage_state: FxHashMap<H256, (BranchNode, Vec<TrieNode>)> = Default::default();
         for (prefix, index, subroot, nodes) in gatherer_rx {
-            let Some(prefix) = prefix else {
-                return Err(StoreError::Custom(
-                    "prefixless storage merkelization result".to_string(),
-                ));
-            };
             let choice = subroot.choices[index as usize].clone();
             let (root, node_list) = match storage_state.entry(prefix) {
                 Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
@@ -399,65 +417,28 @@ impl Blockchain {
             root.choices[index as usize] = choice;
         }
 
-        let mut storage_roots: FxHashMap<H256, H256> = Default::default();
         let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
-        for (hashed_account, (root, mut nodes)) in storage_state {
-            if let Some(root) =
-                self.collapse_root_node(parent_header, Some(hashed_account), root)?
-            {
-                let mut root = NodeRef::from(root);
-                let hash = root.commit(Nibbles::default(), &mut nodes);
-                storage_roots.insert(hashed_account, hash.finalize());
+
+        for (hashed_account, state) in account_state {
+            let bucket = hashed_account.as_fixed_bytes()[0] >> 4;
+            let root = if let Some((root, nodes)) = storage_state.remove(&hashed_account) {
+                storage_updates.push((hashed_account, nodes));
+                Some(root)
             } else {
-                nodes.push((Nibbles::default(), vec![RLP_NULL]));
-                storage_roots.insert(hashed_account, *EMPTY_TRIE_HASH);
-            }
-            storage_updates.push((hashed_account, nodes));
-        }
-
-        let mut code_updates: FxHashMap<H256, Code> = Default::default();
-
-        for update in account_updates {
-            let hashed_address = keccak(update.address);
-            let mut state = match account_state.get(&hashed_address) {
-                Some(value) => value.clone().unwrap_or_default(),
-                None => match state_trie.get(&hashed_address.0.to_vec())? {
-                    Some(rlp) => AccountState::decode(&rlp)?,
-                    None => AccountState::default(),
-                },
+                None
             };
-            if let Some(info) = update.info {
-                if let Some(code) = update.code {
-                    code_updates.insert(info.code_hash, code);
-                }
-                state.balance = info.balance;
-                state.nonce = info.nonce;
-                state.code_hash = info.code_hash;
-            }
-            if let Some(storage_root) = storage_roots.get(&hashed_address) {
-                state.storage_root = *storage_root;
-            }
-            if update.removed {
-                account_state.insert(hashed_address, None);
-            } else {
-                account_state.insert(hashed_address, Some(state.clone()));
-            }
-            workers_tx[hashed_address.as_fixed_bytes()[0] as usize >> 4]
-                .send(MerklizationRequest::Merklize {
-                    prefix: None,
-                    key: hashed_address,
-                    value: if update.removed {
-                        vec![]
-                    } else {
-                        state.encode_to_vec()
-                    },
+            workers_tx[bucket as usize]
+                .send(MerklizationRequest::MerklizeAccount {
+                    hashed_account,
+                    storage_root_node: root,
+                    state,
                 })
                 .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
         }
 
         let (gatherer_tx, gatherer_rx) = channel();
         for tx in &workers_tx {
-            tx.send(MerklizationRequest::Collect {
+            tx.send(MerklizationRequest::CollectState {
                 tx: gatherer_tx.clone(),
             })
             .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
@@ -472,7 +453,8 @@ impl Blockchain {
                 .unwrap_or_else(|| Node::Branch(Box::default())),
         );
         let mut state_updates = Vec::new();
-        for (_prefix, index, subroot, nodes) in gatherer_rx {
+        for (index, subroot, nodes, storage_nodes) in gatherer_rx {
+            storage_updates.extend(storage_nodes);
             state_updates.extend(nodes);
             root.choices[index as usize] = subroot.choices[index as usize].clone();
         }
@@ -574,19 +556,21 @@ impl Blockchain {
         parent_header: &BlockHeader,
         index: u8,
     ) -> Result<(), StoreError> {
-        let mut tree: FxHashMap<Option<H256>, Trie> = Default::default();
+        let mut tree: FxHashMap<H256, Trie> = Default::default();
+        let mut state_trie = self.storage.open_state_trie(parent_header.state_root)?;
+        let mut storage_nodes = vec![];
         for msg in rx {
             match msg {
                 MerklizationRequest::Delete(prefix) => {
                     let mut trie = Trie::new_temp();
                     trie.root = Node::Branch(Box::default()).into();
-                    tree.insert(Some(prefix), trie);
+                    tree.insert(prefix, trie);
                 }
-                MerklizationRequest::Merklize { prefix, key, value } => {
+                MerklizationRequest::MerklizeStorage { prefix, key, value } => {
                     let trie = match tree.entry(prefix) {
                         Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
                         Entry::Vacant(vacant_entry) => {
-                            vacant_entry.insert(self.load_trie(parent_header, prefix)?)
+                            vacant_entry.insert(self.load_trie(parent_header, Some(prefix))?)
                         }
                     };
                     if value.is_empty() {
@@ -595,7 +579,44 @@ impl Blockchain {
                         trie.insert(key.as_bytes().to_vec(), value)?;
                     }
                 }
-                MerklizationRequest::Collect { tx } => {
+                MerklizationRequest::MerklizeAccount {
+                    hashed_account,
+                    storage_root_node,
+                    state,
+                } => {
+                    let mut storage_root = None;
+                    let mut nodes = vec![];
+                    if let Some(root) = storage_root_node {
+                        if let Some(root) =
+                            self.collapse_root_node(parent_header, Some(hashed_account), root)?
+                        {
+                            let mut root = NodeRef::from(root);
+                            let hash = root.commit(Nibbles::default(), &mut nodes);
+                            storage_root = Some(hash.finalize());
+                        } else {
+                            nodes.push((Nibbles::default(), vec![RLP_NULL]));
+                            storage_root = Some(*EMPTY_TRIE_HASH);
+                        }
+                    }
+                    if !nodes.is_empty() {
+                        storage_nodes.push((hashed_account, nodes));
+                    }
+                    match state {
+                        Some(mut state) => {
+                            if let Some(storage_root) = storage_root {
+                                state.storage_root = storage_root;
+                            }
+                            state_trie.insert(
+                                hashed_account.as_bytes().to_vec(),
+                                state.encode_to_vec(),
+                            )?;
+                        }
+                        None => {
+                            state_trie.remove(&hashed_account.as_bytes().to_vec())?;
+                        }
+                    }
+                }
+                MerklizationRequest::CollectStorages { tx } => {
                     for (prefix, mut trie) in tree.drain() {
                         let root = branchify(
                             trie.root_node()?
@@ -609,6 +630,20 @@ impl Blockchain {
                         tx.send((prefix, index, root, nodes))
                             .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                     }
+                }
+                MerklizationRequest::CollectState { tx } => {
+                    let root = branchify(
+                        state_trie
+                            .root_node()?
+                            .map(Arc::unwrap_or_clone)
+                            .unwrap_or_else(|| Node::Branch(Box::default())),
+                    );
+                    state_trie.root = Node::Branch(Box::new(root.clone())).into();
+                    let (_, mut nodes) = state_trie.collect_changes_since_last_hash();
+                    nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
+
+                    tx.send((index, root, nodes, std::mem::take(&mut storage_nodes)))
+                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                 }
             }
         }
