@@ -227,7 +227,8 @@ contract OnChainProposer is
             commit_hash != bytes32(0),
             "OnChainProposer: commit hash is zero"
         );
-        require(new_vk != bytes32(0), "OnChainProposer: vk is zero");
+        // we don't want to restrict setting the vk to zero
+        // as we may want to disable the version
         verificationKeys[commit_hash][VK_SP1] = new_vk;
         emit VerificationKeyUpgraded("SP1", commit_hash, new_vk);
     }
@@ -241,7 +242,8 @@ contract OnChainProposer is
             commit_hash != bytes32(0),
             "OnChainProposer: commit hash is zero"
         );
-        require(new_vk != bytes32(0), "OnChainProposer: vk is zero");
+        // we don't want to restrict setting the vk to zero
+        // as we may want to disable the version
         verificationKeys[commit_hash][VK_RISC0] = new_vk;
         emit VerificationKeyUpgraded("RISC0", commit_hash, new_vk);
     }
