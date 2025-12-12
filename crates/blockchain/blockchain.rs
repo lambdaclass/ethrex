@@ -35,7 +35,7 @@ use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
-use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieNode};
+use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
@@ -407,7 +407,8 @@ impl Blockchain {
         drop(gatherer_tx);
 
         let mut storage_state: FxHashMap<H256, (BranchNode, Vec<TrieNode>)> = Default::default();
-        for (prefix, index, subroot, nodes) in gatherer_rx {
+        for (prefix, index, mut subroot, nodes) in gatherer_rx {
+            subroot.choices.iter_mut().for_each(NodeRef::clear_hash);
             let choice = subroot.choices[index as usize].clone();
             let (root, node_list) = match storage_state.entry(prefix) {
                 Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
@@ -445,13 +446,7 @@ impl Blockchain {
         }
         drop(gatherer_tx);
 
-        let state_trie = self.load_trie(parent_header, None)?;
-        let mut root = branchify(
-            state_trie
-                .root_node()?
-                .map(Arc::unwrap_or_clone)
-                .unwrap_or_else(|| Node::Branch(Box::default())),
-        );
+        let mut root = BranchNode::default();
         let mut state_updates = Vec::new();
         for (index, subroot, nodes, storage_nodes) in gatherer_rx {
             storage_updates.extend(storage_nodes);
@@ -617,33 +612,17 @@ impl Blockchain {
                     }
                 }
                 MerklizationRequest::CollectStorages { tx } => {
-                    for (prefix, mut trie) in tree.drain() {
-                        let root = branchify(
-                            trie.root_node()?
-                                .map(Arc::unwrap_or_clone)
-                                .unwrap_or_else(|| Node::Branch(Box::default())),
-                        );
-                        trie.root = Node::Branch(Box::new(root.clone())).into();
-                        let (_, mut nodes) = trie.collect_changes_since_last_hash();
-                        nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
-
+                    for (prefix, trie) in tree.drain() {
+                        let (root, nodes) = collect_trie(index, trie)?;
                         tx.send((prefix, index, root, nodes))
                             .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                     }
                 }
                 MerklizationRequest::CollectState { tx } => {
-                    let root = branchify(
-                        state_trie
-                            .root_node()?
-                            .map(Arc::unwrap_or_clone)
-                            .unwrap_or_else(|| Node::Branch(Box::default())),
-                    );
-                    state_trie.root = Node::Branch(Box::new(root.clone())).into();
-                    let (_, mut nodes) = state_trie.collect_changes_since_last_hash();
-                    nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
-
+                    let (root, nodes) = collect_trie(index, state_trie)?;
                     tx.send((index, root, nodes, std::mem::take(&mut storage_nodes)))
                         .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                    break;
                 }
             }
         }
@@ -1897,6 +1876,23 @@ fn branchify(node: Node) -> BranchNode {
             BranchNode::new(choices)
         }
     }
+}
+
+fn collect_trie(index: u8, mut trie: Trie) -> Result<(BranchNode, Vec<TrieNode>), TrieError> {
+    let root = branchify(
+        trie.root_node()?
+            .map(Arc::unwrap_or_clone)
+            .unwrap_or_else(|| Node::Branch(Box::default())),
+    );
+    trie.root = Node::Branch(Box::new(root)).into();
+    let (_, mut nodes) = trie.collect_changes_since_last_hash();
+    nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
+
+    let root = match trie.root_node()?.map(Arc::unwrap_or_clone) {
+        Some(Node::Branch(branch)) => *branch,
+        _ => unreachable!(), // we just put it in
+    };
+    Ok((root, nodes))
 }
 
 #[cfg(test)]
