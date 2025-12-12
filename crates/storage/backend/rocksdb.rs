@@ -19,18 +19,23 @@ use std::path::Path;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-/// RocksDB backend
+/// Wrapper around the RocksDB instance to implement Drop
 #[derive(Debug)]
-pub struct RocksDBBackend {
-    /// Optimistric transaction database
-    db: Arc<DBWithThreadMode<MultiThreaded>>,
-}
+struct DB(DBWithThreadMode<MultiThreaded>);
 
 impl Drop for RocksDBBackend {
     fn drop(&mut self) {
         // Wait for all background work to finish before dropping the DB
-        self.db.cancel_all_background_work(true);
+        // See #5621 for why this is necessary
+        self.db.0.cancel_all_background_work(true);
     }
+}
+
+/// RocksDB backend
+#[derive(Debug)]
+pub struct RocksDBBackend {
+    /// Optimistric transaction database
+    db: Arc<DB>,
 }
 
 impl RocksDBBackend {
@@ -206,7 +211,9 @@ impl RocksDBBackend {
                         warn!("Failed to drop column family '{}': {}", cf_name, e));
             }
         }
-        Ok(Self { db: Arc::new(db) })
+        Ok(Self {
+            db: Arc::new(DB(db)),
+        })
     }
 }
 
@@ -214,10 +221,11 @@ impl StorageBackend for RocksDBBackend {
     fn clear_table(&self, table: &'static str) -> Result<(), StoreError> {
         let cf = self
             .db
+            .0
             .cf_handle(table)
             .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
 
-        let mut iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
+        let mut iter = self.db.0.iterator_cf(&cf, rocksdb::IteratorMode::Start);
         let mut batch = WriteBatch::default();
 
         while let Some(Ok((key, _))) = iter.next() {
@@ -225,6 +233,7 @@ impl StorageBackend for RocksDBBackend {
         }
 
         self.db
+            .0
             .write(batch)
             .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
     }
@@ -249,16 +258,16 @@ impl StorageBackend for RocksDBBackend {
         table_name: &'static str,
     ) -> Result<Box<dyn StorageLockedView>, StoreError> {
         let db = Box::leak(Box::new(self.db.clone()));
-        let lock = db.snapshot();
-        let cf = db
-            .cf_handle(table_name)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table_name)))?;
+        let lock = db.0.snapshot();
+        let cf =
+            db.0.cf_handle(table_name)
+                .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table_name)))?;
 
         Ok(Box::new(RocksDBLocked { db, lock, cf }))
     }
 
     fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError> {
-        let checkpoint = Checkpoint::new(&self.db)
+        let checkpoint = Checkpoint::new(&self.db.0)
             .map_err(|e| StoreError::Custom(format!("Failed to create checkpoint: {e}")))?;
 
         checkpoint.create_checkpoint(path).map_err(|e| {
@@ -273,17 +282,19 @@ impl StorageBackend for RocksDBBackend {
 
 /// Read-only view for RocksDB
 pub struct RocksDBReadTx {
-    db: Arc<DBWithThreadMode<MultiThreaded>>,
+    db: Arc<DB>,
 }
 
 impl StorageReadView for RocksDBReadTx {
     fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let cf = self
             .db
+            .0
             .cf_handle(table)
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
 
         self.db
+            .0
             .get_cf(&cf, key)
             .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
     }
@@ -295,10 +306,11 @@ impl StorageReadView for RocksDBReadTx {
     ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
         let cf = self
             .db
+            .0
             .cf_handle(table)
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
 
-        let iter = self.db.prefix_iterator_cf(&cf, prefix).map(|result| {
+        let iter = self.db.0.prefix_iterator_cf(&cf, prefix).map(|result| {
             result.map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
         });
         Ok(Box::new(iter))
@@ -308,7 +320,7 @@ impl StorageReadView for RocksDBReadTx {
 /// Write batch for RocksDB
 pub struct RocksDBWriteTx {
     /// Database reference for writing
-    db: Arc<DBWithThreadMode<MultiThreaded>>,
+    db: Arc<DB>,
     /// Write batch for accumulating changes
     batch: WriteBatch,
 }
@@ -317,6 +329,7 @@ impl StorageWriteBatch for RocksDBWriteTx {
     fn put(&mut self, table: &'static str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         let cf = self
             .db
+            .0
             .cf_handle(table)
             .ok_or_else(|| StoreError::Custom(format!("Table {table:?} not found")))?;
         self.batch.put_cf(&cf, key, value);
@@ -332,6 +345,7 @@ impl StorageWriteBatch for RocksDBWriteTx {
     ) -> Result<(), StoreError> {
         let cf = self
             .db
+            .0
             .cf_handle(table)
             .ok_or_else(|| StoreError::Custom(format!("Table {table:?} not found")))?;
 
@@ -344,6 +358,7 @@ impl StorageWriteBatch for RocksDBWriteTx {
     fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError> {
         let cf = self
             .db
+            .0
             .cf_handle(table)
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
 
@@ -355,6 +370,7 @@ impl StorageWriteBatch for RocksDBWriteTx {
         // Take ownership of the batch (replaces it with an empty one) since db.write() consumes it
         let batch = std::mem::take(&mut self.batch);
         self.db
+            .0
             .write(batch)
             .map_err(|e| StoreError::Custom(format!("Failed to commit batch: {}", e)))
     }
@@ -364,7 +380,7 @@ impl StorageWriteBatch for RocksDBWriteTx {
 /// This is used for batch read operations in snap sync
 pub struct RocksDBLocked {
     /// Reference to database
-    db: &'static Arc<DBWithThreadMode<MultiThreaded>>,
+    db: &'static Arc<DB>,
     /// Snapshot/locked transaction
     lock: SnapshotWithThreadMode<'static, DBWithThreadMode<MultiThreaded>>,
     /// Column family handle
@@ -382,10 +398,7 @@ impl StorageLockedView for RocksDBLocked {
 impl Drop for RocksDBLocked {
     fn drop(&mut self) {
         unsafe {
-            drop(Box::from_raw(
-                self.db as *const Arc<DBWithThreadMode<MultiThreaded>>
-                    as *mut Arc<DBWithThreadMode<MultiThreaded>>,
-            ));
+            drop(Box::from_raw(self.db as *const Arc<DB> as *mut Arc<DB>));
         }
     }
 }
