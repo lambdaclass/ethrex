@@ -63,16 +63,36 @@ pub async fn start_block_producer(
         // Note that this makes getPayload failures result in skipped blocks.
         sleep(Duration::from_millis(block_production_interval_ms)).await;
 
+        // Fork-aware payload retrieval: try V5 (Osaka) first, fall back to V4 (Prague) if unsupported
         let execution_payload_response = match engine_client.engine_get_payload_v5(payload_id).await
         {
             Ok(response) => {
                 tracing::debug!("engine_getPayloadV5 response: {response:?}");
                 response
             }
-            Err(error) => {
-                tracing::error!(
-                    "Failed to produce block: error sending engine_getPayloadV5: {error}"
+            Err(EngineClientError::FailedDuringGetPayload(
+                ethrex_rpc::clients::auth::errors::GetPayloadError::UnsupportedFork(msg),
+            )) => {
+                tracing::debug!(
+                    "V5 not supported for current fork, falling back to V4: {msg}"
                 );
+                match engine_client.engine_get_payload_v4(payload_id).await {
+                    Ok(response) => {
+                        tracing::debug!("engine_getPayloadV4 response: {response:?}");
+                        response
+                    }
+                    Err(v4_error) => {
+                        tracing::error!(
+                            "Failed to produce block: error sending engine_getPayloadV4: {v4_error}"
+                        );
+                        sleep(Duration::from_millis(300)).await;
+                        tries += 1;
+                        continue;
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::error!("Failed to produce block: error sending engine_getPayloadV5: {error}");
                 sleep(Duration::from_millis(300)).await;
                 tries += 1;
                 continue;
@@ -128,4 +148,61 @@ pub async fn start_block_producer(
         head_block_hash = produced_block_hash;
     }
     Err(EngineClientError::SystemFailed(format!("{max_tries}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_rpc::clients::auth::errors::GetPayloadError;
+
+    #[test]
+    fn test_unsupported_fork_error_matching() {
+        let error = EngineClientError::FailedDuringGetPayload(
+            GetPayloadError::UnsupportedFork("Unsupported fork: Prague".to_string()),
+        );
+
+        match error {
+            EngineClientError::FailedDuringGetPayload(
+                GetPayloadError::UnsupportedFork(_msg),
+            ) => {
+                assert!(true, "Correctly matched UnsupportedFork error");
+            }
+            _ => panic!("Failed to match UnsupportedFork error variant"),
+        }
+    }
+
+    #[test]
+    fn test_non_fork_error_not_matched() {
+        let error = EngineClientError::FailedDuringGetPayload(
+            GetPayloadError::RPCError("Network error".to_string()),
+        );
+
+        match error {
+            EngineClientError::FailedDuringGetPayload(
+                GetPayloadError::UnsupportedFork(_),
+            ) => {
+                panic!("Should not match non-fork errors");
+            }
+            EngineClientError::FailedDuringGetPayload(GetPayloadError::RPCError(_)) => {
+                assert!(true, "Correctly identified non-fork error");
+            }
+            _ => panic!("Unexpected error variant"),
+        }
+    }
+
+    #[test]
+    fn test_error_variant_enumeration() {
+        let unsupported_fork = GetPayloadError::UnsupportedFork("test".to_string());
+        let rpc_error = GetPayloadError::RPCError("test".to_string());
+
+        match unsupported_fork {
+            GetPayloadError::UnsupportedFork(_) => {}
+            _ => panic!("UnsupportedFork variant should exist"),
+        }
+
+        match rpc_error {
+            GetPayloadError::RPCError(_) => {}
+            _ => panic!("RPCError variant should exist"),
+        }
+    }
 }

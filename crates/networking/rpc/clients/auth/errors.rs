@@ -65,6 +65,8 @@ pub enum GetPayloadError {
     #[error("{0}")]
     SerdeJSONError(#[from] serde_json::Error),
     #[error("{0}")]
+    UnsupportedFork(String),
+    #[error("{0}")]
     RPCError(String),
     #[error("{0}")]
     ParseIntError(#[from] std::num::ParseIntError),
