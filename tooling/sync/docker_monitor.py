@@ -87,6 +87,32 @@ def slack_notify(header: str, msg: str, success: bool = True):
             pass
 
 
+def restart_containers(compose_file: str, compose_dir: str):
+    """Stop and restart docker compose containers, clearing volumes."""
+    print("\n🔄 Restarting containers...\n", flush=True)
+    try:
+        subprocess.run(["docker", "compose", "-f", compose_file, "down", "-v"], cwd=compose_dir, check=True)
+        time.sleep(5)
+        subprocess.run(["docker", "compose", "-f", compose_file, "up", "-d"], cwd=compose_dir, check=True)
+        print("✅ Containers restarted successfully\n", flush=True)
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Failed to restart containers: {e}\n", flush=True)
+        return False
+
+
+def reset_instance(inst: Instance):
+    """Reset instance state for a new sync cycle."""
+    inst.status = "waiting"
+    inst.start_time = 0
+    inst.sync_time = 0
+    inst.last_block = 0
+    inst.last_block_time = 0
+    inst.block_check_start = 0
+    inst.initial_block = 0
+    inst.error = ""
+
+
 def print_status(instances: list[Instance]):
     print("\033[2J\033[H", end="")
     print(f"{'='*60}\nStatus at {time.strftime('%H:%M:%S')}\n{'='*60}")
@@ -167,6 +193,8 @@ def main():
     p.add_argument("--timeout", type=int, default=SYNC_TIMEOUT)
     p.add_argument("--no-slack", action="store_true")
     p.add_argument("--exit-on-success", action="store_true")
+    p.add_argument("--compose-file", default="docker-compose.snapsync.yaml", help="Docker compose file name")
+    p.add_argument("--compose-dir", default=".", help="Directory containing docker compose file")
     args = p.parse_args()
     
     ports = [int(x) for x in args.ports.split(",")]
@@ -200,33 +228,48 @@ def main():
             # else: node not responding yet, stay in "waiting"
     
     hostname, commit = socket.gethostname(), git_commit()
-    print(f"🔍 Monitoring {len(instances)} instances (timeout: {args.timeout}m)", flush=True)
+    run_count = 1
     
-    last_print = 0
     try:
         while True:
-            changed = any(update_instance(i, args.timeout) for i in instances)
+            print(f"🔍 Run #{run_count}: Monitoring {len(instances)} instances (timeout: {args.timeout}m)", flush=True)
+            last_print = 0
             
-            if not args.no_slack:
-                for i in instances:
-                    if i.status == "success":
-                        slack_notify(f"✅ {i.name} snapsync complete", f"*Server:* `{hostname}`\n*Synced in:* {fmt_time(i.sync_time)}\n*Commit:* `{commit}`")
-                    elif i.status == "failed":
-                        slack_notify(f"❌ {i.name} snapsync failed", f"*Server:* `{hostname}`\n*Error:* {i.error}\n*Commit:* `{commit}`", False)
+            while True:
+                changed = any(update_instance(i, args.timeout) for i in instances)
+                
+                if not args.no_slack:
+                    for i in instances:
+                        if i.status == "success":
+                            slack_notify(f"✅ {i.name} snapsync complete (run #{run_count})", f"*Server:* `{hostname}`\n*Synced in:* {fmt_time(i.sync_time)}\n*Commit:* `{commit}`")
+                        elif i.status == "failed":
+                            slack_notify(f"❌ {i.name} snapsync failed (run #{run_count})", f"*Server:* `{hostname}`\n*Error:* {i.error}\n*Commit:* `{commit}`", False)
+                
+                if changed or (time.time() - last_print) > STATUS_PRINT_INTERVAL:
+                    print_status(instances)
+                    last_print = time.time()
+                
+                if all(i.status in ("success", "failed") for i in instances):
+                    print_status(instances)
+                    break
+                
+                time.sleep(CHECK_INTERVAL)
             
-            if changed or (time.time() - last_print) > STATUS_PRINT_INTERVAL:
-                print_status(instances)
-                last_print = time.time()
-            
-            if all(i.status in ("success", "failed") for i in instances):
-                print_status(instances)
-                if all(i.status == "success" for i in instances):
-                    print("🎉 All instances synced successfully!")
-                    sys.exit(0) if args.exit_on_success else None
+            # Check results
+            if all(i.status == "success" for i in instances):
+                print(f"🎉 Run #{run_count}: All instances synced successfully!")
+                if args.exit_on_success:
+                    sys.exit(0)
+                # Restart for another run
+                if restart_containers(args.compose_file, args.compose_dir):
+                    for inst in instances:
+                        reset_instance(inst)
+                    run_count += 1
+                    time.sleep(30)  # Wait for containers to start
                 else:
-                    sys.exit("⚠️ Some instances failed")
-            
-            time.sleep(CHECK_INTERVAL)
+                    sys.exit("❌ Failed to restart containers")
+            else:
+                sys.exit("⚠️ Some instances failed")
     except KeyboardInterrupt:
         print("\n⚠️ Interrupted")
         print_status(instances)
