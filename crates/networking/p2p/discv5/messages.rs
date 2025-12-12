@@ -38,6 +38,8 @@ pub enum PacketDecodeErr {
     ChipherError(String),
     #[error("TryFromSliceError: {0}")]
     TryFromSliceError(#[from] TryFromSliceError),
+    #[error("Io Error: {0}")]
+    IoError(#[from] std::io::Error),
 }
 
 impl From<StreamCipherError> for PacketDecodeErr {
@@ -85,13 +87,15 @@ impl Packet {
     pub fn encode(
         &self,
         buf: &mut dyn BufMut,
-        masking_iv: &[u8],
+        masking_iv: u128,
         nonce: Vec<u8>,
         dest_id: &H256,
     ) -> Result<(), PacketDecodeErr> {
-        buf.put_slice(masking_iv);
+        let masking_as_bytes = masking_iv.to_be_bytes();
+        buf.put_slice(&masking_as_bytes);
 
-        let mut cipher = <Aes128Ctr64BE as KeyIvInit>::new(dest_id[..16].into(), masking_iv.into());
+        let mut cipher =
+            <Aes128Ctr64BE as KeyIvInit>::new(dest_id[..16].into(), masking_as_bytes[..].into());
 
         match self {
             Packet::Ordinary(_ordinary) => todo!(),
@@ -211,14 +215,17 @@ pub enum Message {
 }
 
 impl Message {
-    pub fn decode_with_type(packet_type: u8, msg: &[u8]) -> Result<Message, RLPDecodeError> {
+    pub fn decode_with_type(
+        packet_type: u8,
+        encrypted_message: &[u8],
+    ) -> Result<Message, RLPDecodeError> {
         match packet_type {
             0x01 => {
-                let (ping, _rest) = PingMessage::decode_unfinished(msg)?;
+                let (ping, _rest) = PingMessage::decode_unfinished(encrypted_message)?;
                 Ok(Message::Ping(ping))
             }
             0x02 => {
-                let (pong, _rest) = PongMessage::decode_unfinished(msg)?;
+                let (pong, _rest) = PongMessage::decode_unfinished(encrypted_message)?;
                 Ok(Message::Pong(pong))
             }
             // 0x03 => {
@@ -311,10 +318,18 @@ impl RLPDecode for PongMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::{node_id, public_key_from_signing_key};
     use hex_literal::hex;
     use secp256k1::SecretKey;
     use std::net::Ipv4Addr;
+    use crate::{
+        discv5::{
+            codec::Discv5Codec,
+            messages::{Message, Ordinary, Packet, PingMessage, WhoAreYou},
+        },
+        utils::{node_id, public_key_from_signing_key},
+    };
+    use bytes::BytesMut;
+    use tokio_util::codec::Decoder as _;
 
     // node-a-key = 0xeef77acb6c6a6eebc5b363a475ac583ec7eccdb42b6481424c60f59aa326547f
     // node-b-key = 0x66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628
@@ -358,7 +373,7 @@ mod tests {
 
         let _ = packet.encode(
             &mut buf,
-            &hex!("00000000000000000000000000000000"),
+            0,
             hex!("0102030405060708090a0b0c").to_vec(),
             &dest_id,
         );
@@ -386,12 +401,13 @@ mod tests {
         .unwrap();
 
         let dest_id = node_id(&public_key_from_signing_key(&node_b_key));
+        let mut codec = Discv5Codec::new(dest_id);
 
-        let encoded = &hex!(
+        let mut encoded = BytesMut::from(hex!(
             "00000000000000000000000000000000088b3d434277464933a1ccc59f5967ad1d6035f15e528627dde75cd68292f9e6c27d6b66c8100a873fcbaed4e16b8d"
-        );
-        let packet = Packet::decode(&dest_id, encoded).unwrap();
-        let expected = Packet::WhoAreYou(WhoAreYou {
+        ).as_slice());
+        let packet = codec.decode(&mut encoded).unwrap();
+        let expected = Some(Packet::WhoAreYou(WhoAreYou {
             id_nonce: u128::from_be_bytes(
                 (&hex!("0102030405060708090a0b0c0d0e0f10"))
                     .to_vec()
@@ -399,7 +415,7 @@ mod tests {
                     .unwrap(),
             ),
             enr_seq: 0,
-        });
+        }));
 
         assert_eq!(packet, expected);
     }
