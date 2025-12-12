@@ -24,6 +24,7 @@ from typing import Optional
 CHECK_INTERVAL = 10  # seconds
 BLOCK_CHECK_INTERVAL = 120  # seconds  
 BLOCK_PRODUCTION_DURATION = 30 * 60  # 30 minutes
+STATUS_PRINT_INTERVAL = 30  # seconds - print status every 30s
 
 
 @dataclass
@@ -126,7 +127,9 @@ def parse_args():
 
 def print_status(instances: list[Instance]):
     """Print current status of all instances."""
-    print(f"\n{'='*60}")
+    # Clear previous output for cleaner display
+    print(f"\033[2J\033[H", end="")  # Clear screen and move cursor to top
+    print(f"{'='*60}")
     print(f"Status at {time.strftime('%H:%M:%S')}")
     print(f"{'='*60}")
     for inst in instances:
@@ -141,7 +144,9 @@ def print_status(instances: list[Instance]):
         }.get(inst.status, "❓")
         
         extra = ""
-        if inst.status == "syncing":
+        if inst.status == "waiting":
+            extra = " (waiting for node...)"
+        elif inst.status == "syncing":
             extra = f" ({format_elapsed_time(elapsed)} elapsed)"
         elif inst.status == "synced":
             extra = f" (synced in {format_elapsed_time(inst.sync_time)})"
@@ -155,6 +160,7 @@ def print_status(instances: list[Instance]):
             
         print(f"  {emoji} {inst.name} (:{inst.port}): {inst.status}{extra}")
     print()
+    sys.stdout.flush()  # Force output
 
 
 def monitor_instance(inst: Instance, timeout_minutes: int) -> bool:
@@ -237,6 +243,7 @@ def main():
     print(f"🔍 Monitoring {len(instances)} instances...")
     print(f"   Timeout: {args.timeout} minutes")
     print(f"   Block production check: {BLOCK_PRODUCTION_DURATION // 60} minutes")
+    sys.stdout.flush()
     
     last_print = 0
     
@@ -262,8 +269,8 @@ def main():
                                 success=False
                             )
             
-            # Print status periodically or on changes
-            if any_changed or (time.time() - last_print) > 60:
+            # Print status every STATUS_PRINT_INTERVAL seconds
+            if any_changed or (time.time() - last_print) > STATUS_PRINT_INTERVAL:
                 print_status(instances)
                 last_print = time.time()
             
