@@ -712,7 +712,7 @@ async fn delete_blocks_from_batch(
         .get_block_header(last_kept_block)?
         .ok_or_else(|| eyre::eyre!("Block number {} not found", last_kept_block))?;
     store
-        .forkchoice_update(None, last_kept_block, last_kept_header.hash(), None, None)
+        .forkchoice_update(vec![], last_kept_block, last_kept_header.hash(), None, None)
         .await?;
     Ok(())
 }
