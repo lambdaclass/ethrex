@@ -78,4 +78,4 @@ fi
 curl -sS --fail -X POST \
   -H 'Content-type: application/json' \
   --data "$PAYLOAD" \
-  "$WEBHOOK_URL" || echo "Failed to send Slack notification" >&2
+  "$SLACK_WEBHOOK_URL" || echo "Failed to send Slack notification" >&2

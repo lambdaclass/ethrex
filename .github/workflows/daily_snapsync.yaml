@@ -82,7 +82,7 @@ jobs:
       - name: Post run on slack
         if: always()
         env:
-          WEBHOOK_URL: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_URL: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
           REPO: ${{ github.repository }}
           NAME: "lighthouse-${{ matrix.network }}"
           OUTCOME: ${{ steps.snapsync.outcome }}
@@ -120,9 +120,9 @@ jobs:
       - name: Post run on slack
         if: always()
         env:
-          WEBHOOK_URL: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_URL: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
           REPO: ${{ github.repository }}
-          NAME: "lighthouse-${{ matrix.network }}"
+          NAME: "prysm-${{ matrix.network }}"
           OUTCOME: ${{ steps.snapsync.outcome }}
           HEAD_SHA: ${{ github.sha }}
           START_TIME: ${{ steps.start.outputs.timestamp }}
