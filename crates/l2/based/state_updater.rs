@@ -6,6 +6,7 @@ use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch};
 use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
+use reqwest::Url;
 use spawned_concurrency::{
     error::GenServerError,
     tasks::{CallResponse, CastResponse, GenServer, GenServerHandle, send_after},
@@ -60,12 +61,14 @@ pub struct StateUpdater {
     sequencer_registry_address: Address,
     sequencer_address: Address,
     eth_client: Arc<EthClient>,
+    l2_client: Arc<EthClient>,
     store: Store,
     rollup_store: StoreRollup,
     check_interval_ms: u64,
     sequencer_state: SequencerState,
     blockchain: Arc<Blockchain>,
     stop_at: Option<u64>,
+    based: bool,
 }
 
 impl StateUpdater {
@@ -75,6 +78,7 @@ impl StateUpdater {
         blockchain: Arc<Blockchain>,
         store: Store,
         rollup_store: StoreRollup,
+        l2_url: Url,
     ) -> Result<Self, StateUpdaterError> {
         Ok(Self {
             on_chain_proposer_address: sequencer_cfg.l1_committer.on_chain_proposer_address,
@@ -89,6 +93,8 @@ impl StateUpdater {
             sequencer_state,
             blockchain,
             stop_at: None,
+            based: sequencer_cfg.based.enabled,
+            l2_client: Arc::new(EthClient::new(l2_url)?),
         })
     }
 
@@ -98,6 +104,7 @@ impl StateUpdater {
         blockchain: Arc<Blockchain>,
         store: Store,
         rollup_store: StoreRollup,
+        l2_url: Url,
     ) -> Result<GenServerHandle<StateUpdater>, StateUpdaterError> {
         let mut state_updater = Self::new(
             sequencer_cfg,
@@ -105,6 +112,7 @@ impl StateUpdater {
             blockchain,
             store,
             rollup_store,
+            l2_url,
         )?
         .start();
         state_updater
@@ -115,8 +123,7 @@ impl StateUpdater {
     }
 
     pub async fn update_state(&mut self) -> Result<(), StateUpdaterError> {
-        let latest_block = self.eth_client.get_block_number().await?;
-
+        let latest_block = self.l2_client.get_block_number().await?;
         if let Some(stop_at) = self.stop_at
             && latest_block >= U256::from(stop_at)
         {
@@ -126,6 +133,9 @@ impl StateUpdater {
             return Ok(());
         }
 
+        if !self.based {
+            return Ok(());
+        }
         let lead_sequencer = hash_to_address(
             self.eth_client
                 .call(

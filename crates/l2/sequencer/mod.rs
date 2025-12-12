@@ -163,7 +163,7 @@ pub async fn start_l2(
     });
 
     #[cfg(feature = "metrics")]
-    let metrics_gatherer = MetricsGatherer::spawn(&cfg, rollup_store.clone(), l2_url)
+    let metrics_gatherer = MetricsGatherer::spawn(&cfg, rollup_store.clone(), l2_url.clone())
         .await
         .inspect_err(|err| {
             error!("Error starting Block Producer: {err}");
@@ -183,6 +183,7 @@ pub async fn start_l2(
         blockchain.clone(),
         store.clone(),
         rollup_store.clone(),
+        l2_url,
     )
     .await
     .inspect_err(|err| {
