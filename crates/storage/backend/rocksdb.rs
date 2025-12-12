@@ -23,11 +23,11 @@ use tracing::{info, warn};
 #[derive(Debug)]
 struct DB(DBWithThreadMode<MultiThreaded>);
 
-impl Drop for RocksDBBackend {
+impl Drop for DB {
     fn drop(&mut self) {
         // Wait for all background work to finish before dropping the DB
         // See #5621 for why this is necessary
-        self.db.0.cancel_all_background_work(true);
+        self.0.cancel_all_background_work(true);
     }
 }
 
