@@ -1,42 +1,41 @@
 #!/usr/bin/env python3
-"""
-Monitor Docker Compose snapsync instances.
-
-Reuses logic from server_runner.py to check sync status and block production.
-
-Usage:
-    python docker_monitor.py --compose-file docker-compose.snapsync-test.yaml
-    python docker_monitor.py --ports 8545,8546 --names hoodi-1,hoodi-2
-"""
+"""Monitor Docker Compose snapsync instances for sync completion."""
 
 import argparse
-import requests
-import time
 import os
-import json
 import socket
-import sys
 import subprocess
+import sys
+import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional
 
+import requests
 
-CHECK_INTERVAL = 10  # seconds
-BLOCK_CHECK_INTERVAL = 120  # seconds  
-BLOCK_PRODUCTION_DURATION = 30 * 60  # 30 minutes
-STATUS_PRINT_INTERVAL = 30  # seconds - print status every 30s
+CHECK_INTERVAL = 10
+BLOCK_PROCESSING_DURATION = 30 * 60
+BLOCK_STALL_TIMEOUT = 10 * 60  # Fail if no new block for 10 minutes
+STATUS_PRINT_INTERVAL = 30
+
+STATUS_EMOJI = {
+    "waiting": "⏳", "syncing": "🔄", "synced": "✅",
+    "block_processing": "📦", "success": "🎉", "failed": "❌"
+}
 
 
 @dataclass
 class Instance:
     name: str
     port: int
-    container_name: str = ""  # Docker container name
-    status: str = "waiting"  # waiting, syncing, synced, block_production, success, failed
+    container: str = ""
+    status: str = "waiting"
     start_time: float = 0
     sync_time: float = 0
     last_block: int = 0
+    last_block_time: float = 0  # When we last saw a new block
     block_check_start: float = 0
+    initial_block: int = 0  # Block when entering block_processing
     error: str = ""
 
     @property
@@ -44,292 +43,174 @@ class Instance:
         return f"http://localhost:{self.port}"
 
 
-def format_elapsed_time(seconds: float) -> str:
-    seconds = abs(seconds)
-    hours = int(seconds // 3600)
-    remaining = seconds % 3600
-    minutes = int(remaining // 60)
-    secs = int(remaining % 60)
-    parts = []
-    if hours > 0:
-        parts.append(f"{hours}h")
-    if minutes > 0:
-        parts.append(f"{minutes}m")
-    if secs > 0 or (hours == 0 and minutes == 0):
-        parts.append(f"{secs}s")
-    return " ".join(parts)
+def fmt_time(secs: float) -> str:
+    secs = int(abs(secs))
+    h, m, s = secs // 3600, (secs % 3600) // 60, secs % 60
+    return " ".join(f"{v}{u}" for v, u in [(h, "h"), (m, "m"), (s, "s")] if v or (not h and not m))
 
 
-def get_git_commit() -> Optional[str]:
+def git_commit() -> str:
     try:
-        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"]).decode().strip()
-    except:
-        return None
+        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL).decode().strip()
+    except Exception:
+        return "unknown"
 
 
-def get_container_start_time(container_name: str) -> Optional[float]:
-    """Get the start time of a Docker container as Unix timestamp."""
+def container_start_time(name: str) -> Optional[float]:
     try:
-        result = subprocess.check_output([
-            "docker", "inspect", "-f", "{{.State.StartedAt}}", container_name
-        ], stderr=subprocess.DEVNULL).decode().strip()
-        # Parse ISO format: 2024-12-11T10:30:45.123456789Z
-        from datetime import datetime
-        # Handle nanoseconds by truncating to microseconds
-        if '.' in result:
-            base, frac = result.rsplit('.', 1)
-            # Remove 'Z' and truncate to 6 digits for microseconds
-            frac = frac.rstrip('Z')[:6]
-            result = f"{base}.{frac}"
-        else:
-            result = result.rstrip('Z')
-        dt = datetime.fromisoformat(result.replace('Z', '+00:00'))
-        return dt.timestamp()
+        out = subprocess.check_output(["docker", "inspect", "-f", "{{.State.StartedAt}}", name], stderr=subprocess.DEVNULL).decode().strip()
+        if '.' in out:
+            base, frac = out.rsplit('.', 1)
+            out = f"{base}.{frac.rstrip('Z')[:6]}"
+        return datetime.fromisoformat(out.replace('Z', '+00:00')).timestamp()
     except Exception:
         return None
 
 
-def send_slack_message(header: str, message: str, success: bool = True):
-    """Send Slack notification."""
+def rpc_call(url: str, method: str) -> Optional[any]:
     try:
-        webhook_key = "SLACK_WEBHOOK_URL_SUCCESS" if success else "SLACK_WEBHOOK_URL_FAILED"
-        webhook_url = os.environ.get(webhook_key)
-        if not webhook_url:
-            return
-
-        payload = {
-            "blocks": [
-                {"type": "header", "text": {"type": "plain_text", "text": header}},
-                {"type": "section", "text": {"type": "mrkdwn", "text": message}},
-            ]
-        }
-        requests.post(webhook_url, json=payload, timeout=10)
-    except Exception as e:
-        print(f"Slack error: {e}", file=sys.stderr)
-
-
-def check_syncing(rpc_url: str) -> tuple[bool, Optional[dict]]:
-    """Check eth_syncing. Returns (is_synced, sync_info)."""
-    try:
-        resp = requests.post(rpc_url, json={
-            "jsonrpc": "2.0", "method": "eth_syncing", "params": [], "id": 1
-        }, timeout=5).json()
-        result = resp.get("result")
-        if result is False:
-            return True, None
-        return False, result
-    except:
-        return False, None
-
-
-def get_block_number(rpc_url: str) -> Optional[int]:
-    """Get current block number."""
-    try:
-        resp = requests.post(rpc_url, json={
-            "jsonrpc": "2.0", "method": "eth_blockNumber", "params": [], "id": 1
-        }, timeout=5).json()
-        return int(resp.get("result", "0x0"), 16)
-    except:
+        return requests.post(url, json={"jsonrpc": "2.0", "method": method, "params": [], "id": 1}, timeout=5).json().get("result")
+    except Exception:
         return None
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Monitor Docker Compose snapsync instances")
-    parser.add_argument("--ports", type=str, default="8545,8546",
-                        help="Comma-separated RPC ports (default: 8545,8546)")
-    parser.add_argument("--names", type=str, default="hoodi-1,hoodi-2",
-                        help="Comma-separated instance names (default: hoodi-1,hoodi-2)")
-    parser.add_argument("--containers", type=str, default="",
-                        help="Comma-separated Docker container names (default: ethrex-<name>)")
-    parser.add_argument("--timeout", type=int, default=180,
-                        help="Sync timeout in minutes (default: 180)")
-    parser.add_argument("--no-slack", action="store_true",
-                        help="Disable Slack notifications")
-    parser.add_argument("--exit-on-success", action="store_true",
-                        help="Exit when all instances succeed")
-    return parser.parse_args()
+def slack_notify(header: str, msg: str, success: bool = True):
+    url = os.environ.get("SLACK_WEBHOOK_URL_SUCCESS" if success else "SLACK_WEBHOOK_URL_FAILED")
+    if url:
+        try:
+            requests.post(url, json={"blocks": [
+                {"type": "header", "text": {"type": "plain_text", "text": header}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": msg}}
+            ]}, timeout=10)
+        except Exception:
+            pass
 
 
 def print_status(instances: list[Instance]):
-    """Print current status of all instances."""
-    # Clear previous output for cleaner display
-    print(f"\033[2J\033[H", end="")  # Clear screen and move cursor to top
-    print(f"{'='*60}")
-    print(f"Status at {time.strftime('%H:%M:%S')}")
-    print(f"{'='*60}")
-    for inst in instances:
-        elapsed = time.time() - inst.start_time if inst.start_time else 0
-        emoji = {
-            "waiting": "⏳",
-            "syncing": "🔄",
-            "synced": "✅",
-            "block_production": "📦",
-            "success": "🎉",
-            "failed": "❌"
-        }.get(inst.status, "❓")
-        
-        extra = ""
-        if inst.status == "waiting":
-            extra = " (waiting for node...)"
-        elif inst.status == "syncing":
-            extra = f" ({format_elapsed_time(elapsed)} elapsed)"
-        elif inst.status == "synced":
-            extra = f" (synced in {format_elapsed_time(inst.sync_time)})"
-        elif inst.status == "block_production":
-            remaining = BLOCK_PRODUCTION_DURATION - (time.time() - inst.block_check_start)
-            extra = f" (block {inst.last_block}, {format_elapsed_time(remaining)} remaining)"
-        elif inst.status == "success":
-            extra = f" ✓ synced in {format_elapsed_time(inst.sync_time)}"
-        elif inst.status == "failed":
-            extra = f" - {inst.error}"
-            
-        print(f"  {emoji} {inst.name} (:{inst.port}): {inst.status}{extra}")
-    print()
-    sys.stdout.flush()  # Force output
+    print("\033[2J\033[H", end="")
+    print(f"{'='*60}\nStatus at {time.strftime('%H:%M:%S')}\n{'='*60}")
+    
+    for i in instances:
+        elapsed = time.time() - i.start_time if i.start_time else 0
+        extra = {
+            "waiting": " (waiting for node...)",
+            "syncing": f" ({fmt_time(elapsed)} elapsed)",
+            "synced": f" (synced in {fmt_time(i.sync_time)})",
+            "block_processing": f" (block {i.last_block}, +{i.last_block - i.initial_block} blocks, {fmt_time(BLOCK_PROCESSING_DURATION - (time.time() - i.block_check_start))} left)",
+            "success": f" ✓ synced in {fmt_time(i.sync_time)}, processed +{i.last_block - i.initial_block} blocks",
+            "failed": f" - {i.error}"
+        }.get(i.status, "")
+        print(f"  {STATUS_EMOJI.get(i.status, '?')} {i.name} (:{i.port}): {i.status}{extra}")
+    
+    print(flush=True)
 
 
-def monitor_instance(inst: Instance, timeout_minutes: int) -> bool:
-    """Update instance status. Returns True if state changed."""
+def update_instance(inst: Instance, timeout_min: int) -> bool:
+    if inst.status in ("success", "failed"):
+        return False
+    
     now = time.time()
+    block = rpc_call(inst.rpc_url, "eth_blockNumber")
+    block = int(block, 16) if block else None
     
-    if inst.status in ["success", "failed"]:
-        return False
-    
-    # Check if reachable
-    block = get_block_number(inst.rpc_url)
     if block is None:
-        if inst.status == "waiting":
-            return False  # Still waiting for container
-        # Was running but stopped
-        inst.status = "failed"
-        inst.error = "Node stopped responding"
-        return True
+        if inst.status != "waiting":
+            inst.status, inst.error = "failed", "Node stopped responding"
+            return True
+        return False
     
-    # Node is reachable
     if inst.status == "waiting":
-        inst.status = "syncing"
-        inst.start_time = now
+        inst.status, inst.start_time = "syncing", inst.start_time or now
         return True
     
-    # Check timeout
-    if inst.status == "syncing" and (now - inst.start_time) > timeout_minutes * 60:
-        inst.status = "failed"
-        inst.error = f"Sync timeout ({timeout_minutes}m)"
-        return True
-    
-    # Check sync status
     if inst.status == "syncing":
-        is_synced, _ = check_syncing(inst.rpc_url)
-        if is_synced:
-            inst.status = "synced"
-            inst.sync_time = now - inst.start_time
-            inst.block_check_start = now
-            inst.last_block = block or 0
+        if (now - inst.start_time) > timeout_min * 60:
+            inst.status, inst.error = "failed", f"Sync timeout ({timeout_min}m)"
             return True
-        return False
+        if rpc_call(inst.rpc_url, "eth_syncing") is False:
+            inst.status, inst.sync_time = "synced", now - inst.start_time
+            inst.block_check_start, inst.last_block = now, block
+            inst.initial_block, inst.last_block_time = block, now
+            return True
     
-    # Synced - start block production monitoring
     if inst.status == "synced":
-        inst.status = "block_production"
-        inst.block_check_start = now
-        inst.last_block = block or 0
+        inst.status = "block_processing"
+        inst.block_check_start, inst.last_block, inst.initial_block, inst.last_block_time = now, block, block, now
         return True
     
-    # Block production phase
-    if inst.status == "block_production":
-        if (now - inst.block_check_start) > BLOCK_PRODUCTION_DURATION:
-            inst.status = "success"
+    if inst.status == "block_processing":
+        # Check for stalled node (no new blocks for too long)
+        if (now - inst.last_block_time) > BLOCK_STALL_TIMEOUT:
+            inst.status, inst.error = "failed", f"Block processing stalled at {inst.last_block} for {fmt_time(BLOCK_STALL_TIMEOUT)}"
             return True
-        
-        if block is not None and block > inst.last_block:
-            inst.last_block = block
-        elif block is not None and block <= inst.last_block:
-            # No new blocks - but only fail after several checks
-            pass  # For now, just continue
-        return False
+        # Update last block time if we see progress
+        if block and block > inst.last_block:
+            inst.last_block, inst.last_block_time = block, now
+        # Success after duration, but only if we made progress
+        if (now - inst.block_check_start) > BLOCK_PROCESSING_DURATION:
+            if inst.last_block > inst.initial_block:
+                inst.status = "success"
+                return True
+            else:
+                inst.status, inst.error = "failed", "No block progress during monitoring"
+                return True
     
     return False
 
 
 def main():
-    args = parse_args()
-    hostname = socket.gethostname()
-    commit = get_git_commit()
+    p = argparse.ArgumentParser(description="Monitor Docker snapsync instances")
+    p.add_argument("--ports", default="8545,8546,8547")
+    p.add_argument("--names", default="hoodi,sepolia,mainnet")
+    p.add_argument("--containers", default="")
+    p.add_argument("--timeout", type=int, default=180)
+    p.add_argument("--no-slack", action="store_true")
+    p.add_argument("--exit-on-success", action="store_true")
+    args = p.parse_args()
     
-    ports = [int(p.strip()) for p in args.ports.split(",")]
-    names = [n.strip() for n in args.names.split(",")]
+    ports = [int(x) for x in args.ports.split(",")]
+    names = args.names.split(",")
+    containers = args.containers.split(",") if args.containers else [f"ethrex-{n}" for n in names]
     
     if len(ports) != len(names):
-        print("Error: ports and names must have same length", file=sys.stderr)
-        sys.exit(1)
+        sys.exit("Error: ports and names must match")
     
-    # Get container names (default: ethrex-<name>)
-    if args.containers:
-        containers = [c.strip() for c in args.containers.split(",")]
-    else:
-        containers = [f"ethrex-{n}" for n in names]
+    instances = [Instance(n.strip(), p, c.strip()) for n, p, c in zip(names, ports, containers)]
     
-    instances = [Instance(name=n, port=p, container_name=c) for n, p, c in zip(names, ports, containers)]
-    
-    # Try to get container start times
     for inst in instances:
-        start_time = get_container_start_time(inst.container_name)
-        if start_time:
-            inst.start_time = start_time
-            inst.status = "syncing"  # Container is running, assume syncing
+        if t := container_start_time(inst.container):
+            inst.start_time, inst.status = t, "syncing"
     
-    print(f"🔍 Monitoring {len(instances)} instances...")
-    print(f"   Timeout: {args.timeout} minutes")
-    print(f"   Block production check: {BLOCK_PRODUCTION_DURATION // 60} minutes")
-    sys.stdout.flush()
+    hostname, commit = socket.gethostname(), git_commit()
+    print(f"🔍 Monitoring {len(instances)} instances (timeout: {args.timeout}m)", flush=True)
     
     last_print = 0
-    
     try:
         while True:
-            any_changed = False
-            for inst in instances:
-                if monitor_instance(inst, args.timeout):
-                    any_changed = True
-                    
-                    # Send notifications on state changes
-                    if not args.no_slack:
-                        if inst.status == "success":
-                            send_slack_message(
-                                f"✅ {inst.name} snapsync complete",
-                                f"*Server:* `{hostname}`\n*Synced in:* {format_elapsed_time(inst.sync_time)}\n*Commit:* `{commit}`",
-                                success=True
-                            )
-                        elif inst.status == "failed":
-                            send_slack_message(
-                                f"❌ {inst.name} snapsync failed",
-                                f"*Server:* `{hostname}`\n*Error:* {inst.error}\n*Commit:* `{commit}`",
-                                success=False
-                            )
+            changed = any(update_instance(i, args.timeout) for i in instances)
             
-            # Print status every STATUS_PRINT_INTERVAL seconds
-            if any_changed or (time.time() - last_print) > STATUS_PRINT_INTERVAL:
+            if not args.no_slack:
+                for i in instances:
+                    if i.status == "success":
+                        slack_notify(f"✅ {i.name} snapsync complete", f"*Server:* `{hostname}`\n*Synced in:* {fmt_time(i.sync_time)}\n*Commit:* `{commit}`")
+                    elif i.status == "failed":
+                        slack_notify(f"❌ {i.name} snapsync failed", f"*Server:* `{hostname}`\n*Error:* {i.error}\n*Commit:* `{commit}`", False)
+            
+            if changed or (time.time() - last_print) > STATUS_PRINT_INTERVAL:
                 print_status(instances)
                 last_print = time.time()
             
-            # Check completion
-            all_done = all(i.status in ["success", "failed"] for i in instances)
-            all_success = all(i.status == "success" for i in instances)
-            
-            if all_done:
+            if all(i.status in ("success", "failed") for i in instances):
                 print_status(instances)
-                if all_success:
+                if all(i.status == "success" for i in instances):
                     print("🎉 All instances synced successfully!")
-                    if args.exit_on_success:
-                        sys.exit(0)
+                    sys.exit(0) if args.exit_on_success else None
                 else:
-                    print("⚠️ Some instances failed")
-                    sys.exit(1)
+                    sys.exit("⚠️ Some instances failed")
             
             time.sleep(CHECK_INTERVAL)
-            
     except KeyboardInterrupt:
-        print("\n\n⚠️ Interrupted by user")
+        print("\n⚠️ Interrupted")
         print_status(instances)
         sys.exit(130)
 
