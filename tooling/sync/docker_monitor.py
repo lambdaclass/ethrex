@@ -14,6 +14,7 @@ from typing import Optional
 import requests
 
 CHECK_INTERVAL = 10
+SYNC_TIMEOUT = 4 * 60  # 4 hours default sync timeout (in minutes)
 BLOCK_PROCESSING_DURATION = 30 * 60
 BLOCK_STALL_TIMEOUT = 10 * 60  # Fail if no new block for 10 minutes
 STATUS_PRINT_INTERVAL = 30
@@ -163,7 +164,7 @@ def main():
     p.add_argument("--ports", default="8545,8546,8547")
     p.add_argument("--names", default="hoodi,sepolia,mainnet")
     p.add_argument("--containers", default="")
-    p.add_argument("--timeout", type=int, default=180)
+    p.add_argument("--timeout", type=int, default=SYNC_TIMEOUT)
     p.add_argument("--no-slack", action="store_true")
     p.add_argument("--exit-on-success", action="store_true")
     args = p.parse_args()
