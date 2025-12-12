@@ -163,7 +163,7 @@ mod tests {
 
         match error {
             EngineClientError::FailedDuringGetPayload(GetPayloadError::UnsupportedFork(_msg)) => {
-                assert!(true, "Correctly matched UnsupportedFork error");
+                // Correctly matched UnsupportedFork error
             }
             _ => panic!("Failed to match UnsupportedFork error variant"),
         }
@@ -180,7 +180,7 @@ mod tests {
                 panic!("Should not match non-fork errors");
             }
             EngineClientError::FailedDuringGetPayload(GetPayloadError::RPCError(_)) => {
-                assert!(true, "Correctly identified non-fork error");
+                // Correctly identified non-fork error
             }
             _ => panic!("Unexpected error variant"),
         }
