@@ -100,7 +100,6 @@ impl Simulator {
         if opts.datadir.exists() {
             std::fs::remove_dir_all(&opts.datadir)
                 .expect("Failed to remove existing data directory");
-            tokio::time::sleep(Duration::from_millis(1)).await;
         }
         std::fs::create_dir_all(&opts.datadir).expect("Failed to create data directory");
 
