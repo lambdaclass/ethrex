@@ -110,7 +110,7 @@ impl Blockchain {
             self.storage.clone(),
             parent_header,
             block_hash_cache,
-        );
+        )?;
         let mut vm = self.new_evm(vm_db)?;
         // Run parents to rebuild pre-state
         for block in blocks_to_re_execute.iter().rev() {
