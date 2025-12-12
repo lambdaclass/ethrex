@@ -92,6 +92,8 @@ pub async fn start_api(
         .route("/committer/stop", get(stop_committer))
         .route("/admin/health", get(admin_health))
         .route("/health", get(health))
+        // TODO: should it be a POST?
+        .route("/stop-at/{block_number}", get(set_sequencer_stop_at))
         .with_state(admin.clone())
         .fallback(not_found);
     let http_listener = TcpListener::bind(http_addr)
@@ -259,4 +261,11 @@ async fn not_found(uri: Uri) -> (StatusCode, String) {
         StatusCode::NOT_FOUND,
         format!("Method {uri} does not exist"),
     )
+}
+
+async fn set_sequencer_stop_at(
+    State(admin): State<Admin>,
+    Path(block_number): Path<u64>,
+) -> Result<Json<Value>, AdminErrorResponse> {
+    Ok(Json::from(Value::String("ok".into())))
 }

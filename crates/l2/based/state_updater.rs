@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use ethrex_blockchain::Blockchain;
-use ethrex_common::{Address, types::Block};
+use ethrex_common::{Address, U256, types::Block};
 use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch};
 use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
@@ -60,6 +60,7 @@ pub struct StateUpdater {
     check_interval_ms: u64,
     sequencer_state: SequencerState,
     blockchain: Arc<Blockchain>,
+    stop_at: Option<u64>,
 }
 
 impl StateUpdater {
@@ -82,6 +83,7 @@ impl StateUpdater {
             check_interval_ms: sequencer_cfg.based.state_updater.check_interval_ms,
             sequencer_state,
             blockchain,
+            stop_at: None,
         })
     }
 
@@ -107,6 +109,17 @@ impl StateUpdater {
     }
 
     pub async fn update_state(&mut self) -> Result<(), StateUpdaterError> {
+        let latest_block = self.eth_client.get_block_number().await?;
+
+        if let Some(stop_at) = self.stop_at
+            && latest_block >= U256::from(stop_at)
+        {
+            self.sequencer_state
+                .new_status(SequencerStatus::Following)
+                .await;
+            return Ok(());
+        }
+
         let lead_sequencer = hash_to_address(
             self.eth_client
                 .call(
