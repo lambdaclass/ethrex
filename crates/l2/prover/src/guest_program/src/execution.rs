@@ -254,10 +254,10 @@ pub fn stateless_validation_l1(
         .last()
         .ok_or(StatelessExecutionError::EmptyBatchError)?;
 
-    // report_cycles("validate_state_root", || {
-    //     validate_state_root(&last_block.header, final_state_root)
-    //         .map_err(|_chain_err| StatelessExecutionError::InvalidFinalStateTrie)
-    // })?;
+    report_cycles("validate_state_root", || {
+        validate_state_root(&last_block.header, final_state_root)
+            .map_err(|_chain_err| StatelessExecutionError::InvalidFinalStateTrie)
+    })?;
 
     Ok(ProgramOutput {
         initial_state_hash,
