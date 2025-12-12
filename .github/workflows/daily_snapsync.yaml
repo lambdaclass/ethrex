@@ -32,15 +32,15 @@ jobs:
         run: |
           event_name="${GITHUB_EVENT_NAME}"
           if [[ "$event_name" == "schedule" ]]; then
-            json='[{"network":"hoodi","timeout":"40m"},{"network":"sepolia","timeout":"2h30m"}]'
+            json='[{"network":"hoodi","timeout":"1h"},{"network":"sepolia","timeout":"2h30m"}]'
           elif [[ "$event_name" == "pull_request" ]]; then
-            json='[{"network":"hoodi","timeout":"40m"}]'
+            json='[{"network":"hoodi","timeout":"1h"}]'
           else
             network=$(jq -r '.inputs.network // empty' "$GITHUB_EVENT_PATH")
 
             case "$network" in
               hoodi)
-                json='[{"network":"hoodi","timeout":"40m"}]'
+                json='[{"network":"hoodi","timeout":"1h"}]'
                 ;;
               sepolia)
                 json='[{"network":"sepolia","timeout":"2h30m"}]'
