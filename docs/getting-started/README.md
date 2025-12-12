@@ -8,6 +8,9 @@ The client supports running in two different modes:
 
 ## Quickstart L1
 
+> [!CAUTION]
+> Before starting, ensure your hardware meets the [hardware requirements](./hardware_requirements.md).
+
 Follow these steps to sync an ethrex node on the Hoodi testnet.
 
 ### MacOS
@@ -56,7 +59,6 @@ chmod +x ethrex
 curl -LO https://github.com/sigp/lighthouse/releases/download/v8.0.0/lighthouse-v8.0.0-x86_64-unknown-linux-gnu.tar.gz
 tar -xvf lighthouse-v8.0.0-x86_64-unknown-linux-gnu.tar.gz
 ```
-
 
 On one terminal:
 
