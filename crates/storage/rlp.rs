@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 
 use ethrex_common::{
     H256,
-    types::{Block, BlockBody, BlockHash, BlockHeader, Receipt},
+    types::{Block, BlockBody, BlockHeader, Receipt},
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 
@@ -11,7 +11,6 @@ use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 pub type AccountCodeHashRLP = Rlp<H256>;
 
 // Block types
-pub type BlockHashRLP = Rlp<BlockHash>;
 pub type BlockHeaderRLP = Rlp<BlockHeader>;
 pub type BlockBodyRLP = Rlp<BlockBody>;
 pub type BlockRLP = Rlp<Block>;
@@ -44,5 +43,9 @@ impl<T> Rlp<T> {
 
     pub fn bytes(&self) -> &Vec<u8> {
         &self.0
+    }
+
+    pub fn into_vec(self) -> Vec<u8> {
+        self.0
     }
 }
