@@ -126,8 +126,8 @@
               },
               "editorMode": "code",
               "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"reth-mainnet-1:6060\", quantile=\"0.999\"}",
-              "hide": false,
-              "legendFormat": "reth mainnet p99.9",
+              "hide": true,
+              "legendFormat": "reth mainnet old p99.9",
               "range": true,
               "refId": "A"
             },
@@ -138,9 +138,9 @@
               },
               "editorMode": "code",
               "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"reth-mainnet-1:6060\", quantile=\"0.5\"}",
-              "hide": false,
+              "hide": true,
               "instant": false,
-              "legendFormat": "reth mainnet p50",
+              "legendFormat": "reth mainnet old p50",
               "range": true,
               "refId": "E"
             },
@@ -152,7 +152,7 @@
               "editorMode": "code",
               "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"reth-mainnet-1-1:6060\", quantile=\"0.999\"}",
               "hide": false,
-              "legendFormat": "reth mainnet-1-1 p99.9",
+              "legendFormat": "reth mainnet p99.9",
               "range": true,
               "refId": "H"
             },
@@ -165,7 +165,7 @@
               "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"reth-mainnet-1-1:6060\", quantile=\"0.5\"}",
               "hide": false,
               "instant": false,
-              "legendFormat": "reth mainnet-1-1 p50",
+              "legendFormat": "reth mainnet p50",
               "range": true,
               "refId": "I"
             },
@@ -355,8 +355,8 @@
               },
               "editorMode": "builder",
               "expr": "reth_process_resident_memory_bytes{instance=\"eth-mainnet-rpc:6060\"}",
-              "hide": false,
-              "legendFormat": "reth mainnet resident memory",
+              "hide": true,
+              "legendFormat": "reth mainnet old resident memory",
               "range": true,
               "refId": "A"
             },
@@ -368,7 +368,7 @@
               "editorMode": "builder",
               "expr": "reth_process_resident_memory_bytes{instance=\"reth-mainnet-1-1:6060\"}",
               "hide": false,
-              "legendFormat": "reth mainnet-1-1 resident memory",
+              "legendFormat": "reth mainnet resident memory",
               "range": true,
               "refId": "E"
             },
