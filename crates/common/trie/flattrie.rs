@@ -403,23 +403,26 @@ impl FlatTrie {
                         prefix.at(0) != 16,
                         "insertion into extension yielded branch with value"
                     );
-                    let new_node_view_index = if prefix.len() == 1 {
-                        child.expect("missing child of extension node at match_index == 0")
+                    let branch_view_index = if prefix.len() == 1 {
+                        self.put_branch(vec![(
+                            prefix.at(0),
+                            (child, self.get_extension_child(&self_view)?),
+                        )])
                     } else {
                         // New extension with self_node as a child
-                        self.put_extension(
+                        let new_node_view_index = self.put_extension(
                             prefix.offset(1),
                             self.get_extension_child(&self_view)?,
                             child,
-                        )
+                        );
+                        self.put_branch(vec![(
+                            prefix.at(0),
+                            (
+                                Some(new_node_view_index),
+                                self.get_hash(new_node_view_index),
+                            ),
+                        )])
                     };
-                    let branch_view_index = self.put_branch(vec![(
-                        prefix.at(0),
-                        (
-                            Some(new_node_view_index),
-                            self.get_hash(new_node_view_index),
-                        ),
-                    )]);
                     self.insert_inner(branch_view_index, path, value)
                 } else {
                     let new_extension_view_index = self.put_extension(
