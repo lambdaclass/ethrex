@@ -166,7 +166,7 @@ pub async fn fill_transactions(
         };
 
         if let Transaction::PrivilegedL2Transaction(privileged_tx) = &head_tx.clone().into() {
-            let this_chain_id = store.chain_config.chain_id;
+            let this_chain_id = store.get_chain_config().chain_id;
             if privileged_tx.chain_id == this_chain_id
                 && privileged_tx_count >= PRIVILEGED_TX_BUDGET
             {
@@ -245,7 +245,7 @@ pub async fn fill_transactions(
             let id = head_tx.nonce();
             privileged_nonces.insert(privileged_tx.chain_id, Some(id));
 
-            if privileged_tx.chain_id == store.chain_config.chain_id {
+            if privileged_tx.chain_id == store.get_chain_config().chain_id {
                 privileged_tx_count += 1;
             }
         }

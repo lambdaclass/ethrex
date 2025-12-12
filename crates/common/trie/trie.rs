@@ -224,6 +224,9 @@ impl Trie {
         let acc = self.commit_without_storing();
         self.db.put_batch(acc)?;
 
+        // Commit the underlying transaction
+        self.db.commit()?;
+
         Ok(())
     }
 
