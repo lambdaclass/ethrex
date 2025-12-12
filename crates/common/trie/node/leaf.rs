@@ -47,7 +47,6 @@ impl LeafNode {
 
     /// Stores the received value and returns the new root of the subtrie previously consisting of self
     pub fn insert(&mut self, path: Nibbles, value: ValueOrHash) -> Result<Option<Node>, TrieError> {
-        dbg!("b");
         /* Possible flow paths:
             Leaf { SelfValue } -> Leaf { Value }
             Leaf { SelfValue } -> Extension { Branch { [Self,...] Value } }
@@ -56,7 +55,6 @@ impl LeafNode {
         */
         // If the path matches the stored path, update the value and return self
         if self.partial == path {
-            dbg!("c");
             match value {
                 ValueOrHash::Value(value) => self.value = value,
                 ValueOrHash::Hash(_) => {
@@ -67,7 +65,6 @@ impl LeafNode {
             }
             Ok(None)
         } else {
-            dbg!("d");
             let match_index = path.count_prefix(&self.partial);
             let self_choice_idx = self.partial.at(match_index);
             let new_leaf_choice_idx = path.at(match_index);
@@ -116,10 +113,8 @@ impl LeafNode {
             };
 
             let final_node = if match_index == 0 {
-                dbg!("e");
                 branch_node.into()
             } else {
-                dbg!("f");
                 // Create an extension node with the branch node as child
                 // Extension { BranchNode }
                 ExtensionNode::new(path.slice(0, match_index), Node::from(branch_node).into())

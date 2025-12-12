@@ -76,7 +76,6 @@ impl ExtensionNode {
         */
         let match_index = path.count_prefix(&self.prefix);
         if match_index == self.prefix.len() {
-            dbg!("h");
             let path = path.offset(match_index);
             // Insert into child node
             let Some(child_node) = self.child.get_node_mut(db, path.current())? else {
@@ -93,12 +92,9 @@ impl ExtensionNode {
             self.child.clear_hash();
             Ok(None)
         } else if match_index == 0 {
-            dbg!("i");
             let mut new_node = if self.prefix.len() == 1 {
-            dbg!("j");
                 self.child.clone()
             } else {
-            dbg!("k");
                 Node::from(ExtensionNode::new(
                     self.prefix.offset(1),
                     self.child.clone(),
@@ -143,7 +139,6 @@ impl ExtensionNode {
             branch_node.insert(db, path, value)?;
             Ok(Some(branch_node.into()))
         } else {
-            dbg!("l");
             let mut new_extension =
                 ExtensionNode::new(self.prefix.offset(match_index), self.child.clone());
             let new_node = new_extension
