@@ -1,4 +1,4 @@
-use crate::StateUpdater;
+use crate::based::state_updater::{CallMessage as StateUpdaterCallMessage, StateUpdater};
 use crate::sequencer::block_producer::{
     BlockProducer, CallMessage as BlockProducerCallMessage, OutMessage as BlockProducerOutMessage,
 };
@@ -271,5 +271,15 @@ async fn set_sequencer_stop_at(
     State(admin): State<Admin>,
     Path(block_number): Path<u64>,
 ) -> Result<Json<Value>, AdminErrorResponse> {
-    Ok(Json::from(Value::String("ok".into())))
+    let Some(mut state_updater) = admin.state_updater else {
+        return Err(AdminErrorResponse::NoHandle);
+    };
+
+    match state_updater
+        .call(StateUpdaterCallMessage::StopAt(block_number))
+        .await
+    {
+        Ok(_) => Ok(Json::from(Value::String("ok".into()))),
+        Err(err) => Err(AdminErrorResponse::GenServerError(err)),
+    }
 }
