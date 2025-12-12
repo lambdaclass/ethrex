@@ -255,6 +255,7 @@ impl GuestProgramState {
                             .expect("failed to remove key");
                     }
 
+                    storage_trie.authenticate()?;
                     let storage_root = storage_trie.root_hash()?.unwrap().finalize();
                     account_state.storage_root = storage_root;
                 }
