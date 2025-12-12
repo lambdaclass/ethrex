@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Usage: notify_snapsync_run.sh
 # Expects the following env vars (provided by the caller workflow):
-#   REPO, WORKFLOW_NAME, CONCLUSION, RUN_HTML_URL, RUN_ID, HEAD_SHA
+#   REPO, NAME, OUTCOME, HEAD_SHA, START_TIME
 
 if [[ -z "${SLACK_WEBHOOK_URL}" ]]; then
   echo "Slack webhook URL not provided; skipping notification." >&2
