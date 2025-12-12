@@ -43,10 +43,10 @@ use calldata::from_hex_string_to_h256_array;
 
 use crate::privileged_data::PrivilegedTransactionData;
 
-// 0xfa73fbd6d2167c110ecf5c5c36946b4ea1d1e51d
+// 0x81aa3ba4522195d2106d5415d7c025821e163ca2
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
-    0xfa, 0x73, 0xfb, 0xd6, 0xd2, 0x16, 0x7c, 0x11, 0x0e, 0xcf, 0x5c, 0x5c, 0x36, 0x94, 0x6b, 0x4e,
-    0xa1, 0xd1, 0xe5, 0x1d,
+    0x81, 0xaa, 0x3b, 0xa4, 0x52, 0x21, 0x95, 0xd2, 0x10, 0x6d, 0x54, 0x15, 0xd7, 0xc0, 0x25, 0x82,
+    0x1e, 0x16, 0x3c, 0xa2,
 ]);
 
 // 0x000000000000000000000000000000000000ffff
@@ -92,7 +92,7 @@ pub enum SdkError {
     FailedToParseAddressFromHex,
 }
 
-/// BRIDGE_ADDRESS or 0xfa73fbd6d2167c110ecf5c5c36946b4ea1d1e51d
+/// BRIDGE_ADDRESS or 0x81aa3ba4522195d2106d5415d7c025821e163ca2
 pub fn bridge_address() -> Result<Address, SdkError> {
     std::env::var("ETHREX_WATCHER_BRIDGE_ADDRESS")
         .unwrap_or(format!("{DEFAULT_BRIDGE_ADDRESS:#x}"))
