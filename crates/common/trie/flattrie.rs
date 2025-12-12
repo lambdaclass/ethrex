@@ -387,33 +387,29 @@ impl FlatTrie {
                         Some(new_child_view_index),
                     ))
                 } else if match_index == 0 {
+                    debug_assert!(
+                        prefix.at(0) != 16,
+                        "insertion into extension yielded branch with value"
+                    );
                     let new_node_view_index = if prefix.len() == 1 {
                         child.expect("missing child of extension node at match_index == 0")
                     } else {
                         // New extension with self_node as a child
-                        let node_children = NodeType::Extension { child };
-                        let node_data = NodeData::Extension {
-                            path: prefix.offset(1),
-                            child: self.get_extension_child(&self_view)?,
-                        };
-                        self.put(node_children, node_data)
+                        self.put_extension(
+                            prefix.offset(1),
+                            self.get_extension_child(&self_view)?,
+                            child,
+                        )
                     };
-
-                    let branch_view_index = if prefix.at(0) == 16 {
-                        // Yields a branch with a value
-                        unreachable!("extension inserting yielded a branch with a value")
-                    } else {
-                        // New branch with the new node as a child
-                        self.put_branch(vec![(prefix.at(0), new_node_view_index)])
-                    };
+                    let branch_view_index =
+                        self.put_branch(vec![(prefix.at(0), new_node_view_index)]);
                     self.insert_inner(branch_view_index, path, value)
                 } else {
-                    let extension_children = NodeType::Extension { child };
-                    let extension_data = NodeData::Extension {
-                        path: prefix.offset(match_index),
-                        child: self.get_extension_child(&self_view)?,
-                    };
-                    let new_extension_view_index = self.put(extension_children, extension_data);
+                    let new_extension_view_index = self.put_extension(
+                        prefix.offset(match_index),
+                        self.get_extension_child(&self_view)?,
+                        child,
+                    );
                     let new_node_view_index = self.insert_inner(
                         new_extension_view_index,
                         path.offset(match_index),
