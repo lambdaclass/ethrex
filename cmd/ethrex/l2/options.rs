@@ -166,6 +166,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 operator_fee_vault_address: opts.block_producer_opts.operator_fee_vault_address,
                 elasticity_multiplier: opts.block_producer_opts.elasticity_multiplier,
                 block_gas_limit: opts.block_producer_opts.block_gas_limit,
+                start_at: opts.block_producer_opts.start_at,
             },
             l1_committer: CommitterConfig {
                 on_chain_proposer_address: opts
@@ -535,6 +536,15 @@ pub struct BlockProducerOptions {
         help_heading = "Block producer options"
     )]
     pub block_gas_limit: u64,
+    #[arg(
+        long = "block-producer.start_at",
+        default_value = "0",
+        value_name = "UINT64",
+        env = "ETHREX_BLOCK_PRODUCER_START_AT",
+        help = "Starting L2 block to start producing blocks",
+        help_heading = "Block producer options"
+    )]
+    pub start_at: u64,
 }
 
 impl Default for BlockProducerOptions {
@@ -552,6 +562,7 @@ impl Default for BlockProducerOptions {
             l1_fee_vault_address: None,
             elasticity_multiplier: 2,
             block_gas_limit: DEFAULT_BUILDER_GAS_CEIL,
+            start_at: 0,
         }
     }
 }
