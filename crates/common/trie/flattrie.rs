@@ -9,7 +9,7 @@ use ethrex_rlp::{
 };
 use rkyv::with::Skip;
 
-use crate::{Nibbles, Node, NodeHash, NodeRef, rlp::decode_child};
+use crate::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, NodeRef, rlp::decode_child};
 
 /// A trie implementation that is non recursive, POD and avoids copying and encoding
 /// nodes by providing views into a RLP flat buffer
@@ -28,7 +28,7 @@ pub struct FlatTrie {
     /// Contains the structural information of the MPT
     pub views: Vec<NodeView>,
     /// The index of the view for the root of this trie
-    pub root_index: usize,
+    pub root_index: Option<usize>,
     /// Root hash that gets initialized when calling `Self::authenticate`
     #[serde(skip)]
     #[rkyv(with = Skip)]
@@ -114,7 +114,7 @@ impl From<&Node> for FlatTrie {
         }
 
         recursive(root, &mut trie);
-        trie.root_index = trie.views.len() - 1; // last stored node is the root
+        trie.root_index = Some(trie.views.len() - 1); // last stored node is the root
         trie
     }
 }
@@ -180,8 +180,10 @@ impl FlatTrie {
         }
 
         let Some(root_view) = self.get_root_view() else {
-            panic!(); // TODO: err
+            self.root_hash = Some((*EMPTY_TRIE_HASH).into());
+            return Ok(true);
         };
+
         let Some(root_hash) = recursive(&self, root_view)? else {
             return Ok(false);
         };
@@ -246,7 +248,7 @@ impl FlatTrie {
             }
         }
 
-        let Some(root_view) = self.views.get(self.root_index) else {
+        let Some(root_view) = self.get_root_view() else {
             panic!(); // TODO: err
         };
         recursive(&self, &mut path, root_view)
@@ -292,10 +294,10 @@ impl FlatTrie {
 
     pub fn insert(&mut self, path: Vec<u8>, value: Vec<u8>) -> Result<(), RLPDecodeError> {
         let path = Nibbles::from_bytes(&path);
-        if let None = self.get_root_view() {
-            self.root_index = self.put_leaf(path, value);
+        if let Some(root_index) = self.root_index {
+            self.root_index = Some(self.insert_inner(root_index, path, value)?);
         } else {
-            self.root_index = self.insert_inner(self.root_index, path, value)?;
+            self.root_index = Some(self.put_leaf(path, value));
         }
         self.root_hash = None;
         Ok(())
@@ -461,8 +463,8 @@ impl FlatTrie {
 
     pub fn remove(&mut self, path: Vec<u8>) -> Result<(), RLPDecodeError> {
         let path = Nibbles::from_bytes(&path);
-        if self.get_root_view().is_some() {
-            self.root_index = self.remove_inner(self.root_index, path)?;
+        if let Some(root_index) = self.root_index {
+            self.root_index = self.remove_inner(root_index, path)?;
         }
         self.root_hash = None;
         Ok(())
@@ -493,7 +495,7 @@ impl FlatTrie {
             NodeType::Extension { child } => {
                 let mut prefix = self.get_extension_prefix(&self_view)?;
 
-                if path.skip_prefix(prefix) {
+                if path.skip_prefix(&prefix) {
                     let new_child_view_index = self.remove_inner(
                         child.expect("missing child of extension node at remove"),
                         path,
@@ -529,7 +531,56 @@ impl FlatTrie {
                 }
             }
             NodeType::Branch { mut children } => {
+                let Some(choice) = path.next_choice() else {
+                    // We disallow values on branches
+                    unreachable!();
+                };
+                let Some(child_view_index) = children[choice] else {
+                    return Ok(Some(self_view_index));
+                };
 
+                let new_child_index = self.remove_inner(child_view_index, path)?;
+                children[choice] = new_child_index;
+
+                let children: Vec<(usize, usize)> = children
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(i, child)| Some((i, child?)))
+                    .collect();
+
+                match children.len() {
+                    0 => Ok(None),
+                    1 => {
+                        let (choice_idx, child_idx) = children[0];
+                        let child_view = self
+                            .get_view(child_idx)
+                            .expect("missing child view of branch choice at remove");
+
+                        match child_view.node_type {
+                            NodeType::Leaf => {
+                                let (mut partial, value) =
+                                    self.get_leaf_partial_and_value(child_view)?;
+                                partial.prepend(choice_idx as u8);
+                                Ok(Some(self.put_leaf(partial, value.to_vec())))
+                            }
+                            NodeType::Extension { child } => {
+                                let mut prefix = self.get_extension_prefix(child_view)?;
+                                prefix.prepend(choice_idx as u8);
+                                Ok(Some(self.put_extension(
+                                    prefix,
+                                    child.expect(
+                                        "missing child of extension at remove for branch case",
+                                    ),
+                                )))
+                            }
+                            NodeType::Branch { .. } => {
+                                let prefix = Nibbles::from_hex(vec![choice_idx as u8]);
+                                Ok(Some(self.put_extension(prefix, child_idx)))
+                            }
+                        }
+                    }
+                    _ => Ok(Some(self.put_branch(children))),
+                }
             }
         }
     }
@@ -584,7 +635,8 @@ impl FlatTrie {
     }
 
     pub fn get_root_view(&self) -> Option<&NodeView> {
-        self.get_view(self.root_index)
+        self.root_index
+            .map(|i| self.get_view(i).expect("missing root view"))
     }
 
     /// Calculates the hash of a node from a view index of its data.
@@ -705,23 +757,50 @@ impl FlatTrie {
 
 #[cfg(test)]
 mod test {
-    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
     use proptest::{
         collection::{btree_set, vec},
         prelude::*,
     };
 
-    use crate::{Nibbles, Node, Trie, flattrie::FlatTrie};
+    use crate::{Trie, flattrie::FlatTrie};
 
     proptest! {
         #[test]
-        fn proptest_compare_hash(data in btree_set(vec(any::<u8>(), 1), 1..100)) {
+        fn proptest_insert_compare_hash(data in btree_set(vec(any::<u8>(), 1), 1..100)) {
             let mut trie = Trie::new_temp();
             let mut flat_trie = FlatTrie::default();
 
             for val in data.iter(){
                 trie.insert(val.clone(), val.clone()).unwrap();
                 flat_trie.insert(val.clone(), val.clone()).unwrap();
+
+                let hash = trie.hash_no_commit();
+
+                prop_assert!(flat_trie.authenticate().unwrap());
+                let flat_trie_hash = flat_trie.root_hash().unwrap().unwrap();
+                prop_assert_eq!(hash, flat_trie_hash.finalize());
+            }
+        }
+
+        #[test]
+        fn proptest_insert_remove_compare_hash(data in btree_set(vec(any::<u8>(), 1), 1..100)) {
+            let mut trie = Trie::new_temp();
+            let mut flat_trie = FlatTrie::default();
+
+            for val in data.iter() {
+                trie.insert(val.clone(), val.clone()).unwrap();
+                flat_trie.insert(val.clone(), val.clone()).unwrap();
+
+                let hash = trie.hash_no_commit();
+
+                prop_assert!(flat_trie.authenticate().unwrap());
+                let flat_trie_hash = flat_trie.root_hash().unwrap().unwrap();
+                prop_assert_eq!(hash, flat_trie_hash.finalize());
+            }
+
+            for val in data.iter().rev() {
+                trie.remove(val).unwrap();
+                flat_trie.remove(val.clone()).unwrap();
 
                 let hash = trie.hash_no_commit();
 
