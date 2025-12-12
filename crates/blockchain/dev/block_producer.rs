@@ -73,9 +73,7 @@ pub async fn start_block_producer(
             Err(EngineClientError::FailedDuringGetPayload(
                 ethrex_rpc::clients::auth::errors::GetPayloadError::UnsupportedFork(msg),
             )) => {
-                tracing::debug!(
-                    "V5 not supported for current fork, falling back to V4: {msg}"
-                );
+                tracing::debug!("V5 not supported for current fork, falling back to V4: {msg}");
                 match engine_client.engine_get_payload_v4(payload_id).await {
                     Ok(response) => {
                         tracing::debug!("engine_getPayloadV4 response: {response:?}");
@@ -92,7 +90,9 @@ pub async fn start_block_producer(
                 }
             }
             Err(error) => {
-                tracing::error!("Failed to produce block: error sending engine_getPayloadV5: {error}");
+                tracing::error!(
+                    "Failed to produce block: error sending engine_getPayloadV5: {error}"
+                );
                 sleep(Duration::from_millis(300)).await;
                 tries += 1;
                 continue;
@@ -157,14 +157,12 @@ mod tests {
 
     #[test]
     fn test_unsupported_fork_error_matching() {
-        let error = EngineClientError::FailedDuringGetPayload(
-            GetPayloadError::UnsupportedFork("Unsupported fork: Prague".to_string()),
-        );
+        let error = EngineClientError::FailedDuringGetPayload(GetPayloadError::UnsupportedFork(
+            "Unsupported fork: Prague".to_string(),
+        ));
 
         match error {
-            EngineClientError::FailedDuringGetPayload(
-                GetPayloadError::UnsupportedFork(_msg),
-            ) => {
+            EngineClientError::FailedDuringGetPayload(GetPayloadError::UnsupportedFork(_msg)) => {
                 assert!(true, "Correctly matched UnsupportedFork error");
             }
             _ => panic!("Failed to match UnsupportedFork error variant"),
@@ -173,14 +171,12 @@ mod tests {
 
     #[test]
     fn test_non_fork_error_not_matched() {
-        let error = EngineClientError::FailedDuringGetPayload(
-            GetPayloadError::RPCError("Network error".to_string()),
-        );
+        let error = EngineClientError::FailedDuringGetPayload(GetPayloadError::RPCError(
+            "Network error".to_string(),
+        ));
 
         match error {
-            EngineClientError::FailedDuringGetPayload(
-                GetPayloadError::UnsupportedFork(_),
-            ) => {
+            EngineClientError::FailedDuringGetPayload(GetPayloadError::UnsupportedFork(_)) => {
                 panic!("Should not match non-fork errors");
             }
             EngineClientError::FailedDuringGetPayload(GetPayloadError::RPCError(_)) => {
