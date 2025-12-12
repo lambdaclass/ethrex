@@ -356,7 +356,11 @@ impl FlatTrie {
                         Ok(branch_view_index)
                     } else {
                         // Yields an extension node with the branch as child
-                        Ok(self.put_extension(path.slice(0, match_index), branch_view_index))
+                        Ok(self.put_extension(
+                            path.slice(0, match_index),
+                            self.get_hash(branch_view_index),
+                            Some(branch_view_index),
+                        ))
                     }
                 }
             }
@@ -377,7 +381,11 @@ impl FlatTrie {
                         path,
                         value,
                     )?;
-                    Ok(self.put_extension(prefix, new_child_view_index))
+                    Ok(self.put_extension(
+                        prefix,
+                        self.get_hash(new_child_view_index),
+                        Some(new_child_view_index),
+                    ))
                 } else if match_index == 0 {
                     let new_node_view_index = if prefix.len() == 1 {
                         child.expect("missing child of extension node at match_index == 0")
@@ -412,7 +420,11 @@ impl FlatTrie {
                         value,
                     )?;
 
-                    Ok(self.put_extension(prefix.slice(0, match_index), new_node_view_index))
+                    Ok(self.put_extension(
+                        prefix.slice(0, match_index),
+                        self.get_hash(new_node_view_index),
+                        Some(new_node_view_index),
+                    ))
                 }
             }
             NodeType::Branch { mut children } => {
@@ -497,16 +509,22 @@ impl FlatTrie {
 
                     let new_child_view = self.get_view(new_child_view_index).unwrap();
                     let new_view_index = match new_child_view.node_type {
-                        NodeType::Branch { .. } => self.put_extension(prefix, new_child_view_index),
+                        NodeType::Branch { .. } => self.put_extension(
+                            prefix,
+                            self.get_hash(new_child_view_index),
+                            Some(new_child_view_index),
+                        ),
                         NodeType::Extension {
                             child: new_extension_child,
                         } => {
                             let new_child_prefix = self.get_extension_prefix(new_child_view)?;
                             prefix.extend(&new_child_prefix);
+                            let new_extension_child = new_extension_child
+                                .expect("missing child of new extension at remove");
                             self.put_extension(
                                 prefix,
-                                new_extension_child
-                                    .expect("missing child of new extension at remove"),
+                                self.get_hash(new_extension_child),
+                                Some(new_extension_child),
                             )
                         }
                         NodeType::Leaf => {
@@ -557,16 +575,21 @@ impl FlatTrie {
                             NodeType::Extension { child } => {
                                 let mut prefix = self.get_extension_prefix(child_view)?;
                                 prefix.prepend(choice_idx as u8);
+                                let child = child
+                                    .expect("missing child of extension at remove for branch case");
                                 Ok(Some(self.put_extension(
                                     prefix,
-                                    child.expect(
-                                        "missing child of extension at remove for branch case",
-                                    ),
+                                    self.get_hash(child),
+                                    Some(child),
                                 )))
                             }
                             NodeType::Branch { .. } => {
                                 let prefix = Nibbles::from_hex(vec![choice_idx as u8]);
-                                Ok(Some(self.put_extension(prefix, child_idx)))
+                                Ok(Some(self.put_extension(
+                                    prefix,
+                                    self.get_hash(child_idx),
+                                    Some(child_idx),
+                                )))
                             }
                         }
                     }
@@ -585,16 +608,21 @@ impl FlatTrie {
         self.put(children, data)
     }
 
-    /// Puts a new extension node from a path and a child. The child needs to exist in the trie's data.
+    /// Puts a new extension node from a path, child hash and child view.
     ///
     /// Returns the new node's view index.
-    pub fn put_extension(&mut self, path: Nibbles, child_view_index: usize) -> usize {
+    pub fn put_extension(
+        &mut self,
+        path: Nibbles,
+        child_hash: NodeHash,
+        child_view_index: Option<usize>,
+    ) -> usize {
         let data = NodeData::Extension {
             path,
-            child: self.get_hash(child_view_index),
+            child: child_hash,
         };
         let children = NodeType::Extension {
-            child: Some(child_view_index),
+            child: child_view_index,
         };
         self.put(children, data)
     }
