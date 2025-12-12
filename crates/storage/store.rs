@@ -2386,7 +2386,9 @@ impl Store {
     }
 
     pub fn create_checkpoint(&self, path: impl AsRef<Path>) -> Result<(), StoreError> {
-        self.backend.create_checkpoint(path.as_ref())
+        self.backend.create_checkpoint(path.as_ref())?;
+        init_metadata_file(path.as_ref())?;
+        Ok(())
     }
 
     pub fn get_store_directory(&self) -> Result<PathBuf, StoreError> {
@@ -2852,13 +2854,8 @@ fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
             return Err(StoreError::NotFoundDBVersion {
                 expected: STORE_SCHEMA_VERSION,
             });
-        } else {
-            std::fs::create_dir_all(path)?;
         }
-        let metadata = StoreMetadata::new(STORE_SCHEMA_VERSION);
-        let serialized_metadata = serde_json::to_string_pretty(&metadata)?;
-        let mut new_file = std::fs::File::create_new(metadata_path)?;
-        new_file.write_all(serialized_metadata.as_bytes())?;
+        init_metadata_file(path)?;
         return Ok(());
     }
     if !metadata_path.is_file() {
@@ -2876,6 +2873,17 @@ fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
             expected: STORE_SCHEMA_VERSION,
         });
     }
+    Ok(())
+}
+
+fn init_metadata_file(parent_path: &Path) -> Result<(), StoreError> {
+    std::fs::create_dir_all(parent_path)?;
+
+    let metadata_path = parent_path.join(STORE_METADATA_FILENAME);
+    let metadata = StoreMetadata::new(STORE_SCHEMA_VERSION);
+    let serialized_metadata = serde_json::to_string_pretty(&metadata)?;
+    let mut new_file = std::fs::File::create_new(metadata_path)?;
+    new_file.write_all(serialized_metadata.as_bytes())?;
     Ok(())
 }
 
