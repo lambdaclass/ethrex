@@ -37,6 +37,13 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         block_number: BlockNumber,
     ) -> Result<Option<BlockHeader>, StoreError>;
 
+    /// Obtain canonical block headers in from..=to
+    async fn get_block_headers(
+        &self,
+        from: BlockNumber,
+        to: BlockNumber,
+    ) -> Result<Vec<Option<BlockHeader>>, StoreError>;
+
     /// Add block body
     async fn add_block_body(
         &self,
