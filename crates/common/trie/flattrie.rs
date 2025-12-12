@@ -461,8 +461,8 @@ impl FlatTrie {
         }
     }
 
-    pub fn remove(&mut self, path: Vec<u8>) -> Result<(), RLPDecodeError> {
-        let path = Nibbles::from_bytes(&path);
+    pub fn remove(&mut self, path: &[u8]) -> Result<(), RLPDecodeError> {
+        let path = Nibbles::from_bytes(path);
         if let Some(root_index) = self.root_index {
             self.root_index = self.remove_inner(root_index, path)?;
         }
@@ -800,7 +800,7 @@ mod test {
 
             for val in data.iter().rev() {
                 trie.remove(val).unwrap();
-                flat_trie.remove(val.clone()).unwrap();
+                flat_trie.remove(val).unwrap();
 
                 let hash = trie.hash_no_commit();
 
