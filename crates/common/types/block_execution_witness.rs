@@ -452,7 +452,13 @@ impl GuestProgramState {
             };
             let storage_trie = match self.storage_tries.get_mut(&address) {
                 None if storage_root == *EMPTY_TRIE_HASH => return Ok(None),
-                Some(trie) if trie.root_hash.unwrap().finalize() == storage_root => trie, // TODO: unwrap
+                Some(trie) => {
+                    if trie.root_hash()?.unwrap().finalize() == storage_root {
+                        trie
+                    } else {
+                        panic!()
+                    }
+                }
                 _ => {
                     return Err(GuestProgramStateError::Custom(format!(
                         "invalid storage trie for account {address}"
