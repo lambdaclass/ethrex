@@ -2,7 +2,7 @@ use crate::{
     engine::{
         ExchangeCapabilitiesRequest,
         fork_choice::ForkChoiceUpdatedV3,
-        payload::{GetPayloadV5Request, NewPayloadV4Request},
+        payload::{GetPayloadV4Request, GetPayloadV5Request, NewPayloadV4Request},
     },
     types::{
         fork_choice::{ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3},
@@ -104,6 +104,31 @@ impl EngineClient {
         }
     }
 
+    pub async fn engine_get_payload_v4(
+        &self,
+        payload_id: u64,
+    ) -> Result<ExecutionPayloadResponse, EngineClientError> {
+        let request = GetPayloadV4Request { payload_id }.into();
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
+                .map_err(GetPayloadError::SerdeJSONError)
+                .map_err(EngineClientError::from),
+            RpcResponse::Error(error_response) => {
+                let error_message = if let Some(data) = error_response.error.data {
+                    format!("{}: {:?}", error_response.error.message, data)
+                } else {
+                    error_response.error.message.to_string()
+                };
+                if error_response.error.code == -38005 {
+                    Err(GetPayloadError::UnsupportedFork(error_message).into())
+                } else {
+                    Err(GetPayloadError::RPCError(error_message).into())
+                }
+            }
+        }
+    }
+
     pub async fn engine_get_payload_v5(
         &self,
         payload_id: u64,
@@ -120,7 +145,11 @@ impl EngineClient {
                 } else {
                     error_response.error.message.to_string()
                 };
-                Err(GetPayloadError::RPCError(error_message).into())
+                if error_response.error.code == -38005 {
+                    Err(GetPayloadError::UnsupportedFork(error_message).into())
+                } else {
+                    Err(GetPayloadError::RPCError(error_message).into())
+                }
             }
         }
     }
@@ -173,5 +202,92 @@ impl EngineClient {
             "engine_getPayloadV5".to_owned(),
             "engine_newPayloadV4".to_owned(),
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::RpcErrorMetadata;
+    use crate::utils::RpcRequestId;
+    use errors::GetPayloadError;
+
+    fn create_unsupported_fork_error() -> RpcErrorResponse {
+        RpcErrorResponse {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            error: RpcErrorMetadata {
+                code: -38005,
+                data: None,
+                message: "Unsupported fork: Prague".to_string(),
+            },
+        }
+    }
+
+    fn create_generic_rpc_error() -> RpcErrorResponse {
+        RpcErrorResponse {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            error: RpcErrorMetadata {
+                code: -32603,
+                data: None,
+                message: "Internal error".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn test_error_code_mapping_unsupported_fork() {
+        let error_response = create_unsupported_fork_error();
+        let error_message = if let Some(data) = error_response.error.data {
+            format!("{}: {:?}", error_response.error.message, data)
+        } else {
+            error_response.error.message.to_string()
+        };
+
+        let result: Result<(), GetPayloadError> = if error_response.error.code == -38005 {
+            Err(GetPayloadError::UnsupportedFork(error_message))
+        } else {
+            Err(GetPayloadError::RPCError(error_message))
+        };
+
+        match result {
+            Err(GetPayloadError::UnsupportedFork(msg)) => {
+                assert_eq!(msg, "Unsupported fork: Prague");
+            }
+            _ => panic!("Expected UnsupportedFork error"),
+        }
+    }
+
+    #[test]
+    fn test_error_code_mapping_generic_error() {
+        let error_response = create_generic_rpc_error();
+        let error_message = if let Some(data) = error_response.error.data {
+            format!("{}: {:?}", error_response.error.message, data)
+        } else {
+            error_response.error.message.to_string()
+        };
+
+        let result: Result<(), GetPayloadError> = if error_response.error.code == -38005 {
+            Err(GetPayloadError::UnsupportedFork(error_message))
+        } else {
+            Err(GetPayloadError::RPCError(error_message))
+        };
+
+        match result {
+            Err(GetPayloadError::RPCError(msg)) => {
+                assert_eq!(msg, "Internal error");
+            }
+            _ => panic!("Expected RPCError, got: {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_unsupported_fork_error_variant_exists() {
+        let error = GetPayloadError::UnsupportedFork("test".to_string());
+        match error {
+            GetPayloadError::UnsupportedFork(_) => {}
+            _ => panic!("UnsupportedFork variant should exist"),
+        }
     }
 }
