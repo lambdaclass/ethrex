@@ -1,7 +1,8 @@
 use std::{array::TryFromSliceError, net::IpAddr};
 
 use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherError};
-use bytes::BufMut;
+use aes_gcm::{Aes128Gcm, KeyInit, aead::AeadMutInPlace};
+use bytes::{BufMut, Bytes};
 use ethrex_common::H256;
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -56,7 +57,7 @@ pub enum Packet {
 }
 
 impl Packet {
-    pub fn decode(dest_id: &H256, encoded_packet: &[u8]) -> Result<Packet, PacketDecodeErr> {
+    pub fn decode(dest_id: &H256, decrypt_key: &Vec<u8>, encoded_packet: &[u8]) -> Result<Packet, PacketDecodeErr> {
         if encoded_packet.len() < MIN_PACKET_SIZE || encoded_packet.len() > MAX_PACKET_SIZE {
             return Err(PacketDecodeErr::InvalidSize);
         }
@@ -77,6 +78,7 @@ impl Packet {
                 static_header,
                 authdata,
                 nonce,
+                decrypt_key,
                 &encoded_packet[authdata_end..],
             )?)),
             0x01 => Ok(Packet::WhoAreYou(WhoAreYou::decode(&authdata)?)),
@@ -149,7 +151,8 @@ impl Ordinary {
         masking_iv: &[u8],
         static_header: Vec<u8>,
         authdata: Vec<u8>,
-        _nonce: Vec<u8>,
+        nonce: Vec<u8>,
+        decrypt_key: &Vec<u8>,
         encrypted_message: &[u8],
     ) -> Result<Ordinary, PacketDecodeErr> {
         // message    = aesgcm_encrypt(initiator-key, nonce, message-pt, message-ad)
@@ -159,8 +162,24 @@ impl Ordinary {
         message_ad.extend_from_slice(&static_header);
         message_ad.extend_from_slice(&authdata);
 
-        let message = Message::decode_with_type(1, encrypted_message)?;
+        let mut message = (&encrypted_message).to_vec();
+        Self::decrypt(decrypt_key, nonce, &mut message, message_ad)?;
+        
+        let message = Message::decode(&message)?;
         Ok(Ordinary { message })
+    }
+
+    fn decrypt(
+        key: &Vec<u8>,
+        nonce: Vec<u8>,
+        message: &mut Vec<u8>,
+        message_ad: Vec<u8>,
+    ) -> Result<(), PacketDecodeErr> {
+        let mut cipher = Aes128Gcm::new(key[..16].into());
+        cipher
+            .decrypt_in_place(nonce.as_slice().into(), &message_ad, message)
+            .map_err(|e| PacketDecodeErr::ChipherError(e.to_string()))?;
+        Ok(())
     }
 }
 
@@ -215,17 +234,17 @@ pub enum Message {
 }
 
 impl Message {
-    pub fn decode_with_type(
-        packet_type: u8,
+    pub fn decode(
         encrypted_message: &[u8],
     ) -> Result<Message, RLPDecodeError> {
-        match packet_type {
+        let message_type = encrypted_message[0];
+        match message_type {
             0x01 => {
-                let (ping, _rest) = PingMessage::decode_unfinished(encrypted_message)?;
+                let ping = PingMessage::decode(&encrypted_message[1..])?;
                 Ok(Message::Ping(ping))
             }
             0x02 => {
-                let (pong, _rest) = PongMessage::decode_unfinished(encrypted_message)?;
+                let pong = PongMessage::decode(&encrypted_message[1..])?;
                 Ok(Message::Pong(pong))
             }
             // 0x03 => {
@@ -256,26 +275,30 @@ impl Message {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PingMessage {
     /// The request id of the sender.
-    pub req_id: u64,
+    pub req_id: Vec<u8>,
     /// The ENR sequence number of the sender.
     pub enr_seq: u64,
 }
 
 impl PingMessage {
-    pub fn new(req_id: u64, enr_seq: u64) -> Self {
+    pub fn new(req_id: Vec<u8>, enr_seq: u64) -> Self {
         Self { req_id, enr_seq }
+    }
+}
+
+impl RLPEncode for PingMessage {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.req_id)
+            .encode_field(&self.enr_seq)
+            .finish();
     }
 }
 
 impl RLPDecode for PingMessage {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (req_id, decoder) = decoder.decode_field("req_id")?;
-        let (enr_seq, decoder) = decoder.decode_field("enr_seq")?;
-
-        let ping = PingMessage { req_id, enr_seq };
-        // NOTE: as per the spec, any additional elements should be ignored.
-        let remaining = decoder.finish_unchecked();
+        let ((req_id, enr_seq), remaining): ((Bytes, u64), &[u8]) = RLPDecode::decode_unfinished(rlp)?;
+        let ping = PingMessage { req_id: req_id.to_vec(), enr_seq };
         Ok((ping, remaining))
     }
 }
@@ -318,9 +341,6 @@ impl RLPDecode for PongMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hex_literal::hex;
-    use secp256k1::SecretKey;
-    use std::net::Ipv4Addr;
     use crate::{
         discv5::{
             codec::Discv5Codec,
@@ -329,6 +349,9 @@ mod tests {
         utils::{node_id, public_key_from_signing_key},
     };
     use bytes::BytesMut;
+    use hex_literal::hex;
+    use secp256k1::SecretKey;
+    use std::net::Ipv4Addr;
     use tokio_util::codec::Decoder as _;
 
     // node-a-key = 0xeef77acb6c6a6eebc5b363a475ac583ec7eccdb42b6481424c60f59aa326547f
@@ -447,15 +470,28 @@ mod tests {
         let encoded = &hex!(
             "00000000000000000000000000000000088b3d4342774649325f313964a39e55ea96c005ad52be8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08dab84102ed931f66d1492acb308fa1c6715b9d139b81acbdcc"
         );
-        let packet = Packet::decode(&dest_id, encoded).unwrap();
+        // # read-key = 0x00000000000000000000000000000000
+        let read_key = [0;16].to_vec();
+        let packet = Packet::decode(&dest_id, &read_key, encoded).unwrap();
         let expected = Packet::Ordinary(Ordinary {
             message: Message::Ping(PingMessage {
-                req_id: 0x00000001,
+                req_id: hex!("00000001").to_vec(),
                 enr_seq: 2,
             }),
         });
 
         assert_eq!(packet, expected);
+    }
+
+    #[test]
+    fn ping_packet_codec_roundtrip() {
+        let pkt = PingMessage {
+            req_id: [1,2,3,4].to_vec(),
+            enr_seq: 4321,
+        };
+
+        let buf = pkt.encode_to_vec();
+        assert_eq!(PingMessage::decode(&buf).unwrap(), pkt);
     }
 
     // TODO: Test encode pong packet (with known good encoding).

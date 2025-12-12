@@ -8,6 +8,7 @@ use tokio_util::codec::{Decoder, Encoder};
 pub struct Discv5Codec {
     dest_id: H256,
     nonce: u128,
+    key: Vec<u8>,
 }
 
 impl Discv5Codec {
@@ -15,6 +16,7 @@ impl Discv5Codec {
         Self {
             dest_id,
             nonce: rand::random(),
+            key: vec![],
         }
     }
 
@@ -32,6 +34,7 @@ impl Decoder for Discv5Codec {
         if !buf.is_empty() {
             Ok(Some(Packet::decode(
                 &self.dest_id,
+                &self.key,
                 &buf.split_to(buf.len()),
             )?))
         } else {
