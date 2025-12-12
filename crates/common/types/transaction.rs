@@ -1412,6 +1412,7 @@ pub fn recover_address_from_message(
     recover_address(signature, payload).map_err(EcdsaError::from)
 }
 
+// Half the secp256k1 curve order (n/2), i.e. the upper bound for a valid `s` value per EIP-2.
 const SECP256K1_N_HALF: [u8; 32] = [
     0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
     0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b, 0x20, 0xa0,
@@ -1432,6 +1433,7 @@ fn signature_has_high_s(signature_bytes: &[u8; 65]) -> bool {
 pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, secp256k1::Error> {
     // Create signature
     let signature_bytes = signature.to_fixed_bytes();
+    // EIP-2: reject high-s signatures (s > secp256k1n/2).
     if signature_has_high_s(&signature_bytes) {
         return Err(secp256k1::Error::InvalidSignature);
     }
@@ -1461,6 +1463,7 @@ pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, k
 
     // Create signature
     let signature_bytes = signature.to_fixed_bytes();
+    // EIP-2: signatures must use "low-s" (s <= secp256k1n/2).
     // Standard k256 rejects high-s signatures by default but it's best to leave this for 3 reasons:
     // 1. Make it more explicit
     // 2. Sometimes it can happen that the zkVM patch can have a different behavior than the original crate (shouldn't happen, but has happened). So we put this just in case.
