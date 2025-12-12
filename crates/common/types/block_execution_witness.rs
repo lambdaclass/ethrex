@@ -219,6 +219,7 @@ impl GuestProgramState {
                 };
                 if update.removed_storage {
                     account_state.storage_root = *EMPTY_TRIE_HASH;
+                    self.storage_tries.insert(update.address, FlatTrie::default());
                 }
                 if let Some(info) = &update.info {
                     account_state.nonce = info.nonce;
