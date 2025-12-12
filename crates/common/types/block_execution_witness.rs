@@ -270,6 +270,7 @@ impl GuestProgramState {
     /// Returns the root hash of the state trie
     /// Returns an error if the state trie is not built yet
     pub fn state_trie_root(&mut self) -> Result<H256, GuestProgramStateError> {
+        self.state_trie.authenticate()?;
         Ok(self.state_trie.root_hash()?.unwrap().finalize()) // TOOD: unwrap
     }
 
