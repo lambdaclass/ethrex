@@ -619,10 +619,9 @@ impl Blockchain {
                     }
                 }
                 MerklizationRequest::CollectState { tx } => {
-                    let (root, nodes) = collect_trie(index, state_trie)?;
+                    let (root, nodes) = collect_trie(index, std::mem::take(&mut state_trie))?;
                     tx.send((index, root, nodes, std::mem::take(&mut storage_nodes)))
                         .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                    break;
                 }
             }
         }
