@@ -108,7 +108,7 @@ kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
 aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", rev = "c60d7eb147edbdf12bb7a7c6e92ec178d9f8da23" }
-spawned-concurrency = { git = "https://github.com/lakshya-sky/spawned", version = "0.4.3", branch = "no_state_clone" }
+spawned-concurrency = { git = "https://github.com/lambdaclass/spawned", version = "0.4.3", rev = "ce47cf1bf04a46e3ecd94d38843748b587c1c2ef" }
 spawned-rt = "0.4.2"
 lambdaworks-crypto = "0.13.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }

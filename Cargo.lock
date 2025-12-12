@@ -12402,11 +12402,11 @@ dependencies = [
 [[package]]
 name = "spawned-concurrency"
 version = "0.4.3"
-source = "git+https://github.com/lakshya-sky/spawned?branch=no_state_clone#a944f0bbac0bd1f395daf4d42b116e1249f5af9c"
+source = "git+https://github.com/lambdaclass/spawned?rev=ce47cf1bf04a46e3ecd94d38843748b587c1c2ef#ce47cf1bf04a46e3ecd94d38843748b587c1c2ef"
 dependencies = [
  "futures",
  "pin-project-lite",
- "spawned-rt 0.4.3 (git+https://github.com/lakshya-sky/spawned?branch=no_state_clone)",
+ "spawned-rt 0.4.3 (git+https://github.com/lambdaclass/spawned?rev=ce47cf1bf04a46e3ecd94d38843748b587c1c2ef)",
  "thiserror 2.0.17",
  "tracing",
 ]
@@ -12428,7 +12428,7 @@ dependencies = [
 [[package]]
 name = "spawned-rt"
 version = "0.4.3"
-source = "git+https://github.com/lakshya-sky/spawned?branch=no_state_clone#a944f0bbac0bd1f395daf4d42b116e1249f5af9c"
+source = "git+https://github.com/lambdaclass/spawned?rev=ce47cf1bf04a46e3ecd94d38843748b587c1c2ef#ce47cf1bf04a46e3ecd94d38843748b587c1c2ef"
 dependencies = [
  "crossbeam 0.7.3",
  "tokio",
