@@ -6,10 +6,10 @@ use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch};
 use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
+use reqwest::Url;
 use spawned_concurrency::{
     error::GenServerError,
-    messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
+    tasks::{CallResponse, CastResponse, GenServer, GenServerHandle, send_after},
 };
 use tracing::{debug, error, info, warn};
 
@@ -48,6 +48,12 @@ pub enum InMessage {
 #[derive(Clone, PartialEq)]
 pub enum OutMessage {
     Done,
+    Set,
+}
+
+#[derive(Clone)]
+pub enum CallMessage {
+    StopAt(u64),
 }
 
 pub struct StateUpdater {
@@ -55,11 +61,15 @@ pub struct StateUpdater {
     sequencer_registry_address: Address,
     sequencer_address: Address,
     eth_client: Arc<EthClient>,
+    l2_client: Arc<EthClient>,
     store: Store,
     rollup_store: StoreRollup,
     check_interval_ms: u64,
     sequencer_state: SequencerState,
     blockchain: Arc<Blockchain>,
+    stop_at: Option<u64>,
+    start_at: u64,
+    based: bool,
 }
 
 impl StateUpdater {
@@ -69,6 +79,7 @@ impl StateUpdater {
         blockchain: Arc<Blockchain>,
         store: Store,
         rollup_store: StoreRollup,
+        l2_url: Url,
     ) -> Result<Self, StateUpdaterError> {
         Ok(Self {
             on_chain_proposer_address: sequencer_cfg.l1_committer.on_chain_proposer_address,
@@ -82,6 +93,10 @@ impl StateUpdater {
             check_interval_ms: sequencer_cfg.based.state_updater.check_interval_ms,
             sequencer_state,
             blockchain,
+            stop_at: None,
+            start_at: sequencer_cfg.block_producer.start_at,
+            based: sequencer_cfg.based.enabled,
+            l2_client: Arc::new(EthClient::new(l2_url)?),
         })
     }
 
@@ -91,22 +106,44 @@ impl StateUpdater {
         blockchain: Arc<Blockchain>,
         store: Store,
         rollup_store: StoreRollup,
-    ) -> Result<(), StateUpdaterError> {
+        l2_url: Url,
+    ) -> Result<GenServerHandle<StateUpdater>, StateUpdaterError> {
         let mut state_updater = Self::new(
             sequencer_cfg,
             sequencer_state,
             blockchain,
             store,
             rollup_store,
+            l2_url,
         )?
         .start();
         state_updater
             .cast(InMessage::UpdateState)
             .await
-            .map_err(StateUpdaterError::InternalError)
+            .map_err(StateUpdaterError::InternalError)?;
+        Ok(state_updater)
     }
 
     pub async fn update_state(&mut self) -> Result<(), StateUpdaterError> {
+        let latest_block = self.l2_client.get_block_number().await?;
+        if latest_block < self.start_at.into() {
+            self.sequencer_state
+                .new_status(SequencerStatus::Following)
+                .await;
+            return Ok(());
+        }
+        if let Some(stop_at) = self.stop_at
+            && latest_block >= stop_at.into()
+        {
+            self.sequencer_state
+                .new_status(SequencerStatus::Following)
+                .await;
+            return Ok(());
+        }
+
+        if !self.based {
+            return Ok(());
+        }
         let lead_sequencer = hash_to_address(
             self.eth_client
                 .call(
@@ -238,10 +275,15 @@ impl StateUpdater {
 
         Ok(())
     }
+
+    fn set_stop_at(&mut self, block_number: u64) -> CallResponse<Self> {
+        self.stop_at = Some(block_number);
+        CallResponse::Reply(OutMessage::Set)
+    }
 }
 
 impl GenServer for StateUpdater {
-    type CallMsg = Unused;
+    type CallMsg = CallMessage;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type Error = StateUpdaterError;
@@ -261,6 +303,16 @@ impl GenServer for StateUpdater {
             Self::CastMsg::UpdateState,
         );
         CastResponse::NoReply
+    }
+
+    async fn handle_call(
+        &mut self,
+        message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+    ) -> spawned_concurrency::tasks::CallResponse<Self> {
+        match message {
+            CallMessage::StopAt(block_number) => self.set_stop_at(block_number),
+        }
     }
 }
 

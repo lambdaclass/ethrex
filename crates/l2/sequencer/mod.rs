@@ -163,7 +163,7 @@ pub async fn start_l2(
     });
 
     #[cfg(feature = "metrics")]
-    let metrics_gatherer = MetricsGatherer::spawn(&cfg, rollup_store.clone(), l2_url)
+    let metrics_gatherer = MetricsGatherer::spawn(&cfg, rollup_store.clone(), l2_url.clone())
         .await
         .inspect_err(|err| {
             error!("Error starting Block Producer: {err}");
@@ -177,19 +177,19 @@ pub async fn start_l2(
             needed_proof_types.clone(),
         )));
     }
+    let state_updater = StateUpdater::spawn(
+        cfg.clone(),
+        shared_state.clone(),
+        blockchain.clone(),
+        store.clone(),
+        rollup_store.clone(),
+        l2_url,
+    )
+    .await
+    .inspect_err(|err| {
+        error!("Error starting State Updater: {err}");
+    });
     if cfg.based.enabled {
-        let _ = StateUpdater::spawn(
-            cfg.clone(),
-            shared_state.clone(),
-            blockchain.clone(),
-            store.clone(),
-            rollup_store.clone(),
-        )
-        .await
-        .inspect_err(|err| {
-            error!("Error starting State Updater: {err}");
-        });
-
         let _ = BlockFetcher::spawn(
             &cfg,
             store.clone(),
@@ -225,6 +225,7 @@ pub async fn start_l2(
         l1_watcher.ok(),
         l1_proof_sender.ok(),
         block_producer_handle.clone(),
+        state_updater.ok(),
         #[cfg(feature = "metrics")]
         metrics_gatherer.ok(),
     )

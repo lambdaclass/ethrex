@@ -99,6 +99,7 @@ impl BlockProducer {
             operator_fee_vault_address,
             elasticity_multiplier,
             block_gas_limit,
+            ..
         } = config;
 
         let eth_client = EthClient::new_with_multiple_urls(l1_rpc_url)?;
