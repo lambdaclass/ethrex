@@ -104,7 +104,9 @@
 - [Re-execute Ethereum with ethrex](./ethrex_replay/ethrex_replay.md)
   - [FAQ](./ethrex_replay/faq.md)
 - [CLI reference](./CLI.md)
-- [Release Process](./developers/release-process.md)
+- [Release Process](./developers/release-process/README.md)
+  - [How to Release](./developers/release-process/release-process.md)
+  - [Pre-Release Checklist](./developers/release-process/pre-release-checklist.md)
 - [Troubleshooting]()
 
 # Roadmap
