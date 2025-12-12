@@ -259,8 +259,6 @@ impl Display for Node {
 }
 
 /// Reference: [ENR records](https://github.com/ethereum/devp2p/blob/master/enr.md)
-/// Holds optional values in (key, value) format, value represents the rlp encoded bytes
-/// The key/value pairs must be sorted by key and must be unique
 #[derive(Debug, Default, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct NodeRecordPairs {
     /// The ID of the identity scheme: https://github.com/ethereum/devp2p/blob/master/enr.md#v4-identity-scheme
@@ -282,23 +280,17 @@ pub struct NodeRecordPairs {
 }
 
 impl NodeRecordPairs {
-    pub fn try_from_raw_pairs(
-        pairs: &Vec<(Bytes, Bytes)>,
-    ) -> Result<NodeRecordPairs, RLPDecodeError> {
+    pub fn try_from_raw_pairs(pairs: &[(Bytes, Bytes)]) -> Result<NodeRecordPairs, RLPDecodeError> {
         let mut decoded_pairs = NodeRecordPairs::default();
         for (key, value) in pairs {
-            let Ok(key) = String::from_utf8(key.to_vec()) else {
-                continue;
-            };
-            let value = value.to_vec();
-            match key.as_str() {
-                "id" => decoded_pairs.id = Some(String::decode(&value)?),
-                "ip" => decoded_pairs.ip = Some(Ipv4Addr::decode(&value)?),
-                "ip6" => decoded_pairs.ip6 = Some(Ipv6Addr::decode(&value)?),
-                "tcp" => decoded_pairs.tcp_port = Some(u16::decode(&value)?),
-                "udp" => decoded_pairs.udp_port = Some(u16::decode(&value)?),
-                "secp256k1" => {
-                    let bytes = Bytes::decode(&value)?;
+            match key.as_ref() {
+                b"id" => decoded_pairs.id = Some(String::decode(value)?),
+                b"ip" => decoded_pairs.ip = Some(Ipv4Addr::decode(value)?),
+                b"ip6" => decoded_pairs.ip6 = Some(Ipv6Addr::decode(value)?),
+                b"tcp" => decoded_pairs.tcp_port = Some(u16::decode(value)?),
+                b"udp" => decoded_pairs.udp_port = Some(u16::decode(value)?),
+                b"secp256k1" => {
+                    let bytes = Bytes::decode(value)?;
                     if bytes.len() < 33 {
                         return Err(RLPDecodeError::Custom(format!(
                             "Invalid secp256k1 public key length: expected at least 33 bytes, got {}",
@@ -307,20 +299,19 @@ impl NodeRecordPairs {
                     }
                     decoded_pairs.secp256k1 = Some(H264::from_slice(&bytes))
                 }
-                "snap" => decoded_pairs.snap = Some(Vec::<u32>::decode(&value)?),
-                "eth" => {
+                b"snap" => decoded_pairs.snap = Some(Vec::<u32>::decode(value)?),
+                b"eth" => {
                     // https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
                     // entry-value = [[ forkHash, forkNext ], ...]
-                    let decoder = Decoder::new(&value)?;
+                    let decoder = Decoder::new(value)?;
                     // Here we decode fork-id = [ forkHash, forkNext ]
-                    // TODO(#3494): here we decode as optional to ignore any errors,
-                    // but we should return an error if we can't decode it
-                    let (fork_id, decoder) = decoder.decode_optional_field();
+                    let (fork_id, decoder) = decoder.decode_field("forkId")?;
 
                     // As per the spec, we should ignore any additional list elements in entry-value
                     decoder.finish_unchecked();
-                    decoded_pairs.eth = fork_id;
+                    decoded_pairs.eth = Some(fork_id);
                 }
+                // Key is some random bytes sequence which we don't care
                 _ => {}
             }
         }
@@ -328,7 +319,9 @@ impl NodeRecordPairs {
         Ok(decoded_pairs)
     }
 
+    /// Encodes to a list of (key, value) where keys are ascii bytes and values are rlp encoded bytes.
     pub fn encode_pairs(&self) -> Vec<(Bytes, Bytes)> {
+        // The key/value pairs must be sorted by key and must be unique
         let mut pairs = vec![];
         if let Some(eth) = self.eth.clone() {
             // Without the Vec wrapper, RLP encoding fork_id directly would produce:
