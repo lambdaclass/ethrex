@@ -10,7 +10,7 @@ use ethrex_blockchain::{
     error::ChainError,
     fork_choice::apply_fork_choice,
     payload::{BuildPayloadArgs, create_payload},
-    validate_block,
+    validate_block_pre_execution,
 };
 use ethrex_common::H256;
 use ethrex_common::{Address, U256};
@@ -209,7 +209,7 @@ impl BlockProducer {
         // Blockchain stores block
         let block = payload_build_result.payload;
         let chain_config = self.store.get_chain_config();
-        validate_block(
+        validate_block_pre_execution(
             &block,
             &head_header,
             &chain_config,
