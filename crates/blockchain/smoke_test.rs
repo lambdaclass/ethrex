@@ -13,7 +13,7 @@ mod blockchain_integration_test {
     use bytes::Bytes;
     use ethrex_common::{
         H160, H256,
-        types::{Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER},
+        types::{Block, BlockBody, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER},
     };
     use ethrex_storage::{EngineType, Store};
 
@@ -285,6 +285,48 @@ mod blockchain_integration_test {
 
         // The latest block should now be the new head.
         assert_eq!(latest_canonical_block_hash(&store).await.unwrap(), hash_b);
+    }
+
+    #[tokio::test]
+    async fn test_state_not_reachable_returns_error() {
+        // This test verifies that apply_fork_choice returns StateNotReachable
+        // when the link block's state root is not available in the trie.
+        let store = test_store().await;
+        let genesis_header = store.get_block_header(0).unwrap().unwrap();
+        let genesis_hash = genesis_header.hash();
+
+        // Create a block with a state_root that doesn't exist in the trie.
+        // We create it as a child of genesis but with a fake state_root.
+        let fake_state_root = H256::random();
+        let block_header = BlockHeader {
+            parent_hash: genesis_hash,
+            number: 1,
+            timestamp: genesis_header.timestamp + 12,
+            state_root: fake_state_root,
+            ..Default::default()
+        };
+        let block_hash = block_header.hash();
+        let block = Block::new(
+            block_header,
+            BlockBody {
+                transactions: vec![],
+                ommers: vec![],
+                withdrawals: Some(vec![]),
+            },
+        );
+
+        // Add the block directly to storage (bypassing state computation).
+        store.add_block(block).await.unwrap();
+
+        // Now try to apply fork choice to this block.
+        // It should fail with StateNotReachable because the state_root doesn't exist.
+        let result = apply_fork_choice(&store, block_hash, genesis_hash, genesis_hash).await;
+
+        assert!(
+            matches!(result, Err(InvalidForkChoice::StateNotReachable)),
+            "Expected StateNotReachable, got {:?}",
+            result
+        );
     }
 
     async fn new_block(store: &Store, parent: &BlockHeader) -> Block {
