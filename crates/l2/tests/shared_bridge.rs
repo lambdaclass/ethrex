@@ -8,8 +8,9 @@ use ethrex_common::{Address, U256, types::TxType};
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
-    build_generic_tx, calldata::encode_calldata, compile_contract, create_deploy, git_clone,
-    send_generic_transaction,
+    COMMON_BRIDGE_L2_ADDRESS, bridge_address, build_generic_tx, calldata::encode_calldata,
+    compile_contract, create_deploy, git_clone, send_generic_transaction,
+    wait_for_l2_deposit_receipt, wait_for_transaction_receipt,
 };
 use ethrex_rpc::{
     EthClient,
@@ -24,14 +25,17 @@ use secp256k1::SecretKey;
 use std::{path::Path, str::FromStr, time::Duration};
 use tokio::time::sleep;
 
+const L1_RPC_URL: &str = "http://localhost:8545";
 const L2A_RPC_URL: &str = "http://localhost:1729";
 const L2B_RPC_URL: &str = "http://localhost:1730";
 
 const RECEIVER_ADDRESS: &str = "0xe25583099ba105d9ec0a67f5ae86d90e50036425";
-const SENDER_ADDRESS: &str = "0x8943545177806ed17b9f23f0a21ee5948ecaa776";
+const SENDER_ADDRESS: &str = "0x0008a52c83d34f0791d07ffed04fb6b14f94e2d4";
 const COMMON_BRIDGE_ADDRESS: &str = "0x000000000000000000000000000000000000FFFF";
 
-const SENDER_PRIVATE_KEY: &str = "bcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31";
+const SENDER_PRIVATE_KEY: &str = "c1354d508b68dc33e1dab6cfbe3ce46302285a245642a0be71a655dd1a925be1";
+const SENDER_PRIVATE_KEY_ERC20: &str =
+    "e4f7dc8b199fdaac6693c9c412ea68aed9e1584d193e1c3478d30a6f01f26057";
 
 const VALUE: u64 = 10000000000000001u64;
 
@@ -44,7 +48,234 @@ const SIGNATURE: &str = "sendToL2(uint256,address,uint256,bytes)";
 const GAS_PRICE: u64 = 3946771033u64;
 
 #[tokio::test]
-async fn test_shared_bridge() {
+async fn test_shared_bridge() -> Result<()> {
+    test_counter().await?;
+
+    test_transfer_erc_20().await?;
+
+    Ok(())
+}
+
+async fn test_transfer_erc_20() -> Result<()> {
+    let l1_client = connect(L1_RPC_URL).await;
+    let l2a_client = connect(L2A_RPC_URL).await;
+    let l2b_client = connect(L2B_RPC_URL).await;
+
+    let private_key = SecretKey::from_str(SENDER_PRIVATE_KEY_ERC20).unwrap();
+    let signer: Signer = LocalSigner::new(private_key).into();
+    let sender_address = signer.address();
+    println!("test_transfer_erc_20: Sender address: {sender_address:?}");
+
+    let l1_erc20_contract_address = deploy_l1_erc20(&l1_client, &signer, sender_address).await?;
+    let fee_token_contract = build_fee_token_bytecode(l1_erc20_contract_address)?;
+    let (l2a_erc20_contract_address, _) = deploy_l2_erc20(
+        &l2a_client,
+        &signer,
+        &fee_token_contract,
+        sender_address,
+        "L2a",
+        "l2a",
+    )
+    .await?;
+    let (l2b_erc20_contract_address, l2b_balance) = deploy_l2_erc20(
+        &l2b_client,
+        &signer,
+        &fee_token_contract,
+        sender_address,
+        "L2b",
+        "l2b",
+    )
+    .await?;
+
+    approve_and_deposit(
+        &l1_client,
+        &l2a_client,
+        &signer,
+        l1_erc20_contract_address,
+        l2a_erc20_contract_address,
+        sender_address,
+    )
+    .await?;
+
+    let bridge_balance =
+        test_balance_of(&l1_client, l1_erc20_contract_address, bridge_address()?).await;
+    assert_eq!(
+        bridge_balance,
+        U256::from(888899999999u64),
+        "invalid deposit"
+    );
+
+    // send ERC20 from L2a to L2b
+    let transfer_amount = U256::from(999999u64);
+    let signature = "transferERC20(uint256,address,uint256,address,address,uint256)";
+    let values = [
+        Value::Uint(U256::from(1730)),
+        Value::Address(sender_address),
+        Value::Uint(transfer_amount),
+        Value::Address(l2a_erc20_contract_address),
+        Value::Address(l2b_erc20_contract_address),
+        Value::Uint(U256::from(210000)),
+    ];
+    test_send(
+        &l2a_client,
+        &private_key,
+        U256::zero(),
+        GAS_PRICE,
+        COMMON_BRIDGE_L2_ADDRESS,
+        signature,
+        &values,
+        "erc20_shared_bridge",
+    )
+    .await?;
+    sleep(Duration::from_secs(180)).await; // Wait for the message to be processed
+
+    let l2b_new_balance =
+        test_balance_of(&l2b_client, l2b_erc20_contract_address, sender_address).await;
+    assert_eq!(
+        l2b_new_balance,
+        l2b_balance + transfer_amount,
+        "test_transfer_erc_20: Invalid deposit"
+    );
+
+    Ok(())
+}
+
+async fn deploy_l1_erc20(
+    l1_client: &EthClient,
+    signer: &Signer,
+    sender_address: Address,
+) -> Result<Address> {
+    let init_code_bytes = std::fs::read("../../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin")
+        .context("failed to read L1 ERC20 bytecode file")?;
+    let init_code_l1 =
+        hex::decode(init_code_bytes).context("failed to decode L1 ERC20 bytecode")?;
+
+    let (tx_hash, l1_erc20_contract_address) =
+        create_deploy(l1_client, signer, init_code_l1.into(), Overrides::default()).await?;
+    wait_for_transaction_receipt(tx_hash, l1_client, 100).await?;
+    println!("Deployed L1 ERC20 at {l1_erc20_contract_address:?} in hash {tx_hash:?}");
+    let l1_balance = test_balance_of(l1_client, l1_erc20_contract_address, sender_address).await;
+    assert_eq!(
+        l1_balance,
+        U256::from_str("D3C21BCECCEDA1000000")?,
+        "l1 invalid deploy"
+    );
+
+    Ok(l1_erc20_contract_address)
+}
+
+fn build_fee_token_bytecode(l1_erc20_contract_address: Address) -> Result<Vec<u8>> {
+    let contracts_path = Path::new("contracts");
+    get_contract_dependencies(contracts_path);
+
+    let fee_token_path = Path::new("../../crates/l2/contracts/src/example");
+    let interfaces_path = Path::new("../../crates/l2/contracts/src/l2");
+    let remappings = [(
+        "@openzeppelin/contracts",
+        contracts_path
+            .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
+    )];
+    let allow_paths = [fee_token_path, interfaces_path, contracts_path];
+
+    compile_contract(
+        fee_token_path,
+        &fee_token_path.join("FeeToken.sol"),
+        false,
+        false,
+        Some(&remappings),
+        &allow_paths,
+        None,
+    )?;
+
+    let mut fee_token_contract =
+        hex::decode(std::fs::read(fee_token_path.join("solc_out/FeeToken.bin"))?)?;
+    fee_token_contract.extend_from_slice(&[0u8; 12]);
+    fee_token_contract.extend_from_slice(&l1_erc20_contract_address.to_fixed_bytes());
+
+    Ok(fee_token_contract)
+}
+
+async fn deploy_l2_erc20(
+    client: &EthClient,
+    signer: &Signer,
+    fee_token_contract: &[u8],
+    sender_address: Address,
+    display_label: &str,
+    assert_label: &str,
+) -> Result<(Address, U256)> {
+    let (tx_hash, l2_erc20_contract_address) = create_deploy(
+        client,
+        signer,
+        fee_token_contract.to_vec().into(),
+        Overrides::default(),
+    )
+    .await?;
+    wait_for_transaction_receipt(tx_hash, client, 100).await?;
+    println!("Deployed {display_label} ERC20 at {l2_erc20_contract_address:?} in hash {tx_hash:?}");
+    let balance = test_balance_of(client, l2_erc20_contract_address, sender_address).await;
+    assert_eq!(
+        balance,
+        U256::from_str("D3C21BCECCEDA1000000")?,
+        "{assert_label} invalid deploy"
+    );
+
+    Ok((l2_erc20_contract_address, balance))
+}
+
+async fn approve_and_deposit(
+    l1_client: &EthClient,
+    l2_client: &EthClient,
+    signer: &Signer,
+    l1_erc20_contract_address: Address,
+    l2_erc20_contract_address: Address,
+    sender_address: Address,
+) -> Result<()> {
+    let bridge_address = bridge_address()?;
+    let approve_calldata = encode_calldata(
+        "approve(address,uint256)",
+        &[
+            Value::Address(bridge_address),
+            Value::Uint(U256::from(9999999999999999u64)),
+        ],
+    )?;
+    let approve_tx = build_generic_tx(
+        l1_client,
+        TxType::EIP1559,
+        l1_erc20_contract_address,
+        sender_address,
+        approve_calldata.into(),
+        Overrides::default(),
+    )
+    .await?;
+    let approve_hash = send_generic_transaction(l1_client, approve_tx, signer).await?;
+    wait_for_transaction_receipt(approve_hash, l1_client, 100).await?;
+
+    let deposit_calldata = encode_calldata(
+        "depositERC20(address,address,address,uint256)",
+        &[
+            Value::Address(l1_erc20_contract_address),
+            Value::Address(l2_erc20_contract_address),
+            Value::Address(sender_address),
+            Value::Uint(U256::from(888899999999u64)),
+        ],
+    )?;
+    let deposit_tx = build_generic_tx(
+        l1_client,
+        TxType::EIP1559,
+        bridge_address,
+        sender_address,
+        deposit_calldata.into(),
+        Overrides::default(),
+    )
+    .await?;
+    let deposit_hash = send_generic_transaction(l1_client, deposit_tx, signer).await?;
+    let deposit_receipt = wait_for_transaction_receipt(deposit_hash, l1_client, 100).await?;
+    wait_for_l2_deposit_receipt(&deposit_receipt, l1_client, l2_client).await?;
+
+    Ok(())
+}
+
+async fn test_counter() -> Result<()> {
     let l2a_client = connect(L2A_RPC_URL).await;
     let l2b_client = connect(L2B_RPC_URL).await;
 
@@ -197,6 +428,7 @@ async fn test_shared_bridge() {
         sender_balance_after < sender_balance - value,
         "Sender balance did not decrease correctly"
     );
+    Ok(())
 }
 
 async fn connect(rpc_url: &str) -> EthClient {
@@ -329,4 +561,18 @@ async fn test_deploy(
     );
 
     Ok(contract_address)
+}
+
+async fn test_balance_of(client: &EthClient, token: Address, user: Address) -> U256 {
+    let res = client
+        .call(
+            token,
+            encode_calldata("balanceOf(address)", &[Value::Address(user)])
+                .unwrap()
+                .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+    U256::from_str_radix(res.trim_start_matches("0x"), 16).unwrap()
 }

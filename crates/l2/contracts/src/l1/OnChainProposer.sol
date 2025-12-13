@@ -313,7 +313,7 @@ contract OnChainProposer is
             if (bytes(reason).length != 0) {
                 revert(
                     string.concat(
-                        "00b", // OnChainProposer: Invalid RISC0 proof: 
+                        "00b", // OnChainProposer: Invalid RISC0 proof:
                         reason
                     )
                 );
@@ -340,7 +340,7 @@ contract OnChainProposer is
             if (bytes(reason).length != 0) {
                 revert(
                     string.concat(
-                        "00d", // OnChainProposer: Invalid SP1 proof: 
+                        "00d", // OnChainProposer: Invalid SP1 proof:
                         reason
                     )
                 );
@@ -367,7 +367,7 @@ contract OnChainProposer is
             if (bytes(reason).length != 0) {
                 revert(
                     string.concat(
-                        "00f", // OnChainProposer: Invalid TDX proof: 
+                        "00f", // OnChainProposer: Invalid TDX proof:
                         reason
                     )
                 );
@@ -386,6 +386,7 @@ contract OnChainProposer is
 
         if (batchCommitments[batchNumber].l2MessagesMerkleRoot != bytes32(0)) {
             ICommonBridge(BRIDGE).publishL2Messages(
+                CHAIN_ID,
                 batchNumber,
                 batchCommitments[batchNumber].l2MessagesMerkleRoot,
                 batchCommitments[batchNumber].balanceDiffs
@@ -458,7 +459,7 @@ contract OnChainProposer is
             if (bytes(reason).length != 0) {
                 revert(
                     string.concat(
-                        "00m", // OnChainProposer: Invalid ALIGNED proof: 
+                        "00m", // OnChainProposer: Invalid ALIGNED proof:
                         reason
                     )
                 );
@@ -494,29 +495,34 @@ contract OnChainProposer is
         uint256 batchNumber,
         bytes calldata publicData
     ) internal view returns (string memory) {
-        uint256 registered_chains = batchCommitments[batchNumber].balanceDiffs.length;
-        if (publicData.length != 288 + 64 * registered_chains) {
+        ICommonBridge.BalanceDiff[] memory balanceDiffs = batchCommitments[
+            batchNumber
+        ].balanceDiffs;
+        uint256 registered_chains = balanceDiffs.length;
+        uint256 expected_length = 288;
+        for (uint256 i = 0; i < registered_chains; i++) {
+            expected_length += 32;
+            expected_length += balanceDiffs[i].valuePerToken.length * 128;
+        }
+        if (publicData.length != expected_length) {
             return "00n"; // invalid public data length
         }
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
         if (
             batchCommitments[lastVerifiedBatch].newStateRoot != initialStateRoot
         ) {
-            return
-                "00o"; // initial state root public inputs don't match with initial state root
+            return "00o"; // initial state root public inputs don't match with initial state root
         }
         bytes32 finalStateRoot = bytes32(publicData[32:64]);
         if (batchCommitments[batchNumber].newStateRoot != finalStateRoot) {
-            return
-                "00p"; // final state root public inputs don't match with final state root
+            return "00p"; // final state root public inputs don't match with final state root
         }
         bytes32 withdrawalsMerkleRoot = bytes32(publicData[64:96]);
         if (
             batchCommitments[batchNumber].withdrawalsLogsMerkleRoot !=
             withdrawalsMerkleRoot
         ) {
-            return
-                "00q"; // withdrawals public inputs don't match with committed withdrawals
+            return "00q"; // withdrawals public inputs don't match with committed withdrawals
         }
         bytes32 privilegedTransactionsHash = bytes32(publicData[96:128]);
         if (
@@ -524,21 +530,18 @@ contract OnChainProposer is
                 .processedPrivilegedTransactionsRollingHash !=
             privilegedTransactionsHash
         ) {
-            return
-                "00r"; // privileged transactions hash public input does not match with committed transactions
+            return "00r"; // privileged transactions hash public input does not match with committed transactions
         }
         bytes32 blobVersionedHash = bytes32(publicData[128:160]);
         if (
             batchCommitments[batchNumber].blobKZGVersionedHash !=
             blobVersionedHash
         ) {
-            return
-                "00s"; // blob versioned hash public input does not match with committed hash
+            return "00s"; // blob versioned hash public input does not match with committed hash
         }
         bytes32 lastBlockHash = bytes32(publicData[160:192]);
         if (batchCommitments[batchNumber].lastBlockHash != lastBlockHash) {
-            return
-                "00t"; // last block hash public inputs don't match with last block hash
+            return "00t"; // last block hash public inputs don't match with last block hash
         }
         uint256 chainId = uint256(bytes32(publicData[192:224]));
         if (chainId != CHAIN_ID) {
@@ -551,28 +554,60 @@ contract OnChainProposer is
             ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() &&
             nonPrivilegedTransactions != 0
         ) {
-            return
-                "00v"; // exceeded privileged transaction inclusion deadline, can't include non-privileged transactions
+            return "00v"; // exceeded privileged transaction inclusion deadline, can't include non-privileged transactions
         }
         bytes32 l2MessagesMerkleRoot = bytes32(publicData[256:288]);
         if (
             batchCommitments[batchNumber].l2MessagesMerkleRoot !=
             l2MessagesMerkleRoot
         ) {
-            return
-                "00w"; // l2 messages merkle root public inputs don't match with committed l2 messages merkle root
+            return "00w"; // l2 messages merkle root public inputs don't match with committed l2 messages merkle root
         }
 
+        uint256 offset = 288;
         for (uint256 i = 0; i < registered_chains; i++) {
-            uint256 offset = 288 + i * 64;
             uint256 chainId = uint256(bytes32(publicData[offset:offset + 32]));
-            uint256 value = uint256(bytes32(publicData[offset + 32:offset + 64]));
-            if (
-                batchCommitments[batchNumber].balanceDiffs[i].chainId != chainId ||
-                batchCommitments[batchNumber].balanceDiffs[i].value != value
-            ) {
-                return
-                    "00x"; // balance diffs public inputs don't match with committed balance diffs
+            offset += 32;
+
+            if (balanceDiffs[i].chainId != chainId) {
+                return "00x"; // balance diffs public inputs don't match with committed balance diffs
+            }
+
+            // Validate each token entry
+            for (uint256 j = 0; j < balanceDiffs[i].valuePerToken.length; j++) {
+                (
+                    address tokenL1,
+                    address tokenL2,
+                    address destTokenL2,
+                    uint256 tokenValue
+                ) = (
+                        address(
+                            bytes20(bytes32(publicData[offset:offset + 32]))
+                        ),
+                        address(
+                            bytes20(
+                                bytes32(publicData[offset + 32:offset + 64])
+                            )
+                        ),
+                        address(
+                            bytes20(
+                                bytes32(publicData[offset + 64:offset + 96])
+                            )
+                        ),
+                        uint256(bytes32(publicData[offset + 96:offset + 128]))
+                    );
+
+                offset += 128;
+
+                if (
+                    tokenL1 != balanceDiffs[i].valuePerToken[j].tokenL1 ||
+                    tokenL2 != balanceDiffs[i].valuePerToken[j].tokenL2 ||
+                    destTokenL2 !=
+                    balanceDiffs[i].valuePerToken[j].destTokenL2 ||
+                    tokenValue != balanceDiffs[i].valuePerToken[j].value
+                ) {
+                    return "00z"; // balance diffs public inputs don't match with committed balance diffs
+                }
             }
         }
         return "";
@@ -593,12 +628,12 @@ contract OnChainProposer is
             .staticcall(callData);
         require(
             callResult,
-            "00y" // OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed
+            "010" // OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed
         );
         bool proofVerified = abi.decode(response, (bool));
         require(
             proofVerified,
-            "00z" // OnChainProposer: Aligned proof verification failed
+            "011" // OnChainProposer: Aligned proof verification failed
         );
     }
 
@@ -608,11 +643,11 @@ contract OnChainProposer is
     ) external override onlySequencer whenPaused {
         require(
             batchNumber >= lastVerifiedBatch,
-            "010" // OnChainProposer: can't revert verified batch
+            "012" // OnChainProposer: can't revert verified batch
         );
         require(
             batchNumber < lastCommittedBatch,
-            "011" // OnChainProposer: no batches are being reverted
+            "013" // OnChainProposer: no batches are being reverted
         );
 
         // Remove old batches

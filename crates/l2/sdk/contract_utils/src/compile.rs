@@ -46,6 +46,7 @@ pub fn compile_contract(
             .to_str()
             .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
     )
+    // Enable optimizer to keep bytecode size within limits.
     .arg("--via-ir")
     .arg("-o")
     .arg(

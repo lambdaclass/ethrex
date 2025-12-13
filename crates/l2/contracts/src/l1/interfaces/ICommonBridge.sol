@@ -55,10 +55,18 @@ interface ICommonBridge {
         bytes data;
     }
 
-    /// @notice Structure representing balance to send to each chain.
+    /// @notice Structure representing token and value information.
+    struct TokenValue {
+        address tokenL1;
+        address tokenL2;
+        address destTokenL2;
+        uint256 value;
+    }
+
+    /// @notice Structure representing the changes per chain id and token values.
     struct BalanceDiff {
         uint256 chainId;
-        uint256 value;
+        TokenValue[] valuePerToken;
     }
 
     /// @notice Method to retrieve all the pending transaction hashes.
@@ -121,10 +129,12 @@ interface ICommonBridge {
     /// @notice Publishes the L2 messages in the router contract.
     /// @dev This method is used by the L2 OnChainProposer to publish the L2
     /// messages when an L2 batch is committed.
+    /// @param chainId the chain id of the L2 where the messages were emitted.
     /// @param l2MessagesBatchNumber the batch number in L2 where the l2 messages were emitted.
     /// @param l2MessagesMerkleRoot the merkle root of the l2 messages.
     /// @param balanceDiffs Array of balance differences for cross-chain accounting.
     function publishL2Messages(
+        uint256 chainId,
         uint256 l2MessagesBatchNumber,
         bytes32 l2MessagesMerkleRoot,
         BalanceDiff[] calldata balanceDiffs
@@ -146,6 +156,15 @@ interface ICommonBridge {
     /// @dev This method should only be called by the shared bridge router, as this
     /// method will not burn the L2 gas.
     function receiveFromSharedBridge() external payable;
+
+    /// @notice Receives an ERC20 message from another chain via shared bridge router.
+    /// @dev This method should only be called by the shared bridge router, as this
+    /// method will modify the token balances accordingly.
+    function receiveERC20FromSharedBridge(
+        address tokenL1,
+        address tokenL2,
+        uint256 amount
+    ) external payable;
 
     /// @notice Method that claims an L2 withdrawal.
     /// @dev For a user to claim a withdrawal, this method verifies:

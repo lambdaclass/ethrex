@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256};
-use ethrex_common::types::balance_diff::BalanceDiff;
+use ethrex_common::types::balance_diff::{BalanceDiff, ValuePerToken};
 use ethrex_common::utils::keccak;
 use ethrex_common::{H160, U256, types::Receipt};
 
@@ -19,6 +19,14 @@ pub static L1MESSAGE_EVENT_SELECTOR: LazyLock<H256> =
 // keccak256("L2Message(uint256,address,address,uint256,uint256,uint256,bytes)")
 pub static L2MESSAGE_EVENT_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
     keccak("L2Message(uint256,address,address,uint256,uint256,uint256,bytes)".as_bytes())
+});
+
+// keccak256("crosschainMintERC20(address,address,address,address,uint256)")
+pub static CROSSCHAIN_MINT_ERC20_SELECTOR: LazyLock<[u8; 4]> = LazyLock::new(|| {
+    let h = keccak("crosschainMintERC20(address,address,address,address,uint256)".as_bytes());
+    let mut sel = [0u8; 4];
+    sel.copy_from_slice(&h.0[..4]);
+    sel
 });
 
 pub const BRIDGE_ADDRESS: Address = H160([
@@ -170,13 +178,66 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
         if message.to == BRIDGE_ADDRESS && message.from == BRIDGE_ADDRESS {
             continue;
         }
+        let mut offset = 4;
+        let value_per_token_decoded = if let Some(selector) = message.data.get(..4)
+            && *selector == *CROSSCHAIN_MINT_ERC20_SELECTOR
+        {
+            let Some(token_l1) = message.data.get(offset + 12..offset + 32) else {
+                continue;
+            };
+            offset += 32;
+            let Some(token_l2) = message.data.get(offset + 12..offset + 32) else {
+                continue;
+            };
+            offset += 32;
+            let Some(other_chain_token_l2) = message.data.get(offset + 12..offset + 32) else {
+                continue;
+            };
+            offset += 32;
+            offset += 32; // skip to
+            let Some(value_bytes) = message.data.get(offset..offset + 32) else {
+                continue;
+            };
+            ValuePerToken {
+                token_l1: Address::from_slice(token_l1),
+                token_l2: Address::from_slice(token_l2),
+                other_chain_token_l2: Address::from_slice(other_chain_token_l2),
+                value: U256::from_big_endian(value_bytes),
+            }
+        } else {
+            ValuePerToken {
+                token_l1: Address::zero(),
+                token_l2: Address::zero(),
+                other_chain_token_l2: Address::zero(),
+                value: message.value,
+            }
+        };
         let entry = balance_diffs
             .entry(message.chain_id)
             .or_insert(BalanceDiff {
                 chain_id: message.chain_id,
-                value: U256::zero(),
+                value_per_token: Vec::new(),
             });
-        entry.value += message.value;
+        let mut found = false;
+        for value_per_token in &mut entry.value_per_token {
+            if value_per_token.token_l1 == value_per_token_decoded.token_l1
+                && value_per_token.token_l2 == value_per_token_decoded.token_l2
+                && value_per_token.other_chain_token_l2
+                    == value_per_token_decoded.other_chain_token_l2
+            {
+                value_per_token.value += value_per_token_decoded.value;
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            entry.value_per_token.push(ValuePerToken {
+                token_l1: value_per_token_decoded.token_l1,
+                token_l2: value_per_token_decoded.token_l2,
+                other_chain_token_l2: value_per_token_decoded.other_chain_token_l2,
+                value: value_per_token_decoded.value,
+            });
+        }
     }
     balance_diffs.into_values().collect()
 }

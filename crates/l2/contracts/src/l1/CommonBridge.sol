@@ -9,7 +9,9 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+import {
+    MerkleProof
+} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
@@ -354,6 +356,7 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function publishL2Messages(
+        uint256 chainId,
         uint256 l2MessagesBatchNumber,
         bytes32 l2MessagesMerkleRoot,
         BalanceDiff[] calldata balanceDiffs
@@ -362,19 +365,52 @@ contract CommonBridge is
             l2MessagesMerkleRoots[l2MessagesBatchNumber] == bytes32(0),
             "CommonBridge: l2 messages already published"
         );
-        l2MessagesMerkleRoots[
-            l2MessagesBatchNumber
-        ] = l2MessagesMerkleRoot;
+        l2MessagesMerkleRoots[l2MessagesBatchNumber] = l2MessagesMerkleRoot;
         emit L2MessagesPublished(l2MessagesBatchNumber, l2MessagesMerkleRoot);
         for (uint i = 0; i < balanceDiffs.length; i++) {
-            IRouter(SHARED_BRIDGE_ROUTER).sendMessage{value: balanceDiffs[i].value}(
-                balanceDiffs[i].chainId
-            );
+            for (uint j = 0; j < balanceDiffs[i].valuePerToken.length; j++) {
+                TokenValue memory tv = balanceDiffs[i].valuePerToken[j];
+                if (tv.tokenL1 == address(0)) {
+                    IRouter(SHARED_BRIDGE_ROUTER).sendMessage{value: tv.value}(
+                        balanceDiffs[i].chainId
+                    );
+                } else {
+                    require(
+                        deposits[tv.tokenL1][tv.tokenL2] >= tv.value,
+                        "CommonBridge: trying to withdraw more tokens than were deposited"
+                    );
+                    deposits[tv.tokenL1][tv.tokenL2] -= tv.value;
+                    IERC20(tv.tokenL1).safeTransfer(
+                        SHARED_BRIDGE_ROUTER,
+                        tv.value
+                    );
+                    IRouter(SHARED_BRIDGE_ROUTER).sendERC20Message(
+                        chainId,
+                        balanceDiffs[i].chainId,
+                        tv.tokenL1,
+                        tv.destTokenL2,
+                        tv.value
+                    );
+                }
+            }
         }
     }
 
     /// @inheritdoc ICommonBridge
-    function receiveFromSharedBridge() public override payable {
+    function receiveFromSharedBridge() public payable override {
+        require(
+            msg.sender == SHARED_BRIDGE_ROUTER,
+            "CommonBridge: caller is not the shared bridge router"
+        );
+    }
+
+    /// @inheritdoc ICommonBridge
+    function receiveERC20FromSharedBridge(
+        address tokenL1,
+        address tokenL2,
+        uint256 amount
+    ) public payable override {
+        deposits[tokenL1][tokenL2] += amount;
         require(
             msg.sender == SHARED_BRIDGE_ROUTER,
             "CommonBridge: caller is not the shared bridge router"
@@ -387,11 +423,12 @@ contract CommonBridge is
         uint256 l2MessageBatchNumber,
         bytes32[] calldata l2MessageProof
     ) external view override returns (bool) {
-        return MerkleProof.verify(
-            l2MessageProof,
-            l2MessagesMerkleRoots[l2MessageBatchNumber],
-            l2MessageLeaf
-        );
+        return
+            MerkleProof.verify(
+                l2MessageProof,
+                l2MessagesMerkleRoots[l2MessageBatchNumber],
+                l2MessageLeaf
+            );
     }
 
     /// @inheritdoc ICommonBridge
