@@ -3,7 +3,8 @@ flamegraph-branch flamegraph-inner flamegraph-mainnet flamegraph-sepolia flamegr
 flamegraph-hoodi start-lighthouse start-ethrex backup-db start-mainnet-metrics-docker \
 start-sepolia-metrics-docker start-holesky-metrics-docker start-hoodi-metrics-docker \
 start-metrics-docker tail-syncing-logs tail-metrics-logs copy_flamegraph import-with-metrics \
-snapsync-docker-up snapsync-docker-down snapsync-docker-clean snapsync-docker-logs snapsync-docker-status
+snapsync-docker-up snapsync-docker-down snapsync-docker-clean snapsync-docker-logs snapsync-docker-status \
+snapsync-docker-restart snapsync-docker-monitor snapsync-docker-run snapsync-docker-loop
 
 ETHREX_DIR ?= "../.."
 EVM ?= levm
@@ -273,11 +274,17 @@ snapsync-docker-restart: ## Restart the cycle (clean volumes + start fresh).
 	$(SNAPSYNC_COMPOSE) down -v
 	$(SNAPSYNC_COMPOSE) up -d
 
-snapsync-docker-monitor: ## Monitor all networks and report success/failure (like server_runner.py).
+snapsync-docker-monitor: ## Monitor all networks (one-shot, exits on completion).
 	python3 docker_monitor.py --ports 8545,8546,8547 --names hoodi,sepolia,mainnet --containers ethrex-hoodi,ethrex-sepolia,ethrex-mainnet --exit-on-success
 
-snapsync-docker-run: ## Full run: start all networks + monitor until success/failure.
+snapsync-docker-run: ## Full run: start + monitor (one-shot, exits on completion).
 	$(SNAPSYNC_COMPOSE) up -d
 	@echo "Waiting 10s for containers to start..."
 	@sleep 10
 	python3 docker_monitor.py --ports 8545,8546,8547 --names hoodi,sepolia,mainnet --containers ethrex-hoodi,ethrex-sepolia,ethrex-mainnet --exit-on-success
+
+snapsync-docker-loop: ## Continuous loop: sync all networks, restart on success, repeat forever.
+	$(SNAPSYNC_COMPOSE) up -d
+	@echo "Waiting 10s for containers to start..."
+	@sleep 10
+	python3 docker_monitor.py --ports 8545,8546,8547 --names hoodi,sepolia,mainnet --containers ethrex-hoodi,ethrex-sepolia,ethrex-mainnet --compose-file docker-compose.snapsync.yaml --compose-dir $(CURDIR)
