@@ -15,7 +15,7 @@ import requests
 
 CHECK_INTERVAL = 10
 SYNC_TIMEOUT = 4 * 60  # 4 hours default sync timeout (in minutes)
-BLOCK_PROCESSING_DURATION = 30 * 60
+BLOCK_PROCESSING_DURATION = 22 * 60 # Monitor block processing for 20 minutes
 BLOCK_STALL_TIMEOUT = 10 * 60  # Fail if no new block for 10 minutes
 STATUS_PRINT_INTERVAL = 30
 
