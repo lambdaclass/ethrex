@@ -48,6 +48,7 @@
 - [Monitoring and metrics](./l2/monitoring.md)
 - [Admin server](./l2/admin.md)
 - [Ethrex <> Aligned](./l2/aligned_integration.md)
+- [Ethrex Rollup Stages](./l2/stages.md)
 - [Architecture](./l2/architecture/README.md)
   - [Overview](./l2/architecture/overview.md)
   - [Sequencer](./l2/architecture/sequencer.md)
