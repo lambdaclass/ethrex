@@ -34,7 +34,12 @@ contract OnChainProposer is
         bytes32 processedPrivilegedTransactionsRollingHash;
         bytes32 withdrawalsLogsMerkleRoot;
         bytes32 lastBlockHash;
+        /// @dev git commit hash that produced the proof/verification key used for this batch
+        bytes32 commitHash;
     }
+
+    uint8 internal constant VK_SP1 = 1;
+    uint8 internal constant VK_RISC0 = 2;
 
     /// @notice The commitments of the committed batches.
     /// @dev If a batch is committed, the commitment is stored here.
@@ -65,6 +70,7 @@ contract OnChainProposer is
     address public TDX_VERIFIER_ADDRESS;
     address public SEQUENCER_REGISTRY;
 
+    /// @dev Deprecated variable.
     bytes32 public SP1_VERIFICATION_KEY;
 
     /// @notice Indicates whether the contract operates in validium mode.
@@ -75,6 +81,7 @@ contract OnChainProposer is
     /// @dev This address is set during contract initialization and is used to verify aligned proofs.
     address public ALIGNEDPROOFAGGREGATOR;
 
+    /// @dev Deprecated variable.
     bytes32 public RISC0_VERIFICATION_KEY;
 
     /// @notice True if a Risc0 proof is required for batch verification.
@@ -89,6 +96,10 @@ contract OnChainProposer is
 
     /// @notice Chain ID of the network
     uint256 public CHAIN_ID;
+
+    /// @notice Verification keys keyed by git commit hash (keccak of the commit SHA string) and verifier type.
+    mapping(bytes32 commitHash => mapping(uint8 verifierId => bytes32 vk))
+        public verificationKeys;
 
     modifier onlyLeaderSequencer() {
         require(
@@ -120,6 +131,7 @@ contract OnChainProposer is
         address alignedProofAggregator,
         bytes32 sp1Vk,
         bytes32 risc0Vk,
+        bytes32 commitHash,
         bytes32 genesisStateRoot,
         address sequencer_registry,
         uint256 chainId
@@ -129,13 +141,10 @@ contract OnChainProposer is
         // Risc0 constants
         REQUIRE_RISC0_PROOF = requireRisc0Proof;
         RISC0_VERIFIER_ADDRESS = r0verifier;
-        RISC0_VERIFICATION_KEY = risc0Vk;
 
         // SP1 constants
         REQUIRE_SP1_PROOF = requireSp1Proof;
         SP1_VERIFIER_ADDRESS = sp1verifier;
-        SP1_VERIFICATION_KEY = sp1Vk;
-        RISC0_VERIFICATION_KEY = risc0Vk;
 
         // TDX constants
         REQUIRE_TDX_PROOF = requireTdxProof;
@@ -145,12 +154,28 @@ contract OnChainProposer is
         ALIGNED_MODE = aligned;
         ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
 
+        require(
+            commitHash != bytes32(0),
+            "OnChainProposer: commit hash is zero"
+        );
+        require(
+            !REQUIRE_SP1_PROOF || sp1Vk != bytes32(0),
+            "OnChainProposer: missing SP1 verification key"
+        );
+        require(
+            !REQUIRE_RISC0_PROOF || risc0Vk != bytes32(0),
+            "OnChainProposer: missing RISC0 verification key"
+        );
+        verificationKeys[commitHash][VK_SP1] = sp1Vk;
+        verificationKeys[commitHash][VK_RISC0] = risc0Vk;
+
         batchCommitments[0] = BatchCommitmentInfo(
             genesisStateRoot,
             bytes32(0),
             bytes32(0),
             bytes32(0),
-            bytes32(0)
+            bytes32(0),
+            commitHash
         );
 
         // Set the SequencerRegistry address
@@ -171,6 +196,9 @@ contract OnChainProposer is
         CHAIN_ID = chainId;
 
         OwnableUpgradeable.__Ownable_init(owner);
+
+        emit VerificationKeyUpgraded("SP1", commitHash, sp1Vk);
+        emit VerificationKeyUpgraded("RISC0", commitHash, risc0Vk);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -191,15 +219,33 @@ contract OnChainProposer is
     }
 
     /// @inheritdoc IOnChainProposer
-    function upgradeSP1VerificationKey(bytes32 new_vk) public onlyOwner {
-        SP1_VERIFICATION_KEY = new_vk;
-        emit VerificationKeyUpgraded("SP1", new_vk);
+    function upgradeSP1VerificationKey(
+        bytes32 commit_hash,
+        bytes32 new_vk
+    ) public onlyOwner {
+        require(
+            commit_hash != bytes32(0),
+            "OnChainProposer: commit hash is zero"
+        );
+        // we don't want to restrict setting the vk to zero
+        // as we may want to disable the version
+        verificationKeys[commit_hash][VK_SP1] = new_vk;
+        emit VerificationKeyUpgraded("SP1", commit_hash, new_vk);
     }
 
     /// @inheritdoc IOnChainProposer
-    function upgradeRISC0VerificationKey(bytes32 new_vk) public onlyOwner {
-        RISC0_VERIFICATION_KEY = new_vk;
-        emit VerificationKeyUpgraded("RISC0", new_vk);
+    function upgradeRISC0VerificationKey(
+        bytes32 commit_hash,
+        bytes32 new_vk
+    ) public onlyOwner {
+        require(
+            commit_hash != bytes32(0),
+            "OnChainProposer: commit hash is zero"
+        );
+        // we don't want to restrict setting the vk to zero
+        // as we may want to disable the version
+        verificationKeys[commit_hash][VK_RISC0] = new_vk;
+        emit VerificationKeyUpgraded("RISC0", commit_hash, new_vk);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -209,6 +255,7 @@ contract OnChainProposer is
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash,
+        bytes32 commitHash,
         bytes[] calldata //rlpEncodedBlocks
     ) external override onlyLeaderSequencer {
         // TODO: Refactor validation
@@ -245,6 +292,16 @@ contract OnChainProposer is
             );
         }
 
+        // Validate commit hash and corresponding verification keys are valid
+        require(commitHash != bytes32(0), "012");
+        require(
+            (!REQUIRE_SP1_PROOF ||
+                verificationKeys[commitHash][VK_SP1] != bytes32(0)) &&
+                (!REQUIRE_RISC0_PROOF ||
+                    verificationKeys[commitHash][VK_RISC0] != bytes32(0)),
+            "013" // missing verification key for commit hash
+        );
+
         // Blob is published in the (EIP-4844) transaction that calls this function.
         bytes32 blobVersionedHash = blobhash(0);
         if (VALIDIUM) {
@@ -264,7 +321,8 @@ contract OnChainProposer is
             blobVersionedHash,
             processedPrivilegedTransactionsRollingHash,
             withdrawalsLogsMerkleRoot,
-            lastBlockHash
+            lastBlockHash,
+            commitHash
         );
         emit BatchCommitted(batchNumber, newStateRoot);
 
@@ -293,7 +351,10 @@ contract OnChainProposer is
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature
     ) external {
-        require(!ALIGNED_MODE, "Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead.");
+        require(
+            !ALIGNED_MODE,
+            "Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead."
+        );
 
         require(
             batchCommitments[batchNumber].newStateRoot != bytes32(0),
@@ -324,10 +385,12 @@ contract OnChainProposer is
                     )
                 );
             }
+            bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
+            bytes32 risc0Vk = verificationKeys[batchCommitHash][VK_RISC0];
             try
                 IRiscZeroVerifier(RISC0_VERIFIER_ADDRESS).verify(
                     risc0BlockProof,
-                    RISC0_VERIFICATION_KEY,
+                    risc0Vk,
                     sha256(risc0Journal)
                 )
             {} catch {
@@ -351,9 +414,11 @@ contract OnChainProposer is
                     )
                 );
             }
+            bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
+            bytes32 sp1Vk = verificationKeys[batchCommitHash][VK_SP1];
             try
                 ISP1Verifier(SP1_VERIFIER_ADDRESS).verifyProof(
-                    SP1_VERIFICATION_KEY,
+                    sp1Vk,
                     sp1PublicValues,
                     sp1ProofBytes
                 )
@@ -379,7 +444,10 @@ contract OnChainProposer is
                 );
             }
             try
-                ITDXVerifier(TDX_VERIFIER_ADDRESS).verify(tdxPublicValues, tdxSignature)
+                ITDXVerifier(TDX_VERIFIER_ADDRESS).verify(
+                    tdxPublicValues,
+                    tdxSignature
+                )
             {} catch {
                 revert(
                     "OnChainProposer: Invalid TDX proof failed proof verification"
@@ -462,7 +530,9 @@ contract OnChainProposer is
             if (REQUIRE_SP1_PROOF) {
                 _verifyProofInclusionAligned(
                     sp1MerkleProofsList[i],
-                    SP1_VERIFICATION_KEY,
+                    verificationKeys[batchCommitments[batchNumber].commitHash][
+                        VK_SP1
+                    ],
                     publicInputsList[i]
                 );
             }
@@ -470,7 +540,9 @@ contract OnChainProposer is
             if (REQUIRE_RISC0_PROOF) {
                 _verifyProofInclusionAligned(
                     risc0MerkleProofsList[i],
-                    RISC0_VERIFICATION_KEY,
+                    verificationKeys[batchCommitments[batchNumber].commitHash][
+                        VK_RISC0
+                    ],
                     publicInputsList[i]
                 );
             }

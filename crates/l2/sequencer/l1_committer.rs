@@ -13,6 +13,7 @@ use bytes::Bytes;
 use ethrex_blockchain::{
     Blockchain, BlockchainOptions, BlockchainType, L2Config, error::ChainError, vm::StoreVmDatabase,
 };
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -68,9 +69,9 @@ use spawned_concurrency::tasks::{
 };
 
 const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
-    "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes[])";
+    "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes32,bytes[])";
 const COMMIT_FUNCTION_SIGNATURE: &str =
-    "commitBatch(uint256,bytes32, bytes32,bytes32,bytes32,bytes32,(uint256,uint256)[])";
+    "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes32,bytes32,(uint256,uint256)[])";
 /// Default wake up time for the committer to check if it should send a commit tx
 const COMMITTER_DEFAULT_WAKE_TIME_MS: u64 = 60_000;
 
@@ -1090,6 +1091,7 @@ impl L1Committer {
         debug!("l2 messages merkle root: {l2_messages_merkle_root:#x}");
         debug!("l2 messages hashes len: {}", batch.l2_message_hashes.len());
         let last_block_hash = get_last_block_hash(&self.store, batch.last_block)?;
+        let commit_hash_bytes = keccak(self.git_commit_hash.as_bytes());
         let balance_diffs: Vec<Value> = batch
             .balance_diffs
             .iter()
@@ -1118,6 +1120,7 @@ impl L1Committer {
                 encoded_blocks.push(block.encode_to_vec().into());
             }
 
+            calldata_values.push(Value::FixedBytes(commit_hash_bytes.0.to_vec().into()));
             calldata_values.push(Value::Array(
                 encoded_blocks.into_iter().map(Value::Bytes).collect(),
             ));
@@ -1125,6 +1128,7 @@ impl L1Committer {
             (COMMIT_FUNCTION_SIGNATURE_BASED, calldata_values)
         } else {
             calldata_values.push(Value::FixedBytes(l2_messages_merkle_root.0.to_vec().into()));
+            calldata_values.push(Value::FixedBytes(commit_hash_bytes.0.to_vec().into()));
             calldata_values.push(Value::Array(balance_diffs));
             (COMMIT_FUNCTION_SIGNATURE, calldata_values)
         };
