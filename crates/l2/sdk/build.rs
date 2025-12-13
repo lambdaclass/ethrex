@@ -1,60 +1,62 @@
 //! Build script for the L2 SDK crate.
 //! This script downloads dependencies and compiles contracts to be embedded as constants in the SDK.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-use std::env;
-use std::path::Path;
+use std::{env, fs, path::PathBuf};
 
 use ethrex_sdk_contract_utils::git_clone;
 
 fn main() {
-    println!("cargo::rerun-if-env-changed=COMPILE_CONTRACTS");
+    println!("cargo::rerun-if-env-changed=ETHREX_SDK_OZ_CONTRACTS_DIR");
     println!("cargo::rerun-if-changed=build.rs");
 
-    let out_dir = env::var_os("OUT_DIR").unwrap();
-    let contracts_path = Path::new(&out_dir).join("contracts");
-    std::fs::create_dir_all(contracts_path.join("lib")).expect("Failed to create contracts/lib");
+    let contracts_path =
+        PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR not set")).join("contracts");
+    fs::create_dir_all(contracts_path.join("lib")).expect("failed to create contracts/lib");
 
-    // If COMPILE_CONTRACTS is not set, skip the compilation step.
-    if env::var_os("COMPILE_CONTRACTS").is_none() {
-        // Write an empty bytecode file to indicate that contracts are not compiled.
-        std::fs::create_dir_all(contracts_path.join("solc_out"))
-            .expect("failed to create contracts output directory");
-        std::fs::write(contracts_path.join("solc_out/ERC1967Proxy.bytecode"), [])
-            .expect("failed to write ERC1967Proxy bytecode");
-        return;
-    }
+    let openzeppelin_contracts_root = env::var_os("ETHREX_SDK_OZ_CONTRACTS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let target = contracts_path.join("lib/openzeppelin-contracts");
+            git_clone(
+                "https://github.com/OpenZeppelin/openzeppelin-contracts.git",
+                target.to_str().expect("failed to convert git target path"),
+                Some("release-v5.4"),
+                true,
+            )
+            .expect("failed to clone openzeppelin-contracts repo");
+            target
+        });
 
-    git_clone(
-        "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git",
-        contracts_path
-            .join("lib/openzeppelin-contracts-upgradeable")
-            .to_str()
-            .expect("Failed to convert path to str"),
-        Some("release-v5.4"),
-        true,
-    )
-    .unwrap();
+    let proxy_contract_path =
+        openzeppelin_contracts_root.join("contracts/proxy/ERC1967/ERC1967Proxy.sol");
+    assert!(
+        proxy_contract_path.exists(),
+        "ERC1967Proxy.sol not found at {}; try using the contracts/contracts/ path if needed",
+        proxy_contract_path.display()
+    );
 
-    // Compile the ERC1967Proxy contract
-    let proxy_contract_path = contracts_path.join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol");
+    let allow_paths = vec![
+        contracts_path.as_path(),
+        openzeppelin_contracts_root.as_path(),
+    ];
     ethrex_sdk_contract_utils::compile_contract(
         &contracts_path,
         &proxy_contract_path,
         false,
         false,
         None,
-        &[&contracts_path],
+        &allow_paths,
         Some(999999),
     )
     .expect("failed to compile ERC1967Proxy contract");
 
     let contract_bytecode_hex =
-        std::fs::read_to_string(contracts_path.join("solc_out/ERC1967Proxy.bin"))
+        fs::read_to_string(contracts_path.join("solc_out/ERC1967Proxy.bin"))
             .expect("failed to read ERC1967Proxy bytecode");
     let contract_bytecode = hex::decode(contract_bytecode_hex.trim())
         .expect("failed to hex-decode ERC1967Proxy bytecode");
 
-    std::fs::write(
+    fs::write(
         contracts_path.join("solc_out/ERC1967Proxy.bytecode"),
         contract_bytecode,
     )

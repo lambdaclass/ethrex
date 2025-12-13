@@ -34,30 +34,30 @@ Ensure you have the following installed on your system:
 
     ```shell
     # For dummy proving
-    COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql
+    cargo build --release --bin ethrex --features l2,l2-sql
 
     # For SP1 CPU proving (very slow, not recommended)
-    COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,sp1
+    cargo build --release --bin ethrex --features l2,l2-sql,sp1
 
     # For RISC0 CPU proving (very slow, not recommended)
-    COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,risc0
+    cargo build --release --bin ethrex --features l2,l2-sql,risc0
 
     # For SP1 and RISC0 CPU proving (very slow, not recommended)
-    COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,sp1,risc0
+    cargo build --release --bin ethrex --features l2,l2-sql,sp1,risc0
 
     # For SP1 GPU proving
-    COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,sp1,gpu
+    cargo build --release --bin ethrex --features l2,l2-sql,sp1,gpu
 
     # For RISC0 GPU proving
-    COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,risc0,gpu
+    cargo build --release --bin ethrex --features l2,l2-sql,risc0,gpu
 
     # For SP1 and RISC0 GPU proving
-    COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,sp1,risc0,gpu
+    cargo build --release --bin ethrex --features l2,l2-sql,sp1,risc0,gpu
     ```
 
 > [!WARNING]
 > If you want your verifying keys generation to be reproducible, prepend `PROVER_REPRODUCIBLE_BUILD=true` to the above command:
 >
 > ```shell
-> PROVER_REPRODUCIBLE_BUILD=true COMPILE_CONTRACTS=true cargo b -r --bin ethrex -F l2,l2-sql,sp1,risc0,gpu
+> PROVER_REPRODUCIBLE_BUILD=true cargo b -r --bin ethrex -F l2,l2-sql,sp1,risc0,gpu
 > ```

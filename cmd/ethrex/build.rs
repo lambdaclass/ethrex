@@ -12,7 +12,6 @@ mod build_l2;
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo::rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-env-changed=COMPILE_CONTRACTS");
     println!("cargo:rerun-if-changed=../../crates/l2/contracts/src");
 
     // Export build OS and rustc version as environment variables
@@ -39,11 +38,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         download_script();
 
-        // If COMPILE_CONTRACTS is not set, skip
-        if env::var_os("COMPILE_CONTRACTS").is_some() {
-            let out_dir = env::var_os("OUT_DIR").unwrap();
-            update_genesis_file(L2_GENESIS_PATH.as_ref(), Path::new(&out_dir))?;
-        }
+        let out_dir = env::var_os("OUT_DIR").unwrap();
+        update_genesis_file(L2_GENESIS_PATH.as_ref(), Path::new(&out_dir))?;
     }
 
     Ok(())

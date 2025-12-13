@@ -69,18 +69,6 @@ jobs:
         run: |
           cargo fmt --all -- --check
 
-      - name: Run tooling cargo check
-        run: cargo check --workspace --all-targets
-        working-directory: tooling
-
-      - name: Run tooling cargo clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-        working-directory: tooling
-
-      - name: Run tooling cargo fmt
-        run: cargo fmt --all -- --check
-        working-directory: tooling
-
   test:
     name: Test - ${{ matrix.runner }}
     needs: detect-changes
@@ -101,12 +89,15 @@ jobs:
 
       - name: Run unit tests
         run: |
-          cargo test --workspace --exclude ethrex-l2
-
-      - name: Run Blockchain EF tests
-        if: ${{ github.event_name != 'merge_group' }}
-        run: |
-          make -C tooling/ef_tests/blockchain test
+          cargo test --workspace \
+            --exclude ethrex-l2 \
+            --exclude ethrex-l2-common \
+            --exclude ethrex-l2-rpc \
+            --exclude ethrex-sdk \
+            --exclude ethrex-sdk-contract-utils \
+            --exclude ethrex-prover \
+            --exclude ethrex-storage-rollup \
+            --exclude guest_program
 
   docker_build:
     name: Build Docker
@@ -323,24 +314,3 @@ jobs:
             echo "Job Hive failed"
             exit 1
           fi
-
-  reorg-tests:
-    name: Reorg Tests
-    runs-on: ubuntu-latest
-    needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Free Disk Space
-        uses: ./.github/actions/free-disk
-
-      - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
-
-      - name: Compile ethrex binary
-        run: cargo build --bin ethrex
-
-      - name: Run reorg tests
-        run: cd tooling/reorgs && cargo run

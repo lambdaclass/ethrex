@@ -27,11 +27,11 @@ The following command will:
 2. Start an ethrex supernode, i.e. an L1 execution client embedded with an L2 sequencer node.
 
 ```shell
-rm -rf dev_ethrex_l*; RUSTFLAGS="-Awarnings" COMPILE_CONTRACTS=true RUST_LOG=off cargo run -r -F l2,l2-sql -- l2 --supernode --block-producer.coinbase-address $(rex a -z) --committer.l1-private-key 0x850643a0224065ecce3882673c21f56bcf6eef86274cc21cadff15930b59fc8c --proof-coordinator.l1-private-key 0xf296c7802555da2a5a662be70e078cbd38b44f96f8615ae529da41122ce8db05 --eth.rpc-url http://localhost:8545 --validium --no-monitor --datadir dev_ethrex_l2 --network ./fixtures/genesis/l2.json --http.port 1729 --committer.commit-time 86400000
+rm -rf dev_ethrex_l*; RUSTFLAGS="-Awarnings" RUST_LOG=off cargo run -r -F l2,l2-sql -- l2 --supernode --block-producer.coinbase-address $(rex a -z) --committer.l1-private-key 0x850643a0224065ecce3882673c21f56bcf6eef86274cc21cadff15930b59fc8c --proof-coordinator.l1-private-key 0xf296c7802555da2a5a662be70e078cbd38b44f96f8615ae529da41122ce8db05 --eth.rpc-url http://localhost:8545 --validium --no-monitor --datadir dev_ethrex_l2 --network ./fixtures/genesis/l2.json --http.port 1729 --committer.commit-time 86400000
 
 # Same but enabling logs
 
-rm -rf dev_ethrex_l*; RUSTFLAGS="-Awarnings" COMPILE_CONTRACTS=true RUST_LOG=info,ethrex_p2p=error,ethrex_l2::sequencer::l1_committer=debug cargo run -r -F l2,l2-sql -- l2 --supernode --block-producer.coinbase-address $(rex a -z) --committer.l1-private-key 0x850643a0224065ecce3882673c21f56bcf6eef86274cc21cadff15930b59fc8c --proof-coordinator.l1-private-key 0xf296c7802555da2a5a662be70e078cbd38b44f96f8615ae529da41122ce8db05 --eth.rpc-url http://localhost:8545 --validium --no-monitor --datadir dev_ethrex_l2 --network ./fixtures/genesis/l2.json --http.port 1729 --committer.commit-time 86400000
+rm -rf dev_ethrex_l*; RUSTFLAGS="-Awarnings" RUST_LOG=info,ethrex_p2p=error,ethrex_l2::sequencer::l1_committer=debug cargo run -r -F l2,l2-sql -- l2 --supernode --block-producer.coinbase-address $(rex a -z) --committer.l1-private-key 0x850643a0224065ecce3882673c21f56bcf6eef86274cc21cadff15930b59fc8c --proof-coordinator.l1-private-key 0xf296c7802555da2a5a662be70e078cbd38b44f96f8615ae529da41122ce8db05 --eth.rpc-url http://localhost:8545 --validium --no-monitor --datadir dev_ethrex_l2 --network ./fixtures/genesis/l2.json --http.port 1729 --committer.commit-time 86400000
 ```
 
 ### Testing L1 -> L2 synchronous composability

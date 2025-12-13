@@ -73,6 +73,12 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install solc
+        uses: lambdaclass/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
+
       - name: Install RISC0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -188,14 +194,10 @@ jobs:
           sudo cp target/release/rex /usr/local/bin
 
       - name: Build ethrex with L2 features and contracts
-        env:
-          COMPILE_CONTRACTS: "true"
         run: |
           cargo build --release --features "l2,l2-sql" --bin ethrex
 
       - name: Run L2 dev node and Uniswap Swap Token Script
-        env:
-          COMPILE_CONTRACTS: "true"
         run: |
           set -euo pipefail
 
@@ -364,7 +366,6 @@ jobs:
           cd crates/l2
           if  [ "${{ matrix.based }}" = true ]; then
             export ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true
-            export COMPILE_CONTRACTS=true
           fi
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
@@ -584,7 +585,6 @@ jobs:
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          COMPILE_CONTRACTS=true \
           docker compose up contract_deployer
 
           DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
