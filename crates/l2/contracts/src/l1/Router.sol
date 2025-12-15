@@ -21,7 +21,7 @@ contract Router is
 
     uint256[] public registeredChainIds;
 
-    mapping(address => uint256) public registeredAddresses;
+    mapping(address bridge => uint256 chainId) public registeredAddresses;
 
     function initialize(address owner) public initializer {
         OwnableUpgradeable.__Ownable_init(owner);
@@ -84,7 +84,9 @@ contract Router is
     function removeChainID(uint256 chainId) internal {
         for (uint i = 0; i < registeredChainIds.length; i++) {
             if (registeredChainIds[i] == chainId) {
-                registeredChainIds[i] = registeredChainIds[registeredChainIds.length - 1];
+                registeredChainIds[i] = registeredChainIds[
+                    registeredChainIds.length - 1
+                ];
                 registeredChainIds.pop();
                 return;
             }
