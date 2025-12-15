@@ -7,6 +7,7 @@ use ethrex_common::H256;
 use ethrex_common::U256;
 use ethrex_common::types::{AuthorizationList, AuthorizationTupleEntry};
 use ethrex_l2_common::messages::L1MessageProof;
+use ethrex_rpc::clients::eth::errors::GetBatchByBlockNumberError;
 use ethrex_rpc::clients::eth::errors::GetL1BlobBaseFeeRequestError;
 use ethrex_rpc::clients::eth::errors::GetL1FeeVaultAddressError;
 use ethrex_rpc::clients::eth::errors::GetOperatorFeeError;
@@ -51,15 +52,15 @@ pub async fn get_batch_by_block(
     client: &EthClient,
     block: BlockIdentifier,
 ) -> Result<Option<RpcBatch>, EthClientError> {
-    let params = Some(vec![block.into(), json!(true)]);
+    let params = Some(vec![block.into()]);
     let request = RpcRequest::new("ethrex_getBatchByBlock", params);
 
     match client.send_request(request).await? {
         RpcResponse::Success(result) => serde_json::from_value(result.result)
-            .map_err(GetBatchByNumberError::SerdeJSONError)
+            .map_err(GetBatchByBlockNumberError::SerdeJSONError)
             .map_err(EthClientError::from),
         RpcResponse::Error(error_response) => {
-            Err(GetBatchByNumberError::RPCError(error_response.error.message).into())
+            Err(GetBatchByBlockNumberError::RPCError(error_response.error.message).into())
         }
     }
 }
