@@ -131,6 +131,7 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
 }
 
 enum MerklizationRequest {
+    LoadAccount(H256),
     Delete(H256),
     MerklizeStorage {
         prefix: H256,
@@ -363,8 +364,13 @@ impl Blockchain {
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
             *max_queue_length = current_length.max(*max_queue_length);
             for update in updates {
-                account_updates.push(update.clone());
                 let hashed_address = keccak(update.address);
+                let account_bucket = hashed_address.as_fixed_bytes()[0] >> 4;
+                workers_tx[account_bucket as usize]
+                    .send(MerklizationRequest::LoadAccount(hashed_address))
+                    .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+
+                account_updates.push(update.clone());
                 if update.removed_storage | update.removed {
                     for tx in &workers_tx {
                         tx.send(MerklizationRequest::Delete(hashed_address))
@@ -416,7 +422,8 @@ impl Blockchain {
             let state = account_state.entry(prefix).or_default();
             match &mut state.storage_root {
                 Some(root) => {
-                    root.choices[index as usize] = std::mem::take(&mut subroot.choices[index as usize]);
+                    root.choices[index as usize] =
+                        std::mem::take(&mut subroot.choices[index as usize]);
                 }
                 rootptr => {
                     *rootptr = Some(*subroot);
@@ -562,8 +569,24 @@ impl Blockchain {
         let mut tree: FxHashMap<H256, Trie> = Default::default();
         let mut state_trie = self.storage.open_state_trie(parent_header.state_root)?;
         let mut storage_nodes = vec![];
+        let mut accounts: FxHashMap<H256, AccountState> = Default::default();
         for msg in rx {
             match msg {
+                MerklizationRequest::LoadAccount(prefix) => match accounts.entry(prefix) {
+                    Entry::Occupied(_) => {}
+                    Entry::Vacant(vacant_entry) => {
+                        let pathrlp = prefix.as_bytes().to_vec();
+                        let account_state = match state_trie.get(&pathrlp)? {
+                            Some(rlp) => {
+                                let state = AccountState::decode(&rlp)?;
+                                state_trie.insert(pathrlp, rlp)?;
+                                state
+                            }
+                            None => AccountState::default(),
+                        };
+                        vacant_entry.insert(account_state);
+                    }
+                },
                 MerklizationRequest::Delete(prefix) => {
                     let mut trie = Trie::new_temp();
                     trie.root = Node::Branch(Box::default()).into();
@@ -602,10 +625,17 @@ impl Blockchain {
                     storage_nodes.push((hashed_account, state.nodes));
 
                     let pathrlp = hashed_account.as_bytes().to_vec();
-                    let mut old_state = match state_trie.get(&pathrlp)? {
-                        Some(rlp) => AccountState::decode(&rlp)?,
-                        None => AccountState::default(),
+                    let old_state = match accounts.entry(hashed_account) {
+                        Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
+                        Entry::Vacant(vacant_entry) => {
+                            let account_state = match state_trie.get(&pathrlp)? {
+                                Some(rlp) => AccountState::decode(&rlp)?,
+                                None => AccountState::default(),
+                            };
+                            vacant_entry.insert(account_state)
+                        }
                     };
+
                     if let Some(storage_root) = storage_root {
                         old_state.storage_root = storage_root;
                     }
@@ -614,7 +644,7 @@ impl Blockchain {
                         old_state.balance = info.balance;
                         old_state.code_hash = info.code_hash;
                     }
-                    if old_state != AccountState::default() {
+                    if *old_state != AccountState::default() {
                         state_trie.insert(pathrlp, old_state.encode_to_vec())?;
                     } else {
                         state_trie.remove(&pathrlp)?;
