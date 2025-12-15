@@ -396,6 +396,14 @@ impl PeerTable {
         }
     }
 
+    /// Return rate of target peers completion
+    pub async fn target_peers_completion(&mut self) -> Result<f64, PeerTableError> {
+        match self.handle.call(CallMessage::TargetPeersCompletion).await? {
+            OutMessage::TargetCompletion(result) => Ok(result),
+            _ => unreachable!(),
+        }
+    }
+
     /// Provide a contact to initiate a connection
     pub async fn get_contact_to_initiate(&mut self) -> Result<Option<Contact>, PeerTableError> {
         match self.handle.call(CallMessage::GetContactToInitiate).await? {
@@ -931,6 +939,7 @@ enum CallMessage {
     PeerCountByCapabilities { capabilities: Vec<Capability> },
     TargetReached,
     TargetPeersReached,
+    TargetPeersCompletion,
     GetContactToInitiate,
     GetContactForLookup,
     GetContactForEnrLookup,
@@ -961,6 +970,7 @@ pub enum OutMessage {
     PeerConnection(Vec<(H256, PeerConnection)>),
     Contacts(Vec<Contact>),
     TargetReached(bool),
+    TargetCompletion(f64),
     IsNew(bool),
     Nodes(Vec<Node>),
     Contact(Box<Contact>),
@@ -1009,6 +1019,9 @@ impl GenServer for PeerTableServer {
             CallMessage::TargetPeersReached => CallResponse::Reply(Self::OutMsg::TargetReached(
                 self.peers.len() >= self.target_peers,
             )),
+            CallMessage::TargetPeersCompletion => CallResponse::Reply(
+                Self::OutMsg::TargetCompletion(self.peers.len() as f64 / self.target_peers as f64),
+            ),
             CallMessage::GetContactToInitiate => CallResponse::Reply(
                 self.get_contact_to_initiate()
                     .map(Box::new)
