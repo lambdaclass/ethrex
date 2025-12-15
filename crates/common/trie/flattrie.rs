@@ -352,36 +352,33 @@ impl FlatTrie {
                     let new_self_view_index =
                         self.put_leaf(partial.offset(match_index + 1), self_value.to_vec());
 
-                    let branch_view_index = if self_choice_idx == 16 {
-                        // Yields a new leaf node with the new value, and a parent branch node
-                        // with the old value. We disallow branches with values.
-                        unreachable!("leaf insertion yielded branch with old value");
-                    } else if new_leaf_choice_idx == 16 {
-                        // Yields a new branch node with the current leaf as child, and the new
-                        // value in the branch. We disallow branches with values.
-                        unreachable!("leaf insertion yielded branch with new value")
-                    } else {
-                        // Yields a new leaf with the path and value in it, and a new branch
-                        // with the new and old leaf as children.
-                        let new_leaf_view_index =
-                            self.put_leaf(path.offset(match_index + 1), value);
-                        self.put_branch(vec![
+                    debug_assert!(
+                        self_choice_idx != 16,
+                        "leaf insertion yielded branch with old value"
+                    );
+                    debug_assert!(
+                        new_leaf_choice_idx != 16,
+                        "leaf insertion yielded branch with new value"
+                    );
+                    // Yields a new leaf with the path and value in it, and a new branch
+                    // with the new and old leaf as children.
+                    let new_leaf_view_index = self.put_leaf(path.offset(match_index + 1), value);
+                    let branch_view_index = self.put_branch(vec![
+                        (
+                            new_leaf_choice_idx,
                             (
-                                new_leaf_choice_idx,
-                                (
-                                    Some(new_leaf_view_index),
-                                    self.get_hash(new_leaf_view_index),
-                                ),
+                                Some(new_leaf_view_index),
+                                self.get_hash(new_leaf_view_index),
                             ),
+                        ),
+                        (
+                            self_choice_idx,
                             (
-                                self_choice_idx,
-                                (
-                                    Some(new_self_view_index),
-                                    self.get_hash(new_self_view_index),
-                                ),
+                                Some(new_self_view_index),
+                                self.get_hash(new_self_view_index),
                             ),
-                        ])
-                    };
+                        ),
+                    ]);
 
                     if match_index == 0 {
                         Ok(branch_view_index)
@@ -472,28 +469,26 @@ impl FlatTrie {
                     if !child.is_empty() { Some(child) } else { None }
                 });
 
-                if let Some(choice) = path.next_choice() {
-                    let new_child_view_index = match children[choice] {
-                        None if children_hashes[choice].is_some() => {
-                            panic!("Missing children of branch needed for insert")
-                        }
-                        None => self.put_leaf(path, value),
-                        Some(view_index) => self.insert_inner(view_index, path, value)?,
-                    };
-                    children[choice] = Some(new_child_view_index);
-                    children_hashes[choice] = Some(self.get_hash(new_child_view_index));
+                let choice = path
+                    .next_choice()
+                    .expect("branch insertion yielded value on a branch");
+                let new_child_view_index = match children[choice] {
+                    None if children_hashes[choice].is_some() => {
+                        panic!("Missing children of branch needed for insert")
+                    }
+                    None => self.put_leaf(path, value),
+                    Some(view_index) => self.insert_inner(view_index, path, value)?,
+                };
+                children[choice] = Some(new_child_view_index);
+                children_hashes[choice] = Some(self.get_hash(new_child_view_index));
 
-                    let new_children = children
-                        .into_iter()
-                        .zip(children_hashes.into_iter())
-                        .enumerate()
-                        .filter_map(|(i, (c, h))| Some((i, (c, h?))))
-                        .collect();
-                    Ok(self.put_branch(new_children))
-                } else {
-                    // We disallow values in branchs
-                    unreachable!("wanted to insert value in a branch");
-                }
+                let new_children = children
+                    .into_iter()
+                    .zip(children_hashes.into_iter())
+                    .enumerate()
+                    .filter_map(|(i, (c, h))| Some((i, (c, h?))))
+                    .collect();
+                Ok(self.put_branch(new_children))
             }
         }
     }
@@ -574,10 +569,9 @@ impl FlatTrie {
                 }
             }
             NodeType::Branch { mut children } => {
-                let Some(choice) = path.next_choice() else {
-                    // We disallow values on branches
-                    unreachable!();
-                };
+                let choice = path
+                    .next_choice()
+                    .expect("branch removal yielded value on a branch");
 
                 let Some(items) = self.get_encoded_items(&self_view)? else {
                     panic!();
