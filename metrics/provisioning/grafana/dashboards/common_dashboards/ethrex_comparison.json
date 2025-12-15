@@ -126,31 +126,6 @@
               },
               "editorMode": "code",
               "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"reth-mainnet-1:6060\", quantile=\"0.999\"}",
-              "hide": true,
-              "legendFormat": "reth mainnet old p99.9",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "code",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"reth-mainnet-1:6060\", quantile=\"0.5\"}",
-              "hide": true,
-              "instant": false,
-              "legendFormat": "reth mainnet old p50",
-              "range": true,
-              "refId": "E"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "code",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"reth-mainnet-1-1:6060\", quantile=\"0.999\"}",
               "hide": false,
               "legendFormat": "reth mainnet p99.9",
               "range": true,
@@ -162,7 +137,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"reth-mainnet-1-1:6060\", quantile=\"0.5\"}",
+              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"reth-mainnet-1:6060\", quantile=\"0.5\"}",
               "hide": false,
               "instant": false,
               "legendFormat": "reth mainnet p50",
@@ -354,19 +329,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "builder",
-              "expr": "reth_process_resident_memory_bytes{instance=\"eth-mainnet-rpc:6060\"}",
-              "hide": true,
-              "legendFormat": "reth mainnet old resident memory",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "builder",
-              "expr": "reth_process_resident_memory_bytes{instance=\"reth-mainnet-1-1:6060\"}",
+              "expr": "reth_process_resident_memory_bytes{instance=\"reth-mainnet-1:6060\"}",
               "hide": false,
               "legendFormat": "reth mainnet resident memory",
               "range": true,
