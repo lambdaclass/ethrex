@@ -236,6 +236,7 @@ impl WhoAreYou {
 pub enum Message {
     Ping(PingMessage),
     Pong(PongMessage),
+    FindNode(FindNodeMessage),
     Nodes(NodesMessage),
     TalkReq(TalkReqMessage),
     // TODO: add the other messages
@@ -253,10 +254,10 @@ impl Message {
                 let pong = PongMessage::decode(&encrypted_message[1..])?;
                 Ok(Message::Pong(pong))
             }
-            // 0x03 => {
-            //     let (find_node_msg, _rest) = FindNodeMessage::decode_unfinished(msg)?;
-            //     Ok(Message::FindNode(find_node_msg))
-            // }
+            0x03 => {
+                let find_node_msg = FindNodeMessage::decode(&encrypted_message[1..])?;
+                Ok(Message::FindNode(find_node_msg))
+            }
             0x04 => {
                 let nodes_msg = NodesMessage::decode(&encrypted_message[1..])?;
                 Ok(Message::Nodes(nodes_msg))
@@ -345,6 +346,31 @@ impl RLPDecode for PongMessage {
             },
             decoder.finish()?,
         ))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FindNodeMessage {
+    pub req_id: u64,
+    pub distance: Vec<u64>,
+}
+
+impl RLPEncode for FindNodeMessage {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.req_id)
+            .encode_field(&self.distance)
+            .finish();
+    }
+}
+
+impl RLPDecode for FindNodeMessage {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (req_id, decoder) = decoder.decode_field("req_id")?;
+        let (distance, decoder) = decoder.decode_field("distance")?;
+
+        Ok((Self { req_id, distance }, decoder.finish()?))
     }
 }
 
@@ -588,6 +614,17 @@ mod tests {
 
         let buf = pkt.encode_to_vec();
         assert_eq!(PongMessage::decode(&buf).unwrap(), pkt);
+    }
+
+    #[test]
+    fn findnode_packet_codec_roundtrip() {
+        let pkt = FindNodeMessage {
+            req_id: 1234,
+            distance: vec![1, 2, 3, 4],
+        };
+
+        let buf = pkt.encode_to_vec();
+        assert_eq!(FindNodeMessage::decode(&buf).unwrap(), pkt);
     }
 
     #[test]
