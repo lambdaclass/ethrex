@@ -1,3 +1,4 @@
+use bytes::BufMut;
 use ethereum_types::H256;
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
@@ -258,28 +259,45 @@ impl FlatTrie {
         // TODO: check that both match
 
         let start = self.data.len();
-        let mut encoder = Encoder::new(&mut self.data);
         match data {
             NodeData::Leaf { partial, value } => {
+                let mut encoder = Encoder::new(&mut self.data);
                 encoder = encoder.encode_bytes(&partial.encode_compact());
                 encoder = encoder.encode_bytes(&value);
+                encoder.finish();
             }
             NodeData::Extension { path, child } => {
+                let mut encoder = Encoder::new(&mut self.data);
                 encoder = encoder.encode_bytes(&path.encode_compact());
                 encoder = child.encode(encoder);
+                encoder.finish();
             }
             NodeData::Branch { children } => {
-                for child in children {
-                    if let Some(child) = child {
-                        encoder = child.encode(encoder);
+                let payload_len = children.iter().fold(0, |acc, child| {
+                    acc + if let Some(child) = child {
+                        RLPEncode::length(child)
                     } else {
-                        encoder = encoder.encode_raw(&[RLP_NULL])
+                        1
+                    }
+                });
+
+                encode_length(payload_len, &mut self.data);
+                for child in children.iter() {
+                    let Some(child) = child else {
+                        self.data.put_u8(RLP_NULL);
+                        continue;
+                    };
+                    match child {
+                        NodeHash::Hashed(hash) => hash.0.encode(&mut self.data),
+                        NodeHash::Inline((_, 0)) => self.data.put_u8(RLP_NULL),
+                        NodeHash::Inline((encoded, len)) => {
+                            self.data.put_slice(&encoded[..*len as usize])
+                        }
                     }
                 }
-                encoder = encoder.encode_raw(&[RLP_NULL])
+                self.data.put_u8(RLP_NULL);
             }
         }
-        encoder.finish();
         let end = self.data.len();
 
         let data_range = (start, end);
