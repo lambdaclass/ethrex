@@ -12,6 +12,8 @@ use ethrex_rlp::{
 };
 use secp256k1::SecretKey;
 
+use crate::types::NodeRecord;
+
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 
 // Max and min packet sizes as defined in
@@ -234,6 +236,7 @@ impl WhoAreYou {
 pub enum Message {
     Ping(PingMessage),
     Pong(PongMessage),
+    Nodes(NodesMessage),
     // TODO: add the other messages
 }
 
@@ -253,10 +256,10 @@ impl Message {
             //     let (find_node_msg, _rest) = FindNodeMessage::decode_unfinished(msg)?;
             //     Ok(Message::FindNode(find_node_msg))
             // }
-            // 0x04 => {
-            //     let (neighbors_msg, _rest) = NeighborsMessage::decode_unfinished(msg)?;
-            //     Ok(Message::Neighbors(neighbors_msg))
-            // }
+            0x04 => {
+                let nodes_msg = NodesMessage::decode(&encrypted_message[1..])?;
+                Ok(Message::Nodes(nodes_msg))
+            }
             // 0x05 => {
             //     let (enr_request_msg, _rest) = ENRRequestMessage::decode_unfinished(msg)?;
             //     Ok(Message::ENRRequest(enr_request_msg))
@@ -344,6 +347,41 @@ impl RLPDecode for PongMessage {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodesMessage {
+    pub req_id: u64,
+    pub total: u64,
+    pub nodes: Vec<NodeRecord>,
+}
+
+impl RLPEncode for NodesMessage {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.req_id)
+            .encode_field(&self.total)
+            .encode_field(&self.nodes)
+            .finish();
+    }
+}
+
+impl RLPDecode for NodesMessage {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (req_id, decoder) = decoder.decode_field("req_id")?;
+        let (total, decoder) = decoder.decode_field("total")?;
+        let (nodes, decoder) = decoder.decode_field("nodes")?;
+
+        Ok((
+            Self {
+                req_id,
+                total,
+                nodes,
+            },
+            decoder.finish()?,
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -352,9 +390,11 @@ mod tests {
             codec::Discv5Codec,
             messages::{Message, Ordinary, Packet, PingMessage, WhoAreYou},
         },
+        types::NodeRecordPairs,
         utils::{node_id, public_key_from_signing_key},
     };
     use bytes::BytesMut;
+    use ethrex_common::H512;
     use hex_literal::hex;
     use secp256k1::SecretKey;
     use std::net::Ipv4Addr;
@@ -512,5 +552,28 @@ mod tests {
 
         let buf = pkt.encode_to_vec();
         assert_eq!(PongMessage::decode(&buf).unwrap(), pkt);
+    }
+
+    #[test]
+    fn nodes_packet_codec_roundtrip() {
+        let pairs: Vec<(Bytes, Bytes)> = NodeRecordPairs {
+            id: Some("id".to_string()),
+            ..Default::default()
+        }
+        .try_into()
+        .unwrap();
+
+        let pkt = NodesMessage {
+            req_id: 1234,
+            total: 2,
+            nodes: vec![NodeRecord {
+                seq: 4321,
+                pairs: pairs,
+                signature: H512::random(),
+            }],
+        };
+
+        let buf = pkt.encode_to_vec();
+        assert_eq!(NodesMessage::decode(&buf).unwrap(), pkt);
     }
 }
