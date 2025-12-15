@@ -234,6 +234,7 @@ impl WhoAreYou {
 pub enum Message {
     Ping(PingMessage),
     Pong(PongMessage),
+    TalkRes(TalkResMessage),
     // TODO: add the other messages
 }
 
@@ -261,10 +262,10 @@ impl Message {
             //     let (enr_request_msg, _rest) = ENRRequestMessage::decode_unfinished(msg)?;
             //     Ok(Message::ENRRequest(enr_request_msg))
             // }
-            // 0x06 => {
-            //     let (enr_response_msg, _rest) = ENRResponseMessage::decode_unfinished(msg)?;
-            //     Ok(Message::ENRResponse(enr_response_msg))
-            // }
+            0x06 => {
+                let (enr_response_msg, _rest) = TalkResMessage::decode_unfinished(msg)?;
+                Ok(Message::TalkRes(enr_response_msg))
+            }
             _ => Err(RLPDecodeError::MalformedData),
         }
     }
@@ -340,6 +341,35 @@ impl RLPDecode for PongMessage {
                 recipient_addr,
             },
             decoder.finish()?,
+        ))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TalkResMessage {
+    pub req_id: u64,
+    pub response: Vec<u8>,
+}
+
+impl RLPEncode for TalkResMessage {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.req_id)
+            .encode_field(&Bytes::copy_from_slice(&self.response))
+            .finish();
+    }
+}
+
+impl RLPDecode for TalkResMessage {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let ((req_id, response), remaining) = <(u64, Bytes) as RLPDecode>::decode_unfinished(rlp)?;
+
+        Ok((
+            Self {
+                req_id,
+                response: response.to_vec(),
+            },
+            remaining,
         ))
     }
 }
@@ -512,5 +542,16 @@ mod tests {
 
         let buf = pkt.encode_to_vec();
         assert_eq!(PongMessage::decode(&buf).unwrap(), pkt);
+    }
+
+    #[test]
+    fn talk_res_packet_codec_roundtrip() {
+        let pkt = TalkResMessage {
+            req_id: 1234,
+            response: b"\x00\x01\x02\x03".into(),
+        };
+
+        let buf = pkt.encode_to_vec();
+        assert_eq!(TalkResMessage::decode(&buf).unwrap(), pkt);
     }
 }
