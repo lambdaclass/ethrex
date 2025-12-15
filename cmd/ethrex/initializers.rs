@@ -1,8 +1,8 @@
 use crate::{
     cli::{LogColor, Options},
     utils::{
-        display_chain_initialization, get_client_version, init_datadir, parse_socket_addr,
-        read_jwtsecret_file, read_node_config_file,
+        display_chain_initialization, get_client_version, init_datadir, is_memory_datadir,
+        parse_socket_addr, read_jwtsecret_file, read_node_config_file,
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
@@ -111,7 +111,7 @@ pub async fn load_store(datadir: &Path) -> Result<Store, StoreError> {
 
 /// Opens a pre-existing Store or creates a new one
 pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
-    if datadir.ends_with("memory") {
+    if is_memory_datadir(datadir) {
         Store::new(datadir, EngineType::InMemory)
     } else {
         #[cfg(feature = "rocksdb")]
@@ -139,7 +139,9 @@ pub async fn init_rpc_api(
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) {
-    init_datadir(&opts.datadir);
+    if !is_memory_datadir(&opts.datadir) {
+        init_datadir(&opts.datadir);
+    }
 
     let syncmode = if opts.dev {
         &SyncMode::Full
@@ -274,6 +276,10 @@ pub fn get_bootnodes(opts: &Options, network: &Network, datadir: &Path) -> Vec<N
 }
 
 pub fn get_signer(datadir: &Path) -> SecretKey {
+    if is_memory_datadir(datadir) {
+        return SecretKey::new(&mut OsRng);
+    }
+
     // Get the signer from the default directory, create one if the key file is not present.
     let key_path = datadir.join("node.key");
     match fs::read(key_path.clone()) {
@@ -378,12 +384,16 @@ pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
-    let datadir: &PathBuf = if opts.dev && cfg!(feature = "dev") {
-        &opts.datadir.join("dev")
-    } else {
-        &opts.datadir
-    };
-    init_datadir(datadir);
+    let datadir: &PathBuf =
+        if opts.dev && cfg!(feature = "dev") && !is_memory_datadir(&opts.datadir) {
+            &opts.datadir.join("dev")
+        } else {
+            &opts.datadir
+        };
+
+    if !is_memory_datadir(datadir) {
+        init_datadir(datadir);
+    }
 
     let network = get_network(&opts);
 
