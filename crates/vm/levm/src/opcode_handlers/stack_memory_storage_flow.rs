@@ -36,7 +36,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.increase_consumed_gas(gas_cost::TLOAD)?;
 
-        current_call_frame.stack.push1(value)?;
+        current_call_frame.stack.push(value)?;
         Ok(OpcodeResult::Continue)
     }
 
@@ -73,7 +73,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push1(current_call_frame.memory.load_word(offset)?)?;
+            .push(current_call_frame.memory.load_word(offset)?)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -142,7 +142,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.increase_consumed_gas(gas_cost::sload(storage_slot_was_cold)?)?;
 
-        current_call_frame.stack.push1(value)?;
+        current_call_frame.stack.push(value)?;
         Ok(OpcodeResult::Continue)
     }
 
@@ -233,7 +233,7 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::MSIZE)?;
         current_call_frame
             .stack
-            .push1(current_call_frame.memory.len().into())?;
+            .push(current_call_frame.memory.len().into())?;
         Ok(OpcodeResult::Continue)
     }
 
@@ -244,7 +244,7 @@ impl<'a> VM<'a> {
 
         let remaining_gas = current_call_frame.gas_remaining;
         // Note: These are not consumed gas calculations, but are related, so I used this wrapping here
-        current_call_frame.stack.push1(remaining_gas.into())?;
+        current_call_frame.stack.push(remaining_gas.into())?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -291,7 +291,7 @@ impl<'a> VM<'a> {
     ///   - Checking that the byte at the requested target PC is a JUMPDEST (0x5B).
     ///   - Ensuring the byte is not blacklisted. In other words, the 0x5B value is not part of a
     ///     constant associated with a push instruction.
-    fn target_address_is_valid(call_frame: &mut CallFrame, jump_address: u32) -> bool {
+    fn target_address_is_valid(call_frame: &CallFrame, jump_address: u32) -> bool {
         call_frame
             .bytecode
             .jump_targets
@@ -351,7 +351,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push1(U256::from(current_call_frame.pc.wrapping_sub(1)))?;
+            .push(U256::from(current_call_frame.pc.wrapping_sub(1)))?;
 
         Ok(OpcodeResult::Continue)
     }

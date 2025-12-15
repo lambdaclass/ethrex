@@ -86,7 +86,7 @@ pub struct SequencerOptions {
         value_name = "BOOLEAN",
         env = "ETHREX_L2_VALIDIUM",
         help_heading = "L2 options",
-        long_help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1."
+        long_help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish blobs to the L1."
     )]
     pub validium: bool,
     #[clap(
@@ -200,6 +200,9 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 max_block_step: opts.watcher_opts.max_block_step.into(),
                 watcher_block_delay: opts.watcher_opts.watcher_block_delay,
                 l1_blob_base_fee_update_interval: opts.watcher_opts.l1_fee_update_interval_ms,
+                l2_rpc_urls: opts.watcher_opts.l2_rpc_urls.unwrap_or_default(),
+                l2_chain_ids: opts.watcher_opts.l2_chain_ids.unwrap_or_default(),
+                router_address: opts.watcher_opts.router_address.unwrap_or_default(),
             },
             proof_coordinator: ProofCoordinatorConfig {
                 listen_ip: opts.proof_coordinator_opts.listen_ip,
@@ -418,6 +421,27 @@ pub struct WatcherOptions {
         help_heading = "Block producer options"
     )]
     pub l1_fee_update_interval_ms: u64,
+    #[arg(
+        long = "l1.router-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_WATCHER_ROUTER_ADDRESS",
+        help_heading = "L1 Watcher options"
+    )]
+    pub router_address: Option<Address>,
+    #[arg(
+        long = "watcher.l2-rpcs",
+        num_args = 1..,
+        env = "ETHREX_WATCHER_L2_RPCS",
+        help_heading = "L1 Watcher options"
+    )]
+    pub l2_rpc_urls: Option<Vec<Url>>,
+    #[arg(
+        long = "watcher.l2-chain-ids",
+        num_args = 1..,
+        env = "ETHREX_WATCHER_L2_CHAIN_IDS",
+        help_heading = "L1 Watcher options"
+    )]
+    pub l2_chain_ids: Option<Vec<u64>>,
 }
 
 impl Default for WatcherOptions {
@@ -428,6 +452,9 @@ impl Default for WatcherOptions {
             max_block_step: 5000,
             watcher_block_delay: 0,
             l1_fee_update_interval_ms: 60000,
+            router_address: None,
+            l2_rpc_urls: None,
+            l2_chain_ids: None,
         }
     }
 }
@@ -435,6 +462,9 @@ impl Default for WatcherOptions {
 impl WatcherOptions {
     fn populate_with_defaults(&mut self, defaults: &Self) {
         self.bridge_address = self.bridge_address.or(defaults.bridge_address);
+        self.router_address = self.router_address.or(defaults.router_address);
+        self.l2_rpc_urls = self.l2_rpc_urls.clone().or(defaults.l2_rpc_urls.clone());
+        self.l2_chain_ids = self.l2_chain_ids.clone().or(defaults.l2_chain_ids.clone());
     }
 }
 

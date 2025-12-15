@@ -1,10 +1,8 @@
 use axum::{Router, routing::get};
 
-use crate::profiling::gather_profiling_metrics;
-
 use crate::{
-    MetricsApiError, metrics_blocks::METRICS_BLOCKS, metrics_process::METRICS_PROCESS,
-    metrics_transactions::METRICS_TX,
+    MetricsApiError, blocks::METRICS_BLOCKS, gather_default_metrics, p2p::METRICS_P2P,
+    process::METRICS_PROCESS, transactions::METRICS_TX,
 };
 
 pub async fn start_prometheus_metrics_api(
@@ -33,10 +31,10 @@ pub(crate) async fn get_metrics() -> String {
     };
 
     ret_string.push('\n');
-    match gather_profiling_metrics() {
+    match gather_default_metrics() {
         Ok(string) => ret_string.push_str(&string),
         Err(_) => {
-            tracing::error!("Failed to register METRICS_PROFILING");
+            tracing::error!("Failed to gather default Prometheus metrics");
             return String::new();
         }
     };
@@ -54,6 +52,12 @@ pub(crate) async fn get_metrics() -> String {
     match METRICS_PROCESS.gather_metrics() {
         Ok(s) => ret_string.push_str(&s),
         Err(_) => tracing::error!("Failed to register METRICS_PROCESS"),
+    };
+
+    ret_string.push('\n');
+    match METRICS_P2P.gather_metrics() {
+        Ok(s) => ret_string.push_str(&s),
+        Err(_) => tracing::error!("Failed to register METRICS_P2P"),
     };
 
     ret_string

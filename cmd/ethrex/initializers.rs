@@ -11,6 +11,7 @@ use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
+use ethrex_metrics::rpc::initialize_rpc_metrics;
 use ethrex_p2p::rlpx::initiator::RLPxInitiator;
 use ethrex_p2p::{
     discv4::peer_table::PeerTable,
@@ -21,7 +22,7 @@ use ethrex_p2p::{
     types::{Node, NodeRecord},
     utils::public_key_from_signing_key,
 };
-use ethrex_storage::{EngineType, Store};
+use ethrex_storage::{EngineType, Store, error::StoreError};
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
@@ -30,7 +31,7 @@ use std::env;
 use std::{
     fs,
     io::IsTerminal,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -89,40 +90,35 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
     );
 
     initialize_block_processing_profile();
+    initialize_rpc_metrics();
 
     tracker.spawn(metrics_api);
 }
 
 /// Opens a new or pre-existing Store and loads the initial state provided by the network
-pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Store {
-    let mut store = open_store(datadir.as_ref());
-    store
-        .add_initial_state(genesis)
-        .await
-        .expect("Failed to create genesis block");
-    store
+pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Result<Store, StoreError> {
+    let mut store = open_store(datadir.as_ref())?;
+    store.add_initial_state(genesis).await?;
+    Ok(store)
 }
 
 /// Initializes a pre-existing Store
-pub async fn load_store(datadir: &Path) -> Store {
-    let store = open_store(datadir);
-    store
-        .load_initial_state()
-        .await
-        .expect("Failed to load store");
-    store
+pub async fn load_store(datadir: &Path) -> Result<Store, StoreError> {
+    let store = open_store(datadir)?;
+    store.load_initial_state().await?;
+    Ok(store)
 }
 
 /// Opens a pre-existing Store or creates a new one
-pub fn open_store(datadir: &Path) -> Store {
+pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
     if datadir.ends_with("memory") {
-        Store::new(datadir, EngineType::InMemory).expect("Failed to create Store")
+        Store::new(datadir, EngineType::InMemory)
     } else {
         #[cfg(feature = "rocksdb")]
         let engine_type = EngineType::RocksDB;
         #[cfg(feature = "metrics")]
-        ethrex_metrics::metrics_process::set_datadir_path(datadir.to_path_buf());
-        Store::new(datadir, engine_type).expect("Failed to create Store")
+        ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
+        Store::new(datadir, engine_type)
     }
 }
 
@@ -299,22 +295,22 @@ pub fn get_signer(datadir: &Path) -> SecretKey {
 }
 
 pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
-    let udp_socket_addr = parse_socket_addr("::", &opts.discovery_port)
-        .expect("Failed to parse discovery address and port");
-    let tcp_socket_addr =
-        parse_socket_addr("::", &opts.p2p_port).expect("Failed to parse addr and port");
+    let tcp_port = opts.p2p_port.parse().expect("Failed to parse p2p port");
+    let udp_port = opts
+        .discovery_port
+        .parse()
+        .expect("Failed to parse discovery port");
 
-    let p2p_node_ip = local_ip()
-        .unwrap_or_else(|_| local_ipv6().expect("Neither ipv4 nor ipv6 local address found"));
+    let p2p_node_ip: IpAddr = if let Some(addr) = &opts.p2p_addr {
+        addr.parse().expect("Failed to parse p2p address")
+    } else {
+        local_ip()
+            .unwrap_or_else(|_| local_ipv6().expect("Neither ipv4 nor ipv6 local address found"))
+    };
 
     let local_public_key = public_key_from_signing_key(signer);
 
-    let node = Node::new(
-        p2p_node_ip,
-        udp_socket_addr.port(),
-        tcp_socket_addr.port(),
-        local_public_key,
-    );
+    let node = Node::new(p2p_node_ip, udp_port, tcp_port, local_public_key);
 
     // TODO Find a proper place to show node information
     // https://github.com/lambdaclass/ethrex/issues/836
@@ -382,7 +378,11 @@ pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
-    let datadir = &opts.datadir;
+    let datadir: &PathBuf = if opts.dev && cfg!(feature = "dev") {
+        &opts.datadir.join("dev")
+    } else {
+        &opts.datadir
+    };
     init_datadir(datadir);
 
     let network = get_network(&opts);
@@ -394,7 +394,17 @@ pub async fn init_l1(
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
-    let store = init_store(datadir, genesis).await;
+    let store = match init_store(datadir, genesis).await {
+        Ok(store) => store,
+        Err(err @ StoreError::IncompatibleDBVersion { .. })
+        | Err(err @ StoreError::NotFoundDBVersion { .. }) => {
+            return Err(eyre::eyre!(
+                "{err}. Please erase your DB by running `ethrex removedb` and restart node to resync. Note that this will take a while."
+            ));
+        }
+        Err(error) => return Err(eyre::eyre!("Failed to create Store: {error}")),
+    };
+
     if opts.syncmode == SyncMode::Full {
         store.generate_flatkeyvalue()?;
     }
@@ -436,6 +446,7 @@ pub async fn init_l1(
         get_client_version(),
         None,
         opts.tx_broadcasting_time_interval,
+        opts.lookup_interval,
     )
     .await
     .expect("P2P context could not be created");

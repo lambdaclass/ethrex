@@ -255,12 +255,12 @@ pub const BLS12_MAP_FP2_TO_G2: Precompile = Precompile {
     active_since_fork: Prague,
 };
 
-pub const P256_VERIFICATION: Precompile = Precompile {
+pub const P256VERIFY: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x01, 0x00,
     ]),
-    name: "P256_VERIFICATION",
+    name: "P256VERIFY",
     active_since_fork: Osaka,
 };
 
@@ -283,7 +283,7 @@ pub const PRECOMPILES: [Precompile; 19] = [
     BLS12_MAP_FP2_TO_G2,
     BLS12_MAP_FP_TO_G1,
     BLS12_PAIRING_CHECK,
-    P256_VERIFICATION,
+    P256VERIFY,
 ];
 
 pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
@@ -293,7 +293,7 @@ pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
 }
 
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
-    (matches!(vm_type, VMType::L2(_)) && *address == P256_VERIFICATION.address)
+    (matches!(vm_type, VMType::L2(_)) && *address == P256VERIFY.address)
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
 }
 
@@ -329,10 +329,9 @@ pub fn execute_precompile(
             Some(bls12_map_fp_to_g1 as PrecompileFn);
         precompiles[BLS12_MAP_FP2_TO_G2.address.0[19] as usize] =
             Some(bls12_map_fp2_tp_g2 as PrecompileFn);
-        precompiles[u16::from_be_bytes([
-            P256_VERIFICATION.address.0[18],
-            P256_VERIFICATION.address.0[19],
-        ]) as usize] = Some(p_256_verify as PrecompileFn);
+        precompiles
+            [u16::from_be_bytes([P256VERIFY.address.0[18], P256VERIFY.address.0[19]]) as usize] =
+            Some(p_256_verify as PrecompileFn);
         precompiles
     };
 
@@ -374,7 +373,12 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
     padded_calldata.into()
 }
 
-#[cfg(all(not(feature = "sp1"), not(feature = "risc0")))]
+#[cfg(all(
+    not(feature = "sp1"),
+    not(feature = "risc0"),
+    not(feature = "zisk"),
+    feature = "secp256k1"
+))]
 pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     use crate::gas_cost::ECRECOVER_COST;
 
@@ -440,7 +444,12 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
 ///   [64..128): r||s (64 bytes)
 ///
 /// Returns the recovered address.
-#[cfg(any(feature = "sp1", feature = "risc0"))]
+#[cfg(any(
+    feature = "sp1",
+    feature = "risc0",
+    feature = "zisk",
+    not(feature = "secp256k1"),
+))]
 pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     use ethrex_common::utils::keccak;
     use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
@@ -780,7 +789,7 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
     bn254_g1_mul(g1, scalar)
 }
 
-#[cfg(not(feature = "sp1"))]
+#[cfg(not(any(feature = "sp1", feature = "zisk")))]
 #[inline]
 pub fn bn254_g1_mul(point: G1, scalar: U256) -> Result<Bytes, VMError> {
     let x = ark_bn254::Fq::from_be_bytes_mod_order(&point.0.to_big_endian());
@@ -811,7 +820,7 @@ pub fn bn254_g1_mul(point: G1, scalar: U256) -> Result<Bytes, VMError> {
     Ok(Bytes::from(out))
 }
 
-#[cfg(feature = "sp1")]
+#[cfg(any(feature = "sp1", feature = "zisk"))]
 #[inline]
 pub fn bn254_g1_mul(g1: G1, scalar: U256) -> Result<Bytes, VMError> {
     use substrate_bn::{AffineG1, Fq, Fr, G1, Group};
@@ -827,9 +836,17 @@ pub fn bn254_g1_mul(g1: G1, scalar: U256) -> Result<Bytes, VMError> {
 
     let g1 = AffineG1::new(g1_x, g1_y).map_err(|_| PrecompileError::InvalidPoint)?;
 
+    // Small difference between the patched versions of substrate-bn
+    #[cfg(feature = "zisk")]
+    let g1: G1 = g1.into();
+
     let scalar =
         Fr::from_slice(&scalar.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?;
 
+    #[allow(
+        clippy::arithmetic_side_effects,
+        reason = "G1 scalar multiplication doesn't overflow, intermediate operations that could overflow should be handled correctly by the library"
+    )]
     let result = g1 * scalar;
 
     let mut x_bytes = [0u8; 32];
@@ -949,7 +966,7 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     Ok(Bytes::from_owner(result))
 }
 
-#[cfg(any(feature = "sp1", feature = "risc0"))]
+#[cfg(any(feature = "sp1", feature = "risc0", feature = "zisk"))]
 #[inline]
 pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     use substrate_bn::{AffineG1, AffineG2, Fq, Fq2, G1 as SubstrateG1, G2 as SubstrateG2, Group};
@@ -1005,7 +1022,7 @@ pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     Ok(result == substrate_bn::Gt::one())
 }
 
-#[cfg(all(not(feature = "sp1"), not(feature = "risc0")))]
+#[cfg(all(not(feature = "sp1"), not(feature = "risc0"), not(feature = "zisk")))]
 #[inline]
 pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     use lambdaworks_math::errors::PairingError;
