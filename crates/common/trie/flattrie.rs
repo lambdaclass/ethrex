@@ -467,8 +467,8 @@ impl FlatTrie {
                     let new_children = children
                         .into_iter()
                         .zip(children_hashes.into_iter())
-                        .filter_map(|(c, h)| Some((c, h?)))
                         .enumerate()
+                        .filter_map(|(i, (c, h))| Some((i, (c, h?))))
                         .collect();
                     Ok(self.put_branch(new_children))
                 } else {
@@ -579,8 +579,8 @@ impl FlatTrie {
                 let new_children: Vec<(_, _)> = children
                     .into_iter()
                     .zip(children_hashes.into_iter())
-                    .filter_map(|(c, h)| Some((c, h?)))
                     .enumerate()
+                    .filter_map(|(i, (c, h))| Some((i, (c, h?))))
                     .collect();
 
                 match new_children.len() {
