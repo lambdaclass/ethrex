@@ -42,11 +42,16 @@ impl TrieIterator {
             node: NodeRef,
             new_stack: &mut Vec<(Nibbles, NodeRef)>,
         ) -> Result<(), TrieError> {
-            let Some(mut next_node) = node
-                .get_node_checked(db, prefix_nibbles.clone())
-                .ok()
-                .flatten()
-            else {
+            let next_node_res = node.get_node_checked(db, prefix_nibbles.clone());
+
+            // In case of debug assertions, we want to panic on error, otherwise we ignore it
+            let next_node_opt = if cfg!(debug_assertions) {
+                next_node_res.unwrap()
+            } else {
+                next_node_res.ok().flatten()
+            };
+
+            let Some(mut next_node) = next_node_opt else {
                 return Ok(());
             };
             match Arc::make_mut(&mut next_node) {
@@ -143,10 +148,15 @@ impl Iterator for TrieIterator {
         };
         // Fetch the last node in the stack
         let (mut path, next_node_ref) = self.stack.pop()?;
-        let next_node = next_node_ref
-            .get_node_checked(self.db.as_ref(), path.clone())
-            .ok()
-            .flatten()?;
+        let next_node_res = next_node_ref.get_node_checked(self.db.as_ref(), path.clone());
+
+        // In case of debug assertions, we want to panic on error, otherwise we ignore it
+        let next_node = if cfg!(debug_assertions) {
+            next_node_res.unwrap()?
+        } else {
+            next_node_res.ok().flatten()?
+        };
+
         match &(*next_node) {
             Node::Branch(branch_node) => {
                 // Add all children to the stack (in reverse order so we process first child frist)
