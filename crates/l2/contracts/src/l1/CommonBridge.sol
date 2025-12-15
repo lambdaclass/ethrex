@@ -9,7 +9,9 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+import {
+    MerkleProof
+} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
@@ -109,10 +111,12 @@ contract CommonBridge is
     uint256 public CHAIN_ID;
 
     /// @notice Mapping of chain ID to array of pending message hashes received from that chain.
-    mapping(uint256 => bytes32[]) public pendingMessagesHashesPerChain;
+    mapping(uint256 chainId => bytes32[] hashes)
+        public pendingMessagesHashesPerChain;
 
     /// @notice Mapping of chain ID to index of the first unprocessed message hash in the array.
-    mapping(uint256 => uint256) public pendingMessagesIndexPerChain;
+    mapping(uint256 chainId => uint256 index)
+        public pendingMessagesIndexPerChain;
 
     modifier onlyOnChainProposer() {
         require(
@@ -316,11 +320,12 @@ contract CommonBridge is
         );
 
         bytes memory hashes;
-        for (uint i = 0; i < number; i++) {
-            hashes = bytes.concat(
-                hashes,
-                pendingTxHashes[i + pendingPrivilegedTxIndex]
-            );
+        for (
+            uint i = pendingPrivilegedTxIndex;
+            i < number + pendingPrivilegedTxIndex;
+            i++
+        ) {
+            hashes = bytes.concat(hashes, pendingTxHashes[i]);
         }
 
         return
@@ -345,11 +350,12 @@ contract CommonBridge is
         ];
         uint256 pendingMessageIndex = pendingMessagesIndexPerChain[chainId];
 
-        for (uint i = 0; i < number; i++) {
-            hashes = bytes.concat(
-                hashes,
-                pendingMessagesHashes[i + pendingMessageIndex]
-            );
+        for (
+            uint i = pendingMessageIndex;
+            i < number + pendingMessagesHashes;
+            i++
+        ) {
+            hashes = bytes.concat(hashes, pendingMessagesHashes[i]);
         }
 
         return
@@ -408,15 +414,12 @@ contract CommonBridge is
                 memory pendingMessagesHashes = pendingMessagesHashesPerChain[
                     chainId
                 ];
-            if (pendingMessageIndex < pendingMessagesHashes.length) {
-                if (
-                    block.timestamp >
-                    privilegedTxDeadline[
-                        pendingMessagesHashes[pendingMessageIndex]
-                    ]
-                ) {
-                    return true;
-                }
+            if (
+                pendingMessageIndex < pendingMessagesHashes.length &&
+                block.timestamp >
+                privilegedTxDeadline[pendingMessagesHashes[pendingMessageIndex]]
+            ) {
+                return true;
             }
         }
 

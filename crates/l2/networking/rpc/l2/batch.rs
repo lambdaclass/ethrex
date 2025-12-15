@@ -116,10 +116,8 @@ impl RpcHandler for GetBatchByBatchBlockNumberRequest {
         let params = params.as_ref().ok_or(ethrex_rpc::RpcErr::BadParams(
             "No params provided".to_owned(),
         ))?;
-        if params.len() != 2 {
-            return Err(ethrex_rpc::RpcErr::BadParams(
-                "Expected 2 params".to_owned(),
-            ))?;
+        if params.len() != 1 {
+            return Err(ethrex_rpc::RpcErr::BadParams("Expected 1 param".to_owned()))?;
         };
         Ok(GetBatchByBatchBlockNumberRequest {
             block: BlockIdentifier::parse(params[0].clone(), 0)?,

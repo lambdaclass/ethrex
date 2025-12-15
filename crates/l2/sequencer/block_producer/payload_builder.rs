@@ -243,7 +243,6 @@ pub async fn fill_transactions(
             let id = head_tx.nonce();
             privileged_nonces.insert(privileged_tx.chain_id, Some(id));
 
-            // Increment privileged tx count
             privileged_tx_count += 1;
         }
 
