@@ -32,7 +32,7 @@ jobs:
             run_tests:
               - "crates/l2/**"
               - "fixtures/keys/**"
-              - "fixtures/genesis/l1-dev.json"
+              - "fixtures/genesis/l1.json"
               - "fixtures/genesis/l2.json"
               - "fixtures/cache/**"
               - "fixtures/blobs/**"
@@ -740,7 +740,7 @@ jobs:
           docker compose -f docker-compose.yaml -f docker-compose-l2-shared-bridge.overrides.yaml up --detach --no-deps ethrex_l2_b
 
       - name: Run tests
-        run: | 
+        run: |
           sudo chmod -R a+rw crates/l2
           cd crates/l2
           cargo run --release --features "l2,l2-sql" --manifest-path ../../Cargo.toml -- \
@@ -757,7 +757,6 @@ jobs:
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH=true INTEGRATION_TEST_L2_RPC=http://localhost:1730 cargo test l2 --release -- --nocapture --test-threads=1
           cargo test shared_bridge --release -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
-
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
