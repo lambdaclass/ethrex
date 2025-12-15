@@ -2440,8 +2440,6 @@ struct TrieUpdate {
     storage_updates: Vec<(H256, TrieNodesUpdate)>,
 }
 
-// NOTE: we don't receive `Store` here to avoid cyclic dependencies
-// with the other end of `fkv_ctl`
 /*
 This function does three things:
     - First, it updates the top-most in-memory diff layer and notifies the process that sent the message (i.e. the
@@ -2457,6 +2455,8 @@ This function does three things:
     again for FlatKeyValue generation to continue.
 
     - Third, it removes the (no longer needed) bottom-most diff layer from the trie layers in the same way as the first step.
+
+NOTE: we don't receive `Store` here to avoid cyclic dependencies with the other end of `fkv_ctl`
 */
 fn apply_trie_updates(
     backend: &dyn StorageBackend,
