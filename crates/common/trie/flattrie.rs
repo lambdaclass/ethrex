@@ -444,34 +444,32 @@ impl FlatTrie {
                 }
             }
             NodeType::Branch { mut children } => {
-                // let Some(items) = self.get_encoded_items(&self_view)? else {
-                //     panic!();
-                // };
+                let Some(items) = self.get_encoded_items(&self_view)? else {
+                    panic!();
+                };
 
-                // let children: [_; 16] = std::array::from_fn(|i| {
-                //     let (child, _) = decode_bytes(items[i]).unwrap();
-                //     if child.is_empty() {
-                //         None
-                //     } else {
-                //         Some(child.to_vec())
-                //     }
-                // });
+                let mut children_hashes: [_; 16] = std::array::from_fn(|i| {
+                    let child = decode_child(items[i]);
+                    if !child.is_empty() { Some(child) } else { None }
+                });
 
                 if let Some(choice) = path.next_choice() {
                     let new_child_view_index = match children[choice] {
-                        // TODO: we are not differentiating between a child which is not included in the data
-                        // vs an empty choice. We should decode the RLP and get the information from there,
-                        // or it could be added to the view.
+                        None if children_hashes[choice].is_some() => {
+                            panic!("Missing children of branch needed for insert")
+                        }
                         None => self.put_leaf(path, value),
                         Some(view_index) => self.insert_inner(view_index, path, value)?,
                     };
                     children[choice] = Some(new_child_view_index);
-                    let children = children
+                    children_hashes[choice] = Some(self.get_hash(new_child_view_index));
+
+                    let new_children = children
                         .into_iter()
+                        .zip(children_hashes.into_iter().filter_map(|h| h))
                         .enumerate()
-                        .filter_map(|(i, child)| Some((i, (Some(child?), self.get_hash(child?)))))
                         .collect();
-                    Ok(self.put_branch(children))
+                    Ok(self.put_branch(new_children))
                 } else {
                     // We disallow values in branchs
                     unreachable!("wanted to insert value in a branch");
@@ -560,23 +558,33 @@ impl FlatTrie {
                     // We disallow values on branches
                     unreachable!();
                 };
+
+                let Some(items) = self.get_encoded_items(&self_view)? else {
+                    panic!();
+                };
+                let mut children_hashes: [_; 16] = std::array::from_fn(|i| {
+                    let child = decode_child(items[i]);
+                    if !child.is_empty() { Some(child) } else { None }
+                });
+
                 let Some(child_view_index) = children[choice] else {
                     return Ok(Some(self_view_index));
                 };
 
                 let new_child_index = self.remove_inner(child_view_index, path)?;
                 children[choice] = new_child_index;
+                children_hashes[choice] = new_child_index.map(|i| self.get_hash(i));
 
-                let children: Vec<(_, _)> = children
+                let new_children: Vec<(_, _)> = children
                     .into_iter()
+                    .zip(children_hashes.into_iter().filter_map(|h| h))
                     .enumerate()
-                    .filter_map(|(i, child)| Some((i, (Some(child?), self.get_hash(child?)))))
                     .collect();
 
-                match children.len() {
+                match new_children.len() {
                     0 => Ok(None),
                     1 => {
-                        let (choice_idx, (child_idx, _)) = children[0];
+                        let (choice_idx, (child_idx, _)) = new_children[0];
                         let child_idx = child_idx.expect("missing child of branch at remove");
                         let child_view = self
                             .get_view(child_idx)
@@ -610,7 +618,7 @@ impl FlatTrie {
                             }
                         }
                     }
-                    _ => Ok(Some(self.put_branch(children))),
+                    _ => Ok(Some(self.put_branch(new_children))),
                 }
             }
         }
