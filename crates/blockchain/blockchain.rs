@@ -139,15 +139,22 @@ enum MerklizationRequest {
     },
     MerklizeAccount {
         hashed_account: H256,
-        storage_root_node: Option<BranchNode>,
+        storage_root_node: Option<Box<BranchNode>>,
         state: Option<PartialAccountState>,
     },
     CollectStorages {
-        tx: Sender<(H256, u8, BranchNode, Vec<TrieNode>)>,
+        tx: Sender<(H256, u8, Box<BranchNode>, Vec<TrieNode>)>,
     },
     CollectState {
-        tx: Sender<(u8, BranchNode, Vec<TrieNode>, Vec<(H256, Vec<TrieNode>)>)>,
+        tx: Sender<CollectedStateMsg>,
     },
+}
+
+struct CollectedStateMsg {
+    index: u8,
+    subroot: Box<BranchNode>,
+    state_nodes: Vec<TrieNode>,
+    storage_nodes: Vec<(H256, Vec<TrieNode>)>,
 }
 
 #[derive(Default, Clone)]
@@ -410,7 +417,8 @@ impl Blockchain {
         }
         drop(gatherer_tx);
 
-        let mut storage_state: FxHashMap<H256, (BranchNode, Vec<TrieNode>)> = Default::default();
+        let mut storage_state: FxHashMap<H256, (Box<BranchNode>, Vec<TrieNode>)> =
+            Default::default();
         for (prefix, index, subroot, nodes) in gatherer_rx {
             let choice = subroot.choices[index as usize].clone();
             let (root, node_list) = match storage_state.entry(prefix) {
@@ -451,9 +459,15 @@ impl Blockchain {
 
         let mut root = BranchNode::default();
         let mut state_updates = Vec::new();
-        for (index, subroot, nodes, storage_nodes) in gatherer_rx {
+        for CollectedStateMsg {
+            index,
+            subroot,
+            state_nodes,
+            storage_nodes,
+        } in gatherer_rx
+        {
             storage_updates.extend(storage_nodes);
-            state_updates.extend(nodes);
+            state_updates.extend(state_nodes);
             root.choices[index as usize] = subroot.choices[index as usize].clone();
         }
         let state_trie_hash =
@@ -588,7 +602,7 @@ impl Blockchain {
                     let mut nodes = vec![];
                     if let Some(root) = storage_root_node {
                         if let Some(root) =
-                            self.collapse_root_node(parent_header, Some(hashed_account), root)?
+                            self.collapse_root_node(parent_header, Some(hashed_account), *root)?
                         {
                             let mut root = NodeRef::from(root);
                             let hash = root.commit(Nibbles::default(), &mut nodes);
@@ -635,9 +649,15 @@ impl Blockchain {
                     }
                 }
                 MerklizationRequest::CollectState { tx } => {
-                    let (root, nodes) = collect_trie(index, std::mem::take(&mut state_trie))?;
-                    tx.send((index, root, nodes, std::mem::take(&mut storage_nodes)))
-                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                    let (subroot, state_nodes) =
+                        collect_trie(index, std::mem::take(&mut state_trie))?;
+                    tx.send(CollectedStateMsg {
+                        index,
+                        subroot,
+                        state_nodes,
+                        storage_nodes: std::mem::take(&mut storage_nodes),
+                    })
+                    .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                 }
             }
         }
@@ -1894,7 +1914,7 @@ fn branchify(node: Node) -> BranchNode {
     }
 }
 
-fn collect_trie(index: u8, mut trie: Trie) -> Result<(BranchNode, Vec<TrieNode>), TrieError> {
+fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieNode>), TrieError> {
     let root = branchify(
         trie.root_node()?
             .map(Arc::unwrap_or_clone)
@@ -1905,7 +1925,7 @@ fn collect_trie(index: u8, mut trie: Trie) -> Result<(BranchNode, Vec<TrieNode>)
     nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
 
     let root = match trie.root_node()?.map(Arc::unwrap_or_clone) {
-        Some(Node::Branch(branch)) => *branch,
+        Some(Node::Branch(branch)) => branch,
         _ => unreachable!(), // we just put it in
     };
     Ok((root, nodes))
