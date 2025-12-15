@@ -744,7 +744,7 @@ impl PeerHandler {
                 .peer_table
                 .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await
-                .inspect_err(|err| error!(%err, "Error requesting a peer for account range"))
+                .inspect_err(|err| warn!(%err, "Error requesting a peer for account range"))
                 .unwrap_or(None)
             else {
                 // Log ~ once every 10 seconds
@@ -1031,7 +1031,7 @@ impl PeerHandler {
                 .peer_table
                 .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await
-                .inspect_err(|err| error!(%err, "Error requesting a peer for bytecodes"))
+                .inspect_err(|err| warn!(%err, "Error requesting a peer for bytecodes"))
                 .unwrap_or(None)
             else {
                 // Log ~ once every 10 seconds
@@ -1557,7 +1557,7 @@ impl PeerHandler {
                 .peer_table
                 .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await
-                .inspect_err(|err| error!(%err, "Error requesting a peer for storage ranges"))
+                .inspect_err(|err| warn!(%err, "Error requesting a peer for storage ranges"))
                 .unwrap_or(None)
             else {
                 // Log ~ once every 10 seconds
