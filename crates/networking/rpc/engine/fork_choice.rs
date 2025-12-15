@@ -3,7 +3,8 @@ use ethrex_blockchain::{
     fork_choice::apply_fork_choice,
     payload::{BuildPayloadArgs, create_payload},
 };
-use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER, Fork::*};
+use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
+use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
 use tracing::{info, warn};
 
@@ -37,7 +38,7 @@ impl RpcHandler for ForkChoiceUpdatedV1 {
             handle_forkchoice(&self.fork_choice_state, context.clone(), 1).await?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
             let chain_config = context.storage.get_chain_config();
-            if chain_config.is_fork_activated(Cancun, attributes.timestamp) {
+            if chain_config.is_cancun_activated(attributes.timestamp) {
                 return Err(RpcErr::UnsuportedFork(
                     "forkChoiceV1 used to build Cancun payload".to_string(),
                 ));
@@ -70,11 +71,11 @@ impl RpcHandler for ForkChoiceUpdatedV2 {
             handle_forkchoice(&self.fork_choice_state, context.clone(), 2).await?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
             let chain_config = context.storage.get_chain_config();
-            if chain_config.is_fork_activated(Cancun, attributes.timestamp) {
+            if chain_config.is_cancun_activated(attributes.timestamp) {
                 return Err(RpcErr::UnsuportedFork(
                     "forkChoiceV2 used to build Cancun payload".to_string(),
                 ));
-            } else if chain_config.is_fork_activated(Shanghai, attributes.timestamp) {
+            } else if chain_config.is_shanghai_activated(attributes.timestamp) {
                 validate_attributes_v2(attributes, &head_block)?;
             } else {
                 // Behave as a v1
@@ -219,22 +220,14 @@ async fn handle_forkchoice(
         ));
     }
 
-    /*   Revert #4985
-    if context.syncer.sync_mode() == SyncMode::Snap {
-        // Don't trigger a sync if the block is already canonical
-        if context
-            .storage
-            .is_canonical_sync(fork_choice_state.head_block_hash)?
-        {
-            // Disable snapsync mode so we can process incoming payloads
-            context.syncer.disable_snap();
-        } else {
-            context
-                .syncer
-                .sync_to_head(fork_choice_state.head_block_hash);
-            return Ok((None, PayloadStatus::syncing().into()));
-        }
-    } */
+    // Ignore any FCU during snap-sync.
+    // Processing the FCU while snap-syncing can result in reading inconsistent data
+    // from the DB, and the later head update can overwrite changes made by the syncer
+    // process, corrupting the forkchoice state (see #5547)
+    if syncer.sync_mode() == SyncMode::Snap {
+        syncer.sync_to_head(fork_choice_state.head_block_hash);
+        return Ok((None, PayloadStatus::syncing().into()));
+    }
 
     match apply_fork_choice(
         &context.storage,
@@ -284,6 +277,11 @@ async fn handle_forkchoice(
                 InvalidForkChoice::Syncing => {
                     // Start sync
                     syncer.sync_to_head(fork_choice_state.head_block_hash);
+                    ForkChoiceResponse::from(PayloadStatus::syncing())
+                }
+                // TODO(#5564): handle arbitrary reorgs
+                InvalidForkChoice::StateNotReachable => {
+                    // Ignore the FCU
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
                 InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {
@@ -355,7 +353,7 @@ fn validate_attributes_v3(
             "Attribute parent_beacon_block_root is null".to_string(),
         ));
     }
-    if !chain_config.is_fork_activated(Cancun, attributes.timestamp) {
+    if !chain_config.is_cancun_activated(attributes.timestamp) {
         return Err(RpcErr::UnsuportedFork(
             "forkChoiceV3 used to build pre-Cancun payload".to_string(),
         ));

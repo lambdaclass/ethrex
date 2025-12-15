@@ -347,7 +347,7 @@ impl RpcHandler for CreateAccessListRequest {
             _ => return Ok(Value::Null),
         };
 
-        let vm_db = StoreVmDatabase::new(context.storage.clone(), header.clone());
+        let vm_db = StoreVmDatabase::new(context.storage.clone(), header.clone())?;
         let mut vm = context.blockchain.new_evm(vm_db)?;
 
         // Run transaction and obtain access list
@@ -447,7 +447,7 @@ impl RpcHandler for EstimateGasRequest {
             _ => return Ok(Value::Null),
         };
 
-        let current_fork = chain_config.get_fork(block_header.timestamp);
+        let current_fork = chain_config.fork(block_header.timestamp);
 
         let transaction = match self.transaction.nonce {
             Some(_nonce) => self.transaction.clone(),
@@ -576,7 +576,7 @@ async fn simulate_tx(
     storage: Store,
     blockchain: Arc<Blockchain>,
 ) -> Result<ExecutionResult, RpcErr> {
-    let vm_db = StoreVmDatabase::new(storage, block_header.clone());
+    let vm_db = StoreVmDatabase::new(storage, block_header.clone())?;
     let mut vm = blockchain.new_evm(vm_db)?;
 
     match vm.simulate_tx_from_generic(transaction, block_header)? {

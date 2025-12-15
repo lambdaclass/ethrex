@@ -10,7 +10,7 @@ use crate::{
 
 use bytes::Bytes;
 use ethrex_common::{
-    Address, U256,
+    Address, H256, U256,
     types::{Code, Fork},
 };
 
@@ -493,7 +493,11 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
     let (bytecode, code_address) = if vm.is_create()? {
         // Here bytecode is the calldata and the code_address is just the created contract address.
         let calldata = std::mem::take(&mut vm.current_call_frame.calldata);
-        (Code::from_bytecode(calldata), vm.current_call_frame.to)
+        (
+            // SAFETY: we don't need the hash for the initcode
+            Code::from_bytecode_unchecked(calldata, H256::zero()),
+            vm.current_call_frame.to,
+        )
     } else {
         // Here bytecode and code_address could be either from the account or from the delegated account.
         let to = vm.current_call_frame.to;

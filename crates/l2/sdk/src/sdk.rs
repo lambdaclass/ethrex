@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use calldata::encode_calldata;
 use ethereum_types::{H160, H256, U256};
+use ethrex_common::types::EIP7702Transaction;
 use ethrex_common::types::FeeTokenTransaction;
 use ethrex_common::types::Fork;
 use ethrex_common::utils::keccak;
@@ -11,9 +12,10 @@ use ethrex_common::{
         WrappedEIP4844Transaction,
     },
 };
-use ethrex_l2_common::{calldata::Value, l1_messages::L1MessageProof};
+use ethrex_l2_common::messages::{L2Message, L2MessageProof, get_l2_message_hash};
+use ethrex_l2_common::{calldata::Value, messages::L1MessageProof};
 use ethrex_l2_rpc::{
-    clients::get_message_proof,
+    clients::get_l1_message_proof,
     signer::{LocalSigner, Signable, Signer},
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -25,7 +27,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ops::{Add, Div};
 use std::str::FromStr;
 use std::{fs::read_to_string, path::Path};
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 pub mod calldata;
 pub mod l1_to_l2_tx_data;
@@ -38,10 +40,10 @@ pub use ethrex_sdk_contract_utils::*;
 
 use calldata::from_hex_string_to_h256_array;
 
-// 0x39b37222708e21491b9126e0969a043baa09d5a7
+// 0x13295e5562584289b27f92b28f5418269d3b7d82
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
-    0x39, 0xb3, 0x72, 0x22, 0x70, 0x8e, 0x21, 0x49, 0x1b, 0x91, 0x26, 0xe0, 0x96, 0x9a, 0x04, 0x3b,
-    0xaa, 0x09, 0xd5, 0xa7,
+    0x13, 0x29, 0x5e, 0x55, 0x62, 0x58, 0x42, 0x89, 0xb2, 0x7f, 0x92, 0xb2, 0x8f, 0x54, 0x18, 0x26,
+    0x9d, 0x3b, 0x7d, 0x82,
 ]);
 
 // 0x000000000000000000000000000000000000ffff
@@ -79,13 +81,15 @@ const ERC1967_PROXY_BYTECODE: &[u8] = include_bytes!(concat!(
     "/contracts/solc_out/ERC1967Proxy.bytecode"
 ));
 
+const VERIFY_MESSAGE_SIGNATURE: &str = "verifyMessage(uint256,uint256,bytes32,bytes32[])";
+
 #[derive(Debug, thiserror::Error)]
 pub enum SdkError {
     #[error("Failed to parse address from hex")]
     FailedToParseAddressFromHex,
 }
 
-/// BRIDGE_ADDRESS or 0x39b37222708e21491b9126e0969a043baa09d5a7
+/// BRIDGE_ADDRESS or 0x13295e5562584289b27f92b28f5418269d3b7d82
 pub fn bridge_address() -> Result<Address, SdkError> {
     std::env::var("ETHREX_WATCHER_BRIDGE_ADDRESS")
         .unwrap_or(format!("{DEFAULT_BRIDGE_ADDRESS:#x}"))
@@ -810,6 +814,14 @@ pub async fn send_generic_transaction(
 
             tx.encode(&mut encoded_tx);
         }
+        TxType::EIP7702 => {
+            let tx: EIP7702Transaction = generic_tx.try_into()?;
+            let signed_tx = tx
+                .sign(signer)
+                .await
+                .map_err(|err| EthClientError::Custom(err.to_string()))?;
+            signed_tx.encode(&mut encoded_tx);
+        }
         TxType::FeeToken => {
             let tx: FeeTokenTransaction = generic_tx.try_into()?;
             let signed_tx = tx
@@ -820,9 +832,10 @@ pub async fn send_generic_transaction(
             signed_tx.encode(&mut encoded_tx);
         }
         _ => {
-            return Err(EthClientError::Custom(
-                "Unsupported transaction type".to_string(),
-            ));
+            return Err(EthClientError::Custom(format!(
+                "Unsupported transaction type: {:?}",
+                generic_tx.r#type
+            )));
         }
     };
 
@@ -956,8 +969,12 @@ pub async fn build_generic_tx(
     overrides: Overrides,
 ) -> Result<GenericTransaction, EthClientError> {
     match r#type {
-        TxType::EIP1559 | TxType::EIP4844 | TxType::Privileged | TxType::FeeToken => {}
-        TxType::EIP2930 | TxType::EIP7702 | TxType::Legacy => {
+        TxType::EIP1559
+        | TxType::EIP4844
+        | TxType::EIP7702
+        | TxType::Privileged
+        | TxType::FeeToken => {}
+        TxType::EIP2930 | TxType::Legacy => {
             return Err(EthClientError::Custom(
                 "Unsupported tx type in build_generic_tx".to_owned(),
             ));
@@ -996,6 +1013,7 @@ pub async fn build_generic_tx(
         fee_token: overrides.fee_token,
         from,
         wrapper_version: overrides.wrapper_version,
+        authorization_list: overrides.authorization_list,
         ..Default::default()
     };
     tx.gas_price = tx.max_fee_per_gas.unwrap_or_default();
@@ -1063,12 +1081,12 @@ async fn priority_fee_from_override_or_rpc(
     get_fee_from_override_or_get_gas_price(client, None).await
 }
 
-pub async fn wait_for_message_proof(
+pub async fn wait_for_l1_message_proof(
     client: &EthClient,
     transaction_hash: H256,
     max_retries: u64,
 ) -> Result<Vec<L1MessageProof>, EthClientError> {
-    let mut message_proof = get_message_proof(client, transaction_hash).await?;
+    let mut message_proof = get_l1_message_proof(client, transaction_hash).await?;
     let mut r#try = 1;
     while message_proof.is_none() {
         println!(
@@ -1084,7 +1102,7 @@ pub async fn wait_for_message_proof(
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-        message_proof = get_message_proof(client, transaction_hash).await?;
+        message_proof = get_l1_message_proof(client, transaction_hash).await?;
     }
     message_proof.ok_or(EthClientError::Custom("L1Message proof is None".to_owned()))
 }
@@ -1160,6 +1178,70 @@ pub async fn get_l1_active_fork(
     } else {
         Ok(Fork::Osaka)
     }
+}
+
+pub async fn verify_message(
+    chain_id: u64,
+    eth_client: &EthClient,
+    l2_message: &L2Message,
+    message_proof: &L2MessageProof,
+    router_address: Address,
+) -> Result<bool, EthClientError> {
+    info!("Verifying L2 message on chain id {chain_id} via router at {router_address:#x}");
+
+    let message_leaf: Vec<u8> = get_l2_message_hash(l2_message).as_bytes().to_vec();
+    info!("L2 message leaf: 0x{}", hex::encode(&message_leaf));
+    info!("proofs: {}", message_proof.merkle_proof.len());
+    info!("batch number: {}", message_proof.batch_number);
+    info!("message hash : 0x{}", message_proof.message_hash);
+
+    let proof_values = message_proof
+        .merkle_proof
+        .iter()
+        .map(|h| Value::FixedBytes(h.as_bytes().to_vec().into()))
+        .collect::<Vec<_>>();
+
+    let calldata_values = vec![
+        Value::Uint(chain_id.into()),
+        Value::Uint(message_proof.batch_number.into()),
+        Value::FixedBytes(message_leaf.into()),
+        Value::Array(proof_values),
+    ];
+
+    let calldata = encode_calldata(VERIFY_MESSAGE_SIGNATURE, &calldata_values)?;
+
+    info!(
+        "calling eth client to verify message... {:?}",
+        eth_client.urls
+    );
+    info!("router address: {router_address:#x}");
+
+    let hex_string = eth_client
+        .call(router_address, calldata.into(), Overrides::default())
+        .await?;
+
+    // Decode the 32-byte ABI bool
+    let return_data = hex::decode(hex_string.trim_start_matches("0x"))
+        .map_err(|e| EthClientError::Custom(format!("Failed to decode hex string: {e}")))?;
+
+    if return_data.len() != 32 {
+        return Err(EthClientError::Custom(
+            "Unexpected return data length".to_owned(),
+        ));
+    }
+
+    #[expect(clippy::indexing_slicing)]
+    let is_valid = match return_data[31] {
+        0 => false,
+        1 => true,
+        _ => {
+            return Err(EthClientError::Custom(
+                "Invalid boolean value in return data".to_owned(),
+            ));
+        }
+    };
+
+    Ok(is_valid)
 }
 
 async fn _generic_call(
