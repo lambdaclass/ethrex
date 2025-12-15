@@ -754,9 +754,11 @@ impl PeerTableServer {
     }
 
     fn get_closest_nodes(&self, node_id: H256) -> Vec<Node> {
+        const NODES_TO_SAMPLE: usize = 1024;
+
         let mut nodes: Vec<(Node, usize)> = vec![];
 
-        for (contact_id, contact) in &self.contacts {
+        for (contact_id, contact) in self.contacts.iter().take(NODES_TO_SAMPLE) {
             let distance = Self::distance(&node_id, contact_id);
             if nodes.len() < MAX_NODES_IN_NEIGHBORS_PACKET {
                 nodes.push((contact.node.clone(), distance));
