@@ -412,12 +412,11 @@ impl Blockchain {
         }
         drop(gatherer_tx);
 
-        for (prefix, index, subroot, nodes) in gatherer_rx {
-            let choice = subroot.choices[index as usize].clone();
+        for (prefix, index, mut subroot, nodes) in gatherer_rx {
             let state = account_state.entry(prefix).or_default();
             match &mut state.storage_root {
                 Some(root) => {
-                    root.choices[index as usize] = choice;
+                    root.choices[index as usize] = std::mem::take(&mut subroot.choices[index as usize]);
                 }
                 rootptr => {
                     *rootptr = Some(*subroot);
