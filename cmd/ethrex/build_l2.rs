@@ -100,6 +100,10 @@ pub fn download_script() {
             "OnChainProposer",
         ),
         (
+            &Path::new("../../crates/l2/contracts/src/l1/UpgradeTimelock.sol"),
+            "UpgradeTimelock",
+        ),
+        (
             &Path::new("../../crates/l2/contracts/src/l1/CommonBridge.sol"),
             "CommonBridge",
         ),
@@ -185,6 +189,7 @@ fn write_empty_bytecode_files(output_contracts_path: &Path) {
         "ERC1967Proxy",
         "SP1Verifier",
         "OnChainProposer",
+        "UpgradeTimelock",
         "CommonBridge",
         "Router",
         "CommonBridgeL2",

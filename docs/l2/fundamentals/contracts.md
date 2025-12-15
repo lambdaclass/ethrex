@@ -114,6 +114,8 @@ The `Messenger` is a simple L2 smart contract that enables communication from L2
 
 To upgrade a contract, you have to create the new contract and, as the original one, inherit from OpenZeppelin's `UUPSUpgradeable`. Make sure to implement the `_authorizeUpgrade` function and follow the [proxy pattern restrictions](https://docs.openzeppelin.com/upgrades-plugins/writing-upgradeable).
 
+### CommonBridge
+
 Once you have the new contract, you need to do the following three steps:
 
 1. Deploy the new contract
@@ -133,6 +135,21 @@ Once you have the new contract, you need to do the following three steps:
     ```sh
     curl http://localhost:8545 -d '{"jsonrpc": "2.0", "id": "1", "method": "eth_getStorageAt", "params": [<PROXY_ADDRESS>, "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc", "latest"]}'
     ```
+
+### OnChainProposer (7-day timelock)
+
+The `OnChainProposer` UUPS upgrade is restricted to a timelock (`UPGRADE_TIMELOCK`) with a minimum delay of 7 days, so upgrades must be scheduled and later executed through that timelock.
+When deploying via `ethrex l2 deploy`, the timelock address is written to the generated `.env` as `ETHREX_DEPLOYER_ON_CHAIN_PROPOSER_UPGRADE_TIMELOCK_ADDRESS`.
+
+1. Deploy the new implementation
+
+2. Schedule the upgrade call on the timelock, targeting the `OnChainProposer` proxy address:
+
+    - `target`: `<ON_CHAIN_PROPOSER_PROXY_ADDRESS>`
+    - `data`: ABI-encoded call to `upgradeToAndCall(address,bytes)` (or `upgradeTo(address)` if no init call)
+    - `delay`: `604800` (7 days)
+
+3. After the delay has elapsed, execute the scheduled operation on the timelock.
 
 ## Transfer ownership
 

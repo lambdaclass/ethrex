@@ -12,6 +12,10 @@ import {ISP1Verifier} from "../interfaces/ISP1Verifier.sol";
 import {ITDXVerifier} from "../interfaces/ITDXVerifier.sol";
 import {ISequencerRegistry} from "../interfaces/ISequencerRegistry.sol";
 
+interface ITimelockController {
+    function getMinDelay() external view returns (uint256);
+}
+
 /// @title OnChainProposer contract.
 /// @author LambdaClass
 contract OnChainProposer is
@@ -20,6 +24,8 @@ contract OnChainProposer is
     UUPSUpgradeable,
     Ownable2StepUpgradeable
 {
+    uint256 private constant UPGRADE_DELAY = 7 days;
+
     /// @notice Committed batches data.
     /// @dev This struct holds the information about the committed batches.
     /// @dev processedPrivilegedTransactionsRollingHash is the Merkle root of the hashes of the
@@ -90,6 +96,20 @@ contract OnChainProposer is
     /// @notice Chain ID of the network
     uint256 public CHAIN_ID;
 
+    /// @notice Address of the timelock contract that is allowed to upgrade this contract.
+    address public UPGRADE_TIMELOCK;
+
+    /// @notice Upgrade timelock has been set.
+    event UpgradeTimelockSet(address indexed upgradeTimelock);
+
+    modifier onlyUpgradeTimelock() {
+        require(
+            msg.sender == UPGRADE_TIMELOCK,
+            "OnChainProposer: caller is not the upgrade timelock"
+        );
+        _;
+    }
+
     modifier onlyLeaderSequencer() {
         require(
             msg.sender ==
@@ -110,6 +130,7 @@ contract OnChainProposer is
     function initialize(
         bool _validium,
         address owner,
+        address upgradeTimelock,
         bool requireRisc0Proof,
         bool requireSp1Proof,
         bool requireTdxProof,
@@ -125,6 +146,21 @@ contract OnChainProposer is
         uint256 chainId
     ) public initializer {
         VALIDIUM = _validium;
+
+        require(
+            upgradeTimelock != address(0),
+            "OnChainProposer: upgrade timelock is the zero address"
+        );
+        require(
+            upgradeTimelock.code.length != 0,
+            "OnChainProposer: upgrade timelock has no code"
+        );
+        require(
+            ITimelockController(upgradeTimelock).getMinDelay() >= UPGRADE_DELAY,
+            "OnChainProposer: upgrade timelock delay too small"
+        );
+        UPGRADE_TIMELOCK = upgradeTimelock;
+        emit UpgradeTimelockSet(upgradeTimelock);
 
         // Risc0 constants
         REQUIRE_RISC0_PROOF = requireRisc0Proof;
@@ -171,6 +207,31 @@ contract OnChainProposer is
         CHAIN_ID = chainId;
 
         OwnableUpgradeable.__Ownable_init(owner);
+    }
+
+    /// @notice Sets the upgrade timelock for already deployed proxies (one-time).
+    /// @dev Meant to be called via `upgradeToAndCall` when upgrading from older implementations.
+    function initializeUpgradeTimelock(
+        address upgradeTimelock
+    ) public reinitializer(2) onlyOwner {
+        require(
+            UPGRADE_TIMELOCK == address(0),
+            "OnChainProposer: upgrade timelock already set"
+        );
+        require(
+            upgradeTimelock != address(0),
+            "OnChainProposer: upgrade timelock is the zero address"
+        );
+        require(
+            upgradeTimelock.code.length != 0,
+            "OnChainProposer: upgrade timelock has no code"
+        );
+        require(
+            ITimelockController(upgradeTimelock).getMinDelay() >= UPGRADE_DELAY,
+            "OnChainProposer: upgrade timelock delay too small"
+        );
+        UPGRADE_TIMELOCK = upgradeTimelock;
+        emit UpgradeTimelockSet(upgradeTimelock);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -571,5 +632,5 @@ contract OnChainProposer is
     /// @param newImplementation the address of the new implementation
     function _authorizeUpgrade(
         address newImplementation
-    ) internal virtual override onlyOwner {}
+    ) internal virtual override onlyUpgradeTimelock {}
 }
