@@ -36,22 +36,22 @@ Ensure you have the following installed on your system:
 
     ```shell
     # For SP1 CPU proving (very slow, not recommended)
-    cargo install --path cmd/ethrex --bin ethrex --features l2,l2-sql,sp1
+    cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql,sp1
 
     # For RISC0 CPU proving (very slow, not recommended)
-    cargo install --path cmd/ethrex --bin ethrex --features l2,l2-sql,risc0
+    cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql,risc0
 
     # For SP1 and RISC0 CPU proving (very slow, not recommended)
-    cargo install --path cmd/ethrex --bin ethrex --features l2,l2-sql,sp1,risc0
+    cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql,sp1,risc0
 
     # For SP1 GPU proving
-    cargo install --path cmd/ethrex --bin ethrex --features l2,l2-sql,sp1,gpu
+    cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql,sp1,gpu
 
     # For RISC0 GPU proving
-    cargo install --path cmd/ethrex --bin ethrex --features l2,l2-sql,risc0,gpu
+    cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql,risc0,gpu
 
     # For SP1 and RISC0 GPU proving
-    cargo install --path cmd/ethrex --bin ethrex --features l2,l2-sql,sp1,risc0,gpu
+    cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql,sp1,risc0,gpu
     ```
 
     `cargo install` places the binary at `~/.cargo/bin/ethrex`; ensure that directory is on your `$PATH`. Add `--force` if you need to reinstall.
@@ -62,7 +62,7 @@ Ensure you have the following installed on your system:
 > Example:
 >
 > ```shell
-> PROVER_REPRODUCIBLE_BUILD=true COMPILE_CONTRACTS=true cargo install --path cmd/ethrex --bin ethrex --features l2,l2-sql,sp1,risc0,gpu
+> PROVER_REPRODUCIBLE_BUILD=true COMPILE_CONTRACTS=true cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql,sp1,risc0,gpu
 > ```
 
 > [!IMPORTANT]
