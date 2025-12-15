@@ -537,7 +537,7 @@ pub struct BlockProducerOptions {
     )]
     pub block_gas_limit: u64,
     #[arg(
-        long = "block-producer.start_at",
+        long = "block-producer.start-at",
         default_value = "0",
         value_name = "UINT64",
         env = "ETHREX_BLOCK_PRODUCER_START_AT",

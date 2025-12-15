@@ -1,7 +1,7 @@
-use std::{sync::Arc, time::Duration};
+use std::{str::FromStr, sync::Arc, time::Duration};
 
 use ethrex_blockchain::Blockchain;
-use ethrex_common::{Address, types::Block};
+use ethrex_common::{Address, U256, types::Block};
 use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch};
 use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
@@ -81,6 +81,8 @@ impl StateUpdater {
         rollup_store: StoreRollup,
         l2_url: Url,
     ) -> Result<Self, StateUpdaterError> {
+        let l2_url = Url::from_str("http://localhost:1729")
+            .map_err(|_| StateUpdaterError::MissingData("invalid url".to_owned()))?;
         Ok(Self {
             on_chain_proposer_address: sequencer_cfg.l1_committer.on_chain_proposer_address,
             sequencer_registry_address: sequencer_cfg.based.state_updater.sequencer_registry,
@@ -125,25 +127,61 @@ impl StateUpdater {
     }
 
     pub async fn update_state(&mut self) -> Result<(), StateUpdaterError> {
-        let latest_block = self.l2_client.get_block_number().await?;
-        if latest_block < self.start_at.into() {
-            self.sequencer_state
-                .new_status(SequencerStatus::Following)
-                .await;
-            return Ok(());
+        let current_state = self.sequencer_state.status().await;
+        info!("The sequencer is {current_state}");
+        if matches!(current_state, SequencerStatus::Sequencing) && !self.blockchain.is_synced() {
+            self.blockchain.set_synced();
         }
+
+        let current_block: U256 = self.store.get_latest_block_number().await?.into();
+        println!("{}", current_state);
+
+        let latest_block = self.l2_client.get_block_number().await?;
+
+        let can_sequence = current_block >= latest_block;
+
+        if latest_block < self.start_at.into() {
+            if can_sequence {
+                self.sequencer_state
+                    .new_status(SequencerStatus::Following)
+                    .await;
+                info!("The sequencer is now Following");
+                self.blockchain.set_synced();
+                return Ok(());
+            } else {
+                self.sequencer_state
+                    .new_status(SequencerStatus::Syncing)
+                    .await;
+                info!("The Sequencer is now Syncing");
+                self.blockchain.set_not_synced();
+                return Ok(());
+            }
+        } else if can_sequence {
+            self.sequencer_state
+                .new_status(SequencerStatus::Sequencing)
+                .await;
+            info!("The sequencer is now Sequencing");
+        }
+
         if let Some(stop_at) = self.stop_at
             && latest_block >= stop_at.into()
         {
             self.sequencer_state
                 .new_status(SequencerStatus::Following)
                 .await;
+            info!("The sequencer is now Following");
             return Ok(());
         }
 
         if !self.based {
             return Ok(());
         }
+        let node_is_up_to_date = node_is_up_to_date::<StateUpdaterError>(
+            &self.eth_client,
+            self.on_chain_proposer_address,
+            &self.rollup_store,
+        )
+        .await?;
         let lead_sequencer = hash_to_address(
             self.eth_client
                 .call(
@@ -159,15 +197,6 @@ impl StateUpdater {
                     ))
                 })?,
         );
-
-        let node_is_up_to_date = node_is_up_to_date::<StateUpdaterError>(
-            &self.eth_client,
-            self.on_chain_proposer_address,
-            &self.rollup_store,
-        )
-        .await?;
-
-        let current_state = self.sequencer_state.status().await;
 
         let new_status = determine_new_status(
             current_state,

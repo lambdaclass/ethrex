@@ -219,7 +219,7 @@ pub async fn init_l2(
 
     let based = opts.sequencer_opts.based;
 
-    let (peer_handler, syncer) = if based {
+    let (peer_handler, syncer) = if !opts.node_opts.p2p_disabled {
         let peer_table = PeerTable::spawn(opts.node_opts.target_peers);
         let p2p_context = P2PContext::new(
             local_p2p_node.clone(),
@@ -339,7 +339,7 @@ pub async fn init_l2(
     let node_config_path = datadir.join("node_config.json");
     info!(path = %node_config_path.display(), "Storing node config");
     cancel_token.cancel();
-    if based {
+    if !opts.node_opts.p2p_disabled {
         let peer_handler = peer_handler.ok_or_eyre("Peer handler not initialized")?;
         let node_config = NodeConfigFile::new(peer_handler.peer_table, local_node_record).await;
         store_node_config_file(node_config, node_config_path).await;

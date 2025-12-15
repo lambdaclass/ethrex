@@ -128,9 +128,15 @@ pub(crate) async fn handle_based_capability_message(
         }
         L2Message::NewBlock(ref new_block_msg) => {
             if should_process_new_block(established, new_block_msg).await? {
-                process_new_block(established, new_block_msg).await?;
-                broadcast_message(established, msg.into())?;
+                established
+                    .l2_state
+                    .connection_state_mut()?
+                    .blocks_on_queue
+                    .entry(new_block_msg.block.header.number)
+                    .or_insert_with(|| new_block_msg.block.clone());
+                broadcast_message(established, msg.clone().into())?;
             }
+            process_blocks_on_queue(established, new_block_msg).await?;
         }
     }
     Ok(())
@@ -282,10 +288,10 @@ async fn should_process_new_block(
     msg: &NewBlock,
 ) -> Result<bool, PeerConnectionError> {
     let l2_state = established.l2_state.connection_state_mut()?;
-    if !established.blockchain.is_synced() {
-        debug!("Not processing new block, blockchain is not synced");
-        return Ok(false);
-    }
+    // if !established.blockchain.is_synced() {
+    //     debug!("Not processing new block, blockchain is not synced");
+    //     return Ok(false);
+    // }
     if l2_state.latest_block_added >= msg.block.header.number
         || l2_state
             .blocks_on_queue
@@ -331,10 +337,10 @@ async fn should_process_batch_sealed(
     msg: &BatchSealed,
 ) -> Result<bool, PeerConnectionError> {
     let l2_state = established.l2_state.connection_state_mut()?;
-    if !established.blockchain.is_synced() {
-        debug!("Not processing BatchSealedMessage, blockchain is not synced");
-        return Ok(false);
-    }
+    // if !established.blockchain.is_synced() {
+    //     debug!("Not processing BatchSealedMessage, blockchain is not synced");
+    //     return Ok(false);
+    // }
     if l2_state
         .store_rollup
         .contains_batch(&msg.batch.number)
@@ -376,7 +382,7 @@ async fn should_process_batch_sealed(
     Ok(true)
 }
 
-async fn process_new_block(
+async fn process_blocks_on_queue(
     established: &mut Established,
     msg: &NewBlock,
 ) -> Result<(), PeerConnectionError> {
@@ -387,6 +393,14 @@ async fn process_new_block(
         .or_insert_with(|| msg.block.clone());
 
     let mut next_block_to_add = l2_state.latest_block_added + 1;
+    if let Some(latest_batch_number) = l2_state.store_rollup.get_batch_number().await?
+        && let Some(latest_batch) = l2_state
+            .store_rollup
+            .get_batch(latest_batch_number, ethrex_common::types::Fork::Prague)
+            .await?
+    {
+        next_block_to_add = next_block_to_add.max(latest_batch.last_block + 1);
+    }
     while let Some(block) = l2_state.blocks_on_queue.remove(&next_block_to_add) {
         // This check is necessary if a connection to another peer already applied the block but this connection
         // did not register that update.
@@ -397,9 +411,7 @@ async fn process_new_block(
         }
         let block_hash = block.hash();
         let block_number = block.header.number;
-        let block = Arc::<Block>::try_unwrap(block).map_err(|_| {
-            PeerConnectionError::InternalError("Failed to take ownership of block".to_string())
-        })?;
+        let block = Arc::unwrap_or_clone(block);
         established.blockchain.add_block(block).inspect_err(|e| {
             error!(
                 peer=%established.node,
