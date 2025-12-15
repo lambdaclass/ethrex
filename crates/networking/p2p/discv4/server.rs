@@ -40,8 +40,8 @@ const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12
 /// The initial interval between peer lookups, until the number of peers reaches
 /// [target_peers](DiscoverySideCarState::target_peers), or the number of
 /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
-pub const INITIAL_LOOKUP_INTERVAL: Duration = Duration::from_millis(100); // 10 per second
-pub const LOOKUP_INTERVAL: Duration = Duration::from_millis(600); // 100 per minute
+pub const INITIAL_LOOKUP_INTERVAL_MS: f64 = 100.0; // 10 per second
+pub const LOOKUP_INTERVAL_MS: f64 = 600.0; // 100 per minute
 const CHANGE_FIND_NODE_MESSAGE_INTERVAL: Duration = Duration::from_secs(5);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -90,6 +90,7 @@ pub struct DiscoveryServer {
     /// The last `FindNode` message sent, cached due to message
     /// signatures being expensive.
     find_node_message: BytesMut,
+    initial_lookup_interval: f64,
 }
 
 impl DiscoveryServer {
@@ -100,6 +101,7 @@ impl DiscoveryServer {
         udp_socket: Arc<UdpSocket>,
         mut peer_table: PeerTable,
         bootnodes: Vec<Node>,
+        initial_lookup_interval: f64,
     ) -> Result<(), DiscoveryServerError> {
         info!("Starting Discovery Server");
 
@@ -119,6 +121,7 @@ impl DiscoveryServer {
             store: storage.clone(),
             peer_table: peer_table.clone(),
             find_node_message: Self::random_message(&signer),
+            initial_lookup_interval,
         };
 
         info!(count = bootnodes.len(), "Adding bootnodes");
@@ -163,7 +166,7 @@ impl DiscoveryServer {
                     sender_public_key,
                 );
 
-                let _ = self.handle_ping(hash, node).await.inspect_err(|e| {
+                let _ = self.handle_ping(ping_message, hash, sender_public_key, node).await.inspect_err(|e| {
                     error!(sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e, "Error handling message");
                 });
             }
@@ -182,7 +185,8 @@ impl DiscoveryServer {
                     return Ok(());
                 }
 
-                self.handle_find_node(sender_public_key, from).await?;
+                self.handle_find_node(sender_public_key, find_node_message.target, from)
+                    .await?;
             }
             Message::Neighbors(neighbors_message) => {
                 trace!(received = "Neighbors", msg = ?neighbors_message, from = %format!("{sender_public_key:#x}"));
@@ -248,9 +252,12 @@ impl DiscoveryServer {
 
     async fn lookup(&mut self) -> Result<(), DiscoveryServerError> {
         if let Some(contact) = self.peer_table.get_contact_for_lookup().await? {
-            if self.udp_socket.send_to(&self.find_node_message, &contact.node.udp_addr()).await.inspect_err(
-                |e| error!(sending = "FindNode", addr = ?&contact.node.udp_addr(), err=?e, "Error sending message"),
-            ).is_err() {
+            if let Err(e) = self
+                .udp_socket
+                .send_to(&self.find_node_message, &contact.node.udp_addr())
+                .await
+            {
+                error!(sending = "FindNode", addr = ?&contact.node.udp_addr(), err=?e, "Error sending message");
                 self.peer_table
                     .set_disposable(&contact.node.node_id())
                     .await?;
@@ -270,62 +277,26 @@ impl DiscoveryServer {
     }
 
     async fn get_lookup_interval(&mut self) -> Duration {
-        if !self.peer_table.target_reached().await.unwrap_or(false) {
-            INITIAL_LOOKUP_INTERVAL
-        } else {
-            trace!("Reached target number of peers or contacts. Using longer lookup interval.");
-            LOOKUP_INTERVAL
-        }
+        let peer_completion = self
+            .peer_table
+            .target_peers_completion()
+            .await
+            .unwrap_or_default();
+        lookup_interval_function(
+            peer_completion,
+            self.initial_lookup_interval,
+            LOOKUP_INTERVAL_MS,
+        )
     }
 
     async fn enr_lookup(&mut self) -> Result<(), DiscoveryServerError> {
         if let Some(contact) = self.peer_table.get_contact_for_enr_lookup().await? {
-            let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
-            let enr_request = Message::ENRRequest(ENRRequestMessage { expiration });
-
-            let mut buf = Vec::new();
-            enr_request.encode_with_header(&mut buf, &self.signer);
-            let enr_request_hash: [u8; 32] = buf[..32]
-                .try_into()
-                .expect("first 32 bytes are the message hash");
-
-            if self.udp_socket.send_to(&buf, contact.node.udp_addr())
-                .await
-                .inspect_err( |e| error!(sending = "ENRRequest", addr = ?&contact.node.udp_addr(), to = %format!("{:#x}", contact.node.public_key), err=?e, "Error sending message"),)
-                .is_err()
-            {
-                self.peer_table
-                    .set_disposable(&contact.node.node_id())
-                    .await?;
-                METRICS.record_new_discarded_node().await;
-            }
-
-            self.peer_table
-                .record_enr_request_sent(&contact.node.node_id(), H256::from(enr_request_hash))
-                .await?;
+            self.send_enr_request(&contact.node).await?;
         }
         Ok(())
     }
 
     async fn send_ping(&mut self, node: &Node) -> Result<(), DiscoveryServerError> {
-        match self.send_ping_internal(node).await {
-            Ok(ping_hash) => {
-                METRICS.record_ping_sent().await;
-                self.peer_table
-                    .record_ping_sent(&node.node_id(), ping_hash)
-                    .await?;
-            }
-            Err(err) => {
-                error!(sent = "Ping", to = %format!("{:#x}", node.public_key), err = ?err, "Error sending message");
-                self.peer_table.set_disposable(&node.node_id()).await?;
-                METRICS.record_new_discarded_node().await;
-            }
-        }
-        Ok(())
-    }
-
-    async fn send_ping_internal(&self, node: &Node) -> Result<H256, DiscoveryServerError> {
-        let mut buf = Vec::new();
         // TODO: Parametrize this expiration.
         let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
         let from = Endpoint {
@@ -340,14 +311,13 @@ impl DiscoveryServer {
         };
         let enr_seq = self.local_node_record.seq;
         let ping = Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(enr_seq));
-        ping.encode_with_header(&mut buf, &self.signer);
-        let ping_hash: [u8; 32] = buf[..32]
-            .try_into()
-            .expect("first 32 bytes are the message hash");
-        // We do not use self.send() here, as we already encoded the message to calculate hash.
-        self.udp_socket.send_to(&buf, node.udp_addr()).await?;
+        let ping_hash = self.send_else_dispose(ping, node).await?;
         trace!(sent = "Ping", to = %format!("{:#x}", node.public_key));
-        Ok(H256::from(ping_hash))
+        METRICS.record_ping_sent().await;
+        self.peer_table
+            .record_ping_sent(&node.node_id(), ping_hash)
+            .await?;
+        Ok(())
     }
 
     async fn send_pong(&self, ping_hash: H256, node: &Node) -> Result<(), DiscoveryServerError> {
@@ -383,8 +353,20 @@ impl DiscoveryServer {
 
         self.send(msg, node.udp_addr()).await?;
 
-        debug!(sent = "Neighbors", to = %format!("{:#x}", node.public_key));
+        trace!(sent = "Neighbors", to = %format!("{:#x}", node.public_key));
 
+        Ok(())
+    }
+
+    async fn send_enr_request(&mut self, node: &Node) -> Result<(), DiscoveryServerError> {
+        let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
+        let enr_request = Message::ENRRequest(ENRRequestMessage { expiration });
+
+        let enr_request_hash = self.send_else_dispose(enr_request, node).await?;
+
+        self.peer_table
+            .record_enr_request_sent(&node.node_id(), enr_request_hash)
+            .await?;
         Ok(())
     }
 
@@ -402,11 +384,34 @@ impl DiscoveryServer {
         Ok(())
     }
 
-    async fn handle_ping(&mut self, hash: H256, node: Node) -> Result<(), DiscoveryServerError> {
+    async fn handle_ping(
+        &mut self,
+        ping_message: PingMessage,
+        hash: H256,
+        sender_public_key: H512,
+        node: Node,
+    ) -> Result<(), DiscoveryServerError> {
         self.send_pong(hash, &node).await?;
 
         if self.peer_table.insert_if_new(&node).await.unwrap_or(false) {
             self.send_ping(&node).await?;
+        } else {
+            // If the contact has stale ENR then request the updated one.
+            let node_id = node_id(&sender_public_key);
+            let stored_enr_seq = self
+                .peer_table
+                .get_contact(node_id)
+                .await?
+                .and_then(|c| c.record)
+                .map(|r| r.seq);
+
+            let received_enr_seq = ping_message.enr_seq;
+
+            if let (Some(received), Some(stored)) = (received_enr_seq, stored_enr_seq)
+                && received > stored
+            {
+                self.send_enr_request(&node).await?;
+            }
         }
         Ok(())
     }
@@ -416,23 +421,43 @@ impl DiscoveryServer {
         message: PongMessage,
         node_id: H256,
     ) -> Result<(), DiscoveryServerError> {
+        let Some(contact) = self.peer_table.get_contact(node_id).await? else {
+            return Ok(());
+        };
+
+        // If the contact doesn't exist then there is nothing to record.
+        // So we do it after making sure that the contact exists.
         self.peer_table
             .record_pong_received(&node_id, message.ping_hash)
             .await?;
+
+        // If the contact has stale ENR then request the updated one.
+        let stored_enr_seq = contact.record.map(|r| r.seq);
+        let received_enr_seq = message.enr_seq;
+        if let (Some(received), Some(stored)) = (received_enr_seq, stored_enr_seq)
+            && received > stored
+        {
+            self.send_enr_request(&contact.node).await?;
+        }
+
         Ok(())
     }
 
     async fn handle_find_node(
         &mut self,
         sender_public_key: H512,
+        target: H512,
         from: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
-        let node_id = node_id(&sender_public_key);
+        let sender_id = node_id(&sender_public_key);
         if let Ok(contact) = self
-            .validate_contact(sender_public_key, node_id, from, "FindNode")
+            .validate_contact(sender_public_key, sender_id, from, "FindNode")
             .await
         {
-            let neighbors = self.peer_table.get_closest_nodes(&node_id).await?;
+            // According to https://github.com/ethereum/devp2p/blob/master/discv4.md#findnode-packet-0x03
+            // reply closest 16 nodes to target
+            let target_id = node_id(&target);
+            let neighbors = self.peer_table.get_closest_nodes(&target_id).await?;
 
             // A single node encodes to at most 89B, so 8 of them are at most 712B plus
             // recursive length and expiration time, well within bound of 1280B per packet.
@@ -629,6 +654,24 @@ impl DiscoveryServer {
             |e| error!(sending = ?message, addr = ?addr, err=?e, "Error sending message"),
         )?)
     }
+
+    async fn send_else_dispose(
+        &mut self,
+        message: Message,
+        node: &Node,
+    ) -> Result<H256, DiscoveryServerError> {
+        let mut buf = BytesMut::new();
+        message.encode_with_header(&mut buf, &self.signer);
+        let message_hash: [u8; 32] = buf[..32]
+            .try_into()
+            .expect("first 32 bytes are the message hash");
+        if let Err(e) = self.udp_socket.send_to(&buf, node.udp_addr()).await {
+            error!(sending = ?message, addr = ?node.udp_addr(), to = ?node.node_id(), err=?e, "Error sending message");
+            self.peer_table.set_disposable(&node.node_id()).await?;
+            METRICS.record_new_discarded_node().await;
+        }
+        Ok(H256::from(message_hash))
+    }
 }
 
 impl GenServer for DiscoveryServer {
@@ -752,6 +795,20 @@ impl Discv4Message {
     pub fn get_node_id(&self) -> H256 {
         node_id(&self.sender_public_key)
     }
+}
+
+pub fn lookup_interval_function(progress: f64, lower_limit: f64, upper_limit: f64) -> Duration {
+    // Smooth progression curve
+    // See https://easings.net/#easeInOutCubic
+    let ease_in_out_cubic = if progress < 0.5 {
+        4.0 * progress.powf(3.0)
+    } else {
+        1.0 - ((-2.0 * progress + 2.0).powf(3.0)) / 2.0
+    };
+    Duration::from_micros(
+        // Use `progress` here instead of `ease_in_out_cubic` for a linear function.
+        (1000f64 * (ease_in_out_cubic * (upper_limit - lower_limit) + lower_limit)).round() as u64,
+    )
 }
 
 // TODO: Reimplement tests removed during snap sync refactor
