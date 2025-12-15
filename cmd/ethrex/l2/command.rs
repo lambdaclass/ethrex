@@ -529,7 +529,7 @@ impl Command {
                     // Create checkpoint
                     let checkpoint_path =
                         store_path.join(format!("checkpoint_batch_{batch_number}"));
-                    store.create_checkpoint(&checkpoint_path).await?;
+                    store.create_checkpoint(&checkpoint_path)?;
 
                     info!("Sealed batch {batch_number}.");
                 }
@@ -700,7 +700,7 @@ async fn delete_blocks_from_batch(
     let genesis = network.get_genesis()?;
 
     let mut block_to_delete = last_kept_block + 1;
-    let store = init_store(datadir, genesis).await;
+    let store = init_store(datadir, genesis).await?;
 
     while store
         .get_canonical_block_hash(block_to_delete)
