@@ -411,8 +411,7 @@ impl Blockchain {
         drop(gatherer_tx);
 
         let mut storage_state: FxHashMap<H256, (BranchNode, Vec<TrieNode>)> = Default::default();
-        for (prefix, index, mut subroot, nodes) in gatherer_rx {
-            subroot.choices.iter_mut().for_each(NodeRef::clear_hash);
+        for (prefix, index, subroot, nodes) in gatherer_rx {
             let choice = subroot.choices[index as usize].clone();
             let (root, node_list) = match storage_state.entry(prefix) {
                 Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
@@ -484,12 +483,13 @@ impl Blockchain {
             Some(account_hash) => {
                 let trie = self.storage.open_storage_trie(
                     account_hash,
-                    *EMPTY_TRIE_HASH,
                     parent_header.state_root,
+                    *EMPTY_TRIE_HASH,
                 )?;
                 let root = trie
                     .db()
                     .get(Nibbles::default())?
+                    .filter(|rlp| !rlp.is_empty())
                     .map(keccak)
                     .unwrap_or(*EMPTY_TRIE_HASH);
                 self.storage
@@ -507,8 +507,9 @@ impl Blockchain {
         &self,
         parent_header: &BlockHeader,
         prefix: Option<H256>,
-        root: BranchNode,
+        mut root: BranchNode,
     ) -> Result<Option<Node>, StoreError> {
+        root.choices.iter_mut().for_each(NodeRef::clear_hash);
         let mut valid_children_iter = root
             .choices
             .iter()
