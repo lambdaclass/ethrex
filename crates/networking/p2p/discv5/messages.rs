@@ -58,10 +58,20 @@ pub enum Packet {
     // Handshake(Handshake),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PacketHeader {
+    pub static_header: Vec<u8>,
+    pub flag: u8,
+    pub nonce: Vec<u8>,
+    pub authdata: Vec<u8>,
+    /// Offset in the encoded packet where authdata ends, i.e where the header ends.
+    pub header_end_offset: usize,
+}
+
 impl Packet {
     pub fn decode(
         dest_id: &H256,
-        decrypt_key: &Vec<u8>,
+        decrypt_key: &[u8],
         encoded_packet: &[u8],
     ) -> Result<Packet, PacketDecodeErr> {
         if encoded_packet.len() < MIN_PACKET_SIZE || encoded_packet.len() > MAX_PACKET_SIZE {
@@ -75,19 +85,20 @@ impl Packet {
 
         let mut cipher = <Aes128Ctr64BE as KeyIvInit>::new(dest_id[..16].into(), masking_iv.into());
 
-        let (static_header, flag, nonce, authdata, authdata_end) =
-            Packet::decode_header(&mut cipher, encoded_packet)?;
+        let packet_header = Packet::decode_header(&mut cipher, encoded_packet)?;
 
-        match flag {
+        match packet_header.flag {
             0x00 => Ok(Packet::Ordinary(Ordinary::decode(
                 masking_iv,
-                static_header,
-                authdata,
-                nonce,
+                packet_header.static_header,
+                packet_header.authdata,
+                packet_header.nonce,
                 decrypt_key,
-                &encoded_packet[authdata_end..],
+                &encoded_packet[packet_header.header_end_offset..],
             )?)),
-            0x01 => Ok(Packet::WhoAreYou(WhoAreYou::decode(&authdata)?)),
+            0x01 => Ok(Packet::WhoAreYou(WhoAreYou::decode(
+                &packet_header.authdata,
+            )?)),
             _ => Err(RLPDecodeError::MalformedData)?,
         }
     }
@@ -117,7 +128,7 @@ impl Packet {
     fn decode_header<T: StreamCipher>(
         cipher: &mut T,
         encoded_packet: &[u8],
-    ) -> Result<(Vec<u8>, u8, Vec<u8>, Vec<u8>, usize), PacketDecodeErr> {
+    ) -> Result<PacketHeader, PacketDecodeErr> {
         // static header
         let mut static_header = encoded_packet[IV_MASKING_SIZE..STATIC_HEADER_END].to_vec();
 
@@ -129,7 +140,7 @@ impl Packet {
         let version = u16::from_be_bytes(static_header[6..8].try_into()?);
         if protocol_id != PROTOCOL_ID || version != PROTOCOL_VERSION {
             return Err(PacketDecodeErr::InvalidProtocol(
-                match str::from_utf8(&protocol_id) {
+                match str::from_utf8(protocol_id) {
                     Ok(result) => format!("{} v{}", result, version),
                     Err(_) => format!("{:?} v{}", protocol_id, version),
                 },
@@ -143,7 +154,14 @@ impl Packet {
         let authdata = &mut encoded_packet[STATIC_HEADER_END..authdata_end].to_vec();
 
         cipher.try_apply_keystream(authdata)?;
-        Ok((static_header, flag, nonce, authdata.to_vec(), authdata_end))
+
+        Ok(PacketHeader {
+            static_header,
+            flag,
+            nonce,
+            authdata: authdata.to_vec(),
+            header_end_offset: authdata_end,
+        })
     }
 }
 
@@ -158,7 +176,7 @@ impl Ordinary {
         static_header: Vec<u8>,
         authdata: Vec<u8>,
         nonce: Vec<u8>,
-        decrypt_key: &Vec<u8>,
+        decrypt_key: &[u8],
         encrypted_message: &[u8],
     ) -> Result<Ordinary, PacketDecodeErr> {
         // message    = aesgcm_encrypt(initiator-key, nonce, message-pt, message-ad)
@@ -168,7 +186,7 @@ impl Ordinary {
         message_ad.extend_from_slice(&static_header);
         message_ad.extend_from_slice(&authdata);
 
-        let mut message = (&encrypted_message).to_vec();
+        let mut message = encrypted_message.to_vec();
         Self::decrypt(decrypt_key, nonce, &mut message, message_ad)?;
 
         let message = Message::decode(&message)?;
@@ -176,7 +194,7 @@ impl Ordinary {
     }
 
     fn decrypt(
-        key: &Vec<u8>,
+        key: &[u8],
         nonce: Vec<u8>,
         message: &mut Vec<u8>,
         message_ad: Vec<u8>,
@@ -224,7 +242,7 @@ impl WhoAreYou {
         buf.put_slice(&self.enr_seq.to_be_bytes());
     }
 
-    pub fn decode(authdata: &Vec<u8>) -> Result<WhoAreYou, PacketDecodeErr> {
+    pub fn decode(authdata: &[u8]) -> Result<WhoAreYou, PacketDecodeErr> {
         let id_nonce = u128::from_be_bytes(authdata[..16].try_into()?);
         let enr_seq = u64::from_be_bytes(authdata[16..].try_into()?);
 
@@ -491,7 +509,7 @@ mod tests {
 
         let packet = Packet::WhoAreYou(WhoAreYou {
             id_nonce: u128::from_be_bytes(
-                (&hex!("0102030405060708090a0b0c0d0e0f10"))
+                hex!("0102030405060708090a0b0c0d0e0f10")
                     .to_vec()
                     .try_into()
                     .unwrap(),
@@ -540,7 +558,7 @@ mod tests {
         let packet = codec.decode(&mut encoded).unwrap();
         let expected = Some(Packet::WhoAreYou(WhoAreYou {
             id_nonce: u128::from_be_bytes(
-                (&hex!("0102030405060708090a0b0c0d0e0f10"))
+                hex!("0102030405060708090a0b0c0d0e0f10")
                     .to_vec()
                     .try_into()
                     .unwrap(),
@@ -633,15 +651,14 @@ mod tests {
             id: Some("id".to_string()),
             ..Default::default()
         }
-        .try_into()
-        .unwrap();
+        .into();
 
         let pkt = NodesMessage {
             req_id: 1234,
             total: 2,
             nodes: vec![NodeRecord {
                 seq: 4321,
-                pairs: pairs,
+                pairs,
                 signature: H512::random(),
             }],
         };
