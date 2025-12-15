@@ -5,6 +5,7 @@ use ethereum_types::Address;
 use ethereum_types::Signature;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::fork_choice::apply_fork_choice;
+use ethrex_common::types::batch::Batch;
 use ethrex_common::types::{Block, recover_address};
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::{Message as SecpMessage, SecretKey};
@@ -22,6 +23,7 @@ pub struct L2ConnectedState {
     pub latest_block_added: u64,
     pub latest_batch_sent: u64,
     pub blocks_on_queue: BTreeMap<u64, Arc<Block>>,
+    pub batch_on_queue: BTreeMap<u64, Arc<Batch>>,
     pub store_rollup: StoreRollup,
     pub committer_key: Arc<SecretKey>,
     pub next_block_broadcast: Instant,
@@ -95,6 +97,7 @@ impl L2ConnState {
                     latest_block_sent: 0,
                     latest_block_added: 0,
                     blocks_on_queue: BTreeMap::new(),
+                    batch_on_queue: BTreeMap::new(),
                     latest_batch_sent: 0,
                     store_rollup: ctxt.store_rollup.clone(),
                     committer_key: ctxt.committer_key.clone(),
@@ -122,9 +125,15 @@ pub(crate) async fn handle_based_capability_message(
     match msg {
         L2Message::BatchSealed(ref batch_sealed_msg) => {
             if should_process_batch_sealed(established, batch_sealed_msg).await? {
-                process_batch_sealed(established, batch_sealed_msg).await?;
+                established
+                    .l2_state
+                    .connection_state_mut()?
+                    .batch_on_queue
+                    .entry(batch_sealed_msg.batch.number)
+                    .or_insert_with(|| batch_sealed_msg.batch.clone());
                 broadcast_message(established, msg.into())?;
             }
+            process_batch_on_queue(established).await?;
         }
         L2Message::NewBlock(ref new_block_msg) => {
             if should_process_new_block(established, new_block_msg).await? {
@@ -134,9 +143,9 @@ pub(crate) async fn handle_based_capability_message(
                     .blocks_on_queue
                     .entry(new_block_msg.block.header.number)
                     .or_insert_with(|| new_block_msg.block.clone());
-                broadcast_message(established, msg.clone().into())?;
+                broadcast_message(established, msg.into())?;
             }
-            process_blocks_on_queue(established, new_block_msg).await?;
+            process_blocks_on_queue(established).await?;
         }
     }
     Ok(())
@@ -349,18 +358,6 @@ async fn should_process_batch_sealed(
         debug!("Batch {} already sealed, ignoring it", msg.batch.number);
         return Ok(false);
     }
-    if msg.batch.first_block == msg.batch.last_block {
-        // is empty batch
-        return Ok(false);
-    }
-    if l2_state.latest_block_added < msg.batch.last_block {
-        debug!(
-            "Not processing batch {} because the last block {} is not added yet",
-            msg.batch.number, msg.batch.last_block
-        );
-        return Ok(false);
-    }
-
     let hash = batch_hash(&msg.batch);
 
     let recovered_lead_sequencer = recover_address(msg.signature, hash).map_err(|e| {
@@ -382,15 +379,10 @@ async fn should_process_batch_sealed(
     Ok(true)
 }
 
-async fn process_blocks_on_queue(
+pub async fn process_blocks_on_queue(
     established: &mut Established,
-    msg: &NewBlock,
 ) -> Result<(), PeerConnectionError> {
     let l2_state = established.l2_state.connection_state_mut()?;
-    l2_state
-        .blocks_on_queue
-        .entry(msg.block.header.number)
-        .or_insert_with(|| msg.block.clone());
 
     let mut next_block_to_add = l2_state.latest_block_added + 1;
     if let Some(latest_batch_number) = l2_state.store_rollup.get_batch_number().await?
@@ -494,16 +486,40 @@ pub(crate) async fn send_sealed_batch(
     Ok(())
 }
 
-async fn process_batch_sealed(
+pub async fn process_batch_on_queue(
     established: &mut Established,
-    msg: &BatchSealed,
 ) -> Result<(), PeerConnectionError> {
     let l2_state = established.l2_state.connection_state_mut()?;
-    l2_state.store_rollup.seal_batch(*msg.batch.clone()).await?;
-    info!(
-        "Sealed batch {} with blocks from {} to {}",
-        msg.batch.number, msg.batch.first_block, msg.batch.last_block
-    );
+    let Some(latest_stored_batch) = l2_state.store_rollup.get_batch_number().await? else {
+        return Ok(());
+    };
+    let mut next_batch_to_seal = latest_stored_batch + 1;
+    while let Some(batch) = l2_state.batch_on_queue.get(&next_batch_to_seal) {
+        let last_block_on_next_batch = batch.last_block;
+        if established
+            .storage
+            .get_block_by_number(last_block_on_next_batch)
+            .await?
+            .is_none()
+        {
+            debug!("Missing blocks from the next batch to seal");
+            return Ok(());
+        }
+        if let Some(batch) = l2_state.batch_on_queue.remove(&next_batch_to_seal) {
+            let batch = Arc::unwrap_or_clone(batch);
+            let (batch_number, batch_first_block, batch_last_block) =
+                (batch.number, batch.first_block, batch.last_block);
+            l2_state.store_rollup.seal_batch(batch).await?;
+            info!(
+                "Sealed batch {} with blocks from {} to {}",
+                batch_number, batch_first_block, batch_last_block
+            );
+        } else {
+            return Ok(());
+        }
+        next_batch_to_seal += 1;
+    }
+
     Ok(())
 }
 

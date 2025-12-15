@@ -55,7 +55,7 @@ impl RLPxMessage for NewBlock {
 
 #[derive(Debug, Clone)]
 pub struct BatchSealed {
-    pub batch: Box<Batch>,
+    pub batch: Arc<Batch>,
     pub signature: Signature,
 }
 
@@ -78,13 +78,13 @@ impl BatchSealed {
         sig[64] = recovery_id;
         let signature = Signature::from_slice(&sig);
         Ok(Self {
-            batch: Box::new(batch),
+            batch: Arc::new(batch),
             signature,
         })
     }
     pub fn new(batch: Batch, signature: Signature) -> Self {
         Self {
-            batch: Box::new(batch),
+            batch: Arc::new(batch),
             signature,
         }
     }
