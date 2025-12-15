@@ -466,7 +466,8 @@ impl FlatTrie {
 
                     let new_children = children
                         .into_iter()
-                        .zip(children_hashes.into_iter().filter_map(|h| h))
+                        .zip(children_hashes.into_iter())
+                        .filter_map(|(c, h)| Some((c, h?)))
                         .enumerate()
                         .collect();
                     Ok(self.put_branch(new_children))
