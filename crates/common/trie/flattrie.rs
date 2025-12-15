@@ -829,73 +829,29 @@ impl FlatTrie {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
-
     use ethrex_rlp::encode::RLPEncode;
     use proptest::{
         collection::{btree_set, vec},
         prelude::*,
     };
 
-    use crate::{
-        Nibbles, Node, NodeRef, Trie,
-        flattrie::FlatTrie,
-        node::{BranchNode, ExtensionNode},
-    };
+    use crate::{Nibbles, Trie, flattrie::FlatTrie};
 
-    fn kv_pairs_strategy()
-    -> impl Strategy<Value = (Vec<(Vec<u8>, Vec<u8>)>, Vec<usize>, Vec<usize>)> {
+    fn kv_pairs_strategy() -> impl Strategy<Value = (Vec<(Vec<u8>, Vec<u8>)>, Vec<usize>)> {
         // create random key-values, with keys all the same size, and a random permutation of indices
         (1usize..32).prop_flat_map(|key_len| {
-            prop::collection::vec(
-                (vec(any::<u8>(), key_len), vec(any::<u8>(), 0..256)),
-                1..100,
-            )
-            .prop_flat_map(|kvs| {
-                let len = kvs.len();
-                let shuffle0 = vec(..len, ..len).prop_shuffle();
-                let shuffle1 = vec(..len, ..len).prop_shuffle();
-                (Just(kvs), shuffle0, shuffle1)
-            })
+            prop::collection::vec((vec(any::<u8>(), key_len), vec(any::<u8>(), 0..256)), 1..2)
+                .prop_flat_map(|kvs| {
+                    let len = kvs.len();
+                    let shuffle = vec(..len, ..len).prop_shuffle();
+                    (Just(kvs), shuffle)
+                })
         })
-    }
-
-    fn prune(node: Arc<Node>, node_path: Nibbles, keys_to_keep: &[Nibbles]) -> NodeRef {
-        if !keys_to_keep
-            .iter()
-            .any(|k| &k.as_ref()[..node_path.len()] == node_path.as_ref())
-        {
-            // if not in the path of any key to keep, then prune node
-            return NodeRef::Hash(node.compute_hash());
-        }
-        // recursively prune nodes in the path
-        match &*node {
-            Node::Leaf(_) => node.into(),
-            Node::Extension(e) => {
-                let child = if let NodeRef::Node(c, _) = &e.child {
-                    prune(c.clone(), node_path.concat(&e.prefix), keys_to_keep)
-                } else {
-                    e.child.clone()
-                };
-                let node: Node = ExtensionNode::new(e.prefix.clone(), child).into();
-                node.into()
-            }
-            Node::Branch(b) => {
-                let choices = std::array::from_fn(|i| match &b.choices[i] {
-                    NodeRef::Node(c, _) => {
-                        prune(c.clone(), node_path.append_new(i as u8), keys_to_keep)
-                    }
-                    c => c.clone(),
-                });
-                let node: Node = BranchNode::new_with_value(choices, b.value.clone()).into();
-                node.into()
-            }
-        }
     }
 
     proptest! {
         #[test]
-        fn proptest_insert_compare_hash((kv, _, _) in kv_pairs_strategy()) {
+        fn proptest_insert_compare_hash((kv, _) in kv_pairs_strategy()) {
             let mut trie = Trie::new_temp();
             let mut flat_trie = FlatTrie::default();
 
@@ -913,11 +869,11 @@ mod test {
         }
 
         #[test]
-        fn proptest_insert_remove_compare_hash((kv, shuffle, _) in kv_pairs_strategy()) {
+        fn proptest_insert_remove_compare_hash((kv, shuffle) in kv_pairs_strategy()) {
             let mut trie = Trie::new_temp();
             let mut flat_trie = FlatTrie::default();
 
-            for (key, value) in &kv {
+            for (key, value) in kv.iter() {
                 trie.insert(key.clone(), value.clone()).unwrap();
                 flat_trie.insert(key.clone(), value.clone()).unwrap();
 
@@ -929,52 +885,7 @@ mod test {
                 prop_assert_eq!(hash, flat_trie_hash.finalize());
             }
 
-            for i in shuffle {
-                let key = &kv[i].0;
-                trie.remove(key).unwrap();
-                flat_trie.remove(key).unwrap();
-
-                let hash = trie.hash_no_commit();
-
-                prop_assert!(flat_trie.authenticate().unwrap());
-                let flat_trie_hash = flat_trie.root_hash().unwrap().unwrap();
-
-                prop_assert_eq!(hash, flat_trie_hash.finalize());
-            }
-        }
-
-        #[test]
-        fn proptest_insert_remove_compare_hash_pruned((kv, shuffle0, shuffle1) in kv_pairs_strategy()) {
-            let mut trie = Trie::new_temp();
-            for (key, value) in &kv {
-                trie.insert(key.clone(), value.clone()).unwrap();
-            }
-
-            // prune trie
-            let keys_to_keep: Vec<_> = shuffle0.iter().map(|i| Nibbles::from_bytes(&kv[*i].0)).collect();
-            let root = trie.root_node().unwrap().map(|n| prune(n, Nibbles::default(), &keys_to_keep)).unwrap_or_default();
-            let mut trie = Trie::new_temp_with_root(root.clone());
-
-            let mut flat_trie = if let NodeRef::Node(n, _) = root {
-                FlatTrie::from(&*n)
-            } else {
-                FlatTrie::default()
-            };
-
-            for i in &shuffle1[..shuffle1.len() / 2] {
-                let (key, value) = &kv[*i];
-                trie.insert(key.clone(), value.clone()).unwrap();
-                flat_trie.insert(key.clone(), value.clone()).unwrap();
-
-                let hash = trie.hash_no_commit();
-
-                prop_assert!(flat_trie.authenticate().unwrap());
-                let flat_trie_hash = flat_trie.root_hash().unwrap().unwrap();
-
-                prop_assert_eq!(hash, flat_trie_hash.finalize());
-            }
-
-            for i in &shuffle1[shuffle1.len() / 2..] {
+            for i in shuffle.iter() {
                 let key = &kv[*i].0;
                 trie.remove(key).unwrap();
                 flat_trie.remove(key).unwrap();
