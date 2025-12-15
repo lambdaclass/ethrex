@@ -320,12 +320,11 @@ contract CommonBridge is
         );
 
         bytes memory hashes;
-        for (
-            uint i = pendingPrivilegedTxIndex;
-            i < number + pendingPrivilegedTxIndex;
-            i++
-        ) {
-            hashes = bytes.concat(hashes, pendingTxHashes[i]);
+        for (uint i = 0; i < number; i++) {
+            hashes = bytes.concat(
+                hashes,
+                pendingTxHashes[i + pendingPrivilegedTxIndex]
+            );
         }
 
         return
@@ -350,12 +349,11 @@ contract CommonBridge is
         ];
         uint256 pendingMessageIndex = pendingMessagesIndexPerChain[chainId];
 
-        for (
-            uint i = pendingMessageIndex;
-            i < number + pendingMessagesHashes;
-            i++
-        ) {
-            hashes = bytes.concat(hashes, pendingMessagesHashes[i]);
+        for (uint i = 0; i < number; i++) {
+            hashes = bytes.concat(
+                hashes,
+                pendingMessagesHashes[i + pendingMessageIndex]
+            );
         }
 
         return
