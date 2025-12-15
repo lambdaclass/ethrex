@@ -35,5 +35,5 @@ The tests that are run are almost the same, with some small discrepancies:
 
 ## Daily report vs CI run
 We run some of the same simulations in the CI workflow, with a couple of differences:
-- In the CI we run a pinned version of hive (see this [link](https://github.com/lambdaclass/ethrex/blob/9feefd2e3fd2e8bb2097e5e39e0d20f7315c5880/.github/workflows/pr-main_l1.yaml#L259)) whereas in the daily report we run the latest master branch. This is because we prioritize stability on the CI workflow, while the daily report aims to provide a more up-to-date simulation results.
+- In the CI we run a pinned version of hive (see this [link](https://github.com/lambdaclass/ethrex/blob/9feefd2e3fd2e8bb2097e5e39e0d20f7315c5880/.github/workflows/pr-main_l1.yaml#L259)) whereas in the daily report we run the latest master branch. This is because we prioritize stability on the CI workflow, while the daily report aims to provide more up-to-date simulation results.
 - We only run Hive EELS tests in the daily run, since they take too long to be run on the CI. That being said, we run the equivalent more low level "blockchain tests", which should provide the same coverage (see this [link](https://github.com/lambdaclass/ethrex/blob/9feefd2e3fd2e8bb2097e5e39e0d20f7315c5880/.github/workflows/pr-main_l1.yaml#L107)).
