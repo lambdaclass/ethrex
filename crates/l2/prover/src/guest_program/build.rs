@@ -14,20 +14,10 @@ fn main() {
     build_openvm_program();
 }
 
-/// Force the nested guest builds to match the workspace release profile.
-pub fn set_guest_release_profile_env() {
-    unsafe {
-        std::env::set_var("CARGO_PROFILE_RELEASE_LTO", "thin");
-        std::env::set_var("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1");
-    }
-}
-
 #[cfg(all(not(clippy), feature = "risc0"))]
 fn build_risc0_program() {
     use hex;
     use risc0_build::{DockerOptionsBuilder, GuestOptionsBuilder, embed_methods_with_options};
-
-    set_guest_release_profile_env();
 
     let features = if cfg!(feature = "l2") {
         vec!["l2".to_string()]
@@ -77,8 +67,6 @@ fn build_sp1_program() {
     use hex;
     use sp1_sdk::{HashableKey, ProverClient};
 
-    set_guest_release_profile_env();
-
     let features = if cfg!(feature = "l2") {
         vec!["l2".to_string()]
     } else {
@@ -122,8 +110,6 @@ fn build_zisk_program() {
     // cargo-zisk rom-setup fails with `Os { code: 2, kind: NotFound, message: "No such file or directory" }`
     // when building in a GitHub CI environment. This command is not required if we won't generate a proof
     // so we skip it under the `ci` feature flag.
-
-    set_guest_release_profile_env();
 
     let mut build_command = std::process::Command::new("cargo");
     #[cfg(not(feature = "ci"))]
@@ -207,8 +193,6 @@ fn build_openvm_program() {
         path::Path,
         process::{Command, Stdio},
     };
-
-    set_guest_release_profile_env();
 
     let status = Command::new("cargo")
         .arg("openvm")
