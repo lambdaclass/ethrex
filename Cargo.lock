@@ -3591,7 +3591,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spawned-concurrency",
- "spawned-rt 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "spawned-rt 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.17",
  "tikv-jemallocator",
  "tokio",
@@ -3760,7 +3760,7 @@ dependencies = [
  "serde_json",
  "serde_with",
  "spawned-concurrency",
- "spawned-rt 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "spawned-rt 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "tabwriter",
  "thiserror 2.0.17",
  "tokio",
@@ -3912,7 +3912,7 @@ dependencies = [
  "sha2",
  "snap",
  "spawned-concurrency",
- "spawned-rt 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "spawned-rt 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
@@ -4004,7 +4004,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "spawned-concurrency",
- "spawned-rt 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "spawned-rt 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
@@ -4070,7 +4070,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spawned-concurrency",
- "spawned-rt 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "spawned-rt 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
@@ -12401,21 +12401,21 @@ dependencies = [
 
 [[package]]
 name = "spawned-concurrency"
-version = "0.4.3"
-source = "git+https://github.com/lambdaclass/spawned?rev=ce47cf1bf04a46e3ecd94d38843748b587c1c2ef#ce47cf1bf04a46e3ecd94d38843748b587c1c2ef"
+version = "0.4.5"
+source = "git+https://github.com/lakshya-sky/spawned?rev=c1251c1d6996b22c3d2facbcc5e3d35d056040b5#c1251c1d6996b22c3d2facbcc5e3d35d056040b5"
 dependencies = [
  "futures",
  "pin-project-lite",
- "spawned-rt 0.4.3 (git+https://github.com/lambdaclass/spawned?rev=ce47cf1bf04a46e3ecd94d38843748b587c1c2ef)",
+ "spawned-rt 0.4.5 (git+https://github.com/lakshya-sky/spawned?rev=c1251c1d6996b22c3d2facbcc5e3d35d056040b5)",
  "thiserror 2.0.17",
  "tracing",
 ]
 
 [[package]]
 name = "spawned-rt"
-version = "0.4.3"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d58e8d7224fbcd3dbc39f7bacf958ae0882c95b5431353445be5a86b80cedcaf"
+checksum = "cca60c56b1c60b94dd314edce5ea1a98b6037cca3b44d73828e647bad4dae46c"
 dependencies = [
  "crossbeam 0.7.3",
  "tokio",
@@ -12427,8 +12427,8 @@ dependencies = [
 
 [[package]]
 name = "spawned-rt"
-version = "0.4.3"
-source = "git+https://github.com/lambdaclass/spawned?rev=ce47cf1bf04a46e3ecd94d38843748b587c1c2ef#ce47cf1bf04a46e3ecd94d38843748b587c1c2ef"
+version = "0.4.5"
+source = "git+https://github.com/lakshya-sky/spawned?rev=c1251c1d6996b22c3d2facbcc5e3d35d056040b5#c1251c1d6996b22c3d2facbcc5e3d35d056040b5"
 dependencies = [
  "crossbeam 0.7.3",
  "tokio",

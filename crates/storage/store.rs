@@ -41,7 +41,7 @@ use lru::LruCache;
 use rustc_hash::FxBuildHasher;
 use spawned_concurrency::{
     messages::Unused,
-    threads::{CastResponse, GenServer},
+    threads::{CastResponse, GenServer, spawn_listener},
 };
 use std::{
     collections::{BTreeMap, HashMap, hash_map::Entry},
@@ -3257,6 +3257,7 @@ impl TrieUpdateWorker {
 
     fn apply_trie_updates(&self, trie_update: TrieUpdate) {
         // FIXME: what should we do on error?
+        tracing::info!("Apply Trie Updates");
         let _ = apply_trie_updates(
             self.backend.as_ref(),
             &self.flatkeyvalue_control_tx,
@@ -3277,30 +3278,14 @@ impl GenServer for TrieUpdateWorker {
         self,
         handle: &spawned_concurrency::threads::GenServerHandle<Self>,
     ) -> Result<Self, Self::Error> {
-        let mut handle = handle.clone();
-        let rx = self.trie_upd_rx.clone();
-        let _ = std::thread::spawn(move || {
-            let mut cancellation_token = handle.cancellation_token();
-            loop {
-                match rx.recv() {
-                    Ok(updates) => match handle.cast(Self::CastMsg::TrieUpdates(updates)) {
-                        Ok(_) => {}
-                        Err(e) => {
-                            error!("Failed to send update: {e}");
-                            break;
-                        }
-                    },
-                    Err(err) => {
-                        debug!("Trie update sender disconnected: {err}");
-                        return;
-                    }
-                }
-                if cancellation_token.is_cancelled() {
-                    tracing::trace!("TrieUpdateWorker stopped");
-                    break;
-                }
-            }
-        });
+        let handle = handle.clone();
+        let rx = self
+            .trie_upd_rx
+            .clone()
+            .into_iter()
+            .map(Self::CastMsg::TrieUpdates);
+
+        spawn_listener(handle, rx);
         Ok(self)
     }
 
