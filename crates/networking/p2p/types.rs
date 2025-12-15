@@ -289,16 +289,7 @@ impl NodeRecordPairs {
                 b"ip6" => decoded_pairs.ip6 = Some(Ipv6Addr::decode(value)?),
                 b"tcp" => decoded_pairs.tcp_port = Some(u16::decode(value)?),
                 b"udp" => decoded_pairs.udp_port = Some(u16::decode(value)?),
-                b"secp256k1" => {
-                    let bytes = Bytes::decode(value)?;
-                    if bytes.len() < 33 {
-                        return Err(RLPDecodeError::Custom(format!(
-                            "Invalid secp256k1 public key length: expected at least 33 bytes, got {}",
-                            bytes.len()
-                        )));
-                    }
-                    decoded_pairs.secp256k1 = Some(H264::from_slice(&bytes))
-                }
+                b"secp256k1" => decoded_pairs.secp256k1 = Some(H264(<[u8; 33]>::decode(value)?)),
                 b"snap" => decoded_pairs.snap = Some(Vec::<u32>::decode(value)?),
                 b"eth" => {
                     // https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
