@@ -36,7 +36,7 @@ impl RocksDBBackend {
         opts.set_max_open_files(-1);
         opts.set_max_file_opening_threads(16);
 
-        opts.set_max_background_jobs(8);
+        opts.set_max_background_jobs(64);
 
         opts.set_level_zero_file_num_compaction_trigger(2);
         opts.set_level_zero_slowdown_writes_trigger(10);
