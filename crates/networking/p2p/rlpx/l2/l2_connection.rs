@@ -3,6 +3,7 @@ use crate::rlpx::l2::messages::{BatchSealed, L2Message, NewBlock};
 use crate::rlpx::{connection::server::Established, error::PeerConnectionError, message::Message};
 use ethereum_types::Address;
 use ethereum_types::Signature;
+use ethrex_blockchain::BlockchainType;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::fork_choice::apply_fork_choice;
 use ethrex_common::types::batch::Batch;
@@ -22,12 +23,18 @@ pub struct L2ConnectedState {
     pub latest_block_sent: u64,
     pub latest_block_added: u64,
     pub latest_batch_sent: u64,
-    pub blocks_on_queue: BTreeMap<u64, Arc<Block>>,
+    pub blocks_on_queue: BTreeMap<u64, QueuedBlock>,
     pub batch_on_queue: BTreeMap<u64, Arc<Batch>>,
     pub store_rollup: StoreRollup,
     pub committer_key: Arc<SecretKey>,
     pub next_block_broadcast: Instant,
     pub next_batch_broadcast: Instant,
+}
+
+#[derive(Debug, Clone)]
+pub struct QueuedBlock {
+    pub block: Arc<Block>,
+    pub fee_config: ethrex_common::types::fee_config::FeeConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -142,7 +149,10 @@ pub(crate) async fn handle_based_capability_message(
                     .connection_state_mut()?
                     .blocks_on_queue
                     .entry(new_block_msg.block.header.number)
-                    .or_insert_with(|| new_block_msg.block.clone());
+                    .or_insert_with(|| QueuedBlock {
+                        block: new_block_msg.block.clone(),
+                        fee_config: new_block_msg.fee_config,
+                    });
                 broadcast_message(established, msg.into())?;
             }
             process_blocks_on_queue(established).await?;
@@ -276,9 +286,37 @@ pub(crate) async fn send_new_block(
                     signature
                 }
             };
+
+            let fee_config = match l2_state
+                .store_rollup
+                .get_fee_config_by_block(block_number)
+                .await?
+            {
+                Some(fee_config) => fee_config,
+                None => {
+                    let BlockchainType::L2(l2_config) = &established.blockchain.options.r#type
+                    else {
+                        return Err(PeerConnectionError::InternalError(
+                            "Invalid blockchain type. Expected L2.".to_owned(),
+                        ));
+                    };
+                    let fee_config = *l2_config.fee_config.read().map_err(|_| {
+                        PeerConnectionError::InternalError(
+                            "Fee config lock was poisoned".to_owned(),
+                        )
+                    })?;
+                    warn!(
+                        block_number,
+                        "Fee config not found in rollup store for canonical block; using current fee config for gossip"
+                    );
+                    fee_config
+                }
+            };
+
             NewBlock {
                 block: new_block.into(),
                 signature,
+                fee_config,
             }
         };
 
@@ -393,7 +431,8 @@ pub async fn process_blocks_on_queue(
     {
         next_block_to_add = next_block_to_add.max(latest_batch.last_block + 1);
     }
-    while let Some(block) = l2_state.blocks_on_queue.remove(&next_block_to_add) {
+    while let Some(queued) = l2_state.blocks_on_queue.remove(&next_block_to_add) {
+        let QueuedBlock { block, fee_config } = queued;
         // This check is necessary if a connection to another peer already applied the block but this connection
         // did not register that update.
         if let Ok(Some(_)) = established.storage.get_block_body(next_block_to_add).await {
@@ -422,6 +461,11 @@ pub async fn process_blocks_on_queue(
                     block_number, block_hash
                 )))
             })?;
+
+        l2_state
+            .store_rollup
+            .store_fee_config_by_block(block_number, fee_config)
+            .await?;
         info!(
             "Added new block {} with hash {:?}",
             next_block_to_add, block_hash
