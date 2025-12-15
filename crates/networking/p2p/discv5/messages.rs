@@ -234,6 +234,7 @@ impl WhoAreYou {
 pub enum Message {
     Ping(PingMessage),
     Pong(PongMessage),
+    TalkReq(TalkReqMessage),
     // TODO: add the other messages
 }
 
@@ -257,10 +258,10 @@ impl Message {
             //     let (neighbors_msg, _rest) = NeighborsMessage::decode_unfinished(msg)?;
             //     Ok(Message::Neighbors(neighbors_msg))
             // }
-            // 0x05 => {
-            //     let (enr_request_msg, _rest) = ENRRequestMessage::decode_unfinished(msg)?;
-            //     Ok(Message::ENRRequest(enr_request_msg))
-            // }
+            0x05 => {
+                let talk_req_msg = TalkReqMessage::decode(&encrypted_message[1..])?;
+                Ok(Message::TalkReq(talk_req_msg))
+            }
             // 0x06 => {
             //     let (enr_response_msg, _rest) = ENRResponseMessage::decode_unfinished(msg)?;
             //     Ok(Message::ENRResponse(enr_response_msg))
@@ -338,6 +339,41 @@ impl RLPDecode for PongMessage {
                 req_id,
                 enr_seq,
                 recipient_addr,
+            },
+            decoder.finish()?,
+        ))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TalkReqMessage {
+    pub req_id: u64,
+    pub protocol: Bytes,
+    pub request: Bytes,
+}
+
+impl RLPEncode for TalkReqMessage {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.req_id)
+            .encode_field(&self.protocol)
+            .encode_field(&self.request)
+            .finish();
+    }
+}
+
+impl RLPDecode for TalkReqMessage {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (req_id, decoder) = decoder.decode_field("req_id")?;
+        let (protocol, decoder) = decoder.decode_field("protocol")?;
+        let (request, decoder) = decoder.decode_field("request")?;
+
+        Ok((
+            Self {
+                req_id,
+                protocol,
+                request,
             },
             decoder.finish()?,
         ))
@@ -512,5 +548,17 @@ mod tests {
 
         let buf = pkt.encode_to_vec();
         assert_eq!(PongMessage::decode(&buf).unwrap(), pkt);
+    }
+
+    #[test]
+    fn talkreq_packet_codec_roundtrip() {
+        let pkt = TalkReqMessage {
+            req_id: 1234,
+            protocol: Bytes::from_static(&[1, 2, 3, 4]),
+            request: Bytes::from_static(&[1, 2, 3, 4]),
+        };
+
+        let buf = pkt.encode_to_vec();
+        assert_eq!(TalkReqMessage::decode(&buf).unwrap(), pkt);
     }
 }
