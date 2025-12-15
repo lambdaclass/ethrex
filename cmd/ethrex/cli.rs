@@ -9,10 +9,15 @@ use std::{
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
-use ethrex_blockchain::{BlockchainOptions, BlockchainType, L2Config, error::ChainError};
-use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis};
+use ethrex_blockchain::{
+    BlockchainOptions, BlockchainType, L2Config,
+    error::{ChainError, InvalidBlockError},
+};
+use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
 use ethrex_p2p::{
-    discv4::peer_table::TARGET_PEERS, sync::SyncMode, tx_broadcaster::BROADCAST_INTERVAL_MS,
+    discv4::{peer_table::TARGET_PEERS, server::INITIAL_LOOKUP_INTERVAL_MS},
+    sync::SyncMode,
+    tx_broadcaster::BROADCAST_INTERVAL_MS,
     types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -236,13 +241,21 @@ pub struct Options {
     )]
     pub tx_broadcasting_time_interval: u64,
     #[arg(
-        long = "target.peers",
+        long = "p2p.target-peers",
         default_value_t = TARGET_PEERS,
         value_name = "MAX_PEERS",
         help = "Max amount of connected peers.",
         help_heading = "P2P options"
     )]
     pub target_peers: usize,
+    #[arg(
+        long = "p2p.lookup-interval",
+        default_value_t = INITIAL_LOOKUP_INTERVAL_MS,
+        value_name = "INITIAL_LOOKUP_INTERVAL",
+        help = "Initial Lookup Time Interval (ms) to trigger each Discovery lookup message and RLPx connection attempt.",
+        help_heading = "P2P options"
+    )]
+    pub lookup_interval: f64,
     #[arg(
         long = "builder.extra-data",
         default_value = get_minimal_client_version(),
@@ -330,6 +343,7 @@ impl Default for Options {
             mempool_max_size: Default::default(),
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
+            lookup_interval: Default::default(),
             extra_data: get_minimal_client_version(),
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
         }
@@ -630,6 +644,9 @@ pub async fn import_blocks(
                 continue;
             }
 
+            validate_block_body(&block.header, &block.body)
+                .map_err(InvalidBlockError::InvalidBody)?;
+
             if index + MIN_FULL_BLOCKS < size {
                 block_batch.push(block);
                 if block_batch.len() >= IMPORT_BATCH_SIZE || index + MIN_FULL_BLOCKS + 1 == size {
@@ -744,6 +761,9 @@ pub async fn import_blocks_bench(
                 info!("Block {} is already in the blockchain", block.hash());
                 continue;
             }
+
+            validate_block_body(&block.header, &block.body)
+                .map_err(InvalidBlockError::InvalidBody)?;
 
             blockchain
                 .add_block_pipeline(block)
