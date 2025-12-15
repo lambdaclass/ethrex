@@ -273,6 +273,7 @@ impl FlatTrie {
                 encoder.finish();
             }
             NodeData::Branch { children } => {
+                // optimized encoding taken from rlp.rs
                 let payload_len = children.iter().fold(1, |acc, child| {
                     acc + if let Some(child) = child {
                         RLPEncode::length(child)
