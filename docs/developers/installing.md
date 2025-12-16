@@ -40,8 +40,6 @@ the following feature can be enable with `--features <features>`
 
 **Bolded** are features enabled by default
 
-Additionally the environment variable `COMPILE_CONTRACTS` can be set to `true` to enable embedding the solidity contracts used by the rollup, into the binary to enable the [L2 dev mode](../developers/l2/dev-mode.md).
-
 ## Building the docker image
 
 The Dockerfile is located at the root of the repository and can be built by running
