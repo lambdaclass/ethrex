@@ -266,14 +266,15 @@
   <span class="mdbook-alerts-icon"></span>
   important
 </p>
-<p>If you plan to prove your L2 using SP1, RISC0, or TDX, add the following extra arguments to the command above:
-<code>--sp1 true</code> to require SP1 proofs for validating batch execution and state settlement.
-<code>--sp1.verifier-address</code> to use an existing verifier instead of deploying one on the public network. Succinct Labs recommends their deployed canonical verifier gateways; see the list here.
-<code>--risc0 true</code> to require RISC0 proofs for validating batch execution and state settlement.
-<code>--risc0.verifier-address</code> to use an existing verifier instead of deploying one on the public network. RISC0 recommends their deployed canonical verifier gateways; see the list here.
-<code>--tdx true</code> to require TEE proofs for validating batch execution and state settlement.
-<code>--tdx.verifier-address</code> to use an existing verifier instead of deploying one on the public network. Do not pass this flag if you want to deploy a new verifier.
-Enabling multiple proving backend will require running multiple provers, one for each backend. Refer to the <a href="./prover/multi-prover.html">Run multiple provers</a> section for more details.</p>
+<p>If you plan to prove your L2 using SP1, RISC0, or TDX, add the following extra arguments to the command above:</p>
+<p><code>--sp1 true</code> to require SP1 proofs for validating batch execution and state settlement.</p>
+<p><code>--sp1.verifier-address</code> to use an existing verifier instead of deploying one on the public network. Succinct Labs recommends their deployed canonical verifier gateways; see the list here.</p>
+<p><code>--risc0 true</code> to require RISC0 proofs for validating batch execution and state settlement.</p>
+<p><code>--risc0.verifier-address</code> to use an existing verifier instead of deploying one on the public network. RISC0 recommends their deployed canonical verifier gateways; see the list here.</p>
+<p><code>--tdx true</code> to require TEE proofs for validating batch execution and state settlement.</p>
+<p><code>--tdx.verifier-address</code> to use an existing verifier instead of deploying one on the public network. Do not pass this flag if you want to deploy a new verifier.</p>
+<p>Enabling multiple proving backend will require running multiple provers, one for each backend. Refer to the <a href="./prover/multi-prover.html">Run multiple provers</a> section for more details.</p>
+<p>If you enable more than one proving system (e.g., both <code>--sp1 true</code> and <code>--risc0 true</code>), all selected proving systems will be required (i.e., every batch must include a proof from each enabled system to settle on L1).</p>
 </div>
 <div class="mdbook-alerts mdbook-alerts-important">
 <p class="mdbook-alerts-title">
@@ -329,10 +330,26 @@ Enabling multiple proving backend will require running multiple provers, one for
   note
 </p>
 <ul>
-<li>Replace <code>COMMON_BRIDGE_ADDRESS</code> and <code>ON_CHAIN_PROPOSER_ADDRESS</code> with the proxy addresses for the CommonBridge and OnChainProposer contracts from the deployment step.</li>
-<li>Replace <code>L2_COINBASE_ADDRESS</code> with the address that will collect L2 block fees. To access these funds on L1, you'll need to withdraw them (see the Withdrawals section for details).</li>
-<li>Replace <code>L1_PROOF_SENDER_PRIVATE_KEY</code> and <code>L1_COMMITTER_PRIVATE_KEY</code> with the private keys for the <code>L1_PROOF_SENDER_ADDRESS</code> and <code>L1_COMMITTER_ADDRESS</code> from the deployment step.</li>
-<li>Replace <code>L1_RPC_URL</code> and <code>PATH_TO_L2_GENESIS_FILE</code> with the same values used in the deployment step.</li>
+<li>
+<p>Replace <code>COMMON_BRIDGE_ADDRESS</code> and <code>ON_CHAIN_PROPOSER_ADDRESS</code> with the proxy addresses for the CommonBridge and OnChainProposer contracts from the deployment step.</p>
+</li>
+<li>
+<p>Replace <code>L2_COINBASE_ADDRESS</code> with the address that will collect L2 block fees. To access these funds on L1, you'll need to withdraw them (see the Withdrawals section for details).</p>
+</li>
+<li>
+<p>Replace <code>L1_PROOF_SENDER_PRIVATE_KEY</code> and <code>L1_COMMITTER_PRIVATE_KEY</code> with the private keys for the <code>L1_PROOF_SENDER_ADDRESS</code> and <code>L1_COMMITTER_ADDRESS</code> from the deployment step.</p>
+</li>
+<li>
+<p>Replace <code>L1_RPC_URL</code> and <code>PATH_TO_L2_GENESIS_FILE</code> with the same values used in the deployment step.</p>
+</li>
+<li>
+<p>Tune throughput with the gas caps:</p>
+<ul>
+<li><code>--block-producer.block-gas-limit</code> (env: <code>ETHREX_BLOCK_PRODUCER_BLOCK_GAS_LIMIT</code>, default: <code>30000000</code>): Sets the gas limit per L2 block.</li>
+<li><code>--committer.batch-gas-limit</code> (env: <code>ETHREX_COMMITTER_BATCH_GAS_LIMIT</code>): Sets the gas limit per batch sent to L1—should be at or above the block gas limit.</li>
+</ul>
+<p>You can use either the environment variables or the flags to configure these values.</p>
+</li>
 </ul>
 </div>
 <p>That's it! You now have a vanilla ethrex L2 up and running. However, one key component is still missing: state proving. The L2 state is considered final only after a batch execution ZK proof is successfully verified on-chain. Generating these proofs requires running a dedicated prover, which is covered in the Run an ethrex L2 Prover section.</p>

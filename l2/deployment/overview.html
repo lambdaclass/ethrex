@@ -246,7 +246,7 @@
   <span class="mdbook-alerts-icon"></span>
   note
 </p>
-<p>This section focuses solely on the step-by-step process for deploying ethrex L2 in any of its forms. For a deeper understanding of how each mode works under the hood, refer to the Fundamentals section. To learn more about the architecture of each mode, see the Architecture section.</p>
+<p>This section focuses solely on the step-by-step process for deploying ethrex L2 in any of its forms. For a deeper understanding of how each mode works under the hood, refer to the <a href="../fundamentals/README.html">Fundamentals</a> section. To learn more about the architecture of each mode, see the <a href="../architecture/README.html">Architecture</a> section.</p>
 </div>
 <p>Before proceeding, note that this guide assumes you have ethrex installed. If you haven't installed it yet, follow one of the methods in the <a href="../../getting-started/installation/README.html">Installation Guide</a>. If you're looking to build from source, don't skip this section—we'll cover that method here, as it is independent of the deployment approach you choose later.</p>
 <h2 id="building-from-source-skip-if-ethrex-is-already-installed"><a class="header" href="#building-from-source-skip-if-ethrex-is-already-installed">Building from source (skip if ethrex is already installed)</a></h2>
@@ -267,28 +267,29 @@ cd ethrex
 </code></pre>
 </li>
 <li>
-<p>Build the binary:</p>
+<p>Install the binary to your <code>$PATH</code>:</p>
 <pre><code class="language-shell"># For dummy proving
-COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql
+COMPILE_CONTRACTS=true cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql
 
 # For SP1 CPU proving (very slow, not recommended)
-COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,sp1
+COMPILE_CONTRACTS=true cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql,sp1
 
 # For RISC0 CPU proving (very slow, not recommended)
-COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,risc0
+COMPILE_CONTRACTS=true cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql,risc0
 
 # For SP1 and RISC0 CPU proving (very slow, not recommended)
-COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,sp1,risc0
+COMPILE_CONTRACTS=true cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql,sp1,risc0
 
 # For SP1 GPU proving
-COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,sp1,gpu
+COMPILE_CONTRACTS=true cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql,sp1,gpu
 
 # For RISC0 GPU proving
-COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,risc0,gpu
+COMPILE_CONTRACTS=true cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql,risc0,gpu
 
 # For SP1 and RISC0 GPU proving
-COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,sp1,risc0,gpu
+COMPILE_CONTRACTS=true cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql,sp1,risc0,gpu
 </code></pre>
+<p>By default <code>cargo install</code> places the binary at <code>~/.cargo/bin/ethrex</code> (make sure that directory is on your <code>$PATH</code>). Add <code>--force</code> to the commands above if you need to overwrite a previous installation.</p>
 </li>
 </ol>
 <div class="mdbook-alerts mdbook-alerts-warning">
@@ -297,8 +298,15 @@ COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,l2-sql,s
   warning
 </p>
 <p>If you want your verifying keys generation to be reproducible, prepend <code>PROVER_REPRODUCIBLE_BUILD=true</code> to the above command:</p>
-<pre><code class="language-shell">PROVER_REPRODUCIBLE_BUILD=true COMPILE_CONTRACTS=true cargo b -r --bin ethrex -F l2,l2-sql,sp1,risc0,gpu
+<pre><code class="language-shell">PROVER_REPRODUCIBLE_BUILD=true COMPILE_CONTRACTS=true cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql,sp1,risc0,gpu
 </code></pre>
+</div>
+<div class="mdbook-alerts mdbook-alerts-important">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  important
+</p>
+<p>Compiling with both <code>sp1</code> and <code>risc0</code> features only makes the binary capable of both. Settlement requires every proof you mark as required at deploy time (e.g., passing both <code>--sp1 true</code> and <code>--risc0 true</code> in <code>ethrex l2 deploy</code> will require both proofs).</p>
 </div>
 
                     </main>
