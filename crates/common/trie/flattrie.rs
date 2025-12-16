@@ -162,6 +162,8 @@ impl FlatTrie {
     ///
     /// Initializes `Self::root_hash` if successful, and returns a boolean indicating success.
     pub fn authenticate(&mut self) -> Result<bool, RLPDecodeError> {
+        self.apply_puts();
+
         fn recursive<'a>(
             trie: &'a FlatTrie,
             view: &NodeView,
@@ -260,24 +262,58 @@ impl FlatTrie {
     }
 
     pub fn put(&mut self, node_type: NodeType, data: NodeData) -> usize {
-        //self.puts.push(data);
-        //let view = NodeView {
-        //    pointer: NodeViewPointer::InPut {
-        //        index: self.puts.len() - 1,
-        //    },
-        //    node_type,
-        //};
-        let start = self.data.len();
-        Self::encode(&mut self.data, data);
-        let end = self.data.len();
+        self.puts.push(data);
         let view = NodeView {
-            pointer: NodeViewPointer::InBuffer {
-                data_range: (start, end),
+            pointer: NodeViewPointer::InPut {
+                index: self.puts.len() - 1,
             },
             node_type,
         };
+        // let start = self.data.len();
+        // Self::encode(&mut self.data, data);
+        // let end = self.data.len();
+        // let view = NodeView {
+        //     pointer: NodeViewPointer::InBuffer {
+        //         data_range: (start, end),
+        //     },
+        //     node_type,
+        // };
         self.views.push(view);
         self.views.len() - 1
+    }
+
+    pub fn apply_puts(&mut self) {
+        fn recursive(trie: &mut FlatTrie, self_index: usize) {
+            let view = &mut trie.views[self_index];
+            if let NodeViewPointer::InPut { index } = view.pointer {
+                let start = trie.data.len();
+                FlatTrie::encode(&mut trie.data, trie.puts[index].clone());
+                let end = trie.data.len();
+
+                view.pointer = NodeViewPointer::InBuffer {
+                    data_range: (start, end),
+                };
+            }
+
+            match view.node_type {
+                NodeType::Leaf => {}
+                NodeType::Extension { child } => {
+                    if let Some(child) = child {
+                        recursive(trie, child)
+                    }
+                }
+                NodeType::Branch { children } => {
+                    for child in children {
+                        if let Some(child) = child {
+                            recursive(trie, child)
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(root_index) = self.root_index {
+            recursive(self, root_index);
+        }
     }
 
     pub fn encode(buf: &mut impl BufMut, data: NodeData) {
@@ -322,8 +358,6 @@ impl FlatTrie {
             }
         }
     }
-
-    pub fn apply_puts() {}
 
     pub fn insert(&mut self, path: Vec<u8>, value: Vec<u8>) -> Result<(), RLPDecodeError> {
         let path = Nibbles::from_bytes(&path);
