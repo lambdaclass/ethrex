@@ -1418,9 +1418,7 @@ const SECP256K1_N_HALF: [u8; 32] =
     hex!("7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0");
 
 fn signature_has_high_s(signature_bytes: &[u8; 65]) -> bool {
-    let mut s = [0u8; 32];
-    s.copy_from_slice(&signature_bytes[32..64]);
-    s > SECP256K1_N_HALF
+    &signature_bytes[32..64] > &SECP256K1_N_HALF[..]
 }
 
 #[cfg(all(
