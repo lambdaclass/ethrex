@@ -36,7 +36,9 @@ Example of a possible state after stopping fast sync due to staleness.
 
 In the example, even if we find that node { hash: 0x317f, path: 0 } is correct, we still need to check all its children in the DB (in this case none are present).
 
-To solve the second problem, we introduce an optimization, which is called the "Membatch". This allows us to maintain a new invariant:
+To solve the second problem, we introduce an optimization, which is called the "Membatch"^2. This allows us to maintain a new invariant:
+
+[^2]: The membatch is an idea taken from geth, and the name comes from their code. The name should be updated to "pendingNodes" as it reflects it current use.
 
 > If a node is present in the DB, then that node and all its children must be present.
 
@@ -44,8 +46,10 @@ This removes the need to explore entire subtrees: when walking down the trie, if
 
 To maintain this invariant, we do the following:
 
+
 - When we get a new node, we don't immediately store it in the database. We keep track of the amount of every node's children that are not yet in the database. As long as it's not zero, we keep it in a separate in-memory structure "Membatch" instead of on the db.
 - When a node has all of its children in the db, we commit it and recursively go up the tree to see if its parent needs to be commited, etc.
+- When the nodes are written to the database, all it's parents are deleted from the db, which preserves the subtree invariant. Because lower down nodes are always written first, we never delete a valid node.
 
 Example of a possible state after stopping fast sync due to staleness with membatch.
 
@@ -56,13 +60,12 @@ Example of a possible state after stopping fast sync due to staleness with memba
 Fast-sync is slow (ethrex fast-sync of a fresh “hoodi” state takes ~45 minutes—4.5× slower than snap-sync). To accelerate it, we use a key property of fast-sync:
 > Fast-sync can “heal” any partial trie that obeys the invariant, even if that trie is not consistent with any real on-chain state.
 
-Snap-sync exploits this:
+Snap sync exploits this by:
 
-- download only the leaves (the accounts and storage slots) from any recent state,
-- assemble a trie from these leaves,
-- run fast-sync (“healing”) to repair it into a consistent trie.
-
-For our code, we call the fast-sync the healing step.
+- downloading only the leaves (the accounts and storage slots) from any recent state
+- assembling a trie from these leaves
+- running fast-sync (“healing”) to repair it into a consistent trie.
+In our code, we call the fast-sync step "healing".
 
 Example run:
 
@@ -86,11 +89,11 @@ Generalized Flowchart of snapsync
 
 ### Flags
 
-When testing snap sync there are flags to take into account:
+When developing snap sync there are flags to take into account that are used only for testing:
 
 - If the `SKIP_START_SNAP_SYNC` environment variable is set and isn't empty, it will skip the step of downloading the leaves and will immediately begin healing. This simulates the behaviour of fast-sync.
 
-- If debug assertions are on, the program will validate that the entire state and storage tries are valid by traversing the entire trie and recomputing the roots. If any is found to be wrong, it will print an error and exit the program.
+- If debug assertions are on, the program will validate that the entire state and storage tries are valid by traversing the entire trie and recomputing the roots. If any is found to be wrong, it will print an error and exit the program. This is used for debugging purposes; a validation error here means that there is 100% a bug in snap sync.
 
 - `--syncmode [full, default:snap]` which defines what kind of sync we use. Full is executing each block, and isn't possible for mainnet and sepolia.
 
@@ -237,7 +240,7 @@ To solve these issues we take two actions:
 
 #### The time traveling problem
 
-During the development of snap sync we found a recurring problem, the time traveling problem. In hash based, when a node returned to a previous state, those accounts wouldn't be redownloaded, as it would just return to the previous hash which was present in the database.
+During the development of snap sync we found a recurring problem, the time traveling problem. In a hash based trie, when a node returned to a previous state, those accounts wouldn't be redownloaded, as it would just return to the previous hash which was present in the database.
  **Any algorithm that depended on updating accounts during healing would fail**.
 The alternative is to always go to disk if there is to mark healed accounts as unreliable and go to disk to get the datum.
 This may not be a problem in path based again, but should be studied.
@@ -250,7 +253,7 @@ A large amount of the accounts with storage have exactly the same storage as oth
 
 #### Big Accounts
 
-The storage trie is very uneven distribution of the accounts sizes. Between accounts with a single or two storage slots are around 70% of all accounts with storage trie. And large accounts have more storage slots than accounts slots are present in the state accounts. As such they need to be downloaded with special consideration.
+Storage trie sizes have a very uneven distribution. Around 70% of all ethereum mainnet contracts have only 1 or 2 storage slots. However, a few contracts have more storage slots than all account leaves in the entire state trie. As such, the code needs to take this pareto distribution into account to download storage tries fast.
 
 At the beginning of the algorithm, we divide the accounts into chunks of 300 storage roots and their corresponding accounts. We start downloading the storage slots, until we find an account whose storage doesn't fit into a single requests. This will be indicated by the proof field having the data indicating that there are still more nodes to download in that account.
 
@@ -311,7 +314,7 @@ struct StorageTaskResult {
 
 #### Retry Limit
 
-Currently, if ethrex has been downloading storages for more than 2 pivots, the node will stop trying to download storage, and fallback to heal (fast sync) all the storage accounts that were still missing downloads. This stops ethrex hanging due to a problem but it indicates that we still have bugs in our storage slots download.
+Currently, if ethrex has been downloading storages for more than 2 pivots, the node will stop trying to download storage, and fallback to heal (fast sync) all the storage accounts that were still missing downloads. This prevents snap sync from hanging due to an edge case we do not currently handle if an account time travels. See the "snap sync concerns" document for details on what this edge case is.
 
 ### Downloading Bytecodes
 
@@ -319,4 +322,4 @@ Whenever an account is download or healed we check if the code is not empty. If 
 
 ### Forkchoice update
 
-Once the entire files are downloaded, we change the snap sync mode to full, and we do an `apply_forkchoice` to mark that as the last pivot as the last block.
+Once the entire state trie, all storage tries and contract bytecodes are downloaded, we switch the sync mode from `snap` to `full`, and we do an `apply_forkchoice` to mark that as the last pivot as the last block.

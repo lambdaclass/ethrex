@@ -1,6 +1,6 @@
 # Snap Sync Concerns
 
-## Known Bugs
+## Code Improvement opportunities
 
 ### Storage downloads
 
@@ -17,6 +17,10 @@ We are currently asking for all the bytecodes that we have seen, never checking 
 ## Performance
 
 For performance, having an efficient cache of accounts that need to have their storage downloaded in memory is key, and we should avoid going to the db as much as possible. In particular in storage healing we start by trying to get all of the storage healing roots, and this can be sped up considerably if we avoid going to the db.
+
+### Improving debug
+
+The functions `validate_state_root` and `validate_storage_roots` are very slow, as they rebuild the entire state trie in memory. This is 
 
 ## Code Quality
 
