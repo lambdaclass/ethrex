@@ -723,7 +723,6 @@ impl Syncer {
             // is correct. To do so, we always heal the state trie before requesting storage rates
             let mut chunk_index = 0_u64;
             let mut state_leafs_healed = 0_u64;
-            let mut storage_range_request_attempts = 0;
             loop {
                 while block_is_stale(&pivot_header) {
                     pivot_header = update_pivot(
@@ -754,42 +753,17 @@ impl Syncer {
                     "Started request_storage_ranges with {} accounts with storage root unchanged",
                     storage_accounts.accounts_with_storage_root.len()
                 );
-                storage_range_request_attempts += 1;
-                if storage_range_request_attempts < 3 {
-                    chunk_index = self
-                        .peers
-                        .request_storage_ranges(
-                            &mut storage_accounts,
-                            account_storages_snapshots_dir.as_ref(),
-                            chunk_index,
-                            &mut pivot_header,
-                            store.clone(),
-                        )
-                        .await
-                        .map_err(SyncError::PeerHandler)?;
-                } else {
-                    for (acc_hash, (maybe_root, old_intervals)) in
-                        storage_accounts.accounts_with_storage_root.iter()
-                    {
-                        // When we fall into this case what happened is there are certain accounts for which
-                        // the storage root went back to a previous value we already had, and thus could not download
-                        // their storage leaves because we were using an old value for their storage root.
-                        // The fallback is to ensure we mark it for storage healing.
-                        storage_accounts.healed_accounts.insert(*acc_hash);
-                        debug!(
-                            "We couldn't download these accounts on request_storage_ranges. Falling back to storage healing for it.
-                            Account hash: {:x?}, {:x?}. Number of intervals {}",
-                            acc_hash,
-                            maybe_root,
-                            old_intervals.len()
-                        );
-                    }
-
-                    warn!("Storage could not be downloaded after multiple attempts. Marking for healing.
-                        This could impact snap sync time (healing may take a while).");
-
-                    storage_accounts.accounts_with_storage_root.clear();
-                }
+                chunk_index = self
+                    .peers
+                    .request_storage_ranges(
+                        &mut storage_accounts,
+                        account_storages_snapshots_dir.as_ref(),
+                        chunk_index,
+                        &mut pivot_header,
+                        store.clone(),
+                    )
+                    .await
+                    .map_err(SyncError::PeerHandler)?;
 
                 info!(
                     "Ended request_storage_ranges with {} accounts with storage root unchanged and not downloaded yet and with {} big/healed accounts",
