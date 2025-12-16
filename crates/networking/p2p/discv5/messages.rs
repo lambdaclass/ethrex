@@ -107,7 +107,7 @@ impl Packet {
         &self,
         buf: &mut dyn BufMut,
         masking_iv: u128,
-        nonce: Vec<u8>,
+        nonce: &[u8],
         dest_id: &H256,
     ) -> Result<(), PacketDecodeErr> {
         let masking_as_bytes = masking_iv.to_be_bytes();
@@ -218,13 +218,13 @@ impl WhoAreYou {
         &self,
         buf: &mut dyn BufMut,
         cipher: &mut T,
-        nonce: Vec<u8>,
+        nonce: &[u8],
     ) -> Result<(), PacketDecodeErr> {
         let mut static_header = Vec::new();
         static_header.put_slice(PROTOCOL_ID);
         static_header.put_slice(&PROTOCOL_VERSION.to_be_bytes());
         static_header.put_u8(0x01);
-        static_header.put_slice(&nonce);
+        static_header.put_slice(nonce);
         static_header.put_slice(&24u16.to_be_bytes());
         cipher.try_apply_keystream(&mut static_header)?;
         buf.put_slice(&static_header);
@@ -520,12 +520,7 @@ mod tests {
         let dest_id = node_id(&public_key_from_signing_key(&node_b_key));
         let mut buf = Vec::new();
 
-        let _ = packet.encode(
-            &mut buf,
-            0,
-            hex!("0102030405060708090a0b0c").to_vec(),
-            &dest_id,
-        );
+        let _ = packet.encode(&mut buf, 0, &hex!("0102030405060708090a0b0c"), &dest_id);
         let expected = &hex!(
             "00000000000000000000000000000000088b3d434277464933a1ccc59f5967ad1d6035f15e528627dde75cd68292f9e6c27d6b66c8100a873fcbaed4e16b8d"
         );
