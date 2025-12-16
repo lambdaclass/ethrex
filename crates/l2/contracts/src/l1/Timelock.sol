@@ -19,7 +19,7 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable {
         uint256 minDelay, // This should be the minimum delay for contract upgrades in seconds (e.g. 7 days = 604800 sec).
         address[] memory sequencers, // Will be able to commit and verify batches.
         address owner, // Will be able to propose and execute functions, respecting the delay.
-        address securityCouncil, // It will have admin role, which means no delay.
+        address securityCouncil, // TODO: Admin role -> Can manage roles. But it can't schedule/execute by itself, maybe we should add that
         address _onChainProposer // deployed OnChainProposer contract.
     ) public initializer {
         for (uint256 i = 0; i < sequencers.length; ++i) {
