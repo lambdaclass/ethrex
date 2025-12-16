@@ -2,7 +2,7 @@
 
 ## Sequencer and prover versions
 
-Each committed batch stores the git commit hash of the sequencer build that produced it. The OnChainProposer uses that commit hash to look up the verifier key in its `verificationKeys` mapping. When you upgrade the sequencer, all batches committed before the upgrade must be proved with the prover matching the old version, and all batches committed after the upgrade must be proved with a prover built from the new version.
+Each committed batch stores the git commit hash of the sequencer build that produced it. The OnChainProposer uses that commit hash to look up the verifier key in its `verificationKeys` mapping. When the sequencer is upgraded, all batches committed before the upgrade must be proved with the prover matching the old version, and all batches committed after the upgrade must be proved with a prover built from the new version.
 
 ## Registering a new verification key
 
