@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-12-16
+
+- Fetch receipts for block in single DB transaction for the RCP queries [#xxxx](https://github.com/lambdaclass/ethrex/pull/xxxx)
+
 ### 2025-12-02
 
 - Avoid unnecessary hashing of init codes and already hashed codes [#5397](https://github.com/lambdaclass/ethrex/pull/5397)

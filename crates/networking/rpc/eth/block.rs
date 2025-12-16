@@ -331,15 +331,15 @@ impl RpcHandler for GetBlobBaseFee {
 }
 
 pub async fn get_all_block_rpc_receipts(
-    block_number: BlockNumber,
+    _block_number: BlockNumber,
     header: BlockHeader,
     body: BlockBody,
     storage: &Store,
 ) -> Result<Vec<RpcReceipt>, RpcErr> {
-    let mut receipts = Vec::new();
+    let mut rpc_receipts = Vec::new();
     // Check if this is the genesis block
     if header.parent_hash.is_zero() {
-        return Ok(receipts);
+        return Ok(rpc_receipts);
     }
     // TODO: Here we are calculating the base_fee_per_blob_gas with the current header.
     // Check if we should be passing the parent header instead
@@ -352,56 +352,52 @@ pub async fn get_all_block_rpc_receipts(
             .unwrap_or_default(),
     );
     let base_fee_per_gas = header.base_fee_per_gas;
+    let block_hash = header.hash();
     // Fetch receipt info from block
     let block_info = RpcReceiptBlockInfo::from_block_header(header);
     // Fetch receipt for each tx in the block and add block and tx info
     let mut last_cumulative_gas_used = 0;
     let mut current_log_index = 0;
-    for (index, tx) in body.transactions.iter().enumerate() {
+    let receipts = storage.get_receipts_for_block(&block_hash)?;
+    if body.transactions.len() != receipts.len() {
+        return Err(RpcErr::Internal("Could not get receipt".to_owned()));
+    }
+    for (index, (tx, receipt)) in body
+        .transactions
+        .into_iter()
+        .zip(receipts.into_iter())
+        .enumerate()
+    {
         let index = index as u64;
-        let receipt = match storage.get_receipt(block_number, index).await? {
-            Some(receipt) => receipt,
-            _ => return Err(RpcErr::Internal("Could not get receipt".to_owned())),
-        };
         let gas_used = receipt.cumulative_gas_used - last_cumulative_gas_used;
         let tx_info = RpcReceiptTxInfo::from_transaction(
-            tx.clone(),
+            tx,
             index,
             gas_used,
             blob_base_fee,
             base_fee_per_gas,
         )?;
-        let receipt = RpcReceipt::new(
-            receipt.clone(),
-            tx_info,
-            block_info.clone(),
-            current_log_index,
-        );
         last_cumulative_gas_used += gas_used;
         current_log_index += receipt.logs.len() as u64;
-        receipts.push(receipt);
+        let rpc_receipt = RpcReceipt::new(receipt, tx_info, block_info.clone(), current_log_index);
+        rpc_receipts.push(rpc_receipt);
     }
-    Ok(receipts)
+    Ok(rpc_receipts)
 }
 
 pub async fn get_all_block_receipts(
-    block_number: BlockNumber,
+    _block_number: BlockNumber,
     header: BlockHeader,
     body: BlockBody,
     storage: &Store,
 ) -> Result<Vec<Receipt>, RpcErr> {
-    let mut receipts = Vec::new();
     // Check if this is the genesis block
     if header.parent_hash.is_zero() {
-        return Ok(receipts);
+        return Ok(Vec::new());
     }
-    for (index, _) in body.transactions.iter().enumerate() {
-        let index = index as u64;
-        let receipt = match storage.get_receipt(block_number, index).await? {
-            Some(receipt) => receipt,
-            _ => return Err(RpcErr::Internal("Could not get receipt".to_owned())),
-        };
-        receipts.push(receipt);
+    let receipts = storage.get_receipts_for_block(&header.hash())?;
+    if body.transactions.len() != receipts.len() {
+        return Err(RpcErr::Internal("Could not get receipt".to_owned()));
     }
     Ok(receipts)
 }
