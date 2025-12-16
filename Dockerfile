@@ -1,4 +1,4 @@
-FROM rust:1.87 AS chef
+FROM rust:1.90 AS chef
 
 RUN apt-get update && apt-get install -y \
     build-essential \
@@ -17,8 +17,8 @@ WORKDIR /ethrex
 # This layer is fast and will be invalidated on any source change.
 FROM chef AS planner
 
+COPY benches ./benches
 COPY crates ./crates
-COPY tooling ./tooling
 COPY metrics ./metrics
 COPY cmd ./cmd
 COPY Cargo.* .
@@ -36,9 +36,16 @@ FROM chef AS builder
 COPY --from=planner /ethrex/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
-RUN curl -L -o /usr/bin/solc https://github.com/ethereum/solidity/releases/download/v0.8.29/solc-static-linux \
+RUN  if [ "$(uname -m)" = aarch64 ]; \
+    then \
+    SOLC_URL=https://github.com/nikitastupin/solc/raw/refs/heads/main/linux/aarch64/solc-v0.8.29;\
+    else \
+    SOLC_URL=https://github.com/ethereum/solidity/releases/download/v0.8.29/solc-static-linux; \
+    fi \
+    && curl -L -o /usr/bin/solc $SOLC_URL \
     && chmod +x /usr/bin/solc
 
+COPY benches ./benches
 COPY crates ./crates
 COPY cmd ./cmd
 COPY metrics ./metrics
@@ -58,8 +65,10 @@ RUN cargo build --release $BUILD_FLAGS
 # --- Final Image ---
 # Copy the ethrex binary into a minimalist image to reduce bloat size.
 # This image must have glibc and libssl
-FROM gcr.io/distroless/cc-debian12
+FROM ubuntu:24.04
 WORKDIR /usr/local/bin
+
+RUN apt-get update && apt-get install -y --no-install-recommends libssl3
 
 COPY cmd/ethrex/networks ./cmd/ethrex/networks
 COPY --from=builder /ethrex/target/release/ethrex .

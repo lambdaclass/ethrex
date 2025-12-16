@@ -20,18 +20,13 @@ pub enum EFTestParseError {
     FailedToParseTestFile(String),
 }
 
-const IGNORED_TESTS: [&str; 11] = [
-    "static_Call50000_sha256.json", // Skip because it takes longer to run than some tests, but not a huge deal.
-    "CALLBlake2f_MaxRounds.json",   // Skip because it takes extremely long to run, but passes.
-    "ValueOverflow.json",           // Skip because it tries to deserialize number > U256::MAX
-    "ValueOverflowParis.json",      // Skip because it tries to deserialize number > U256::MAX
-    "loopMul.json",                 // Skip because it takes too long to run
-    "dynamicAccountOverwriteEmpty_Paris.json", // Skip because it fails on REVM
-    "RevertInCreateInInitCreate2Paris.json", // Skip because it fails on REVM. See https://github.com/lambdaclass/ethrex/issues/1555
-    "RevertInCreateInInit_Paris.json", // Skip because it fails on REVM. See https://github.com/lambdaclass/ethrex/issues/1555
-    "create2collisionStorageParis.json", // Skip because it fails on REVM
-    "InitCollisionParis.json",         // Skip because it fails on REVM
-    "InitCollision.json",              // Skip because it fails on REVM
+const IGNORED_TESTS: &[&str] = &[
+    "ValueOverflow.json", // Skip because it tries to deserialize number > U256::MAX
+    "ValueOverflowParis.json", // Skip because it tries to deserialize number > U256::MAX
+    // Skip because they take too long to run:
+    "static_Call50000_sha256.json",
+    "CALLBlake2f_MaxRounds.json",
+    "loopMul.json",
 ];
 
 // One .json can have multiple tests, sometimes we want to skip one of those.

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.29;
 
+import {ICommonBridge} from "./ICommonBridge.sol";
+
 /// @title Interface for the OnChainProposer contract.
 /// @author LambdaClass
 /// @notice A OnChainProposer contract ensures the advancement of the L2. It is used
@@ -27,12 +29,26 @@ interface IOnChainProposer {
     /// @dev Event emitted when a batch is reverted.
     event BatchReverted(bytes32 indexed newStateRoot);
 
+    /// @notice A verification key has been upgraded.
+    /// @dev Event emitted when a verification key is upgraded.
+    /// @param verifier The name of the verifier whose key was upgraded.
+    /// @param newVerificationKey The new verification key.
+    event VerificationKeyUpgraded(string verifier, bytes32 newVerificationKey);
+
     /// @notice Set the bridge address for the first time.
     /// @dev This method is separated from initialize because both the CommonBridge
     /// and the OnChainProposer need to know the address of the other. This solves
     /// the circular dependency while allowing to initialize the proxy with the deploy.
     /// @param bridge the address of the bridge contract.
     function initializeBridgeAddress(address bridge) external;
+
+    /// @notice Upgrades the SP1 verification key that represents the sequencer's code.
+    /// @param new_vk new verification key for SP1 verifier
+    function upgradeSP1VerificationKey(bytes32 new_vk) external;
+
+    /// @notice Upgrades the RISC0 verification key that represents the sequencer's code.
+    /// @param new_vk new verification key for RISC0 verifier
+    function upgradeRISC0VerificationKey(bytes32 new_vk) external;
 
     /// @notice Commits to a batch of L2 blocks.
     /// @dev Committing to an L2 batch means to store the batch's commitment
@@ -44,12 +60,18 @@ interface IOnChainProposer {
     /// @param processedPrivilegedTransactionsRollingHash the rolling hash of the processed
     /// privileged transactions of the batch to be committed.
     /// @param lastBlockHash the hash of the last block of the batch to be committed.
+    /// @param nonPrivilegedTransactions the number of non-privileged transactions in the batch to be committed.
+    /// @param balanceDiffs the balance diffs of the batch to be committed.
+    /// @param l2MessageRollingHashes the L2 message rolling hashes of the batch to be committed.
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
-        bytes32 lastBlockHash
+        bytes32 lastBlockHash,
+        uint256 nonPrivilegedTransactions,
+        ICommonBridge.BalanceDiff[] calldata balanceDiffs,
+        ICommonBridge.L2MessageRollingHash[] calldata l2MessageRollingHashes
     ) external;
 
     /// @notice Method used to verify a batch of L2 blocks.
@@ -77,18 +99,21 @@ interface IOnChainProposer {
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature
     ) external;
+
     // TODO: imageid, programvkey and riscvvkey should be constants
     // TODO: organize each zkvm proof arguments in their own structs
 
     /// @notice Method used to verify a sequence of L2 batches in Aligned, starting from `firstBatchNumber`.
     /// Each proof corresponds to one batch, and batch numbers must increase by 1 sequentially.
     /// @param firstBatchNumber The batch number of the first proof to verify. Must be `lastVerifiedBatch + 1`.
-    /// @param alignedPublicInputsList An array of public input bytes, one per proof.
-    /// @param alignedMerkleProofsList An array of Merkle proofs (sibling hashes), one per proof.
+    /// @param publicInputsList An array of public input bytes, one per proof.
+    /// @param sp1MerkleProofsList An array of Merkle proofs (sibling hashes), one per SP1 proof.
+    /// @param risc0MerkleProofsList An array of Merkle proofs (sibling hashes), one per Risc0 proof.
     function verifyBatchesAligned(
         uint256 firstBatchNumber,
-        bytes[] calldata alignedPublicInputsList,
-        bytes32[][] calldata alignedMerkleProofsList
+        bytes[] calldata publicInputsList,
+        bytes32[][] calldata sp1MerkleProofsList,
+        bytes32[][] calldata risc0MerkleProofsList
     ) external;
 
     /// @notice Allows unverified batches to be reverted

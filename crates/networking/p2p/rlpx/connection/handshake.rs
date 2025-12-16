@@ -1,28 +1,21 @@
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    sync::{Arc, RwLock},
-};
-
 use super::{
     codec::RLPxCodec,
     server::{Initiator, Receiver},
 };
+#[cfg(feature = "l2")]
+use crate::rlpx::l2::l2_connection::L2ConnState;
 use crate::{
     rlpx::{
-        connection::server::{Established, InnerState},
-        error::RLPxError,
-        l2::l2_connection::L2ConnState,
+        connection::server::{ConnectionState, Established},
+        error::PeerConnectionError,
         message::EthCapVersion,
-        utils::{
-            compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, log_peer_debug, sha256,
-            sha256_hmac,
-        },
+        utils::{compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, sha256, sha256_hmac},
     },
     types::Node,
 };
 use aes::cipher::{KeyIvInit, StreamCipher};
 use ethrex_common::{H128, H256, H512, Signature};
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -35,13 +28,17 @@ use secp256k1::{
     PublicKey, SecretKey,
     ecdsa::{RecoverableSignature, RecoveryId},
 };
-use sha3::{Digest, Keccak256};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{Arc, RwLock},
+};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpSocket, TcpStream},
-    sync::Mutex,
 };
 use tokio_util::codec::Framed;
+use tracing::{debug, trace};
 
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 
@@ -62,17 +59,17 @@ pub(crate) struct LocalState {
 }
 
 pub(crate) async fn perform(
-    state: InnerState,
+    state: ConnectionState,
     eth_version: Arc<RwLock<EthCapVersion>>,
-) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), RLPxError> {
-    let (context, node, framed, inbound) = match state {
-        InnerState::Initiator(Initiator { context, node, .. }) => {
+) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), PeerConnectionError> {
+    let (context, node, framed) = match state {
+        ConnectionState::Initiator(Initiator { context, node }) => {
             let addr = SocketAddr::new(node.ip, node.tcp_port);
             let mut stream = match tcp_stream(addr).await {
                 Ok(result) => result,
                 Err(error) => {
-                    log_peer_debug(&node, &format!("Error creating tcp connection {error}"));
-                    // context.table.lock().await.replace_peer(node.node_id());
+                    // If we can't find a TCP connection it's an issue we should track in debug
+                    debug!(peer=%node, %error, "Error creating tcp connection");
                     return Err(error)?;
                 }
             };
@@ -81,25 +78,27 @@ pub(crate) async fn perform(
             // Local node is initator
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
-                Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
+                keccak_hash([remote_state.nonce.0, local_state.nonce.0].concat());
             let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
-            log_peer_debug(&node, "Completed handshake as initiator");
-            (context, node, Framed::new(stream, codec), false)
+            trace!(peer=%node, "Completed handshake as initiator");
+            (context, node, Framed::new(stream, codec))
         }
-        InnerState::Receiver(Receiver {
+        ConnectionState::Receiver(Receiver {
             context,
             peer_addr,
             stream,
         }) => {
             let Some(mut stream) = Arc::into_inner(stream) else {
-                return Err(RLPxError::StateError("Cannot use the stream".to_string()));
+                return Err(PeerConnectionError::StateError(
+                    "Cannot use the stream".to_string(),
+                ));
             };
             let remote_state = receive_auth(&context.signer, &mut stream).await?;
             let local_state = send_ack(remote_state.public_key, &mut stream).await?;
             // Remote node is initiator
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
-                Keccak256::digest([local_state.nonce.0, remote_state.nonce.0].concat()).into();
+                keccak_hash([local_state.nonce.0, remote_state.nonce.0].concat());
             let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
             let node = Node::new(
                 peer_addr.ip(),
@@ -107,24 +106,28 @@ pub(crate) async fn perform(
                 peer_addr.port(),
                 remote_state.public_key,
             );
-            log_peer_debug(&node, "Completed handshake as receiver");
-            (context, node, Framed::new(stream, codec), true)
+            trace!(peer=%node, "Completed handshake as receiver");
+            (context, node, Framed::new(stream, codec))
         }
-        InnerState::Established(_) => {
-            return Err(RLPxError::StateError("Already established".to_string()));
+        ConnectionState::Established(_) => {
+            return Err(PeerConnectionError::StateError(
+                "Already established".to_string(),
+            ));
         }
         // Shouldn't perform a Handshake on an already failed connection.
         // Put it here to complete the match arms
-        InnerState::HandshakeFailed => {
-            return Err(RLPxError::StateError("Handshake Failed".to_string()));
+        ConnectionState::HandshakeFailed => {
+            return Err(PeerConnectionError::StateError(
+                "Handshake Failed".to_string(),
+            ));
         }
     };
     let (sink, stream) = framed.split();
     Ok((
         Established {
             signer: context.signer,
-            sink: Arc::new(Mutex::new(sink)),
-            node: node.clone(),
+            sink,
+            node,
             storage: context.storage.clone(),
             blockchain: context.blockchain.clone(),
             capabilities: vec![],
@@ -134,13 +137,15 @@ pub(crate) async fn perform(
             requested_pooled_txs: HashMap::new(),
             client_version: context.client_version.clone(),
             connection_broadcast_send: context.broadcast.clone(),
-            table: context.table.clone(),
-            backend_channel: None,
-            _inbound: inbound,
+            peer_table: context.table.clone(),
+            #[cfg(feature = "l2")]
             l2_state: context
                 .based_context
                 .map_or_else(|| L2ConnState::Unsupported, L2ConnState::Disconnected),
-            tx_broadcaster: context.tx_broadcaster.clone(),
+            tx_broadcaster: context.tx_broadcaster,
+            current_requests: HashMap::new(),
+            disconnect_reason: None,
+            is_validated: false,
         },
         stream,
     ))
@@ -157,8 +162,9 @@ async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
     signer: &SecretKey,
     remote_public_key: H512,
     mut stream: S,
-) -> Result<LocalState, RLPxError> {
-    let peer_pk = compress_pubkey(remote_public_key).ok_or_else(RLPxError::InvalidPeerId)?;
+) -> Result<LocalState, PeerConnectionError> {
+    let peer_pk =
+        compress_pubkey(remote_public_key).ok_or_else(|| PeerConnectionError::InvalidPeerId)?;
 
     let local_nonce = H256::random_using(&mut rand::thread_rng());
     let local_ephemeral_key = SecretKey::new(&mut rand::thread_rng());
@@ -176,8 +182,9 @@ async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
 async fn send_ack<S: AsyncWrite + std::marker::Unpin>(
     remote_public_key: H512,
     mut stream: S,
-) -> Result<LocalState, RLPxError> {
-    let peer_pk = compress_pubkey(remote_public_key).ok_or_else(RLPxError::InvalidPeerId)?;
+) -> Result<LocalState, PeerConnectionError> {
+    let peer_pk =
+        compress_pubkey(remote_public_key).ok_or_else(|| PeerConnectionError::InvalidPeerId)?;
 
     let local_nonce = H256::random_using(&mut rand::thread_rng());
     let local_ephemeral_key = SecretKey::new(&mut rand::thread_rng());
@@ -195,14 +202,14 @@ async fn send_ack<S: AsyncWrite + std::marker::Unpin>(
 async fn receive_auth<S: AsyncRead + std::marker::Unpin>(
     signer: &SecretKey,
     stream: S,
-) -> Result<RemoteState, RLPxError> {
+) -> Result<RemoteState, PeerConnectionError> {
     let msg_bytes = receive_handshake_msg(stream).await?;
     let size_data = &msg_bytes
         .get(..2)
-        .ok_or_else(RLPxError::InvalidMessageLength)?;
+        .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
     let msg = &msg_bytes
         .get(2..)
-        .ok_or_else(RLPxError::InvalidMessageLength)?;
+        .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
     let (auth, remote_ephemeral_key) = decode_auth_message(signer, msg, size_data)?;
 
     Ok(RemoteState {
@@ -217,18 +224,18 @@ async fn receive_ack<S: AsyncRead + std::marker::Unpin>(
     signer: &SecretKey,
     remote_public_key: H512,
     stream: S,
-) -> Result<RemoteState, RLPxError> {
+) -> Result<RemoteState, PeerConnectionError> {
     let msg_bytes = receive_handshake_msg(stream).await?;
     let size_data = &msg_bytes
         .get(..2)
-        .ok_or_else(RLPxError::InvalidMessageLength)?;
+        .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
     let msg = &msg_bytes
         .get(2..)
-        .ok_or_else(RLPxError::InvalidMessageLength)?;
+        .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
     let ack = decode_ack_message(signer, msg, size_data)?;
     let remote_ephemeral_key = ack
         .get_ephemeral_pubkey()
-        .ok_or_else(|| RLPxError::NotFound("Remote ephemeral key".to_string()))?;
+        .ok_or_else(|| PeerConnectionError::NotFound("Remote ephemeral key".to_string()))?;
 
     Ok(RemoteState {
         public_key: remote_public_key,
@@ -240,7 +247,7 @@ async fn receive_ack<S: AsyncRead + std::marker::Unpin>(
 
 async fn receive_handshake_msg<S: AsyncRead + std::marker::Unpin>(
     mut stream: S,
-) -> Result<Vec<u8>, RLPxError> {
+) -> Result<Vec<u8>, PeerConnectionError> {
     let mut buf = vec![0; 2];
 
     // Read the message's size
@@ -248,14 +255,16 @@ async fn receive_handshake_msg<S: AsyncRead + std::marker::Unpin>(
     let ack_data = [buf[0], buf[1]];
     let msg_size = u16::from_be_bytes(ack_data) as usize;
     if msg_size > P2P_MAX_MESSAGE_SIZE {
-        return Err(RLPxError::InvalidMessageLength());
+        return Err(PeerConnectionError::InvalidMessageLength);
     }
     buf.resize(msg_size + 2, 0);
 
     // Read the rest of the message
     // Guard unwrap
     if buf.len() < msg_size + 2 {
-        return Err(RLPxError::CryptographyError(String::from("bad buf size")));
+        return Err(PeerConnectionError::CryptographyError(String::from(
+            "bad buf size",
+        )));
     }
     stream.read_exact(&mut buf[2..msg_size + 2]).await?;
     let ack_bytes = &buf[..msg_size + 2];
@@ -268,12 +277,14 @@ fn encode_auth_message(
     local_nonce: H256,
     remote_static_pubkey: &PublicKey,
     local_ephemeral_key: &SecretKey,
-) -> Result<Vec<u8>, RLPxError> {
+) -> Result<Vec<u8>, PeerConnectionError> {
     let public_key = decompress_pubkey(&static_key.public_key(secp256k1::SECP256K1));
 
     // Derive a shared secret from the static keys.
     let static_shared_secret = ecdh_xchng(static_key, remote_static_pubkey).map_err(|error| {
-        RLPxError::CryptographyError(format!("Invalid generated static shared secret: {error}"))
+        PeerConnectionError::CryptographyError(format!(
+            "Invalid generated static shared secret: {error}"
+        ))
     })?;
 
     // Create the signature included in the message.
@@ -297,16 +308,19 @@ fn decode_auth_message(
     static_key: &SecretKey,
     msg: &[u8],
     auth_data: &[u8],
-) -> Result<(AuthMessage, PublicKey), RLPxError> {
+) -> Result<(AuthMessage, PublicKey), PeerConnectionError> {
     let payload = decrypt_message(static_key, msg, auth_data)?;
 
     // RLP-decode the message.
     let (auth, _padding) = AuthMessage::decode_unfinished(&payload)?;
 
     // Derive a shared secret from the static keys.
-    let peer_pk = compress_pubkey(auth.public_key).ok_or_else(RLPxError::InvalidPeerId)?;
+    let peer_pk =
+        compress_pubkey(auth.public_key).ok_or_else(|| PeerConnectionError::InvalidPeerId)?;
     let static_shared_secret = ecdh_xchng(static_key, &peer_pk).map_err(|error| {
-        RLPxError::CryptographyError(format!("Invalid generated static shared secret: {error}"))
+        PeerConnectionError::CryptographyError(format!(
+            "Invalid generated static shared secret: {error}"
+        ))
     })?;
     let remote_ephemeral_key =
         retrieve_remote_ephemeral_key(static_shared_secret.into(), auth.nonce, auth.signature)?;
@@ -318,7 +332,7 @@ fn encode_ack_message(
     local_ephemeral_key: &SecretKey,
     local_nonce: H256,
     remote_static_pubkey: &PublicKey,
-) -> Result<Vec<u8>, RLPxError> {
+) -> Result<Vec<u8>, PeerConnectionError> {
     // Compose the ack message.
     let ack_msg = AckMessage::new(
         decompress_pubkey(&local_ephemeral_key.public_key(secp256k1::SECP256K1)),
@@ -336,7 +350,7 @@ fn decode_ack_message(
     static_key: &SecretKey,
     msg: &[u8],
     auth_data: &[u8],
-) -> Result<AckMessage, RLPxError> {
+) -> Result<AckMessage, PeerConnectionError> {
     let payload = decrypt_message(static_key, msg, auth_data)?;
 
     // RLP-decode the message.
@@ -349,36 +363,40 @@ fn decrypt_message(
     static_key: &SecretKey,
     msg: &[u8],
     size_data: &[u8],
-) -> Result<Vec<u8>, RLPxError> {
+) -> Result<Vec<u8>, PeerConnectionError> {
     // Split the message into its components. General layout is:
     // public-key (65) || iv (16) || ciphertext || mac (32)
     let (pk, rest) = msg
         .split_at_checked(65)
-        .ok_or_else(RLPxError::InvalidMessageLength)?;
+        .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
     let (iv, rest) = rest
         .split_at_checked(16)
-        .ok_or_else(RLPxError::InvalidMessageLength)?;
+        .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
     let (c, d) = rest
         .split_at_checked(rest.len() - 32)
-        .ok_or_else(RLPxError::InvalidMessageLength)?;
+        .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
 
     // Derive the message shared secret.
     let shared_secret = ecdh_xchng(static_key, &PublicKey::from_slice(pk)?).map_err(|error| {
-        RLPxError::CryptographyError(format!("Invalid generated shared secret: {error}"))
+        PeerConnectionError::CryptographyError(format!("Invalid generated shared secret: {error}"))
     })?;
     // Derive the AES and MAC keys from the message shared secret.
     let mut buf = [0; 32];
     kdf(&shared_secret, &mut buf).map_err(|error| {
-        RLPxError::CryptographyError(format!("Couldn't get keys from shared secret: {error}"))
+        PeerConnectionError::CryptographyError(format!(
+            "Couldn't get keys from shared secret: {error}"
+        ))
     })?;
     let aes_key = &buf[..16];
     let mac_key = sha256(&buf[16..]);
 
     // Verify the MAC.
     let expected_d = sha256_hmac(&mac_key, &[iv, c], size_data)
-        .map_err(|error| RLPxError::CryptographyError(error.to_string()))?;
+        .map_err(|error| PeerConnectionError::CryptographyError(error.to_string()))?;
     if d != expected_d {
-        return Err(RLPxError::HandshakeError(String::from("Invalid MAC")));
+        return Err(PeerConnectionError::HandshakeError(String::from(
+            "Invalid MAC",
+        )));
     }
 
     // Decrypt the message with the AES key.
@@ -391,7 +409,7 @@ fn decrypt_message(
 fn encrypt_message(
     remote_static_pubkey: &PublicKey,
     mut encoded_msg: Vec<u8>,
-) -> Result<Vec<u8>, RLPxError> {
+) -> Result<Vec<u8>, PeerConnectionError> {
     const SIGNATURE_SIZE: u16 = 65;
     const IV_SIZE: u16 = 16;
     const MAC_FOOTER_SIZE: u16 = 32;
@@ -408,7 +426,7 @@ fn encrypt_message(
     let encoded_msg_len: u16 = encoded_msg
         .len()
         .try_into()
-        .map_err(|_| RLPxError::CryptographyError("Invalid message length".to_owned()))?;
+        .map_err(|_| PeerConnectionError::CryptographyError("Invalid message length".to_owned()))?;
     let auth_size = ecies_overhead + encoded_msg_len;
     let auth_size_bytes = auth_size.to_be_bytes();
 
@@ -418,13 +436,15 @@ fn encrypt_message(
     // Derive a shared secret for this message.
     let message_secret =
         ecdh_xchng(&message_secret_key, remote_static_pubkey).map_err(|error| {
-            RLPxError::CryptographyError(format!("Invalid generated message secret:  {error}"))
+            PeerConnectionError::CryptographyError(format!(
+                "Invalid generated message secret:  {error}"
+            ))
         })?;
 
     // Derive the AES and MAC keys from the message secret.
     let mut secret_keys = [0; 32];
     kdf(&message_secret, &mut secret_keys)
-        .map_err(|error| RLPxError::CryptographyError(error.to_string()))?;
+        .map_err(|error| PeerConnectionError::CryptographyError(error.to_string()))?;
     let aes_key = &secret_keys[..16];
     let mac_key = sha256(&secret_keys[16..]);
 
@@ -439,7 +459,7 @@ fn encrypt_message(
         .public_key(secp256k1::SECP256K1)
         .serialize_uncompressed();
     let mac_footer = sha256_hmac(&mac_key, &[&iv.0, &encrypted_auth_msg], &auth_size_bytes)
-        .map_err(|error| RLPxError::CryptographyError(error.to_string()))?;
+        .map_err(|error| PeerConnectionError::CryptographyError(error.to_string()))?;
 
     // Return the message
     let mut final_msg = Vec::new();
@@ -455,10 +475,10 @@ fn retrieve_remote_ephemeral_key(
     shared_secret: H256,
     remote_nonce: H256,
     signature: Signature,
-) -> Result<PublicKey, RLPxError> {
+) -> Result<PublicKey, PeerConnectionError> {
     let signature_prehash = shared_secret ^ remote_nonce;
     let msg = secp256k1::Message::from_digest_slice(signature_prehash.as_bytes())?;
-    let rid = RecoveryId::from_i32(signature[64].into())?;
+    let rid = RecoveryId::try_from(Into::<i32>::into(signature[64]))?;
     let sig = RecoverableSignature::from_compact(&signature[0..64], rid)?;
     Ok(secp256k1::SECP256K1.recover_ecdsa(&msg, &sig)?)
 }
@@ -467,17 +487,16 @@ fn sign_shared_secret(
     shared_secret: H256,
     local_nonce: H256,
     local_ephemeral_key: &SecretKey,
-) -> Result<Signature, RLPxError> {
+) -> Result<Signature, PeerConnectionError> {
     let signature_prehash = shared_secret ^ local_nonce;
     let msg = secp256k1::Message::from_digest_slice(signature_prehash.as_bytes())?;
     let sig = secp256k1::SECP256K1.sign_ecdsa_recoverable(&msg, local_ephemeral_key);
     let (rid, signature) = sig.serialize_compact();
     let mut signature_bytes = [0; 65];
     signature_bytes[..64].copy_from_slice(&signature);
-    signature_bytes[64] = rid
-        .to_i32()
+    signature_bytes[64] = Into::<i32>::into(rid)
         .try_into()
-        .map_err(|_| RLPxError::CryptographyError("Invalid recovery id".into()))?;
+        .map_err(|_| PeerConnectionError::CryptographyError("Invalid recovery id".into()))?;
     Ok(signature_bytes.into())
 }
 

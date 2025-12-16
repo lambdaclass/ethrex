@@ -447,6 +447,7 @@ pub enum TransactionExpectedException {
     Type3TxInvalidBlobVersionedHash,
     Type4TxContractCreation,
     IntrinsicGasTooLow,
+    IntrinsicGasBelowFloorGasCost,
     InsufficientAccountFunds,
     SenderNotEoa,
     PriorityGreaterThanMaxFeePerGas,

@@ -1,5 +1,6 @@
 use crate::sequencer::errors::ProofCoordinatorError;
 use ethrex_common::types::TxType;
+use ethrex_common::utils::keccak;
 use ethrex_common::{Address, Bytes};
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_common::utils::get_address_from_secret_key;
@@ -7,7 +8,6 @@ use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_l2_sdk::{build_generic_tx, send_tx_bump_gas_exponential_backoff};
 use ethrex_rpc::clients::{Overrides, eth::EthClient};
-use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::str::FromStr;
 
@@ -15,20 +15,19 @@ use tracing::{debug, info};
 
 use std::process::Command;
 
-const QPL_TOOL_PATH: &str = "./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool";
-
 pub async fn prepare_quote_prerequisites(
     eth_client: &EthClient,
     rpc_url: &str,
     private_key_str: &str,
     quote: &str,
+    qpl_tool_path: &str,
 ) -> Result<(), ProofCoordinatorError> {
     let chain_id = eth_client
         .get_chain_id()
         .await
         .map_err(ProofCoordinatorError::EthClientError)?;
 
-    Command::new(QPL_TOOL_PATH)
+    Command::new(qpl_tool_path)
         .args([
             "--chain_id",
             &chain_id.to_string(),
@@ -73,7 +72,8 @@ pub async fn register_tdx_key(
         eth_client,
         TxType::EIP1559,
         tdx_address,
-        get_address_from_secret_key(private_key).map_err(ProofCoordinatorError::InternalError)?,
+        get_address_from_secret_key(&private_key.secret_bytes())
+            .map_err(ProofCoordinatorError::InternalError)?,
         calldata.into(),
         Overrides {
             max_fee_per_gas: Some(gas_price),
@@ -96,7 +96,7 @@ async fn get_tdx_address(
     eth_client: &EthClient,
     on_chain_proposer_address: Address,
 ) -> Result<Address, ProofCoordinatorError> {
-    let calldata = keccak("TDXVERIFIER()")[..4].to_vec();
+    let calldata = keccak("TDX_VERIFIER_ADDRESS()")[..4].to_vec();
 
     let response = eth_client
         .call(
@@ -110,7 +110,7 @@ async fn get_tdx_address(
 
     Address::from_str(&format!("0x{trimmed_response}")).map_err(|_| {
         ProofCoordinatorError::InternalError(
-            "Failed to convert TDXVERIFIER result to address".to_owned(),
+            "Failed to convert TDX_VERIFIER_ADDRESS result to address".to_owned(),
         )
     })
 }

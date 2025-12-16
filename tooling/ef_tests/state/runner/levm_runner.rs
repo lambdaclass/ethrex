@@ -4,6 +4,7 @@ use crate::{
     types::{EFTest, TransactionExpectedException},
     utils::{self, effective_gas_price},
 };
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     H256, U256,
     types::{
@@ -16,11 +17,11 @@ use ethrex_levm::{
     db::gen_db::GeneralizedDatabase,
     errors::{ExecutionReport, TxValidationError, VMError},
     tracing::LevmCallTracer,
+    utils::get_base_fee_per_blob_gas,
     vm::{VM, VMType},
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::backends;
-use keccak_hash::keccak;
 
 pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
     // There are some tests that don't have a hash, unwrap will panic
@@ -37,28 +38,7 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
         hash,
     );
 
-    //Test with the Fusaka tests that should pass. TODO: Once we've implemented all the Fusaka EIPs this should be removed
-    //EIPs should be added as strings in the format 'eip-XXXX'
-    let fusaka_eips_to_test: Vec<&str> = vec![
-        "eip-7883", "eip-7892", "eip-7918", "eip-7934", "eip-7939", "eip-7951", "eip-7594",
-    ];
-
-    //Names of any other tests to run, that don't correspond to an especific EIP (for examples, some integration tests)
-    //We should really remove this once we're finished with implementing Fusaka, but it's a good-enough workaround to run specific tests for now
-    let names_of_fusaka_tests_to_run: Vec<&str> = vec![];
-
-    let test_eip = test._info.clone().reference_spec.unwrap_or_default();
-
     for fork in test.post.forks.keys() {
-        if fork == &Fork::Osaka
-            && !fusaka_eips_to_test.iter().any(|eip| test_eip.contains(eip))
-            && !names_of_fusaka_tests_to_run
-                .iter()
-                .any(|name| *name == test.name)
-        {
-            continue;
-        }
-
         let mut ef_test_report_fork = EFTestReportForkResult::new();
 
         for (vector, _tx) in test.transactions.iter() {
@@ -198,6 +178,7 @@ pub fn prepare_vm_for_tx<'a>(
             data: test_tx.data.clone(),
             access_list,
             authorization_list: list,
+            gas_limit: test_tx.gas_limit,
             ..Default::default()
         }),
         None => Transaction::EIP1559Transaction(EIP1559Transaction {
@@ -205,9 +186,16 @@ pub fn prepare_vm_for_tx<'a>(
             value: test_tx.value,
             data: test_tx.data.clone(),
             access_list,
+            gas_limit: test_tx.gas_limit,
             ..Default::default()
         }),
     };
+    let base_blob_fee_per_gas =
+        get_base_fee_per_blob_gas(test.env.current_excess_blob_gas, &config).map_err(|e| {
+            EFTestRunnerError::FailedToEnsurePreState(format!(
+                "Failed to calculate base blob fee: {e}"
+            ))
+        })?;
 
     VM::new(
         Environment {
@@ -221,6 +209,7 @@ pub fn prepare_vm_for_tx<'a>(
             difficulty: test.env.current_difficulty,
             chain_id: U256::from(1),
             base_fee_per_gas: test.env.current_base_fee.unwrap_or_default(),
+            base_blob_fee_per_gas,
             gas_price: effective_gas_price(test, &test_tx)?,
             block_excess_blob_gas: test.env.current_excess_blob_gas,
             block_blob_gas_used: None,
@@ -231,6 +220,7 @@ pub fn prepare_vm_for_tx<'a>(
             tx_nonce: test_tx.nonce,
             block_gas_limit: test.env.current_gas_limit,
             is_privileged: false,
+            fee_token: None,
         },
         db,
         &tx,
@@ -243,7 +233,7 @@ pub fn prepare_vm_for_tx<'a>(
 pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError> {
     let world_state = &evm.db.store;
     for (address, pre_value) in &test.pre.0 {
-        let account_info = world_state.get_account_info(*address).map_err(|e| {
+        let account_info = world_state.get_account_state(*address).map_err(|e| {
             EFTestRunnerError::Internal(InternalError::Custom(format!(
                 "Failed to read account {address:#x} from world state: {e}",
             )))
@@ -307,6 +297,9 @@ fn exception_is_expected(
                 TransactionExpectedException::IntrinsicGasTooLow,
                 VMError::TxValidation(TxValidationError::IntrinsicGasTooLow)
             ) | (
+                TransactionExpectedException::IntrinsicGasBelowFloorGasCost,
+                VMError::TxValidation(TxValidationError::IntrinsicGasBelowFloorGasCost)
+            ) | (
                 TransactionExpectedException::InsufficientAccountFunds,
                 VMError::TxValidation(TxValidationError::InsufficientAccountFunds)
             ) | (
@@ -367,6 +360,12 @@ fn exception_is_expected(
                 TransactionExpectedException::Type4TxContractCreation,
                 VMError::TxValidation(TxValidationError::Type4TxContractCreation)
             ) | (
+                TransactionExpectedException::TxMaxGasLimitExceeded,
+                VMError::TxValidation(TxValidationError::TxMaxGasLimitExceeded {
+                    tx_hash: _,
+                    tx_gas_limit: _
+                })
+            ) | (
                 TransactionExpectedException::Other,
                 VMError::TxValidation(_) //TODO: Decide whether to support more specific errors, I think this is enough.
             )
@@ -391,7 +390,7 @@ pub async fn ensure_post_state(
                     return Err(EFTestRunnerError::FailedToEnsurePostState(
                         Box::new(execution_report.clone()),
                         error_reason,
-                        cache,
+                        cache.into_iter().collect(),
                     ));
                 }
                 // Execution result was successful and no exception was expected.
@@ -411,7 +410,7 @@ pub async fn ensure_post_state(
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             Box::new(execution_report.clone()),
                             format!("Post-state root mismatch. LEVM runner, line:{}", line!()),
-                            cache,
+                            cache.into_iter().collect(),
                         ));
                     }
 
@@ -429,7 +428,7 @@ pub async fn ensure_post_state(
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             Box::new(execution_report.clone()),
                             format!("Logs mismatch. LEVM runner, line:{}", line!()),
-                            cache,
+                            cache.into_iter().collect(),
                         ));
                     }
                 }
@@ -477,10 +476,9 @@ pub async fn ensure_post_state(
 }
 
 pub async fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest) -> H256 {
-    let (_initial_state, block_hash, store) = utils::load_initial_state(test).await;
+    let (_initial_state, block_hash, store) = utils::load_initial_state_revm(test).await;
     let ret_account_updates_batch = store
         .apply_account_updates_batch(block_hash, account_updates)
-        .await
         .unwrap()
         .unwrap();
     ret_account_updates_batch.state_trie_hash

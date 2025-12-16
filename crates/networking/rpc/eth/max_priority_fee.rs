@@ -31,15 +31,13 @@ impl RpcHandler for MaxPriorityFee {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eth::test_utils::{
+    use crate::test_utils::{
         BASE_PRICE_IN_WEI, add_eip1559_tx_blocks, add_legacy_tx_blocks, add_mixed_tx_blocks,
-        setup_store,
+        default_context_with_storage, example_p2p_node, setup_store,
     };
-
-    use crate::utils::test_utils::default_context_with_storage;
     use crate::{
         rpc::{RpcApiContext, RpcHandler, map_http_requests},
-        utils::{RpcRequest, parse_json_hex, test_utils::example_p2p_node},
+        utils::{RpcRequest, parse_json_hex},
     };
     use ethrex_common::types::MIN_GAS_TIP;
     use serde_json::json;
@@ -72,6 +70,7 @@ mod tests {
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, BASE_PRICE_IN_WEI);
     }
+
     #[tokio::test]
     async fn test_with_mixed_transactions() {
         let context = default_context().await;
@@ -83,6 +82,7 @@ mod tests {
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, BASE_PRICE_IN_WEI);
     }
+
     #[tokio::test]
     async fn test_with_not_enough_blocks_or_transactions() {
         let context = default_context().await;
@@ -94,6 +94,7 @@ mod tests {
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, MIN_GAS_TIP);
     }
+
     #[tokio::test]
     async fn test_with_no_blocks_but_genesis() {
         let context = default_context().await;
@@ -103,6 +104,7 @@ mod tests {
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, MIN_GAS_TIP);
     }
+
     #[tokio::test]
     async fn request_smoke_test() {
         let raw_json = json!(

@@ -1,4 +1,5 @@
 use ethrex_common::{H256, U256};
+use k256::elliptic_curve::bigint::Encoding;
 use p256::{
     FieldElement as P256FieldElement, NistP256,
     elliptic_curve::{Curve, bigint::U256 as P256Uint, ff::PrimeField},
@@ -26,6 +27,9 @@ pub const SYS_CALL_GAS_LIMIT: u64 = 30000000;
 
 // Transaction costs in gas
 pub const TX_BASE_COST: u64 = 21000;
+
+// https://eips.ethereum.org/EIPS/eip-7825
+pub const POST_OSAKA_GAS_LIMIT_CAP: u64 = 16777216;
 
 pub const MAX_CODE_SIZE: u64 = 0x6000;
 pub const INIT_CODE_MAX_SIZE: usize = 49152;
@@ -68,9 +72,11 @@ pub const VALID_BLOB_PREFIXES: [u8; 2] = [0x01, 0x02];
 pub const LAST_AVAILABLE_BLOCK_LIMIT: U256 = U256([256, 0, 0, 0]);
 
 // EIP7702 - EOA Load Code
-pub static SECP256K1_ORDER: LazyLock<U256> =
-    LazyLock::new(|| U256::from_big_endian(&secp256k1::constants::CURVE_ORDER));
-pub static SECP256K1_ORDER_OVER2: LazyLock<U256> =
+pub static SECP256K1_ORDER: LazyLock<U256> = LazyLock::new(||
+        // we use the k256 crate instead of the secp256k1 because the latter is optional
+        // while the former is not, this is to avoid a conditional compilation attribute.
+        U256::from_big_endian(&k256::Secp256k1::ORDER.to_be_bytes()));
+pub static SECP256K1_ORDER_OVER2: std::sync::LazyLock<U256> =
     LazyLock::new(|| *SECP256K1_ORDER / U256::from(2));
 pub const MAGIC: u8 = 0x05;
 pub const SET_CODE_DELEGATION_BYTES: [u8; 3] = [0xef, 0x01, 0x00];

@@ -2,7 +2,9 @@ use ethrex_common::{
     H256,
     types::{BlockHash, BlockHeader, BlockNumber},
 };
+use ethrex_metrics::metrics;
 use ethrex_storage::{Store, error::StoreError};
+use tracing::{error, warn};
 
 use crate::{
     error::{self, InvalidForkChoice},
@@ -66,49 +68,71 @@ pub async fn apply_fork_choice(
         return Err(InvalidForkChoice::UnlinkedHead);
     };
 
-    let link_block_number = match new_canonical_blocks.last() {
-        Some((number, _)) => *number,
-        None => head.number,
+    let (link_block_number, link_block_hash) = match new_canonical_blocks.last() {
+        Some((number, hash)) => (*number, *hash),
+        None => (head.number, head_hash),
     };
 
     // Check that finalized and safe blocks are part of the new canonical chain.
-    if let Some(ref finalized) = finalized_res {
-        if !((is_canonical(store, finalized.number, finalized_hash).await?
+    if let Some(ref finalized) = finalized_res
+        && !((is_canonical(store, finalized.number, finalized_hash).await?
             && finalized.number <= link_block_number)
             || (finalized.number == head.number && finalized_hash == head_hash)
             || new_canonical_blocks.contains(&(finalized.number, finalized_hash)))
-        {
-            return Err(InvalidForkChoice::Disconnected(
-                error::ForkChoiceElement::Head,
-                error::ForkChoiceElement::Finalized,
-            ));
-        };
+    {
+        return Err(InvalidForkChoice::Disconnected(
+            error::ForkChoiceElement::Head,
+            error::ForkChoiceElement::Finalized,
+        ));
     }
 
-    if let Some(ref safe) = safe_res {
-        if !((is_canonical(store, safe.number, safe_hash).await?
+    if let Some(ref safe) = safe_res
+        && !((is_canonical(store, safe.number, safe_hash).await?
             && safe.number <= link_block_number)
             || (safe.number == head.number && safe_hash == head_hash)
             || new_canonical_blocks.contains(&(safe.number, safe_hash)))
-        {
-            return Err(InvalidForkChoice::Disconnected(
-                error::ForkChoiceElement::Head,
-                error::ForkChoiceElement::Safe,
-            ));
-        };
+    {
+        return Err(InvalidForkChoice::Disconnected(
+            error::ForkChoiceElement::Head,
+            error::ForkChoiceElement::Safe,
+        ));
+    }
+
+    let Some(link_header) = store.get_block_header_by_hash(link_block_hash)? else {
+        // Probably unreachable, but we return this error just in case.
+        error!("Link block not found although it was just retrieved from the DB");
+        return Err(InvalidForkChoice::UnlinkedHead);
+    };
+
+    // If the state can't be constructed from the DB, we ignore it and log a warning.
+    // TODO(#5564): handle arbitrary reorgs
+    if !store.has_state_root(link_header.state_root)? {
+        warn!(
+            link_block=%link_block_hash,
+            link_number=%link_header.number,
+            head_number=%head.number,
+            "FCU head state not reachable from DB state. Ignoring fork choice update. This is expected if the consensus client is currently syncing. Otherwise, if consensus is synced and this is a consistent message it can be fixed by removing the DB and re-syncing the execution client."
+        );
+        return Err(InvalidForkChoice::StateNotReachable);
     }
 
     // Finished all validations.
 
     store
         .forkchoice_update(
-            Some(new_canonical_blocks),
+            new_canonical_blocks,
             head.number,
             head_hash,
             safe_res.map(|h| h.number),
             finalized_res.map(|h| h.number),
         )
         .await?;
+
+    metrics!(
+        use ethrex_metrics::blocks::METRICS_BLOCKS;
+
+        METRICS_BLOCKS.set_head_height(head.number);
+    );
 
     Ok(head)
 }

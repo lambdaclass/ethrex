@@ -17,6 +17,7 @@ CONCLUSION=${CONCLUSION:-}
 RUN_HTML_URL=${RUN_HTML_URL:-}
 RUN_ID=${RUN_ID:-}
 HEAD_SHA=${HEAD_SHA:-}
+FAILED_JOBS=${FAILED_JOBS:-Unknown job}
 
 RUN_URL="$RUN_HTML_URL"
 if [[ -z "$RUN_URL" ]]; then
@@ -34,6 +35,7 @@ PAYLOAD=$(jq -n \
   --arg sha "$SHORT_SHA" \
   --arg commit_url "$COMMIT_URL" \
   --arg url "$RUN_URL" \
+  --arg failed_jobs "$FAILED_JOBS" \
   '{
     blocks: [
       {
@@ -49,7 +51,8 @@ PAYLOAD=$(jq -n \
           { type: "mrkdwn", text: "*Workflow*\n\($workflow)" },
           { type: "mrkdwn", text: "*Conclusion*\n\($conclusion)" },
           { type: "mrkdwn", text: "*Commit*\n<\($commit_url)|\($sha)>" },
-          { type: "mrkdwn", text: "*Run*\n<\($url)|Open in GitHub>" }
+          { type: "mrkdwn", text: "*Run*\n<\($url)|Open in GitHub>" },
+          { type: "mrkdwn", text: "*Failed job(s)*\n\($failed_jobs)" }
         ]
       }
     ]

@@ -1,43 +1,40 @@
 use std::sync::Arc;
 
 use crate::{
-    runner::{EFTestRunnerError, InternalError},
+    runner::{
+        EFTestRunnerError, InternalError,
+        revm_db::{RevmState, revm_state},
+    },
     types::{EFTest, EFTestTransaction},
 };
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{H256, U256, types::Genesis};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::{
-    DynVmDatabase,
-    backends::revm::db::{EvmState, evm_state},
-};
+use ethrex_vm::DynVmDatabase;
 
-/// Loads initial state, used for REVM as it contains EvmState.
-pub async fn load_initial_state(test: &EFTest) -> (EvmState, H256, Store) {
+/// Loads initial state, used for REVM as it contains RevmState.
+pub async fn load_initial_state_revm(test: &EFTest) -> (RevmState, H256, Store) {
     let genesis = Genesis::from(test);
 
-    let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
+    let mut storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
     storage.add_initial_state(genesis.clone()).await.unwrap();
 
-    let vm_db: DynVmDatabase = Box::new(StoreVmDatabase::new(
-        storage.clone(),
-        genesis.get_block().hash(),
-    ));
+    let vm_db: DynVmDatabase =
+        Box::new(StoreVmDatabase::new(storage.clone(), genesis.get_block().header).unwrap());
 
-    (evm_state(vm_db), genesis.get_block().hash(), storage)
+    (revm_state(vm_db), genesis.get_block().hash(), storage)
 }
 
-/// Loads initial state, function for LEVM as it does not require EvmState
+/// Loads initial state, function for LEVM as it does not require RevmState
 pub async fn load_initial_state_levm(test: &EFTest) -> GeneralizedDatabase {
     let genesis = Genesis::from(test);
 
-    let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
+    let mut storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
     storage.add_initial_state(genesis.clone()).await.unwrap();
 
-    let block_hash = genesis.get_block().hash();
-
-    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(storage, block_hash));
+    let store: DynVmDatabase =
+        Box::new(StoreVmDatabase::new(storage, genesis.get_block().header).unwrap());
 
     GeneralizedDatabase::new(Arc::new(store))
 }

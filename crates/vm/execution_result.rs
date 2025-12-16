@@ -1,8 +1,3 @@
-#[cfg(feature = "revm")]
-use ethrex_common::{Address, H256};
-#[cfg(feature = "revm")]
-use revm::primitives::{ExecutionResult as RevmExecutionResult, result::Output as RevmOutput};
-
 use bytes::Bytes;
 use ethrex_common::types::Log;
 use ethrex_levm::errors::{ExecutionReport as LevmExecutionReport, TxResult};
@@ -54,48 +49,6 @@ impl ExecutionResult {
             ExecutionResult::Success { output, .. } => output.clone(),
             ExecutionResult::Revert { output, .. } => output.clone(),
             ExecutionResult::Halt { .. } => Bytes::new(),
-        }
-    }
-}
-
-#[cfg(feature = "revm")]
-impl From<RevmExecutionResult> for ExecutionResult {
-    fn from(val: RevmExecutionResult) -> Self {
-        match val {
-            RevmExecutionResult::Success {
-                reason: _,
-                gas_used,
-                gas_refunded,
-                logs,
-                output,
-            } => ExecutionResult::Success {
-                gas_used,
-                gas_refunded,
-                logs: logs
-                    .into_iter()
-                    .map(|log| Log {
-                        address: Address::from_slice(log.address.0.as_ref()),
-                        topics: log
-                            .topics()
-                            .iter()
-                            .map(|v| H256::from_slice(v.as_slice()))
-                            .collect(),
-                        data: log.data.data.0,
-                    })
-                    .collect(),
-                output: match output {
-                    RevmOutput::Call(bytes) => bytes.0,
-                    RevmOutput::Create(bytes, _addr) => bytes.0,
-                },
-            },
-            RevmExecutionResult::Revert { gas_used, output } => ExecutionResult::Revert {
-                gas_used,
-                output: output.0,
-            },
-            RevmExecutionResult::Halt { reason, gas_used } => ExecutionResult::Halt {
-                reason: format!("{reason:?}"),
-                gas_used,
-            },
         }
     }
 }

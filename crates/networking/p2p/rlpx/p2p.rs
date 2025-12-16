@@ -146,7 +146,10 @@ impl RLPxMessage for HelloMessage {
         let (protocol_version, decoder): (u64, _) = decoder.decode_field("protocolVersion")?;
 
         if protocol_version != SUPPORTED_P2P_CAPABILITY_VERSION as u64 {
-            return Err(RLPDecodeError::IncompatibleProtocol);
+            return Err(RLPDecodeError::IncompatibleProtocol(format!(
+                "Received message is encoded in p2p version {} when negotiated p2p version was {} ",
+                protocol_version, SUPPORTED_P2P_CAPABILITY_VERSION
+            )));
         }
 
         let (client_id, decoder): (String, _) = decoder.decode_field("clientId")?;
@@ -187,6 +190,30 @@ pub enum DisconnectReason {
     PingTimeout = 0x0b,
     SubprotocolError = 0x10,
     InvalidReason = 0xff,
+}
+
+impl DisconnectReason {
+    // Returns a vector of all DisconnectReason variants, we need to update this method when we add,
+    // change or remove any DisconnectReason variants which are used in metrics.
+    // A test ensures this method is up to date.
+    pub fn all() -> Vec<DisconnectReason> {
+        vec![
+            DisconnectReason::DisconnectRequested,
+            DisconnectReason::NetworkError,
+            DisconnectReason::ProtocolError,
+            DisconnectReason::UselessPeer,
+            DisconnectReason::TooManyPeers,
+            DisconnectReason::AlreadyConnected,
+            DisconnectReason::IncompatibleVersion,
+            DisconnectReason::InvalidIdentity,
+            DisconnectReason::ClientQuitting,
+            DisconnectReason::UnexpectedIdentity,
+            DisconnectReason::SelfIdentity,
+            DisconnectReason::PingTimeout,
+            DisconnectReason::SubprotocolError,
+            DisconnectReason::InvalidReason,
+        ]
+    }
 }
 
 // impl display for disconnectreason
@@ -382,5 +409,35 @@ mod tests {
         let capability = Capability::eth(68);
 
         assert_eq!(capability.protocol(), "eth");
+    }
+
+    #[test]
+    fn test_disconnect_reason_all() {
+        use crate::rlpx::p2p::DisconnectReason;
+
+        let all_reasons = DisconnectReason::all();
+
+        assert_eq!(all_reasons.len(), 14);
+
+        // This exhaustive match ensures we check all variants exist in all()
+        // If a new variant is added to the enum, this match will fail to compile
+        for reason in &all_reasons {
+            match reason {
+                DisconnectReason::DisconnectRequested
+                | DisconnectReason::NetworkError
+                | DisconnectReason::ProtocolError
+                | DisconnectReason::UselessPeer
+                | DisconnectReason::TooManyPeers
+                | DisconnectReason::AlreadyConnected
+                | DisconnectReason::IncompatibleVersion
+                | DisconnectReason::InvalidIdentity
+                | DisconnectReason::ClientQuitting
+                | DisconnectReason::UnexpectedIdentity
+                | DisconnectReason::SelfIdentity
+                | DisconnectReason::PingTimeout
+                | DisconnectReason::SubprotocolError
+                | DisconnectReason::InvalidReason => {}
+            }
+        }
     }
 }

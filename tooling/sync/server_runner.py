@@ -11,6 +11,27 @@ import socket
 RPC_URL = "http://localhost:8545"
 CHECK_INTERVAL = 5  # seconds
 
+def format_elapsed_time(seconds):
+    if not isinstance(seconds, (int, float)):
+        raise ValueError("Input must be a number")
+    
+    seconds = abs(seconds)
+    
+    hours = int(seconds // 3600)
+    remaining = seconds % 3600
+    minutes = int(remaining // 60)
+    secs = int(remaining % 60)
+    
+    parts = []
+    if hours > 0:
+        parts.append(f"{hours}h")
+    if minutes > 0:
+        parts.append(f"{minutes}m")
+    if secs > 0 or (hours == 0 and minutes == 0):  # Include seconds if time is 0
+        parts.append(f"{secs}s")
+    
+    return " ".join(parts)
+
 def get_git_commit():
     try:
         cmd = ["git", "rev-parse", "--short", "HEAD"]
@@ -22,7 +43,7 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Run a Makefile with optional variables."
     )
-    parser.add_argument("--snap", action="store_true", help="Whether snap is activated")
+    parser.add_argument("--full-sync", action="store_true", help="Whether full-sync is activated")
     parser.add_argument(
         "--healing", action="store_true", help="Whether healing is activated"
     )
@@ -65,12 +86,12 @@ def parse_args():
     return parser.parse_args()
 
 
-def send_slack_message_failed(header: str, hostname: str, timeout, log_file: str, branch: str):
+def send_slack_message_failed(header: str, hostname: str, maybe_timeout_in_minutes, log_file: str, branch: str):
     try:
         commit = get_git_commit()
         webhook_url = os.environ["SLACK_WEBHOOK_URL_FAILED"]
 
-        timeout = "" if timeout == None else f"\n*Timeout:* {timeout} minutes"
+        maybe_timeout = "" if maybe_timeout_in_minutes == None else f"\n*Timeout:* {format_elapsed_time(maybe_timeout_in_minutes * 60)}"
 
         message = {
             "blocks": [
@@ -85,7 +106,7 @@ def send_slack_message_failed(header: str, hostname: str, timeout, log_file: str
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f"*Server:* `{hostname}`{timeout}\n*Logs in:* `{log_file}`\n*Branch:* `{branch}`\n*Commit:* `{commit if commit else 'N/A'}`"
+                        "text": f"*Server:* `{hostname}`{maybe_timeout}\n*Logs in:* `{log_file}`\n*Branch:* `{branch}`\n*Commit:* `{commit if commit else 'N/A'}`"
                     }
                 }
             ]
@@ -104,7 +125,7 @@ def send_slack_message_failed(header: str, hostname: str, timeout, log_file: str
         return
 
 
-def send_slack_message_success(hostname: str, minutes: str, network: str, log_file: str, branch: str):
+def send_slack_message_success(hostname: str, elapsed, network: str, log_file: str, branch: str, debug_assert: bool):
     try:
         commit = get_git_commit()
         webhook_url = os.environ["SLACK_WEBHOOK_URL_SUCCESS"]
@@ -122,7 +143,7 @@ def send_slack_message_success(hostname: str, minutes: str, network: str, log_fi
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f'*Server:* `{hostname}`\n*Synced in:* {minutes} minutes\n*Logs in:* `{log_file}`\n*Branch:* `{branch}`\n*Commit:* `{commit if commit else "N/A"}`'
+                        "text": f'*Server:* `{hostname}`\n*Synced in:* {format_elapsed_time(elapsed)}\n*Logs in:* `{log_file}`\n*Branch:* `{branch}`\n*Commit:* `{commit if commit else "N/A"}`\n*Validation:* `{"true" if debug_assert else "false"}`'
                     }
                 }
             ]
@@ -151,9 +172,9 @@ def capitalize_network(word):
 def get_variables(args):
     variables = {}
 
-    # Only include SNAP if flag is set
-    if args.snap:
-        variables["SNAP"] = "1"
+    # Only include FULL_SYNC if flag is set
+    if args.full_sync:
+        variables["FULL_SYNC"] = "1"
     if args.healing:
         variables["HEALING"] = "1"
     if args.memory:
@@ -167,7 +188,7 @@ def get_variables(args):
 
 
 def block_production_loop(
-    hostname, args, logs_file, elapsed, start_time, block_production_payload
+    hostname, args, logs_file, elapsed, start_time, block_production_payload, debug_assert
 ):
     current_block_number = 0
     block_start_time = time.time()
@@ -175,7 +196,7 @@ def block_production_loop(
         block_elapsed = time.time() - block_start_time
         if block_elapsed > 30 * 60:  # 30 minutes
             print("✅ Node is fully synced!")
-            send_slack_message_success(hostname, f"{elapsed / 60:.2f}", args.network, f"{logs_file}_{start_time}.log", args.branch)
+            send_slack_message_success(hostname, elapsed, args.network, f"{logs_file}_{start_time}.log", args.branch, debug_assert)
             with open("sync_logs.txt", "a") as f:
                 f.write(f"LOGS_FILE={logs_file}_{start_time}.log SYNCED\n")
             return True
@@ -201,7 +222,7 @@ def block_production_loop(
 
 
 def verification_loop(
-    logs_file, args, hostname, payload, block_production_payload, start_time
+    logs_file, args, hostname, payload, block_production_payload, start_time, debug_assert
 ):
     while True:
         try:
@@ -222,6 +243,7 @@ def verification_loop(
                     elapsed,
                     start_time,
                     block_production_payload,
+                    debug_assert,
                 )
                 return success
             time.sleep(CHECK_INTERVAL)
@@ -230,7 +252,7 @@ def verification_loop(
 
 
 def execution_loop(
-    command, logs_file, args, hostname, payload, block_production_payload
+    command, logs_file, args, hostname, payload, block_production_payload, debug_assert
 ):
     while True:
         start_time = time.time()
@@ -241,7 +263,7 @@ def execution_loop(
             print("No monitor flag set, exiting.")
             break
         success = verification_loop(
-            logs_file, args, hostname, payload, block_production_payload, start_time
+            logs_file, args, hostname, payload, block_production_payload, start_time, debug_assert
         )
         if not success:
             break
@@ -266,7 +288,7 @@ def main():
     }
     try:
         execution_loop(
-            command, logs_file, args, hostname, payload, block_production_payload
+            command, logs_file, args, hostname, payload, block_production_payload, args.debug_assert
         )
     except subprocess.CalledProcessError as e:
         print(f"An error occurred while running the make command: {e}", file=sys.stderr)

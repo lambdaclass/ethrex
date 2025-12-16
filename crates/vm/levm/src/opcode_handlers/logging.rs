@@ -45,6 +45,6 @@ impl<'a> VM<'a> {
 
         self.substate.add_log(log);
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 }

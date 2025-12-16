@@ -3,16 +3,16 @@ use crate::{
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
     memory::Memory,
-    utils::{JumpTargetFilter, restore_cache_state},
+    utils::restore_cache_state,
     vm::VM,
 };
 use bytes::Bytes;
 use ethrex_common::{Address, U256};
-use keccak_hash::H256;
-use std::{
-    collections::{BTreeMap, HashMap},
-    fmt,
-};
+use ethrex_common::{H256, types::Code};
+use std::{collections::HashMap, fmt, hint::assert_unchecked};
+
+/// [`u64`]s that make up a [`U256`]
+const U64_PER_U256: usize = U256::MAX.0.len();
 
 #[derive(Clone, PartialEq, Eq)]
 /// The EVM uses a stack-based architecture and does not use registers like some other VMs.
@@ -71,38 +71,9 @@ impl Stack {
         Ok(value)
     }
 
-    #[inline]
-    pub fn push<const N: usize>(&mut self, values: &[U256; N]) -> Result<(), ExceptionalHalt> {
-        // Since the stack grows downwards, when an offset underflow is detected the stack is
-        // overflowing.
-        let next_offset = self
-            .offset
-            .checked_sub(N)
-            .ok_or(ExceptionalHalt::StackOverflow)?;
-
-        // The following index cannot fail because `next_offset` has already been checked and
-        // `self.offset` is known to be within `STACK_LIMIT`.
-        #[expect(
-            unsafe_code,
-            reason = "self.offset < STACK_LIMIT and next_offset == self.offset - N >= 0"
-        )]
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                values.as_ptr(),
-                self.values
-                    .get_unchecked_mut(next_offset..self.offset)
-                    .as_mut_ptr(),
-                N,
-            );
-        }
-        self.offset = next_offset;
-
-        Ok(())
-    }
-
     /// Push a single U256 value to the stack, faster than the generic push.
     #[inline]
-    pub fn push1(&mut self, value: U256) -> Result<(), ExceptionalHalt> {
+    pub fn push(&mut self, value: U256) -> Result<(), ExceptionalHalt> {
         // Since the stack grows downwards, when an offset underflow is detected the stack is
         // overflowing.
         let next_offset = self
@@ -117,8 +88,33 @@ impl Stack {
             std::ptr::copy_nonoverlapping(
                 value.0.as_ptr(),
                 self.values.get_unchecked_mut(next_offset).0.as_mut_ptr(),
-                4,
+                U64_PER_U256,
             );
+        }
+        self.offset = next_offset;
+
+        Ok(())
+    }
+
+    #[inline]
+    pub fn push_zero(&mut self) -> Result<(), ExceptionalHalt> {
+        // Since the stack grows downwards, when an offset underflow is detected the stack is
+        // overflowing.
+        let next_offset = self
+            .offset
+            .checked_sub(1)
+            .ok_or(ExceptionalHalt::StackOverflow)?;
+
+        // The following index cannot fail because `next_offset` has already been checked and
+        // `self.offset` is known to be within `STACK_LIMIT`.
+        #[expect(unsafe_code, reason = "next_offset == self.offset - 1 >= 0")]
+        unsafe {
+            *self
+                .values
+                .get_unchecked_mut(next_offset)
+                .0
+                .as_mut_ptr()
+                .cast() = [0u64; U64_PER_U256];
         }
         self.offset = next_offset;
 
@@ -138,27 +134,24 @@ impl Stack {
         self.offset == self.values.len()
     }
 
-    pub fn get(&self, index: usize) -> Result<&U256, ExceptionalHalt> {
-        // The following index cannot fail because `self.offset` is known to be within
-        // `STACK_LIMIT`.
-        #[expect(unsafe_code)]
-        unsafe {
-            self.values
-                .get_unchecked(self.offset..)
-                .get(index)
-                .ok_or(ExceptionalHalt::StackUnderflow)
-        }
-    }
-
     #[inline(always)]
-    pub fn swap(&mut self, index: usize) -> Result<(), ExceptionalHalt> {
-        let index = self
-            .offset
-            .checked_add(index)
-            .ok_or(ExceptionalHalt::StackUnderflow)?;
+    pub fn swap<const N: usize>(&mut self) -> Result<(), ExceptionalHalt> {
+        // Compile-time check that ensures `self.offset + N` is safe,
+        // since self.offset is bounded by STACK_LIMIT
+        const {
+            assert!(STACK_LIMIT.checked_add(N).is_some());
+        }
+        #[expect(clippy::arithmetic_side_effects)]
+        let index = self.offset + N;
+
         if index >= self.values.len() {
             return Err(ExceptionalHalt::StackUnderflow);
         }
+
+        #[expect(unsafe_code, reason = "self.offset always < STACK_LIMIT")]
+        unsafe {
+            assert_unchecked(self.offset < STACK_LIMIT)
+        };
 
         self.values.swap(self.offset, index);
         Ok(())
@@ -166,6 +159,36 @@ impl Stack {
 
     pub fn clear(&mut self) {
         self.offset = STACK_LIMIT;
+    }
+
+    /// Pushes a copy of the value at depth N
+    #[inline]
+    pub fn dup<const N: usize>(&mut self) -> Result<(), ExceptionalHalt> {
+        // Compile-time check that ensures `self.offset + N` is safe,
+        // since self.offset is bounded by STACK_LIMIT
+        const {
+            assert!(STACK_LIMIT.checked_add(N).is_some());
+        }
+        #[expect(clippy::arithmetic_side_effects)]
+        let index = self.offset + N;
+        if index >= self.values.len() {
+            return Err(ExceptionalHalt::StackUnderflow);
+        }
+
+        self.offset = self
+            .offset
+            .checked_sub(1)
+            .ok_or(ExceptionalHalt::StackOverflow)?;
+
+        #[expect(unsafe_code, reason = "index < size, offset-1 >= 0")]
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                self.values.get_unchecked_mut(index).0.as_mut_ptr(),
+                self.values.get_unchecked_mut(self.offset).0.as_mut_ptr(),
+                U64_PER_U256,
+            );
+        }
+        Ok(())
     }
 }
 
@@ -204,7 +227,11 @@ pub struct CallFrame {
     /// Max gas a callframe can use
     pub gas_limit: u64,
     /// Keeps track of the remaining gas in the current context.
-    pub gas_remaining: u64,
+    ///
+    /// This is a i64 for performance reasons, to allow faster gas cost substraction and checks.
+    ///
+    /// Additionally, gas limit won't be a problem since https://eips.ethereum.org/EIPS/eip-7825 limits it to 2^24, which is lower than i64::MAX.
+    pub gas_remaining: i64,
     /// Program Counter
     pub pc: usize,
     /// Address of the account that sent the message
@@ -213,8 +240,10 @@ pub struct CallFrame {
     pub to: Address,
     /// Address of the code to execute. Usually the same as `to`, but can be different
     pub code_address: Address,
-    /// Bytecode to execute
-    pub bytecode: Bytes,
+    /// Bytecode to execute.
+    /// Its hash field will be bogus for initcodes, as it is inaccessible to the VM
+    /// unless associated to an account, which doesn't happen for its initcode.
+    pub bytecode: Code,
     /// Value sent along the transaction
     pub msg_value: U256,
     pub stack: Stack,
@@ -229,9 +258,6 @@ pub struct CallFrame {
     pub is_static: bool,
     /// Call stack current depth
     pub depth: usize,
-    /// Lazy blacklist of jump targets. Contains all offsets of 0x5B (JUMPDEST) in literals (after
-    /// push instructions).
-    pub jump_target_filter: JumpTargetFilter,
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub is_create: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
@@ -260,8 +286,9 @@ impl CallFrameBackup {
             .entry(address)
             .or_insert_with(|| LevmAccount {
                 info: account.info.clone(),
-                storage: BTreeMap::new(),
+                storage: Default::default(),
                 status: account.status.clone(),
+                has_storage: account.has_storage,
             });
 
         Ok(())
@@ -289,7 +316,7 @@ impl CallFrame {
         msg_sender: Address,
         to: Address,
         code_address: Address,
-        bytecode: Bytes,
+        bytecode: Code,
         msg_value: U256,
         calldata: Bytes,
         is_static: bool,
@@ -303,18 +330,19 @@ impl CallFrame {
         memory: Memory,
     ) -> Self {
         // Note: Do not use ..Default::default() because it has runtime cost.
+
+        #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         Self {
             gas_limit,
-            gas_remaining: gas_limit,
+            gas_remaining: gas_limit as i64,
             msg_sender,
             to,
             code_address,
-            bytecode: bytecode.clone(),
+            bytecode,
             msg_value,
             calldata,
             is_static,
             depth,
-            jump_target_filter: JumpTargetFilter::new(bytecode),
             should_transfer_value,
             is_create,
             ret_offset,
@@ -330,13 +358,14 @@ impl CallFrame {
 
     #[inline(always)]
     pub fn next_opcode(&self) -> u8 {
-        // 0 is the opcode stop.
-        self.bytecode.get(self.pc).copied().unwrap_or(0)
-    }
-
-    pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
-        self.pc = self.pc.checked_add(count).ok_or(InternalError::Overflow)?;
-        Ok(())
+        if self.pc < self.bytecode.bytecode.len() {
+            #[expect(unsafe_code, reason = "bounds checked above")]
+            unsafe {
+                *self.bytecode.bytecode.get_unchecked(self.pc)
+            }
+        } else {
+            0
+        }
     }
 
     pub fn pc(&self) -> usize {
@@ -344,16 +373,20 @@ impl CallFrame {
     }
 
     /// Increases gas consumption of CallFrame and Environment, returning an error if the callframe gas limit is reached.
+    #[inline(always)]
+    #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
+    #[expect(clippy::arithmetic_side_effects, reason = "arithmethic checked")]
     pub fn increase_consumed_gas(&mut self, gas: u64) -> Result<(), ExceptionalHalt> {
-        self.gas_remaining = self
-            .gas_remaining
-            .checked_sub(gas)
-            .ok_or(ExceptionalHalt::OutOfGas)?;
+        self.gas_remaining -= gas as i64;
+
+        if self.gas_remaining < 0 {
+            return Err(ExceptionalHalt::OutOfGas);
+        }
+
         Ok(())
     }
 
-    pub fn set_code(&mut self, code: Bytes) -> Result<(), VMError> {
-        self.jump_target_filter = JumpTargetFilter::new(code.clone());
+    pub fn set_code(&mut self, code: Code) -> Result<(), VMError> {
         self.bytecode = code;
         Ok(())
     }
@@ -429,7 +462,13 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
-        self.current_call_frame.increment_pc_by(count)
+    #[inline(always)]
+    pub fn advance_pc(&mut self, count: usize) -> Result<(), VMError> {
+        self.current_call_frame.pc = self
+            .current_call_frame
+            .pc
+            .checked_add(count)
+            .ok_or(InternalError::Overflow)?;
+        Ok(())
     }
 }

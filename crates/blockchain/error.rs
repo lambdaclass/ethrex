@@ -1,7 +1,10 @@
-use ethrex_common::types::{
-    BlobsBundleError, BlockHash, InvalidBlockBodyError, InvalidBlockHeaderError,
+use ethrex_common::{
+    H256,
+    types::{BlobsBundleError, BlockHash, InvalidBlockBodyError, InvalidBlockHeaderError},
 };
+use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::error::StoreError;
+use ethrex_trie::TrieError;
 use ethrex_vm::EvmError;
 
 #[derive(Debug, thiserror::Error)]
@@ -16,6 +19,10 @@ pub enum ChainError {
     ParentStateNotFound,
     #[error("DB error: {0}")]
     StoreError(#[from] StoreError),
+    #[error("Trie error: {0}")]
+    TrieError(#[from] TrieError),
+    #[error("RLP decode error: {0}")]
+    RLPDecodeError(#[from] RLPDecodeError),
     #[error("EVM error: {0}")]
     EvmError(EvmError),
     #[error("Invalid Transaction: {0}")]
@@ -50,6 +57,8 @@ impl ChainError {
             ChainError::ParentNotFound => "parent_not_found",
             ChainError::ParentStateNotFound => "parent_state_not_found",
             ChainError::StoreError(_) => "store_error",
+            ChainError::TrieError(_) => "trie_error",
+            ChainError::RLPDecodeError(_) => "rlp_decode_error",
             ChainError::EvmError(_) => "evm_error",
             ChainError::InvalidTransaction(_) => "invalid_transaction",
             ChainError::WitnessGeneration(_) => "witness_generation",
@@ -99,6 +108,10 @@ pub enum MempoolError {
     TxMaxDataSizeError,
     #[error("Transaction gas limit exceeded")]
     TxGasLimitExceededError,
+    #[error(
+        "Transaction gas limit exceeds maximum. Transaction hash: {0}, transaction gas limit: {1}"
+    )]
+    TxMaxGasLimitExceededError(H256, u64),
     #[error("Transaction priority fee above gas fee")]
     TxGasOverflowError,
     #[error("Transaction intrinsic gas overflow")]
@@ -126,7 +139,9 @@ pub enum MempoolError {
     #[error("Requested pooled transaction was not received")]
     RequestedPooledTxNotFound,
     #[error("Transaction sender is invalid {0}")]
-    InvalidTxSender(#[from] secp256k1::Error),
+    InvalidTxSender(#[from] ethrex_common::EcdsaError),
+    #[error("Attempted to replace a pooled transaction with an underpriced transaction")]
+    UnderpricedReplacement,
 }
 
 #[derive(Debug)]
@@ -160,4 +175,8 @@ pub enum InvalidForkChoice {
     InvalidAncestor(BlockHash),
     #[error("Cannot find link between Head and the canonical chain")]
     UnlinkedHead,
+
+    // TODO(#5564): handle arbitrary reorgs
+    #[error("State root of the new head is not reachable from the database")]
+    StateNotReachable,
 }

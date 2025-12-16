@@ -1,6 +1,6 @@
 # Configuration
 
-This page covers the basic configuration options for running an L1 node with ethrex.
+This page covers the basic configuration options for running an L1 node with ethrex. Full list of options can be found at the [CLI reference](../../CLI.md)
 
 ## Sync Modes
 

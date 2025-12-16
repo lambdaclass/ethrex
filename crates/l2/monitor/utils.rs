@@ -1,8 +1,8 @@
 use std::cmp::min;
 
+use ethrex_common::utils::keccak;
 use ethrex_common::{Address, U256};
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
-use keccak_hash::keccak;
 
 use crate::sequencer::errors::MonitorError;
 

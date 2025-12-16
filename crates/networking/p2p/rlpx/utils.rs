@@ -1,15 +1,13 @@
-use crate::types::Node;
+use ethrex_common::utils::keccak;
 use ethrex_common::{H256, H512};
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use secp256k1::ecdh::shared_secret_point;
 use secp256k1::{PublicKey, SecretKey};
-use sha3::{Digest, Keccak256};
+use sha2::{Digest, Sha256};
 use snap::raw::{Decoder as SnappyDecoder, Encoder as SnappyEncoder, max_compress_len};
 use std::array::TryFromSliceError;
-use tracing::{debug, error, warn};
 
 pub fn sha256(data: &[u8]) -> [u8; 32] {
-    use sha2::{Digest, Sha256};
     Sha256::digest(data).into()
 }
 use crate::rlpx::error::CryptographyError;
@@ -49,7 +47,7 @@ pub fn kdf(secret: &[u8], output: &mut [u8]) -> Result<(), CryptographyError> {
 
 /// Cpmputes the node_id from a public key (aka computes the Keccak256 hash of the given public key)
 pub fn node_id(public_key: &H512) -> H256 {
-    H256(Keccak256::new_with_prefix(public_key).finalize().into())
+    keccak(public_key)
 }
 
 /// Decompresses the received public key
@@ -80,17 +78,6 @@ pub fn snappy_compress(encoded_data: Vec<u8>) -> Result<Vec<u8>, RLPEncodeError>
 pub fn snappy_decompress(msg_data: &[u8]) -> Result<Vec<u8>, RLPDecodeError> {
     let mut snappy_decoder = SnappyDecoder::new();
     Ok(snappy_decoder.decompress_vec(msg_data)?)
-}
-
-pub(crate) fn log_peer_debug(node: &Node, text: &str) {
-    debug!("[{0}]: {1}", node, text)
-}
-
-pub(crate) fn log_peer_error(node: &Node, text: &str) {
-    error!("[{0}]: {1}", node, text)
-}
-pub(crate) fn log_peer_warn(node: &Node, text: &str) {
-    warn!("[{0}]: {1}", node, text)
 }
 
 #[cfg(test)]

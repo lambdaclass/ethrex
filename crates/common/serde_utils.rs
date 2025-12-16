@@ -5,7 +5,6 @@ use serde::{Deserialize, Deserializer, Serializer, de::Error, ser::SerializeSeq}
 pub mod u256 {
     use super::*;
     use ethereum_types::U256;
-    use serde_json::Number;
 
     pub mod dec_str {
         use super::*;
@@ -22,32 +21,6 @@ pub mod u256 {
             S: Serializer,
         {
             serializer.serialize_str(&value.to_string())
-        }
-    }
-
-    pub fn deser_number<'de, D>(d: D) -> Result<U256, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = Number::deserialize(d)?.to_string();
-        U256::from_dec_str(&value).map_err(|e| D::Error::custom(e.to_string()))
-    }
-
-    pub fn deser_number_opt<'de, D>(d: D) -> Result<Option<U256>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        // Handle the null case explicitly
-        let opt = Option::<Number>::deserialize(d)?;
-        match opt {
-            Some(number) => {
-                // Convert number to string and parse to U256
-                let value = number.to_string();
-                U256::from_dec_str(&value)
-                    .map(Some)
-                    .map_err(|e| D::Error::custom(e.to_string()))
-            }
-            None => Ok(None),
         }
     }
 
@@ -135,6 +108,31 @@ pub mod u256 {
                     Ok((key, value))
                 })
                 .collect()
+        }
+    }
+    pub mod hex_str_opt {
+        use serde::Serialize;
+
+        use super::*;
+
+        pub fn serialize<S>(value: &Option<U256>, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            Option::<String>::serialize(&value.map(|v| format!("{v:#x}")), serializer)
+        }
+
+        pub fn deserialize<'de, D>(d: D) -> Result<Option<U256>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let value = Option::<String>::deserialize(d)?;
+            match value {
+                Some(s) if !s.is_empty() => U256::from_str_radix(s.trim_start_matches("0x"), 16)
+                    .map_err(|_| D::Error::custom("Failed to deserialize U256 value"))
+                    .map(Some),
+                _ => Ok(None),
+            }
         }
     }
 }

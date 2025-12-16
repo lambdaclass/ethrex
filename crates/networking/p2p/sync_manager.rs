@@ -1,6 +1,9 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use ethrex_blockchain::Blockchain;
@@ -32,11 +35,11 @@ pub struct SyncManager {
 impl SyncManager {
     pub async fn new(
         peer_handler: PeerHandler,
-        sync_mode: SyncMode,
+        sync_mode: &SyncMode,
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
         store: Store,
-        datadir: String,
+        datadir: PathBuf,
     ) -> Self {
         let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
         let syncer = Arc::new(Mutex::new(Syncer::new(
@@ -64,18 +67,6 @@ impl SyncManager {
         sync_manager
     }
 
-    /// Creates a dummy SyncManager for tests where syncing is not needed
-    /// This should only be used in tests as it won't be able to connect to the p2p network
-    pub fn dummy() -> Self {
-        Self {
-            snap_enabled: Arc::new(AtomicBool::new(false)),
-            syncer: Arc::new(Mutex::new(Syncer::dummy())),
-            last_fcu_head: Arc::new(Mutex::new(H256::zero())),
-            store: Store::new("temp.db", ethrex_storage::EngineType::InMemory)
-                .expect("Failed to start Storage Engine"),
-        }
-    }
-
     /// Sets the latest fcu head and starts the next sync cycle if the syncer is currently inactive
     pub fn sync_to_head(&self, fcu_head: H256) {
         self.set_head(fcu_head);
@@ -91,6 +82,11 @@ impl SyncManager {
         } else {
             SyncMode::Full
         }
+    }
+
+    /// Disables snapsync mode
+    pub fn disable_snap(&self) {
+        self.snap_enabled.store(false, Ordering::Relaxed);
     }
 
     /// Updates the last fcu head. This may be used on the next sync cycle if needed

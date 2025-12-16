@@ -1,6 +1,7 @@
 use bytes::{BufMut, Bytes};
 use ethrex_common::types::ForkId;
 use ethrex_common::{H256, H264, H512};
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -9,7 +10,6 @@ use ethrex_rlp::{
 };
 use secp256k1::{PublicKey, SecretKey};
 use serde::{Deserialize, Serialize, ser::Serializer};
-use sha3::{Digest, Keccak256};
 use std::net::Ipv6Addr;
 use std::{
     fmt::Display,
@@ -17,8 +17,23 @@ use std::{
     str::FromStr,
     sync::OnceLock,
 };
+use thiserror::Error;
 
 use crate::utils::node_id;
+
+#[derive(Debug, Error)]
+pub enum NodeError {
+    #[error("Invalid format: {0}")]
+    InvalidFormat(String),
+    #[error("Parse error: {0}")]
+    ParseError(String),
+    #[error("RLP decode error: {0}")]
+    RLPDecodeError(#[from] RLPDecodeError),
+    #[error("Missing field: {0}")]
+    MissingField(String),
+    #[error("Signature error: {0}")]
+    SignatureError(String),
+}
 
 const MAX_NODE_RECORD_ENCODED_SIZE: usize = 300;
 
@@ -27,12 +42,6 @@ pub struct Endpoint {
     pub ip: IpAddr,
     pub udp_port: u16,
     pub tcp_port: u16,
-}
-
-impl Endpoint {
-    pub fn tcp_address(&self) -> Option<SocketAddr> {
-        (self.tcp_port != 0).then_some(SocketAddr::new(self.ip, self.tcp_port))
-    }
 }
 
 impl RLPEncode for Endpoint {
@@ -90,7 +99,8 @@ impl<'de> serde::de::Deserialize<'de> for Node {
     where
         D: serde::Deserializer<'de>,
     {
-        Node::from_str(&<String>::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+        Node::from_str(&<String>::deserialize(deserializer)?)
+            .map_err(|e| serde::de::Error::custom(format!("{}", e)))
     }
 }
 
@@ -104,13 +114,15 @@ impl serde::Serialize for Node {
 }
 
 impl FromStr for Node {
-    type Err = String;
+    type Err = NodeError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             s if s.starts_with("enode://") => Self::from_enode_url(s),
             s if s.starts_with("enr:") => Self::from_enr_url(s),
-            _ => Err("Invalid network address format".into()),
+            _ => Err(NodeError::InvalidFormat(
+                "Invalid network address format".into(),
+            )),
         }
     }
 }
@@ -127,9 +139,22 @@ impl Node {
         }
     }
 
-    pub fn from_enode_url(enode: &str) -> Result<Self, String> {
-        let public_key =
-            H512::from_str(&enode[8..136]).map_err(|_| "Could not parse public_key")?;
+    pub fn client_name(&self) -> &str {
+        self.version
+            .as_deref()
+            .and_then(|version| {
+                let base = version
+                    .split_once('/')
+                    .map(|(name, _)| name.trim())
+                    .unwrap_or_else(|| version.trim());
+                if base.is_empty() { None } else { Some(base) }
+            })
+            .unwrap_or("unknown")
+    }
+
+    pub fn from_enode_url(enode: &str) -> Result<Self, NodeError> {
+        let public_key = H512::from_str(&enode[8..136])
+            .map_err(|_| NodeError::ParseError("Could not parse public_key".into()))?;
 
         let address_start = 137;
         let address_part = &enode[address_start..];
@@ -142,33 +167,39 @@ impl Node {
 
         let socket_address: SocketAddr = address_part
             .parse()
-            .map_err(|_| "Could not parse socket address")?;
+            .map_err(|_| NodeError::ParseError("Could not parse socket address".into()))?;
         let ip = socket_address.ip();
         let port = socket_address.port();
 
         let udp_port = match enode.find("?discport=") {
             Some(pos) => enode[pos + 10..]
                 .parse()
-                .map_err(|_| "Could not parse discport")?,
+                .map_err(|_| NodeError::ParseError("Could not parse discport".into()))?,
             None => port,
         };
 
         Ok(Self::new(ip, udp_port, port, public_key))
     }
 
-    pub fn from_enr_url(enr: &str) -> Result<Self, String> {
+    pub fn from_enr_url(enr: &str) -> Result<Self, NodeError> {
         let base64_decoded = ethrex_common::base64::decode(&enr.as_bytes()[4..]);
-        let record = NodeRecord::decode(&base64_decoded)
-            .map_err(|_| "Could not build node record from enr")?;
+        let record = NodeRecord::decode(&base64_decoded).map_err(NodeError::from)?;
         let pairs = record.decode_pairs();
-        let public_key = pairs.secp256k1.ok_or("public key not found in record")?;
-        let verifying_key = PublicKey::from_slice(public_key.as_bytes())
-            .map_err(|_| "public key could no be built from msg pub key bytes")?;
+        let public_key = pairs.secp256k1.ok_or(NodeError::MissingField(
+            "public key not found in record".into(),
+        ))?;
+        let verifying_key = PublicKey::from_slice(public_key.as_bytes()).map_err(|_| {
+            NodeError::ParseError("public key could not be built from msg pub key bytes".into())
+        })?;
         let encoded = verifying_key.serialize_uncompressed();
         let public_key = H512::from_slice(&encoded[1..]);
 
         let ip: IpAddr = match (pairs.ip, pairs.ip6) {
-            (None, None) => return Err("Ip not found in record, can't construct node".to_string()),
+            (None, None) => {
+                return Err(NodeError::MissingField(
+                    "Ip not found in record, can't construct node".into(),
+                ));
+            }
             (None, Some(ipv6)) => IpAddr::from(ipv6),
             (Some(ipv4), None) => IpAddr::from(ipv4),
             (Some(ipv4), Some(_ipv6)) => IpAddr::from(ipv4),
@@ -179,11 +210,11 @@ impl Node {
         let udp_port = pairs
             .udp_port
             .or(pairs.tcp_port)
-            .ok_or("No port found in record")?;
+            .ok_or(NodeError::MissingField("No port found in record".into()))?;
         let tcp_port = pairs
             .tcp_port
             .or(pairs.udp_port)
-            .ok_or("No port found in record")?;
+            .ok_or(NodeError::MissingField("No port found in record".into()))?;
 
         Ok(Self::new(ip, udp_port, tcp_port, public_key))
     }
@@ -218,8 +249,11 @@ impl Node {
 impl Display for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&format!(
-            "{0}({1}:{2})",
-            self.public_key, self.ip, self.tcp_port
+            "{0} #{1}({2}:{3})",
+            self.client_name(),
+            self.node_id(),
+            self.ip,
+            self.tcp_port
         ))
     }
 }
@@ -231,6 +265,7 @@ pub struct NodeRecord {
     pub seq: u64,
     // holds optional values in (key, value) format
     // value represents the rlp encoded bytes
+    // The key/value pairs must be sorted by key and must be unique
     pub pairs: Vec<(Bytes, Bytes)>,
 }
 
@@ -297,17 +332,17 @@ impl NodeRecord {
         decoded_pairs
     }
 
-    pub fn enr_url(&self) -> Result<String, String> {
+    pub fn enr_url(&self) -> Result<String, NodeError> {
         let rlp_encoded = self.encode_to_vec();
         let base64_encoded = ethrex_common::base64::encode(&rlp_encoded);
         let mut result: String = "enr:".into();
-        let base64_encoded =
-            String::from_utf8(base64_encoded).map_err(|_| "Could not base 64 encode enr record")?;
+        let base64_encoded = String::from_utf8(base64_encoded)
+            .map_err(|_| NodeError::ParseError("Could not base 64 encode enr record".into()))?;
         result.push_str(&base64_encoded);
         Ok(result)
     }
 
-    pub fn from_node(node: &Node, seq: u64, signer: &SecretKey) -> Result<Self, String> {
+    pub fn from_node(node: &Node, seq: u64, signer: &SecretKey) -> Result<Self, NodeError> {
         let mut record = NodeRecord {
             seq,
             ..Default::default()
@@ -337,33 +372,27 @@ impl NodeRecord {
         Ok(record)
     }
 
-    pub fn update_seq(&mut self, signer: &SecretKey) -> Result<(), String> {
-        self.seq += 1;
-        self.sign_record(signer)?;
+    pub fn set_fork_id(&mut self, fork_id: ForkId, signer: &SecretKey) -> Result<(), NodeError> {
+        // Without the Vec wrapper, RLP encoding fork_id directly would produce:
+        // [forkHash, forkNext]
+        // But the spec requires nested lists:
+        // [[forkHash, forkNext]]
+        let eth = vec![fork_id];
+        self.pairs.push(("eth".into(), eth.encode_to_vec().into()));
+
+        //Pairs need to be sorted by their key.
+        //The keys are Bytes which implements Ord, so they can be compared directly. The sorting
+        //will be lexicographic (alphabetical for string keys like "eth", "id", "ip", etc.).
+        self.pairs.sort_by(|a, b| a.0.cmp(&b.0));
+
+        self.signature = self.sign_record(signer)?;
         Ok(())
     }
 
-    pub fn set_fork_id(&mut self, fork_id: &ForkId, signer: &SecretKey) -> Result<(), String> {
-        if let Some((_, value)) = self.pairs.iter().find(|(k, _)| k == "eth") {
-            if *fork_id == ForkId::decode(&value[1..]).expect("No fork Id in NodeRecord pairs") {
-                return Ok(());
-            }
-        }
-
-        // remove previous eth version
-        self.pairs.retain(|(k, _)| k != "eth");
-
-        self.pairs
-            .push(("eth".into(), vec![fork_id.clone()].encode_to_vec().into()));
-
-        self.update_seq(signer)?;
-        Ok(())
-    }
-
-    fn sign_record(&mut self, signer: &SecretKey) -> Result<H512, String> {
+    fn sign_record(&self, signer: &SecretKey) -> Result<H512, NodeError> {
         let digest = &self.get_signature_digest();
         let msg = secp256k1::Message::from_digest_slice(digest)
-            .map_err(|_| "Invalid message digest".to_string())?;
+            .map_err(|_| NodeError::SignatureError("Invalid message digest".into()))?;
         let (_recovery_id, signature_bytes) = secp256k1::SECP256K1
             .sign_ecdsa_recoverable(&msg, signer)
             .serialize_compact();
@@ -371,14 +400,13 @@ impl NodeRecord {
         Ok(H512::from_slice(&signature_bytes))
     }
 
-    pub fn get_signature_digest(&self) -> Vec<u8> {
+    pub fn get_signature_digest(&self) -> [u8; 32] {
         let mut rlp = vec![];
         structs::Encoder::new(&mut rlp)
             .encode_field(&self.seq)
             .encode_key_value_list::<Bytes>(&self.pairs)
             .finish();
-        let digest = Keccak256::digest(&rlp);
-        digest.to_vec()
+        keccak_hash(&rlp)
     }
 }
 
@@ -386,6 +414,11 @@ impl From<NodeRecordPairs> for Vec<(Bytes, Bytes)> {
     fn from(value: NodeRecordPairs) -> Self {
         let mut pairs = vec![];
         if let Some(eth) = value.eth {
+            // Without the Vec wrapper, RLP encoding fork_id directly would produce:
+            // [forkHash, forkNext]
+            // But the spec requires nested lists:
+            // [[forkHash, forkNext]]
+            let eth = vec![eth];
             pairs.push(("eth".into(), eth.encode_to_vec().into()));
         }
         if let Some(id) = value.id {
@@ -484,6 +517,7 @@ mod tests {
         utils::public_key_from_signing_key,
     };
     use ethrex_common::H512;
+    use ethrex_rlp::decode::RLPDecode;
     use ethrex_storage::{EngineType, Store};
     use secp256k1::SecretKey;
     use std::{net::SocketAddr, str::FromStr};
@@ -552,7 +586,7 @@ mod tests {
         .unwrap();
         let addr = std::net::SocketAddr::from_str("127.0.0.1:30303").unwrap();
 
-        let storage =
+        let mut storage =
             Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
         storage
             .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
@@ -573,5 +607,42 @@ mod tests {
         let expected_enr_string = "enr:-Iu4QIQVZPoFHwH3TCVkFKpW3hm28yj5HteKEO0QTVsavAGgD9ISdBmAgsIyUzdD9Yrqc84EhT067h1VA1E1HSLKcMgBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";
 
         assert_eq!(record.enr_url().unwrap(), expected_enr_string);
+    }
+
+    #[tokio::test]
+    async fn encode_decode_node_record_with_forkid() {
+        let signer = SecretKey::from_slice(&[
+            16, 125, 177, 238, 167, 212, 168, 215, 239, 165, 77, 224, 199, 143, 55, 205, 9, 194,
+            87, 139, 92, 46, 30, 191, 74, 37, 68, 242, 38, 225, 104, 246,
+        ])
+        .unwrap();
+        let addr = std::net::SocketAddr::from_str("127.0.0.1:30303").unwrap();
+
+        let mut storage =
+            Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
+        storage
+            .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
+            .await
+            .expect("Failed to build test genesis");
+
+        let node = Node::new(
+            addr.ip(),
+            addr.port(),
+            addr.port(),
+            public_key_from_signing_key(&signer),
+        );
+        let fork_id = storage.get_fork_id().await.unwrap();
+
+        let mut record = NodeRecord::from_node(&node, 1, &signer).unwrap();
+        record.set_fork_id(fork_id.clone(), &signer).unwrap();
+
+        record.sign_record(&signer).unwrap();
+
+        let enr_url = record.enr_url().unwrap();
+        let base64_decoded = ethrex_common::base64::decode(&enr_url.as_bytes()[4..]);
+        let parsed_record = NodeRecord::decode(&base64_decoded).unwrap();
+        let pairs = parsed_record.decode_pairs();
+
+        assert_eq!(pairs.eth, Some(fork_id));
     }
 }
