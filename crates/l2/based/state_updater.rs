@@ -228,7 +228,7 @@ impl StateUpdater {
         );
         self.store
             .forkchoice_update(
-                None,
+                vec![],
                 *last_l2_committed_block_number,
                 last_l2_committed_batch_block_hash,
                 None,
