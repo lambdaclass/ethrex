@@ -36,7 +36,7 @@ Example of a possible state after stopping fast sync due to staleness.
 
 In the example, even if we find that node { hash: 0x317f, path: 0 } is correct, we still need to check all its children in the DB (in this case none are present).
 
-To solve the second problem, we introduce an optimization, which is called the "Membatch"^2. This allows us to maintain a new invariant:
+To solve the second problem, we introduce an optimization, which is called the "Membatch"[^2]. This allows us to maintain a new invariant:
 
 [^2]: The membatch is an idea taken from geth, and the name comes from their code. The name should be updated to "pendingNodes" as it reflects it current use.
 
