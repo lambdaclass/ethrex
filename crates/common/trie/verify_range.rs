@@ -11,6 +11,9 @@ use crate::{
     node_hash::NodeHash,
 };
 
+#[cfg(test)]
+use hex_literal::hex;
+
 /// Verifies that the key value range belongs to the trie with the given root given the edge proofs for the range
 /// Also returns true if there is more state to be fetched (aka if there are more keys to the right of the given range)
 pub fn verify_range(
@@ -458,13 +461,13 @@ mod tests {
         .collect::<Vec<_>>();
         let proof = vec![
             // root node leading to the cf5f.. branch and the 2000..0000 leaf
-            hex::decode("f8518080a051786a8d3bc13523fe2a4a4de42ba891617b2aad3a2da9a0681c6efa2263f434808080808080808080a0f62210bb6894ff56c877f572781fcddb0682669e4e0ffa8e69c309ec83cc176280808080").unwrap(),
+            hex!("f8518080a051786a8d3bc13523fe2a4a4de42ba891617b2aad3a2da9a0681c6efa2263f434808080808080808080a0f62210bb6894ff56c877f572781fcddb0682669e4e0ffa8e69c309ec83cc176280808080").to_vec(),
             // extension node leading to the cf5f.. branch
-            hex::decode("e6841f5fef70a0c6604c42272d88b672f55ba740994b7f87602f849fc650ae5f818189336f8439").unwrap(),
+            hex!("e6841f5fef70a0c6604c42272d88b672f55ba740994b7f87602f849fc650ae5f818189336f8439").to_vec(),
             // branch with cf5f..4446 and cf5f..bd13
-            hex::decode("f84d8080808080808080de9c3e5b2031bce48065c29b2550399c1f21e84621770454a2286fbd444601de9c3e0d63e372a3003b4b5ce989b0a8bd5eeaac19e6787d5b0f078fbd130180808080808080").unwrap(),
+            hex!("f84d8080808080808080de9c3e5b2031bce48065c29b2550399c1f21e84621770454a2286fbd444601de9c3e0d63e372a3003b4b5ce989b0a8bd5eeaac19e6787d5b0f078fbd130180808080808080").to_vec(),
             // leaf 2000..0000
-            hex::decode("e2a0300000000000000000000000000000000000000000000000000000000000000001").unwrap()
+            hex!("e2a0300000000000000000000000000000000000000000000000000000000000000001").to_vec()
         ];
         let start_hash =
             H256::from_str("2000000000000000000000000000000000000000000000000000000000000000")

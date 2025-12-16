@@ -718,6 +718,7 @@ mod tests {
     use std::{fs::File, io::BufReader};
 
     use ethereum_types::H160;
+    use hex_literal::hex;
 
     use crate::types::INITIAL_BASE_FEE;
 
@@ -751,8 +752,9 @@ mod tests {
             prague_time: Some(1718232101),
             terminal_total_difficulty: Some(0),
             terminal_total_difficulty_passed: true,
-            deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
-                .unwrap(),
+            deposit_contract_address: H160::from_slice(&hex!(
+                "4242424242424242424242424242424242424242"
+            )),
             // Note this BlobSchedule config is not the default
             blob_schedule: BlobSchedule {
                 cancun: ForkBlobSchedule {
@@ -780,17 +782,20 @@ mod tests {
         assert_eq!(genesis.timestamp, 1718040081);
         // Check alloc field
         // We will only check a couple of the hashmap's values as it is quite large
-        let addr_a = Address::from_str("0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02").unwrap();
+        let addr_a = Address::from_slice(&hex!("000f3df6d732807ef1319fb7b8bb8522d0beac02"));
         assert!(genesis.alloc.contains_key(&addr_a));
         let expected_account_a = GenesisAccount {
-        code: Bytes::from(hex::decode("3373fffffffffffffffffffffffffffffffffffffffe14604d57602036146024575f5ffd5b5f35801560495762001fff810690815414603c575f5ffd5b62001fff01545f5260205ff35b5f5ffd5b62001fff42064281555f359062001fff015500").unwrap()),
-        balance: 0.into(),
-        nonce: 1,
-        storage: Default::default(),
-    };
+            code: Bytes::from(
+                hex!("3373fffffffffffffffffffffffffffffffffffffffe14604d57602036146024575f5ffd5b5f35801560495762001fff810690815414603c575f5ffd5b62001fff01545f5260205ff35b5f5ffd5b62001fff42064281555f359062001fff015500")
+                    .to_vec(),
+            ),
+            balance: 0.into(),
+            nonce: 1,
+            storage: Default::default(),
+        };
         assert_eq!(genesis.alloc[&addr_a], expected_account_a);
         // Check some storage values from another account
-        let addr_b = Address::from_str("0x4242424242424242424242424242424242424242").unwrap();
+        let addr_b = Address::from_slice(&hex!("4242424242424242424242424242424242424242"));
         assert!(genesis.alloc.contains_key(&addr_b));
         let addr_b_storage = &genesis.alloc[&addr_b].storage;
         assert_eq!(
@@ -839,8 +844,9 @@ mod tests {
         assert_eq!(header.coinbase, Address::default());
         assert_eq!(
             header.state_root,
-            H256::from_str("0x2dab6a1d6d638955507777aecea699e6728825524facbd446bd4e86d44fa5ecd")
-                .unwrap()
+            H256::from_slice(&hex!(
+                "2dab6a1d6d638955507777aecea699e6728825524facbd446bd4e86d44fa5ecd"
+            ))
         );
         assert_eq!(header.transactions_root, compute_transactions_root(&[]));
         assert_eq!(header.receipts_root, compute_receipts_root(&[]));
@@ -876,8 +882,9 @@ mod tests {
         let genesis_block_hash = genesis.get_block().hash();
         assert_eq!(
             genesis_block_hash,
-            H256::from_str("0xcb5306dd861d0f2c1f9952fbfbc75a46d0b6ce4f37bea370c3471fe8410bf40b")
-                .unwrap()
+            H256::from_slice(&hex!(
+                "cb5306dd861d0f2c1f9952fbfbc75a46d0b6ce4f37bea370c3471fe8410bf40b"
+            ))
         )
     }
 
@@ -898,9 +905,9 @@ mod tests {
         let genesis: Genesis =
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
         let computed_block_hash = genesis.get_block().hash();
-        let genesis_block_hash =
-            H256::from_str("0x30f516e34fc173bb5fc4daddcc7532c4aca10b702c7228f3c806b4df2646fb7e")
-                .unwrap();
+        let genesis_block_hash = H256::from_slice(&hex!(
+            "30f516e34fc173bb5fc4daddcc7532c4aca10b702c7228f3c806b4df2646fb7e"
+        ));
         assert_eq!(genesis_block_hash, computed_block_hash)
     }
 
@@ -943,8 +950,9 @@ mod tests {
                 },
                 ..Default::default()
             },
-            deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
-                .unwrap(),
+            deposit_contract_address: H160::from_slice(&hex!(
+                "4242424242424242424242424242424242424242"
+            )),
             ..Default::default()
         };
         assert_eq!(&config, &expected_chain_config);
@@ -976,8 +984,9 @@ mod tests {
                 },
                 ..Default::default()
             },
-            deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
-                .unwrap(),
+            deposit_contract_address: H160::from_slice(&hex!(
+                "4242424242424242424242424242424242424242"
+            )),
             ..Default::default()
         };
         assert_eq!(&config, &expected_chain_config);
@@ -1016,8 +1025,9 @@ mod tests {
                 },
                 ..Default::default()
             },
-            deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
-                .unwrap(),
+            deposit_contract_address: H160::from_slice(&hex!(
+                "4242424242424242424242424242424242424242"
+            )),
             ..Default::default()
         };
         assert_eq!(&config, &expected_chain_config);
@@ -1056,8 +1066,9 @@ mod tests {
                 },
                 ..Default::default()
             },
-            deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
-                .unwrap(),
+            deposit_contract_address: H160::from_slice(&hex!(
+                "4242424242424242424242424242424242424242"
+            )),
             ..Default::default()
         };
         assert_eq!(&config, &expected_chain_config);

@@ -207,7 +207,7 @@ mod tests {
     #[test]
     fn encode_fork_id2() {
         let fork = ForkId {
-            fork_hash: H32::from_str("0xdeadbeef").unwrap(),
+            fork_hash: H32::from_slice(&hex!("deadbeef")),
             fork_next: u64::from_str_radix("baddcafe", 16).unwrap(),
         };
         let expected = hex!("ca84deadbeef84baddcafe");
@@ -269,7 +269,7 @@ mod tests {
                 head: 0,
                 time: 0,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xc61a6098").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("c61a6098")),
                     fork_next: 1696000704,
                 },
                 is_valid: true,
@@ -278,7 +278,7 @@ mod tests {
                 head: 123,
                 time: 0,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xc61a6098").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("c61a6098")),
                     fork_next: 1696000704,
                 },
                 is_valid: true,
@@ -287,7 +287,7 @@ mod tests {
                 head: 123,
                 time: 1696000704,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xfd4f016b").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("fd4f016b")),
                     fork_next: 1707305664,
                 },
                 is_valid: true,
@@ -296,7 +296,7 @@ mod tests {
                 head: 123,
                 time: 1707305663,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xfd4f016b").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("fd4f016b")),
                     fork_next: 1707305664,
                 },
                 is_valid: true,
@@ -305,7 +305,7 @@ mod tests {
                 head: 123,
                 time: 1707305664,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0x9b192ad0").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("9b192ad0")),
                     fork_next: 1740434112,
                 },
                 is_valid: true,
@@ -314,7 +314,7 @@ mod tests {
                 head: 123,
                 time: 1740434111,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0x9b192ad0").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("9b192ad0")),
                     fork_next: 1740434112,
                 },
                 is_valid: true,
@@ -323,7 +323,7 @@ mod tests {
                 head: 123,
                 time: 1740434112,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xdfbd9bed").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("dfbd9bed")),
                     fork_next: 1759308480,
                 },
                 is_valid: true,
@@ -332,7 +332,7 @@ mod tests {
                 head: 123,
                 time: 1759308479,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xdfbd9bed").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("dfbd9bed")),
                     fork_next: 1759308480,
                 },
                 is_valid: true,
@@ -341,7 +341,7 @@ mod tests {
                 head: 123,
                 time: 1759308480,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0x783def52").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("783def52")),
                     fork_next: 1759800000,
                 },
                 is_valid: true,
@@ -350,7 +350,7 @@ mod tests {
                 head: 123,
                 time: 1759799999,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0x783def52").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("783def52")),
                     fork_next: 1759800000,
                 },
                 is_valid: true,
@@ -359,7 +359,7 @@ mod tests {
                 head: 123,
                 time: 1759800000,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xa280a45c").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("a280a45c")),
                     fork_next: 1760389824,
                 },
                 is_valid: true,
@@ -368,7 +368,7 @@ mod tests {
                 head: 123,
                 time: 1760389823,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xa280a45c").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("a280a45c")),
                     fork_next: 1760389824,
                 },
                 is_valid: true,
@@ -377,7 +377,7 @@ mod tests {
                 head: 123,
                 time: 1760389824,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0x9bc6cb31").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("9bc6cb31")),
                     fork_next: 0,
                 },
                 is_valid: true,
@@ -386,7 +386,7 @@ mod tests {
                 head: 123,
                 time: 2740434112,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0x9bc6cb31").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("9bc6cb31")),
                     fork_next: 0,
                 },
                 is_valid: true,
@@ -409,7 +409,7 @@ mod tests {
                 head: 123,
                 time: 0,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xbef71d30").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("bef71d30")),
                     fork_next: 1742999832,
                 },
                 is_valid: true,
@@ -418,7 +418,7 @@ mod tests {
                 head: 123,
                 time: 1742999831,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xbef71d30").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("bef71d30")),
                     fork_next: 1742999832,
                 },
                 is_valid: true,
@@ -427,7 +427,7 @@ mod tests {
                 head: 123,
                 time: 1742999832,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0x0929e24e").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("0929e24e")),
                     fork_next: 1761677592,
                 },
                 is_valid: true,
@@ -436,7 +436,7 @@ mod tests {
                 head: 123,
                 time: 1761677591,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0x0929e24e").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("0929e24e")),
                     fork_next: 1761677592,
                 },
                 is_valid: true,
@@ -445,7 +445,7 @@ mod tests {
                 head: 123,
                 time: 1761677592,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xe7e0e7ff").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("e7e0e7ff")),
                     fork_next: 1762365720,
                 },
                 is_valid: true,
@@ -454,7 +454,7 @@ mod tests {
                 head: 123,
                 time: 1762365719,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xe7e0e7ff").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("e7e0e7ff")),
                     fork_next: 1762365720,
                 },
                 is_valid: true,
@@ -463,7 +463,7 @@ mod tests {
                 head: 123,
                 time: 1762365720,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0x3893353e").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("3893353e")),
                     fork_next: 1762955544,
                 },
                 is_valid: true,
@@ -472,7 +472,7 @@ mod tests {
                 head: 123,
                 time: 1762955543,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0x3893353e").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("3893353e")),
                     fork_next: 1762955544,
                 },
                 is_valid: true,
@@ -481,7 +481,7 @@ mod tests {
                 head: 123,
                 time: 1762955544,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0x23aa1351").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("23aa1351")),
                     fork_next: 0,
                 },
                 is_valid: true,
@@ -490,7 +490,7 @@ mod tests {
                 head: 123,
                 time: 2740434112,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0x23aa1351").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("23aa1351")),
                     fork_next: 0,
                 },
                 is_valid: true,
@@ -517,7 +517,7 @@ mod tests {
                 head: 0,
                 time: 0,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xfe3366e7").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("fe3366e7")),
                     fork_next: 1735371,
                 },
                 is_valid: true,
@@ -526,7 +526,7 @@ mod tests {
                 head: 1735370,
                 time: 0,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xfe3366e7").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("fe3366e7")),
                     fork_next: 1735371,
                 },
                 is_valid: true,
@@ -535,7 +535,7 @@ mod tests {
                 head: 1735371,
                 time: 0,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xb96cbd13").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("b96cbd13")),
                     fork_next: 1677557088,
                 },
                 is_valid: true,
@@ -544,7 +544,7 @@ mod tests {
                 head: 1735372,
                 time: 1677557087,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xb96cbd13").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("b96cbd13")),
                     fork_next: 1677557088,
                 },
                 is_valid: true,
@@ -553,7 +553,7 @@ mod tests {
                 head: 1735372,
                 time: 1677557088,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xf7f9bc08").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("f7f9bc08")),
                     fork_next: 1706655072,
                 },
                 is_valid: true,
@@ -562,7 +562,7 @@ mod tests {
                 head: 1735372,
                 time: 1706655071,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xf7f9bc08").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("f7f9bc08")),
                     fork_next: 1706655072,
                 },
                 is_valid: true,
@@ -571,7 +571,7 @@ mod tests {
                 head: 1735372,
                 time: 1706655072,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0x88cf81d9").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("88cf81d9")),
                     fork_next: 1741159776,
                 },
                 is_valid: true,
@@ -580,7 +580,7 @@ mod tests {
                 head: 1735372,
                 time: 1741159775,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0x88cf81d9").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("88cf81d9")),
                     fork_next: 1741159776,
                 },
                 is_valid: true,
@@ -589,7 +589,7 @@ mod tests {
                 head: 1735372,
                 time: 1741159776,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xed88b5fd").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("ed88b5fd")),
                     fork_next: 1760427360,
                 },
                 is_valid: true,
@@ -598,7 +598,7 @@ mod tests {
                 head: 1735372,
                 time: 1760427359,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xed88b5fd").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("ed88b5fd")),
                     fork_next: 1760427360,
                 },
                 is_valid: true,
@@ -607,7 +607,7 @@ mod tests {
                 head: 1735372,
                 time: 1760427360,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xe2ae4999").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("e2ae4999")),
                     fork_next: 1761017184,
                 },
                 is_valid: true,
@@ -616,7 +616,7 @@ mod tests {
                 head: 1735372,
                 time: 1761017183,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0xe2ae4999").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("e2ae4999")),
                     fork_next: 1761017184,
                 },
                 is_valid: true,
@@ -625,7 +625,7 @@ mod tests {
                 head: 1735372,
                 time: 1761017184,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0x56078a1e").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("56078a1e")),
                     fork_next: 1761607008,
                 },
                 is_valid: true,
@@ -634,7 +634,7 @@ mod tests {
                 head: 1735372,
                 time: 1761607007,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0x56078a1e").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("56078a1e")),
                     fork_next: 1761607008,
                 },
                 is_valid: true,
@@ -643,7 +643,7 @@ mod tests {
                 head: 1735372,
                 time: 1761607008,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0x268956b6").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("268956b6")),
                     fork_next: 0,
                 },
                 is_valid: true,
@@ -652,7 +652,7 @@ mod tests {
                 head: 1735372,
                 time: 2741159776,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0x268956b6").unwrap(),
+                    fork_hash: H32::from_slice(&hex!("268956b6")),
                     fork_next: 0,
                 },
                 is_valid: true,
@@ -665,15 +665,15 @@ mod tests {
     fn remote_next_fork_passed_locally() {
         let local_head_block_number = 1000;
         let local_a = ForkId {
-            fork_hash: H32::from_str("0x88cf81d9").unwrap(),
+            fork_hash: H32::from_slice(&hex!("88cf81d9")),
             fork_next: 0,
         };
         let local_b = ForkId {
-            fork_hash: H32::from_str("0x88cf81d9").unwrap(),
+            fork_hash: H32::from_slice(&hex!("88cf81d9")),
             fork_next: 1500,
         };
         let remote = ForkId {
-            fork_hash: H32::from_str("0x88cf81d9").unwrap(),
+            fork_hash: H32::from_slice(&hex!("88cf81d9")),
             fork_next: 100,
         };
         let result_a = local_a.is_valid(
@@ -720,7 +720,7 @@ mod tests {
             head: 5443392,
             time: local_time,
             fork_id: ForkId {
-                fork_hash: H32::from_str("0xf7f9bc08").unwrap(),
+                fork_hash: H32::from_slice(&hex!("f7f9bc08")),
                 fork_next: 0,
             },
             is_valid: false,

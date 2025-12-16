@@ -3137,16 +3137,17 @@ mod tests {
 
     #[test]
     fn legacy_tx_rlp_decode() {
-        let encoded_tx = "f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4";
-        let encoded_tx_bytes = hex::decode(encoded_tx).unwrap();
-        let tx = LegacyTransaction::decode(&encoded_tx_bytes).unwrap();
+        let encoded_tx = hex!(
+            "f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4"
+        );
+        let tx = LegacyTransaction::decode(&encoded_tx).unwrap();
         let expected_tx = LegacyTransaction {
             nonce: 0,
             gas_price: U256::from(1001000000u64),
             gas: 63000,
-            to: TxKind::Call(Address::from_slice(
-                &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
-            )),
+            to: TxKind::Call(Address::from_slice(&hex!(
+                "6177843db3138ae69679a54b95cf345ed759450d"
+            ))),
             value: 3000000000000000_u64.into(),
             data: Bytes::new(),
             r: U256::from_str_radix(
@@ -3167,16 +3168,17 @@ mod tests {
 
     #[test]
     fn eip1559_tx_rlp_decode() {
-        let encoded_tx = "f86c8330182480114e82f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee53800080c080a0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4";
-        let encoded_tx_bytes = hex::decode(encoded_tx).unwrap();
-        let tx = EIP1559Transaction::decode(&encoded_tx_bytes).unwrap();
+        let encoded_tx = hex!(
+            "f86c8330182480114e82f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee53800080c080a0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4"
+        );
+        let tx = EIP1559Transaction::decode(&encoded_tx).unwrap();
         let expected_tx = EIP1559Transaction {
             nonce: 0,
             max_fee_per_gas: 78,
             max_priority_fee_per_gas: 17,
-            to: TxKind::Call(Address::from_slice(
-                &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
-            )),
+            to: TxKind::Call(Address::from_slice(&hex!(
+                "6177843db3138ae69679a54b95cf345ed759450d"
+            ))),
             value: 3000000000000000_u64.into(),
             data: Bytes::new(),
             signature_r: U256::from_str_radix(
@@ -3203,9 +3205,9 @@ mod tests {
         let tx_kind_create = r#""""#;
         let tx_kind_call = r#""0x6177843db3138ae69679A54b95cf345ED759450d""#;
         let deserialized_tx_kind_create = TxKind::Create;
-        let deserialized_tx_kind_call = TxKind::Call(Address::from_slice(
-            &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
-        ));
+        let deserialized_tx_kind_call = TxKind::Call(Address::from_slice(&hex!(
+            "6177843db3138ae69679a54b95cf345ed759450d"
+        )));
         assert_eq!(
             deserialized_tx_kind_create,
             serde_json::from_str(tx_kind_create).unwrap()
@@ -3257,20 +3259,16 @@ mod tests {
             r#type: TxType::EIP2930,
             nonce: Some(2),
             to: TxKind::Create,
-            from: Address::from_slice(
-                &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
-            ),
+            from: Address::from_slice(&hex!("6177843db3138ae69679a54b95cf345ed759450d")),
             gas: Some(0x5208),
             value: U256::from(1),
-            input: Bytes::from(hex::decode("010203040506").unwrap()),
+            input: Bytes::from(hex!("010203040506").to_vec()),
             gas_price: 7,
             max_priority_fee_per_gas: Default::default(),
             max_fee_per_gas: Default::default(),
             max_fee_per_blob_gas: Default::default(),
             access_list: vec![AccessListEntry {
-                address: Address::from_slice(
-                    &hex::decode("000f3df6d732807ef1319fb7b8bb8522d0beac02").unwrap(),
-                ),
+                address: Address::from_slice(&hex!("000f3df6d732807ef1319fb7b8bb8522d0beac02")),
                 storage_keys: vec![H256::from_low_u64_be(12), H256::from_low_u64_be(8203)],
             }],
             fee_token: None,
@@ -3312,20 +3310,16 @@ mod tests {
             r#type: TxType::EIP2930,
             nonce: Some(2),
             to: TxKind::Create,
-            from: Address::from_slice(
-                &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
-            ),
+            from: Address::from_slice(&hex!("6177843db3138ae69679a54b95cf345ed759450d")),
             gas: Some(0x5208),
             value: U256::from(1),
-            input: Bytes::from(hex::decode("010203040506").unwrap()),
+            input: Bytes::from(hex!("010203040506").to_vec()),
             gas_price: 7,
             max_priority_fee_per_gas: Default::default(),
             max_fee_per_gas: Default::default(),
             max_fee_per_blob_gas: Default::default(),
             access_list: vec![AccessListEntry {
-                address: Address::from_slice(
-                    &hex::decode("000f3df6d732807ef1319fb7b8bb8522d0beac02").unwrap(),
-                ),
+                address: Address::from_slice(&hex!("000f3df6d732807ef1319fb7b8bb8522d0beac02")),
                 storage_keys: vec![H256::from_low_u64_be(12), H256::from_low_u64_be(8203)],
             }],
             fee_token: None,
@@ -3373,9 +3367,7 @@ mod tests {
         let deserialized_eip4844_transaction = EIP4844Transaction {
             chain_id: 0x01,
             nonce: 0x02,
-            to: Address::from_slice(
-                &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
-            ),
+            to: Address::from_slice(&hex!("6177843db3138ae69679a54b95cf345ed759450d")),
             max_priority_fee_per_gas: 1,
             max_fee_per_gas: 1,
             max_fee_per_blob_gas: U256::from(0x03),
@@ -3384,9 +3376,7 @@ mod tests {
             // 03 in hex is 0x3033, that's why the 'input' has that number.
             data: Bytes::from_static(b"03"),
             access_list: vec![(
-                Address::from_slice(
-                    &hex::decode("000f3df6d732807ef1319fb7b8bb8522d0beac02").unwrap(),
-                ),
+                Address::from_slice(&hex!("000f3df6d732807ef1319fb7b8bb8522d0beac02")),
                 vec![H256::from_low_u64_be(12), H256::from_low_u64_be(8203)],
             )],
             blob_versioned_hashes: vec![H256::from_low_u64_be(1), H256::from_low_u64_be(2)],
@@ -3410,11 +3400,13 @@ mod tests {
             max_priority_fee_per_gas: 1000,
             max_fee_per_gas: 2000,
             gas_limit: 21000,
-            to: TxKind::Call(H160::from_str("0x000a52D537c4150ec274dcE3962a0d179B7E71B0").unwrap()),
+            to: TxKind::Call(H160::from_slice(&hex!(
+                "000a52d537c4150ec274dce3962a0d179b7e71b0"
+            ))),
             value: U256::from(100000),
             data: Bytes::from_static(b"03"),
             access_list: vec![(
-                H160::from_str("0x000a52D537c4150ec274dcE3962a0d179B7E71B3").unwrap(),
+                H160::from_slice(&hex!("000a52d537c4150ec274dce3962a0d179b7e71b3")),
                 vec![H256::zero()],
             )],
             signature_y_parity: true,
@@ -3443,7 +3435,7 @@ mod tests {
             max_priority_fee_per_gas: 1000,
             max_fee_per_gas: 2000,
             gas_limit: 21000,
-            to: Address::from_str("0x000a52D537c4150ec274dcE3962a0d179B7E71B0").unwrap(),
+            to: Address::from_slice(&hex!("000a52d537c4150ec274dce3962a0d179b7e71b0")),
             value: U256::from(100000),
             data: Bytes::from_static(b"03"),
             access_list: vec![],
@@ -3452,7 +3444,7 @@ mod tests {
             signature_s: U256::zero(),
             authorization_list: vec![AuthorizationTuple {
                 chain_id: U256::from(65536999),
-                address: H160::from_str("0x000a52D537c4150ec274dcE3962a0d179B7E71B1").unwrap(),
+                address: H160::from_slice(&hex!("000a52d537c4150ec274dce3962a0d179b7e71b1")),
                 nonce: 2,
                 y_parity: U256::one(),
                 r_signature: U256::from(22),
@@ -3481,13 +3473,13 @@ mod tests {
             max_priority_fee_per_gas: 875000000,
             max_fee_per_gas: 875000000,
             gas_limit: 42000u64,
-            to: TxKind::Call(
-                Address::from_str("0x8943545177806ed17b9f23f0a21ee5948ecaa776").unwrap(),
-            ),
+            to: TxKind::Call(Address::from_slice(&hex!(
+                "8943545177806ed17b9f23f0a21ee5948ecaa776"
+            ))),
             value: U256::from(500000000000000000000000000u128),
             data: Bytes::new(),
             access_list: vec![],
-            from: Address::from_str("0x8943545177806ed17b9f23f0a21ee5948ecaa776").unwrap(),
+            from: Address::from_slice(&hex!("8943545177806ed17b9f23f0a21ee5948ecaa776")),
             ..Default::default()
         };
 
@@ -3508,9 +3500,9 @@ mod tests {
             nonce: 1,
             gas_price: U256::from(20_000_000_000u64),
             gas: 21000,
-            to: TxKind::Call(
-                Address::from_str("0x742d35Cc6634C0532925a3b844Bc454e4438f44e").unwrap(),
-            ),
+            to: TxKind::Call(Address::from_slice(&hex!(
+                "742d35cc6634c0532925a3b844bc454e4438f44e"
+            ))),
             value: U256::from(1_000_000_000_000_000_000u64),
             data: Bytes::default(),
             v: U256::from(27),
@@ -3533,13 +3525,10 @@ mod tests {
     #[test]
     fn test_eip2930_transaction_into_generic() {
         let access_list = vec![(
-            Address::from_str("0x742d35Cc6634C0532925a3b844Bc454e4438f44e").unwrap(),
-            vec![
-                H256::from_str(
-                    "0x1234567890123456789012345678901234567890123456789012345678901234",
-                )
-                .unwrap(),
-            ],
+            Address::from_slice(&hex!("742d35cc6634c0532925a3b844bc454e4438f44e")),
+            vec![H256::from_slice(&hex!(
+                "1234567890123456789012345678901234567890123456789012345678901234"
+            ))],
         )];
 
         let eip2930_tx = EIP2930Transaction {
@@ -3547,9 +3536,9 @@ mod tests {
             nonce: 1,
             gas_price: U256::from(20_000_000_000u64),
             gas_limit: 21000,
-            to: TxKind::Call(
-                Address::from_str("0x742d35Cc6634C0532925a3b844Bc454e4438f44e").unwrap(),
-            ),
+            to: TxKind::Call(Address::from_slice(&hex!(
+                "742d35cc6634c0532925a3b844bc454e4438f44e"
+            ))),
             value: U256::from(1_000_000_000_000_000_000u64),
             data: Bytes::default(),
             access_list: access_list.clone(),
