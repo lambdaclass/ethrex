@@ -72,8 +72,10 @@ pub enum NodeHandle {
         child_index: Option<usize>,
     },
     Branch {
-        /// Reference to the children. If None, then the child is pruned.
-        children_indices: [Option<usize>; 16],
+        /// Reference to the children.
+        /// - If None, then there is no child for that choice.
+        /// - If Some(None), then there is a child but its pruned.
+        children_indices: [Option<Option<usize>>; 16],
     },
 }
 
@@ -119,7 +121,7 @@ impl FlatTrie {
                     let Some(child_index) = children_indices[choice] else {
                         return Ok(None);
                     };
-                    recursive(trie, path, child_index)
+                    recursive(trie, path, child_index.expect("pruned branch child"))
                 }
             }
         }
@@ -209,6 +211,183 @@ impl FlatTrie {
         Ok(rlp_items)
     }
 
+    pub fn insert(&mut self, path: Vec<u8>, value: Vec<u8>) -> Result<(), RLPDecodeError> {
+        let path = Nibbles::from_bytes(&path);
+        if let Some(root_index) = self.root_index {
+            self.root_index = Some(self.insert_inner(root_index, path, value)?);
+        } else {
+            self.root_index = Some(self.put_leaf(path, value));
+        }
+        self.root_hash = None;
+        Ok(())
+    }
+
+    fn insert_inner(
+        &mut self,
+        self_index: usize,
+        mut path: Nibbles,
+        value: Vec<u8>,
+    ) -> Result<usize, RLPDecodeError> {
+        let self_view = &self.nodes[self_index];
+        match self_view.handle {
+            NodeHandle::Leaf { .. } => {
+                let (partial, self_value) = self.get_leaf_data(self_index)?;
+                if partial == path {
+                    let override_node_handle = NodeHandle::Leaf {
+                        partial: None,
+                        value: Some(value),
+                    };
+                    Ok(self.override_node(self_index, override_node_handle))
+                } else {
+                    // Current node will be replaced with a branch or extension node
+                    let match_index = path.count_prefix(&partial);
+                    let self_choice_idx = partial.at(match_index);
+                    let new_leaf_choice_idx = path.at(match_index);
+
+                    // Modify the partial of self
+                    let new_self_index = self.override_node(
+                        self_index,
+                        NodeHandle::Leaf {
+                            partial: Some(partial.offset(match_index + 1)),
+                            value: None,
+                        },
+                    );
+
+                    debug_assert!(
+                        self_choice_idx != 16,
+                        "leaf insertion yielded branch with old value"
+                    );
+                    debug_assert!(
+                        new_leaf_choice_idx != 16,
+                        "leaf insertion yielded branch with new value"
+                    );
+                    // Yields a new leaf with the path and value in it, and a new branch
+                    // with the new and old leaf as children.
+                    let new_leaf_index = self.override_node(
+                        self_index,
+                        NodeHandle::Leaf {
+                            partial: Some(path.offset(match_index + 1)),
+                            value: None,
+                        },
+                    );
+                    let branch_index = {
+                        let mut children_indices = [None; 16];
+                        children_indices[new_leaf_choice_idx] = Some(Some(new_leaf_index));
+                        children_indices[self_choice_idx] = Some(Some(new_self_index));
+                        self.put_node(NodeHandle::Branch { children_indices })
+                    };
+
+                    if match_index == 0 {
+                        Ok(branch_index)
+                    } else {
+                        // Yields an extension node with the branch as child
+                        Ok(self.put_node(NodeHandle::Extension {
+                            prefix: Some(path.slice(0, match_index)),
+                            child_index: Some(branch_index),
+                        }))
+                    }
+                }
+            }
+            NodeHandle::Extension { child_index, .. } => {
+                let prefix = self.get_extension_data(self_index)?;
+                let match_index = path.count_prefix(&prefix);
+                if match_index == prefix.len() {
+                    let path = path.offset(match_index);
+                    let new_child_index = self.insert_inner(
+                        child_index
+                            .expect("missing child of extension node at match_index == prefix"),
+                        path,
+                        value,
+                    )?;
+                    Ok(self.override_node(
+                        self_index,
+                        NodeHandle::Extension {
+                            prefix: None,
+                            child_index: Some(new_child_index),
+                        },
+                    ))
+                } else if match_index == 0 {
+                    debug_assert!(
+                        prefix.at(0) != 16,
+                        "insertion into extension yielded branch with value"
+                    );
+                    let branch_index = if prefix.len() == 1 {
+                        let mut children_indices = [None; 16];
+                        children_indices[prefix.at(0)] = Some(child_index);
+                        self.put_node(NodeHandle::Branch { children_indices })
+                    } else {
+                        // New extension with self_node as a child
+                        let new_node_index = self.put_node(NodeHandle::Extension {
+                            prefix: Some(prefix.offset(1)),
+                            child_index,
+                        });
+                        {
+                            let mut children_indices = [None; 16];
+                            children_indices[prefix.at(0)] = Some(Some(new_node_index));
+                            self.put_node(NodeHandle::Branch { children_indices })
+                        }
+                    };
+                    self.insert_inner(branch_index, path, value)
+                } else {
+                    let new_extension_index = self.override_node(
+                        self_index,
+                        NodeHandle::Extension {
+                            prefix: Some(prefix.offset(match_index)),
+                            child_index,
+                        },
+                    );
+                    let new_node_index =
+                        self.insert_inner(new_extension_index, path.offset(match_index), value)?;
+                    Ok(self.put_node(NodeHandle::Extension {
+                        prefix: Some(prefix.slice(0, match_index)),
+                        child_index: Some(new_node_index),
+                    }))
+                }
+            }
+            NodeHandle::Branch {
+                mut children_indices,
+            } => {
+                let choice = path
+                    .next_choice()
+                    .expect("branch insertion yielded value on a branch");
+                let new_child_index = match children_indices[choice] {
+                    None => {
+                        panic!("Missing children of branch needed for insert")
+                    }
+                    Some(None) => self.put_leaf(path, value),
+                    Some(Some(index)) => self.insert_inner(index, path, value)?,
+                };
+                children_indices[choice] = Some(Some(new_child_index));
+                Ok(self.override_node(self_index, NodeHandle::Branch { children_indices }))
+            }
+        }
+    }
+
+    /// Adds a new node to the trie with a specific handle
+    ///
+    /// # Warning
+    /// Handle must have all its fields initialize into Some() because there is no
+    /// underlying encoded node to override.
+    pub fn put_node(&mut self, handle: NodeHandle) -> usize {
+        let node = Node {
+            handle,
+            encoded_range: None,
+        };
+        self.nodes.push(node);
+        self.nodes.len() - 1
+    }
+
+    /// Puts a new leaf node from a prefix and a value.
+    ///
+    /// Returns the new node's view index.
+    pub fn put_leaf(&mut self, partial: Nibbles, value: Vec<u8>) -> usize {
+        let handle = NodeHandle::Leaf {
+            partial: Some(partial),
+            value: Some(value),
+        };
+        self.put_node(handle)
+    }
+
     /// Overrides a node in the trie. Used whenever mutating the trie.
     ///
     /// An override can be used in the case of:
@@ -225,14 +404,10 @@ impl FlatTrie {
                 | (NodeHandle::Branch { .. }, NodeHandle::Branch { .. })
         );
 
-        // if node is not the same kind as the override, it gets replaced.
+        // if node is not the same kind as the override, panic
+        // we should use put_node() in these cases
         if override_is_same_node_kind {
-            let node = Node {
-                handle: override_node_handle,
-                encoded_range: None,
-            };
-            self.nodes.push(node);
-            return self.nodes.len() - 1;
+            panic!();
         }
 
         // else, mutate the handle
