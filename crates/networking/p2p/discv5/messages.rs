@@ -10,7 +10,6 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
-use secp256k1::SecretKey;
 
 use crate::types::NodeRecord;
 
@@ -21,6 +20,7 @@ type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 // Used for package validation
 const MIN_PACKET_SIZE: usize = 63;
 const MAX_PACKET_SIZE: usize = 1280;
+const HANDSHAKE_AUTHDATA_HEAD: usize = 34;
 // protocol data
 const PROTOCOL_ID: &[u8] = b"discv5";
 const PROTOCOL_VERSION: u16 = 0x0001;
@@ -55,7 +55,7 @@ impl From<StreamCipherError> for PacketDecodeErr {
 pub enum Packet {
     Ordinary(Ordinary),
     WhoAreYou(WhoAreYou),
-    // Handshake(Handshake),
+    Handshake(Handshake),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,6 +99,14 @@ impl Packet {
             0x01 => Ok(Packet::WhoAreYou(WhoAreYou::decode(
                 &packet_header.authdata,
             )?)),
+            0x02 => Ok(Packet::Handshake(Handshake::decode(
+                masking_iv,
+                packet_header.static_header,
+                packet_header.authdata,
+                packet_header.nonce,
+                decrypt_key,
+                &encoded_packet[packet_header.header_end_offset..],
+            )?)),
             _ => Err(RLPDecodeError::MalformedData)?,
         }
     }
@@ -109,6 +117,7 @@ impl Packet {
         masking_iv: u128,
         nonce: Vec<u8>,
         dest_id: &H256,
+        encrypt_key: &[u8],
     ) -> Result<(), PacketDecodeErr> {
         let masking_as_bytes = masking_iv.to_be_bytes();
         buf.put_slice(&masking_as_bytes);
@@ -120,6 +129,16 @@ impl Packet {
             Packet::Ordinary(_ordinary) => todo!(),
             Packet::WhoAreYou(who_are_you) => {
                 who_are_you.encode_header(buf, &mut cipher, nonce)?;
+            }
+            Packet::Handshake(handshake) => {
+                let (mut static_header, mut authdata, encrypted_message) =
+                    handshake.encode(&nonce, &masking_as_bytes, encrypt_key)?;
+
+                cipher.try_apply_keystream(&mut static_header)?;
+                buf.put_slice(&static_header);
+                cipher.try_apply_keystream(&mut authdata)?;
+                buf.put_slice(&authdata);
+                buf.put_slice(&encrypted_message);
             }
         }
         Ok(())
@@ -250,6 +269,128 @@ impl WhoAreYou {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Handshake {
+    pub src_id: H256,
+    pub id_signature: Vec<u8>,
+    pub eph_pubkey: Vec<u8>,
+    pub record: Option<NodeRecord>,
+    pub message: Message,
+}
+
+impl Handshake {
+    fn encode_authdata(&self, buf: &mut dyn BufMut) -> Result<(), PacketDecodeErr> {
+        let sig_size =
+            u8::try_from(self.id_signature.len()).map_err(|_| PacketDecodeErr::InvalidSize)?;
+        let eph_key_size =
+            u8::try_from(self.eph_pubkey.len()).map_err(|_| PacketDecodeErr::InvalidSize)?;
+
+        buf.put_slice(self.src_id.as_bytes());
+        buf.put_u8(sig_size);
+        buf.put_u8(eph_key_size);
+        buf.put_slice(&self.id_signature);
+        buf.put_slice(&self.eph_pubkey);
+        if let Some(record) = &self.record {
+            record.encode(buf);
+        }
+
+        Ok(())
+    }
+
+    fn encode(
+        &self,
+        nonce: &[u8],
+        masking_iv: &[u8],
+        encrypt_key: &[u8],
+    ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), PacketDecodeErr> {
+        let mut authdata = Vec::new();
+        self.encode_authdata(&mut authdata)?;
+
+        let authdata_size =
+            u16::try_from(authdata.len()).map_err(|_| PacketDecodeErr::InvalidSize)?;
+
+        let mut static_header = Vec::new();
+        static_header.put_slice(PROTOCOL_ID);
+        static_header.put_slice(&PROTOCOL_VERSION.to_be_bytes());
+        static_header.put_u8(0x02);
+        static_header.put_slice(nonce);
+        static_header.put_slice(&authdata_size.to_be_bytes());
+
+        let mut message = Vec::new();
+        self.message.encode(&mut message);
+
+        if encrypt_key.len() < 16 {
+            return Err(PacketDecodeErr::InvalidSize);
+        }
+
+        let mut message_ad = masking_iv.to_vec();
+        message_ad.extend_from_slice(&static_header);
+        message_ad.extend_from_slice(&authdata);
+
+        let mut cipher = Aes128Gcm::new(encrypt_key[..16].into());
+        cipher
+            .encrypt_in_place(nonce.into(), &message_ad, &mut message)
+            .map_err(|e| PacketDecodeErr::ChipherError(e.to_string()))?;
+
+        Ok((static_header, authdata, message))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn decode(
+        masking_iv: &[u8],
+        static_header: Vec<u8>,
+        authdata: Vec<u8>,
+        nonce: Vec<u8>,
+        decrypt_key: &[u8],
+        encrypted_message: &[u8],
+    ) -> Result<Handshake, PacketDecodeErr> {
+        if authdata.len() < HANDSHAKE_AUTHDATA_HEAD {
+            return Err(PacketDecodeErr::InvalidSize);
+        }
+
+        let src_id = H256::from_slice(&authdata[..32]);
+        let sig_size = authdata[32] as usize;
+        let eph_key_size = authdata[33] as usize;
+
+        let authdata_head = HANDSHAKE_AUTHDATA_HEAD + sig_size + eph_key_size;
+        if authdata.len() < authdata_head {
+            return Err(PacketDecodeErr::InvalidSize);
+        }
+
+        let id_signature =
+            authdata[HANDSHAKE_AUTHDATA_HEAD..HANDSHAKE_AUTHDATA_HEAD + sig_size].to_vec();
+        let eph_key_start = HANDSHAKE_AUTHDATA_HEAD + sig_size;
+        let eph_pubkey = authdata[eph_key_start..authdata_head].to_vec();
+
+        let record = if authdata.len() > authdata_head {
+            let record_bytes = &authdata[authdata_head..];
+            if record_bytes.is_empty() {
+                None
+            } else {
+                Some(NodeRecord::decode(record_bytes)?)
+            }
+        } else {
+            None
+        };
+
+        let mut message_ad = masking_iv.to_vec();
+        message_ad.extend_from_slice(&static_header);
+        message_ad.extend_from_slice(&authdata);
+
+        let mut message = encrypted_message.to_vec();
+        Ordinary::decrypt(decrypt_key, nonce, &mut message, message_ad)?;
+        let message = Message::decode(&message)?;
+
+        Ok(Handshake {
+            src_id,
+            id_signature,
+            eph_pubkey,
+            record,
+            message,
+        })
+    }
+}
+
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Message {
     Ping(PingMessage),
@@ -261,6 +402,27 @@ pub enum Message {
 }
 
 impl Message {
+    fn message_type(&self) -> u8 {
+        match self {
+            Message::Ping(_) => 0x01,
+            Message::Pong(_) => 0x02,
+            Message::FindNode(_) => 0x03,
+            Message::Nodes(_) => 0x04,
+            Message::TalkReq(_) => 0x05,
+        }
+    }
+
+    pub fn encode(&self, buf: &mut dyn BufMut) {
+        buf.put_u8(self.message_type());
+        match self {
+            Message::Ping(ping) => ping.encode(buf),
+            Message::Pong(pong) => pong.encode(buf),
+            Message::FindNode(find_node) => find_node.encode(buf),
+            Message::Nodes(nodes) => nodes.encode(buf),
+            Message::TalkReq(talk_req) => talk_req.encode(buf),
+        }
+    }
+
     pub fn decode(encrypted_message: &[u8]) -> Result<Message, RLPDecodeError> {
         let message_type = encrypted_message[0];
         match message_type {
@@ -290,10 +452,6 @@ impl Message {
             // }
             _ => Err(RLPDecodeError::MalformedData),
         }
-    }
-
-    pub fn encode(&self, _buf: &mut dyn BufMut, _signer: &SecretKey) {
-        //TODO
     }
 }
 
@@ -492,6 +650,43 @@ mod tests {
     // .unwrap();
 
     #[test]
+    fn handshake_packet_roundtrip() {
+        let node_a_key = SecretKey::from_byte_array(&hex!(
+            "eef77acb6c6a6eebc5b363a475ac583ec7eccdb42b6481424c60f59aa326547f"
+        ))
+        .unwrap();
+        let node_b_key = SecretKey::from_byte_array(&hex!(
+            "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
+        ))
+        .unwrap();
+
+        let src_id = node_id(&public_key_from_signing_key(&node_a_key));
+        let dest_id = node_id(&public_key_from_signing_key(&node_b_key));
+
+        let handshake = Handshake {
+            src_id,
+            id_signature: vec![1; 64],
+            eph_pubkey: vec![2; 33],
+            record: None,
+            message: Message::Ping(PingMessage {
+                req_id: vec![3],
+                enr_seq: 4,
+            }),
+        };
+
+        let key = vec![0x10; 16];
+        let nonce = hex!("000102030405060708090a0b").to_vec();
+        let mut buf = Vec::new();
+        let packet = Packet::Handshake(handshake.clone());
+        packet
+            .encode(&mut buf, 0, nonce.clone(), &dest_id, &key)
+            .unwrap();
+
+        let decoded = Packet::decode(&dest_id, &key, &buf).unwrap();
+        assert_eq!(decoded, Packet::Handshake(handshake));
+    }
+
+    #[test]
     fn test_encode_whoareyou_packet() {
         // # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
         // # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
@@ -525,6 +720,7 @@ mod tests {
             0,
             hex!("0102030405060708090a0b0c").to_vec(),
             &dest_id,
+            &[],
         );
         let expected = &hex!(
             "00000000000000000000000000000000088b3d434277464933a1ccc59f5967ad1d6035f15e528627dde75cd68292f9e6c27d6b66c8100a873fcbaed4e16b8d"
