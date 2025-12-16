@@ -115,7 +115,7 @@ impl RpcHandler for BlobsV2Request {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!("Received new engine request: Requested Blobs V2");
-        let res = get_blobs_and_proof_v2(&self.blob_versioned_hashes, context).await?;
+        let res = get_blobs_and_proof(&self.blob_versioned_hashes, context, 2).await?;
         if res.iter().any(|blob| blob.is_none()) {
             return Ok(Value::Null);
         }
@@ -138,15 +138,16 @@ impl RpcHandler for BlobsV3Request {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!("Received new engine request: Requested Blobs V3");
-        let res = get_blobs_and_proof_v2(&self.blob_versioned_hashes, context).await?;
+        let res = get_blobs_and_proof(&self.blob_versioned_hashes, context, 3).await?;
         serde_json::to_value(res).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
-// Get blob data for a given list of blob versioned hashes.
-async fn get_blobs_and_proof_v2(
+/// Get blob data and proofs for a given list of blob versioned hashes.
+async fn get_blobs_and_proof(
     blob_versioned_hashes: &[H256],
     context: RpcApiContext,
+    version: u64,
 ) -> Result<Vec<Option<BlobAndProofV2>>, RpcErr> {
     if blob_versioned_hashes.len() >= GET_BLOBS_V1_REQUEST_MAX_SIZE {
         return Err(RpcErr::TooLargeRequest);
@@ -161,9 +162,10 @@ async fn get_blobs_and_proof_v2(
             .is_osaka_activated(current_block_header.timestamp)
     {
         // validation requested in https://github.com/ethereum/execution-apis/blob/a1d95fb555cd91efb3e0d6555e4ab556d9f5dd06/src/engine/osaka.md?plain=1#L130
-        return Err(RpcErr::UnsuportedFork(
-            "getBlobsV2 engine only supported for Osaka".to_string(),
-        ));
+        return Err(RpcErr::UnsuportedFork(format!(
+            "getBlobsV{} engine only supported for Osaka",
+            version
+        )));
     };
 
     let mut res: Vec<Option<BlobAndProofV2>> = vec![None; blob_versioned_hashes.len()];
