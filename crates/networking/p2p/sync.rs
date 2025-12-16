@@ -786,7 +786,7 @@ impl Syncer {
                     }
 
                     warn!("Storage could not be downloaded after multiple attempts. Marking for healing.
-                        This could severely impact snap sync time, please consider stopping the node and resyncing.");
+                        This could impact snap sync time (healing may take a while).");
 
                     storage_accounts.accounts_with_storage_root.clear();
                 }
