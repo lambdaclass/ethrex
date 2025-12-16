@@ -7,7 +7,7 @@ In addition to these classic functionalities, ethrex L2 provides a novel and con
 In this section, we will cover how to deploy any of these options.
 
 > [!NOTE]
-> This section focuses solely on the step-by-step process for deploying ethrex L2 in any of its forms. For a deeper understanding of how each mode works under the hood, refer to the Fundamentals section. To learn more about the architecture of each mode, see the Architecture section.
+> This section focuses solely on the step-by-step process for deploying ethrex L2 in any of its forms. For a deeper understanding of how each mode works under the hood, refer to the [Fundamentals](../fundamentals/README.md) section. To learn more about the architecture of each mode, see the [Architecture](../architecture/README.md) section.
 
 Before proceeding, note that this guide assumes you have ethrex installed. If you haven't installed it yet, follow one of the methods in the [Installation Guide](../../getting-started/installation/README.md). If you're looking to build from source, don't skip this section—we'll cover that method here, as it is independent of the deployment approach you choose later.
 

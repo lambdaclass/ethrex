@@ -28,6 +28,7 @@ ethrex l2 deploy \
 
 > [!IMPORTANT]
 > If you plan to prove your L2 using SP1, RISC0, or TDX, add the following extra arguments to the command above:
+> 
 > `--sp1 true` to require SP1 proofs for validating batch execution and state settlement.
 > `--sp1.verifier-address` to use an existing verifier instead of deploying one on the public network. Succinct Labs recommends their deployed canonical verifier gateways; see the list here.
 > `--risc0 true` to require RISC0 proofs for validating batch execution and state settlement.
