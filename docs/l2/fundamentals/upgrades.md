@@ -24,7 +24,7 @@ To allow proofs from a new sequencer/prover build, register its verification key
      <KECCAK_GIT_COMMIT> \
      <PROVER_ID>
    ```
-   `1` is the SP1 verifier ID (`2` is RISC0).
+   `1` is the SP1 verifier ID, `2` is RISC0.
 
 ### Verification key artifacts
 
