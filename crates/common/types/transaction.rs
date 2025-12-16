@@ -4,6 +4,7 @@ use crate::{errors::EcdsaError, utils::keccak};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, Signature, U256};
 use ethrex_crypto::keccak::keccak_hash;
+use hex_literal::hex;
 pub use mempool::MempoolTransaction;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Serialize, ser::SerializeStruct};
@@ -1413,10 +1414,8 @@ pub fn recover_address_from_message(
 }
 
 // Half the secp256k1 curve order (n/2), i.e. the upper bound for a valid `s` value per EIP-2.
-const SECP256K1_N_HALF: [u8; 32] = [
-    0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b, 0x20, 0xa0,
-];
+const SECP256K1_N_HALF: [u8; 32] =
+    hex!("7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0");
 
 fn signature_has_high_s(signature_bytes: &[u8; 65]) -> bool {
     let mut s = [0u8; 32];
