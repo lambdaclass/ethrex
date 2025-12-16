@@ -30,7 +30,7 @@ For the first problem: once peers stop serving nodes for a given root[^1], we st
 
 [^1]: We update pivots based only on the timestamp, not on the peer response. According to the spec, stale roots return empty responses, but Byzantine peers may return empty responses at arbitrary times. Therefore, we rely on the rule that nodes must keep at least 128 blocks. Once `time > timestamp + 128 * 12` we mark the pivot as stale.
 
-Example of a possible state after stoping fast sync due to staleness.
+Example of a possible state after stopping fast sync due to staleness.
 
 ![Fast Sync Retaking Example - 1](snap_sync/Fast%20Sync%20Retaking%20Example%20-%201.png)
 
@@ -47,7 +47,7 @@ To maintain this invariant, we do the following:
 - When we get a new node, we don't immediately store it in the database. We keep track of the amount of every node's children that are not yet in the database. As long as it's not zero, we keep it in a separate in-memory structure "Membatch" instead of on the db.
 - When a node has all of its children in the db, we commit it and recursively go up the tree to see if its parent needs to be commited, etc.
 
-Example of a possible state after stoping fast sync due to staleness with membatch.
+Example of a possible state after stopping fast sync due to staleness with membatch.
 
 ![Fast Sync Membatch Example - 1](snap_sync/Fast%20Sync%20Membatch%20Example%20-%201.png)
 
@@ -88,11 +88,11 @@ Generalized Flowchart of snapsync
 
 When testing snap sync there are flags to take into account:
 
-- If the `SKIP_START_SNAP_SYNC` environment variable is set and isn't empty, it will skip the step of downloading the leaves and will immediatly begin healing. This simulates the behaviour of fast-sync.
+- If the `SKIP_START_SNAP_SYNC` environment variable is set and isn't empty, it will skip the step of downloading the leaves and will immediately begin healing. This simulates the behaviour of fast-sync.
 
 - If debug assertions are on, the program will validate that the entire state and storage tries are valid by traversing the entire trie and recomputing the roots. If any is found to be wrong, it will print an error and exit the program.
 
-- `--snycmode [full, default:snap]` which defines what kind of sync we use. Full is executing each block, and isn't possible for mainnet and sepolia.
+- `--syncmode [full, default:snap]` which defines what kind of sync we use. Full is executing each block, and isn't possible for mainnet and sepolia.
 
 ### File Structure
 
@@ -138,7 +138,7 @@ The flow of the program in default mode is to start by doing snap sync, then we 
 The first step is downloading all the headers, through the `request_block_headers` function. This function does the following steps:
 
 - Request from peers the number of the sync_head that we received from the consensus client
-- Divide the headers into descrete "chunks" to ask our peers
+- Divide the headers into discrete "chunks" to ask our peers
     - Currently, the headers are divided into 800 chunks[^3]
 - Queue those chunks as tasks into a channel
     - These tasks ask the peers for their data, and respond through a channel
@@ -164,7 +164,7 @@ When downloading the account values, we use the snap function [`GetAccountRange`
 - limitHash: Account hash after which to stop serving data
 - responseBytes: Soft limit at which to stop returning data
 
-[^4]: All accounts and storages are sent and found throught the hash of their address. Example: the account with address 0xf003 would be found through the 0x26c2...38c1 hash, and would be found before the account with adress 0x0001 whose hash would be 0x49d0...49d5
+[^4]: All accounts and storages are sent and found through the hash of their address. Example: the account with address 0xf003 would be found through the 0x26c2...38c1 hash, and would be found before the account with adress 0x0001 whose hash would be 0x49d0...49d5
 
 This method returns the following
 
@@ -204,7 +204,8 @@ For an optimization for faster insertion, these are stored ordered in the RocksD
 
 The sst files in the `"account_state_snapshots"` subfolder are ingested into a RocksDB database. This provides an ordered array that is used for insertion.
 
-[More detailed documentation foun in sorted_trie_insert.md](../../internal/l1/sorted_trie_insert.md).
+[More detailed documentation found in sorted_trie_insert.md](../../internal/l1/sorted_trie_insert.md).
+[More detailed documentation found in sorted_trie_insert.md](../../internal/l1/sorted_trie_insert.md).
 
 ### Downloading Storage Slots
 
@@ -230,7 +231,7 @@ From these parameters, there is a couple of difficulties that pop up.
 - We need to know which accounts have storage that needs to be downloaded
 - We need to know what storage root each account has to be able to verify it
 
-To solve these issues we take two action:
+To solve these issues we take two actions:
 - Before we download the storage slots we ensure that the state trie is in a consistent complete state. This is accomplished by doing the insertion of accounts step first and then healing the trie. If during the storage slot download the pivot becomes stale, we heal the trie again with the new pivot, to keep the trie up to date.
 - When inserting the accounts, we grab a list of all the accounts with their storage root. If the account is healed, we marked the storage root as `None`, to indicate we should check in the DB what is the state of the storage root.
 
@@ -249,7 +250,7 @@ A large amount of the accounts with storage have exactly the same storage as oth
 
 #### Big Accounts
 
-The storage trie is very unneven distribution of the accounts sizes. Between accounts with a single or two storage slots are around 70% of all accounts with storage trie. And large accounts have more storage slots than accounts slots are present in the state accounts. As such they need to be downloaded with special consideration.
+The storage trie is very uneven distribution of the accounts sizes. Between accounts with a single or two storage slots are around 70% of all accounts with storage trie. And large accounts have more storage slots than accounts slots are present in the state accounts. As such they need to be downloaded with special consideration.
 
 At the beginning of the algorithm, we divide the accounts into chunks of 300 storage roots and their corresponding accounts. We start downloading the storage slots, until we find an account whose storage doesn't fit into a single requests. This will be indicated by the proof field having the data indicating that there are still more nodes to download in that account.
 
@@ -290,7 +291,7 @@ struct StorageTask {
 struct StorageTaskResult {
     // Index of the first storage account we want to download
     start_index: usize,
-    // Slots we have succesfuly downloaded with the hash of the slot + value
+    // Slots we have successfully downloaded with the hash of the slot + value
     account_storages: Vec<Vec<(H256, U256)>>,
     // Which peer answered the task, used for scoring
     peer_id: H256,
