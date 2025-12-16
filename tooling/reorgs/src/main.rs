@@ -154,7 +154,9 @@ async fn snap_sync_smoke_test(simulator: Arc<Mutex<Simulator>>) {
 
     let node1 = simulator.start_snapsync_node().await;
 
-    node1.update_forkchoice_with_timeout(&base_chain, Duration::from_secs(120)).await;
+    node1
+        .update_forkchoice_with_timeout(&base_chain, Duration::from_secs(120))
+        .await;
 
     // Check the storage slots are as expected after snap-syncing
     let value_slot0 = node1.get_storage_at(contract_address, slot_key0).await;

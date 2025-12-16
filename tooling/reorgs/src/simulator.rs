@@ -251,7 +251,8 @@ pub struct Node {
 
 impl Node {
     pub async fn update_forkchoice(&self, chain: &Chain) {
-        self.update_forkchoice_with_timeout(chain, Duration::from_secs(5)).await
+        self.update_forkchoice_with_timeout(chain, Duration::from_secs(5))
+            .await
     }
 
     pub async fn update_forkchoice_with_timeout(&self, chain: &Chain, timeout: Duration) {
