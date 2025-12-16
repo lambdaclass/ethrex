@@ -10,6 +10,7 @@ use crate::{
     },
 };
 use bytes::Bytes;
+use ethrex_blockchain::fork_choice::apply_fork_choice;
 use ethrex_blockchain::{
     Blockchain, BlockchainOptions, BlockchainType, L2Config, error::ChainError, vm::StoreVmDatabase,
 };
@@ -181,13 +182,26 @@ impl L1Committer {
             get_last_committed_batch(&eth_client, committer_config.on_chain_proposer_address)
                 .await?;
 
-        let (current_checkpoint_store, _) = Self::get_checkpoint_from_path(
-            genesis.clone(),
-            blockchain.options.clone(),
-            &checkpoints_dir.join(batch_checkpoint_name(last_committed_batch)),
-            &rollup_store,
-        )
-        .await?;
+        let checkpoint_path = checkpoints_dir.join(batch_checkpoint_name(last_committed_batch));
+        let (current_checkpoint_store, _) = if checkpoint_path.exists() {
+            Self::get_checkpoint_from_path(
+                genesis.clone(),
+                blockchain.options.clone(),
+                &checkpoint_path,
+                &rollup_store,
+            )
+            .await?
+        } else {
+            // Don't create a fake `checkpoint_batch_{N}` at startup when the node is not ready to
+            // sequence/commit yet. We'll lazily create/rebuild the real checkpoint when needed.
+            Self::get_checkpoint_from_path(
+                genesis.clone(),
+                blockchain.options.clone(),
+                &checkpoints_dir.join(batch_checkpoint_name(0)),
+                &rollup_store,
+            )
+            .await?
+        };
 
         Ok(Self {
             eth_client,
@@ -215,6 +229,135 @@ impl L1Committer {
             genesis,
             checkpoints_dir,
         })
+    }
+
+    async fn rebuild_checkpoint_to_block(
+        source_store: &Store,
+        rollup_store: &StoreRollup,
+        checkpoint_store: &Store,
+        checkpoint_blockchain: &Arc<Blockchain>,
+        target_block_number: u64,
+    ) -> Result<(), CommitterError> {
+        if target_block_number == 0 {
+            return Ok(());
+        }
+
+        for block_number in 1..=target_block_number {
+            let block = source_store
+                .get_block_by_number(block_number)
+                .await?
+                .ok_or_else(|| {
+                    CommitterError::FailedToCreateCheckpoint(format!(
+                        "Block {block_number} not found in source store"
+                    ))
+                })?;
+
+            let fee_config = rollup_store
+                .get_fee_config_by_block(block_number)
+                .await?
+                .ok_or_else(|| {
+                    CommitterError::FailedToCreateCheckpoint(format!(
+                        "Fee config for block {block_number} not found"
+                    ))
+                })?;
+
+            let BlockchainType::L2(l2_config) = &checkpoint_blockchain.options.r#type else {
+                return Err(CommitterError::FailedToCreateCheckpoint(
+                    "Invalid blockchain type. Expected L2.".into(),
+                ));
+            };
+
+            {
+                let Ok(mut fee_config_guard) = l2_config.fee_config.write() else {
+                    return Err(CommitterError::FailedToCreateCheckpoint(
+                        "Fee config lock was poisoned when rebuilding checkpoint".into(),
+                    ));
+                };
+                *fee_config_guard = fee_config;
+            }
+
+            let block_hash = block.hash();
+            checkpoint_blockchain
+                .add_block(block)
+                .map_err(|err| CommitterError::FailedToCreateCheckpoint(err.to_string()))?;
+
+            apply_fork_choice(checkpoint_store, block_hash, block_hash, block_hash)
+                .await
+                .map_err(|e| {
+                    CommitterError::FailedToCreateCheckpoint(format!(
+                        "Failed to apply fork choice while rebuilding checkpoint: {e}"
+                    ))
+                })?;
+        }
+
+        Ok(())
+    }
+
+    async fn ensure_checkpoint_for_committed_batch(
+        &mut self,
+        last_committed_batch: u64,
+        l1_fork: Fork,
+    ) -> Result<bool, CommitterError> {
+        if last_committed_batch == 0 {
+            return Ok(true);
+        }
+
+        let expected_path = self
+            .checkpoints_dir
+            .join(batch_checkpoint_name(last_committed_batch));
+
+        let current_path = self.current_checkpoint_store.get_store_directory()?;
+        let expected_path_for_cmp =
+            std::fs::canonicalize(&expected_path).unwrap_or(expected_path.clone());
+        let current_path_for_cmp =
+            std::fs::canonicalize(&current_path).unwrap_or(current_path.clone());
+        if expected_path.exists() && current_path_for_cmp == expected_path_for_cmp {
+            return Ok(true);
+        }
+
+        if expected_path.exists() {
+            let (checkpoint_store, _) = Self::get_checkpoint_from_path(
+                self.genesis.clone(),
+                self.blockchain.options.clone(),
+                &expected_path,
+                &self.rollup_store,
+            )
+            .await?;
+            self.current_checkpoint_store = checkpoint_store;
+            return Ok(true);
+        }
+
+        let Some(batch) = self
+            .rollup_store
+            .get_batch(last_committed_batch, l1_fork)
+            .await?
+        else {
+            debug!(
+                "Missing sealed batch {} in rollup store; cannot rebuild checkpoint yet",
+                last_committed_batch
+            );
+            return Ok(false);
+        };
+
+        let (checkpoint_store, checkpoint_blockchain) = Self::get_checkpoint_from_path(
+            self.genesis.clone(),
+            self.blockchain.options.clone(),
+            &expected_path,
+            &self.rollup_store,
+        )
+        .await?;
+
+        Self::rebuild_checkpoint_to_block(
+            &self.store,
+            &self.rollup_store,
+            &checkpoint_store,
+            &checkpoint_blockchain,
+            batch.last_block,
+        )
+        .await?;
+
+        self.current_checkpoint_store = checkpoint_store;
+        Ok(true)
     }
 
     pub async fn spawn(
@@ -257,6 +400,11 @@ impl L1Committer {
 
     async fn commit_next_batch_to_l1(&mut self) -> Result<(), CommitterError> {
         info!("Running committer main loop");
+        let status = self.sequencer_state.status().await;
+        if !matches!(status, SequencerStatus::Sequencing) {
+            debug!("Committer is idle, sequencer status is {status}");
+            return Ok(());
+        }
         // Get the batch to commit
         let last_committed_batch_number =
             get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
@@ -265,6 +413,13 @@ impl L1Committer {
         let l1_fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
             .await
             .map_err(CommitterError::EthClientError)?;
+
+        if !self
+            .ensure_checkpoint_for_committed_batch(last_committed_batch_number, l1_fork)
+            .await?
+        {
+            return Ok(());
+        }
 
         let batch = match self
             .rollup_store
@@ -773,13 +928,23 @@ impl L1Committer {
             // account updates of each block as we go, to be able to continue
             // re-executing the next blocks in the batch.
             {
+                let parent_hash = potential_batch_block.header.parent_hash;
+                if checkpoint_store
+                    .get_block_header_by_hash(parent_hash)?
+                    .is_none()
+                {
+                    let parent_header = self
+                        .store
+                        .get_block_header_by_hash(parent_hash)?
+                        .ok_or(CommitterError::ChainError(ChainError::ParentNotFound))?;
+                    checkpoint_store
+                        .add_block_header(parent_hash, parent_header)
+                        .await?;
+                }
                 let account_updates_list = checkpoint_store
-                    .apply_account_updates_batch(
-                        potential_batch_block.header.parent_hash,
-                        &account_updates,
-                    )?
+                    .apply_account_updates_batch(parent_hash, &account_updates)?
                     .ok_or(CommitterError::FailedToGetInformationFromStorage(
-                        "no account updated".to_owned(),
+                        "parent state not found in checkpoint store".to_owned(),
                     ))?;
 
                 checkpoint_blockchain.store_block(
@@ -1268,6 +1433,7 @@ impl L1Committer {
     }
 
     async fn handle_commit_message(&mut self, handle: &GenServerHandle<Self>) -> CastResponse {
+        // No-op: removed debug spam.
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
             let current_last_committed_batch =
                 get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
