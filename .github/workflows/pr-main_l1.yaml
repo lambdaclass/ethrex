@@ -82,11 +82,13 @@ jobs:
         working-directory: tooling
 
   test:
-    # "Test" is a required check, don't change the name
-    name: Test
+    name: Test - ${{ matrix.runner }}
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-22.04-arm, macos-15]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -284,6 +286,22 @@ jobs:
           name: hive_failed_logs_${{ matrix.artifact_prefix }}
           path: src/results/failed_logs
           if-no-files-found: warn
+
+  # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
+  unit-tests:
+    # "Test" is a required check, don't change the name
+    name: Test
+    runs-on: ubuntu-latest
+    needs: [detect-changes, test]
+    # Make sure this job runs even if the previous jobs failed or were skipped
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    steps:
+      - name: Check if any job failed
+        run: |
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "Job Assertoor Tx Check failed"
+            exit 1
+          fi
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:

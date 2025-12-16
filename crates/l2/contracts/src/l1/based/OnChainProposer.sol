@@ -34,6 +34,7 @@ contract OnChainProposer is
         bytes32 processedPrivilegedTransactionsRollingHash;
         bytes32 withdrawalsLogsMerkleRoot;
         bytes32 lastBlockHash;
+        uint256 nonPrivilegedTransactions;
         /// @dev git commit hash that produced the proof/verification key used for this batch
         bytes32 commitHash;
     }
@@ -175,6 +176,7 @@ contract OnChainProposer is
             bytes32(0),
             bytes32(0),
             bytes32(0),
+            0,
             commitHash
         );
 
@@ -255,6 +257,7 @@ contract OnChainProposer is
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash,
+        uint256 nonPrivilegedTransactions,
         bytes32 commitHash,
         bytes[] calldata //rlpEncodedBlocks
     ) external override onlyLeaderSequencer {
@@ -323,6 +326,7 @@ contract OnChainProposer is
             processedPrivilegedTransactionsRollingHash,
             withdrawalsLogsMerkleRoot,
             lastBlockHash,
+            nonPrivilegedTransactions,
             commitHash
         );
         emit BatchCommitted(batchNumber, newStateRoot);
@@ -372,6 +376,15 @@ contract OnChainProposer is
         if (privileged_transaction_count > 0) {
             ICommonBridge(BRIDGE).removePendingTransactionHashes(
                 privileged_transaction_count
+            );
+        }
+
+        if (
+            ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() &&
+            batchCommitments[batchNumber].nonPrivilegedTransactions != 0
+        ) {
+            revert(
+                "exceeded privileged transaction inclusion deadline, can't include non-privileged transactions"
             );
         }
 
@@ -609,11 +622,11 @@ contract OnChainProposer is
             bytes32(publicData[192:224])
         );
         if (
-            ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() &&
-            nonPrivilegedTransactions != 0
+            batchCommitments[batchNumber].nonPrivilegedTransactions !=
+            nonPrivilegedTransactions
         ) {
             return
-                "exceeded privileged transaction inclusion deadline, can't include non-privileged transactions";
+                "non-privileged transactions public input does not match with committed transactions";
         }
         return "";
     }
