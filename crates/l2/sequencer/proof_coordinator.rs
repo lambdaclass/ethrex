@@ -243,13 +243,32 @@ impl ProofCoordinator {
         }
     }
 
+    async fn next_batch_to_prove_for_version(
+        &self,
+        commit_hash: &str,
+    ) -> Result<u64, ProofCoordinatorError> {
+        let mut batch_to_prove = 1 + self.rollup_store.get_latest_sent_batch_proof().await?;
+
+        while self
+            .rollup_store
+            .get_prover_input_by_batch_and_version(batch_to_prove, commit_hash)
+            .await?
+            .is_none()
+            && self.rollup_store.contains_batch(&batch_to_prove).await?
+        {
+            batch_to_prove += 1;
+        }
+
+        Ok(batch_to_prove)
+    }
+
     async fn handle_request(
         &self,
         stream: &mut TcpStream,
         commit_hash: String,
     ) -> Result<(), ProofCoordinatorError> {
         info!("BatchRequest received");
-        let batch_to_prove = 1 + self.rollup_store.get_latest_sent_batch_proof().await?;
+        let batch_to_prove = self.next_batch_to_prove_for_version(&commit_hash).await?;
 
         if commit_hash != self.git_commit_hash {
             debug!(
