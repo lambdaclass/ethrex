@@ -68,6 +68,7 @@ pub struct L1ProofSender {
     eth_client: EthClient,
     signer: ethrex_l2_rpc::signer::Signer,
     on_chain_proposer_address: Address,
+    timelock_address: Option<Address>,
     needed_proof_types: Vec<ProverType>,
     proof_send_interval_ms: u64,
     sequencer_state: SequencerState,
@@ -124,6 +125,7 @@ impl L1ProofSender {
             eth_client,
             signer: cfg.signer.clone(),
             on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
+            timelock_address: committer_cfg.timelock_address,
             needed_proof_types,
             proof_send_interval_ms: cfg.proof_send_interval_ms,
             sequencer_state,
@@ -397,10 +399,14 @@ impl L1ProofSender {
 
         let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
+        let target_address = self
+            .timelock_address
+            .unwrap_or(self.on_chain_proposer_address);
+
         let send_verify_tx_result = send_verify_tx(
             calldata,
             &self.eth_client,
-            self.on_chain_proposer_address,
+            target_address,
             &self.signer,
         )
         .await;
