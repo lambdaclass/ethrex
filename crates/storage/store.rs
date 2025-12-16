@@ -1,7 +1,7 @@
 #[cfg(feature = "rocksdb")]
 use crate::backend::rocksdb::RocksDBBackend;
 use crate::{
-    STORE_SCHEMA_VERSION,
+    STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION,
     api::{
         StorageBackend,
         tables::{
@@ -39,9 +39,11 @@ use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitn
 use ethrex_trie::{Node, NodeRLP};
 use lru::LruCache;
 use rustc_hash::FxBuildHasher;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, hash_map::Entry},
     fmt::Debug,
+    io::Write,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -809,7 +811,7 @@ impl Store {
 
     pub async fn forkchoice_update_inner(
         &self,
-        new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
+        new_canonical_blocks: Vec<(BlockNumber, BlockHash)>,
         head_number: BlockNumber,
         head_hash: BlockHash,
         safe: Option<BlockNumber>,
@@ -820,12 +822,10 @@ impl Store {
         tokio::task::spawn_blocking(move || {
             let mut txn = db.begin_write()?;
 
-            if let Some(canonical_blocks) = new_canonical_blocks {
-                for (block_number, block_hash) in canonical_blocks {
-                    let head_key = block_number.to_le_bytes();
-                    let head_value = block_hash.encode_to_vec();
-                    txn.put(CANONICAL_BLOCK_HASHES, &head_key, &head_value)?;
-                }
+            for (block_number, block_hash) in new_canonical_blocks {
+                let head_key = block_number.to_le_bytes();
+                let head_value = block_hash.encode_to_vec();
+                txn.put(CANONICAL_BLOCK_HASHES, &head_key, &head_value)?;
             }
 
             for number in (head_number + 1)..=(latest) {
@@ -1341,6 +1341,12 @@ impl Store {
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
         // Ignore unused variable warning when compiling without DB features
         let db_path = path.as_ref().to_path_buf();
+
+        if engine_type != EngineType::InMemory {
+            // Check that the last used DB version matches the current version
+            validate_store_schema_version(&db_path)?;
+        }
+
         match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
@@ -1359,8 +1365,6 @@ impl Store {
         db_path: PathBuf,
         commit_threshold: usize,
     ) -> Result<Self, StoreError> {
-        check_schema_version(backend.as_ref())?;
-
         debug!("Initializing Store with {commit_threshold} in-memory diff-layers");
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
         let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(0);
@@ -1851,7 +1855,7 @@ impl Store {
         self.add_block(genesis_block).await?;
         self.update_earliest_block_number(genesis_block_number)
             .await?;
-        self.forkchoice_update(None, genesis_block_number, genesis_hash, None, None)
+        self.forkchoice_update(vec![], genesis_block_number, genesis_hash, None, None)
             .await?;
         Ok(())
     }
@@ -1922,7 +1926,7 @@ impl Store {
     /// All operations are performed in a single database transaction.
     pub async fn forkchoice_update(
         &self,
-        new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
+        new_canonical_blocks: Vec<(BlockNumber, BlockHash)>,
         head_number: BlockNumber,
         head_hash: BlockHash,
         safe: Option<BlockNumber>,
@@ -2380,7 +2384,9 @@ impl Store {
     }
 
     pub fn create_checkpoint(&self, path: impl AsRef<Path>) -> Result<(), StoreError> {
-        self.backend.create_checkpoint(path.as_ref())
+        self.backend.create_checkpoint(path.as_ref())?;
+        init_metadata_file(path.as_ref())?;
+        Ok(())
     }
 
     pub fn get_store_directory(&self) -> Result<PathBuf, StoreError> {
@@ -2800,33 +2806,6 @@ fn snap_state_key(index: SnapStateIndex) -> Vec<u8> {
     (index as u8).encode_to_vec()
 }
 
-fn check_schema_version(backend: &dyn StorageBackend) -> Result<(), StoreError> {
-    // Check that the last used DB version matches the current version
-    let latest_store_schema_version = backend
-        .begin_read()?
-        .get(MISC_VALUES, b"store_schema_version")?
-        .map(|bytes| -> Result<u64, StoreError> {
-            let array: [u8; 8] = bytes.try_into().map_err(|_| {
-                StoreError::Custom("Invalid store schema version bytes".to_string())
-            })?;
-            Ok(u64::from_le_bytes(array))
-        })
-        .transpose()?;
-    if let Some(schema_version) = latest_store_schema_version
-        && schema_version != STORE_SCHEMA_VERSION
-    {
-        return Err(StoreError::IncompatibleDBVersion);
-    }
-    let mut tx = backend.begin_write()?;
-    tx.put(
-        MISC_VALUES,
-        b"store_schema_version",
-        &STORE_SCHEMA_VERSION.to_le_bytes(),
-    )?;
-    tx.commit()?;
-    Ok(())
-}
-
 fn encode_code(code: &Code) -> Vec<u8> {
     let mut buf = Vec::with_capacity(
         6 + code.bytecode.len() + std::mem::size_of_val(code.jump_targets.as_slice()),
@@ -2850,6 +2829,65 @@ impl LatestBlockHeaderCache {
         let new = Arc::new(header);
         *self.current.lock().expect("poisoned mutex") = new;
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct StoreMetadata {
+    schema_version: u64,
+}
+
+impl StoreMetadata {
+    fn new(schema_version: u64) -> Self {
+        Self { schema_version }
+    }
+}
+
+fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
+    let metadata_path = path.join(STORE_METADATA_FILENAME);
+    // If metadata file does not exist, try to create it
+    if !metadata_path.exists() {
+        // If datadir exists but is not empty, this is probably a DB for an
+        // old ethrex version and we should return an error
+        if path.exists() && !dir_is_empty(path)? {
+            return Err(StoreError::NotFoundDBVersion {
+                expected: STORE_SCHEMA_VERSION,
+            });
+        }
+        init_metadata_file(path)?;
+        return Ok(());
+    }
+    if !metadata_path.is_file() {
+        return Err(StoreError::Custom(
+            "store schema path exists but is not a file".to_string(),
+        ));
+    }
+    let file_contents = std::fs::read_to_string(metadata_path)?;
+    let metadata: StoreMetadata = serde_json::from_str(&file_contents)?;
+
+    // Check schema version matches the expected one
+    if metadata.schema_version != STORE_SCHEMA_VERSION {
+        return Err(StoreError::IncompatibleDBVersion {
+            found: metadata.schema_version,
+            expected: STORE_SCHEMA_VERSION,
+        });
+    }
+    Ok(())
+}
+
+fn init_metadata_file(parent_path: &Path) -> Result<(), StoreError> {
+    std::fs::create_dir_all(parent_path)?;
+
+    let metadata_path = parent_path.join(STORE_METADATA_FILENAME);
+    let metadata = StoreMetadata::new(STORE_SCHEMA_VERSION);
+    let serialized_metadata = serde_json::to_string_pretty(&metadata)?;
+    let mut new_file = std::fs::File::create_new(metadata_path)?;
+    new_file.write_all(serialized_metadata.as_bytes())?;
+    Ok(())
+}
+
+fn dir_is_empty(path: &Path) -> Result<bool, StoreError> {
+    let is_empty = std::fs::read_dir(path)?.next().is_none();
+    Ok(is_empty)
 }
 
 #[cfg(test)]
@@ -3020,7 +3058,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .forkchoice_update(None, block_number, hash, None, None)
+            .forkchoice_update(vec![], block_number, hash, None, None)
             .await
             .unwrap();
 
@@ -3124,7 +3162,7 @@ mod tests {
             .unwrap();
 
         store
-            .forkchoice_update(None, block_number, block_header.hash(), None, None)
+            .forkchoice_update(vec![], block_number, block_header.hash(), None, None)
             .await
             .unwrap();
 
@@ -3178,7 +3216,7 @@ mod tests {
             .unwrap();
         store
             .forkchoice_update(
-                None,
+                vec![],
                 latest_block_number,
                 hash,
                 Some(safe_block_number),
