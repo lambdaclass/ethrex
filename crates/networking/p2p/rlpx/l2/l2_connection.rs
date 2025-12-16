@@ -1,5 +1,5 @@
 use crate::rlpx::connection::server::send;
-use crate::rlpx::l2::messages::{BatchSealed, L2Message, NewBlock};
+use crate::rlpx::l2::messages::{BatchProofMessage, BatchSealed, L2Message, NewBlock};
 use crate::rlpx::{connection::server::Established, error::PeerConnectionError, message::Message};
 use ethereum_types::Address;
 use ethereum_types::Signature;
@@ -8,6 +8,7 @@ use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::fork_choice::apply_fork_choice;
 use ethrex_common::types::batch::Batch;
 use ethrex_common::types::{Block, recover_address};
+use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::{Message as SecpMessage, SecretKey};
 use std::collections::BTreeMap;
@@ -25,6 +26,8 @@ pub struct L2ConnectedState {
     pub latest_batch_sent: u64,
     pub blocks_on_queue: BTreeMap<u64, QueuedBlock>,
     pub batch_on_queue: BTreeMap<u64, Arc<Batch>>,
+    pub proofs_on_queue: BTreeMap<(u64, u32), Arc<BatchProof>>,
+    pub latest_proof_sent: (u64, u32),
     pub store_rollup: StoreRollup,
     pub committer_key: Arc<SecretKey>,
     pub next_block_broadcast: Instant,
@@ -69,6 +72,7 @@ fn broadcast_message(state: &Established, msg: Message) -> Result<(), PeerConnec
 pub enum L2Cast {
     BlockBroadcast,
     BatchBroadcast,
+    ProofBroadcast,
 }
 
 impl L2ConnState {
@@ -105,7 +109,9 @@ impl L2ConnState {
                     latest_block_added: 0,
                     blocks_on_queue: BTreeMap::new(),
                     batch_on_queue: BTreeMap::new(),
+                    proofs_on_queue: BTreeMap::new(),
                     latest_batch_sent: 0,
+                    latest_proof_sent: (0, 0),
                     store_rollup: ctxt.store_rollup.clone(),
                     committer_key: ctxt.committer_key.clone(),
                     next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
@@ -157,6 +163,25 @@ pub(crate) async fn handle_based_capability_message(
             }
             process_blocks_on_queue(established).await?;
         }
+        L2Message::BatchProof(ref proof_msg) => {
+            if should_process_batch_proof(established, proof_msg).await? {
+                let proof_type: u32 = proof_msg.proof.prover_type().into();
+                established
+                    .l2_state
+                    .connection_state_mut()?
+                    .proofs_on_queue
+                    .entry((proof_msg.batch_number, proof_type))
+                    .or_insert_with(|| proof_msg.proof.clone());
+                info!(
+                    peer=%established.node,
+                    batch_number=proof_msg.batch_number,
+                    prover_type=?proof_msg.proof.prover_type(),
+                    "Received batch proof via L2 P2P, queued for processing",
+                );
+                broadcast_message(established, msg.into())?;
+            }
+            process_proofs_on_queue(established).await?;
+        }
     }
     Ok(())
 }
@@ -168,6 +193,7 @@ pub(crate) async fn handle_l2_broadcast(
     match l2_msg {
         msg @ Message::L2(L2Message::BatchSealed(_)) => send(state, msg.clone()).await,
         msg @ Message::L2(L2Message::NewBlock(_)) => send(state, msg.clone()).await,
+        msg @ Message::L2(L2Message::BatchProof(_)) => send(state, msg.clone()).await,
         _ => Err(PeerConnectionError::BroadcastError(format!(
             "Message {:?} is not a valid L2 message for broadcast",
             l2_msg
@@ -214,6 +240,25 @@ pub(crate) fn broadcast_l2_message(
                 .map_err(|_| {
                     PeerConnectionError::BroadcastError(
                         "Could not broadcast l2 message NewBlock".to_owned(),
+                    )
+                })?;
+            Ok(())
+        }
+        msg @ Message::L2(L2Message::BatchProof(_)) => {
+            let task_id = tokio::task::id();
+            state
+                .connection_broadcast_send
+                .send((task_id, msg.into()))
+                .inspect_err(|e| {
+                    error!(
+                        peer=%state.node,
+                        error=%e,
+                        "Could not broadcast l2 message BatchProof",
+                    );
+                })
+                .map_err(|_| {
+                    PeerConnectionError::BroadcastError(
+                        "Could not broadcast l2 message BatchProof".to_owned(),
                     )
                 })?;
             Ok(())
@@ -330,6 +375,86 @@ pub(crate) async fn send_new_block(
     Ok(())
 }
 
+pub(crate) async fn send_next_proof(
+    established: &mut Established,
+) -> Result<(), PeerConnectionError> {
+    let next = {
+        let l2_state = established.l2_state.connection_state_mut()?;
+        let Some(latest_batch) = l2_state.store_rollup.get_batch_number().await? else {
+            return Ok(());
+        };
+
+        let (mut batch_number, mut prover_type_idx) = l2_state.latest_proof_sent;
+        let mut next: Option<(Message, (u64, u32))> = None;
+
+        while batch_number <= latest_batch {
+            let prover_type = match prover_type_idx {
+                0 => ProverType::Exec,
+                1 => ProverType::RISC0,
+                2 => ProverType::SP1,
+                3 => ProverType::TDX,
+                _ => {
+                    batch_number += 1;
+                    prover_type_idx = 0;
+                    continue;
+                }
+            };
+
+            if let Some(proof) = l2_state
+                .store_rollup
+                .get_proof_by_batch_and_type(batch_number, prover_type)
+                .await?
+            {
+                let msg: Message = BatchProofMessage {
+                    batch_number,
+                    proof: Arc::new(proof),
+                }
+                .into();
+                next = Some((msg, (batch_number, prover_type_idx)));
+                break;
+            }
+
+            prover_type_idx += 1;
+            if prover_type_idx > 3 {
+                batch_number += 1;
+                prover_type_idx = 0;
+            }
+        }
+
+        next
+    };
+
+    let Some((msg, latest_proof_sent)) = next else {
+        return Ok(());
+    };
+
+    send(established, msg).await?;
+    let (batch_number, prover_type_idx) = latest_proof_sent;
+    let prover_type = match prover_type_idx {
+        0 => ProverType::Exec,
+        1 => ProverType::RISC0,
+        2 => ProverType::SP1,
+        3 => ProverType::TDX,
+        _ => ProverType::Exec,
+    };
+    info!(
+        peer=%established.node,
+        batch_number,
+        prover_type=?prover_type,
+        "Sent batch proof via L2 P2P",
+    );
+    let next_latest_proof_sent = if prover_type_idx >= 3 {
+        (batch_number + 1, 0)
+    } else {
+        (batch_number, prover_type_idx + 1)
+    };
+    established
+        .l2_state
+        .connection_state_mut()?
+        .latest_proof_sent = next_latest_proof_sent;
+    Ok(())
+}
+
 async fn should_process_new_block(
     established: &mut Established,
     msg: &NewBlock,
@@ -376,6 +501,33 @@ async fn should_process_new_block(
         .store_rollup
         .store_signature_by_block(block_hash, msg.signature)
         .await?;
+    Ok(true)
+}
+
+async fn should_process_batch_proof(
+    established: &mut Established,
+    msg: &BatchProofMessage,
+) -> Result<bool, PeerConnectionError> {
+    let l2_state = established.l2_state.connection_state_mut()?;
+    if !l2_state
+        .store_rollup
+        .contains_batch(&msg.batch_number)
+        .await?
+    {
+        return Ok(false);
+    }
+    let proof_type: u32 = msg.proof.prover_type().into();
+    if l2_state
+        .store_rollup
+        .get_proof_by_batch_and_type(msg.batch_number, msg.proof.prover_type())
+        .await?
+        .is_some()
+        || l2_state
+            .proofs_on_queue
+            .contains_key(&(msg.batch_number, proof_type))
+    {
+        return Ok(false);
+    }
     Ok(true)
 }
 
@@ -474,6 +626,49 @@ pub async fn process_blocks_on_queue(
         next_block_to_add += 1;
     }
     Ok(())
+}
+
+pub async fn process_proofs_on_queue(
+    established: &mut Established,
+) -> Result<(), PeerConnectionError> {
+    let l2_state = established.l2_state.connection_state_mut()?;
+    loop {
+        let Some(key) = l2_state.proofs_on_queue.keys().next().cloned() else {
+            return Ok(());
+        };
+        let (batch_number, proof_type) = key;
+        if !l2_state.store_rollup.contains_batch(&batch_number).await? {
+            return Ok(());
+        }
+        let Some(proof) = l2_state.proofs_on_queue.remove(&key) else {
+            return Ok(());
+        };
+        let prover_type = match proof_type {
+            0 => ProverType::Exec,
+            1 => ProverType::RISC0,
+            2 => ProverType::SP1,
+            3 => ProverType::TDX,
+            _ => continue,
+        };
+        if l2_state
+            .store_rollup
+            .get_proof_by_batch_and_type(batch_number, prover_type)
+            .await?
+            .is_none()
+        {
+            let proof = Arc::unwrap_or_clone(proof);
+            l2_state
+                .store_rollup
+                .store_proof_by_batch_and_type(batch_number, prover_type, proof)
+                .await?;
+            info!(
+                peer=%established.node,
+                batch_number,
+                prover_type=?prover_type,
+                "Stored batch proof received via L2 P2P",
+            );
+        }
+    }
 }
 
 pub(crate) async fn send_sealed_batch(

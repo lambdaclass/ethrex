@@ -9,6 +9,7 @@ use ethrex_common::{
     H256, Signature,
     types::{Block, batch::Batch, fee_config::FeeConfig},
 };
+use ethrex_l2_common::prover::BatchProof;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_rlp::structs::{Decoder, Encoder};
 use secp256k1::{Message as SecpMessage, SecretKey};
@@ -55,6 +56,46 @@ impl RLPxMessage for NewBlock {
             block: Arc::new(block),
             signature,
             fee_config,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BatchProofMessage {
+    pub batch_number: u64,
+    pub proof: Arc<BatchProof>,
+}
+
+impl RLPxMessage for BatchProofMessage {
+    const CODE: u8 = 0x2;
+
+    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        let proof_bytes = serde_json::to_vec(self.proof.deref())
+            .map_err(|e| RLPEncodeError::Custom(format!("proof encode: {e}")))?;
+        let proof_type: u32 = self.proof.prover_type().into();
+        let mut encoded_data = vec![];
+        Encoder::new(&mut encoded_data)
+            .encode_field(&self.batch_number)
+            .encode_field(&proof_type)
+            .encode_field(&proof_bytes)
+            .finish();
+        let msg_data = snappy_compress(encoded_data)?;
+        buf.put_slice(&msg_data);
+        Ok(())
+    }
+
+    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        let decompressed_data = snappy_decompress(msg_data)?;
+        let decoder = Decoder::new(&decompressed_data)?;
+        let (batch_number, decoder) = decoder.decode_field("batch_number")?;
+        let (_proof_type, decoder): (u32, _) = decoder.decode_field("proof_type")?;
+        let (proof_bytes, decoder): (Vec<u8>, _) = decoder.decode_field("proof")?;
+        decoder.finish()?;
+        let proof: BatchProof = serde_json::from_slice(&proof_bytes)
+            .map_err(|e| RLPDecodeError::Custom(format!("proof decode: {e}")))?;
+        Ok(Self {
+            batch_number,
+            proof: Arc::new(proof),
         })
     }
 }
@@ -176,6 +217,7 @@ impl RLPxMessage for BatchSealed {
 pub enum L2Message {
     BatchSealed(BatchSealed),
     NewBlock(NewBlock),
+    BatchProof(BatchProofMessage),
 }
 
 // I don't really like doing ad-hoc 'from' implementations,
@@ -191,6 +233,12 @@ impl From<BatchSealed> for crate::rlpx::message::Message {
 impl From<NewBlock> for crate::rlpx::message::Message {
     fn from(value: NewBlock) -> Self {
         L2Message::NewBlock(value).into()
+    }
+}
+
+impl From<BatchProofMessage> for crate::rlpx::message::Message {
+    fn from(value: BatchProofMessage) -> Self {
+        L2Message::BatchProof(value).into()
     }
 }
 

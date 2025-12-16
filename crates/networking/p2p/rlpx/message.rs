@@ -15,7 +15,7 @@ use super::eth::transactions::{
 };
 use super::eth::update::BlockRangeUpdate;
 #[cfg(feature = "l2")]
-use super::l2::messages::{BatchSealed, L2Message, NewBlock};
+use super::l2::messages::{BatchProofMessage, BatchSealed, L2Message, NewBlock};
 #[cfg(feature = "l2")]
 use super::l2::{self, messages};
 use super::p2p::{DisconnectMessage, HelloMessage, PingMessage, PongMessage};
@@ -148,16 +148,17 @@ impl Message {
             Message::GetTrieNodes(_) => eth_version.snap_capability_offset() + GetTrieNodes::CODE,
             Message::TrieNodes(_) => eth_version.snap_capability_offset() + TrieNodes::CODE,
 
-            #[cfg(feature = "l2")]
-            // based capability
-            Message::L2(l2_msg) => {
-                eth_version.based_capability_offset() + {
-                    match l2_msg {
-                        L2Message::NewBlock(_) => NewBlock::CODE,
-                        L2Message::BatchSealed(_) => BatchSealed::CODE,
+                #[cfg(feature = "l2")]
+                // based capability
+                Message::L2(l2_msg) => {
+                    eth_version.based_capability_offset() + {
+                        match l2_msg {
+                            L2Message::NewBlock(_) => NewBlock::CODE,
+                            L2Message::BatchSealed(_) => BatchSealed::CODE,
+                            L2Message::BatchProof(_) => BatchProofMessage::CODE,
+                        }
                     }
                 }
-            }
         }
     }
     pub fn decode(
@@ -242,6 +243,10 @@ impl Message {
                         let decoded = l2::messages::BatchSealed::decode(data)?;
                         L2Message::BatchSealed(decoded)
                     }
+                    BatchProofMessage::CODE => {
+                        let decoded = l2::messages::BatchProofMessage::decode(data)?;
+                        L2Message::BatchProof(decoded)
+                    }
                     _ => return Err(RLPDecodeError::MalformedData),
                 },
             ));
@@ -288,6 +293,7 @@ impl Message {
             Message::L2(l2_msg) => match l2_msg {
                 L2Message::BatchSealed(msg) => msg.encode(buf),
                 L2Message::NewBlock(msg) => msg.encode(buf),
+                L2Message::BatchProof(msg) => msg.encode(buf),
             },
         }
     }
@@ -360,6 +366,7 @@ impl Display for Message {
             Message::L2(l2_msg) => match l2_msg {
                 L2Message::BatchSealed(_) => "based:BatchSealed".fmt(f),
                 L2Message::NewBlock(_) => "based:NewBlock".fmt(f),
+                L2Message::BatchProof(_) => "based:BatchProof".fmt(f),
             },
         }
     }
