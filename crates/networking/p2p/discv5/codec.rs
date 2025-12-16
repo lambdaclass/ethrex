@@ -51,6 +51,6 @@ impl Encoder<Packet> for Discv5Codec {
     fn encode(&mut self, package: Packet, buf: &mut BytesMut) -> Result<(), Self::Error> {
         let masking_iv: u128 = rand::random();
         let nonce = self.new_nonce();
-        package.encode(buf, masking_iv, &nonce, &self.dest_id)
+        package.encode(buf, masking_iv, &nonce, &self.dest_id, &self.key)
     }
 }
