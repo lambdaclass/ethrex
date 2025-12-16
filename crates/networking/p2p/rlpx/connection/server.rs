@@ -396,33 +396,33 @@ impl GenServer for PeerConnectionServer {
                         message=?msg,
                         "Handling cast for L2 msg"
                     );
-	                    match msg {
-	                        L2Cast::BatchBroadcast => {
-	                            let res = l2_connection::send_sealed_batch(established_state).await;
-	                            if res.is_ok() {
-	                                l2_connection::process_batch_on_queue(established_state).await
-	                            } else {
-	                                res
-	                            }
-	                        }
-	                        L2Cast::BlockBroadcast => {
-	                            let res = l2_connection::send_new_block(established_state).await;
-	                            if res.is_ok() {
-	                                l2_connection::process_blocks_on_queue(established_state).await
-	                            } else {
-	                                res
-	                            }
-	                        }
-	                        L2Cast::ProofBroadcast => {
-	                            let res = l2_connection::send_next_proof(established_state).await;
-	                            if res.is_ok() {
-	                                l2_connection::process_proofs_on_queue(established_state).await
-	                            } else {
-	                                res
-	                            }
-	                        }
-	                    }
-	                }
+                    match msg {
+                        L2Cast::BatchBroadcast => {
+                            let res = l2_connection::send_sealed_batch(established_state).await;
+                            if res.is_ok() {
+                                l2_connection::process_batch_on_queue(established_state).await
+                            } else {
+                                res
+                            }
+                        }
+                        L2Cast::BlockBroadcast => {
+                            let res = l2_connection::send_new_block(established_state).await;
+                            if res.is_ok() {
+                                l2_connection::process_blocks_on_queue(established_state).await
+                            } else {
+                                res
+                            }
+                        }
+                        L2Cast::ProofBroadcast => {
+                            let res = l2_connection::send_next_proof(established_state).await;
+                            if res.is_ok() {
+                                l2_connection::process_proofs_on_queue(established_state).await
+                            } else {
+                                res
+                            }
+                        }
+                    }
+                }
                 #[cfg(feature = "l2")]
                 _ => Err(PeerConnectionError::MessageNotHandled(
                     "Unknown message or capability not handled".to_string(),
