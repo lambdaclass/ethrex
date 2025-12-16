@@ -6,7 +6,7 @@ help:
 inventory: ## Generates inventory for ansible
 	@if [ -n "$TARGET" ]; then \
 		truncate -s0 inventory.ini; \
-		echo "[servers]" >> inventory.ini; \
+		echo "[all]" >> inventory.ini; \
 		for ip in $$(echo $(TARGET) | tr ',' ' '); do echo "$$ip ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
 		echo "" >> inventory.ini; \
 	else \

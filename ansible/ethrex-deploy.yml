@@ -1,17 +1,17 @@
 - name: Ethrex Deployment
-  hosts: servers
+  hosts: all
   vars:
     ansible_ssh_user: admin
     lighthouse_version: "8.0.0"
     ethrex_version: "7.0.0"
-    ethrex_flags: |-
+    ethrex_flags: |
       --http.addr 0.0.0.0
       --metrics
       --metrics.port 3701
       --network mainnet
       --authrpc.jwtsecret /secrets/jwt.hex
       --syncmode full
-    lighthouse_flags: |-
+    lighthouse_flags: |
       bn
       --network mainnet
       --execution-endpoint http://localhost:8551
@@ -21,7 +21,7 @@
       --http
       --http-address 0.0.0.0
       --http-port 5052
-      --http-allow-origin *
+      --http-allow-origin "*"
       --metrics
       --metrics-port 5054
       --metrics-address 0.0.0.0
@@ -193,7 +193,7 @@
             path: "{{ monitoring_stack_dir }}"
             state: absent
       vars:
-        inventory_targets: "{{ groups['servers'] | default([]) | join(',') }}"
+        inventory_targets: "{{ groups['all'] | default([]) | join(',') }}"
         monitoring_stack_dir: "{{ playbook_dir }}/monitoring-stack"
       delegate_to: localhost
       run_once: true
