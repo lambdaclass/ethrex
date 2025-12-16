@@ -257,6 +257,7 @@ pub enum Message {
     FindNode(FindNodeMessage),
     Nodes(NodesMessage),
     TalkReq(TalkReqMessage),
+    Ticket(TicketMessage),
     // TODO: add the other messages
 }
 
@@ -288,6 +289,10 @@ impl Message {
             //     let (enr_response_msg, _rest) = ENRResponseMessage::decode_unfinished(msg)?;
             //     Ok(Message::ENRResponse(enr_response_msg))
             // }
+            0x08 => {
+                let ticket_msg = TicketMessage::decode(&encrypted_message[1..])?;
+                Ok(Message::Ticket(ticket_msg))
+            }
             _ => Err(RLPDecodeError::MalformedData),
         }
     }
@@ -456,6 +461,41 @@ impl RLPDecode for TalkReqMessage {
                 req_id,
                 protocol,
                 request,
+            },
+            decoder.finish()?,
+        ))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TicketMessage {
+    pub req_id: u64,
+    pub ticket: Bytes,
+    pub wait_time: u64,
+}
+
+impl RLPEncode for TicketMessage {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.req_id)
+            .encode_field(&self.ticket)
+            .encode_field(&self.wait_time)
+            .finish();
+    }
+}
+
+impl RLPDecode for TicketMessage {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (req_id, decoder) = decoder.decode_field("req_id")?;
+        let (ticket, decoder) = decoder.decode_field("ticket")?;
+        let (wait_time, decoder) = decoder.decode_field("wait_time")?;
+
+        Ok((
+            Self {
+                req_id,
+                ticket,
+                wait_time,
             },
             decoder.finish()?,
         ))
@@ -677,5 +717,17 @@ mod tests {
 
         let buf = pkt.encode_to_vec();
         assert_eq!(TalkReqMessage::decode(&buf).unwrap(), pkt);
+    }
+
+    #[test]
+    fn ticket_packet_codec_roundtrip() {
+        let pkt = TicketMessage {
+            req_id: 1234,
+            ticket: Bytes::from_static(&[1, 2, 3, 4]),
+            wait_time: 5,
+        };
+
+        let buf = pkt.encode_to_vec();
+        assert_eq!(TicketMessage::decode(&buf).unwrap(), pkt);
     }
 }
