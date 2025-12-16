@@ -33,4 +33,8 @@ pub enum UtilsError {
     BlobBundleError(#[from] BlobsBundleError),
     #[error("Failed to compute deposit logs hash: {0}")]
     PrivilegedTransactionError(#[from] PrivilegedTransactionError),
+    #[error("Privileged transaction hash could not be computed")]
+    InvalidPrivilegedTransaction,
+    #[error("Integer conversion error: {0}")]
+    TryFromIntError(#[from] std::num::TryFromIntError),
 }

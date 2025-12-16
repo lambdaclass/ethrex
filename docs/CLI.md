@@ -54,7 +54,8 @@ Node options:
 
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
-
+          
+          [env: ETHREX_LOG_LEVEL=]
           [default: INFO]
 
       --log.color <LOG_COLOR>
@@ -230,7 +231,8 @@ Node options:
 
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
-
+          
+          [env: ETHREX_LOG_LEVEL=]
           [default: INFO]
 
       --log.color <LOG_COLOR>

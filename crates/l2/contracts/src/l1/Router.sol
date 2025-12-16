@@ -21,6 +21,8 @@ contract Router is
 
     uint256[] public registeredChainIds;
 
+    mapping(address bridge => uint256 chainId) public registeredAddresses;
+
     function initialize(address owner) public initializer {
         OwnableUpgradeable.__Ownable_init(owner);
     }
@@ -40,6 +42,7 @@ contract Router is
 
         bridges[chainId] = _commonBridge;
         registeredChainIds.push(chainId);
+        registeredAddresses[_commonBridge] = chainId;
 
         emit ChainRegistered(chainId, _commonBridge);
     }
@@ -50,51 +53,53 @@ contract Router is
             revert ChainNotRegistered(chainId);
         }
 
+        address bridge = bridges[chainId];
         delete bridges[chainId];
         removeChainID(chainId);
+        delete registeredAddresses[bridge];
 
         emit ChainDeregistered(chainId);
     }
 
     /// @inheritdoc IRouter
-    function sendMessage(uint256 chainId) public payable override {
-        if (bridges[chainId] == address(0)) {
-            emit TransferToChainNotRegistered(chainId);
-        } else {
-            ICommonBridge(bridges[chainId]).receiveFromSharedBridge{value: msg.value}();
-        }
-    }
-
-    /// @inheritdoc IRouter
-    function verifyMessage(
+    function sendMessages(
         uint256 chainId,
-        uint256 l2MessageBatchNumber,
-        bytes32 l2MessageLeaf,
-        bytes32[] calldata l2MessageProof
-    ) external view returns (bool) {
-        address bridge = bridges[chainId];
-        if (bridge == address(0)) {
-            revert ChainNotRegistered(chainId);
+        bytes32[] calldata message_hashes
+    ) public payable override {
+        uint256 senderChainId = registeredAddresses[msg.sender];
+        if (senderChainId == 0) {
+            revert CallerNotBridge(msg.sender);
         }
-        return
-            ICommonBridge(bridge).verifyMessage(
-                l2MessageLeaf,
-                l2MessageBatchNumber,
-                l2MessageProof
-            );
+        address receiverBridge = bridges[chainId];
+        if (receiverBridge == address(0)) {
+            revert TransferToChainNotRegistered(chainId);
+        }
+
+        ICommonBridge(receiverBridge).receiveFromSharedBridge{value: msg.value}(
+            senderChainId,
+            message_hashes
+        );
     }
 
     function removeChainID(uint256 chainId) internal {
         for (uint i = 0; i < registeredChainIds.length; i++) {
             if (registeredChainIds[i] == chainId) {
-                registeredChainIds[i] = registeredChainIds[registeredChainIds.length - 1];
+                registeredChainIds[i] = registeredChainIds[
+                    registeredChainIds.length - 1
+                ];
                 registeredChainIds.pop();
                 return;
             }
         }
     }
 
-    function getRegisteredChainIds() external view returns (uint256[] memory) {
+    /// @inheritdoc IRouter
+    function getRegisteredChainIds()
+        external
+        view
+        override
+        returns (uint256[] memory)
+    {
         return registeredChainIds;
     }
 

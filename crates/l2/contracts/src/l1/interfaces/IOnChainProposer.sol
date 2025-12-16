@@ -57,20 +57,21 @@ interface IOnChainProposer {
     /// @param newStateRoot the new state root of the batch to be committed.
     /// @param withdrawalsLogsMerkleRoot the merkle root of the withdrawal logs
     /// of the batch to be committed.
-    /// @param l2MessagesMerkleRoot the merkle root of the l2 messages
-    /// of the batch to be committed.
     /// @param processedPrivilegedTransactionsRollingHash the rolling hash of the processed
     /// privileged transactions of the batch to be committed.
     /// @param lastBlockHash the hash of the last block of the batch to be committed.
+    /// @param nonPrivilegedTransactions the number of non-privileged transactions in the batch to be committed.
     /// @param balanceDiffs the balance diffs of the batch to be committed.
+    /// @param l2MessageRollingHashes the L2 message rolling hashes of the batch to be committed.
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
         bytes32 withdrawalsLogsMerkleRoot,
-        bytes32 l2MessagesMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash,
-        ICommonBridge.BalanceDiff[] calldata balanceDiffs
+        uint256 nonPrivilegedTransactions,
+        ICommonBridge.BalanceDiff[] calldata balanceDiffs,
+        ICommonBridge.L2MessageRollingHash[] calldata l2MessageRollingHashes
     ) external;
 
     /// @notice Method used to verify a batch of L2 blocks.

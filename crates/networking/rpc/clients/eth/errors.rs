@@ -87,6 +87,8 @@ pub enum EthClientError {
     GetL1BlobBaseFeeError(#[from] GetL1BlobBaseFeeRequestError),
     #[error("ethrex_sendTransaction request error: {0}")]
     SendEthrexTransactionError(#[from] SendEthrexTransactionError),
+    #[error("ethrex_getBatchByBlock request error: {0}")]
+    GetBatchByBlockNumberError(#[from] GetBatchByBlockNumberError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -397,4 +399,12 @@ pub enum SendEthrexTransactionError {
     RPCError(String),
     #[error("{0}")]
     ParseHashError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetBatchByBlockNumberError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
 }
