@@ -16,10 +16,10 @@ Executing all blocks to rebuild the state is slow. It is also not possible on et
 
 Fast-sync is the original method used in Ethereum to download a Patricia Merkle trie. The idea is to download the trie top-down, starting from the root, then recursively downloading child nodes until the entire trie is obtained.
 
-![Initial state of simple fast sync](snap_sync/Fast%20Sync%20-%201.png)
-![Root download of simple fast sync](snap_sync/Fast%20Sync%20-%202.png)
-![Branches download of simple fast sync](snap_sync/Fast%20Sync%20-%203.png)
-![Leaves download of simple fast sync](snap_sync/Fast%20Sync%20-%204.png)
+![Initial state of simple fast sync](./snap_sync/FastSync-1.png)
+![Root download of simple fast sync](./snap_sync/FastSync-2.png)
+![Branches download of simple fast sync](./snap_sync/FastSync-3.png)
+![Leaves download of simple fast sync](./snap_sync/FastSync-4.png)
 
 There are two problems with this:
 
@@ -32,7 +32,7 @@ For the first problem: once peers stop serving nodes for a given root[^1], we st
 
 Example of a possible state after stopping fast sync due to staleness.
 
-![Fast Sync Retaking Example - 1](snap_sync/Fast%20Sync%20Retaking%20Example%20-%201.png)
+![Fast Sync Retaking Example - 1](./snap_sync/FastSyncRetakingExample-1.png)
 
 In the example, even if we find that node { hash: 0x317f, path: 0 } is correct, we still need to check all its children in the DB (in this case none are present).
 
@@ -53,7 +53,7 @@ To maintain this invariant, we do the following:
 
 Example of a possible state after stopping fast sync due to staleness with membatch.
 
-![Fast Sync Membatch Example - 1](snap_sync/Fast%20Sync%20Membatch%20Example%20-%201.png)
+![Fast Sync Membatch Example - 1](./snap_sync/FastSyncMembatchExample-1.png)
 
 ### Speeding up: Snap-Sync
 
@@ -71,11 +71,11 @@ Example run:
 
 \- We download the 4 accounts in the state trie from two different blocks
 
-![Snap Sync Leaves - 1](snap_sync/Snap%20Sync%20Leaves%20-%201.png)
+![Snap Sync Leaves - 1](./snap_sync/SnapSyncLeaves-1.png)
 
 \- We rebuild the trie
 
-![Snap Sync Healing - 1](snap_sync/Snap%20Sync%20Healing%20-%201.png)
+![Snap Sync Healing - 1](./snap_sync/SnapSyncHealing-1.png)
 
 \- We run the healing algorithm and get a correct tree at the end of it
 
@@ -85,7 +85,7 @@ This method alone provides up to a 4-5 times boost in performance, as computing 
 
 Generalized Flowchart of snapsync
 
-![Flow - Snap Sync](snap_sync/Flow%20-%20Snap%20Sync.png)
+![Flow - Snap Sync](./snap_sync/Flow-SnapSync.png)
 
 ### Flags
 
@@ -154,7 +154,7 @@ The first step is downloading all the headers, through the `request_block_header
 
 [^3]: This currently isn't a named constant, we should change that
 
-![request_block_header flowchart](snap_sync/Flow%20-%20Download%20Headers.png)
+![request_block_header flowchart](./snap_sync/Flow-DownloadHeaders.png)
 
 ### Downloading Account Values
 
@@ -201,7 +201,7 @@ For an optimization for faster insertion, these are stored ordered in the RocksD
 
 #### Flowchart
 
-![request_account_range flowchart](snap_sync/Flow%20-%20Download%20Accounts.png)
+![request_account_range flowchart](./snap_sync/Flow-DownloadAccounts.png)
 
 ### Insertion of Accounts
 
@@ -260,7 +260,7 @@ Storage trie sizes have a very uneven distribution. Around 70% of all ethereum m
 
 At the beginning of the algorithm, we divide the accounts into chunks of 300 storage roots and their corresponding accounts. We start downloading the storage slots, until we find an account whose storage doesn't fit into a single requests. This will be indicated by the proof field having the data indicating that there are still more nodes to download in that account.
 
-![proofs for missing slots](snap_sync/Snap%20Sync%20Downloading%20Storages%20-%201.png)
+![proofs for missing slots](./snap_sync/SnapSyncDownloadingStorages-1.png)
 
 When we reach that situation, we chunk the big account based on the "density"[^7] of storage slots we downloaded, following this code to get chunks of 10,000 slots[^6]. We create the tasks to download those intervals, and store all of the intervals in a struct to check when everything for that account was properly download.
 
@@ -313,7 +313,7 @@ struct StorageTaskResult {
 
 #### Big Accounts Flow
 
-![Big Account logic](snap_sync/Flow%20-%20Big%20Account%20Logic.png)
+![Big Account logic](./snap_sync/Flow-BigAccountLogic.png)
 
 #### Retry Limit
 
