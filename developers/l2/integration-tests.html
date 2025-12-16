@@ -255,7 +255,7 @@
 <p>Our integration tests assume that there is an ethrex L1 node, an ethrex L2 node, and an ethrex L2 prover up and running. So before running them, we need to start the nodes.</p>
 <h3 id="running-ethrex-l2-dev-node"><a class="header" href="#running-ethrex-l2-dev-node">Running ethrex L2 dev node</a></h3>
 <p>For this, we are using the <code>ethrex l2 --dev</code> command, which does this job for us. In one console, run the following:</p>
-<pre><code>./ethrex l2 --dev \
+<pre><code class="language-shell">./ethrex l2 --dev \
 --committer.commit-time 150000 \
 --block-producer.block-time 1000 \
 --block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
@@ -287,7 +287,7 @@ We set the flag <code>--no-monitor</code> to disable the built-in monitoring das
 <p>So far, we have an ethrex L1 and an ethrex L2 node up and running. We only miss the ethrex L2 prover, which we are going to spin up in <code>exec</code> mode, meaning that it won't generate ZK proofs.</p>
 <h3 id="running-ethrex-l2-prover"><a class="header" href="#running-ethrex-l2-prover">Running ethrex L2 prover</a></h3>
 <p>In another terminal, run the following to spin up an ethrex L2 prover in exec mode:</p>
-<pre><code>./ethrex l2 prover \
+<pre><code class="language-shell">./ethrex l2 prover \
 --backend exec \
 --proof-coordinators http://localhost:3900
 </code></pre>
@@ -301,10 +301,10 @@ To see more about the proof coordinator, read the <a href="https://docs.ethrex.x
 </div>
 <h2 id="running-the-integration-tests"><a class="header" href="#running-the-integration-tests">Running the integration tests</a></h2>
 <p>During the execution of <code>ethrex l2 --dev</code>, a <code>.env</code> file is created and filled with environment variables containing contract addresses. This <code>.env</code> file is always needed for dev environments, so we need it for running the integration tests. Therefore, before running the integration tests, copy the <code>.env</code> file into <code>ethrex/cmd</code>:</p>
-<pre><code>cp .env ethrex/cmd
+<pre><code class="language-shell">cp .env ethrex/cmd
 </code></pre>
 <p>Finally, in another terminal (should be a third one at this point), change your current directory to <code>ethrex/crates/l2</code> and run:</p>
-<pre><code>make test
+<pre><code class="language-shell">make test
 </code></pre>
 <h2 id="faq"><a class="header" href="#faq">FAQ</a></h2>
 <h3 id="what-should-i-expect"><a class="header" href="#what-should-i-expect">What should I expect?</a></h3>
@@ -347,6 +347,25 @@ To see more about the proof coordinator, read the <a href="https://docs.ethrex.x
 <p>Logs are being constantly improved to provide better clarity. However, during the execution of the integration tests, you might notice periodic warning logs from the L2 prover indicating that there are no new batches to prove. These warnings are expected behavior in this testing scenario and can be safely ignored.</p>
 <h3 id="the-tests-are-failing-what-should-i-do"><a class="header" href="#the-tests-are-failing-what-should-i-do">The tests are failing, what should I do?</a></h3>
 <p>If the tests are failing, first ensure that both the ethrex L2 node and the ethrex L2 prover are running correctly without any errors. Check their logs for any issues. If everything seems fine, try restarting both services and rerun the tests. Ensure that your configuration files (e.g., <code>.env</code>) are correctly set up and that all required environment variables are defined. If the problem persists, consider reaching out to the ethrex community or support channels for further assistance.</p>
+<h3 id="how-do-i-run-the-tests-with-ethrex-running-from-docker"><a class="header" href="#how-do-i-run-the-tests-with-ethrex-running-from-docker">How do I run the tests with ethrex running from docker?</a></h3>
+<p>To run the integration tests with ethrex running on Docker, pass <code>--net=host</code> to docker run so it binds all ports in <code>localhost</code>:</p>
+<pre><code class="language-shell">docker run --net=host &lt;other_docker_flags&gt; ghcr.io/lambdaclass/ethrex:&lt;tag&gt;-l2 &lt;ethrex_flags&gt;
+</code></pre>
+<p>For <a href="#running-ethrex-l2-dev-node">"Running ethrex L2 dev node"</a>, with the latest image, the full command would be:</p>
+<pre><code class="language-shell">docker run --net=host ghcr.io/lambdaclass/ethrex:latest-l2 l2 --dev \
+--committer.commit-time 150000 \
+--block-producer.block-time 1000 \
+--block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+--block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+--block-producer.l1-fee-vault-address 0x45681AE1768a8936FB87aB11453B4755e322ceec \
+--block-producer.operator-fee-per-gas 1000000000 \
+--no-monitor
+</code></pre>
+<p>For <a href="#running-ethrex-l2-prover">"Running ethrex L2 prover"</a>, with the latest image, the full command would be:</p>
+<pre><code class="language-shell">docker run --net=host ghcr.io/lambdaclass/ethrex:latest-l2 l2 prover \
+--backend exec \
+--proof-coordinators http://localhost:3900
+</code></pre>
 <h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
 <div class="mdbook-alerts mdbook-alerts-note">
 <p class="mdbook-alerts-title">
