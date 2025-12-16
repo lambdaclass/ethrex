@@ -24,22 +24,10 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
     ) -> Result<Option<u64>, RollupStoreError>;
 
     /// Gets the L1 message hashes by a given batch number.
-    async fn get_l1_message_hashes_by_batch(
+    async fn get_l1_out_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, RollupStoreError>;
-
-    /// Gets the L2 message hashes by a given batch number.
-    async fn get_l2_message_hashes_by_batch(
-        &self,
-        batch_number: u64,
-    ) -> Result<Option<Vec<H256>>, RollupStoreError>;
-
-    /// Returns the balance diffs by a given batch_number
-    async fn get_balance_diffs_by_batch(
-        &self,
-        batch_number: u64,
-    ) -> Result<Option<Vec<BalanceDiff>>, RollupStoreError>;
 
     /// Returns the block numbers by a given batch_number
     async fn get_block_numbers_by_batch(
@@ -47,10 +35,26 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         batch_number: u64,
     ) -> Result<Option<Vec<BlockNumber>>, RollupStoreError>;
 
-    async fn get_privileged_transactions_hash_by_batch_number(
+    /// Returns the balance diffs by a given batch_number
+    async fn get_balance_diffs_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<BalanceDiff>>, RollupStoreError>;
+
+    async fn get_l1_in_messages_rolling_hash_by_batch_number(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError>;
+
+    async fn get_l2_in_message_rolling_hashes_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<(u64, H256)>>, RollupStoreError>;
+
+    async fn get_non_privileged_transactions_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<u64>, RollupStoreError>;
 
     async fn get_state_root_by_batch_number(
         &self,
