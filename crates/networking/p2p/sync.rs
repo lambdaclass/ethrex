@@ -510,7 +510,7 @@ impl Syncer {
 
         store
             .forkchoice_update(
-                Some(numbers_and_hashes),
+                numbers_and_hashes,
                 last_block_number,
                 last_block_hash,
                 None,
@@ -802,6 +802,9 @@ impl Syncer {
                         );
                     }
 
+                    warn!("Storage could not be downloaded after multiple attempts. Marking for healing.
+                        This could impact snap sync time (healing may take a while).");
+
                     storage_accounts.accounts_with_storage_root.clear();
                 }
 
@@ -992,7 +995,7 @@ impl Syncer {
 
         store
             .forkchoice_update(
-                Some(numbers_and_hashes),
+                numbers_and_hashes,
                 pivot_header.number,
                 pivot_header.hash(),
                 None,

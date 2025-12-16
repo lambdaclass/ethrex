@@ -25,12 +25,12 @@ use ethrex_l2_common::{
     calldata::Value,
     merkle_tree::compute_merkle_root,
     messages::{
-        L2Message, get_balance_diffs, get_block_l1_messages, get_block_l2_messages,
-        get_l1_message_hash, get_l2_message_hash,
+        L2Message, get_balance_diffs, get_block_l1_messages, get_block_l2_out_messages,
+        get_l1_message_hash,
     },
     privileged_transactions::{
-        PRIVILEGED_TX_BUDGET, compute_privileged_transactions_hash,
-        get_block_l1_privileged_transactions,
+        PRIVILEGED_TX_BUDGET, compute_privileged_transactions_hash, get_block_l1_in_messages,
+        get_block_l2_in_messages,
     },
     prover::ProverInputData,
 };
@@ -68,9 +68,9 @@ use spawned_concurrency::tasks::{
 };
 
 const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
-    "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes[])";
-const COMMIT_FUNCTION_SIGNATURE: &str =
-    "commitBatch(uint256,bytes32, bytes32,bytes32,bytes32,bytes32,(uint256,uint256)[])";
+    "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,uint256,bytes[])";
+const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,uint256,(uint256,uint256,bytes32[])[],(uint256,bytes32)[])
+";
 /// Default wake up time for the committer to check if it should send a commit tx
 const COMMITTER_DEFAULT_WAKE_TIME_MS: u64 = 60_000;
 
@@ -470,7 +470,7 @@ impl L1Committer {
 
             // Here we use the checkpoint store because we need the previous
             // state available (i.e. not pruned) for re-execution.
-            let vm_db = StoreVmDatabase::new(one_time_checkpoint_store.clone(), parent_header);
+            let vm_db = StoreVmDatabase::new(one_time_checkpoint_store.clone(), parent_header)?;
 
             let mut vm = Evm::new_for_l2(vm_db, *fee_config)?;
 
@@ -553,10 +553,12 @@ impl L1Committer {
         let Some((
             blobs_bundle,
             new_state_root,
-            l1_message_hashes,
+            l1_out_message_hashes,
             l2_messages,
-            privileged_transactions_hash,
+            l1_in_messages_rolling_hash,
+            l2_in_message_rolling_hashes,
             last_block_of_batch,
+            non_privileged_transactions,
         )) = result
         else {
             self.remove_one_time_checkpoint(&one_time_checkpoint_path)?;
@@ -564,19 +566,18 @@ impl L1Committer {
         };
 
         let balance_diffs = get_balance_diffs(&l2_messages);
-        let l2_message_hashes: Vec<H256> = l2_messages.iter().map(get_l2_message_hash).collect();
-        info!("l2 messages hashes in batch: {}", l2_message_hashes.len());
 
         let batch = Batch {
             number: batch_number,
             first_block: first_block_to_commit,
             last_block: last_block_of_batch,
             state_root: new_state_root,
-            privileged_transactions_hash,
-            l1_message_hashes,
-            l2_message_hashes,
+            l1_in_messages_rolling_hash,
+            l2_in_message_rolling_hashes,
+            l1_out_message_hashes,
             balance_diffs,
             blobs_bundle,
+            non_privileged_transactions,
             commit_tx: None,
             verify_tx: None,
         };
@@ -633,17 +634,22 @@ impl L1Committer {
             Vec<H256>,
             Vec<L2Message>,
             H256,
+            Vec<(u64, H256)>,
             BlockNumber,
+            u64,
         )>,
         CommitterError,
     > {
         let first_block_of_batch = last_added_block_number + 1;
         let mut blobs_bundle = BlobsBundle::default();
 
-        let mut acc_privileged_txs = vec![];
-        let mut l1_message_hashes = vec![];
-        let mut acc_l2_messages = vec![];
-        let mut privileged_transactions_hashes = vec![];
+        let mut acc_l1_in_messages = vec![];
+        let mut acc_l2_in_messages = vec![];
+        let mut l1_out_message_hashes = vec![];
+        let mut acc_l2_out_messages = vec![];
+        let mut acc_non_privileged_transactions = 0;
+        let mut l1_in_message_hashes = vec![];
+        let mut l2_in_message_hashes = BTreeMap::new();
         let mut new_state_root = H256::default();
         let mut acc_gas_used = 0_u64;
         let mut acc_blocks = vec![];
@@ -725,11 +731,13 @@ impl L1Committer {
                 batch_gas_used += potential_batch_block.header.gas_used;
             );
             // Get block messages and privileged transactions
-            let l1_messages = get_block_l1_messages(&receipts);
-            let l2_messages = get_block_l2_messages(&receipts);
-            info!("Got l2 messages: {}", l2_messages.len());
-            let privileged_transactions =
-                get_block_l1_privileged_transactions(&txs, self.store.get_chain_config().chain_id);
+            let l1_out_messages = get_block_l1_messages(&receipts);
+            let l2_out_messages =
+                get_block_l2_out_messages(&receipts, self.store.get_chain_config().chain_id);
+            let l1_in_messages =
+                get_block_l1_in_messages(&txs, self.store.get_chain_config().chain_id);
+            let l2_in_messages =
+                get_block_l2_in_messages(&txs, self.store.get_chain_config().chain_id);
 
             // Get block account updates.
             let account_updates = if let Some(account_updates) = self
@@ -750,7 +758,7 @@ impl L1Committer {
 
                 // Here we use the checkpoint store because we need the previous
                 // state available (i.e. not pruned) for re-execution.
-                let vm_db = StoreVmDatabase::new(checkpoint_store.clone(), parent_header);
+                let vm_db = StoreVmDatabase::new(checkpoint_store.clone(), parent_header)?;
 
                 let fee_config = self
                     .rollup_store
@@ -792,10 +800,12 @@ impl L1Committer {
             }
 
             // Accumulate block data with the rest of the batch.
-            acc_privileged_txs.extend(privileged_transactions.clone());
+            acc_l1_in_messages.extend(l1_in_messages.clone());
+            acc_l2_in_messages.extend(l2_in_messages.clone());
 
-            let acc_privileged_txs_len: u64 = acc_privileged_txs.len().try_into()?;
-            if acc_privileged_txs_len > PRIVILEGED_TX_BUDGET {
+            let l1_in_messages_len: u64 = acc_l1_in_messages.len().try_into()?;
+            let l2_in_messages_len: u64 = acc_l2_in_messages.len().try_into()?;
+            if l1_in_messages_len + l2_in_messages_len > PRIVILEGED_TX_BUDGET {
                 warn!(
                     "Privileged transactions budget exceeded. Any remaining blocks will be processed in the next batch."
                 );
@@ -845,15 +855,32 @@ impl L1Committer {
                 blob_size = latest_blob_size;
             );
 
-            privileged_transactions_hashes.extend(
-                privileged_transactions
+            l1_in_message_hashes.extend(
+                l1_in_messages
                     .iter()
                     .filter_map(|tx| tx.get_privileged_hash())
                     .collect::<Vec<H256>>(),
             );
 
-            l1_message_hashes.extend(l1_messages.iter().map(get_l1_message_hash));
-            acc_l2_messages.extend(l2_messages);
+            for tx in l2_in_messages {
+                let tx_hash = tx
+                    .get_privileged_hash()
+                    .ok_or(CommitterError::InvalidPrivilegedTransaction)?;
+                l2_in_message_hashes
+                    .entry(tx.chain_id)
+                    .or_insert_with(Vec::new)
+                    .push(tx_hash);
+            }
+
+            l1_out_message_hashes.extend(l1_out_messages.iter().map(get_l1_message_hash));
+            acc_l2_out_messages.extend(l2_out_messages);
+
+            acc_non_privileged_transactions += potential_batch_block
+                .body
+                .transactions
+                .iter()
+                .filter(|tx| !tx.is_privileged())
+                .count();
 
             new_state_root = checkpoint_store
                 .state_trie(potential_batch_block.hash())?
@@ -873,8 +900,8 @@ impl L1Committer {
         }
 
         metrics!(if let (Ok(privileged_transaction_count), Ok(messages_count)) = (
-                privileged_transactions_hashes.len().try_into(),
-                l1_message_hashes.len().try_into()
+                l1_in_message_hashes.len().try_into(),
+                l1_out_message_hashes.len().try_into()
             ) {
                 let _ = self
                     .rollup_store
@@ -896,12 +923,17 @@ impl L1Committer {
         );
 
         info!(
-            "Added {} privileged transactions to the batch",
-            privileged_transactions_hashes.len()
+            "Added {} privileged to the batch",
+            l1_in_message_hashes.len() + l2_in_message_hashes.len()
         );
 
-        let privileged_transactions_hash =
-            compute_privileged_transactions_hash(privileged_transactions_hashes)?;
+        let l1_in_messages_rolling_hash =
+            compute_privileged_transactions_hash(l1_in_message_hashes)?;
+        let mut l2_in_message_rolling_hashes = Vec::new();
+        for (chain_id, hashes) in &l2_in_message_hashes {
+            let rolling_hash = compute_privileged_transactions_hash(hashes.clone())?;
+            l2_in_message_rolling_hashes.push((*chain_id, rolling_hash));
+        }
 
         let last_block_hash = acc_blocks
             .last()
@@ -912,7 +944,7 @@ impl L1Committer {
 
         checkpoint_store
             .forkchoice_update(
-                Some(acc_blocks),
+                acc_blocks,
                 last_added_block_number,
                 last_block_hash,
                 None,
@@ -923,10 +955,12 @@ impl L1Committer {
         Ok(Some((
             blobs_bundle,
             new_state_root,
-            l1_message_hashes,
-            acc_l2_messages,
-            privileged_transactions_hash,
+            l1_out_message_hashes,
+            acc_l2_out_messages,
+            l1_in_messages_rolling_hash,
+            l2_in_message_rolling_hashes,
             last_added_block_number,
+            acc_non_privileged_transactions.try_into()?,
         )))
     }
 
@@ -1085,23 +1119,43 @@ impl L1Committer {
     }
 
     async fn send_commitment(&mut self, batch: &Batch) -> Result<H256, CommitterError> {
-        let l1_messages_merkle_root = compute_merkle_root(&batch.l1_message_hashes);
-        let l2_messages_merkle_root = compute_merkle_root(&batch.l2_message_hashes);
-        debug!("l2 messages merkle root: {l2_messages_merkle_root:#x}");
-        debug!("l2 messages hashes len: {}", batch.l2_message_hashes.len());
+        let l1_messages_merkle_root = compute_merkle_root(&batch.l1_out_message_hashes);
         let last_block_hash = get_last_block_hash(&self.store, batch.last_block)?;
-        let balance_diffs: Vec<Value> = batch
+        let balance_diff_values: Vec<Value> = batch
             .balance_diffs
             .iter()
-            .map(|d| Value::Tuple(vec![Value::Uint(d.chain_id), Value::Uint(d.value)]))
+            .map(|d| {
+                Value::Tuple(vec![
+                    Value::Uint(d.chain_id),
+                    Value::Uint(d.value),
+                    Value::Array(
+                        d.message_hashes
+                            .iter()
+                            .map(|h| Value::FixedBytes(h.0.to_vec().into()))
+                            .collect(),
+                    ),
+                ])
+            })
+            .collect();
+
+        let l2_in_message_rolling_hashes_values: Vec<Value> = batch
+            .l2_in_message_rolling_hashes
+            .iter()
+            .map(|(chain_id, hash)| {
+                Value::Tuple(vec![
+                    Value::Uint(U256::from(*chain_id)),
+                    Value::FixedBytes(hash.0.to_vec().into()),
+                ])
+            })
             .collect();
 
         let mut calldata_values = vec![
             Value::Uint(U256::from(batch.number)),
             Value::FixedBytes(batch.state_root.0.to_vec().into()),
             Value::FixedBytes(l1_messages_merkle_root.0.to_vec().into()),
-            Value::FixedBytes(batch.privileged_transactions_hash.0.to_vec().into()),
+            Value::FixedBytes(batch.l1_in_messages_rolling_hash.0.to_vec().into()),
             Value::FixedBytes(last_block_hash.0.to_vec().into()),
+            Value::Uint(U256::from(batch.non_privileged_transactions)),
         ];
 
         let (commit_function_signature, values) = if self.based {
@@ -1124,8 +1178,8 @@ impl L1Committer {
 
             (COMMIT_FUNCTION_SIGNATURE_BASED, calldata_values)
         } else {
-            calldata_values.push(Value::FixedBytes(l2_messages_merkle_root.0.to_vec().into()));
-            calldata_values.push(Value::Array(balance_diffs));
+            calldata_values.push(Value::Array(balance_diff_values));
+            calldata_values.push(Value::Array(l2_in_message_rolling_hashes_values));
             (COMMIT_FUNCTION_SIGNATURE, calldata_values)
         };
 
