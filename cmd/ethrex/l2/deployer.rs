@@ -1223,7 +1223,7 @@ async fn initialize_contracts(
         // Initialize only OnChainProposer without Based config
         let calldata_values = vec![
             Value::Bool(opts.validium),
-            Value::Address(contract_addresses.timelock_address), // Owner set to Timelock
+            Value::Address(contract_addresses.timelock_address),
             Value::Bool(opts.risc0),
             Value::Bool(opts.sp1),
             Value::Bool(opts.tdx),
@@ -1235,7 +1235,6 @@ async fn initialize_contracts(
             Value::FixedBytes(sp1_vk),
             Value::FixedBytes(risc0_vk),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
-            // Removed sequencers array
             Value::Uint(genesis.config.chain_id.into()),
             Value::Address(contract_addresses.bridge_address),
         ];
