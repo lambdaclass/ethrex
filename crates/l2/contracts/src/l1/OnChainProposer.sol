@@ -295,13 +295,11 @@ contract OnChainProposer is
 
         // Validate commit hash and corresponding verification keys are valid
         require(commitHash != bytes32(0), "012");
-        require(
-            (!REQUIRE_SP1_PROOF ||
-                verificationKeys[commitHash][VK_SP1] != bytes32(0)) &&
-                (!REQUIRE_RISC0_PROOF ||
-                    verificationKeys[commitHash][VK_RISC0] != bytes32(0)),
-            "013" // missing verification key for commit hash
-        );
+        if (REQUIRE_SP1_PROOF && verificationKeys[commitHash][VK_SP1] == bytes32(0)) {
+            revert("013"); // missing verification key for commit hash
+        } else if (REQUIRE_RISC0_PROOF && verificationKeys[commitHash][VK_RISC0] == bytes32(0)) {
+            revert("013"); // missing verification key for commit hash
+        }
 
         batchCommitments[batchNumber] = BatchCommitmentInfo(
             newStateRoot,
