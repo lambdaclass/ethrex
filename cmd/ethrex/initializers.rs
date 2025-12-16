@@ -368,7 +368,7 @@ async fn set_sync_block(store: &Store) {
             .expect("Could not get hash for block number provided by env variable")
             .expect("Could not get hash for block number provided by env variable");
         store
-            .forkchoice_update(None, block_number, block_hash, None, None)
+            .forkchoice_update(vec![], block_number, block_hash, None, None)
             .await
             .expect("Could not set sync block");
     }

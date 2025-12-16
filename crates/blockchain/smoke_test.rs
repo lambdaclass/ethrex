@@ -32,7 +32,7 @@ mod blockchain_integration_test {
         let hash_1a = block_1a.hash();
         blockchain.add_block(block_1a.clone()).unwrap();
         store
-            .forkchoice_update(None, 1, hash_1a, None, None)
+            .forkchoice_update(vec![], 1, hash_1a, None, None)
             .await
             .unwrap();
         let retrieved_1a = store.get_block_header(1).unwrap().unwrap();

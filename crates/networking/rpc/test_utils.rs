@@ -99,13 +99,7 @@ async fn add_blocks_with_transactions(
         return;
     };
     storage
-        .forkchoice_update(
-            Some(new_canonical_blocks),
-            last_number,
-            last_hash,
-            None,
-            None,
-        )
+        .forkchoice_update(new_canonical_blocks, last_number, last_hash, None, None)
         .await
         .unwrap();
 }

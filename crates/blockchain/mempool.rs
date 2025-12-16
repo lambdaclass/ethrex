@@ -500,7 +500,7 @@ mod tests {
         let block_hash = header.hash();
         store.add_block_header(block_hash, header).await?;
         store
-            .forkchoice_update(None, block_number, block_hash, None, None)
+            .forkchoice_update(vec![], block_number, block_hash, None, None)
             .await?;
         store.set_chain_config(&config).await?;
         Ok(store)

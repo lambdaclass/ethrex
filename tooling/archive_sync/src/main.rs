@@ -333,7 +333,7 @@ impl DumpProcessor {
 
             store.add_block(block).await?;
             store
-                .forkchoice_update(Some(block_hashes), block_number, block_hash, None, None)
+                .forkchoice_update(block_hashes, block_number, block_hash, None, None)
                 .await?;
             info!("Head of local chain is now block {block_number} with hash {block_hash}");
         }
