@@ -7,7 +7,7 @@ use std::{
 use ethrex::{cli::Options, initializers::init_tracing};
 use ethrex_common::U256;
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, time::Duration};
 use tracing::{error, info, warn};
 
 use crate::simulator::Simulator;
@@ -119,42 +119,42 @@ async fn snap_sync_smoke_test(simulator: Arc<Mutex<Simulator>>) {
     let slot_key1 = U256::from(25);
     let slot_value1 = U256::from(7474);
 
-    let node1 = simulator.start_node().await;
+    let node0 = simulator.start_node().await;
 
     // Create a chain with a few empty blocks
     let mut base_chain = simulator.get_base_chain();
 
-    base_chain = node1.extend_chain(base_chain, 10).await;
+    base_chain = node0.extend_chain(base_chain, 10).await;
 
     // Send a deploy tx for a contract which receives: `(bytes32 key, bytes32 value)` as parameters
-    let contract_address = node1
+    let contract_address = node0
         .send_contract_deploy(&signer, contract_deploy_bytecode)
         .await;
 
-    // Set a storage slot in the contract in node1
+    // Set a storage slot in the contract in node0
     let calldata0 = [slot_key0.to_big_endian(), slot_value0.to_big_endian()]
         .concat()
         .into();
-    node1.send_call(&signer, contract_address, calldata0).await;
+    node0.send_call(&signer, contract_address, calldata0).await;
 
-    base_chain = node1.extend_chain(base_chain, 10).await;
-    // Set another storage slot in the contract in node1
+    base_chain = node0.extend_chain(base_chain, 10).await;
+    // Set another storage slot in the contract in node0
     let calldata1 = [slot_key1.to_big_endian(), slot_value1.to_big_endian()]
         .concat()
         .into();
-    node1.send_call(&signer, contract_address, calldata1).await;
+    node0.send_call(&signer, contract_address, calldata1).await;
 
     // Extend the chain until we go past the snap-sync threshold
-    base_chain = node1.extend_chain(base_chain, 1000).await;
+    base_chain = node0.extend_chain(base_chain, 20000).await;
 
-    let node0 = simulator.start_snapsync_node().await;
+    let node1 = simulator.start_snapsync_node().await;
 
-    node0.update_forkchoice(&base_chain).await;
+    node1.update_forkchoice_with_timeout(&base_chain, Duration::from_secs(120)).await;
 
     // Check the storage slots are as expected after snap-syncing
-    let value_slot0 = node0.get_storage_at(contract_address, slot_key0).await;
+    let value_slot0 = node1.get_storage_at(contract_address, slot_key0).await;
     assert_eq!(value_slot0, slot_value0);
-    let value_slot1 = node0.get_storage_at(contract_address, slot_key1).await;
+    let value_slot1 = node1.get_storage_at(contract_address, slot_key1).await;
     assert_eq!(value_slot1, slot_value1);
 }
 

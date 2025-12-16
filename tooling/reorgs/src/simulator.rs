@@ -81,6 +81,14 @@ impl Simulator {
     }
 
     pub async fn start_node(&mut self) -> Node {
+        self.start_node_with_config(SyncMode::Full).await
+    }
+
+    pub async fn start_snapsync_node(&mut self) -> Node {
+        self.start_node_with_config(SyncMode::Snap).await
+    }
+
+    async fn start_node_with_config(&mut self, syncmode: SyncMode) -> Node {
         let n = self.configs.len();
         let test_name = &self.test_name;
         info!(node = n, "Starting node");
@@ -95,7 +103,7 @@ impl Simulator {
         opts.p2p_port = p2p_port.to_string();
         opts.discovery_port = p2p_port.to_string();
 
-        opts.syncmode = SyncMode::Full;
+        opts.syncmode = syncmode;
 
         if opts.datadir.exists() {
             std::fs::remove_dir_all(&opts.datadir)
@@ -164,91 +172,6 @@ impl Simulator {
             }
         });
         self.cancellation_tokens.push((cancel, waiter));
-
-        info!(
-            "Started node {n} at http://{}:{}",
-            opts.http_addr, opts.http_port
-        );
-
-        self.get_node(n)
-    }
-
-    pub async fn start_snapsync_node(&mut self) -> Node {
-        let n = self.configs.len();
-        let test_name = &self.test_name;
-        info!(node = n, "Starting node");
-        let mut opts = self.base_opts.clone();
-        opts.datadir = format!("data/{test_name}/node{n}").into();
-
-        opts.http_port = get_next_port().to_string();
-        opts.authrpc_port = get_next_port().to_string();
-
-        // These are one TCP and one UDP
-        let p2p_port = get_next_port();
-        opts.p2p_port = p2p_port.to_string();
-        opts.discovery_port = p2p_port.to_string();
-
-        opts.syncmode = SyncMode::Snap;
-
-        let _ = std::fs::remove_dir_all(&opts.datadir);
-        std::fs::create_dir_all(&opts.datadir).expect("Failed to create data directory");
-
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let logs_file_path = format!("data/{test_name}/node{n}_{now}.log");
-        let logs_file = File::create(&logs_file_path).expect("Failed to create logs file");
-
-        let cancel = CancellationToken::new();
-
-        self.configs.push(opts.clone());
-        self.cancellation_tokens.push(cancel.clone());
-
-        let mut cmd = Command::new(&self.cmd_path);
-        cmd.args([
-            format!("--http.addr={}", opts.http_addr),
-            format!("--http.port={}", opts.http_port),
-            format!("--authrpc.addr={}", opts.authrpc_addr),
-            format!("--authrpc.port={}", opts.authrpc_port),
-            format!("--p2p.port={}", opts.p2p_port),
-            format!("--discovery.port={}", opts.discovery_port),
-            format!("--datadir={}", opts.datadir.display()),
-            format!("--network={}", self.genesis_path.display()),
-            format!("--syncmode={:?}", opts.syncmode).to_lowercase(),
-            "--force".to_string(),
-        ])
-        .stdin(Stdio::null())
-        .stdout(logs_file.try_clone().unwrap())
-        .stderr(logs_file);
-
-        if !self.enodes.is_empty() {
-            cmd.arg(format!("--bootnodes={}", self.enodes.join(",")));
-        }
-
-        let child = cmd.spawn().expect("Failed to start ethrex process");
-
-        let logs_file = File::open(&logs_file_path).expect("Failed to open logs file");
-        let enode =
-            tokio::time::timeout(Duration::from_secs(5), wait_for_initialization(logs_file))
-                .await
-                .expect("node initialization timed out");
-        self.enodes.push(enode);
-
-        tokio::spawn(async move {
-            let mut child = child;
-            tokio::select! {
-                _ = cancel.cancelled() => {
-                    if let Some(pid) = child.id() {
-                        // NOTE: we use SIGTERM instead of child.kill() so sockets are closed
-                        signal::kill(Pid::from_raw(pid as i32), Signal::SIGTERM).unwrap();
-                    }
-                }
-                res = child.wait() => {
-                    assert!(res.unwrap().success());
-                }
-            }
-        });
 
         info!(
             "Started node {n} at http://{}:{}",
@@ -328,6 +251,10 @@ pub struct Node {
 
 impl Node {
     pub async fn update_forkchoice(&self, chain: &Chain) {
+        self.update_forkchoice_with_timeout(chain, Duration::from_secs(5)).await
+    }
+
+    pub async fn update_forkchoice_with_timeout(&self, chain: &Chain, timeout: Duration) {
         let fork_choice_state = chain.get_fork_choice_state();
         info!(
             node = self.index,
@@ -336,7 +263,7 @@ impl Node {
         );
         let syncing_fut = wait_until_synced(&self.engine_client, fork_choice_state);
 
-        tokio::time::timeout(Duration::from_secs(5), syncing_fut)
+        tokio::time::timeout(timeout, syncing_fut)
             .await
             .inspect_err(|_| {
                 error!(node = self.index, "Timed out waiting for node to sync");
