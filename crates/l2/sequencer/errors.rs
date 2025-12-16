@@ -292,6 +292,8 @@ pub enum CommitterError {
     ChainError(#[from] ChainError),
     #[error("Failed due to invalid fork choice: {0}")]
     InvalidForkChoice(#[from] InvalidForkChoice),
+    #[error("Privileged transaction hash could not be computed")]
+    InvalidPrivilegedTransaction,
 }
 
 #[derive(Debug, thiserror::Error)]
