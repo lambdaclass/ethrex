@@ -10,7 +10,7 @@
       --metrics.port 3701
       --network mainnet
       --authrpc.jwtsecret /secrets/jwt.hex
-      --syncmode full
+      --syncmode snap
     lighthouse_flags: |
       bn
       --network mainnet
