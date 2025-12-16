@@ -101,6 +101,8 @@ jemalloc_profiling = [
   "ethrex-rpc/jemalloc_profiling",
 ]
 sync-test = ["ethrex-p2p/sync-test"]
+# discv5 is currently experimental and should only be enabled for development purposes
+discv5 = ["ethrex-p2p/discv5"]
 
 l2 = [
   "ethrex-l2",
