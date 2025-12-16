@@ -32,12 +32,13 @@ impl Debug for SQLStore {
     }
 }
 
-const DB_SCHEMA: [&str; 19] = [
+const DB_SCHEMA: [&str; 20] = [
     "CREATE TABLE IF NOT EXISTS blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE IF NOT EXISTS l1_messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
-    "CREATE TABLE IF NOT EXISTS l2_messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
-    "CREATE TABLE IF NOT EXISTS balance_diffs (batch INT, chain_id BLOB, value BLOB, PRIMARY KEY (batch, chain_id))",
+    "CREATE TABLE IF NOT EXISTS l2_rolling_hashes (batch INT PRIMARY KEY, value BLOB)",
+    "CREATE TABLE IF NOT EXISTS balance_diffs (batch INT, chain_id BLOB, value BLOB, message_hashes BLOB, PRIMARY KEY (batch, chain_id))",
     "CREATE TABLE IF NOT EXISTS privileged_transactions (batch INT PRIMARY KEY, transactions_hash BLOB)",
+    "CREATE TABLE IF NOT EXISTS non_privileged_transactions (batch INT PRIMARY KEY, transactions INT)",
     "CREATE TABLE IF NOT EXISTS state_roots (batch INT PRIMARY KEY, state_root BLOB)",
     "CREATE TABLE IF NOT EXISTS blob_bundles (batch INT, idx INT, blob_bundle BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE IF NOT EXISTS account_updates (block_number INT PRIMARY KEY, updates BLOB)",
@@ -162,24 +163,16 @@ impl SQLStore {
         self.execute_in_tx(queries, db_tx).await
     }
 
-    async fn store_l2_message_hashes_by_batch_in_tx(
+    async fn store_non_privileged_transactions_by_batch_in_tx(
         &self,
         batch_number: u64,
-        message_hashes: Vec<H256>,
+        non_privileged_transactions: u64,
         db_tx: Option<&Transaction>,
     ) -> Result<(), RollupStoreError> {
-        let mut queries = vec![(
-            "DELETE FROM l2_messages WHERE batch = ?1",
-            vec![batch_number].into_params()?,
+        let queries = vec![(
+            "INSERT OR REPLACE INTO non_privileged_transactions VALUES (?1, ?2)",
+            (batch_number, non_privileged_transactions).into_params()?,
         )];
-        for (index, hash) in message_hashes.iter().enumerate() {
-            let index = u64::try_from(index)
-                .map_err(|e| RollupStoreError::Custom(format!("conversion error: {e}")))?;
-            queries.push((
-                "INSERT INTO l2_messages VALUES (?1, ?2, ?3)",
-                (batch_number, index, Vec::from(hash.to_fixed_bytes())).into_params()?,
-            ));
-        }
         self.execute_in_tx(queries, db_tx).await
     }
 
@@ -195,11 +188,16 @@ impl SQLStore {
         )];
         for balance_diff in balance_diffs {
             queries.push((
-                "INSERT INTO balance_diffs VALUES (?1, ?2, ?3)",
+                "INSERT INTO balance_diffs VALUES (?1, ?2, ?3, ?4)",
                 (
                     batch_number,
                     Vec::from(balance_diff.chain_id.to_big_endian()),
                     Vec::from(balance_diff.value.to_big_endian()),
+                    balance_diff
+                        .message_hashes
+                        .iter()
+                        .flat_map(|h| h.to_fixed_bytes())
+                        .collect::<Vec<u8>>(),
                 )
                     .into_params()?,
             ));
@@ -207,10 +205,30 @@ impl SQLStore {
         self.execute_in_tx(queries, db_tx).await
     }
 
-    async fn store_privileged_transactions_hash_by_batch_number_in_tx(
+    async fn store_l2_rolling_hashes_by_batch_in_tx(
         &self,
         batch_number: u64,
-        privileged_transactions_hash: H256,
+        l2_rolling_hashes: Vec<(u64, H256)>,
+        db_tx: Option<&Transaction>,
+    ) -> Result<(), RollupStoreError> {
+        let serialized = bincode::serialize(&l2_rolling_hashes)?;
+        let queries = vec![
+            (
+                "DELETE FROM l2_rolling_hashes WHERE batch = ?1",
+                vec![batch_number].into_params()?,
+            ),
+            (
+                "INSERT INTO l2_rolling_hashes VALUES (?1, ?2)",
+                (batch_number, serialized).into_params()?,
+            ),
+        ];
+        self.execute_in_tx(queries, db_tx).await
+    }
+
+    async fn store_l1_in_messages_hash_by_batch_number_in_tx(
+        &self,
+        batch_number: u64,
+        l1_in_messages_hash: H256,
         db_tx: Option<&Transaction>,
     ) -> Result<(), RollupStoreError> {
         let queries = vec![
@@ -222,7 +240,7 @@ impl SQLStore {
                 "INSERT INTO privileged_transactions VALUES (?1, ?2)",
                 (
                     batch_number,
-                    Vec::from(privileged_transactions_hash.to_fixed_bytes()),
+                    Vec::from(l1_in_messages_hash.to_fixed_bytes()),
                 )
                     .into_params()?,
             ),
@@ -364,13 +382,7 @@ impl SQLStore {
             .await?;
         self.store_l1_message_hashes_by_batch_in_tx(
             batch.number,
-            batch.l1_message_hashes,
-            Some(transaction),
-        )
-        .await?;
-        self.store_l2_message_hashes_by_batch_in_tx(
-            batch.number,
-            batch.l2_message_hashes,
+            batch.l1_out_message_hashes,
             Some(transaction),
         )
         .await?;
@@ -380,9 +392,21 @@ impl SQLStore {
             Some(transaction),
         )
         .await?;
-        self.store_privileged_transactions_hash_by_batch_number_in_tx(
+        self.store_l1_in_messages_hash_by_batch_number_in_tx(
             batch.number,
-            batch.privileged_transactions_hash,
+            batch.l1_in_messages_rolling_hash,
+            Some(transaction),
+        )
+        .await?;
+        self.store_non_privileged_transactions_by_batch_in_tx(
+            batch.number,
+            batch.non_privileged_transactions,
+            Some(transaction),
+        )
+        .await?;
+        self.store_l2_rolling_hashes_by_batch_in_tx(
+            batch.number,
+            batch.l2_in_message_rolling_hashes,
             Some(transaction),
         )
         .await?;
@@ -448,7 +472,7 @@ impl StoreEngineRollup for SQLStore {
     }
 
     /// Gets the L1 message hashes by a given batch number.
-    async fn get_l1_message_hashes_by_batch(
+    async fn get_l1_out_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, RollupStoreError> {
@@ -456,29 +480,6 @@ impl StoreEngineRollup for SQLStore {
         let mut rows = self
             .query(
                 "SELECT * from l1_messages WHERE batch = ?1 ORDER BY idx ASC",
-                vec![batch_number],
-            )
-            .await?;
-        while let Some(row) = rows.next().await? {
-            let vec = read_from_row_blob(&row, 2)?;
-            hashes.push(H256::from_slice(&vec));
-        }
-        if hashes.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(hashes))
-        }
-    }
-
-    /// Gets the L2 message hashes by a given batch number.
-    async fn get_l2_message_hashes_by_batch(
-        &self,
-        batch_number: u64,
-    ) -> Result<Option<Vec<H256>>, RollupStoreError> {
-        let mut hashes = vec![];
-        let mut rows = self
-            .query(
-                "SELECT * from l2_messages WHERE batch = ?1 ORDER BY idx ASC",
                 vec![batch_number],
             )
             .await?;
@@ -507,7 +508,17 @@ impl StoreEngineRollup for SQLStore {
         while let Some(row) = rows.next().await? {
             let chain_id = U256::from_big_endian(&read_from_row_blob(&row, 1)?);
             let value = U256::from_big_endian(&read_from_row_blob(&row, 2)?);
-            balance_diffs.push(BalanceDiff { chain_id, value });
+            let blob = read_from_row_blob(&row, 3)?;
+            let mut message_hashes = vec![];
+            for chunk in blob.chunks(32) {
+                message_hashes.push(H256::from_slice(chunk));
+            }
+
+            balance_diffs.push(BalanceDiff {
+                chain_id,
+                value,
+                message_hashes,
+            });
         }
         if balance_diffs.is_empty() {
             Ok(None)
@@ -536,7 +547,27 @@ impl StoreEngineRollup for SQLStore {
         }
     }
 
-    async fn get_privileged_transactions_hash_by_batch_number(
+    async fn get_l2_in_message_rolling_hashes_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<(u64, H256)>>, RollupStoreError> {
+        let mut rows = self
+            .query(
+                "SELECT * FROM l2_rolling_hashes WHERE batch = ?1",
+                vec![batch_number],
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            let vec = read_from_row_blob(&row, 1)?;
+            let l2_rolling_hashes: Vec<(u64, H256)> = bincode::deserialize(&vec).map_err(|e| {
+                RollupStoreError::Custom(format!("error deserializing l2 rolling hashes: {e}"))
+            })?;
+            return Ok(Some(l2_rolling_hashes));
+        }
+        Ok(None)
+    }
+
+    async fn get_l1_in_messages_rolling_hash_by_batch_number(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError> {
@@ -549,6 +580,23 @@ impl StoreEngineRollup for SQLStore {
         if let Some(row) = rows.next().await? {
             let vec = read_from_row_blob(&row, 1)?;
             return Ok(Some(H256::from_slice(&vec)));
+        }
+        Ok(None)
+    }
+
+    async fn get_non_privileged_transactions_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<u64>, RollupStoreError> {
+        let mut rows = self
+            .query(
+                "SELECT * from non_privileged_transactions WHERE batch = ?1",
+                vec![batch_number],
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            let val = read_from_row_int(&row, 1)?;
+            return Ok(Some(val));
         }
         Ok(None)
     }
@@ -738,11 +786,15 @@ impl StoreEngineRollup for SQLStore {
                 [batch_number].into_params()?,
             ),
             (
-                "DELETE FROM l2_messages WHERE batch > ?1",
+                "DELETE FROM l2_rolling_hashes WHERE batch > ?1",
                 [batch_number].into_params()?,
             ),
             (
                 "DELETE FROM privileged_transactions WHERE batch > ?1",
+                [batch_number].into_params()?,
+            ),
+            (
+                "DELETE FROM non_privileged_transactions WHERE batch > ?1",
                 [batch_number].into_params()?,
             ),
             (
