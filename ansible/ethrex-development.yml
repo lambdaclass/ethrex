@@ -1,0 +1,143 @@
+- name: Ethrex Development Setup
+  hosts: all
+  vars:
+    ansible_ssh_user: admin
+    lighthouse_version: "8.0.0"
+    lighthouse_flags: |-
+      bn
+      --network mainnet
+      --execution-endpoint http://localhost:8551
+      --execution-jwt /secrets/jwt.hex
+      --checkpoint-sync-url https://sync-mainnet.beaconcha.in
+      --port 9000
+      --http
+      --http-address 0.0.0.0
+      --http-port 5052
+      --http-allow-origin "*"
+      --metrics
+      --metrics-port 5054
+      --metrics-address 0.0.0.0
+
+  tasks:
+    - name: Install development APT dependencies
+      become: true
+      apt:
+        name:
+          - libclang-dev
+          - clang
+          - tmux
+          - rsync
+          - linux-perf
+          - git
+          - pkg-config
+          - make
+        state: present
+        update_cache: yes
+      vars:
+        ansible_ssh_user: admin
+
+    - name: Download Lighthouse
+      get_url:
+        url: https://github.com/sigp/lighthouse/releases/download/v{{ lighthouse_version }}/lighthouse-v{{ lighthouse_version }}-{{ ansible_facts['architecture'] }}-unknown-linux-gnu.tar.gz
+        dest: "/tmp/lighthouse-{{ lighthouse_version }}.tar.gz"
+        mode: '0644'
+
+    - name: Extract Lighthouse
+      unarchive:
+        src: "/tmp/lighthouse-{{ lighthouse_version }}.tar.gz"
+        dest: "/tmp/"
+        remote_src: true
+
+    - name: Move Lighthouse binary
+      become: true
+      copy:
+        remote_src: true
+        src: "/tmp/lighthouse"
+        dest: "/usr/local/bin/lighthouse"
+        mode: u=rwx,g=rx,o=rx
+      vars:
+        ansible_ssh_user: admin
+
+    - name: Ensure secrets directory exists
+      become: true
+      file:
+        path: /secrets
+        state: directory
+        mode: '0755'
+
+    - name: Generate JWT secret
+      become: true
+      shell: "openssl rand -hex 32 | tr -d '\\n' > /secrets/jwt.hex"
+      args:
+        creates: /secrets/jwt.hex
+
+    - name: Clone ethrex repository
+      ansible.builtin.git:
+        repo: "https://github.com/lambdaclass/ethrex.git"
+        dest: "/home/{{ ansible_user }}/ethrex"
+        version: "{{ lookup('env', 'BRANCH') | default('main', true) }}"
+
+    - name: Build lighthouse flags string
+      set_fact:
+        lighthouse_flags_joined: "{{ lighthouse_flags.splitlines() | join(' ') }}"
+
+    - name: Check if tmux session exists
+      shell: tmux has-session -t LIGHTHOUSE_ETHREX
+      register: tmux_session_check
+      failed_when: false
+      changed_when: false
+
+    - name: Create tmux session with split lighthouse/ethrex panes
+      shell: |
+        set -e
+        tmux new-session -d -s LIGHTHOUSE_ETHREX -n work -c "/home/{{ ansible_user }}"
+        tmux split-window -t LIGHTHOUSE_ETHREX:work -h -c "/home/{{ ansible_user }}/ethrex"
+
+        tmux send-keys -t LIGHTHOUSE_ETHREX:work.0 'lighthouse {{ lighthouse_flags.splitlines() | join(' ') }}'
+      when: tmux_session_check.rc != 0
+
+    - name: Check node_exporter binary presence
+      stat:
+        path: /usr/local/bin/node_exporter
+      register: node_exporter_bin
+
+    - name: Check ethereum_metrics_exporter binary presence
+      stat:
+        path: /usr/local/bin/ethereum-metrics-exporter
+      register: ethereum_metrics_exporter_bin
+
+    - name: Check monitoring exporters state
+      set_fact:
+        monitoring_exporters_running: "{{ node_exporter_bin.stat.exists and ethereum_metrics_exporter_bin.stat.exists }}"
+
+    - block:
+        - name: Clone monitoring stack repository locally
+          git:
+            repo: "git@github.com:lambdaclass/monitoring-stack.git"
+            dest: "{{ monitoring_stack_dir }}"
+
+        - name: Build monitoring stack targets locally for inventory hosts
+          command:
+            cmd: make TARGET={{ inventory_targets }}
+            chdir: "{{ monitoring_stack_dir }}"
+
+        - name: Build node_exporter locally
+          command:
+            cmd: make node_exporter
+            chdir: "{{ monitoring_stack_dir }}"
+
+        - name: Build ethereum_metrics_exporter locally
+          command:
+            cmd: make ethereum_metrics_exporter
+            chdir: "{{ monitoring_stack_dir }}"
+
+        - name: Remove monitoring stack repository locally
+          file:
+            path: "{{ monitoring_stack_dir }}"
+            state: absent
+      vars:
+        inventory_targets: "{{ groups['all'] | default([]) | join(',') }}"
+        monitoring_stack_dir: "{{ playbook_dir }}/monitoring-stack"
+      delegate_to: localhost
+      run_once: true
+      when: not monitoring_exporters_running

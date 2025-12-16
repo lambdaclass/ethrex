@@ -1,0 +1,225 @@
+- name: Ethrex Deployment
+  hosts: servers
+  vars:
+    ansible_ssh_user: admin
+    lighthouse_version: "8.0.0"
+    ethrex_version: "7.0.0"
+    ethrex_flags: |-
+      --http.addr 0.0.0.0
+      --metrics
+      --metrics.port 3701
+      --network mainnet
+      --authrpc.jwtsecret /secrets/jwt.hex
+      --syncmode full
+    lighthouse_flags: |-
+      bn
+      --network mainnet
+      --execution-endpoint http://localhost:8551
+      --execution-jwt /secrets/jwt.hex
+      --checkpoint-sync-url https://mainnet-checkpoint-sync.attestant.io
+      --port 9000
+      --http
+      --http-address 0.0.0.0
+      --http-port 5052
+      --http-allow-origin *
+      --metrics
+      --metrics-port 5054
+      --metrics-address 0.0.0.0
+  tasks:
+    - name: Install deployment APT dependencies
+      become: true
+      apt:
+        name:
+          - libclang-dev
+          - clang
+          - rsync
+          - linux-perf
+          - git
+          - pkg-config
+          - make
+        state: present
+        update_cache: yes
+      vars:
+        ansible_ssh_user: admin
+
+    - name: Download Lighthouse
+      get_url:
+        url: https://github.com/sigp/lighthouse/releases/download/v{{ lighthouse_version }}/lighthouse-v{{ lighthouse_version }}-{{ ansible_facts['architecture'] }}-unknown-linux-gnu.tar.gz
+        dest: "/tmp/lighthouse-{{ lighthouse_version }}.tar.gz"
+        mode: '0644'
+
+    - name: Extract Lighthouse
+      unarchive:
+        src: "/tmp/lighthouse-{{ lighthouse_version }}.tar.gz"
+        dest: "/tmp/"
+        remote_src: true
+
+    - name: Move Lighthouse binary
+      become: true
+      copy:
+        remote_src: true
+        src: "/tmp/lighthouse"
+        dest: "/usr/local/bin/lighthouse"
+        mode: u=rwx,g=rx,o=rx
+      vars:
+        ansible_ssh_user: admin
+
+    - name: Ensure secrets directory exists
+      become: true
+      file:
+        path: /secrets
+        state: directory
+        mode: '0755'
+
+    - name: Generate JWT secret
+      become: true
+      shell: "openssl rand -hex 32 | tr -d '\\n' > /secrets/jwt.hex"
+      args:
+        creates: /secrets/jwt.hex
+
+    - name: Download Ethrex binary
+      become: true
+      get_url:
+        url: "https://github.com/lambdaclass/ethrex/releases/download/v{{ ethrex_version }}/ethrex-l2-linux-{{ ansible_facts['architecture'] }}"
+        dest: "/tmp/ethrex-{{ ethrex_version }}"
+        mode: '0755'
+
+    - name: Move Ethrex binary
+      become: true
+      copy:
+        remote_src: true
+        src: "/tmp/ethrex-{{ ethrex_version }}"
+        dest: /usr/local/bin/ethrex
+        mode: u=rwx,g=rx,o=rx
+
+    - name: Install Lighthouse systemd service
+      become: true
+      copy:
+        dest: /etc/systemd/system/lighthouse.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Lighthouse beacon node
+          After=network-online.target
+          Wants=network-online.target
+          StartLimitIntervalSec=300
+          StartLimitBurst=5
+
+          [Service]
+          User={{ ansible_user }}
+          ExecStart=/usr/local/bin/lighthouse \
+          {% for flag in lighthouse_flags.splitlines() -%}
+          {{ flag }} \
+          {% endfor %}
+
+          Restart=on-failure
+          RestartSec=5
+          LimitNOFILE=65535
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Install Ethrex systemd service
+      become: true
+      copy:
+        dest: /etc/systemd/system/ethrex.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Ethrex execution node
+          After=network-online.target
+          Wants=network-online.target
+          StartLimitIntervalSec=300
+          StartLimitBurst=5
+
+          [Service]
+          User={{ ansible_user }}
+          ExecStart=/usr/local/bin/ethrex \
+          {% for flag in ethrex_flags.splitlines() -%}
+          {{ flag }} \
+          {% endfor %}
+
+          Restart=on-failure
+          RestartSec=5
+          LimitNOFILE=65535
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd units
+      become: true
+      systemd:
+        daemon_reload: true
+      notify:
+        - Cleanup downloaded artifacts
+
+    - name: Check node_exporter binary presence
+      stat:
+        path: /usr/local/bin/node_exporter
+      register: node_exporter_bin
+
+    - name: Check ethereum_metrics_exporter binary presence
+      stat:
+        path: /usr/local/bin/ethereum-metrics-exporter
+      register: ethereum_metrics_exporter_bin
+
+    - name: Check monitoring exporters state
+      set_fact:
+        monitoring_exporters_running: "{{ node_exporter_bin.stat.exists and ethereum_metrics_exporter_bin.stat.exists }}"
+
+    - block:
+        - name: Clone monitoring stack repository locally
+          git:
+            repo: "git@github.com:lambdaclass/monitoring-stack.git"
+            dest: "{{ monitoring_stack_dir }}"
+
+        - name: Build monitoring stack targets locally for inventory hosts
+          command:
+            cmd: make inventory TARGET={{ inventory_targets }}
+            chdir: "{{ monitoring_stack_dir }}"
+
+        - name: Run node_exporter locally
+          command:
+            cmd: make node_exporter
+            chdir: "{{ monitoring_stack_dir }}"
+
+        - name: Run ethereum_metrics_exporter locally
+          command:
+            cmd: make ethereum_metrics_exporter
+            chdir: "{{ monitoring_stack_dir }}"
+
+        - name: Run monitoring stack repository locally
+          file:
+            path: "{{ monitoring_stack_dir }}"
+            state: absent
+      vars:
+        inventory_targets: "{{ groups['servers'] | default([]) | join(',') }}"
+        monitoring_stack_dir: "{{ playbook_dir }}/monitoring-stack"
+      delegate_to: localhost
+      run_once: true
+      when: not monitoring_exporters_running
+
+    - name: Enable and start Lighthouse
+      become: true
+      systemd:
+        name: lighthouse
+        enabled: true
+        state: started
+
+    - name: Enable and start Ethrex
+      become: true
+      systemd:
+        name: ethrex
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Cleanup downloaded artifacts
+      become: true
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/lighthouse-{{ lighthouse_version }}.tar.gz"
+        - "/tmp/lighthouse"
+        - "/tmp/ethrex-{{ ethrex_version }}"
