@@ -73,7 +73,6 @@ jobs:
       - name: Run Snapsync Test
         uses: ./.github/actions/snapsync-run
         id: snapsync
-        if: false
         with:
           network: ${{ matrix.network }}
           timeout: ${{ matrix.timeout }}
@@ -112,7 +111,6 @@ jobs:
       - name: Run Snapsync Test
         uses: ./.github/actions/snapsync-run
         id: snapsync
-        if: false
         with:
           network: ${{ matrix.network }}
           timeout: ${{ matrix.timeout }}
