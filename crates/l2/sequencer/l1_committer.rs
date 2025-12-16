@@ -454,12 +454,27 @@ impl L1Committer {
 
         // Re-execute the blocks in the batch to recreate the checkpoint
         for (i, block) in blocks.iter().enumerate() {
+            // Update blockchain with the block's fee config
             let fee_config = fee_configs.get(i).ok_or(ChainError::WitnessGeneration(
                 "FeeConfig not found for witness generation".to_string(),
             ))?;
 
-            one_time_checkpoint_blockchain
-                .add_block_pipeline_with_fee_config(block.clone(), Some(*fee_config))?;
+            let BlockchainType::L2(l2_config) = &one_time_checkpoint_blockchain.options.r#type
+            else {
+                return Err(ChainError::WitnessGeneration(
+                    "Invalid blockchain type. Expected L2.".to_string(),
+                ))?;
+            };
+
+            {
+                let mut fee_config_guard = l2_config.fee_config.write().map_err(|_poison_err| {
+                    ChainError::WitnessGeneration("Fee config lock was poisoned.".to_string())
+                })?;
+
+                *fee_config_guard = *fee_config;
+            }
+
+            one_time_checkpoint_blockchain.add_block_pipeline(block.clone())?;
         }
 
         Ok(())
@@ -728,6 +743,7 @@ impl L1Committer {
                     last_added_block_number + 1
                 );
 
+                // Update blockchain with the block's fee config
                 let fee_config = self
                     .rollup_store
                     .get_fee_config_by_block(block_to_commit_number)
@@ -736,10 +752,24 @@ impl L1Committer {
                         "Failed to get fee config for re-execution".to_owned(),
                     ))?;
 
-                checkpoint_blockchain.add_block_pipeline_with_fee_config(
-                    potential_batch_block.clone(),
-                    Some(fee_config),
-                )?
+                let BlockchainType::L2(l2_config) = &checkpoint_blockchain.options.r#type else {
+                    return Err(ChainError::WitnessGeneration(
+                        "Invalid blockchain type. Expected L2.".to_string(),
+                    ))?;
+                };
+
+                {
+                    let mut fee_config_guard =
+                        l2_config.fee_config.write().map_err(|_poison_err| {
+                            ChainError::WitnessGeneration(
+                                "Fee config lock was poisoned.".to_string(),
+                            )
+                        })?;
+
+                    *fee_config_guard = fee_config;
+                }
+
+                checkpoint_blockchain.add_block_pipeline(potential_batch_block.clone())?
             };
 
             // Accumulate block data with the rest of the batch.
