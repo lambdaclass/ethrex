@@ -4,8 +4,7 @@ API reference: https://github.com/ethereum/devp2p/blob/master/caps/snap.md
 
 Terminology: 
  - Peers: Other Ethereum execution clients we are connected to, and which can respond to snap requests.
- - Pivot: The block we have chosen to snap-sync to.
-
+ - Pivot: The block we have chosen to snap-sync to. The pivot block changes continually as it becomes too old, because nodes don't serve old data (i.e. more than 128 blocks in the past). Read below for more details on this.
 
 ## Concept
 ### What
