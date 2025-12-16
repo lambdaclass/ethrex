@@ -92,8 +92,7 @@ jobs:
           chmod +x ./main/benchmark
           chmod +x ./pr/benchmark
           make -C tooling/levm revm-comparison-ci
-          cd tooling/levm/bench
-          bash ../../../.github/scripts/compare_levm_and_revm_benchmarks.sh
+          bash .github/scripts/compare_levm_and_revm_benchmarks.sh
 
       - name: Find comment
         continue-on-error: true
