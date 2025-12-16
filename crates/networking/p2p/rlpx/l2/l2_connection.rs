@@ -460,10 +460,10 @@ async fn should_process_new_block(
     msg: &NewBlock,
 ) -> Result<bool, PeerConnectionError> {
     let l2_state = established.l2_state.connection_state_mut()?;
-    // if !established.blockchain.is_synced() {
-    //     debug!("Not processing new block, blockchain is not synced");
-    //     return Ok(false);
-    // }
+    if !established.blockchain.is_synced() {
+        debug!("Not processing new block, blockchain is not synced");
+        return Ok(false);
+    }
     if l2_state.latest_block_added >= msg.block.header.number
         || l2_state
             .blocks_on_queue
@@ -536,10 +536,10 @@ async fn should_process_batch_sealed(
     msg: &BatchSealed,
 ) -> Result<bool, PeerConnectionError> {
     let l2_state = established.l2_state.connection_state_mut()?;
-    // if !established.blockchain.is_synced() {
-    //     debug!("Not processing BatchSealedMessage, blockchain is not synced");
-    //     return Ok(false);
-    // }
+    if !established.blockchain.is_synced() {
+        debug!("Not processing BatchSealedMessage, blockchain is not synced");
+        return Ok(false);
+    }
     if l2_state
         .store_rollup
         .contains_batch(&msg.batch.number)

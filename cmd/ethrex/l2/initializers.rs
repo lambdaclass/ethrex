@@ -217,9 +217,10 @@ pub async fn init_l2(
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
-    let based = opts.sequencer_opts.based;
-
     let (peer_handler, syncer) = if !opts.node_opts.p2p_disabled {
+        if !opts.sequencer_opts.based {
+            blockchain.set_synced();
+        }
         let peer_table = PeerTable::spawn(opts.node_opts.target_peers);
         let p2p_context = P2PContext::new(
             local_p2p_node.clone(),

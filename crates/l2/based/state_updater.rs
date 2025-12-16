@@ -129,33 +129,19 @@ impl StateUpdater {
     pub async fn update_state(&mut self) -> Result<(), StateUpdaterError> {
         let current_state = self.sequencer_state.status().await;
         info!("The sequencer is {current_state}");
-        if matches!(current_state, SequencerStatus::Sequencing) && !self.blockchain.is_synced() {
-            self.blockchain.set_synced();
-        }
 
         let current_block: U256 = self.store.get_latest_block_number().await?.into();
-        println!("{}", current_state);
 
         let latest_block = self.l2_client.get_block_number().await?;
 
         let can_sequence = current_block >= latest_block;
 
         if latest_block < self.start_at.into() {
-            if can_sequence {
-                self.sequencer_state
-                    .new_status(SequencerStatus::Following)
-                    .await;
-                info!("The sequencer is now Following");
-                self.blockchain.set_synced();
-                return Ok(());
-            } else {
-                self.sequencer_state
-                    .new_status(SequencerStatus::Syncing)
-                    .await;
-                info!("The Sequencer is now Syncing");
-                self.blockchain.set_not_synced();
-                return Ok(());
-            }
+            self.sequencer_state
+                .new_status(SequencerStatus::Following)
+                .await;
+            info!("The sequencer is now Following");
+            return Ok(());
         } else if can_sequence {
             self.sequencer_state
                 .new_status(SequencerStatus::Sequencing)
