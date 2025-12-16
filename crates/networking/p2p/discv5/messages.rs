@@ -422,6 +422,8 @@ impl Message {
             Message::FindNode(_) => 0x03,
             Message::Nodes(_) => 0x04,
             Message::TalkReq(_) => 0x05,
+            Message::TalkRes(_) => 0x06,
+            Message::Ticket(_) => 0x08,
         }
     }
 
@@ -433,6 +435,8 @@ impl Message {
             Message::FindNode(find_node) => find_node.encode(buf),
             Message::Nodes(nodes) => nodes.encode(buf),
             Message::TalkReq(talk_req) => talk_req.encode(buf),
+            Message::TalkRes(talk_res) => talk_res.encode(buf),
+            Message::Ticket(ticket) => ticket.encode(buf),
         }
     }
 
@@ -638,7 +642,7 @@ impl RLPDecode for TalkReqMessage {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct TalkResMessage {
+pub struct TalkResMessage {
     pub req_id: u64,
     pub response: Vec<u8>,
 }
@@ -759,9 +763,7 @@ mod tests {
         let nonce = hex!("000102030405060708090a0b").to_vec();
         let mut buf = Vec::new();
         let packet = Packet::Handshake(handshake.clone());
-        packet
-            .encode(&mut buf, 0, nonce.clone(), &dest_id, &key)
-            .unwrap();
+        packet.encode(&mut buf, 0, &nonce, &dest_id, &key).unwrap();
 
         let decoded = Packet::decode(&dest_id, &key, &buf).unwrap();
         assert_eq!(decoded, Packet::Handshake(handshake));
@@ -835,7 +837,7 @@ mod tests {
         let nonce = hex!("ffffffffffffffffffffffff").to_vec();
         let mut buf = Vec::new();
         Packet::Handshake(handshake)
-            .encode(&mut buf, masking_iv, nonce, &dest_id, &read_key)
+            .encode(&mut buf, masking_iv, &nonce, &dest_id, &read_key)
             .unwrap();
 
         assert_eq!(buf, encoded.to_vec());
@@ -1030,6 +1032,7 @@ mod tests {
         assert_eq!(TalkReqMessage::decode(&buf).unwrap(), pkt);
     }
 
+    #[test]
     fn talk_res_packet_codec_roundtrip() {
         let pkt = TalkResMessage {
             req_id: 1234,
