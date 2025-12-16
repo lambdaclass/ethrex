@@ -64,10 +64,6 @@ contract OnChainProposer is
     /// @dev This is crucial for ensuring that only subsequents batches are committed in the contract.
     uint256 public lastCommittedBatch;
 
-    /// @dev The sequencer addresses that are authorized to commit and verify batches.
-    mapping(address _authorizedAddress => bool)
-        public authorizedSequencerAddresses;
-
     address public BRIDGE;
     /// @dev Deprecated variable.
     address public PICO_VERIFIER_ADDRESS;
@@ -101,14 +97,6 @@ contract OnChainProposer is
     /// @notice True if verification is done through Aligned Layer instead of smart contract verifiers.
     bool public ALIGNED_MODE;
 
-    modifier onlySequencer() {
-        require(
-            authorizedSequencerAddresses[msg.sender],
-            "000" // OnChainProposer: caller is not the sequencer
-        );
-        _;
-    }
-
     /// @notice Initializes the contract.
     /// @dev This method is called only once after the contract is deployed.
     /// @dev It sets the bridge address.
@@ -130,7 +118,6 @@ contract OnChainProposer is
         bytes32 sp1Vk,
         bytes32 risc0Vk,
         bytes32 genesisStateRoot,
-        address[] calldata sequencerAddresses,
         uint256 chainId
     ) public initializer {
         VALIDIUM = _validium;
@@ -163,10 +150,6 @@ contract OnChainProposer is
             new ICommonBridge.BalanceDiff[](0),
             new ICommonBridge.L2MessageRollingHash[](0)
         );
-
-        for (uint256 i = 0; i < sequencerAddresses.length; i++) {
-            authorizedSequencerAddresses[sequencerAddresses[i]] = true;
-        }
 
         CHAIN_ID = chainId;
 
@@ -204,7 +187,7 @@ contract OnChainProposer is
         uint256 nonPrivilegedTransactions,
         ICommonBridge.BalanceDiff[] calldata balanceDiffs,
         ICommonBridge.L2MessageRollingHash[] calldata l2MessageRollingHashes
-    ) external override onlySequencer whenNotPaused {
+    ) external override onlyOwner whenNotPaused {
         // TODO: Refactor validation
         require(
             batchNumber == lastCommittedBatch + 1,
@@ -297,7 +280,7 @@ contract OnChainProposer is
         //tdx
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature
-    ) external override onlySequencer whenNotPaused {
+    ) external override onlyOwner whenNotPaused {
         require(
             !ALIGNED_MODE,
             "008" // Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead.
@@ -440,7 +423,7 @@ contract OnChainProposer is
         bytes[] calldata publicInputsList,
         bytes32[][] calldata sp1MerkleProofsList,
         bytes32[][] calldata risc0MerkleProofsList
-    ) external override onlySequencer whenNotPaused {
+    ) external override onlyOwner whenNotPaused {
         require(
             ALIGNED_MODE,
             "00h" // Batch verification should be done via smart contract verifiers. Call verifyBatch() instead.
@@ -683,7 +666,7 @@ contract OnChainProposer is
     /// @inheritdoc IOnChainProposer
     function revertBatch(
         uint256 batchNumber
-    ) external override onlySequencer whenPaused {
+    ) external override onlyOwner whenPaused {
         require(
             batchNumber >= lastVerifiedBatch,
             "010" // OnChainProposer: can't revert verified batch
