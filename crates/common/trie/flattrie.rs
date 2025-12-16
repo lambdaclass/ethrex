@@ -176,7 +176,7 @@ impl FlatTrie {
                             return Ok(None);
                         };
                         let Some(items) = trie.get_encoded_items(view)? else {
-                            panic!(); // TODO: err
+                            panic!("authenticate child case"); // TODO: err
                         };
                         let child_data_hash = decode_child(items[1]);
                         if child_hash != child_data_hash {
@@ -187,7 +187,7 @@ impl FlatTrie {
                 NodeType::Branch { children: childs } => {
                     // TODO: we can decode just the Some(_) childs
                     let Some(items) = trie.get_encoded_items(view)? else {
-                        panic!(); // TODO: err
+                        panic!("authenticate branch case"); // TODO: err
                     };
                     for (i, child) in childs.iter().enumerate() {
                         if let Some(child) = child {
@@ -717,12 +717,12 @@ impl FlatTrie {
     pub fn get_leaf_data(&self, view_index: usize) -> Result<(Nibbles, &[u8]), RLPDecodeError> {
         if let Some(put) = self.puts.get(view_index) {
             let NodeData::Leaf { partial, value } = &put else {
-                panic!();
+                panic!("called get_leaf_data with a different type of node");
             };
             Ok((partial.clone(), value.as_slice()))
         } else {
             let Some(items) = self.get_encoded_items_index(view_index)? else {
-                panic!(); // TODO: err
+                panic!("could not get encoded items for get_leaf_data"); // TODO: err
             };
 
             let (partial, _) = decode_bytes(items[0])?;
@@ -740,12 +740,12 @@ impl FlatTrie {
     ) -> Result<(Nibbles, NodeHash), RLPDecodeError> {
         if let Some(put) = self.puts.get(view_index) {
             let NodeData::Extension { path, child } = &put else {
-                panic!();
+                panic!("called get_extension_data with a different type of node");
             };
             Ok((path.clone(), child.clone()))
         } else {
             let Some(items) = self.get_encoded_items_index(view_index)? else {
-                panic!(); // TODO: err
+                panic!("could not get encoded items for get_extension_data"); // TODO: err
             };
 
             let (prefix, _) = decode_bytes(items[0])?;
@@ -763,12 +763,12 @@ impl FlatTrie {
     ) -> Result<[Option<NodeHash>; 16], RLPDecodeError> {
         if let Some(put) = self.puts.get(view_index) {
             let NodeData::Branch { children } = &put else {
-                panic!();
+                panic!("called get_branch_data with a different type of node");
             };
             Ok(children.clone())
         } else {
             let Some(items) = self.get_encoded_items_index(view_index)? else {
-                panic!();
+                panic!("could not get encoded items for get_branch_data"); // TODO: err
             };
 
             let children_hashes: [_; 16] = std::array::from_fn(|i| {
@@ -822,7 +822,7 @@ impl FlatTrie {
 
     pub fn get_data_view(&self, view: &NodeView) -> &[u8] {
         let NodeViewPointer::InBuffer { data_range } = view.pointer else {
-            panic!()
+            panic!("get_data_view")
         };
         &self.data[data_range.0..data_range.1]
     }
