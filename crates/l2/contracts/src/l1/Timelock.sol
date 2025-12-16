@@ -7,22 +7,20 @@ import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {IOnChainProposer} from "./interfaces/IOnChainProposer.sol";
 import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 
-contract Timelock is
-    TimelockControllerUpgradeable,
-    UUPSUpgradeable,
-    Ownable2StepUpgradeable
-{
+contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable {
+    error TimelockUnauthorizedCaller(address caller);
+
     bytes32 public constant SEQUENCER = keccak256("SEQUENCER");
     bytes32 public constant SECURITY_COUNCIL = keccak256("SECURITY_COUNCIL");
 
     IOnChainProposer public onChainProposer;
 
     function initialize(
-        uint256 minDelay,
-        address[] memory sequencers,
-        address owner,
-        address securityCouncil,
-        address _onChainProposer
+        uint256 minDelay, // This should be the minimum delay for contract upgrades in seconds (e.g. 7 days = 604800 sec).
+        address[] memory sequencers, // Will be able to commit and verify batches.
+        address owner, // Will be able to propose and execute functions, respecting the delay.
+        address securityCouncil, // It will have admin role, which means no delay.
+        address _onChainProposer // deployed OnChainProposer contract.
     ) public initializer {
         for (uint256 i = 0; i < sequencers.length; ++i) {
             _grantRole(SEQUENCER, sequencers[i]);
@@ -39,10 +37,12 @@ contract Timelock is
             owners, // executors
             securityCouncil // admin
         );
-        OwnableUpgradeable.__Ownable_init(owner);
+
         onChainProposer = IOnChainProposer(_onChainProposer);
     }
 
+    // TODO: In commit and verify we should probably modify logic so that we have a time window between commit and verify,
+    // or if we want to do it better we can have commit -> verify -> execute and the time window has to be between commit and execute.
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
@@ -105,9 +105,8 @@ contract Timelock is
         onChainProposer.revertBatch(batchNumber);
     }
 
-    function _authorizeUpgrade(
-        address newImplementation
-    ) internal override onlyOwner {
+    // Logic for updating Timelock contract. Should be triggered by the timelock itself so that it respects min time.
+    function _authorizeUpgrade(address newImplementation) internal override {
         address sender = _msgSender();
         if (sender != address(this)) {
             revert TimelockUnauthorizedCaller(sender);
