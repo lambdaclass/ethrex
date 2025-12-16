@@ -35,7 +35,7 @@ Example of a possible state after stopping fast sync due to staleness.
 
 In the example, even if we find that node { hash: 0x317f, path: 0 } is correct, we still need to check all its children in the DB (in this case none are present).
 
-To solve the second problem, we introduce an optimization, which is called the "Membatch"^2. This allows us to maintain a new invariant:
+To solve the second problem, we introduce an optimization, which is called the "Membatch"[^2]. This allows us to maintain a new invariant:
 
 [^2]: The membatch is an idea taken from geth, and the name comes from their code. The name should be updated to "pendingNodes" as it reflects it current use.
 
@@ -94,7 +94,7 @@ When developing snap sync there are flags to take into account that are used onl
 
 - If debug assertions are on, the program will validate that the entire state and storage tries are valid by traversing the entire trie and recomputing the roots. If any is found to be wrong, it will print an error and exit the program. This is used for debugging purposes; a validation error here means that there is 100% a bug in snap sync.
 
-- `--syncmode [full, default:snap]` which defines what kind of sync we use. Full is executing each block, and isn't possible for mainnet and sepolia.
+- `--syncmode [full, default:snap]` which defines what kind of sync we use. Full is executing each block, and isn't possible on a fresh sync for mainnet and sepolia.
 
 ### File Structure
 
