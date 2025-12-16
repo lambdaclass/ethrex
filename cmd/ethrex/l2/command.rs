@@ -398,6 +398,8 @@ impl Command {
                 )
                 .await?;
 
+                let chain_id = store.get_chain_config().chain_id;
+
                 let rollup_store =
                     StoreRollup::new(&store_path.join("rollup_store"), rollup_store_type)?;
                 rollup_store
@@ -517,6 +519,7 @@ impl Command {
                         U256::from(batch_number),
                         None,
                         blobs_bundle,
+                        chain_id,
                     )
                     .await?;
 
@@ -526,7 +529,7 @@ impl Command {
                     // Create checkpoint
                     let checkpoint_path =
                         store_path.join(format!("checkpoint_batch_{batch_number}"));
-                    store.create_checkpoint(&checkpoint_path).await?;
+                    store.create_checkpoint(&checkpoint_path)?;
 
                     info!("Sealed batch {batch_number}.");
                 }
@@ -712,7 +715,7 @@ async fn delete_blocks_from_batch(
         .get_block_header(last_kept_block)?
         .ok_or_else(|| eyre::eyre!("Block number {} not found", last_kept_block))?;
     store
-        .forkchoice_update(None, last_kept_block, last_kept_header.hash(), None, None)
+        .forkchoice_update(vec![], last_kept_block, last_kept_header.hash(), None, None)
         .await?;
     Ok(())
 }
