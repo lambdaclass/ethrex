@@ -116,7 +116,8 @@ contract OnChainProposer is
         bytes32 sp1Vk,
         bytes32 risc0Vk,
         bytes32 genesisStateRoot,
-        uint256 chainId
+        uint256 chainId,
+        address bridge
     ) public initializer {
         VALIDIUM = _validium;
 
@@ -151,16 +152,13 @@ contract OnChainProposer is
 
         CHAIN_ID = chainId;
 
-        OwnableUpgradeable.__Ownable_init(owner);
-    }
-
-    /// @inheritdoc IOnChainProposer
-    function initializeBridgeAddress(address bridge) public onlyOwner {
         require(
             bridge != address(0),
             "001" // OnChainProposer: bridge is the zero address
         );
         BRIDGE = bridge;
+
+        OwnableUpgradeable.__Ownable_init(owner);
     }
 
     /// @inheritdoc IOnChainProposer

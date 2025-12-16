@@ -8,8 +8,6 @@ import {IOnChainProposer} from "./interfaces/IOnChainProposer.sol";
 import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 
 contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable {
-    error TimelockUnauthorizedCaller(address caller);
-
     bytes32 public constant SEQUENCER = keccak256("SEQUENCER");
     bytes32 public constant SECURITY_COUNCIL = keccak256("SECURITY_COUNCIL");
 
