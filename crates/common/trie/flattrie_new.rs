@@ -47,9 +47,6 @@ pub struct Node {
     pub encoded_range: Option<(usize, usize)>,
 }
 
-#[derive(
-    Clone, serde::Serialize, serde::Deserialize, rkyv::Serialize, rkyv::Deserialize, rkyv::Archive,
-)]
 /// Contains information about this node type and who its children are.
 /// Also contains overrides to the node's data.
 ///
@@ -58,23 +55,32 @@ pub struct Node {
 /// data.
 ///
 /// Finally the RLP buffer will be updated with the newest data based on the initial and overrides.
+#[derive(
+    Clone, serde::Serialize, serde::Deserialize, rkyv::Serialize, rkyv::Deserialize, rkyv::Archive,
+)]
 pub enum NodeHandle {
     Leaf {
-        override_partial: Option<Nibbles>, // None means no override
-        override_value: Option<Vec<u8>>,   // None means no override
+        /// Overrides the encoded partial
+        partial: Option<Nibbles>,
+        /// Overrides the encoded value
+        value: Option<Vec<u8>>,
     },
     Extension {
-        override_prefix: Option<Nibbles>, // Nonde means no override
-        child_index: Option<usize>,       // None means the child is pruned
+        /// Overrides the encoded prefix
+        prefix: Option<Nibbles>,
+        /// Reference to the child. If None, then the child is pruned.
+        child_index: Option<usize>,
     },
     Branch {
-        children_indices: [Option<usize>; 16], // None means the child is pruned
+        /// Reference to the children. If None, then the child is pruned.
+        children_indices: [Option<usize>; 16],
     },
 }
 
 impl Node {}
 
 impl FlatTrie {
+    /// Get an element from the trie
     pub fn get(&self, path: &[u8]) -> Result<Option<&[u8]>, RLPDecodeError> {
         let mut path = Nibbles::from_bytes(path);
         fn recursive<'a>(
@@ -84,7 +90,7 @@ impl FlatTrie {
         ) -> Result<Option<&'a [u8]>, RLPDecodeError> {
             let node = &trie.nodes[index];
             match node.handle {
-                NodeHandle::Leaf {..} => {
+                NodeHandle::Leaf { .. } => {
                     let (partial, value) = trie.get_leaf_data(index)?;
                     if partial == *path {
                         return Ok(Some(value));
@@ -95,12 +101,18 @@ impl FlatTrie {
                 NodeHandle::Extension { child_index, .. } => {
                     let prefix = trie.get_extension_data(index)?;
                     if path.skip_prefix(prefix) {
-                        recursive(trie, path, child_index.expect("no child for extension in get"))
+                        recursive(
+                            trie,
+                            path,
+                            child_index.expect("no child for extension in get"),
+                        )
                     } else {
                         Ok(None)
                     }
                 }
-                NodeHandle::Branch { children_indices, .. } => {
+                NodeHandle::Branch {
+                    children_indices, ..
+                } => {
                     let Some(choice) = path.next_choice() else {
                         return Ok(None);
                     };
@@ -123,17 +135,16 @@ impl FlatTrie {
     pub fn get_leaf_data(&self, index: usize) -> Result<(Nibbles, &[u8]), RLPDecodeError> {
         let handle = &self.nodes[index].handle;
         let NodeHandle::Leaf {
-            override_partial,
-            override_value,
+            partial: override_partial,
+            value: override_value,
         } = handle
         else {
             panic!("not leaf in get_leaf_data");
         };
 
-        // TODO: put inside match
-        let encoded_items = self.get_encoded_items(index)?;
         let data = match (override_partial, override_value) {
             (None, None) => {
+                let encoded_items = self.get_encoded_items(index)?;
                 let (partial, _) = decode_bytes(encoded_items[0])?;
                 let partial = Nibbles::decode_compact(partial);
                 debug_assert!(partial.is_leaf());
@@ -141,10 +152,12 @@ impl FlatTrie {
                 (partial, value)
             }
             (Some(partial), None) => {
+                let encoded_items = self.get_encoded_items(index)?;
                 let (value, _) = decode_bytes(encoded_items[1])?;
                 (partial.clone(), value)
             }
             (None, Some(value)) => {
+                let encoded_items = self.get_encoded_items(index)?;
                 let (partial, _) = decode_bytes(encoded_items[0])?;
                 let partial = Nibbles::decode_compact(partial);
                 debug_assert!(partial.is_leaf());
@@ -160,16 +173,16 @@ impl FlatTrie {
     pub fn get_extension_data(&self, index: usize) -> Result<Nibbles, RLPDecodeError> {
         let handle = &self.nodes[index].handle;
         let NodeHandle::Extension {
-            override_prefix, ..
+            prefix: override_prefix,
+            ..
         } = handle
         else {
             panic!("not leaf in get_leaf_data");
         };
 
-        // TODO: put inside match
-        let encoded_items = self.get_encoded_items(index)?;
         let data = match override_prefix {
             None => {
+                let encoded_items = self.get_encoded_items(index)?;
                 let (prefix, _) = decode_bytes(encoded_items[0])?;
                 let prefix = Nibbles::decode_compact(prefix);
                 debug_assert!(!prefix.is_leaf());
@@ -180,6 +193,7 @@ impl FlatTrie {
         Ok(data)
     }
 
+    /// Gets the encoded items of a node based on its index.
     pub fn get_encoded_items(&self, index: usize) -> Result<Vec<&[u8]>, RLPDecodeError> {
         let node = &self.nodes[index];
         let encoded_range = node.encoded_range.expect("could not get encoded range");
@@ -193,5 +207,87 @@ impl FlatTrie {
             rlp_items.push(item);
         }
         Ok(rlp_items)
+    }
+
+    /// Overrides a node in the trie. Used whenever mutating the trie.
+    ///
+    /// An override can be used in the case of:
+    /// 1. The data of some node gets updated
+    /// 2. The children references of some node gets updated
+    /// 3. A node is replaced with another
+    pub fn override_node(&mut self, index: usize, override_node_handle: NodeHandle) -> usize {
+        let original_node = self.nodes.get_mut(index).unwrap();
+
+        let override_is_same_node_kind = matches!(
+            (&original_node.handle, &override_node_handle),
+            (NodeHandle::Leaf { .. }, NodeHandle::Leaf { .. })
+                | (NodeHandle::Extension { .. }, NodeHandle::Extension { .. })
+                | (NodeHandle::Branch { .. }, NodeHandle::Branch { .. })
+        );
+
+        // if node is not the same kind as the override, it gets replaced.
+        if override_is_same_node_kind {
+            let node = Node {
+                handle: override_node_handle,
+                encoded_range: None,
+            };
+            self.nodes.push(node);
+            return self.nodes.len() - 1;
+        }
+
+        // else, mutate the handle
+        match (&mut original_node.handle, override_node_handle) {
+            (
+                NodeHandle::Leaf {
+                    partial: original_partial,
+                    value: original_value,
+                },
+                NodeHandle::Leaf {
+                    partial: override_partial,
+                    value: override_value,
+                },
+            ) => {
+                if let Some(override_partial) = override_partial {
+                    *original_partial = Some(override_partial);
+                }
+                if let Some(override_value) = override_value {
+                    *original_value = Some(override_value);
+                }
+            }
+            (
+                NodeHandle::Extension {
+                    prefix: original_prefix,
+                    child_index: original_child_index,
+                },
+                NodeHandle::Extension {
+                    prefix: override_prefix,
+                    child_index: override_child_index,
+                },
+            ) => {
+                if let Some(override_prefix) = override_prefix {
+                    *original_prefix = Some(override_prefix);
+                }
+                if let Some(override_child_index) = override_child_index {
+                    *original_child_index = Some(override_child_index);
+                }
+            }
+            (
+                NodeHandle::Branch {
+                    children_indices: original_children_indices,
+                },
+                NodeHandle::Branch {
+                    children_indices: override_children_indices,
+                },
+            ) => {
+                for i in 0..16 {
+                    if override_children_indices[i].is_some() {
+                        original_children_indices[i] = override_children_indices[i];
+                    }
+                }
+            }
+            _ => unreachable!(),
+        }
+
+        index
     }
 }
