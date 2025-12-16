@@ -29,6 +29,8 @@ qfilter = "0.2.5"
 rayon.workspace = true
 lru = "0.16.2"
 
+heed3 = "0.22.0"
+
 [features]
 default = []
 rocksdb = ["dep:rocksdb"]
