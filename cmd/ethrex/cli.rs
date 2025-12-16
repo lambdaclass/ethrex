@@ -672,7 +672,7 @@ pub async fn import_blocks(
         if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
             store
                 .forkchoice_update(
-                    Some(numbers_and_hashes),
+                    numbers_and_hashes,
                     head_number,
                     head_hash,
                     Some(head_number),
@@ -787,7 +787,7 @@ pub async fn import_blocks_bench(
         if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
             store
                 .forkchoice_update(
-                    Some(numbers_and_hashes),
+                    numbers_and_hashes,
                     head_number,
                     head_hash,
                     Some(head_number),
