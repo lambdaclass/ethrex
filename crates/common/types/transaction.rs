@@ -3576,52 +3576,67 @@ mod tests {
     fn recover_address_rejects_high_s_signatures() {
         use k256::ecdsa::SigningKey;
 
+        // 1. Setup: Create a signer and a message
+        // A random private key for testing
         let private_key = hex!("4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318");
-        let signing_key = SigningKey::from_bytes(&private_key.into()).unwrap();
+        let signing_key = SigningKey::from_bytes(&private_key.into()).expect("Valid private key");
 
-        let msg = hex!(
-            "e9808504e3b29200831e848094f0109fc8df283027b6285cc889f5aa624eac1f55\
-             843b9aca0080018080"
-        );
+        // The message we want to sign
+        let msg = b"Test message for high-s signature rejection";
+        // Calculate the Keccak256 hash of the message (the payload)
         let payload = keccak(msg);
 
-        let uncompressed = signing_key.verifying_key().to_encoded_point(false);
-        let uncompressed = uncompressed.to_bytes();
-        let hash = keccak_hash(&uncompressed[1..65]);
-        let expected_address = Address::from_slice(&hash[12..]);
+        // 2. Generate a valid low-s signature
+        // k256's sign_prehash_recoverable produces canonical low-s signatures by default.
+        // We use the pre-calculated hash (payload).
+        let (signature, recovery_id) = signing_key
+            .sign_prehash_recoverable(payload.as_bytes())
+            .expect("Signing failed");
 
-        let mut sig_low = [0u8; 65];
-        sig_low[..64].copy_from_slice(&hex!(
-            "c9cf86333bcb065d140032ecaab5d9281bde80f21b9687b3e94161de42d51895\
-             727a108a0b8d101465414033c3f705a9c7b826e596766046ee1183dbc8aeaa68"
-        ));
-        sig_low[64] = 0;
+        // 3. Construct the signature bytes expected by recover_address
+        // Format: [r (32 bytes), s (32 bytes), v (1 byte)]
+        let mut sig_bytes = [0u8; 65];
+        sig_bytes[..64].copy_from_slice(&signature.to_bytes());
+        sig_bytes[64] = recovery_id.to_byte();
 
-        let recovered =
-            recover_address(Signature::from_slice(&sig_low), payload).expect("low-s accepted");
-        assert_eq!(recovered, expected_address);
+        // 4. Verify that the valid low-s signature recovers the correct address
+        // Calculate the expected address from the public key
+        let uncompressed_pub = signing_key.verifying_key().to_encoded_point(false);
+        let pub_hash = keccak_hash(&uncompressed_pub.as_bytes()[1..]);
+        let expected_address = Address::from_slice(&pub_hash[12..]);
 
-        // Convert the low-s signature into a high-s signature: s' = N - s, flip y-parity bit.
+        let recovered = recover_address(Signature::from_slice(&sig_bytes), payload)
+            .expect("Valid low-s signature should recover successfully");
+        assert_eq!(recovered, expected_address, "Recovered address mismatch");
+
+        // 5. Create a high-s signature: s' = N - s
+        // The curve order N for secp256k1
         let n = U256::from_big_endian(&hex!(
             "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141"
         ));
-        let half_n = U256::from_big_endian(&hex!(
-            "7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0"
-        ));
+        let s = U256::from_big_endian(&sig_bytes[32..64]);
 
-        let s_low = U256::from_big_endian(&sig_low[32..64]);
-        assert!(s_low <= half_n, "test vector must be low-s");
-
-        let s_high = n - s_low;
-        assert!(s_high > half_n, "constructed signature must be high-s");
-
-        let mut sig_high = sig_low;
-        sig_high[32..64].copy_from_slice(&s_high.to_big_endian());
-        sig_high[64] ^= 1;
-
+        // Ensure the generated signature was indeed low-s (standard requirement)
+        let half_n = n / 2;
         assert!(
-            recover_address(Signature::from_slice(&sig_high), payload).is_err(),
-            "high-s signatures must be rejected"
+            s <= half_n,
+            "Generated signature was not low-s, cannot test high-s rejection"
+        );
+
+        // Calculate high-s
+        let s_high = n - s;
+
+        let mut sig_high_bytes = sig_bytes;
+        // Replace s with s_high
+        sig_high_bytes[32..64].copy_from_slice(&s_high.to_big_endian());
+        // When flipping s to -s mod N, we must also flip the recovery ID (v) to maintain validity of the point R
+        sig_high_bytes[64] ^= 1;
+
+        // 6. Verify that the high-s signature is rejected
+        // EIP-2 requires rejecting s > N/2 to prevent malleability
+        assert!(
+            recover_address(Signature::from_slice(&sig_high_bytes), payload).is_err(),
+            "High-s signature should be rejected (EIP-2 compliance)"
         );
     }
 
