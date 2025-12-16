@@ -87,6 +87,7 @@ impl Packet {
         let mut cipher = <Aes128Ctr64BE as KeyIvInit>::new(dest_id[..16].into(), masking_iv.into());
 
         let packet_header = Packet::decode_header(&mut cipher, encoded_packet)?;
+        let encrypted_message = &encoded_packet[packet_header.header_end_offset..];
 
         match packet_header.flag {
             0x00 => Ok(Packet::Ordinary(Ordinary::decode(
@@ -95,18 +96,16 @@ impl Packet {
                 packet_header.authdata,
                 packet_header.nonce,
                 decrypt_key,
-                &encoded_packet[packet_header.header_end_offset..],
+                encrypted_message,
             )?)),
             0x01 => Ok(Packet::WhoAreYou(WhoAreYou::decode(
                 &packet_header.authdata,
             )?)),
             0x02 => Ok(Packet::Handshake(Handshake::decode(
                 masking_iv,
-                packet_header.static_header,
-                packet_header.authdata,
-                packet_header.nonce,
+                packet_header,
                 decrypt_key,
-                &encoded_packet[packet_header.header_end_offset..],
+                encrypted_message,
             )?)),
             _ => Err(RLPDecodeError::MalformedData)?,
         }
@@ -349,12 +348,17 @@ impl Handshake {
     #[allow(clippy::too_many_arguments)]
     pub fn decode(
         masking_iv: &[u8],
-        static_header: Vec<u8>,
-        authdata: Vec<u8>,
-        nonce: Vec<u8>,
+        header: PacketHeader,
         decrypt_key: &[u8],
         encrypted_message: &[u8],
     ) -> Result<Handshake, PacketDecodeErr> {
+        let PacketHeader {
+            static_header,
+            nonce,
+            authdata,
+            ..
+        } = header;
+
         if authdata.len() < HANDSHAKE_AUTHDATA_HEAD {
             return Err(PacketDecodeErr::InvalidSize);
         }
