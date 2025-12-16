@@ -811,7 +811,7 @@ impl Store {
 
     pub async fn forkchoice_update_inner(
         &self,
-        new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
+        new_canonical_blocks: Vec<(BlockNumber, BlockHash)>,
         head_number: BlockNumber,
         head_hash: BlockHash,
         safe: Option<BlockNumber>,
@@ -822,12 +822,10 @@ impl Store {
         tokio::task::spawn_blocking(move || {
             let mut txn = db.begin_write()?;
 
-            if let Some(canonical_blocks) = new_canonical_blocks {
-                for (block_number, block_hash) in canonical_blocks {
-                    let head_key = block_number.to_le_bytes();
-                    let head_value = block_hash.encode_to_vec();
-                    txn.put(CANONICAL_BLOCK_HASHES, &head_key, &head_value)?;
-                }
+            for (block_number, block_hash) in new_canonical_blocks {
+                let head_key = block_number.to_le_bytes();
+                let head_value = block_hash.encode_to_vec();
+                txn.put(CANONICAL_BLOCK_HASHES, &head_key, &head_value)?;
             }
 
             for number in (head_number + 1)..=(latest) {
@@ -1857,7 +1855,7 @@ impl Store {
         self.add_block(genesis_block).await?;
         self.update_earliest_block_number(genesis_block_number)
             .await?;
-        self.forkchoice_update(None, genesis_block_number, genesis_hash, None, None)
+        self.forkchoice_update(vec![], genesis_block_number, genesis_hash, None, None)
             .await?;
         Ok(())
     }
@@ -1928,7 +1926,7 @@ impl Store {
     /// All operations are performed in a single database transaction.
     pub async fn forkchoice_update(
         &self,
-        new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
+        new_canonical_blocks: Vec<(BlockNumber, BlockHash)>,
         head_number: BlockNumber,
         head_hash: BlockHash,
         safe: Option<BlockNumber>,
@@ -2950,6 +2948,11 @@ mod tests {
         run_test(test_genesis_block, engine_type).await;
         run_test(test_iter_accounts, engine_type).await;
         run_test(test_iter_storage, engine_type).await;
+        run_test(test_forkchoice_update_empty_canonical_blocks, engine_type).await;
+        run_test(test_forkchoice_update_with_canonical_blocks, engine_type).await;
+        run_test(test_forkchoice_update_removes_blocks_beyond_head, engine_type).await;
+        run_test(test_forkchoice_update_with_safe_and_finalized, engine_type).await;
+        run_test(test_forkchoice_update_overwrites_canonical, engine_type).await;
     }
 
     async fn test_iter_accounts(store: Store) {
@@ -3060,7 +3063,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .forkchoice_update(None, block_number, hash, None, None)
+            .forkchoice_update(vec![], block_number, hash, None, None)
             .await
             .unwrap();
 
@@ -3164,7 +3167,7 @@ mod tests {
             .unwrap();
 
         store
-            .forkchoice_update(None, block_number, block_header.hash(), None, None)
+            .forkchoice_update(vec![], block_number, block_header.hash(), None, None)
             .await
             .unwrap();
 
@@ -3218,7 +3221,7 @@ mod tests {
             .unwrap();
         store
             .forkchoice_update(
-                None,
+                vec![],
                 latest_block_number,
                 hash,
                 Some(safe_block_number),
@@ -3271,5 +3274,226 @@ mod tests {
                 .unwrap(),
             ..Default::default()
         }
+    }
+
+    /// Test forkchoice_update with empty new_canonical_blocks (equivalent to None)
+    async fn test_forkchoice_update_empty_canonical_blocks(store: Store) {
+        // Create and store a block header
+        let (mut block_header, block_body) = create_block_for_testing();
+        block_header.number = 1;
+        let hash = block_header.hash();
+
+        store
+            .add_block_header(hash, block_header.clone())
+            .await
+            .unwrap();
+        store.add_block_body(hash, block_body).await.unwrap();
+
+        // Call forkchoice_update with empty canonical blocks
+        store
+            .forkchoice_update(vec![], 1, hash, None, None)
+            .await
+            .unwrap();
+
+        // Verify the block is now canonical
+        let canonical_hash = store.get_canonical_block_hash(1).await.unwrap();
+        assert_eq!(canonical_hash, Some(hash));
+
+        // Verify latest block number is updated
+        let latest = store.get_latest_block_number().await.unwrap();
+        assert_eq!(latest, 1);
+    }
+
+    /// Test forkchoice_update with non-empty new_canonical_blocks
+    async fn test_forkchoice_update_with_canonical_blocks(store: Store) {
+        // Create multiple blocks
+        let (mut header1, body1) = create_block_for_testing();
+        header1.number = 1;
+        let hash1 = header1.hash();
+
+        let (mut header2, body2) = create_block_for_testing();
+        header2.number = 2;
+        header2.parent_hash = hash1;
+        let hash2 = header2.hash();
+
+        let (mut header3, body3) = create_block_for_testing();
+        header3.number = 3;
+        header3.parent_hash = hash2;
+        let hash3 = header3.hash();
+
+        // Store all blocks
+        store
+            .add_block_header(hash1, header1.clone())
+            .await
+            .unwrap();
+        store.add_block_body(hash1, body1).await.unwrap();
+
+        store
+            .add_block_header(hash2, header2.clone())
+            .await
+            .unwrap();
+        store.add_block_body(hash2, body2).await.unwrap();
+
+        store
+            .add_block_header(hash3, header3.clone())
+            .await
+            .unwrap();
+        store.add_block_body(hash3, body3).await.unwrap();
+
+        // Call forkchoice_update with all three blocks as canonical
+        let canonical_blocks = vec![(1, hash1), (2, hash2), (3, hash3)];
+        store
+            .forkchoice_update(canonical_blocks, 3, hash3, None, None)
+            .await
+            .unwrap();
+
+        // Verify all blocks are canonical
+        assert_eq!(store.get_canonical_block_hash(1).await.unwrap(), Some(hash1));
+        assert_eq!(store.get_canonical_block_hash(2).await.unwrap(), Some(hash2));
+        assert_eq!(store.get_canonical_block_hash(3).await.unwrap(), Some(hash3));
+
+        // Verify latest block number
+        let latest = store.get_latest_block_number().await.unwrap();
+        assert_eq!(latest, 3);
+    }
+
+    /// Test forkchoice_update removes blocks beyond head
+    async fn test_forkchoice_update_removes_blocks_beyond_head(store: Store) {
+        // Create 5 blocks
+        let mut headers = Vec::new();
+        let mut hashes = Vec::new();
+
+        for i in 1..=5 {
+            let (mut header, body) = create_block_for_testing();
+            header.number = i;
+            if i > 1 {
+                header.parent_hash = hashes[i as usize - 2];
+            }
+            let hash = header.hash();
+
+            store.add_block_header(hash, header.clone()).await.unwrap();
+            store.add_block_body(hash, body).await.unwrap();
+
+            headers.push(header);
+            hashes.push(hash);
+        }
+
+        // Make all 5 blocks canonical
+        let canonical_blocks: Vec<_> = (1..=5).zip(hashes.iter().cloned()).collect();
+        store
+            .forkchoice_update(canonical_blocks, 5, hashes[4], None, None)
+            .await
+            .unwrap();
+
+        // Verify all 5 are canonical
+        for i in 1..=5 {
+            assert!(store.get_canonical_block_hash(i).await.unwrap().is_some());
+        }
+
+        // Now set head to block 3, which should remove blocks 4 and 5 from canonical chain
+        store
+            .forkchoice_update(vec![], 3, hashes[2], None, None)
+            .await
+            .unwrap();
+
+        // Blocks 1-3 should still be canonical
+        assert_eq!(
+            store.get_canonical_block_hash(1).await.unwrap(),
+            Some(hashes[0])
+        );
+        assert_eq!(
+            store.get_canonical_block_hash(2).await.unwrap(),
+            Some(hashes[1])
+        );
+        assert_eq!(
+            store.get_canonical_block_hash(3).await.unwrap(),
+            Some(hashes[2])
+        );
+
+        // Blocks 4 and 5 should no longer be canonical
+        assert_eq!(store.get_canonical_block_hash(4).await.unwrap(), None);
+        assert_eq!(store.get_canonical_block_hash(5).await.unwrap(), None);
+
+        // Latest block number should be 3
+        assert_eq!(store.get_latest_block_number().await.unwrap(), 3);
+    }
+
+    /// Test forkchoice_update with safe and finalized block numbers
+    async fn test_forkchoice_update_with_safe_and_finalized(store: Store) {
+        // Create multiple blocks
+        let mut hashes = Vec::new();
+
+        for i in 1..=5 {
+            let (mut header, body) = create_block_for_testing();
+            header.number = i;
+            if i > 1 {
+                header.parent_hash = hashes[i as usize - 2];
+            }
+            let hash = header.hash();
+
+            store.add_block_header(hash, header.clone()).await.unwrap();
+            store.add_block_body(hash, body).await.unwrap();
+
+            hashes.push(hash);
+        }
+
+        // Set block 5 as head, block 3 as safe, block 2 as finalized
+        let canonical_blocks: Vec<_> = (1..=5).zip(hashes.iter().cloned()).collect();
+        store
+            .forkchoice_update(canonical_blocks, 5, hashes[4], Some(3), Some(2))
+            .await
+            .unwrap();
+
+        // Verify
+        assert_eq!(store.get_latest_block_number().await.unwrap(), 5);
+        assert_eq!(store.get_safe_block_number().await.unwrap(), Some(3));
+        assert_eq!(store.get_finalized_block_number().await.unwrap(), Some(2));
+    }
+
+    /// Test forkchoice_update overwrites existing canonical blocks
+    async fn test_forkchoice_update_overwrites_canonical(store: Store) {
+        // Create block 1a
+        let (mut header1a, body1a) = create_block_for_testing();
+        header1a.number = 1;
+        let hash1a = header1a.hash();
+
+        // Create block 1b (different block at same height)
+        let (mut header1b, body1b) = create_block_for_testing();
+        header1b.number = 1;
+        header1b.extra_data = Bytes::from("different");
+        let hash1b = header1b.hash();
+
+        // Store both blocks
+        store
+            .add_block_header(hash1a, header1a.clone())
+            .await
+            .unwrap();
+        store.add_block_body(hash1a, body1a).await.unwrap();
+
+        store
+            .add_block_header(hash1b, header1b.clone())
+            .await
+            .unwrap();
+        store.add_block_body(hash1b, body1b).await.unwrap();
+
+        // Make block 1a canonical
+        store
+            .forkchoice_update(vec![(1, hash1a)], 1, hash1a, None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.get_canonical_block_hash(1).await.unwrap(),
+            Some(hash1a)
+        );
+
+        // Now make block 1b canonical (reorg)
+        store
+            .forkchoice_update(vec![(1, hash1b)], 1, hash1b, None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.get_canonical_block_hash(1).await.unwrap(),
+            Some(hash1b)
+        );
     }
 }
