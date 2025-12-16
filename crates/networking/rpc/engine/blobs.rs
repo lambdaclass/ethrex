@@ -197,3 +197,103 @@ async fn get_blobs_and_proof(
     }
     Ok(res)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::default_context_with_storage;
+    use ethrex_common::{
+        Address, H256,
+        types::{BYTES_PER_BLOB, BlobsBundle, ChainConfig, Commitment, Proof},
+    };
+    use ethrex_storage::{EngineType, Store};
+
+    fn sample_bundle(count: usize) -> (BlobsBundle, Vec<H256>) {
+        let blobs = vec![[1u8; BYTES_PER_BLOB]; count];
+        let commitments: Vec<Commitment> = (0..count).map(|i| [i as u8; 48]).collect();
+        let proofs: Vec<Proof> = vec![[2u8; 48]; count * CELLS_PER_EXT_BLOB];
+        let bundle = BlobsBundle {
+            blobs,
+            commitments: commitments.clone(),
+            proofs,
+            version: 1,
+        };
+        let hashes = commitments
+            .iter()
+            .map(kzg_commitment_to_versioned_hash)
+            .collect();
+        (bundle, hashes)
+    }
+
+    fn blob_and_proof(bundle: &BlobsBundle, index: usize) -> BlobAndProofV2 {
+        let start = index * CELLS_PER_EXT_BLOB;
+        let end = start + CELLS_PER_EXT_BLOB;
+        BlobAndProofV2 {
+            blob: bundle.blobs[index],
+            proofs: bundle.proofs[start..end].to_vec(),
+        }
+    }
+
+    fn chain_config(osaka_active: bool) -> ChainConfig {
+        ChainConfig {
+            chain_id: 1,
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            prague_time: Some(0),
+            osaka_time: osaka_active.then_some(0),
+            deposit_contract_address: Address::zero(),
+            ..Default::default()
+        }
+    }
+
+    async fn context_with_chain_config(osaka_active: bool) -> RpcApiContext {
+        let mut storage =
+            Store::new("test-blobs", EngineType::InMemory).expect("Failed to create test store");
+        storage
+            .set_chain_config(&chain_config(osaka_active))
+            .await
+            .expect("Failed to set chain config");
+        default_context_with_storage(storage).await
+    }
+
+    #[tokio::test]
+    async fn blobs_v3_returns_partial_results() {
+        let context = context_with_chain_config(true).await;
+        let (bundle, hashes) = sample_bundle(2);
+        context
+            .blockchain
+            .mempool
+            .add_blobs_bundle(H256::from_low_u64_be(1), bundle.clone())
+            .unwrap();
+
+        let request = BlobsV3Request {
+            blob_versioned_hashes: vec![hashes[0], H256::from_low_u64_be(999)],
+        };
+
+        let result = request.handle(context).await.unwrap();
+        let expected = serde_json::to_value(vec![Some(blob_and_proof(&bundle, 0)), None]).unwrap();
+        assert_eq!(result, expected);
+    }
+
+    #[tokio::test]
+    async fn blobs_v3_requires_osaka() {
+        let context = context_with_chain_config(false).await;
+        let request = BlobsV3Request {
+            blob_versioned_hashes: vec![H256::from_low_u64_be(1)],
+        };
+
+        let err = request.handle(context).await.unwrap_err();
+        assert!(matches!(err, RpcErr::UnsuportedFork(_)));
+    }
+
+    #[tokio::test]
+    async fn blobs_v3_rejects_too_many_hashes() {
+        let context = context_with_chain_config(true).await;
+        let request = BlobsV3Request {
+            blob_versioned_hashes: vec![H256::zero(); GET_BLOBS_V1_REQUEST_MAX_SIZE + 1],
+        };
+
+        let err = request.handle(context).await.unwrap_err();
+        assert!(matches!(err, RpcErr::TooLargeRequest));
+    }
+}
