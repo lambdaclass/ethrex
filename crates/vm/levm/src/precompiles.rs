@@ -776,7 +776,7 @@ pub fn bn254_g1_add(first_point: G1, second_point: G1) -> Result<Bytes, VMError>
 #[cfg(any(feature = "sp1", feature = "zisk"))]
 #[inline]
 pub fn bn254_g1_add(first_point: G1, second_point: G1) -> Result<Bytes, VMError> {
-    use substrate_bn::{AffineG1, Fq, Group, SubstrateG1};
+    use substrate_bn::{AffineG1, Fq, Group, G1 as SubstrateG1};
 
     if first_point.is_zero() && second_point.is_zero() {
         return Ok(Bytes::from([0u8; 64].to_vec()));
