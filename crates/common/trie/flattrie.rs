@@ -300,12 +300,18 @@ impl FlatTrie {
                 NodeType::Extension { child } => {
                     if let Some(child) = child {
                         recursive(trie, child)
+                    } else {
+                        dbg!("ext child not present");
+                        dbg!(&self_index);
                     }
                 }
                 NodeType::Branch { children } => {
                     for child in children {
                         if let Some(child) = child {
                             recursive(trie, child)
+                        } else {
+                            dbg!("branch child not present");
+                            dbg!(&self_index);
                         }
                     }
                 }
@@ -704,6 +710,7 @@ impl FlatTrie {
     /// Calculates the hash of a node from a view index of its data.
     /// TODO: cache? we should cache a range into the hash, because its already stored in its parent
     pub fn get_hash(&self, view_index: usize) -> NodeHash {
+        dbg!("get hash");
         NodeHash::from_encoded(self.get_data(view_index))
     }
 
@@ -711,6 +718,7 @@ impl FlatTrie {
     /// TODO: cache? we should cache a range into the hash, because its already stored in its parent
     /// TODO: consider changing into a NodeHash or similar
     pub fn get_hash_view(&self, view: &NodeView) -> NodeHash {
+        dbg!("get hash view");
         NodeHash::from_encoded(self.get_data_view(view))
     }
 
@@ -785,6 +793,7 @@ impl FlatTrie {
         &self,
         index: usize,
     ) -> Result<Option<Vec<&[u8]>>, RLPDecodeError> {
+        dbg!("get encoded items index");
         let data = self.get_data(index);
         let mut decoder = Decoder::new(data)?;
 
@@ -817,6 +826,8 @@ impl FlatTrie {
     }
 
     pub fn get_data(&self, view_index: usize) -> &[u8] {
+        dbg!("get data with index");
+        dbg!(view_index);
         self.get_data_view(&self.views[view_index])
     }
 
