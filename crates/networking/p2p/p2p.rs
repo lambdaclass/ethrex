@@ -1,4 +1,5 @@
 pub mod discv4;
+#[cfg(feature = "discv5")]
 pub mod discv5;
 pub(crate) mod metrics;
 pub mod network;

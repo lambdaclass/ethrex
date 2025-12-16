@@ -20,9 +20,11 @@ impl Discv5Codec {
         }
     }
 
-    fn new_nonce(&mut self) -> Vec<u8> {
+    fn new_nonce(&mut self) -> [u8; 12] {
         self.nonce = self.nonce.wrapping_add(1);
-        self.nonce.to_be_bytes()[4..].to_vec()
+        let mut bytes = [0u8; 12];
+        bytes.copy_from_slice(&self.nonce.to_be_bytes()[4..]);
+        bytes
     }
 }
 

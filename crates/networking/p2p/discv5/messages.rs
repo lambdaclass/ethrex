@@ -116,7 +116,7 @@ impl Packet {
         &self,
         buf: &mut dyn BufMut,
         masking_iv: u128,
-        nonce: Vec<u8>,
+        nonce: &[u8],
         dest_id: &H256,
         encrypt_key: &[u8],
     ) -> Result<(), PacketDecodeErr> {
@@ -238,13 +238,13 @@ impl WhoAreYou {
         &self,
         buf: &mut dyn BufMut,
         cipher: &mut T,
-        nonce: Vec<u8>,
+        nonce: &[u8],
     ) -> Result<(), PacketDecodeErr> {
         let mut static_header = Vec::new();
         static_header.put_slice(PROTOCOL_ID);
         static_header.put_slice(&PROTOCOL_VERSION.to_be_bytes());
         static_header.put_u8(0x01);
-        static_header.put_slice(&nonce);
+        static_header.put_slice(nonce);
         static_header.put_slice(&24u16.to_be_bytes());
         cipher.try_apply_keystream(&mut static_header)?;
         buf.put_slice(&static_header);
@@ -409,6 +409,8 @@ pub enum Message {
     FindNode(FindNodeMessage),
     Nodes(NodesMessage),
     TalkReq(TalkReqMessage),
+    TalkRes(TalkResMessage),
+    Ticket(TicketMessage),
     // TODO: add the other messages
 }
 
@@ -457,10 +459,14 @@ impl Message {
                 let talk_req_msg = TalkReqMessage::decode(&encrypted_message[1..])?;
                 Ok(Message::TalkReq(talk_req_msg))
             }
-            // 0x06 => {
-            //     let (enr_response_msg, _rest) = ENRResponseMessage::decode_unfinished(msg)?;
-            //     Ok(Message::ENRResponse(enr_response_msg))
-            // }
+            0x06 => {
+                let enr_response_msg = TalkResMessage::decode(&encrypted_message[1..])?;
+                Ok(Message::TalkRes(enr_response_msg))
+            }
+            0x08 => {
+                let ticket_msg = TicketMessage::decode(&encrypted_message[1..])?;
+                Ok(Message::Ticket(ticket_msg))
+            }
             _ => Err(RLPDecodeError::MalformedData),
         }
     }
@@ -625,6 +631,70 @@ impl RLPDecode for TalkReqMessage {
                 req_id,
                 protocol,
                 request,
+            },
+            decoder.finish()?,
+        ))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TalkResMessage {
+    pub req_id: u64,
+    pub response: Vec<u8>,
+}
+
+impl RLPEncode for TalkResMessage {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.req_id)
+            .encode_field(&Bytes::copy_from_slice(&self.response))
+            .finish();
+    }
+}
+
+impl RLPDecode for TalkResMessage {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let ((req_id, response), remaining) = <(u64, Bytes) as RLPDecode>::decode_unfinished(rlp)?;
+
+        Ok((
+            Self {
+                req_id,
+                response: response.to_vec(),
+            },
+            remaining,
+        ))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TicketMessage {
+    pub req_id: u64,
+    pub ticket: Bytes,
+    pub wait_time: u64,
+}
+
+impl RLPEncode for TicketMessage {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.req_id)
+            .encode_field(&self.ticket)
+            .encode_field(&self.wait_time)
+            .finish();
+    }
+}
+
+impl RLPDecode for TicketMessage {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (req_id, decoder) = decoder.decode_field("req_id")?;
+        let (ticket, decoder) = decoder.decode_field("ticket")?;
+        let (wait_time, decoder) = decoder.decode_field("wait_time")?;
+
+        Ok((
+            Self {
+                req_id,
+                ticket,
+                wait_time,
             },
             decoder.finish()?,
         ))
@@ -803,7 +873,7 @@ mod tests {
         let _ = packet.encode(
             &mut buf,
             0,
-            hex!("0102030405060708090a0b0c").to_vec(),
+            &hex!("0102030405060708090a0b0c"),
             &dest_id,
             &[],
         );
@@ -958,5 +1028,27 @@ mod tests {
 
         let buf = pkt.encode_to_vec();
         assert_eq!(TalkReqMessage::decode(&buf).unwrap(), pkt);
+    }
+
+    fn talk_res_packet_codec_roundtrip() {
+        let pkt = TalkResMessage {
+            req_id: 1234,
+            response: b"\x00\x01\x02\x03".into(),
+        };
+
+        let buf = pkt.encode_to_vec();
+        assert_eq!(TalkResMessage::decode(&buf).unwrap(), pkt);
+    }
+
+    #[test]
+    fn ticket_packet_codec_roundtrip() {
+        let pkt = TicketMessage {
+            req_id: 1234,
+            ticket: Bytes::from_static(&[1, 2, 3, 4]),
+            wait_time: 5,
+        };
+
+        let buf = pkt.encode_to_vec();
+        assert_eq!(TicketMessage::decode(&buf).unwrap(), pkt);
     }
 }
