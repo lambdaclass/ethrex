@@ -307,6 +307,7 @@ impl Handshake {
     }
 
     /// Encodes the handshake returning the header, authdata and encrypted_message
+    #[allow(clippy::type_complexity)]
     fn encode(
         &self,
         nonce: &[u8],
