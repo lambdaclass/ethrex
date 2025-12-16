@@ -12,9 +12,9 @@ use ethrex_common::{
         WrappedEIP4844Transaction,
     },
 };
-use ethrex_l2_common::{calldata::Value, l1_messages::L1MessageProof};
+use ethrex_l2_common::{calldata::Value, messages::L1MessageProof};
 use ethrex_l2_rpc::{
-    clients::get_message_proof,
+    clients::get_l1_message_proof,
     signer::{LocalSigner, Signable, Signer},
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -39,10 +39,10 @@ pub use ethrex_sdk_contract_utils::*;
 
 use calldata::from_hex_string_to_h256_array;
 
-// 0x39b37222708e21491b9126e0969a043baa09d5a7
+// 0x13295e5562584289b27f92b28f5418269d3b7d82
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
-    0x39, 0xb3, 0x72, 0x22, 0x70, 0x8e, 0x21, 0x49, 0x1b, 0x91, 0x26, 0xe0, 0x96, 0x9a, 0x04, 0x3b,
-    0xaa, 0x09, 0xd5, 0xa7,
+    0x13, 0x29, 0x5e, 0x55, 0x62, 0x58, 0x42, 0x89, 0xb2, 0x7f, 0x92, 0xb2, 0x8f, 0x54, 0x18, 0x26,
+    0x9d, 0x3b, 0x7d, 0x82,
 ]);
 
 // 0x000000000000000000000000000000000000ffff
@@ -86,7 +86,7 @@ pub enum SdkError {
     FailedToParseAddressFromHex,
 }
 
-/// BRIDGE_ADDRESS or 0x39b37222708e21491b9126e0969a043baa09d5a7
+/// BRIDGE_ADDRESS or 0x13295e5562584289b27f92b28f5418269d3b7d82
 pub fn bridge_address() -> Result<Address, SdkError> {
     std::env::var("ETHREX_WATCHER_BRIDGE_ADDRESS")
         .unwrap_or(format!("{DEFAULT_BRIDGE_ADDRESS:#x}"))
@@ -1078,12 +1078,12 @@ async fn priority_fee_from_override_or_rpc(
     get_fee_from_override_or_get_gas_price(client, None).await
 }
 
-pub async fn wait_for_message_proof(
+pub async fn wait_for_l1_message_proof(
     client: &EthClient,
     transaction_hash: H256,
     max_retries: u64,
 ) -> Result<Vec<L1MessageProof>, EthClientError> {
-    let mut message_proof = get_message_proof(client, transaction_hash).await?;
+    let mut message_proof = get_l1_message_proof(client, transaction_hash).await?;
     let mut r#try = 1;
     while message_proof.is_none() {
         println!(
@@ -1099,7 +1099,7 @@ pub async fn wait_for_message_proof(
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-        message_proof = get_message_proof(client, transaction_hash).await?;
+        message_proof = get_l1_message_proof(client, transaction_hash).await?;
     }
     message_proof.ok_or(EthClientError::Custom("L1Message proof is None".to_owned()))
 }
@@ -1144,7 +1144,7 @@ pub async fn get_last_fetched_l1_block(
     _call_u64_variable(client, b"lastFetchedL1Block()", common_bridge_address).await
 }
 
-pub async fn get_pending_privileged_transactions(
+pub async fn get_pending_l1_messages(
     client: &EthClient,
     common_bridge_address: Address,
 ) -> Result<Vec<H256>, EthClientError> {
@@ -1154,6 +1154,28 @@ pub async fn get_pending_privileged_transactions(
         common_bridge_address,
     )
     .await?;
+    from_hex_string_to_h256_array(&response)
+}
+
+pub async fn get_pending_l2_messages(
+    client: &EthClient,
+    common_bridge_address: Address,
+    chain_id: u64,
+) -> Result<Vec<H256>, EthClientError> {
+    let selector = keccak(b"getPendingL2MessagesHashes(uint256)")
+        .as_bytes()
+        .get(..4)
+        .ok_or(EthClientError::Custom("Failed to get selector.".to_owned()))?
+        .to_vec();
+
+    let mut calldata = Vec::new();
+    calldata.extend_from_slice(&selector);
+    calldata.extend_from_slice(&U256::from(chain_id).to_big_endian());
+
+    let response = client
+        .call(common_bridge_address, calldata.into(), Overrides::default())
+        .await?;
+
     from_hex_string_to_h256_array(&response)
 }
 

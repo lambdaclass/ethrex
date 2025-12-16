@@ -10,8 +10,8 @@ use crate::{
 };
 
 use ethrex_l2_common::{
-    l1_messages::{L1MessageProof, get_block_l1_messages, get_l1_message_hash},
     merkle_tree::compute_merkle_proof,
+    messages::{L1MessageProof, get_block_l1_messages, get_l1_message_hash},
 };
 
 pub struct GetL1MessageProof {
@@ -74,7 +74,7 @@ impl RpcHandler for GetL1MessageProof {
         // Gets the message hashes for the batch
         let batch_message_hashes = match context
             .rollup_store
-            .get_message_hashes_by_batch(batch_number)
+            .get_l1_out_message_hashes_by_batch(batch_number)
             .await?
         {
             Some(messages) => messages,

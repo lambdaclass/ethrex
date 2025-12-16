@@ -4,6 +4,7 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["**"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,13 +14,19 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+env:
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
+
 jobs:
   lint_zk:
     name: Lint ${{ matrix.backend }} backend
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        backend: ["sp1", "risc0", "zisk", "openvm"]
+        # Note: openvm backend linting is disabled due to a problem in the installation https://github.com/lambdaclass/ethrex/issues/5509
+        backend: ["sp1", "risc0", "zisk"]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4

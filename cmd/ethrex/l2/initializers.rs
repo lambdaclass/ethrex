@@ -174,7 +174,7 @@ pub async fn init_l2(
     let network = get_network(&opts.node_opts);
 
     let genesis = network.get_genesis()?;
-    let store = init_store(&datadir, genesis.clone()).await;
+    let store = init_store(&datadir, genesis.clone()).await?;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
     let operator_fee_config = get_operator_fee_config(&opts.sequencer_opts)?;
@@ -247,6 +247,7 @@ pub async fn init_l2(
                 ),
             }),
             opts.node_opts.tx_broadcasting_time_interval,
+            opts.node_opts.lookup_interval,
         )
         .expect("P2P context could not be created");
         let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;

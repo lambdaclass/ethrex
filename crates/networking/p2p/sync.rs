@@ -23,7 +23,7 @@ use ethrex_common::types::Code;
 use ethrex_common::{
     H256,
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
-    types::{AccountState, Block, BlockHash, BlockHeader},
+    types::{AccountState, Block, BlockHeader},
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
@@ -493,7 +493,7 @@ impl Syncer {
 
         store
             .forkchoice_update(
-                Some(numbers_and_hashes),
+                numbers_and_hashes,
                 last_block_number,
                 last_block_hash,
                 None,
@@ -578,31 +578,6 @@ async fn store_block_bodies(
 
             // Check if we need to ask for another batch
             if block_headers.is_empty() {
-                break;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Fetches all receipts for the given block hashes via p2p and stores them
-// TODO: remove allow when used again
-#[allow(unused)]
-async fn store_receipts(
-    mut block_hashes: Vec<BlockHash>,
-    mut peers: PeerHandler,
-    store: Store,
-) -> Result<(), SyncError> {
-    loop {
-        debug!("Requesting Receipts ");
-        if let Some(receipts) = peers.request_receipts(block_hashes.clone()).await? {
-            debug!(" Received {} Receipts", receipts.len());
-            // Track which blocks we have already fetched receipts for
-            for (block_hash, receipts) in block_hashes.drain(0..receipts.len()).zip(receipts) {
-                store.add_receipts(block_hash, receipts).await?;
-            }
-            // Check if we need to ask for another batch
-            if block_hashes.is_empty() {
                 break;
             }
         }
@@ -1003,7 +978,7 @@ impl Syncer {
 
         store
             .forkchoice_update(
-                Some(numbers_and_hashes),
+                numbers_and_hashes,
                 pivot_header.number,
                 pivot_header.hash(),
                 None,
