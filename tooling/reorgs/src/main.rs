@@ -107,6 +107,7 @@ async fn no_reorgs_full_sync_smoke_test(simulator: Arc<Mutex<Simulator>>) {
     node1.update_forkchoice(&base_chain).await;
 }
 
+#[expect(unused)]
 async fn snap_sync_smoke_test(simulator: Arc<Mutex<Simulator>>) {
     let mut simulator = simulator.lock().await;
     // Initcode for deploying a contract that receives two `bytes32` parameters and sets `storage[param0] = param1`

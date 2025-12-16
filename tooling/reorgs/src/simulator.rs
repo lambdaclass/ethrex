@@ -84,6 +84,7 @@ impl Simulator {
         self.start_node_with_config(SyncMode::Full).await
     }
 
+    #[expect(unused)]
     pub async fn start_snapsync_node(&mut self) -> Node {
         self.start_node_with_config(SyncMode::Snap).await
     }
