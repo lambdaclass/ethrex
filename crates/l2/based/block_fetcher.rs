@@ -260,7 +260,7 @@ impl BlockFetcher {
         Ok(())
     }
 
-    async fn store_batch(&mut self, batch: &[Block]) -> Result<(), BlockFetcherError> {
+    async fn store_batch(&self, batch: &[Block]) -> Result<(), BlockFetcherError> {
         for block in batch.iter() {
             self.blockchain.add_block(block.clone())?;
 
@@ -287,17 +287,19 @@ impl BlockFetcher {
     }
 
     async fn seal_batch(
-        &mut self,
+        &self,
         batch: &[Block],
         batch_number: U256,
         commit_tx: H256,
     ) -> Result<(), BlockFetcherError> {
+        let chain_id = self.store.get_chain_config().chain_id;
         let batch = get_batch(
             &self.store,
             batch,
             batch_number,
             Some(commit_tx),
             BlobsBundle::default(),
+            chain_id,
         )
         .await?;
 
@@ -311,7 +313,7 @@ impl BlockFetcher {
     /// Process the logs from the event `BatchVerified`.
     /// Gets the batch number from the logs and stores the verify transaction hash in the rollup store
     async fn process_verified_logs(
-        &mut self,
+        &self,
         batch_verified_logs: Vec<RpcLog>,
     ) -> Result<(), BlockFetcherError> {
         for batch_verified_log in batch_verified_logs {

@@ -13,7 +13,7 @@ use ethrex_l2::monitor::widget::l2_to_l1_messages::{L2ToL1MessageKind, L2ToL1Mes
 use ethrex_l2::monitor::widget::{L2ToL1MessagesTable, l2_to_l1_messages::L2ToL1MessageRow};
 use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
 use ethrex_l2_common::calldata::Value;
-use ethrex_l2_common::l1_messages::L1MessageProof;
+use ethrex_l2_common::messages::L1MessageProof;
 use ethrex_l2_common::utils::get_address_from_secret_key;
 use ethrex_l2_rpc::clients::{
     get_base_fee_vault_address, get_l1_blob_base_fee_per_gas, get_l1_fee_vault_address,
@@ -28,7 +28,7 @@ use ethrex_l2_sdk::{
 };
 use ethrex_l2_sdk::{
     FEE_TOKEN_REGISTRY_ADDRESS, L2_WITHDRAW_SIGNATURE, REGISTER_FEE_TOKEN_SIGNATURE,
-    build_generic_tx, get_last_verified_batch, send_generic_transaction, wait_for_message_proof,
+    build_generic_tx, get_last_verified_batch, send_generic_transaction, wait_for_l1_message_proof,
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
@@ -90,10 +90,10 @@ const DEFAULT_PROPOSER_COINBASE_ADDRESS: Address = H160([
     0xad, 0x62, 0x0c, 0x8d,
 ]);
 
-// 0x3e141f8f9f083024c6e1ec3de2509de5da47c354
+// 0x44669840b8f0aedaa707636272031b5e8d67516c
 const DEFAULT_ON_CHAIN_PROPOSER_ADDRESS: Address = H160([
-    0x3e, 0x14, 0x1f, 0x8f, 0x9f, 0x08, 0x30, 0x24, 0xc6, 0xe1, 0xec, 0x3d, 0xe2, 0x50, 0x9d, 0xe5,
-    0xda, 0x47, 0xc3, 0x54,
+    0x44, 0x66, 0x98, 0x40, 0xb8, 0xf0, 0xae, 0xda, 0xa7, 0x07, 0x63, 0x62, 0x72, 0x03, 0x1b, 0x5e,
+    0x8d, 0x67, 0x51, 0x6c,
 ]);
 
 const DEFAULT_RICH_KEYS_FILE_PATH: &str = "../../fixtures/keys/private_keys_l1.txt";
@@ -311,6 +311,7 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<Fees
         false,
         Some(&remappings),
         &[contracts_path],
+        None,
     )?;
 
     let bridge_code = hex::decode(std::fs::read("contracts/solc_out/CommonBridgeL2.bin")?)?;
@@ -565,6 +566,7 @@ async fn test_erc20_roundtrip(
         false,
         Some(&remappings),
         &[contracts_path],
+        None,
     )?;
     let init_code_l2_inner = hex::decode(String::from_utf8(std::fs::read(
         "contracts/solc_out/TestTokenL2.bin",
@@ -651,7 +653,7 @@ async fn test_erc20_roundtrip(
         token_l2,
         signature,
         &data,
-        "test_erc20_roundtrip",
+        "test_erc20_roundtrip 1",
     )
     .await?;
 
@@ -678,7 +680,7 @@ async fn test_erc20_roundtrip(
         COMMON_BRIDGE_L2_ADDRESS,
         signature,
         &data,
-        "test_erc20_roundtrip",
+        "test_erc20_roundtrip 2",
     )
     .await?;
 
@@ -909,8 +911,8 @@ async fn test_forced_withdrawal(
     rich_wallet_private_key: SecretKey,
 ) -> Result<FeesDetails> {
     println!("forced_withdrawal: Testing forced withdrawal");
-    let rich_address =
-        get_address_from_secret_key(&rich_wallet_private_key).expect("Failed to get address");
+    let rich_address = get_address_from_secret_key(&rich_wallet_private_key.secret_bytes())
+        .expect("Failed to get address");
     let l1_initial_balance = l1_client
         .get_balance(rich_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
@@ -1072,7 +1074,7 @@ async fn test_send(
     .with_context(|| format!("Failed to build tx for {test}"))?;
     tx.gas = tx.gas.map(|g| g * 6 / 5); // (+20%) tx reverts in some cases otherwise
     let tx_hash = send_generic_transaction(client, tx, &signer).await.unwrap();
-    ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, client, 10)
+    ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, client, 1000)
         .await
         .with_context(|| format!("Failed to get receipt for {test}"))
 }
@@ -1087,7 +1089,7 @@ async fn test_deposit(
     rich_wallet_private_key: &SecretKey,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("test_deposit: Fetching initial balances on L1 and L2");
-    let rich_wallet_address = get_address_from_secret_key(rich_wallet_private_key)
+    let rich_wallet_address = get_address_from_secret_key(&rich_wallet_private_key.secret_bytes())
         .expect("Failed to get address from l1 rich wallet pk");
 
     let deposit_value = std::env::var("INTEGRATION_TEST_DEPOSIT_VALUE")
@@ -1243,8 +1245,10 @@ async fn test_transfer(
     returnerer_private_key: SecretKey,
 ) -> Result<FeesDetails> {
     println!("test_transfer: Transferring funds on L2");
-    let transferer_address = get_address_from_secret_key(&transferer_private_key).unwrap();
-    let returner_address = get_address_from_secret_key(&returnerer_private_key).unwrap();
+    let transferer_address =
+        get_address_from_secret_key(&transferer_private_key.secret_bytes()).unwrap();
+    let returner_address =
+        get_address_from_secret_key(&returnerer_private_key.secret_bytes()).unwrap();
 
     println!(
         "test_transfer: Performing transfer from {transferer_address:#x} to {returner_address:#x}"
@@ -1290,8 +1294,10 @@ async fn test_transfer_with_privileged_tx(
     receiver_private_key: SecretKey,
 ) -> Result<FeesDetails> {
     println!("transfer_with_ptx: Transferring funds on L2 through a deposit");
-    let transferer_address = get_address_from_secret_key(&transferer_private_key).unwrap();
-    let receiver_address = get_address_from_secret_key(&receiver_private_key).unwrap();
+    let transferer_address =
+        get_address_from_secret_key(&transferer_private_key.secret_bytes()).unwrap();
+    let receiver_address =
+        get_address_from_secret_key(&receiver_private_key.secret_bytes()).unwrap();
 
     println!("transfer_with_ptx: Fetching receiver's initial balance on L2");
 
@@ -1348,7 +1354,8 @@ async fn test_gas_burning(
     rich_wallet_private_key: SecretKey,
 ) -> Result<FeesDetails> {
     println!("test_gas_burning: Transferring funds on L2 through a deposit");
-    let rich_address = get_address_from_secret_key(&rich_wallet_private_key).unwrap();
+    let rich_address =
+        get_address_from_secret_key(&rich_wallet_private_key.secret_bytes()).unwrap();
     let l2_gas_limit = 2_000_000;
     let l1_extra_gas_limit = 400_000;
 
@@ -1387,8 +1394,10 @@ async fn test_privileged_tx_not_enough_balance(
     println!(
         "ptx_not_enough_balance: Starting test for privileged transaction with insufficient balance"
     );
-    let rich_address = get_address_from_secret_key(&rich_wallet_private_key).unwrap();
-    let receiver_address = get_address_from_secret_key(&receiver_private_key).unwrap();
+    let rich_address =
+        get_address_from_secret_key(&rich_wallet_private_key.secret_bytes()).unwrap();
+    let receiver_address =
+        get_address_from_secret_key(&receiver_private_key.secret_bytes()).unwrap();
 
     println!("ptx_not_enough_balance: Fetching initial balances on L1 and L2");
 
@@ -1450,7 +1459,8 @@ async fn perform_transfer(
     transfer_value: U256,
     test: &str,
 ) -> Result<FeesDetails> {
-    let transferer_address = get_address_from_secret_key(transferer_private_key).unwrap();
+    let transferer_address =
+        get_address_from_secret_key(&transferer_private_key.secret_bytes()).unwrap();
 
     let transferer_initial_l2_balance = l2_client
         .get_balance(transferer_address, BlockIdentifier::Tag(BlockTag::Latest))
@@ -1531,7 +1541,7 @@ async fn test_n_withdraws(
     n: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("test_n_withdraws: Withdrawing funds from L2 to L1");
-    let withdrawer_address = get_address_from_secret_key(withdrawer_private_key)?;
+    let withdrawer_address = get_address_from_secret_key(&withdrawer_private_key.secret_bytes())?;
     let withdraw_value = std::env::var("INTEGRATION_TEST_WITHDRAW_VALUE")
         .map(|value| U256::from_dec_str(&value).expect("Invalid withdraw value"))
         .unwrap_or(U256::from(100000000000000000000u128));
@@ -1922,8 +1932,8 @@ async fn test_call_to_contract_with_deposit(
     caller_private_key: &SecretKey,
     test: &str,
 ) -> Result<()> {
-    let caller_address =
-        get_address_from_secret_key(caller_private_key).expect("Failed to get address");
+    let caller_address = get_address_from_secret_key(&caller_private_key.secret_bytes())
+        .expect("Failed to get address");
 
     println!("{test}: Checking balances before call");
 
@@ -2001,7 +2011,8 @@ async fn test_fee_token(
     recipient_private_key: SecretKey,
 ) -> Result<FeesDetails> {
     let test = "test_fee_token";
-    let rich_wallet_address = get_address_from_secret_key(&rich_wallet_private_key).unwrap();
+    let rich_wallet_address =
+        get_address_from_secret_key(&rich_wallet_private_key.secret_bytes()).unwrap();
     let l1_client = l1_client();
     println!("{test}: Rich wallet address: {rich_wallet_address:#x}");
 
@@ -2024,6 +2035,7 @@ async fn test_fee_token(
         false,
         Some(&remappings),
         &allow_paths,
+        None,
     )?;
 
     let mut fee_token_contract =
@@ -2076,7 +2088,8 @@ async fn test_fee_token(
     println!("{test}: Sender balance before transfer: {sender_balance_before_transfer}");
     println!("{test}: Sender fee balance before transfer: {sender_token_balance_before_transfer}");
 
-    let recipient_address = get_address_from_secret_key(&recipient_private_key).unwrap();
+    let recipient_address =
+        get_address_from_secret_key(&recipient_private_key.secret_bytes()).unwrap();
     let recipient_balance_before_transfer = l2_client
         .get_balance(recipient_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
@@ -2514,7 +2527,7 @@ async fn get_rich_accounts_balance(
 
     for pk in private_keys.iter() {
         let secret_key = parse_private_key(pk)?;
-        let address = get_address_from_secret_key(&secret_key)?;
+        let address = get_address_from_secret_key(&secret_key.secret_bytes())?;
         let get_balance = l2_client
             .get_balance(address, BlockIdentifier::Tag(BlockTag::Latest))
             .await?;
@@ -2613,7 +2626,7 @@ async fn wait_for_verified_proof(
     l2_client: &EthClient,
     tx: H256,
 ) -> L1MessageProof {
-    let proof = wait_for_message_proof(l2_client, tx, 10000).await;
+    let proof = wait_for_l1_message_proof(l2_client, tx, 10000).await;
     let proof = proof.unwrap().into_iter().next().expect("proof not found");
 
     loop {

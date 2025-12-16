@@ -77,8 +77,13 @@ path = "./lib.rs"
 
 [features]
 debug = ["ethrex-vm/debug"]
-default = ["rocksdb", "c-kzg", "metrics", "jemalloc", "dev"]
+default = ["rocksdb", "c-kzg", "secp256k1", "metrics", "jemalloc", "dev"]
 dev = ["dep:ethrex-dev"]
+secp256k1 = [
+  "ethrex-vm/secp256k1",
+  "ethrex-common/secp256k1",
+  "ethrex-blockchain/secp256k1",
+]
 c-kzg = [
   "ethrex-vm/c-kzg",
   "ethrex-common/c-kzg",
@@ -86,7 +91,7 @@ c-kzg = [
   "ethrex-p2p/c-kzg",
   "ethrex-crypto/c-kzg",
 ]
-metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics"]
+metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics", "ethrex-p2p/metrics"]
 rocksdb = ["ethrex-storage/rocksdb", "ethrex-p2p/rocksdb", "ethrex-l2?/rocksdb"]
 jemalloc = ["dep:tikv-jemallocator"]
 jemalloc_profiling = [
