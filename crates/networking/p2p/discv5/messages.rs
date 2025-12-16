@@ -12,6 +12,8 @@ use ethrex_rlp::{
 };
 use secp256k1::SecretKey;
 
+use crate::types::NodeRecord;
+
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 
 // Max and min packet sizes as defined in
@@ -56,10 +58,20 @@ pub enum Packet {
     // Handshake(Handshake),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PacketHeader {
+    pub static_header: Vec<u8>,
+    pub flag: u8,
+    pub nonce: Vec<u8>,
+    pub authdata: Vec<u8>,
+    /// Offset in the encoded packet where authdata ends, i.e where the header ends.
+    pub header_end_offset: usize,
+}
+
 impl Packet {
     pub fn decode(
         dest_id: &H256,
-        decrypt_key: &Vec<u8>,
+        decrypt_key: &[u8],
         encoded_packet: &[u8],
     ) -> Result<Packet, PacketDecodeErr> {
         if encoded_packet.len() < MIN_PACKET_SIZE || encoded_packet.len() > MAX_PACKET_SIZE {
@@ -73,19 +85,20 @@ impl Packet {
 
         let mut cipher = <Aes128Ctr64BE as KeyIvInit>::new(dest_id[..16].into(), masking_iv.into());
 
-        let (static_header, flag, nonce, authdata, authdata_end) =
-            Packet::decode_header(&mut cipher, encoded_packet)?;
+        let packet_header = Packet::decode_header(&mut cipher, encoded_packet)?;
 
-        match flag {
+        match packet_header.flag {
             0x00 => Ok(Packet::Ordinary(Ordinary::decode(
                 masking_iv,
-                static_header,
-                authdata,
-                nonce,
+                packet_header.static_header,
+                packet_header.authdata,
+                packet_header.nonce,
                 decrypt_key,
-                &encoded_packet[authdata_end..],
+                &encoded_packet[packet_header.header_end_offset..],
             )?)),
-            0x01 => Ok(Packet::WhoAreYou(WhoAreYou::decode(&authdata)?)),
+            0x01 => Ok(Packet::WhoAreYou(WhoAreYou::decode(
+                &packet_header.authdata,
+            )?)),
             _ => Err(RLPDecodeError::MalformedData)?,
         }
     }
@@ -115,7 +128,7 @@ impl Packet {
     fn decode_header<T: StreamCipher>(
         cipher: &mut T,
         encoded_packet: &[u8],
-    ) -> Result<(Vec<u8>, u8, Vec<u8>, Vec<u8>, usize), PacketDecodeErr> {
+    ) -> Result<PacketHeader, PacketDecodeErr> {
         // static header
         let mut static_header = encoded_packet[IV_MASKING_SIZE..STATIC_HEADER_END].to_vec();
 
@@ -127,7 +140,7 @@ impl Packet {
         let version = u16::from_be_bytes(static_header[6..8].try_into()?);
         if protocol_id != PROTOCOL_ID || version != PROTOCOL_VERSION {
             return Err(PacketDecodeErr::InvalidProtocol(
-                match str::from_utf8(&protocol_id) {
+                match str::from_utf8(protocol_id) {
                     Ok(result) => format!("{} v{}", result, version),
                     Err(_) => format!("{:?} v{}", protocol_id, version),
                 },
@@ -141,7 +154,14 @@ impl Packet {
         let authdata = &mut encoded_packet[STATIC_HEADER_END..authdata_end].to_vec();
 
         cipher.try_apply_keystream(authdata)?;
-        Ok((static_header, flag, nonce, authdata.to_vec(), authdata_end))
+
+        Ok(PacketHeader {
+            static_header,
+            flag,
+            nonce,
+            authdata: authdata.to_vec(),
+            header_end_offset: authdata_end,
+        })
     }
 }
 
@@ -156,7 +176,7 @@ impl Ordinary {
         static_header: Vec<u8>,
         authdata: Vec<u8>,
         nonce: Vec<u8>,
-        decrypt_key: &Vec<u8>,
+        decrypt_key: &[u8],
         encrypted_message: &[u8],
     ) -> Result<Ordinary, PacketDecodeErr> {
         // message    = aesgcm_encrypt(initiator-key, nonce, message-pt, message-ad)
@@ -166,7 +186,7 @@ impl Ordinary {
         message_ad.extend_from_slice(&static_header);
         message_ad.extend_from_slice(&authdata);
 
-        let mut message = (&encrypted_message).to_vec();
+        let mut message = encrypted_message.to_vec();
         Self::decrypt(decrypt_key, nonce, &mut message, message_ad)?;
 
         let message = Message::decode(&message)?;
@@ -174,7 +194,7 @@ impl Ordinary {
     }
 
     fn decrypt(
-        key: &Vec<u8>,
+        key: &[u8],
         nonce: Vec<u8>,
         message: &mut Vec<u8>,
         message_ad: Vec<u8>,
@@ -222,7 +242,7 @@ impl WhoAreYou {
         buf.put_slice(&self.enr_seq.to_be_bytes());
     }
 
-    pub fn decode(authdata: &Vec<u8>) -> Result<WhoAreYou, PacketDecodeErr> {
+    pub fn decode(authdata: &[u8]) -> Result<WhoAreYou, PacketDecodeErr> {
         let id_nonce = u128::from_be_bytes(authdata[..16].try_into()?);
         let enr_seq = u64::from_be_bytes(authdata[16..].try_into()?);
 
@@ -234,6 +254,9 @@ impl WhoAreYou {
 pub enum Message {
     Ping(PingMessage),
     Pong(PongMessage),
+    FindNode(FindNodeMessage),
+    Nodes(NodesMessage),
+    TalkReq(TalkReqMessage),
     TalkRes(TalkResMessage),
     // TODO: add the other messages
 }
@@ -250,20 +273,20 @@ impl Message {
                 let pong = PongMessage::decode(&encrypted_message[1..])?;
                 Ok(Message::Pong(pong))
             }
-            // 0x03 => {
-            //     let (find_node_msg, _rest) = FindNodeMessage::decode_unfinished(msg)?;
-            //     Ok(Message::FindNode(find_node_msg))
-            // }
-            // 0x04 => {
-            //     let (neighbors_msg, _rest) = NeighborsMessage::decode_unfinished(msg)?;
-            //     Ok(Message::Neighbors(neighbors_msg))
-            // }
-            // 0x05 => {
-            //     let (enr_request_msg, _rest) = ENRRequestMessage::decode_unfinished(msg)?;
-            //     Ok(Message::ENRRequest(enr_request_msg))
-            // }
+            0x03 => {
+                let find_node_msg = FindNodeMessage::decode(&encrypted_message[1..])?;
+                Ok(Message::FindNode(find_node_msg))
+            }
+            0x04 => {
+                let nodes_msg = NodesMessage::decode(&encrypted_message[1..])?;
+                Ok(Message::Nodes(nodes_msg))
+            }
+            0x05 => {
+                let talk_req_msg = TalkReqMessage::decode(&encrypted_message[1..])?;
+                Ok(Message::TalkReq(talk_req_msg))
+            }
             0x06 => {
-                let (enr_response_msg, _rest) = TalkResMessage::decode_unfinished(msg)?;
+                let enr_response_msg = TalkResMessage::decode(&encrypted_message[1..])?;
                 Ok(Message::TalkRes(enr_response_msg))
             }
             _ => Err(RLPDecodeError::MalformedData),
@@ -346,6 +369,101 @@ impl RLPDecode for PongMessage {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FindNodeMessage {
+    pub req_id: u64,
+    pub distance: Vec<u64>,
+}
+
+impl RLPEncode for FindNodeMessage {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.req_id)
+            .encode_field(&self.distance)
+            .finish();
+    }
+}
+
+impl RLPDecode for FindNodeMessage {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (req_id, decoder) = decoder.decode_field("req_id")?;
+        let (distance, decoder) = decoder.decode_field("distance")?;
+
+        Ok((Self { req_id, distance }, decoder.finish()?))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodesMessage {
+    pub req_id: u64,
+    pub total: u64,
+    pub nodes: Vec<NodeRecord>,
+}
+
+impl RLPEncode for NodesMessage {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.req_id)
+            .encode_field(&self.total)
+            .encode_field(&self.nodes)
+            .finish();
+    }
+}
+
+impl RLPDecode for NodesMessage {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (req_id, decoder) = decoder.decode_field("req_id")?;
+        let (total, decoder) = decoder.decode_field("total")?;
+        let (nodes, decoder) = decoder.decode_field("nodes")?;
+
+        Ok((
+            Self {
+                req_id,
+                total,
+                nodes,
+            },
+            decoder.finish()?,
+        ))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TalkReqMessage {
+    pub req_id: u64,
+    pub protocol: Bytes,
+    pub request: Bytes,
+}
+
+impl RLPEncode for TalkReqMessage {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.req_id)
+            .encode_field(&self.protocol)
+            .encode_field(&self.request)
+            .finish();
+    }
+}
+
+impl RLPDecode for TalkReqMessage {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (req_id, decoder) = decoder.decode_field("req_id")?;
+        let (protocol, decoder) = decoder.decode_field("protocol")?;
+        let (request, decoder) = decoder.decode_field("request")?;
+
+        Ok((
+            Self {
+                req_id,
+                protocol,
+                request,
+            },
+            decoder.finish()?,
+        ))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct TalkResMessage {
     pub req_id: u64,
     pub response: Vec<u8>,
@@ -382,9 +500,11 @@ mod tests {
             codec::Discv5Codec,
             messages::{Message, Ordinary, Packet, PingMessage, WhoAreYou},
         },
+        types::NodeRecordPairs,
         utils::{node_id, public_key_from_signing_key},
     };
     use bytes::BytesMut;
+    use ethrex_common::H512;
     use hex_literal::hex;
     use secp256k1::SecretKey;
     use std::net::Ipv4Addr;
@@ -419,7 +539,7 @@ mod tests {
 
         let packet = Packet::WhoAreYou(WhoAreYou {
             id_nonce: u128::from_be_bytes(
-                (&hex!("0102030405060708090a0b0c0d0e0f10"))
+                hex!("0102030405060708090a0b0c0d0e0f10")
                     .to_vec()
                     .try_into()
                     .unwrap(),
@@ -468,7 +588,7 @@ mod tests {
         let packet = codec.decode(&mut encoded).unwrap();
         let expected = Some(Packet::WhoAreYou(WhoAreYou {
             id_nonce: u128::from_be_bytes(
-                (&hex!("0102030405060708090a0b0c0d0e0f10"))
+                hex!("0102030405060708090a0b0c0d0e0f10")
                     .to_vec()
                     .try_into()
                     .unwrap(),
@@ -542,6 +662,51 @@ mod tests {
 
         let buf = pkt.encode_to_vec();
         assert_eq!(PongMessage::decode(&buf).unwrap(), pkt);
+    }
+
+    #[test]
+    fn findnode_packet_codec_roundtrip() {
+        let pkt = FindNodeMessage {
+            req_id: 1234,
+            distance: vec![1, 2, 3, 4],
+        };
+
+        let buf = pkt.encode_to_vec();
+        assert_eq!(FindNodeMessage::decode(&buf).unwrap(), pkt);
+    }
+
+    #[test]
+    fn nodes_packet_codec_roundtrip() {
+        let pairs: Vec<(Bytes, Bytes)> = NodeRecordPairs {
+            id: Some("id".to_string()),
+            ..Default::default()
+        }
+        .into();
+
+        let pkt = NodesMessage {
+            req_id: 1234,
+            total: 2,
+            nodes: vec![NodeRecord {
+                seq: 4321,
+                pairs,
+                signature: H512::random(),
+            }],
+        };
+
+        let buf = pkt.encode_to_vec();
+        assert_eq!(NodesMessage::decode(&buf).unwrap(), pkt);
+    }
+
+    #[test]
+    fn talkreq_packet_codec_roundtrip() {
+        let pkt = TalkReqMessage {
+            req_id: 1234,
+            protocol: Bytes::from_static(&[1, 2, 3, 4]),
+            request: Bytes::from_static(&[1, 2, 3, 4]),
+        };
+
+        let buf = pkt.encode_to_vec();
+        assert_eq!(TalkReqMessage::decode(&buf).unwrap(), pkt);
     }
 
     #[test]
