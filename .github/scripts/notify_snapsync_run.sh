@@ -43,7 +43,7 @@ if [[ "$OUTCOME" == "success" ]]; then
         fields: [
           { type: "mrkdwn", text: "*Job*\n\($name)" },
           { type: "mrkdwn", text: "*Commit*\n<\($commit_url)|\($sha)>" },
-          { type: "mrkdwn", text: "*Duration*\n\($duration)" },
+          { type: "mrkdwn", text: "*Duration*\n\($duration)" }
         ]
       }
     ]
@@ -68,7 +68,7 @@ else
         fields: [
           { type: "mrkdwn", text: "*Job*\n\($name)" },
           { type: "mrkdwn", text: "*Commit*\n<\($commit_url)|\($sha)>" },
-          { type: "mrkdwn", text: "*Duration*\n\($duration)" },
+          { type: "mrkdwn", text: "*Duration*\n\($duration)" }
         ]
       }
     ]
