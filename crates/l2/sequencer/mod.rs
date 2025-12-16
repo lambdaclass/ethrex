@@ -61,7 +61,7 @@ pub async fn start_l2(
 > {
     let initial_status = if cfg.based.enabled {
         SequencerStatus::default()
-    } else if cfg.block_producer.start_at > 0 {
+    } else if cfg.admin_server.start_at > 0 {
         SequencerStatus::Syncing
     } else {
         SequencerStatus::Sequencing

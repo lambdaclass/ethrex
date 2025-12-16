@@ -1,4 +1,4 @@
-use std::{str::FromStr, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{Address, U256, types::Block};
@@ -81,8 +81,6 @@ impl StateUpdater {
         rollup_store: StoreRollup,
         l2_url: Url,
     ) -> Result<Self, StateUpdaterError> {
-        let l2_url = Url::from_str("http://localhost:1729")
-            .map_err(|_| StateUpdaterError::MissingData("invalid url".to_owned()))?;
         Ok(Self {
             on_chain_proposer_address: sequencer_cfg.l1_committer.on_chain_proposer_address,
             sequencer_registry_address: sequencer_cfg.based.state_updater.sequencer_registry,
@@ -96,9 +94,13 @@ impl StateUpdater {
             sequencer_state,
             blockchain,
             stop_at: None,
-            start_at: sequencer_cfg.block_producer.start_at,
+            start_at: sequencer_cfg.admin_server.start_at,
             based: sequencer_cfg.based.enabled,
-            l2_client: Arc::new(EthClient::new(l2_url)?),
+            l2_client: if let Some(l2_safe_url) = sequencer_cfg.admin_server.l2_safe_url {
+                Arc::new(EthClient::new(l2_safe_url)?)
+            } else {
+                Arc::new(EthClient::new(l2_url)?)
+            },
         })
     }
 

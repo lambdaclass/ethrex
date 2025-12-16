@@ -166,7 +166,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 operator_fee_vault_address: opts.block_producer_opts.operator_fee_vault_address,
                 elasticity_multiplier: opts.block_producer_opts.elasticity_multiplier,
                 block_gas_limit: opts.block_producer_opts.block_gas_limit,
-                start_at: opts.block_producer_opts.start_at,
             },
             l1_committer: CommitterConfig {
                 on_chain_proposer_address: opts
@@ -248,6 +247,8 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
             admin_server: AdminConfig {
                 listen_ip: opts.admin_opts.admin_listen_ip,
                 listen_port: opts.admin_opts.admin_listen_port,
+                start_at: opts.admin_opts.start_at,
+                l2_safe_url: opts.admin_opts.l2_safe_url,
             },
         })
     }
@@ -536,15 +537,6 @@ pub struct BlockProducerOptions {
         help_heading = "Block producer options"
     )]
     pub block_gas_limit: u64,
-    #[arg(
-        long = "block-producer.start-at",
-        default_value = "0",
-        value_name = "UINT64",
-        env = "ETHREX_BLOCK_PRODUCER_START_AT",
-        help = "Starting L2 block to start producing blocks",
-        help_heading = "Block producer options"
-    )]
-    pub start_at: u64,
 }
 
 impl Default for BlockProducerOptions {
@@ -562,7 +554,6 @@ impl Default for BlockProducerOptions {
             l1_fee_vault_address: None,
             elasticity_multiplier: 2,
             block_gas_limit: DEFAULT_BUILDER_GAS_CEIL,
-            start_at: 0,
         }
     }
 }
@@ -1015,6 +1006,25 @@ pub struct AdminOptions {
         help_heading = "Admin server options"
     )]
     pub admin_listen_port: u16,
+    #[arg(
+        long = "admin.start-at",
+        default_value = "0",
+        value_name = "UINT64",
+        env = "ETHREX_ADMIN_START_AT",
+        requires = "l2_safe_url",
+        help = "Starting L2 block to start producing blocks",
+        help_heading = "Admin server options"
+    )]
+    pub start_at: u64,
+    #[arg(
+        long = "admin.l2-safe-url",
+        value_name = "URL",
+        env = "ETHREX_ADMIN_L2_SAFE_URL",
+        requires = "start_at",
+        help = "Which RPC node to know if it is up to date",
+        help_heading = "Admin server options"
+    )]
+    pub l2_safe_url: Option<Url>,
 }
 
 impl Default for AdminOptions {
@@ -1022,6 +1032,8 @@ impl Default for AdminOptions {
         Self {
             admin_listen_ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             admin_listen_port: 5555,
+            start_at: 0,
+            l2_safe_url: None,
         }
     }
 }
