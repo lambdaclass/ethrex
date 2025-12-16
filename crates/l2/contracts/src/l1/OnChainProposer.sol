@@ -32,6 +32,7 @@ contract OnChainProposer is
     /// pendingTxHashes queue of the CommonBridge contract.
     /// @dev withdrawalsLogsMerkleRoot is the Merkle root of the Merkle tree containing
     /// all the withdrawals that were processed in the batch being committed
+    /// @dev commitHash: keccak of the git commit hash that produced the proof/verification key used for this batch
     struct BatchCommitmentInfo {
         bytes32 newStateRoot;
         bytes32 blobKZGVersionedHash;
@@ -40,7 +41,6 @@ contract OnChainProposer is
         bytes32 lastBlockHash;
         bytes32 l2MessagesMerkleRoot;
         ICommonBridge.BalanceDiff[] balanceDiffs;
-        /// @dev git commit hash that produced the proof/verification key used for this batch
         bytes32 commitHash;
     }
 
@@ -195,9 +195,6 @@ contract OnChainProposer is
         CHAIN_ID = chainId;
 
         OwnableUpgradeable.__Ownable_init(owner);
-
-        emit VerificationKeyUpgraded("SP1", commitHash, sp1Vk);
-        emit VerificationKeyUpgraded("RISC0", commitHash, risc0Vk);
     }
 
     /// @inheritdoc IOnChainProposer
