@@ -28,6 +28,13 @@ To allow proofs from a new sequencer/prover build, register its verification key
 
 ### Verification key artifacts
 
-- The SP1 verification key that goes on-chain is obtained when you build the prover. It is stored at `crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254`.
+The verification key that goes on-chain is obtained when you build the prover.
 
-- For Aligned proving, use the `u32` form generated alongside it at `crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32`.
+For SP1 it is stored at:
+
+  - `crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254`.
+
+  - If proving with Aligned, use the `u32` form generated alongside it at `crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32`.
+
+For RISC0 it is stored at:
+  - `crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk`
