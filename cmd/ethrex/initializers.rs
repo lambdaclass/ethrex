@@ -118,6 +118,8 @@ pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
         let engine_type = EngineType::RocksDB;
         #[cfg(feature = "metrics")]
         ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
+
+        let engine_type = EngineType::Heed;
         Store::new(datadir, engine_type)
     }
 }
