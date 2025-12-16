@@ -6,6 +6,5 @@ Full syncing works by downloading and executing every block from genesis. This m
 
 ## Snap sync
 
-To exemplify how queue-like processes work we will explain how the `bytecode_fetcher` works:
 For snap sync, you can view the [main document here](./snap_sync.md).
 `
