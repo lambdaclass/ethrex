@@ -20,6 +20,7 @@ type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 // Used for package validation
 const MIN_PACKET_SIZE: usize = 63;
 const MAX_PACKET_SIZE: usize = 1280;
+/// 32 src-id + 1 sig-size + 1 eph-key-size
 const HANDSHAKE_AUTHDATA_HEAD: usize = 34;
 // protocol data
 const PROTOCOL_ID: &[u8] = b"discv5";
@@ -274,16 +275,24 @@ pub struct Handshake {
     pub src_id: H256,
     pub id_signature: Vec<u8>,
     pub eph_pubkey: Vec<u8>,
+    /// The record field may be omitted if the enr-seq of WHOAREYOU is recent enough, i.e. when it matches the current sequence number of the sending node.
+    /// If enr-seq is zero, the record must be sent.
     pub record: Option<NodeRecord>,
     pub message: Message,
 }
 
 impl Handshake {
     fn encode_authdata(&self, buf: &mut dyn BufMut) -> Result<(), PacketDecodeErr> {
-        let sig_size =
-            u8::try_from(self.id_signature.len()).map_err(|_| PacketDecodeErr::InvalidSize)?;
-        let eph_key_size =
-            u8::try_from(self.eph_pubkey.len()).map_err(|_| PacketDecodeErr::InvalidSize)?;
+        let sig_size: u8 = self
+            .id_signature
+            .len()
+            .try_into()
+            .map_err(|_| PacketDecodeErr::InvalidSize)?;
+        let eph_key_size: u8 = self
+            .eph_pubkey
+            .len()
+            .try_into()
+            .map_err(|_| PacketDecodeErr::InvalidSize)?;
 
         buf.put_slice(self.src_id.as_bytes());
         buf.put_u8(sig_size);
@@ -297,6 +306,7 @@ impl Handshake {
         Ok(())
     }
 
+    /// Encodes the handshake returning the header, authdata and encrypted_message
     fn encode(
         &self,
         nonce: &[u8],
@@ -402,7 +412,7 @@ pub enum Message {
 }
 
 impl Message {
-    fn message_type(&self) -> u8 {
+    fn msg_type(&self) -> u8 {
         match self {
             Message::Ping(_) => 0x01,
             Message::Pong(_) => 0x02,
@@ -413,7 +423,7 @@ impl Message {
     }
 
     pub fn encode(&self, buf: &mut dyn BufMut) {
-        buf.put_u8(self.message_type());
+        buf.put_u8(self.msg_type());
         match self {
             Message::Ping(ping) => ping.encode(buf),
             Message::Pong(pong) => pong.encode(buf),
@@ -684,6 +694,80 @@ mod tests {
 
         let decoded = Packet::decode(&dest_id, &key, &buf).unwrap();
         assert_eq!(decoded, Packet::Handshake(handshake));
+    }
+
+    /// Ping handshake packet (flag 2) from https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire-test-vectors.md
+    #[test]
+    fn handshake_packet_vector_test_roundtrip() {
+        /*
+        # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
+        # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
+        # nonce = 0xffffffffffffffffffffffff
+        # read-key = 0x4f9fac6de7567d1e3b1241dffe90f662
+        # ping.req-id = 0x00000001
+        # ping.enr-seq = 1
+        #
+        # handshake inputs:
+        #
+        # whoareyou.challenge-data = 0x000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000001
+        # whoareyou.request-nonce = 0x0102030405060708090a0b0c
+        # whoareyou.id-nonce = 0x0102030405060708090a0b0c0d0e0f10
+        # whoareyou.enr-seq = 1
+        # ephemeral-key = 0x0288ef00023598499cb6c940146d050d2b1fb914198c327f76aad590bead68b6
+        # ephemeral-pubkey = 0x039a003ba6517b473fa0cd74aefe99dadfdb34627f90fec6362df85803908f53a5
+
+        00000000000000000000000000000000088b3d4342774649305f313964a39e55
+        ea96c005ad521d8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d3
+        4c4f53245d08da4bb252012b2cba3f4f374a90a75cff91f142fa9be3e0a5f3ef
+        268ccb9065aeecfd67a999e7fdc137e062b2ec4a0eb92947f0d9a74bfbf44dfb
+        a776b21301f8b65efd5796706adff216ab862a9186875f9494150c4ae06fa4d1
+        f0396c93f215fa4ef524f1eadf5f0f4126b79336671cbcf7a885b1f8bd2a5d83
+        9cf8
+         */
+        let node_b_key = SecretKey::from_byte_array(&hex!(
+            "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
+        ))
+        .unwrap();
+        let dest_id = node_id(&public_key_from_signing_key(&node_b_key));
+
+        let encoded = &hex!(
+            "00000000000000000000000000000000088b3d4342774649305f313964a39e55ea96c005ad521d8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08da4bb252012b2cba3f4f374a90a75cff91f142fa9be3e0a5f3ef268ccb9065aeecfd67a999e7fdc137e062b2ec4a0eb92947f0d9a74bfbf44dfba776b21301f8b65efd5796706adff216ab862a9186875f9494150c4ae06fa4d1f0396c93f215fa4ef524f1eadf5f0f4126b79336671cbcf7a885b1f8bd2a5d839cf8"
+        );
+        let read_key = hex!("4f9fac6de7567d1e3b1241dffe90f662").to_vec();
+
+        let packet = Packet::decode(&dest_id, &read_key, encoded).unwrap();
+        let handshake = match packet {
+            Packet::Handshake(hs) => hs,
+            other => panic!("unexpected packet {other:?}"),
+        };
+
+        assert_eq!(
+            handshake.src_id,
+            H256::from_slice(&hex!(
+                "aaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb"
+            ))
+        );
+        assert_eq!(handshake.record, None);
+        assert_eq!(
+            handshake.eph_pubkey,
+            hex!("039a003ba6517b473fa0cd74aefe99dadfdb34627f90fec6362df85803908f53a5").to_vec()
+        );
+        assert_eq!(
+            handshake.message,
+            Message::Ping(PingMessage {
+                req_id: hex!("00000001").to_vec(),
+                enr_seq: 1,
+            })
+        );
+
+        let masking_iv = u128::from_be_bytes(encoded[..16].try_into().unwrap());
+        let nonce = hex!("ffffffffffffffffffffffff").to_vec();
+        let mut buf = Vec::new();
+        Packet::Handshake(handshake)
+            .encode(&mut buf, masking_iv, nonce, &dest_id, &read_key)
+            .unwrap();
+
+        assert_eq!(buf, encoded.to_vec());
     }
 
     #[test]
