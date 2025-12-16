@@ -240,10 +240,13 @@ To solve these issues we take two actions:
 
 #### The time traveling problem
 
-During the development of snap sync we found a recurring problem, the time traveling problem. In a hash based trie, when a node returned to a previous state, those accounts wouldn't be redownloaded, as it would just return to the previous hash which was present in the database.
- **Any algorithm that depended on updating accounts during healing would fail**.
-The alternative is to always go to disk if there is to mark healed accounts as unreliable and go to disk to get the datum.
-This may not be a problem in path based again, but should be studied.
+During snap sync development, we kept running into a problematic edge case: what we call "time traveling". This is when a certain account is in state A at a certain pivot, then changes to B in the next pivot, **then goes back to A** on a subsequent pivot change. This was a huge source of problems because it broke an invariant we assumed to be true, namely:
+
+- If an account changes its state on pivot change, we will encounter it during state healing. This is NOT true if the trie is hash based.
+
+The reason for this is the time traveling scenario. When an account goes back to a state we already have on our database, we do not heal it (because we already have it), even though its state has changed. This means the code won't realize the account has changed its storage root and won't update it.
+
+This should not be a problem in a path based trie (which we currently have), but it's important to keep it in mind and make sure that whatever code we write keeps this time traveling edge case in mind and solves it.
 
 #### Repeated Storage Roots
 

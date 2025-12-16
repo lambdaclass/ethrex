@@ -4,7 +4,9 @@
 
 ### Storage downloads
 
-When downloading storages, there are scenarios when the storages are never finished downloading. The most likely explanation is that big accounts intervals aren't properly redownloaded. 
+When downloading storages, there's a possibility that storage leaves never finish downloading. This can happen if an account time travels (i.e. if it goes from state A to state B on a pivot change, then back to state A on a subsequent pivot). The reason for this is that we have an in-memory cache where we keep track of the storage root for every account that needs to be downloaded. On every state healing phase on a pivot change, we update the storage root of every account we encounter. However, if an account time travels, we will not encounter it during healing because we already had it, and thus our storage root for it will be wrong.
+
+NOTE: this should no longer be a problem now that our trie is path based, because on every state healing phase we erase the account's previous state. However, it's important to keep this scenario in mind when developing snap sync; any change in how we handle our trie or our assumptions may run into a problem it does not properly handle time traveling accounts.
 
 ### Handling the pivot and reorgs
 
@@ -40,4 +42,4 @@ There are two healing challenges. We should have a single main algorithm for hea
 
 ### Storage accounts
 
-Currently, we use a struct `accounts_by_root_hash` that we don't check the memory size. When rewriting this algorithm we should check if we're not going over the memory limit.
+Currently, we use a struct `accounts_by_root_hash` that has an unbounded size in memory. When rewriting this algorithm we should make sure that we never use more than a certain amount of memory for it; the rest should be on disk.
