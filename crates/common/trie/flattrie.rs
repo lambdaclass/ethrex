@@ -36,10 +36,10 @@ pub struct FlatTrie {
     #[serde(skip)]
     #[rkyv(with = Skip)]
     root_hash: Option<NodeHash>,
+    /// Stores new data for a view index
     #[serde(skip)]
     #[rkyv(with = Skip)]
-    /// Stores new data for a view index
-    puts: HashMap<usize, (NodeData, NodeType)>,
+    puts: Vec<NodeData>,
 }
 
 /// A view into a particular node
@@ -53,10 +53,25 @@ pub struct FlatTrie {
     rkyv::Archive,
 )]
 pub struct NodeView {
-    /// Indices to the RLP code of this node over the flat data buffer
-    pub data_range: (usize, usize),
+    pub pointer: NodeViewPointer,
     /// Handle into this node's childs
     pub node_type: NodeType,
+}
+
+#[derive(
+    Clone,
+    Copy,
+    serde::Serialize,
+    serde::Deserialize,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    rkyv::Archive,
+)]
+pub enum NodeViewPointer {
+    /// Indices to the RLP code of this node over the flat data buffer
+    InBuffer { data_range: (usize, usize) },
+    /// Index to the put vector that contains the newer data of this node
+    InPut { index: usize },
 }
 
 /// Contains indices to the `handles` list for each child of a node
@@ -116,7 +131,9 @@ impl From<&Node> for FlatTrie {
             let offset = trie.data.len();
             trie.data.extend(value.encode_to_vec());
             trie.views.push(NodeView {
-                data_range: (offset, trie.data.len()),
+                pointer: NodeViewPointer::InBuffer {
+                    data_range: (offset, trie.data.len()),
+                },
                 node_type: childs,
             });
         }
@@ -243,18 +260,36 @@ impl FlatTrie {
     }
 
     pub fn put(&mut self, node_type: NodeType, data: NodeData) -> usize {
-        // TODO: check that both match
-
+        //self.puts.push(data);
+        //let view = NodeView {
+        //    pointer: NodeViewPointer::InPut {
+        //        index: self.puts.len() - 1,
+        //    },
+        //    node_type,
+        //};
         let start = self.data.len();
+        Self::encode(&mut self.data, data);
+        let end = self.data.len();
+        let view = NodeView {
+            pointer: NodeViewPointer::InBuffer {
+                data_range: (start, end),
+            },
+            node_type,
+        };
+        self.views.push(view);
+        self.views.len() - 1
+    }
+
+    pub fn encode(buf: &mut impl BufMut, data: NodeData) {
         match data {
             NodeData::Leaf { partial, value } => {
-                let mut encoder = Encoder::new(&mut self.data);
+                let mut encoder = Encoder::new(buf);
                 encoder = encoder.encode_bytes(&partial.encode_compact());
                 encoder = encoder.encode_bytes(&value);
                 encoder.finish();
             }
             NodeData::Extension { path, child } => {
-                let mut encoder = Encoder::new(&mut self.data);
+                let mut encoder = Encoder::new(buf);
                 encoder = encoder.encode_bytes(&path.encode_compact());
                 encoder = child.encode(encoder);
                 encoder.finish();
@@ -269,33 +304,23 @@ impl FlatTrie {
                     }
                 });
 
-                encode_length(payload_len, &mut self.data);
+                encode_length(payload_len, buf);
                 for child in children.iter() {
                     let Some(child) = child else {
-                        self.data.put_u8(RLP_NULL);
+                        buf.put_u8(RLP_NULL);
                         continue;
                     };
                     match child {
-                        NodeHash::Hashed(hash) => hash.0.encode(&mut self.data),
-                        NodeHash::Inline((_, 0)) => self.data.put_u8(RLP_NULL),
+                        NodeHash::Hashed(hash) => hash.0.encode(buf),
+                        NodeHash::Inline((_, 0)) => buf.put_u8(RLP_NULL),
                         NodeHash::Inline((encoded, len)) => {
-                            self.data.put_slice(&encoded[..*len as usize])
+                            buf.put_slice(&encoded[..*len as usize])
                         }
                     }
                 }
-                self.data.put_u8(RLP_NULL);
+                buf.put_u8(RLP_NULL);
             }
         }
-        let end = self.data.len();
-
-        let data_range = (start, end);
-
-        let view = NodeView {
-            data_range,
-            node_type,
-        };
-        self.views.push(view);
-        self.views.len() - 1
     }
 
     pub fn apply_puts() {}
@@ -393,18 +418,13 @@ impl FlatTrie {
                         prefix.at(0) != 16,
                         "insertion into extension yielded branch with value"
                     );
+                    let (_, self_child) = self.get_extension_data(self_view_index)?;
                     let branch_view_index = if prefix.len() == 1 {
-                        self.put_branch(vec![(
-                            prefix.at(0),
-                            (child, self.get_extension_child(&self_view)?),
-                        )])
+                        self.put_branch(vec![(prefix.at(0), (child, self_child))])
                     } else {
                         // New extension with self_node as a child
-                        let new_node_view_index = self.put_extension(
-                            prefix.offset(1),
-                            self.get_extension_child(&self_view)?,
-                            child,
-                        );
+                        let new_node_view_index =
+                            self.put_extension(prefix.offset(1), self_child, child);
                         self.put_branch(vec![(
                             prefix.at(0),
                             (
@@ -415,11 +435,9 @@ impl FlatTrie {
                     };
                     self.insert_inner(branch_view_index, path, value)
                 } else {
-                    let new_extension_view_index = self.put_extension(
-                        prefix.offset(match_index),
-                        self.get_extension_child(&self_view)?,
-                        child,
-                    );
+                    let (_, self_child) = self.get_extension_data(self_view_index)?;
+                    let new_extension_view_index =
+                        self.put_extension(prefix.offset(match_index), self_child, child);
                     let new_node_view_index = self.insert_inner(
                         new_extension_view_index,
                         path.offset(match_index),
@@ -476,14 +494,7 @@ impl FlatTrie {
         let self_view = self.views[self_view_index];
         match self_view.node_type {
             NodeType::Leaf => {
-                let Some(items) = self.get_encoded_items(&self_view)? else {
-                    panic!();
-                };
-
-                let (partial, _) = decode_bytes(items[0])?;
-                let partial = Nibbles::decode_compact(partial);
-                debug_assert!(partial.is_leaf());
-
+                let (partial, _) = self.get_leaf_data(self_view_index)?;
                 if partial == path {
                     Ok(None)
                 } else {
@@ -491,7 +502,7 @@ impl FlatTrie {
                 }
             }
             NodeType::Extension { child } => {
-                let mut prefix = self.get_extension_prefix(&self_view)?;
+                let (mut prefix, _) = self.get_extension_data(self_view_index)?;
 
                 if path.skip_prefix(&prefix) {
                     let new_child_view_index = self.remove_inner(
@@ -512,7 +523,8 @@ impl FlatTrie {
                         NodeType::Extension {
                             child: new_extension_child,
                         } => {
-                            let new_child_prefix = self.get_extension_prefix(new_child_view)?;
+                            let (new_child_prefix, _) =
+                                self.get_extension_data(new_child_view_index)?;
                             prefix.extend(&new_child_prefix);
                             let new_extension_child = new_extension_child
                                 .expect("missing child of new extension at remove");
@@ -523,8 +535,7 @@ impl FlatTrie {
                             )
                         }
                         NodeType::Leaf => {
-                            let (partial, value) =
-                                self.get_leaf_partial_and_value(new_child_view)?;
+                            let (partial, value) = self.get_leaf_data(new_child_view_index)?;
                             prefix.extend(&partial);
                             self.put_leaf(prefix, value.to_vec())
                         }
@@ -539,14 +550,7 @@ impl FlatTrie {
                     .next_choice()
                     .expect("branch removal yielded value on a branch");
 
-                let Some(items) = self.get_encoded_items(&self_view)? else {
-                    panic!();
-                };
-                let mut children_hashes: [_; 16] = std::array::from_fn(|i| {
-                    let child = decode_child(items[i]);
-                    if !child.is_empty() { Some(child) } else { None }
-                });
-
+                let mut children_hashes = self.get_branch_data(self_view_index)?;
                 let Some(child_view_index) = children[choice] else {
                     return Ok(Some(self_view_index));
                 };
@@ -573,13 +577,12 @@ impl FlatTrie {
 
                         match child_view.node_type {
                             NodeType::Leaf => {
-                                let (mut partial, value) =
-                                    self.get_leaf_partial_and_value(child_view)?;
+                                let (mut partial, value) = self.get_leaf_data(child_view_index)?;
                                 partial.prepend(choice_idx as u8);
                                 Ok(Some(self.put_leaf(partial, value.to_vec())))
                             }
                             NodeType::Extension { child } => {
-                                let mut prefix = self.get_extension_prefix(child_view)?;
+                                let (mut prefix, _) = self.get_extension_data(child_view_index)?;
                                 prefix.prepend(choice_idx as u8);
                                 let child = child
                                     .expect("missing child of extension at remove for branch case");
@@ -678,8 +681,8 @@ impl FlatTrie {
     }
 
     pub fn get_leaf_data(&self, view_index: usize) -> Result<(Nibbles, &[u8]), RLPDecodeError> {
-        if let Some(put) = self.puts.get(&view_index) {
-            let NodeData::Leaf { partial, value } = &put.0 else {
+        if let Some(put) = self.puts.get(view_index) {
+            let NodeData::Leaf { partial, value } = &put else {
                 panic!();
             };
             Ok((partial.clone(), value.as_slice()))
@@ -701,8 +704,8 @@ impl FlatTrie {
         &self,
         view_index: usize,
     ) -> Result<(Nibbles, NodeHash), RLPDecodeError> {
-        if let Some(put) = self.puts.get(&view_index) {
-            let NodeData::Extension { path, child } = &put.0 else {
+        if let Some(put) = self.puts.get(view_index) {
+            let NodeData::Extension { path, child } = &put else {
                 panic!();
             };
             Ok((path.clone(), child.clone()))
@@ -724,8 +727,8 @@ impl FlatTrie {
         &self,
         view_index: usize,
     ) -> Result<[Option<NodeHash>; 16], RLPDecodeError> {
-        if let Some(put) = self.puts.get(&view_index) {
-            let NodeData::Branch { children } = &put.0 else {
+        if let Some(put) = self.puts.get(view_index) {
+            let NodeData::Branch { children } = &put else {
                 panic!();
             };
             Ok(children.clone())
@@ -763,7 +766,10 @@ impl FlatTrie {
 
     // TODO: cache decoded view?
     pub fn get_encoded_items(&self, view: &NodeView) -> Result<Option<Vec<&[u8]>>, RLPDecodeError> {
-        let data = self.get_data_view(view);
+        let NodeViewPointer::InBuffer { data_range } = view.pointer else {
+            return Ok(None);
+        };
+        let data = &self.data[data_range.0..data_range.1];
         let mut decoder = Decoder::new(data)?;
 
         let mut rlp_items = Vec::with_capacity(17);
@@ -781,53 +787,10 @@ impl FlatTrie {
     }
 
     pub fn get_data_view(&self, view: &NodeView) -> &[u8] {
-        &self.data[view.data_range.0..view.data_range.1]
-    }
-
-    pub fn get_extension_prefix(&self, view: &NodeView) -> Result<Nibbles, RLPDecodeError> {
-        let Some(items) = self.get_encoded_items(view)? else {
-            panic!();
+        let NodeViewPointer::InBuffer { data_range } = view.pointer else {
+            panic!()
         };
-
-        let (prefix, _) = decode_bytes(items[0])?;
-        let prefix = Nibbles::decode_compact(prefix);
-        debug_assert!(!prefix.is_leaf());
-        Ok(prefix)
-    }
-
-    pub fn get_extension_child(&self, view: &NodeView) -> Result<NodeHash, RLPDecodeError> {
-        let Some(items) = self.get_encoded_items(view)? else {
-            panic!();
-        };
-        Ok(decode_child(items[1]))
-    }
-
-    pub fn get_leaf_partial(&self, view: &NodeView) -> Result<Nibbles, RLPDecodeError> {
-        let Some(items) = self.get_encoded_items(view)? else {
-            panic!();
-        };
-
-        let (partial, _) = decode_bytes(items[0])?;
-        let partial = Nibbles::decode_compact(partial);
-        debug_assert!(partial.is_leaf());
-        Ok(partial)
-    }
-
-    pub fn get_leaf_partial_and_value(
-        &self,
-        view: &NodeView,
-    ) -> Result<(Nibbles, &[u8]), RLPDecodeError> {
-        let Some(items) = self.get_encoded_items(view)? else {
-            panic!();
-        };
-
-        let (partial, _) = decode_bytes(items[0])?;
-        let partial = Nibbles::decode_compact(partial);
-        debug_assert!(partial.is_leaf());
-
-        let (value, _) = decode_bytes(items[1])?;
-
-        Ok((partial, value))
+        &self.data[data_range.0..data_range.1]
     }
 }
 
