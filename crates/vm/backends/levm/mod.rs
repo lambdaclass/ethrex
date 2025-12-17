@@ -756,7 +756,12 @@ fn env_from_generic(
         difficulty: header.difficulty,
         is_privileged: false,
         fee_token: tx.fee_token,
-        fee_ratio: None,
+        fee_ratio: if let Some(fee_token) = tx.fee_token
+        {
+            get_fee_token_ratio(header, db, VMType::L2(FeeConfig::default()), chain_config, fee_token)?
+        } else {
+            None
+        };,
     })
 }
 
