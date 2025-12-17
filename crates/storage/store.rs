@@ -47,7 +47,6 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::AtomicU64,
         mpsc::{SyncSender, TryRecvError, sync_channel},
     },
 };
@@ -75,18 +74,57 @@ enum FKVGeneratorControlMessage {
 // 64mb
 const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
 
-// TODO: don't use atomic here, instead wrap in Mutex the whole cache
+#[derive(Debug)]
+struct InnerCodeCache {
+    cache: LruCache<H256, Code, FxBuildHasher>,
+    cache_size: u64,
+}
+
+impl Default for InnerCodeCache {
+    fn default() -> Self {
+        Self {
+            cache: LruCache::unbounded_with_hasher(FxBuildHasher),
+            cache_size: 0,
+        }
+    }
+}
+
+impl InnerCodeCache {
+    fn get(&mut self, code_hash: &H256) -> Result<Option<Code>, StoreError> {
+        Ok(self.cache.get(code_hash).cloned())
+    }
+
+    fn insert(&mut self, code: &Code) -> Result<(), StoreError> {
+        let code_size = code.size();
+        let cache_len = self.cache.len() + 1;
+        self.cache_size += code_size as u64;
+        let current_size = self.cache_size;
+        debug!(
+            "[ACCOUNT CODE CACHE] cache elements (): {cache_len}, total size: {current_size} bytes"
+        );
+
+        while self.cache_size > CODE_CACHE_MAX_SIZE {
+            if let Some((_, code)) = self.cache.pop_lru() {
+                self.cache_size -= code.size() as u64;
+            } else {
+                break;
+            }
+        }
+
+        self.cache.get_or_insert(code.hash, || code.clone());
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 struct CodeCache {
-    inner_cache: Mutex<LruCache<H256, Code, FxBuildHasher>>,
-    cache_size: AtomicU64,
+    inner_cache: Mutex<InnerCodeCache>,
 }
 
 impl Default for CodeCache {
     fn default() -> Self {
         Self {
-            inner_cache: Mutex::new(LruCache::unbounded_with_hasher(FxBuildHasher)),
-            cache_size: AtomicU64::new(0),
+            inner_cache: Mutex::new(InnerCodeCache::default()),
         }
     }
 }
@@ -94,32 +132,12 @@ impl Default for CodeCache {
 impl CodeCache {
     fn get(&self, code_hash: &H256) -> Result<Option<Code>, StoreError> {
         let mut cache = self.inner_cache.lock().map_err(|_| StoreError::LockError)?;
-        Ok(cache.get(code_hash).cloned())
+        cache.get(code_hash)
     }
 
     fn insert(&self, code: &Code) -> Result<(), StoreError> {
         let mut cache = self.inner_cache.lock().map_err(|_| StoreError::LockError)?;
-        let code_size = code.size();
-        self.cache_size
-            .fetch_add(code_size as u64, std::sync::atomic::Ordering::SeqCst);
-        let cache_len = cache.len() + 1;
-        let mut current_size = self.cache_size.load(std::sync::atomic::Ordering::SeqCst);
-        debug!(
-            "[ACCOUNT CODE CACHE] cache elements (): {cache_len}, total size: {current_size} bytes"
-        );
-
-        while current_size > CODE_CACHE_MAX_SIZE {
-            if let Some((_, code)) = cache.pop_lru() {
-                self.cache_size
-                    .fetch_sub(code.size() as u64, std::sync::atomic::Ordering::SeqCst);
-                current_size = self.cache_size.load(std::sync::atomic::Ordering::SeqCst);
-            } else {
-                break;
-            }
-        }
-
-        cache.get_or_insert(code.hash, || code.clone());
-        Ok(())
+        cache.insert(code)
     }
 }
 
