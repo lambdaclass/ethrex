@@ -6,7 +6,7 @@ use crate::{
     constants::EMPTY_KECCACK_HASH,
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
 };
-use ethereum_types::{Address, H256, U256};
+use ethereum_types::{Address, H160, H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
@@ -322,13 +322,19 @@ impl GuestProgramState {
         &mut self,
         address: Address,
     ) -> Result<Option<AccountState>, GuestProgramStateError> {
+        const SYSTEM_ADDRESS: H160 = H160([
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE,
+        ]);
+        if address == SYSTEM_ADDRESS {
+            return Ok(None);
+        }
+
         let hashed_address = self
             .account_hashes_by_address
             .entry(address)
             .or_insert_with(|| hash_address(&address));
 
-        dbg!("get account state");
-        dbg!(&address);
         let Ok(Some(encoded_state)) = self.state_trie.get(hashed_address) else {
             return Ok(None);
         };
