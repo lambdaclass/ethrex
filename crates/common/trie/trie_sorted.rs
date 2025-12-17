@@ -56,7 +56,9 @@ pub enum TrieGenerationError {
 pub const SIZE_TO_WRITE_DB: u64 = 20_000;
 /// How many write buffers we can use at the same time.
 /// This number and SIZE_TO_WRITE_DB limits how much memory we use
-pub const BUFFER_COUNT: u64 = 32;
+// pub const BUFFER_COUNT: u64 = 32;
+// Limit to one write in the background, to avoid concurrent writes
+pub const BUFFER_COUNT: u64 = 2;
 
 impl CenterSide {
     fn from_value(tuple: (H256, Vec<u8>)) -> CenterSide {
