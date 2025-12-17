@@ -8,7 +8,6 @@ use heed3::{Database, DatabaseFlags, DatabaseOpenOptions, EnvFlags, EnvOpenOptio
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use tracing::info;
 
 // We don't use TLS since we need HeedLocked to be Send + Sync
 // TODO: this should be easy to change
@@ -187,11 +186,6 @@ impl StorageWriteBatch for HeedWriteTx {
         table: &'static str,
         batch: Vec<(Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
-        info!(
-            "Inserting batch of {} items into table {}",
-            batch.len(),
-            table
-        );
         let db = self
             .dbs
             .get(table)
@@ -202,7 +196,6 @@ impl StorageWriteBatch for HeedWriteTx {
             key.insert(0, 0);
             db.put(self.wtxn.as_mut().unwrap(), &key, &value).unwrap();
         }
-        info!("Finished inserting batch into table {table}");
         Ok(())
     }
 
@@ -219,10 +212,8 @@ impl StorageWriteBatch for HeedWriteTx {
     }
 
     fn commit(&mut self) -> Result<(), StoreError> {
-        info!("Committing write transaction");
         // Take ownership of the batch (replaces it with an empty one) since db.write() consumes it
         self.wtxn.take().unwrap().commit().unwrap();
-        info!("Finished commit");
         Ok(())
     }
 }
