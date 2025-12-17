@@ -159,7 +159,7 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 init-l2-dev: ## 🚀 Initializes an L1 and L2 Lambda ethrex Client
 	COMPILE_CONTRACTS=true \
 	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- \
-	l2 --dev --no-monitor --osaka-activation-time ${ETHREX_OSAKA_ACTIVATION_TIME}
+	l2 --dev --osaka-activation-time ${ETHREX_OSAKA_ACTIVATION_TIME}
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	L1_RPC_URL=${L1_RPC_URL} \
