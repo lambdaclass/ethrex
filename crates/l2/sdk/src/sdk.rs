@@ -12,7 +12,6 @@ use ethrex_common::{
         WrappedEIP4844Transaction,
     },
 };
-use ethrex_l2_common::messages::{L2Message, L2MessageProof, get_l2_message_hash};
 use ethrex_l2_common::{calldata::Value, messages::L1MessageProof};
 use ethrex_l2_rpc::{
     clients::get_l1_message_proof,
@@ -27,7 +26,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ops::{Add, Div};
 use std::str::FromStr;
 use std::{fs::read_to_string, path::Path};
-use tracing::{error, info, warn};
+use tracing::{error, warn};
 
 pub mod calldata;
 pub mod l1_to_l2_tx_data;
@@ -83,8 +82,6 @@ const ERC1967_PROXY_BYTECODE: &[u8] = include_bytes!(concat!(
     env!("OUT_DIR"),
     "/contracts/solc_out/ERC1967Proxy.bytecode"
 ));
-
-const VERIFY_MESSAGE_SIGNATURE: &str = "verifyMessage(uint256,uint256,bytes32,bytes32[])";
 
 #[derive(Debug, thiserror::Error)]
 pub enum SdkError {
@@ -1150,7 +1147,7 @@ pub async fn get_last_fetched_l1_block(
     _call_u64_variable(client, b"lastFetchedL1Block()", common_bridge_address).await
 }
 
-pub async fn get_pending_privileged_transactions(
+pub async fn get_pending_l1_messages(
     client: &EthClient,
     common_bridge_address: Address,
 ) -> Result<Vec<H256>, EthClientError> {
@@ -1160,6 +1157,28 @@ pub async fn get_pending_privileged_transactions(
         common_bridge_address,
     )
     .await?;
+    from_hex_string_to_h256_array(&response)
+}
+
+pub async fn get_pending_l2_messages(
+    client: &EthClient,
+    common_bridge_address: Address,
+    chain_id: u64,
+) -> Result<Vec<H256>, EthClientError> {
+    let selector = keccak(b"getPendingL2MessagesHashes(uint256)")
+        .as_bytes()
+        .get(..4)
+        .ok_or(EthClientError::Custom("Failed to get selector.".to_owned()))?
+        .to_vec();
+
+    let mut calldata = Vec::new();
+    calldata.extend_from_slice(&selector);
+    calldata.extend_from_slice(&U256::from(chain_id).to_big_endian());
+
+    let response = client
+        .call(common_bridge_address, calldata.into(), Overrides::default())
+        .await?;
+
     from_hex_string_to_h256_array(&response)
 }
 
@@ -1181,70 +1200,6 @@ pub async fn get_l1_active_fork(
     } else {
         Ok(Fork::Osaka)
     }
-}
-
-pub async fn verify_message(
-    chain_id: u64,
-    eth_client: &EthClient,
-    l2_message: &L2Message,
-    message_proof: &L2MessageProof,
-    router_address: Address,
-) -> Result<bool, EthClientError> {
-    info!("Verifying L2 message on chain id {chain_id} via router at {router_address:#x}");
-
-    let message_leaf: Vec<u8> = get_l2_message_hash(l2_message).as_bytes().to_vec();
-    info!("L2 message leaf: 0x{}", hex::encode(&message_leaf));
-    info!("proofs: {}", message_proof.merkle_proof.len());
-    info!("batch number: {}", message_proof.batch_number);
-    info!("message hash : 0x{}", message_proof.message_hash);
-
-    let proof_values = message_proof
-        .merkle_proof
-        .iter()
-        .map(|h| Value::FixedBytes(h.as_bytes().to_vec().into()))
-        .collect::<Vec<_>>();
-
-    let calldata_values = vec![
-        Value::Uint(chain_id.into()),
-        Value::Uint(message_proof.batch_number.into()),
-        Value::FixedBytes(message_leaf.into()),
-        Value::Array(proof_values),
-    ];
-
-    let calldata = encode_calldata(VERIFY_MESSAGE_SIGNATURE, &calldata_values)?;
-
-    info!(
-        "calling eth client to verify message... {:?}",
-        eth_client.urls
-    );
-    info!("router address: {router_address:#x}");
-
-    let hex_string = eth_client
-        .call(router_address, calldata.into(), Overrides::default())
-        .await?;
-
-    // Decode the 32-byte ABI bool
-    let return_data = hex::decode(hex_string.trim_start_matches("0x"))
-        .map_err(|e| EthClientError::Custom(format!("Failed to decode hex string: {e}")))?;
-
-    if return_data.len() != 32 {
-        return Err(EthClientError::Custom(
-            "Unexpected return data length".to_owned(),
-        ));
-    }
-
-    #[expect(clippy::indexing_slicing)]
-    let is_valid = match return_data[31] {
-        0 => false,
-        1 => true,
-        _ => {
-            return Err(EthClientError::Custom(
-                "Invalid boolean value in return data".to_owned(),
-            ));
-        }
-    };
-
-    Ok(is_valid)
 }
 
 async fn _generic_call(

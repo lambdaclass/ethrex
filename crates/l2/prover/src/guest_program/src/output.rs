@@ -12,11 +12,14 @@ pub struct ProgramOutput {
     /// final state trie root hash
     pub final_state_hash: H256,
     #[cfg(feature = "l2")]
-    /// merkle root of all messages in a batch
-    pub l1messages_merkle_root: H256,
+    /// merkle root of all L1 output messages in a batch
+    pub l1_out_messages_merkle_root: H256,
     #[cfg(feature = "l2")]
-    /// hash of all the privileged transactions made in a batch
-    pub privileged_transactions_hash: H256,
+    /// rolling hash of all the deposit transactions included in a batch
+    pub l1_in_messages_rolling_hash: H256,
+    #[cfg(feature = "l2")]
+    /// rolling hash of all L2 in messages included in a batch
+    pub l2_in_message_rolling_hashes: Vec<(u64, H256)>,
     #[cfg(feature = "l2")]
     /// blob commitment versioned hash
     pub blob_versioned_hash: H256,
@@ -26,9 +29,6 @@ pub struct ProgramOutput {
     pub chain_id: U256,
     /// amount of non-privileged transactions
     pub non_privileged_count: U256,
-    #[cfg(feature = "l2")]
-    /// merkle root of all l2 messages in a batch
-    pub l2messages_merkle_root: H256,
     #[cfg(feature = "l2")]
     /// balance diffs for each chain id
     pub balance_diffs: Vec<BalanceDiff>,
@@ -40,35 +40,43 @@ impl ProgramOutput {
             self.initial_state_hash.to_fixed_bytes(),
             self.final_state_hash.to_fixed_bytes(),
             #[cfg(feature = "l2")]
-            self.l1messages_merkle_root.to_fixed_bytes(),
+            self.l1_out_messages_merkle_root.to_fixed_bytes(),
             #[cfg(feature = "l2")]
-            self.privileged_transactions_hash.to_fixed_bytes(),
+            self.l1_in_messages_rolling_hash.to_fixed_bytes(),
             #[cfg(feature = "l2")]
             self.blob_versioned_hash.to_fixed_bytes(),
             self.last_block_hash.to_fixed_bytes(),
             self.chain_id.to_big_endian(),
             self.non_privileged_count.to_big_endian(),
-            #[cfg(feature = "l2")]
-            self.l2messages_merkle_root.to_fixed_bytes(),
         ]
         .concat();
 
         #[cfg(feature = "l2")]
-        {
-            for balance_diff in &self.balance_diffs {
-                encoded.extend_from_slice(&balance_diff.chain_id.to_big_endian());
-                for value_per_token in &balance_diff.value_per_token {
-                    encoded.extend_from_slice(&[0u8; 12]);
-                    encoded.extend_from_slice(&value_per_token.token_l1.to_fixed_bytes());
-                    encoded.extend_from_slice(&[0u8; 12]);
-                    encoded.extend_from_slice(&value_per_token.token_l2.to_fixed_bytes());
-                    encoded.extend_from_slice(&[0u8; 12]);
-                    encoded
-                        .extend_from_slice(&value_per_token.other_chain_token_l2.to_fixed_bytes());
-                    encoded.extend_from_slice(&value_per_token.value.to_big_endian());
-                }
+        for balance_diff in &self.balance_diffs {
+            encoded.extend_from_slice(&balance_diff.chain_id.to_big_endian());
+            for value_per_token in &balance_diff.value_per_token {
+                encoded.extend_from_slice(&[0u8; 12]);
+                encoded.extend_from_slice(&value_per_token.token_l1.to_fixed_bytes());
+                encoded.extend_from_slice(&[0u8; 12]);
+                encoded.extend_from_slice(&value_per_token.token_l2.to_fixed_bytes());
+                encoded.extend_from_slice(&[0u8; 12]);
+                encoded.extend_from_slice(&value_per_token.other_chain_token_l2.to_fixed_bytes());
+                encoded.extend_from_slice(&value_per_token.value.to_big_endian());
             }
+            encoded.extend(
+                balance_diff
+                    .message_hashes
+                    .iter()
+                    .flat_map(|h| h.to_fixed_bytes()),
+            );
         }
+
+        #[cfg(feature = "l2")]
+        for (chain_id, hash) in &self.l2_in_message_rolling_hashes {
+            encoded.extend_from_slice(&chain_id.to_be_bytes());
+            encoded.extend_from_slice(&hash.to_fixed_bytes());
+        }
+
         encoded
     }
 }

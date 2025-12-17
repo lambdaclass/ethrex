@@ -4,13 +4,16 @@
 #![allow(clippy::too_many_arguments)]
 
 use anyhow::{Context, Result};
-use ethrex_common::{Address, U256, types::TxType};
+use ethrex_common::{Address, H160, U256, types::TxType};
 use ethrex_l2_common::calldata::Value;
-use ethrex_l2_rpc::signer::{LocalSigner, Signer};
+use ethrex_l2_rpc::{
+    clients::get_batch_by_block,
+    signer::{LocalSigner, Signer},
+};
 use ethrex_l2_sdk::{
     COMMON_BRIDGE_L2_ADDRESS, bridge_address, build_generic_tx, calldata::encode_calldata,
-    compile_contract, create_deploy, git_clone, send_generic_transaction,
-    wait_for_l2_deposit_receipt, wait_for_transaction_receipt,
+    compile_contract, create_deploy, get_last_verified_batch, git_clone, send_generic_transaction,
+    transfer, wait_for_l2_deposit_receipt, wait_for_transaction_receipt,
 };
 use ethrex_rpc::{
     EthClient,
@@ -22,7 +25,13 @@ use ethrex_rpc::{
 };
 use reqwest::Url;
 use secp256k1::SecretKey;
-use std::{path::Path, str::FromStr, time::Duration};
+use std::{fs::File, io::BufRead};
+use std::{
+    io::BufReader,
+    path::{Path, PathBuf},
+    str::FromStr,
+    time::Duration,
+};
 use tokio::time::sleep;
 
 const L1_RPC_URL: &str = "http://localhost:8545";
@@ -46,6 +55,45 @@ const DEST_GAS_LIMIT: u64 = 100000u64;
 const SIGNATURE: &str = "sendToL2(uint256,address,uint256,bytes)";
 
 const GAS_PRICE: u64 = 3946771033u64;
+
+// 0x84307998a57635ccc4ed1e5dba1e76344dcdfbe6
+const DEFAULT_ON_CHAIN_PROPOSER_ADDRESS: Address = H160([
+    0x84, 0x30, 0x79, 0x98, 0xa5, 0x76, 0x35, 0xcc, 0xc4, 0xed, 0x1e, 0x5d, 0xba, 0x1e, 0x76, 0x34,
+    0x4d, 0xcd, 0xfb, 0xe6,
+]);
+
+fn on_chain_proposer_address() -> Address {
+    std::env::var("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS")
+        .map(|address| address.parse().expect("Invalid proposer address"))
+        .unwrap_or(DEFAULT_ON_CHAIN_PROPOSER_ADDRESS)
+}
+
+pub fn read_env_file_by_config() {
+    let env_file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../cmd/.env");
+    let Ok(env_file) = File::open(env_file_path) else {
+        println!(".env file not found, skipping");
+        return;
+    };
+
+    let reader = BufReader::new(env_file);
+
+    for line in reader.lines() {
+        let line = line.expect("Failed to read line");
+        if line.starts_with("#") {
+            // Skip comments
+            continue;
+        };
+        match line.split_once('=') {
+            Some((key, value)) => {
+                if std::env::vars().any(|(k, _)| k == key) {
+                    continue;
+                }
+                unsafe { std::env::set_var(key, value) }
+            }
+            None => continue,
+        };
+    }
+}
 
 #[tokio::test]
 async fn test_shared_bridge() -> Result<()> {
@@ -429,6 +477,124 @@ async fn test_counter() -> Result<()> {
         "Sender balance did not decrease correctly"
     );
     Ok(())
+}
+
+#[tokio::test]
+async fn test_forced_inclusion() {
+    // The porpuse of this test is to verify that an L2 (L2A) that ignores messages from another L2 (L2B)
+    // is unable to advance its lastVerifiedBatch.
+    // This test assumes that all the necessary setup has been done to have L2A ignoring messages from L2B
+    read_env_file_by_config();
+    let l2a_client = connect(L2A_RPC_URL).await;
+    let l2b_client = connect(L2B_RPC_URL).await;
+
+    let receiver_address = Address::from_str(RECEIVER_ADDRESS).unwrap();
+    let sender_address = Address::from_str(SENDER_ADDRESS).unwrap();
+
+    println!("Getting initial balances...");
+    let receiver_balance = l2a_client
+        .get_balance(receiver_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await
+        .expect("Error getting balance");
+
+    let sender_balance = l2b_client
+        .get_balance(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await
+        .expect("Error getting balance");
+
+    println!("Initial balances: receiver: {receiver_balance}, sender: {sender_balance}");
+
+    let private_key = SecretKey::from_str(SENDER_PRIVATE_KEY).unwrap();
+    let value = U256::from(VALUE);
+    let to = Address::from_str(COMMON_BRIDGE_ADDRESS).unwrap();
+    let data = vec![
+        Value::Uint(U256::from(L2_A_CHAIN_ID)),  // chainId
+        Value::Address(receiver_address),        // to
+        Value::Uint(U256::from(DEST_GAS_LIMIT)), // destGasLimit
+        Value::Bytes(vec![].into()),             // data
+    ];
+    println!("Sending shared bridge transaction...");
+    test_send(
+        &l2b_client,
+        &private_key,
+        value,
+        GAS_PRICE,
+        to,
+        SIGNATURE,
+        &data,
+        "shared bridge test",
+    )
+    .await
+    .expect("Error sending shared bridge transaction");
+
+    println!("Waiting 5 minutes for message to be expired...");
+    sleep(Duration::from_secs(300)).await;
+
+    println!("Getting final balances...");
+    let receiver_balance_after = l2a_client
+        .get_balance(receiver_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await
+        .expect("Error getting balance");
+
+    let sender_balance_after = l2b_client
+        .get_balance(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await
+        .expect("Error getting balance");
+
+    assert_eq!(
+        receiver_balance_after, receiver_balance,
+        "Receiver balance should not have changed"
+    );
+    assert!(
+        sender_balance_after < sender_balance - value,
+        "Sender balance did not decrease correctly"
+    );
+    println!(
+        "Sending a non-privileged transaction on L2A to verify that its batch is never verified..."
+    );
+    let tx_hash = transfer(
+        U256::from(1u64),
+        sender_address,
+        receiver_address,
+        &private_key,
+        &l2a_client,
+    )
+    .await
+    .expect("Error sending transfer transaction");
+    let receipt = ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, &l2a_client, 1000)
+        .await
+        .expect("Error getting receipt for transfer transaction");
+
+    let block_number = receipt.block_info.block_number;
+    let mut batch = get_batch_by_block(&l2a_client, BlockIdentifier::Number(block_number))
+        .await
+        .expect("Failed to get batch by block");
+    while batch.is_none() {
+        println!("Batch not found yet, waiting 10 seconds...");
+        sleep(Duration::from_secs(10)).await;
+        batch = get_batch_by_block(&l2a_client, BlockIdentifier::Number(block_number))
+            .await
+            .expect("Failed to get batch by block");
+    }
+    println!("Waiting 10 minutes for L2A to try to verify the batch...");
+    sleep(Duration::from_secs(600)).await; // Wait for the batch to be verified
+    let on_chain_proposer_address = on_chain_proposer_address();
+    println!("Using onChainProposer address: {on_chain_proposer_address:?}");
+    let last_verified_batch = get_last_verified_batch(&l2a_client, on_chain_proposer_address)
+        .await
+        .expect("Failed to get last verified batch");
+
+    let batch_number = batch.unwrap().batch.number;
+
+    println!(
+        "Last verified batch: {}, transaction batch number: {}",
+        last_verified_batch, batch_number
+    );
+
+    assert!(
+        last_verified_batch < batch_number,
+        "L2A should not have verified the batch from L2B"
+    );
 }
 
 async fn connect(rpc_url: &str) -> EthClient {

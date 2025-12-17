@@ -1,5 +1,5 @@
 use bytes::BufMut;
-use ethereum_types::{Address, U256};
+use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use serde::{Deserialize, Serialize};
 
@@ -16,12 +16,14 @@ pub struct ValuePerToken {
 pub struct BalanceDiff {
     pub chain_id: U256,
     pub value_per_token: Vec<ValuePerToken>,
+    pub message_hashes: Vec<H256>,
 }
 
 impl RLPEncode for BalanceDiff {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.chain_id.encode(buf);
         self.value_per_token.encode(buf);
+        self.message_hashes.encode(buf);
     }
 }
 
@@ -29,10 +31,12 @@ impl RLPDecode for BalanceDiff {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (chain_id, rlp) = U256::decode_unfinished(rlp)?;
         let (value_per_token, rlp) = Vec::<ValuePerToken>::decode_unfinished(rlp)?;
+        let (message_hashes, rlp) = Vec::<H256>::decode_unfinished(rlp)?;
         Ok((
             BalanceDiff {
                 chain_id,
                 value_per_token,
+                message_hashes,
             },
             rlp,
         ))
