@@ -13,12 +13,12 @@ inventory: ## Generates inventory for ansible
 		echo "Error: TARGET variable was not set." 1>&2; exit 1; \
 	fi
 
-ethrex-deploy: ## Deploys Ethrex mainnet nodes
-	ansible-playbook -i inventory.ini ethrex-deploy.yml
+ethrex-deploy: ## Deploys Ethrex nodes (NETWORK optional, defaults to mainnet)
+	NETWORK=$(NETWORK) ansible-playbook -i inventory.ini ethrex-deploy.yml
 
-ethrex-development: ## Sets up Ethrex development environment (requires BRANCH)
+ethrex-development: ## Sets up Ethrex development environment (requires BRANCH and NETWORK (defaults for mainnet))
 	@if [ -z "$(BRANCH)" ]; then \
 		echo "Error: BRANCH variable was not set."; \
 		exit 1; \
 	fi
-	BRANCH=$(BRANCH) ansible-playbook -i inventory.ini ethrex-development.yml
+	BRANCH=$(BRANCH) NETWORK=$(NETWORK) ansible-playbook -i inventory.ini ethrex-development.yml
