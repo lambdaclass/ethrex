@@ -205,7 +205,7 @@ impl Ordinary {
         Ok(())
     }
 
-    /// Encodes the handshake returning the header, authdata and encrypted_message
+    /// Encodes the ordinary packet returning the header, authdata and encrypted_message
     #[allow(clippy::type_complexity)]
     fn encode(
         &self,
@@ -908,6 +908,59 @@ mod tests {
         assert_eq!(buf, encoded.to_vec());
     }
 
+    /// Ping handshake message packet (flag 2, with ENR) from https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire-test-vectors.md
+    #[test]
+    fn handshake_packet_with_enr_vector_test_roundtrip() {
+        let node_b_key = SecretKey::from_byte_array(&hex!(
+            "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
+        ))
+        .unwrap();
+        let dest_id = node_id(&public_key_from_signing_key(&node_b_key));
+
+        let encoded = &hex!(
+            "00000000000000000000000000000000088b3d4342774649305f313964a39e55ea96c005ad539c8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08da4bb23698868350aaad22e3ab8dd034f548a1c43cd246be98562fafa0a1fa86d8e7a3b95ae78cc2b988ded6a5b59eb83ad58097252188b902b21481e30e5e285f19735796706adff216ab862a9186875f9494150c4ae06fa4d1f0396c93f215fa4ef524e0ed04c3c21e39b1868e1ca8105e585ec17315e755e6cfc4dd6cb7fd8e1a1f55e49b4b5eb024221482105346f3c82b15fdaae36a3bb12a494683b4a3c7f2ae41306252fed84785e2bbff3b022812d0882f06978df84a80d443972213342d04b9048fc3b1d5fcb1df0f822152eced6da4d3f6df27e70e4539717307a0208cd208d65093ccab5aa596a34d7511401987662d8cf62b139471"
+        );
+        let nonce = hex!("ffffffffffffffffffffffff").to_vec();
+        let read_key = hex!("53b1c075f41876423154e157470c2f48").to_vec();
+
+        let packet = Packet::decode(&dest_id, &read_key, encoded).unwrap();
+        let handshake = match packet {
+            Packet::Handshake(hs) => hs,
+            other => panic!("unexpected packet {other:?}"),
+        };
+
+        assert_eq!(
+            handshake.src_id,
+            H256::from_slice(&hex!(
+                "aaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb"
+            ))
+        );
+        assert_eq!(
+            handshake.eph_pubkey,
+            hex!("039a003ba6517b473fa0cd74aefe99dadfdb34627f90fec6362df85803908f53a5").to_vec()
+        );
+        assert_eq!(
+            handshake.message,
+            Message::Ping(PingMessage {
+                req_id: hex!("00000001").to_vec(),
+                enr_seq: 1,
+            })
+        );
+
+        let record = handshake.record.clone().expect("expected ENR record");
+        let pairs = record.decode_pairs();
+        assert_eq!(pairs.id.as_deref(), Some("v4"));
+        assert!(pairs.secp256k1.is_some());
+
+        let masking_iv = u128::from_be_bytes(encoded[..16].try_into().unwrap());
+        let mut buf = Vec::new();
+        Packet::Handshake(handshake)
+            .encode(&mut buf, masking_iv, &nonce, &dest_id, &read_key)
+            .unwrap();
+
+        assert_eq!(buf, encoded.to_vec());
+    }
+
     #[test]
     fn test_encode_whoareyou_packet() {
         // # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
@@ -985,11 +1038,6 @@ mod tests {
         }));
 
         assert_eq!(packet, expected);
-    }
-
-    #[test]
-    fn test_encode_ping_message() {
-        // TODO
     }
 
     #[test]
