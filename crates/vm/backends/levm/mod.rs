@@ -510,7 +510,7 @@ impl LEVM {
 
 fn get_fee_token_ratio(
     block_header: &BlockHeader,
-    db: &mut GeneralizedDatabase,
+    db: &GeneralizedDatabase,
     vm_type: VMType,
     chain_config: ethrex_common::types::ChainConfig,
     fee_token: ethrex_common::H160,
