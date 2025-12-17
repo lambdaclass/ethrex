@@ -1,12 +1,13 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::based::sequencer_state::SequencerState;
-use crate::based::sequencer_state::SequencerStatus;
 use crate::monitor::EthrexMonitor;
 use crate::sequencer::admin_server::start_api;
 use crate::sequencer::errors::SequencerError;
-use crate::{BlockFetcher, SequencerConfig, StateUpdater};
+use crate::sequencer::state_updater::StateUpdater;
+use crate::utils::sequencer_state::SequencerState;
+use crate::utils::sequencer_state::SequencerStatus;
+use crate::{BlockFetcher, SequencerConfig};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Genesis;
@@ -35,6 +36,7 @@ pub mod l1_watcher;
 #[cfg(feature = "metrics")]
 pub mod metrics;
 pub mod proof_coordinator;
+pub mod state_updater;
 
 pub mod configs;
 pub mod errors;

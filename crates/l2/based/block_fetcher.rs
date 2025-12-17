@@ -20,8 +20,8 @@ use tracing::{debug, error, info};
 use crate::utils::state_reconstruct::get_batch;
 use crate::{
     SequencerConfig,
-    based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::utils::node_is_up_to_date,
+    utils::sequencer_state::{SequencerState, SequencerStatus},
 };
 
 #[derive(Debug, thiserror::Error)]

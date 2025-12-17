@@ -32,7 +32,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     BlockProducerConfig, SequencerConfig,
-    based::sequencer_state::{SequencerState, SequencerStatus},
+    utils::sequencer_state::{SequencerState, SequencerStatus},
 };
 use std::str::FromStr;
 

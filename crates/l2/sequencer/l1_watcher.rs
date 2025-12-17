@@ -1,5 +1,5 @@
 use super::utils::random_duration;
-use crate::based::sequencer_state::{SequencerState, SequencerStatus};
+use crate::utils::sequencer_state::{SequencerState, SequencerStatus};
 use crate::{EthConfig, L1WatcherConfig, SequencerConfig};
 use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
 use bytes::Bytes;

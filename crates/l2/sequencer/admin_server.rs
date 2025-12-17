@@ -1,4 +1,3 @@
-use crate::based::state_updater::{CallMessage as StateUpdaterCallMessage, StateUpdater};
 use crate::sequencer::block_producer::{
     BlockProducer, CallMessage as BlockProducerCallMessage, OutMessage as BlockProducerOutMessage,
 };
@@ -15,6 +14,7 @@ use crate::sequencer::l1_watcher::{
 use crate::sequencer::metrics::{
     CallMessage as MetricsCallMessage, MetricsGatherer, OutMessage as MetricsOutMessage,
 };
+use crate::sequencer::state_updater::{CallMessage as StateUpdaterCallMessage, StateUpdater};
 use axum::extract::{Path, State};
 use axum::http::Uri;
 use axum::response::IntoResponse;

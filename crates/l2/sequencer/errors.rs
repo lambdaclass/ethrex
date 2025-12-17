@@ -1,6 +1,6 @@
 use crate::based::block_fetcher::BlockFetcherError;
-use crate::based::state_updater::StateUpdaterError;
 use crate::sequencer::admin_server::AdminError;
+use crate::sequencer::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
 use aligned_sdk::common::errors::SubmitError;
 use ethereum_types::FromStrRadixErr;

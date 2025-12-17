@@ -1,6 +1,5 @@
 use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, SequencerConfig,
-    based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::{
         errors::CommitterError,
         utils::{
@@ -8,6 +7,7 @@ use crate::{
             get_git_commit_hash, system_now_ms,
         },
     },
+    utils::sequencer_state::{SequencerState, SequencerStatus},
 };
 use bytes::Bytes;
 use ethrex_blockchain::fork_choice::apply_fork_choice;

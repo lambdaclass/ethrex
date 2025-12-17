@@ -42,7 +42,7 @@ use crate::{
     sequencer::errors::MonitorError,
 };
 use crate::{
-    based::sequencer_state::SequencerState, monitor::widget::rich_accounts::RichAccountsTable,
+    monitor::widget::rich_accounts::RichAccountsTable, utils::sequencer_state::SequencerState,
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
