@@ -311,40 +311,44 @@ impl NodeRecordPairs {
     }
 
     /// Encodes to a list of (key, value) where keys are ascii bytes and values are rlp encoded bytes.
-    pub fn encode_pairs(&self) -> Vec<(Bytes, Bytes)> {
-        // The key/value pairs must be sorted by key and must be unique
-        let mut pairs = vec![];
+    fn encode(&self, buf: &mut dyn BufMut) {
         if let Some(eth) = self.eth.clone() {
             // Without the Vec wrapper, RLP encoding fork_id directly would produce:
             // [forkHash, forkNext]
             // But the spec requires nested lists:
             // [[forkHash, forkNext]]
             let eth = vec![eth];
-            pairs.push(("eth".into(), eth.encode_to_vec().into()));
+            Bytes::from("eth").encode(buf);
+            eth.encode(buf);
         }
-        if let Some(id) = self.id.as_ref() {
-            pairs.push(("id".into(), id.encode_to_vec().into()));
+        if let Some(id) = &self.id {
+            Bytes::from("id").encode(buf);
+            id.encode(buf);
         }
-        if let Some(ip) = self.ip {
-            pairs.push(("ip".into(), ip.encode_to_vec().into()));
+        if let Some(ip) = &self.ip {
+            Bytes::from("ip").encode(buf);
+            ip.encode(buf);
         }
-        if let Some(ip6) = self.ip6 {
-            pairs.push(("ip6".into(), ip6.encode_to_vec().into()));
+        if let Some(ip6) = &self.ip6 {
+            Bytes::from("ip6").encode(buf);
+            ip6.encode(buf);
         }
-        if let Some(secp256k1) = self.secp256k1 {
-            pairs.push(("secp256k1".into(), secp256k1.encode_to_vec().into()));
+        if let Some(secp256k1) = &self.secp256k1 {
+            Bytes::from("secp256k1").encode(buf);
+            secp256k1.encode(buf);
         }
-        if let Some(snap) = self.snap.as_ref() {
-            pairs.push(("snap".into(), snap.encode_to_vec().into()));
+        if let Some(snap) = &self.snap {
+            Bytes::from("snap").encode(buf);
+            snap.encode(buf);
         }
-
         if let Some(tcp) = self.tcp_port {
-            pairs.push(("tcp".into(), tcp.encode_to_vec().into()));
+            Bytes::from("tcp").encode(buf);
+            tcp.encode(buf);
         }
         if let Some(udp) = self.udp_port {
-            pairs.push(("udp".into(), udp.encode_to_vec().into()));
+            Bytes::from("udp").encode(buf);
+            udp.encode(buf);
         }
-        pairs
     }
 }
 
@@ -431,19 +435,13 @@ impl NodeRecord {
         let mut rlp = vec![];
         structs::Encoder::new(&mut rlp)
             .encode_field(&self.seq)
-            .encode_key_value_list::<Bytes>(&self.pairs.encode_pairs())
+            .encode_with(|buf| self.pairs.encode(buf))
             .finish();
         keccak_hash(&rlp)
     }
 
     pub fn pairs(&self) -> &NodeRecordPairs {
         &self.pairs
-    }
-}
-
-impl From<NodeRecordPairs> for Vec<(Bytes, Bytes)> {
-    fn from(value: NodeRecordPairs) -> Self {
-        value.encode_pairs()
     }
 }
 
@@ -499,7 +497,7 @@ impl RLPEncode for NodeRecord {
         structs::Encoder::new(buf)
             .encode_field(&self.signature)
             .encode_field(&self.seq)
-            .encode_key_value_list::<Bytes>(&self.pairs.encode_pairs())
+            .encode_with(|buf| self.pairs.encode(buf))
             .finish();
     }
 }
