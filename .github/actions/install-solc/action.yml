@@ -13,11 +13,11 @@ runs:
     - id: vars
       shell: bash
       run: |
-        if [[ "${{ matrix.os }}" == "linux" && "${{ matrix.arch }}" == "x86_64" ]]; then
+        if [[ "${{ runner.os }}" == "Linux" && "${{ runner.arch }}" == "X64" ]]; then
           sudo curl -L -o /usr/local/bin/solc https://github.com/argotorg/solidity/releases/download/${{ inputs.version }}/solc-static-linux
-        elif [[ "${{ matrix.os }}" == "linux" && "${{ matrix.arch }}" == "aarch64" ]]; then
+        elif [[ "${{ runner.os }}" == "Linux" && "${{ runner.arch }}" == "ARM64" ]]; then
           sudo curl -L -o /usr/local/bin/solc https://github.com/argotorg/solidity/releases/download/${{ inputs.version }}/solc-static-linux-arm
-        elif [[ "${{ matrix.os }}" == "macos" ]]; then
+        elif [[ "${{ runner.os }}" == "macOS" ]]; then
           sudo curl -L -o /usr/local/bin/solc https://github.com/argotorg/solidity/releases/download/${{ inputs.version }}/solc-macos
         fi
         sudo chmod +x /usr/local/bin/solc
