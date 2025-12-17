@@ -148,17 +148,17 @@ impl Message {
             Message::GetTrieNodes(_) => eth_version.snap_capability_offset() + GetTrieNodes::CODE,
             Message::TrieNodes(_) => eth_version.snap_capability_offset() + TrieNodes::CODE,
 
-                #[cfg(feature = "l2")]
-                // based capability
-                Message::L2(l2_msg) => {
-                    eth_version.based_capability_offset() + {
-                        match l2_msg {
-                            L2Message::NewBlock(_) => NewBlock::CODE,
-                            L2Message::BatchSealed(_) => BatchSealed::CODE,
-                            L2Message::BatchProof(_) => BatchProofMessage::CODE,
-                        }
+            #[cfg(feature = "l2")]
+            // based capability
+            Message::L2(l2_msg) => {
+                eth_version.based_capability_offset() + {
+                    match l2_msg {
+                        L2Message::NewBlock(_) => NewBlock::CODE,
+                        L2Message::BatchSealed(_) => BatchSealed::CODE,
+                        L2Message::BatchProof(_) => BatchProofMessage::CODE,
                     }
                 }
+            }
         }
     }
     pub fn decode(
