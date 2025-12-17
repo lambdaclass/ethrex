@@ -204,6 +204,8 @@ async fn deploy_l1_erc20(
     let l1_balance = test_balance_of(l1_client, l1_erc20_contract_address, sender_address).await;
     assert_eq!(
         l1_balance,
+        // The fee token is a mintable ERC20 that mints 1_000_000 * (10 ** 18) tokens to the deployer
+        // This is the value in hexadecimal
         U256::from_str("D3C21BCECCEDA1000000")?,
         "l1 invalid deploy"
     );
