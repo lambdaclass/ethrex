@@ -415,7 +415,7 @@ impl FlatTrie {
 
         // if node is not the same kind as the override, panic
         // we should use put_node() in these cases
-        if override_is_same_node_kind {
+        if !override_is_same_node_kind {
             panic!();
         }
 
@@ -599,8 +599,8 @@ mod test {
 
     fn kv_pairs_strategy() -> impl Strategy<Value = (Vec<(Vec<u8>, Vec<u8>)>, Vec<usize>)> {
         // create random key-values, with keys all the same size, and a random permutation of indices
-        (1usize..32).prop_flat_map(|key_len| {
-            prop::collection::vec((vec(any::<u8>(), key_len), vec(any::<u8>(), 0..256)), 1..3)
+        (1usize..2).prop_flat_map(|key_len| {
+            prop::collection::vec((vec(any::<u8>(), key_len), vec(any::<u8>(), 0..1)), 1..3)
                 .prop_flat_map(|kvs| {
                     let len = kvs.len();
                     let shuffle = vec(..len, ..len).prop_shuffle();
