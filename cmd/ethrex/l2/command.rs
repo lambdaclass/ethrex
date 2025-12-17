@@ -95,10 +95,8 @@ impl L2Command {
                 .sequencer_opts
                 .committer_opts
                 .on_chain_proposer_address = Some(contract_addresses.on_chain_proposer_address);
-            l2_options
-                .sequencer_opts
-                .committer_opts
-                .timelock_address = Some(contract_addresses.timelock_address);
+            l2_options.sequencer_opts.committer_opts.timelock_address =
+                Some(contract_addresses.timelock_address);
             l2_options.sequencer_opts.watcher_opts.bridge_address =
                 Some(contract_addresses.bridge_address);
             println!("Initializing L2");

@@ -403,13 +403,8 @@ impl L1ProofSender {
             .timelock_address
             .unwrap_or(self.on_chain_proposer_address);
 
-        let send_verify_tx_result = send_verify_tx(
-            calldata,
-            &self.eth_client,
-            target_address,
-            &self.signer,
-        )
-        .await;
+        let send_verify_tx_result =
+            send_verify_tx(calldata, &self.eth_client, target_address, &self.signer).await;
 
         if let Err(EthClientError::EstimateGasError(EstimateGasError::RPCError(error))) =
             send_verify_tx_result.as_ref()
