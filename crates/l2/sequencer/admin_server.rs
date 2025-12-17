@@ -96,7 +96,6 @@ pub async fn start_api(
         .route("/committer/stop", get(stop_committer))
         .route("/admin/health", get(admin_health))
         .route("/health", get(health))
-        // TODO: should it be a POST?
         .route("/stop-at/{block_number}", get(set_sequencer_stop_at))
         .with_state(admin.clone())
         .fallback(not_found);
