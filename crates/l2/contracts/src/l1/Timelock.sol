@@ -103,6 +103,14 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable {
         onChainProposer.revertBatch(batchNumber);
     }
 
+    function pause() external onlyRole(SECURITY_COUNCIL) {
+        onChainProposer.pause();
+    }
+
+    function unpause() external onlyRole(SECURITY_COUNCIL) {
+        onChainProposer.unpause();
+    }
+
     // Logic for updating Timelock contract. Should be triggered by the timelock itself so that it respects min time.
     function _authorizeUpgrade(address newImplementation) internal override {
         address sender = _msgSender();
