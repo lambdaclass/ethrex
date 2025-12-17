@@ -536,7 +536,7 @@ contract OnChainProposer is
         uint256 expected_length = 256;
         for (uint256 i = 0; i < registered_chains; i++) {
             expected_length += 32;
-            expected_length += balanceDiffs[i].valuePerToken.length * 128;
+            expected_length += balanceDiffs[i].valuePerToken.length * 92;
             expected_length += balanceDiffs[i].message_hashes.length * 32;
         }
         expected_length +=
@@ -613,23 +613,13 @@ contract OnChainProposer is
                     address destTokenL2,
                     uint256 tokenValue
                 ) = (
-                        address(
-                            bytes20(bytes32(publicData[offset:offset + 32]))
-                        ),
-                        address(
-                            bytes20(
-                                bytes32(publicData[offset + 32:offset + 64])
-                            )
-                        ),
-                        address(
-                            bytes20(
-                                bytes32(publicData[offset + 64:offset + 96])
-                            )
-                        ),
-                        uint256(bytes32(publicData[offset + 96:offset + 128]))
+                        address(bytes20(publicData[offset:offset + 20])),
+                        address(bytes20(publicData[offset + 20:offset + 40])),
+                        address(bytes20(publicData[offset + 40:offset + 60])),
+                        uint256(bytes32(publicData[offset + 60:offset + 92]))
                     );
 
-                offset += 128;
+                offset += 92;
 
                 if (
                     tokenL1 != balanceDiffs[i].valuePerToken[j].tokenL1 ||

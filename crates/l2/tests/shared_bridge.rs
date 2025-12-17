@@ -56,10 +56,10 @@ const SIGNATURE: &str = "sendToL2(uint256,address,uint256,bytes)";
 
 const GAS_PRICE: u64 = 3946771033u64;
 
-// 0x84307998a57635ccc4ed1e5dba1e76344dcdfbe6
+// 0xe481f8ed3efe6ff14b58424a1905d72558951167
 const DEFAULT_ON_CHAIN_PROPOSER_ADDRESS: Address = H160([
-    0x84, 0x30, 0x79, 0x98, 0xa5, 0x76, 0x35, 0xcc, 0xc4, 0xed, 0x1e, 0x5d, 0xba, 0x1e, 0x76, 0x34,
-    0x4d, 0xcd, 0xfb, 0xe6,
+    0xe4, 0x81, 0xf8, 0xed, 0x3e, 0xfe, 0x6f, 0xf1, 0x4b, 0x58, 0x42, 0x4a, 0x19, 0x05, 0xd7, 0x25,
+    0x58, 0x95, 0x11, 0x67,
 ]);
 
 fn on_chain_proposer_address() -> Address {
@@ -135,6 +135,7 @@ async fn test_transfer_erc_20() -> Result<()> {
     )
     .await?;
 
+    println!("Approving and depositing ERC20 from L1 to L2a...");
     approve_and_deposit(
         &l1_client,
         &l2a_client,
@@ -295,6 +296,7 @@ async fn approve_and_deposit(
         Overrides::default(),
     )
     .await?;
+    println!("Approving ERC20 transfer to bridge at {bridge_address:?}...");
     let approve_hash = send_generic_transaction(l1_client, approve_tx, signer).await?;
     wait_for_transaction_receipt(approve_hash, l1_client, 100).await?;
 
@@ -316,6 +318,7 @@ async fn approve_and_deposit(
         Overrides::default(),
     )
     .await?;
+    println!("Depositing ERC20 to L2 at {l2_erc20_contract_address:?}...");
     let deposit_hash = send_generic_transaction(l1_client, deposit_tx, signer).await?;
     let deposit_receipt = wait_for_transaction_receipt(deposit_hash, l1_client, 100).await?;
     wait_for_l2_deposit_receipt(&deposit_receipt, l1_client, l2_client).await?;
