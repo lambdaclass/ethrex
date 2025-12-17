@@ -12,6 +12,7 @@ use ethrex_common::{
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
 use ethrex_storage::hash_address;
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeRef, Trie, TrieError, flattrie_new::FlatTrie};
+use ethrex_vm::system_contracts::SYSTEM_ADDRESS;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::debug;
@@ -146,6 +147,7 @@ pub fn execution_witness_from_rpc_chain_config(
         storage_tries.insert(address, trie.clone());
     }
 
+    dbg!(state_trie.get(&hash_address(SYSTEM_ADDRESS)));
     let state_trie = state_trie_root.map(|n| FlatTrie::from(&n));
 
     let witness = ExecutionWitness {

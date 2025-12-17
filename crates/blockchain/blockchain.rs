@@ -7,6 +7,7 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
+use ethrex_vm::system_contracts::SYSTEM_ADDRESS;
 use ::tracing::{debug, info, instrument, trace};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
@@ -1015,6 +1016,7 @@ impl Blockchain {
             storage_tries.insert(address, FlatTrie::from(&(*node)));
         }
 
+        dbg!(state_trie.get(&hash_address(SYSTEM_ADDRESS)));
         let state_trie = state_trie_root.map(|n| FlatTrie::from(&n));
 
         Ok(ExecutionWitness {
