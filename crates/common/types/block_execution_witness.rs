@@ -327,6 +327,8 @@ impl GuestProgramState {
             .entry(address)
             .or_insert_with(|| hash_address(&address));
 
+        dbg!("get account state");
+        dbg!(&address);
         let Ok(Some(encoded_state)) = self.state_trie.get(hashed_address) else {
             return Ok(None);
         };
@@ -360,6 +362,9 @@ impl GuestProgramState {
         let Some(storage_trie) = self.get_valid_storage_trie(address)? else {
             return Ok(None);
         };
+        dbg!("get storage slot");
+        dbg!(&address);
+        dbg!(&key);
         if let Some(encoded_key) = storage_trie
             .get(&hashed_key)
             .map_err(|e| GuestProgramStateError::Database(e.to_string()))?
