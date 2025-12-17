@@ -7,6 +7,7 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
+use ethrex_vm::system_contracts::SYSTEM_ADDRESS;
 use ::tracing::{debug, info, instrument, trace};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
@@ -1007,6 +1008,7 @@ impl Blockchain {
             storage_trie_roots.insert(address, (*node).clone());
         }
 
+        dbg!(state_trie.get(&hash_address(&SYSTEM_ADDRESS)));
         Ok(ExecutionWitness {
             codes,
             block_headers_bytes,
