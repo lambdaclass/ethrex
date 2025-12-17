@@ -16,10 +16,8 @@ For instructions on how to get started using ethrex L1 and/or L2, please refer t
 
 This client supports running in two different modes:
 
-- As a regular Ethereum execution client
-- As a multi-prover ZK-Rollup (supporting SP1, RISC Zero and TEEs), where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security. Support for based sequencing is currently in the works.
-
-We call the first one ethrex L1 and the second one ethrex L2.
+* **ethrex L1** - As a regular Ethereum execution client
+* **ethrex L2** - As a multi-prover ZK-Rollup (supporting SP1, RISC Zero and TEEs), where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security. Support for based sequencing is currently in the works.
 
 ## Philosophy
 
@@ -39,9 +37,9 @@ Read more about our engineering philosophy [in this post of our blog](https://bl
 - Prioritize code readability and maintainability over premature optimizations.
 - Avoid concurrency split all over the codebase. Concurrency adds complexity. Only use where strictly necessary.
 
-<img width="100%" alt="Lines of Code comparison chart for Ethereum clients" src="https://github.com/user-attachments/assets/4ef7d9db-57a0-4b8b-b170-78950691b47a" />
+<img width="100%" alt="Lines of Code comparison chart for Ethereum clients" src="https://github.com/user-attachments/assets/ebf83d67-7150-44ba-a8d8-f0e657d4a19d" />
 
-_(Data from main branch of each project at 2025/09/26)_
+_(Data from main branch of each project at 2025/10/08)_
 
 ## 🗺️ Roadmap
 
@@ -74,6 +72,7 @@ The following links, repos, companies and projects have been important in the de
 - [Gattaca](https://github.com/gattaca-com)
 - [Spire](https://www.spire.dev/)
 - [Commonware](https://commonware.xyz/)
+- [Gravity](https://docs.gravity.xyz/research/litepaper)
 
 If we forgot to include anyone, please file an issue so we can add you. We always strive to reference the inspirations and code we use, but as an organization with multiple people, mistakes can happen, and someone might forget to include a reference.
 

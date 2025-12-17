@@ -9,7 +9,10 @@ use crate::{
 };
 
 use bytes::Bytes;
-use ethrex_common::{Address, U256, types::Fork};
+use ethrex_common::{
+    Address, H256, U256,
+    types::{Code, Fork},
+};
 
 pub const MAX_REFUND_QUOTIENT: u64 = 5;
 
@@ -96,7 +99,7 @@ impl Hook for DefaultHook {
 
         // (9) SENDER_NOT_EOA
         let code = vm.db.get_code(sender_info.code_hash)?;
-        validate_sender(sender_address, code)?;
+        validate_sender(sender_address, &code.bytecode)?;
 
         // (10) GAS_ALLOWANCE_EXCEEDED
         validate_gas_allowance(vm)?;
@@ -234,7 +237,7 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
             .backup_account_info(*address, account_to_remove)?;
 
         *account_to_remove = LevmAccount::default();
-        vm.db.destroyed_accounts.insert(*address);
+        account_to_remove.mark_destroyed();
     }
 
     Ok(())
@@ -273,8 +276,7 @@ pub fn validate_max_fee_per_blob_gas(
     vm: &mut VM<'_>,
     tx_max_fee_per_blob_gas: U256,
 ) -> Result<(), VMError> {
-    let base_fee_per_blob_gas =
-        get_base_fee_per_blob_gas(vm.env.block_excess_blob_gas, &vm.env.config)?;
+    let base_fee_per_blob_gas = vm.env.base_blob_fee_per_gas;
     if tx_max_fee_per_blob_gas < base_fee_per_blob_gas {
         return Err(TxValidationError::InsufficientMaxFeePerBlobGas {
             base_fee_per_blob_gas,
@@ -455,7 +457,7 @@ pub fn deduct_caller(
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
     let value = vm.current_call_frame.msg_value;
 
-    let blob_gas_cost = get_blob_gas_price(
+    let blob_gas_cost = calculate_blob_gas_cost(
         &vm.env.tx_blob_hashes,
         vm.env.block_excess_blob_gas,
         &vm.env.config,
@@ -492,7 +494,11 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
     let (bytecode, code_address) = if vm.is_create()? {
         // Here bytecode is the calldata and the code_address is just the created contract address.
         let calldata = std::mem::take(&mut vm.current_call_frame.calldata);
-        (calldata, vm.current_call_frame.to)
+        (
+            // SAFETY: we don't need the hash for the initcode
+            Code::from_bytecode_unchecked(calldata, H256::zero()),
+            vm.current_call_frame.to,
+        )
     } else {
         // Here bytecode and code_address could be either from the account or from the delegated account.
         let to = vm.current_call_frame.to;

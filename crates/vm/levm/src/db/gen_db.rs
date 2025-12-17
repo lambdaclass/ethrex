@@ -1,15 +1,14 @@
-use std::collections::BTreeMap;
-use std::collections::HashSet;
 use std::sync::Arc;
 
-use bytes::Bytes;
 use ethrex_common::Address;
 use ethrex_common::H256;
 use ethrex_common::U256;
 use ethrex_common::types::Account;
-use ethrex_common::utils::keccak;
+use ethrex_common::types::Code;
+use ethrex_common::utils::ZERO_U256;
 
 use super::Database;
+use crate::account::AccountStatus;
 use crate::account::LevmAccount;
 use crate::call_frame::CallFrameBackup;
 use crate::errors::InternalError;
@@ -18,41 +17,38 @@ use crate::utils::account_to_levm_account;
 use crate::utils::restore_cache_state;
 use crate::vm::VM;
 pub use ethrex_common::types::AccountUpdate;
-use std::collections::btree_map::Entry;
+use rustc_hash::FxHashMap;
+use std::collections::hash_map::Entry;
 
-pub type CacheDB = BTreeMap<Address, LevmAccount>;
+pub type CacheDB = FxHashMap<Address, LevmAccount>;
 
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub current_accounts_state: CacheDB,
     pub initial_accounts_state: CacheDB,
-    pub codes: BTreeMap<H256, Bytes>,
+    pub codes: FxHashMap<H256, Code>,
     pub tx_backup: Option<CallFrameBackup>,
-    /// For keeping track of all destroyed accounts during block execution.
-    /// Used in get_state_transitions for edge case in which account is destroyed and re-created afterwards
-    /// In that scenario we want to remove the previous storage of the account but we still want the account to exist.
-    pub destroyed_accounts: HashSet<Address>,
 }
 
 impl GeneralizedDatabase {
     pub fn new(store: Arc<dyn Database>) -> Self {
         Self {
             store,
-            current_accounts_state: CacheDB::new(),
-            initial_accounts_state: CacheDB::new(),
+            current_accounts_state: Default::default(),
+            initial_accounts_state: Default::default(),
             tx_backup: None,
-            destroyed_accounts: HashSet::new(),
-            codes: BTreeMap::new(),
+            codes: Default::default(),
         }
     }
 
+    /// Only used within Levm Runner, where the accounts already have all the storage pre-loaded, not used in real case scenarios.
     pub fn new_with_account_state(
         store: Arc<dyn Database>,
-        current_accounts_state: BTreeMap<Address, Account>,
+        current_accounts_state: FxHashMap<Address, Account>,
     ) -> Self {
-        let mut codes = BTreeMap::new();
-        let levm_accounts: BTreeMap<Address, LevmAccount> = current_accounts_state
+        let mut codes: FxHashMap<H256, Code> = Default::default();
+        let levm_accounts: FxHashMap<Address, LevmAccount> = current_accounts_state
             .into_iter()
             .map(|(address, account)| {
                 let (levm_account, code) = account_to_levm_account(account);
@@ -65,7 +61,6 @@ impl GeneralizedDatabase {
             current_accounts_state: levm_accounts.clone(),
             initial_accounts_state: levm_accounts,
             tx_backup: None,
-            destroyed_accounts: HashSet::new(),
             codes,
         }
     }
@@ -77,8 +72,8 @@ impl GeneralizedDatabase {
         match self.current_accounts_state.entry(address) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                let info = self.store.get_account_info(address)?;
-                let account = LevmAccount::from(info);
+                let state = self.store.get_account_state(address)?;
+                let account = LevmAccount::from(state);
                 self.initial_accounts_state.insert(address, account.clone());
                 Ok(entry.insert(account))
             }
@@ -93,13 +88,15 @@ impl GeneralizedDatabase {
     /// Gets mutable reference of an account
     /// Warning: Use directly only if outside of the EVM, otherwise use `vm.get_account_mut` because it contemplates call frame backups.
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut LevmAccount, InternalError> {
-        self.load_account(address)
+        let acc = self.load_account(address)?;
+        acc.mark_modified();
+        Ok(acc)
     }
 
     /// Gets code immutably given the code hash.
     /// Use this only inside of the VM, when we don't surely know if the code is in the cache or not
     /// But e.g. in `get_state_transitions` just do `db.codes.get(code_hash)` because we know for sure code is there.
-    pub fn get_code(&mut self, code_hash: H256) -> Result<&Bytes, InternalError> {
+    pub fn get_code(&mut self, code_hash: H256) -> Result<&Code, InternalError> {
         match self.codes.entry(code_hash) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
@@ -110,7 +107,7 @@ impl GeneralizedDatabase {
     }
 
     /// Shortcut for getting the code when we only have the address of an account and we don't need anything else.
-    pub fn get_account_code(&mut self, address: Address) -> Result<&Bytes, InternalError> {
+    pub fn get_account_code(&mut self, address: Address) -> Result<&Code, InternalError> {
         let code_hash = self.get_account(address)?.info.code_hash;
         self.get_code(code_hash)
     }
@@ -121,11 +118,6 @@ impl GeneralizedDatabase {
         address: Address,
         key: H256,
     ) -> Result<U256, InternalError> {
-        // If the account was destroyed then we cannot rely on the DB to obtain its previous value
-        // This is critical when executing blocks in batches, as an account may be destroyed and created within the same batch
-        if self.destroyed_accounts.contains(&address) {
-            return Ok(Default::default());
-        }
         let value = self.store.get_storage_value(address, key)?;
         // Account must already be in initial_accounts_state
         match self.initial_accounts_state.get_mut(&address) {
@@ -145,9 +137,11 @@ impl GeneralizedDatabase {
     /// Gets the transaction backup, if it exists.
     /// It only works if the `BackupHook` was enabled during the transaction execution.
     pub fn get_tx_backup(&self) -> Result<CallFrameBackup, InternalError> {
-        self.tx_backup.clone().ok_or(InternalError::Custom(
-            "Transaction backup not found. Was BackupHook enabled?".to_string(),
-        ))
+        self.tx_backup.clone().ok_or_else(|| {
+            InternalError::Custom(
+                "Transaction backup not found. Was BackupHook enabled?".to_string(),
+            )
+        })
     }
 
     /// Undoes the last transaction by restoring the cache state to the state before the transaction.
@@ -160,36 +154,17 @@ impl GeneralizedDatabase {
     pub fn get_state_transitions(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in self.current_accounts_state.iter() {
-            // In case the account is not in immutable_cache (rare) we search for it in the actual database.
-            let initial_state_account =
-                self.initial_accounts_state
-                    .get(address)
-                    .ok_or(VMError::Internal(InternalError::Custom(format!(
-                        "Failed to get account {address} from immutable cache",
-                    ))))?;
-
-            // Edge case: Account was destroyed and created again afterwards with CREATE2.
-            if self.destroyed_accounts.contains(address) && !new_state_account.is_empty() {
-                // Push to account updates the removal of the account and then push the new state of the account.
-                // This is for clearing the account's storage when it was selfdestructed in the first place.
-                account_updates.push(AccountUpdate::removed(*address));
-                let new_account_update = AccountUpdate {
-                    address: *address,
-                    removed: false,
-                    info: Some(new_state_account.info.clone()),
-                    code: Some(
-                        self.codes
-                            .get(&new_state_account.info.code_hash)
-                            .ok_or(VMError::Internal(InternalError::Custom(format!(
-                                "Failed to get code for account {address}"
-                            ))))?
-                            .clone(),
-                    ),
-                    added_storage: new_state_account.storage.clone(),
-                };
-                account_updates.push(new_account_update);
+            if new_state_account.is_unmodified() {
+                // Skip processing account that we know wasn't mutably accessed during execution
                 continue;
             }
+            // In case the account is not in immutable_cache (rare) we search for it in the actual database.
+            let initial_state_account =
+                self.initial_accounts_state.get(address).ok_or_else(|| {
+                    VMError::Internal(InternalError::Custom(format!(
+                        "Failed to get account {address} from immutable cache",
+                    )))
+                })?;
 
             let mut acc_info_updated = false;
             let mut storage_updated = false;
@@ -203,24 +178,38 @@ impl GeneralizedDatabase {
                 acc_info_updated = true;
             }
 
-            let code =
-                if initial_state_account.info.code_hash != new_state_account.info.code_hash {
-                    acc_info_updated = true;
-                    // code should be in `codes`
-                    Some(self.codes.get(&new_state_account.info.code_hash).ok_or(
-                        VMError::Internal(InternalError::Custom(format!(
-                            "Failed to get code for account {address}"
-                        ))),
-                    )?)
-                } else {
-                    None
-                };
+            let code = if initial_state_account.info.code_hash != new_state_account.info.code_hash {
+                acc_info_updated = true;
+                // code should be in `codes`
+                Some(
+                    self.codes
+                        .get(&new_state_account.info.code_hash)
+                        .ok_or_else(|| {
+                            VMError::Internal(InternalError::Custom(format!(
+                                "Failed to get code for account {address}"
+                            )))
+                        })?,
+                )
+            } else {
+                None
+            };
+
+            // Account will have only its storage removed if it was Destroyed and then modified
+            // Edge cases that can make this true:
+            //   1. Account was destroyed and created again afterwards.
+            //   2. Account was destroyed but then was sent ETH, so it's not going to be completely removed from the trie.
+            let removed_storage = new_state_account.status == AccountStatus::DestroyedModified;
 
             // 2. Storage has been updated if the current value is different from the one before execution.
-            let mut added_storage = BTreeMap::new();
+            let mut added_storage: FxHashMap<_, _> = Default::default();
 
             for (key, new_value) in &new_state_account.storage {
-                let old_value = initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address}")))})?;
+                let old_value = if !removed_storage {
+                    initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address:?}. For key: {key:?}")))})?
+                } else {
+                    // There's not an "old value" if the contract was destroyed and re-created.
+                    &ZERO_U256
+                };
 
                 if new_value != old_value {
                     added_storage.insert(*key, *new_value);
@@ -235,11 +224,11 @@ impl GeneralizedDatabase {
             };
 
             // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
-            // If the account was already empty then this is not an update
+            // ethrex is a post-Merge client, empty accounts have already been pruned from the trie on Mainnet by the Merge (see EIP-161), so we won't have any empty accounts in the trie.
             let was_empty = initial_state_account.is_empty();
             let removed = new_state_account.is_empty() && !was_empty;
 
-            if !removed && !acc_info_updated && !storage_updated {
+            if !removed && !acc_info_updated && !storage_updated && !removed_storage {
                 // Account hasn't been updated
                 continue;
             }
@@ -250,14 +239,112 @@ impl GeneralizedDatabase {
                 info,
                 code: code.cloned(),
                 added_storage,
+                removed_storage,
             };
 
             account_updates.push(account_update);
         }
         self.initial_accounts_state.clear();
-        //TODO: These down below don't need to be cleared every time we get state transitions. Clearing them slows down execution but consumes less memory. #3946
         self.current_accounts_state.clear();
         self.codes.clear();
+        Ok(account_updates)
+    }
+
+    pub fn get_state_transitions_tx(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
+        let mut account_updates: Vec<AccountUpdate> = vec![];
+        for (address, new_state_account) in self.current_accounts_state.iter() {
+            if new_state_account.is_unmodified() {
+                // Skip processing account that we know wasn't mutably accessed during execution
+                continue;
+            }
+            // [LIE] In case the account is not in immutable_cache (rare) we search for it in the actual database.
+            let initial_state_account =
+                self.initial_accounts_state.get(address).ok_or_else(|| {
+                    VMError::Internal(InternalError::Custom(format!(
+                        "Failed to get account {address} from immutable cache",
+                    )))
+                })?;
+
+            let mut acc_info_updated = false;
+            let mut storage_updated = false;
+
+            // 1. Account Info has been updated if balance, nonce or bytecode changed.
+            if initial_state_account.info.balance != new_state_account.info.balance {
+                acc_info_updated = true;
+            }
+
+            if initial_state_account.info.nonce != new_state_account.info.nonce {
+                acc_info_updated = true;
+            }
+
+            let code = if initial_state_account.info.code_hash != new_state_account.info.code_hash {
+                acc_info_updated = true;
+                // code should be in `codes`
+                Some(
+                    self.codes
+                        .get(&new_state_account.info.code_hash)
+                        .cloned()
+                        .ok_or_else(|| {
+                            VMError::Internal(InternalError::Custom(format!(
+                                "Failed to get code for account {address}"
+                            )))
+                        })?,
+                )
+            } else {
+                None
+            };
+
+            // Account will have only its storage removed if it was Destroyed and then modified
+            // Edge cases that can make this true:
+            //   1. Account was destroyed and created again afterwards.
+            //   2. Account was destroyed but then was sent ETH, so it's not going to be completely removed from the trie.
+            let removed_storage = new_state_account.status == AccountStatus::DestroyedModified;
+
+            // 2. Storage has been updated if the current value is different from the one before execution.
+            let mut added_storage: FxHashMap<_, _> = Default::default();
+
+            for (key, new_value) in &new_state_account.storage {
+                let old_value = if !removed_storage {
+                    initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address}")))})?
+                } else {
+                    // There's not an "old value" if the contract was destroyed and re-created.
+                    &ZERO_U256
+                };
+
+                if new_value != old_value {
+                    added_storage.insert(*key, *new_value);
+                    storage_updated = true;
+                }
+            }
+
+            let info = acc_info_updated.then(|| new_state_account.info.clone());
+
+            // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
+            // ethrex is a post-Merge client, empty accounts have already been pruned from the trie on Mainnet by the Merge (see EIP-161), so we won't have any empty accounts in the trie.
+            let was_empty = initial_state_account.is_empty();
+            let removed = new_state_account.is_empty() && !was_empty;
+
+            if !removed && !acc_info_updated && !storage_updated && !removed_storage {
+                // Account hasn't been updated
+                continue;
+            }
+
+            let account_update = AccountUpdate {
+                address: *address,
+                removed,
+                info,
+                code,
+                added_storage,
+                removed_storage,
+            };
+
+            account_updates.push(account_update);
+        }
+        self.initial_accounts_state.extend(
+            self.current_accounts_state
+                .iter()
+                .map(|(k, v)| (*k, v.clone())),
+        );
         Ok(account_updates)
     }
 }
@@ -340,11 +427,11 @@ impl<'a> VM<'a> {
     pub fn update_account_bytecode(
         &mut self,
         address: Address,
-        new_bytecode: Bytes,
+        new_bytecode: Code,
     ) -> Result<(), InternalError> {
         let acc = self.get_account_mut(address)?;
-        let code_hash = keccak(new_bytecode.as_ref()).0.into();
-        acc.info.code_hash = code_hash;
+        let code_hash = new_bytecode.hash;
+        acc.info.code_hash = new_bytecode.hash;
         self.db.codes.entry(code_hash).or_insert(new_bytecode);
         Ok(())
     }
@@ -403,6 +490,10 @@ impl<'a> VM<'a> {
         if let Some(account) = self.db.current_accounts_state.get(&address) {
             if let Some(value) = account.storage.get(&key) {
                 return Ok(*value);
+            }
+            // If the account was destroyed and then created then we cannot rely on the DB to obtain storage values
+            if account.status == AccountStatus::DestroyedModified {
+                return Ok(U256::zero());
             }
         } else {
             // When requesting storage of an account we should've previously requested and cached the account

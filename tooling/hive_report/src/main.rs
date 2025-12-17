@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use serde_json::json;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -24,12 +25,33 @@ struct JsonFile {
     test_cases: std::collections::HashMap<String, TestCase>,
 }
 
+const HIVE_SLACK_BLOCKS_FILE_PATH: &str = "./hive_slack_blocks.json";
+
 struct HiveResult {
     category: String,
     display_name: String,
     passed_tests: usize,
     total_tests: usize,
     success_percentage: f64,
+}
+
+struct CategoryResults {
+    name: String,
+    tests: Vec<HiveResult>,
+}
+
+impl CategoryResults {
+    fn total_passed(&self) -> usize {
+        self.tests.iter().map(|res| res.passed_tests).sum()
+    }
+
+    fn total_tests(&self) -> usize {
+        self.tests.iter().map(|res| res.total_tests).sum()
+    }
+
+    fn success_percentage(&self) -> f64 {
+        calculate_success_percentage(self.total_passed(), self.total_tests())
+    }
 }
 
 impl HiveResult {
@@ -45,8 +67,9 @@ impl HiveResult {
             "snap" => ("P2P", "Snap capability"),
             "rpc-compat" => ("RPC", "RPC API Compatibility"),
             "sync" => ("Sync", "Node Syncing"),
-            "eest/consume-rlp" => ("EVM - Consume RLP", fork.as_str()),
-            "eest/consume-engine" => ("EVM - Consume Engine", fork.as_str()),
+            "eels/consume-rlp" => ("EVM - Consume RLP", fork.as_str()),
+            "eels/consume-engine" => ("EVM - Consume Engine", fork.as_str()),
+            "eels/execute-blobs" => ("EVM - Execute Blobs", "Execute Blobs"),
             other => {
                 eprintln!("Warn: Unknown suite: {other}. Skipping");
                 ("", "")
@@ -108,6 +131,71 @@ fn calculate_success_percentage(passed_tests: usize, total_tests: usize) -> f64 
     }
 }
 
+fn build_slack_blocks(
+    categories: &[CategoryResults],
+    total_passed: usize,
+    total_tests: usize,
+) -> serde_json::Value {
+    let total_percentage = calculate_success_percentage(total_passed, total_tests);
+    let mut blocks = vec![json!({
+        "type": "header",
+        "text": {
+            "type": "plain_text",
+            "text": format!(
+                "Daily Hive Coverage report — {total_passed}/{total_tests} ({total_percentage:.02}%)"
+            )
+        }
+    })];
+
+    for category in categories {
+        let category_passed = category.total_passed();
+        let category_total = category.total_tests();
+        let category_percentage = category.success_percentage();
+        let status = if category_passed == category_total {
+            "✅"
+        } else {
+            "⚠️"
+        };
+
+        let mut lines = vec![format!(
+            "*{}* {}/{} ({:.02}%) {}",
+            category.name, category_passed, category_total, category_percentage, status
+        )];
+
+        let mut failing_tests: Vec<_> = category
+            .tests
+            .iter()
+            .filter(|result| result.passed_tests < result.total_tests)
+            .collect();
+
+        failing_tests.sort_by(|a, b| {
+            a.success_percentage
+                .partial_cmp(&b.success_percentage)
+                .unwrap_or(Ordering::Equal)
+        });
+
+        for result in failing_tests {
+            lines.push(format!(
+                "- {}: {}/{} ({:.02}%)",
+                result.display_name,
+                result.passed_tests,
+                result.total_tests,
+                result.success_percentage
+            ));
+        }
+
+        blocks.push(json!({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": lines.join("\n"),
+            },
+        }));
+    }
+
+    json!({ "blocks": blocks })
+}
+
 fn aggregate_result(
     aggregated_results: &mut HashMap<(String, String), (usize, usize)>,
     result: HiveResult,
@@ -159,8 +247,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Both of these simulators have only 1 suite where we can find tests for 3 different forks.
             // To get the total tests and the passed tests a filtes is done each time so we do not clone the test cases each time.
-            if json_data.name.as_str() == "eest/consume-rlp"
-                || json_data.name.as_str() == "eest/consume-engine"
+            if json_data.name.as_str() == "eels/consume-rlp"
+                || json_data.name.as_str() == "eels/consume-engine"
             {
                 let result_paris = create_fork_result(&json_data, "Paris", "fork_Paris");
                 // Shanghai
@@ -237,22 +325,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
     });
 
-    let results_by_category = results.chunk_by(|a, b| a.category == b.category);
+    let mut grouped_results: Vec<CategoryResults> = Vec::new();
+    for result in results {
+        if let Some(last) = grouped_results
+            .last_mut()
+            .filter(|last| last.name == result.category)
+        {
+            last.tests.push(result);
+            continue;
+        }
 
-    for results in results_by_category {
-        // print category
-        println!("*{}*", results[0].category);
-        for result in results {
+        let name = result.category.clone();
+        grouped_results.push(CategoryResults {
+            name,
+            tests: vec![result],
+        });
+    }
+
+    for category in &grouped_results {
+        println!("*{}*", category.name);
+        for result in &category.tests {
             println!("\t{result}");
         }
         println!();
     }
 
     println!();
-    let total_passed = results.iter().map(|r| r.passed_tests).sum::<usize>();
-    let total_tests = results.iter().map(|r| r.total_tests).sum::<usize>();
+    let total_passed = grouped_results
+        .iter()
+        .flat_map(|group| group.tests.iter().map(|r| r.passed_tests))
+        .sum::<usize>();
+    let total_tests = grouped_results
+        .iter()
+        .flat_map(|group| group.tests.iter().map(|r| r.total_tests))
+        .sum::<usize>();
     let total_percentage = calculate_success_percentage(total_passed, total_tests);
     println!("*Total: {total_passed}/{total_tests} ({total_percentage:.02}%)*");
+
+    let slack_blocks = build_slack_blocks(&grouped_results, total_passed, total_tests);
+    fs::write(
+        HIVE_SLACK_BLOCKS_FILE_PATH,
+        serde_json::to_string_pretty(&slack_blocks)?,
+    )?;
 
     Ok(())
 }

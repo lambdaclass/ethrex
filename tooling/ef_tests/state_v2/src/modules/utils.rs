@@ -40,12 +40,13 @@ pub async fn load_initial_state(
     fork: &Fork,
 ) -> (GeneralizedDatabase, H256, Store, Genesis) {
     let genesis = genesis_from_test_and_fork(test, fork);
-    let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
+    let mut storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
 
     storage.add_initial_state(genesis.clone()).await.unwrap();
 
     let block_hash = genesis.get_block().hash();
-    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(storage.clone(), block_hash));
+    let store: DynVmDatabase =
+        Box::new(StoreVmDatabase::new(storage.clone(), genesis.get_block().header).unwrap());
 
     // We return some values that will be needed to calculate the post execution checks (original storage, genesis and blockhash)
     (

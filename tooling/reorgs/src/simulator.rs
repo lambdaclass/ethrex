@@ -32,6 +32,7 @@ use sha2::{Digest, Sha256};
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
+use url::Url;
 
 pub struct Simulator {
     cmd_path: PathBuf,
@@ -42,7 +43,7 @@ pub struct Simulator {
     genesis_path: PathBuf,
     configs: Vec<Options>,
     enodes: Vec<String>,
-    cancellation_tokens: Vec<CancellationToken>,
+    cancellation_tokens: Vec<(CancellationToken, tokio::task::JoinHandle<()>)>,
 }
 
 impl Simulator {
@@ -96,7 +97,10 @@ impl Simulator {
 
         opts.syncmode = SyncMode::Full;
 
-        let _ = std::fs::remove_dir_all(&opts.datadir);
+        if opts.datadir.exists() {
+            std::fs::remove_dir_all(&opts.datadir)
+                .expect("Failed to remove existing data directory");
+        }
         std::fs::create_dir_all(&opts.datadir).expect("Failed to create data directory");
 
         let now = SystemTime::now()
@@ -109,7 +113,6 @@ impl Simulator {
         let cancel = CancellationToken::new();
 
         self.configs.push(opts.clone());
-        self.cancellation_tokens.push(cancel.clone());
 
         let mut cmd = Command::new(&self.cmd_path);
         cmd.args([
@@ -141,20 +144,26 @@ impl Simulator {
                 .expect("node initialization timed out");
         self.enodes.push(enode);
 
-        tokio::spawn(async move {
-            let mut child = child;
-            tokio::select! {
-                _ = cancel.cancelled() => {
-                    if let Some(pid) = child.id() {
-                        // NOTE: we use SIGTERM instead of child.kill() so sockets are closed
-                        signal::kill(Pid::from_raw(pid as i32), Signal::SIGTERM).unwrap();
+        let waiter = tokio::spawn({
+            let cancel = cancel.clone();
+            async move {
+                let mut child = child;
+                tokio::select! {
+                    _ = cancel.cancelled() => {
+                        if let Some(pid) = child.id() {
+                            // NOTE: we use SIGTERM instead of child.kill() so sockets are closed
+                            signal::kill(Pid::from_raw(pid as i32), Signal::SIGTERM).unwrap();
+                        }
+                    }
+                    res = child.wait() => {
+                        assert!(res.unwrap().success());
                     }
                 }
-                res = child.wait() => {
-                    assert!(res.unwrap().success());
-                }
+                // Ignore any errors on shutdown
+                let _ = child.wait().await.unwrap();
             }
         });
+        self.cancellation_tokens.push((cancel, waiter));
 
         info!(
             "Started node {n} at http://{}:{}",
@@ -164,15 +173,19 @@ impl Simulator {
         self.get_node(n)
     }
 
-    pub fn stop(&self) {
-        for token in &self.cancellation_tokens {
+    pub async fn stop(&mut self) {
+        for (token, waiter) in self.cancellation_tokens.drain(..) {
             token.cancel();
+            waiter.await.unwrap();
         }
+        self.enodes.clear();
+        self.configs.clear();
     }
 
-    fn get_http_url(&self, index: usize) -> String {
+    fn get_http_url(&self, index: usize) -> Url {
         let opts = &self.configs[index];
-        format!("http://{}:{}", opts.http_addr, opts.http_port)
+        Url::parse(&format!("http://{}:{}", opts.http_addr, opts.http_port))
+            .expect("Error parsing RPC URL")
     }
 
     fn get_auth_url(&self, index: usize) -> String {
@@ -185,7 +198,7 @@ impl Simulator {
         let engine_client = EngineClient::new(&auth_url, self.jwt_secret.clone());
 
         let http_url = self.get_http_url(index);
-        let rpc_client = EthClient::new(&http_url).unwrap();
+        let rpc_client = EthClient::new(http_url).unwrap();
 
         Node {
             index,
@@ -277,7 +290,7 @@ impl Node {
 
         let payload_response = self
             .engine_client
-            .engine_get_payload_v4(payload_id)
+            .engine_get_payload_v5(payload_id)
             .await
             .unwrap();
 
@@ -523,13 +536,8 @@ fn generate_jwt_secret() -> Bytes {
 }
 
 fn keccak256(data: &[u8]) -> H256 {
-    H256(
-        Sha256::new_with_prefix(data)
-            .finalize()
-            .as_slice()
-            .try_into()
-            .unwrap(),
-    )
+    let digest = Sha256::new_with_prefix(data).finalize();
+    H256::from_slice(digest.as_ref())
 }
 
 async fn wait_until_synced(engine_client: &EngineClient, fork_choice_state: ForkChoiceState) {

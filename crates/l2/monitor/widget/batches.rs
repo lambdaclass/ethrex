@@ -1,5 +1,8 @@
-use ethrex_common::{Address, H256, types::batch::Batch};
-use ethrex_l2_sdk::get_last_committed_batch;
+use ethrex_common::{
+    Address, H256,
+    types::{Fork, batch::Batch},
+};
+use ethrex_l2_sdk::{get_l1_active_fork, get_last_committed_batch};
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;
 use ratatui::{
@@ -50,27 +53,37 @@ impl BatchesTable {
         &mut self,
         eth_client: &EthClient,
         rollup_store: &StoreRollup,
+        osaka_activation_time: Option<u64>,
     ) -> Result<(), MonitorError> {
         let mut new_latest_batches = Self::fetch_new_items(
             &mut self.last_l1_block_fetched,
             self.on_chain_proposer_address,
             eth_client,
             rollup_store,
+            osaka_activation_time,
         )
         .await?;
         new_latest_batches.truncate(BATCH_WINDOW_SIZE);
 
+        let l1_fork = get_l1_active_fork(eth_client, osaka_activation_time)
+            .await
+            .map_err(MonitorError::EthClientError)?;
+
         let n_new_latest_batches = new_latest_batches.len();
         self.items
             .truncate(BATCH_WINDOW_SIZE - n_new_latest_batches);
-        self.refresh_items(rollup_store).await?;
+        self.refresh_items(rollup_store, l1_fork).await?;
         self.items.extend_from_slice(&new_latest_batches);
         self.items.rotate_right(n_new_latest_batches);
 
         Ok(())
     }
 
-    async fn refresh_items(&mut self, rollup_store: &StoreRollup) -> Result<(), MonitorError> {
+    async fn refresh_items(
+        &mut self,
+        rollup_store: &StoreRollup,
+        fork: Fork,
+    ) -> Result<(), MonitorError> {
         if self.items.is_empty() {
             return Ok(());
         }
@@ -83,7 +96,7 @@ impl BatchesTable {
             } else {
                 let batch_number = batch.number;
                 let new_batch = rollup_store
-                    .get_batch(batch_number)
+                    .get_batch(batch_number, fork)
                     .await
                     .map_err(|e| MonitorError::GetBatchByNumber(batch_number, e))?
                     .ok_or(MonitorError::BatchNotFound(batch_number))?;
@@ -104,6 +117,7 @@ impl BatchesTable {
         on_chain_proposer_address: Address,
         eth_client: &EthClient,
         rollup_store: &StoreRollup,
+        osaka_activation_time: Option<u64>,
     ) -> Result<Vec<BatchLine>, MonitorError> {
         let last_l2_batch_number = get_last_committed_batch(eth_client, on_chain_proposer_address)
             .await
@@ -116,9 +130,17 @@ impl BatchesTable {
                     .map_err(|_| MonitorError::BatchWindow)?,
             ),
         );
+        let l1_fork = get_l1_active_fork(eth_client, osaka_activation_time)
+            .await
+            .map_err(MonitorError::EthClientError)?;
 
-        let new_batches =
-            Self::get_batches(last_l2_batch_fetched, last_l2_batch_number, rollup_store).await?;
+        let new_batches = Self::get_batches(
+            last_l2_batch_fetched,
+            last_l2_batch_number,
+            rollup_store,
+            l1_fork,
+        )
+        .await?;
 
         Ok(Self::process_batches(new_batches))
     }
@@ -127,12 +149,13 @@ impl BatchesTable {
         from: &mut u64,
         to: u64,
         rollup_store: &StoreRollup,
+        fork: Fork,
     ) -> Result<Vec<Batch>, MonitorError> {
         let mut new_batches = Vec::new();
 
         for batch_number in *from + 1..=to {
             let batch = rollup_store
-                .get_batch(batch_number)
+                .get_batch(batch_number, fork)
                 .await
                 .map_err(|e| MonitorError::GetBatchByNumber(batch_number, e))?
                 .ok_or(MonitorError::BatchNotFound(batch_number))?;
@@ -149,7 +172,7 @@ impl BatchesTable {
         BatchLine {
             number: batch.number,
             block_count: batch.last_block - batch.first_block + 1,
-            message_count: batch.message_hashes.len(),
+            message_count: batch.l1_out_message_hashes.len(),
             commit_tx: batch.commit_tx,
             verify_tx: batch.verify_tx,
         }

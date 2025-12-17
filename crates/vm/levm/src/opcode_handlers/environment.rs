@@ -20,7 +20,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push1(u256_from_big_endian_const(addr.to_fixed_bytes()))?;
+            .push(u256_from_big_endian_const(addr.to_fixed_bytes()))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -36,7 +36,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.increase_consumed_gas(gas_cost::balance(address_was_cold)?)?;
 
-        current_call_frame.stack.push1(account_balance)?;
+        current_call_frame.stack.push(account_balance)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -49,7 +49,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push1(u256_from_big_endian_const(origin.to_fixed_bytes()))?;
+            .push(u256_from_big_endian_const(origin.to_fixed_bytes()))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -60,7 +60,7 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::CALLER)?;
 
         let caller = u256_from_big_endian_const(current_call_frame.msg_sender.to_fixed_bytes());
-        current_call_frame.stack.push1(caller)?;
+        current_call_frame.stack.push(caller)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -72,7 +72,7 @@ impl<'a> VM<'a> {
 
         let callvalue = current_call_frame.msg_value;
 
-        current_call_frame.stack.push1(callvalue)?;
+        current_call_frame.stack.push(callvalue)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -114,7 +114,7 @@ impl<'a> VM<'a> {
 
         let result = u256_from_big_endian_const(data);
 
-        current_call_frame.stack.push1(result)?;
+        current_call_frame.stack.push(result)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -126,7 +126,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push1(U256::from(current_call_frame.calldata.len()))?;
+            .push(U256::from(current_call_frame.calldata.len()))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -204,7 +204,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push1(U256::from(current_call_frame.bytecode.len()))?;
+            .push(U256::from(current_call_frame.bytecode.bytecode.len()))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -231,11 +231,12 @@ impl<'a> VM<'a> {
 
         // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
         if let Some(code_offset_end) = code_offset.checked_add(size)
-            && code_offset_end <= current_call_frame.bytecode.len()
+            && code_offset_end <= current_call_frame.bytecode.bytecode.len()
         {
             #[expect(unsafe_code, reason = "bounds checked beforehand")]
             let slice = unsafe {
                 current_call_frame
+                    .bytecode
                     .bytecode
                     .get_unchecked(code_offset..code_offset_end)
             };
@@ -245,15 +246,23 @@ impl<'a> VM<'a> {
         }
 
         let mut data = vec![0u8; size];
-        if code_offset < current_call_frame.bytecode.len() {
-            let diff = current_call_frame.bytecode.len().wrapping_sub(code_offset);
+        if code_offset < current_call_frame.bytecode.bytecode.len() {
+            let diff = current_call_frame
+                .bytecode
+                .bytecode
+                .len()
+                .wrapping_sub(code_offset);
             let final_size = size.min(diff);
             let end = code_offset.wrapping_add(final_size);
 
             #[expect(unsafe_code, reason = "bounds checked beforehand")]
             unsafe {
-                data.get_unchecked_mut(..final_size)
-                    .copy_from_slice(current_call_frame.bytecode.get_unchecked(code_offset..end));
+                data.get_unchecked_mut(..final_size).copy_from_slice(
+                    current_call_frame
+                        .bytecode
+                        .bytecode
+                        .get_unchecked(code_offset..end),
+                );
             }
         }
 
@@ -268,7 +277,7 @@ impl<'a> VM<'a> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::GASPRICE)?;
 
-        current_call_frame.stack.push1(gas_price)?;
+        current_call_frame.stack.push(gas_price)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -277,13 +286,14 @@ impl<'a> VM<'a> {
     pub fn op_extcodesize(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
         let address_was_cold = !self.substate.add_accessed_address(address);
-        let account_code_length = self.db.get_account_code(address)?.len().into();
+        // FIXME: a bit wasteful to fetch the whole code just to get the length.
+        let account_code_length = self.db.get_account_code(address)?.bytecode.len().into();
 
         let current_call_frame = &mut self.current_call_frame;
 
         current_call_frame.increase_consumed_gas(gas_cost::extcodesize(address_was_cold)?)?;
 
-        current_call_frame.stack.push1(account_code_length)?;
+        current_call_frame.stack.push(account_code_length)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -319,10 +329,10 @@ impl<'a> VM<'a> {
 
         // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
         if let Some(offset_end) = offset.checked_add(size)
-            && offset_end <= bytecode.len()
+            && offset_end <= bytecode.bytecode.len()
         {
             #[expect(unsafe_code, reason = "bounds checked beforehand")]
-            let slice = unsafe { bytecode.get_unchecked(offset..offset_end) };
+            let slice = unsafe { bytecode.bytecode.get_unchecked(offset..offset_end) };
             self.current_call_frame
                 .memory
                 .store_data(dest_offset, slice)?;
@@ -331,15 +341,15 @@ impl<'a> VM<'a> {
         }
 
         let mut data = vec![0u8; size];
-        if offset < bytecode.len() {
-            let diff = bytecode.len().wrapping_sub(offset);
+        if offset < bytecode.bytecode.len() {
+            let diff = bytecode.bytecode.len().wrapping_sub(offset);
             let final_size = size.min(diff);
             let end = offset.wrapping_add(final_size);
 
             #[expect(unsafe_code, reason = "bounds checked beforehand")]
             unsafe {
                 data.get_unchecked_mut(..final_size)
-                    .copy_from_slice(bytecode.get_unchecked(offset..end));
+                    .copy_from_slice(bytecode.bytecode.get_unchecked(offset..end));
             }
         }
 
@@ -357,7 +367,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push1(U256::from(current_call_frame.sub_return_data.len()))?;
+            .push(U256::from(current_call_frame.sub_return_data.len()))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -422,7 +432,7 @@ impl<'a> VM<'a> {
         }
 
         let hash = u256_from_big_endian_const(account_code_hash);
-        current_call_frame.stack.push1(hash)?;
+        current_call_frame.stack.push(hash)?;
 
         Ok(OpcodeResult::Continue)
     }

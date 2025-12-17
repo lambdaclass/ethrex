@@ -8,19 +8,25 @@ use crate::system_contracts::{
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
+use ethrex_common::types::fee_config::FeeConfig;
+use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
 use ethrex_common::{
     Address, U256,
     types::{
-        AccessList, AccountUpdate, AuthorizationTuple, Block, BlockHeader, EIP1559Transaction,
-        EIP7702Transaction, Fork, GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Receipt,
-        Transaction, TxKind, Withdrawal, requests::Requests,
+        AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, GWEI_TO_WEI,
+        GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind, Withdrawal,
+        requests::Requests,
     },
 };
 use ethrex_levm::EVMConfig;
-use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
+use ethrex_levm::call_frame::Stack;
+use ethrex_levm::constants::{
+    POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST,
+};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
 use ethrex_levm::tracing::LevmCallTracer;
+use ethrex_levm::utils::get_base_fee_per_blob_gas;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
     Environment,
@@ -28,6 +34,8 @@ use ethrex_levm::{
     vm::VM,
 };
 use std::cmp::min;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::Sender;
 
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
@@ -51,14 +59,22 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
+            if cumulative_gas_used + tx.gas_limit() > block.header.gas_limit {
+                return Err(EvmError::Transaction(format!(
+                    "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
+                    block.header.gas_limit,
+                    tx.gas_limit()
+                )));
+            }
+
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
                 tx.tx_type(),
-                matches!(report.result.clone(), TxResult::Success),
+                matches!(report.result, TxResult::Success),
                 cumulative_gas_used,
-                report.logs.clone(),
+                report.logs,
             );
 
             receipts.push(receipt);
@@ -73,26 +89,125 @@ impl LEVM {
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
-            VMType::L2 => Default::default(),
+            VMType::L2(_) => Default::default(),
         };
 
         Ok(BlockExecutionResult { receipts, requests })
+    }
+
+    pub fn execute_block_pipeline(
+        block: &Block,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        merkleizer: Sender<Vec<AccountUpdate>>,
+        queue_length: &AtomicUsize,
+    ) -> Result<BlockExecutionResult, EvmError> {
+        Self::prepare_block(block, db, vm_type)?;
+
+        let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
+
+        let mut receipts = Vec::new();
+        let mut cumulative_gas_used = 0;
+
+        // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
+        // The value itself can be safely changed.
+        let mut tx_since_last_flush = 2;
+
+        for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
+            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+        })? {
+            if cumulative_gas_used + tx.gas_limit() > block.header.gas_limit {
+                return Err(EvmError::Transaction(format!(
+                    "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
+                    block.header.gas_limit,
+                    tx.gas_limit()
+                )));
+            }
+
+            let report = Self::execute_tx_in_block(
+                tx,
+                tx_sender,
+                &block.header,
+                db,
+                vm_type,
+                &mut shared_stack_pool,
+            )?;
+            if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
+                LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
+                tx_since_last_flush = 0;
+            } else {
+                tx_since_last_flush += 1;
+            }
+
+            cumulative_gas_used += report.gas_used;
+            let receipt = Receipt::new(
+                tx.tx_type(),
+                matches!(report.result, TxResult::Success),
+                cumulative_gas_used,
+                report.logs,
+            );
+
+            receipts.push(receipt);
+        }
+        if queue_length.load(Ordering::Relaxed) == 0 {
+            LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
+        }
+
+        for (address, increment) in block
+            .body
+            .withdrawals
+            .iter()
+            .flatten()
+            .filter(|withdrawal| withdrawal.amount > 0)
+            .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
+        {
+            let account = db
+                .get_account_mut(address)
+                .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
+
+            account.info.balance += increment.into();
+        }
+
+        // TODO: I don't like deciding the behavior based on the VMType here.
+        // TODO2: Revise this, apparently extract_all_requests_levm is not called
+        // in L2 execution, but its implementation behaves differently based on this.
+        let requests = match vm_type {
+            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
+            VMType::L2(_) => Default::default(),
+        };
+        LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
+
+        Ok(BlockExecutionResult { receipts, requests })
+    }
+
+    fn send_state_transitions_tx(
+        merkleizer: &Sender<Vec<AccountUpdate>>,
+        db: &mut GeneralizedDatabase,
+        queue_length: &AtomicUsize,
+    ) -> Result<(), EvmError> {
+        let transitions = LEVM::get_state_transitions_tx(db)?;
+        merkleizer
+            .send(transitions)
+            .map_err(|e| EvmError::Custom(format!("send failed: {e}")))?;
+        queue_length.fetch_add(1, Ordering::Relaxed);
+        Ok(())
     }
 
     fn setup_env(
         tx: &Transaction,
         tx_sender: Address,
         block_header: &BlockHeader,
-        db: &mut GeneralizedDatabase,
+        db: &GeneralizedDatabase,
+        vm_type: VMType,
     ) -> Result<Environment, EvmError> {
         let chain_config = db.store.get_chain_config()?;
-        let gas_price: U256 = tx
-            .effective_gas_price(block_header.base_fee_per_gas)
-            .ok_or(VMError::TxValidation(
-                TxValidationError::InsufficientMaxFeePerGas,
-            ))?
-            .into();
+        let gas_price: U256 = calculate_gas_price_for_tx(
+            tx,
+            block_header.base_fee_per_gas.unwrap_or_default(),
+            &vm_type,
+        )?;
 
+        let block_excess_blob_gas = block_header.excess_blob_gas.map(U256::from);
         let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
         let env = Environment {
             origin: tx_sender,
@@ -104,8 +219,9 @@ impl LEVM {
             prev_randao: Some(block_header.prev_randao),
             chain_id: chain_config.chain_id.into(),
             base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
+            base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
             gas_price,
-            block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
+            block_excess_blob_gas,
             block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
             tx_blob_hashes: tx.blob_versioned_hashes(),
             tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
@@ -115,6 +231,7 @@ impl LEVM {
             block_gas_limit: block_header.gas_limit,
             difficulty: block_header.difficulty,
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
+            fee_token: tx.fee_token(),
         };
 
         Ok(env)
@@ -123,17 +240,38 @@ impl LEVM {
     pub fn execute_tx(
         // The transaction to execute.
         tx: &Transaction,
-        // The transactions recovered address
+        // The transaction's recovered address
         tx_sender: Address,
         // The block header for the current block.
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db)?;
+        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         vm.execute().map_err(VMError::into)
+    }
+
+    // Like execute_tx but allows reusing the stack pool
+    fn execute_tx_in_block(
+        // The transaction to execute.
+        tx: &Transaction,
+        // The transaction's recovered address
+        tx_sender: Address,
+        // The block header for the current block.
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        stack_pool: &mut Vec<Stack>,
+    ) -> Result<ExecutionReport, EvmError> {
+        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
+
+        std::mem::swap(&mut vm.stack_pool, stack_pool);
+        let result = vm.execute().map_err(VMError::into);
+        std::mem::swap(&mut vm.stack_pool, stack_pool);
+        result
     }
 
     pub fn undo_last_tx(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
@@ -168,6 +306,12 @@ impl LEVM {
         Ok(db.get_state_transitions()?)
     }
 
+    pub fn get_state_transitions_tx(
+        db: &mut GeneralizedDatabase,
+    ) -> Result<Vec<AccountUpdate>, EvmError> {
+        Ok(db.get_state_transitions_tx()?)
+    }
+
     pub fn process_withdrawals(
         db: &mut GeneralizedDatabase,
         withdrawals: &[Withdrawal],
@@ -193,7 +337,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<(), EvmError> {
-        if let VMType::L2 = vm_type {
+        if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
                 "beacon_root_contract_call should not be called for L2 VM".to_string(),
             ));
@@ -219,7 +363,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<(), EvmError> {
-        if let VMType::L2 = vm_type {
+        if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
                 "process_block_hash_history should not be called for L2 VM".to_string(),
             ));
@@ -240,7 +384,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
-        if let VMType::L2 = vm_type {
+        if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
                 "read_withdrawal_requests should not be called for L2 VM".to_string(),
             ));
@@ -269,7 +413,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
-        if let VMType::L2 = vm_type {
+        if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
                 "dequeue_consolidation_requests should not be called for L2 VM".to_string(),
             ));
@@ -309,7 +453,7 @@ impl LEVM {
 
         // Execute the tx again, now with the created access list.
         tx.access_list = vm.substate.make_access_list();
-        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
+        let mut vm = vm_from_generic(&tx, env, db, vm_type)?;
 
         let report = vm.stateless_execute()?;
 
@@ -332,7 +476,7 @@ impl LEVM {
         let fork = chain_config.fork(block_header.timestamp);
 
         // TODO: I don't like deciding the behavior based on the VMType here.
-        if let VMType::L2 = vm_type {
+        if let VMType::L2(_) = vm_type {
             return Ok(());
         }
 
@@ -389,7 +533,7 @@ pub fn generic_system_contract_levm(
     if PRAGUE_SYSTEM_CONTRACTS
         .iter()
         .any(|contract| contract.address == contract_address)
-        && db.get_account_code(contract_address)?.is_empty()
+        && db.get_account_code(contract_address)?.bytecode.is_empty()
     {
         return Err(EvmError::SystemContractCallFailed(format!(
             "System contract: {contract_address} has no code after deployment"
@@ -434,7 +578,7 @@ pub fn extract_all_requests_levm(
     header: &BlockHeader,
     vm_type: VMType,
 ) -> Result<Vec<Requests>, EvmError> {
-    if let VMType::L2 = vm_type {
+    if let VMType::L2(_) = vm_type {
         return Err(EvmError::InvalidEVM(
             "extract_all_requests_levm should not be called for L2 VM".to_string(),
         ));
@@ -464,7 +608,7 @@ pub fn extract_all_requests_levm(
 
 /// Calculating gas_price according to EIP-1559 rules
 /// See https://github.com/ethereum/go-ethereum/blob/7ee9a6e89f59cee21b5852f5f6ffa2bcfc05a25f/internal/ethapi/transaction_args.go#L430
-pub fn calculate_gas_price(tx: &GenericTransaction, basefee: u64) -> U256 {
+pub fn calculate_gas_price_for_generic(tx: &GenericTransaction, basefee: u64) -> U256 {
     if tx.gas_price != 0 {
         // Legacy gas field was specified, use it
         tx.gas_price.into()
@@ -476,6 +620,35 @@ pub fn calculate_gas_price(tx: &GenericTransaction, basefee: u64) -> U256 {
         )
         .into()
     }
+}
+
+pub fn calculate_gas_price_for_tx(
+    tx: &Transaction,
+    mut fee_per_gas: u64,
+    vm_type: &VMType,
+) -> Result<U256, VMError> {
+    let Some(max_priority_fee) = tx.max_priority_fee() else {
+        // Legacy transaction
+        return Ok(tx.gas_price());
+    };
+
+    let max_fee_per_gas = tx.max_fee_per_gas().ok_or(VMError::TxValidation(
+        TxValidationError::InsufficientMaxFeePerGas,
+    ))?;
+
+    if let VMType::L2(fee_config) = vm_type
+        && let Some(operator_fee_config) = &fee_config.operator_fee_config
+    {
+        fee_per_gas += operator_fee_config.operator_fee_per_gas;
+    }
+
+    if fee_per_gas > max_fee_per_gas {
+        return Err(VMError::TxValidation(
+            TxValidationError::InsufficientMaxFeePerGas,
+        ));
+    }
+
+    Ok(min(max_priority_fee + fee_per_gas, max_fee_per_gas).into())
 }
 
 /// When basefee tracking is disabled  (ie. env.disable_base_fee = true; env.disable_block_gas_limit = true;)
@@ -493,17 +666,36 @@ fn adjust_disabled_base_fee(env: &mut Environment) {
     }
 }
 
+/// When l2 fees are disabled (ie. env.gas_price = 0), set fee configs to None to avoid breaking failing fee deductions
+fn adjust_disabled_l2_fees(env: &Environment, vm_type: VMType) -> VMType {
+    if env.gas_price == U256::zero()
+        && let VMType::L2(fee_config) = vm_type
+    {
+        // Don't deduct fees if no gas price is set
+        return VMType::L2(FeeConfig {
+            operator_fee_config: None,
+            l1_fee_config: None,
+            ..fee_config
+        });
+    }
+    vm_type
+}
+
 fn env_from_generic(
     tx: &GenericTransaction,
     header: &BlockHeader,
     db: &GeneralizedDatabase,
 ) -> Result<Environment, VMError> {
     let chain_config = db.store.get_chain_config()?;
-    let gas_price = calculate_gas_price(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
+    let gas_price =
+        calculate_gas_price_for_generic(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
+    let block_excess_blob_gas = header.excess_blob_gas.map(U256::from);
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
     Ok(Environment {
         origin: tx.from.0.into(),
-        gas_limit: tx.gas.unwrap_or(header.gas_limit), // Ensure tx doesn't fail due to gas limit
+        gas_limit: tx
+            .gas
+            .unwrap_or(get_max_allowed_gas_limit(header.gas_limit, config.fork)), // Ensure tx doesn't fail due to gas limit
         config,
         block_number: header.number.into(),
         coinbase: header.coinbase,
@@ -511,8 +703,9 @@ fn env_from_generic(
         prev_randao: Some(header.prev_randao),
         chain_id: chain_config.chain_id.into(),
         base_fee_per_gas: header.base_fee_per_gas.unwrap_or_default().into(),
+        base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
         gas_price,
-        block_excess_blob_gas: header.excess_blob_gas.map(U256::from),
+        block_excess_blob_gas,
         block_blob_gas_used: header.blob_gas_used.map(U256::from),
         tx_blob_hashes: tx.blob_versioned_hashes.clone(),
         tx_max_priority_fee_per_gas: tx.max_priority_fee_per_gas.map(U256::from),
@@ -522,6 +715,7 @@ fn env_from_generic(
         block_gas_limit: header.gas_limit,
         difficulty: header.difficulty,
         is_privileged: false,
+        fee_token: tx.fee_token,
     })
 }
 
@@ -564,5 +758,15 @@ fn vm_from_generic<'a>(
             ..Default::default()
         }),
     };
+
+    let vm_type = adjust_disabled_l2_fees(&env, vm_type);
     VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type)
+}
+
+pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {
+    if fork >= Fork::Osaka {
+        POST_OSAKA_GAS_LIMIT_CAP
+    } else {
+        block_gas_limit
+    }
 }

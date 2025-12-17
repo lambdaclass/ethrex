@@ -21,6 +21,7 @@ impl<'a> VM<'a> {
 
         let value = if let Some(slice) = call_frame
             .bytecode
+            .bytecode
             .get(call_frame.pc..call_frame.pc.wrapping_add(N))
         {
             u256_from_big_endian_const(
@@ -34,7 +35,7 @@ impl<'a> VM<'a> {
             U256::zero()
         };
 
-        call_frame.stack.push1(value)?;
+        call_frame.stack.push(value)?;
 
         // Advance the PC by the number of bytes in this instruction's payload.
         call_frame.pc = call_frame.pc.wrapping_add(N);

@@ -30,39 +30,11 @@ pub fn parse_and_execute(
 ) -> datatest_stable::Result<()> {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let tests = parse_tests(path);
-    //Test with the Fusaka tests that should pass. TODO: Once we've implemented all the Fusaka EIPs this should be removed
-    //EIPs should be added as strings in the format 'eip-XXXX'
-    let fusaka_eips_to_test: Vec<&str> = vec![
-        "eip-7594", "eip-7883", "eip-7918", "eip-7934", "eip-7892", "eip-7939", "eip-7951",
-        "eip-7594", "eip-7825",
-    ];
-
-    //Hashes of any other tests to run, that don't correspond to an especific EIP (for examples, some integration tests)
-    //We should really remove this once we're finished with implementing Fusaka, but it's a good-enough workaround to run specific tests for now
-    let hashes_of_fusaka_tests_to_run: Vec<&str> = vec![
-        "0xf0672af9718013a1f396a9268e91e220ff09e7fa97480844e31da500f8ef291f", //All opcodes test
-    ];
-
-    // Names of tests to run, to run entire specific .json files. Checked against the TestUnit URl
-    let specific_fusaka_tests_to_run: Vec<&str> = vec![
-        "/tests/frontier/precompiles/test_precompiles.py",
-        "/tests/frontier/precompiles/test_precompile_absence.py",
-    ];
 
     let mut failures = Vec::new();
 
     for (test_key, test) in tests {
-        let test_eip = test.info.clone().reference_spec.unwrap_or_default();
-
         let should_skip_test = test.network < Fork::Merge
-            || (test.network > Fork::Prague
-                && (!fusaka_eips_to_test.iter().any(|eip| test_eip.contains(eip))
-                    && !hashes_of_fusaka_tests_to_run
-                        .iter()
-                        .any(|hash| *hash == test.info.hash.clone().unwrap())
-                    && !specific_fusaka_tests_to_run
-                        .iter()
-                        .any(|name| test.info.url.clone().unwrap().contains(*name))))
             || skipped_tests
                 .map(|skipped| skipped.iter().any(|s| test_key.contains(s)))
                 .unwrap_or(false);
@@ -140,7 +112,7 @@ async fn run(
         let hash = block.hash();
 
         // Attempt to add the block as the head of the chain
-        let chain_result = blockchain.add_block(block).await;
+        let chain_result = blockchain.add_block(block);
 
         match chain_result {
             Err(error) => {
@@ -224,6 +196,11 @@ fn exception_is_expected(
                     BlockExpectedException::SystemContractCallFailed
                 ),
                 ChainError::EvmError(EvmError::SystemContractCallFailed(_))
+            ) | (
+                BlockChainExpectedException::BlockException(
+                    BlockExpectedException::RlpBlockLimitExceeded
+                ),
+                ChainError::InvalidBlock(InvalidBlockError::MaximumRlpSizeExceeded(_, _))
             ) | (
                 BlockChainExpectedException::Other,
                 _ //TODO: Decide whether to support more specific errors.
@@ -313,7 +290,7 @@ fn parse_json_file(path: &Path) -> HashMap<String, TestUnit> {
 
 /// Creats a new in-memory store and adds the genesis state
 pub async fn build_store_for_test(test: &TestUnit) -> Store {
-    let store =
+    let mut store =
         Store::new("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
     let genesis = test.get_genesis();
     store
@@ -337,6 +314,7 @@ fn check_prestate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
         test_state_root, db_block_header.state_root,
         "Mismatched genesis state root for database, test: {test_key}"
     );
+    assert!(db.has_state_root(test_state_root).unwrap());
 }
 
 /// Checks that all accounts in the post-state are present and have the correct values in the DB
@@ -380,7 +358,6 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
             for (key, value) in expected_account.storage {
                 let db_storage_value = db
                     .get_storage_at(latest_block_number, *addr, key)
-                    .await
                     .expect("Failed to read from DB")
                     .unwrap_or_else(|| {
                         panic!("Storage missing for address {addr} key {key} in DB test:{test_key}")
@@ -422,8 +399,10 @@ async fn re_run_stateless(
     if test_should_fail && witness.is_err() {
         // We can't generate witness for a test that should fail.
         return Ok(());
-    } else if !test_should_fail && witness.is_err() {
-        return Err("Failed to create witness for a test that should not fail".into());
+    } else if !test_should_fail && let Err(err) = witness {
+        return Err(format!(
+            "Failed to create witness for a test that should not fail: {err}"
+        ));
     }
     // At this point witness is guaranteed to be Ok
     let execution_witness = witness.unwrap();

@@ -103,6 +103,7 @@ impl Mempool {
     pub fn add_transaction(
         &self,
         hash: H256,
+        sender: Address,
         transaction: MempoolTransaction,
     ) -> Result<(), StoreError> {
         let mut inner = self.write()?;
@@ -119,7 +120,7 @@ impl Mempool {
         inner.txs_order.push_back(hash);
         inner
             .txs_by_sender_nonce
-            .insert((transaction.sender(), transaction.nonce()), hash);
+            .insert((sender, transaction.nonce()), hash);
         inner.transaction_pool.insert(hash, transaction);
         inner.broadcast_pool.insert(hash);
 
@@ -494,12 +495,12 @@ mod tests {
     const MEMPOOL_MAX_SIZE_TEST: usize = 10_000;
 
     async fn setup_storage(config: ChainConfig, header: BlockHeader) -> Result<Store, StoreError> {
-        let store = Store::new("test", EngineType::InMemory)?;
+        let mut store = Store::new("test", EngineType::InMemory)?;
         let block_number = header.number;
         let block_hash = header.hash();
         store.add_block_header(block_hash, header).await?;
         store
-            .forkchoice_update(None, block_number, block_hash, None, None)
+            .forkchoice_update(vec![], block_number, block_hash, None, None)
             .await?;
         store.set_chain_config(&config).await?;
         Ok(store)
@@ -852,9 +853,11 @@ mod tests {
         let filter =
             |tx: &Transaction| -> bool { matches!(tx, Transaction::EIP4844Transaction(_)) };
         mempool
-            .add_transaction(blob_tx_hash, blob_tx.clone())
+            .add_transaction(blob_tx_hash, blob_tx_sender, blob_tx.clone())
             .unwrap();
-        mempool.add_transaction(plain_tx_hash, plain_tx).unwrap();
+        mempool
+            .add_transaction(plain_tx_hash, plain_tx_sender, plain_tx)
+            .unwrap();
         let txs = mempool.filter_transactions_with_filter_fn(&filter).unwrap();
         assert_eq!(txs, HashMap::from([(blob_tx.sender(), vec![blob_tx])]));
     }

@@ -1,5 +1,5 @@
 use crate::rlpx::{
-    error::RLPxError,
+    error::PeerConnectionError,
     eth::status::StatusMessage,
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
@@ -76,18 +76,21 @@ impl RLPxMessage for StatusMessage69 {
 }
 
 impl StatusMessage69 {
-    pub async fn new(storage: &Store) -> Result<Self, RLPxError> {
-        let chain_config = storage.get_chain_config()?;
+    pub async fn new(storage: &Store) -> Result<Self, PeerConnectionError> {
+        let chain_config = storage.get_chain_config();
         let network_id = chain_config.chain_id;
 
         // These blocks must always be available
         let genesis_header = storage
             .get_block_header(0)?
-            .ok_or(RLPxError::NotFound("Genesis Block".to_string()))?;
+            .ok_or(PeerConnectionError::NotFound("Genesis Block".to_string()))?;
         let lastest_block = storage.get_latest_block_number().await?;
-        let block_header = storage
-            .get_block_header(lastest_block)?
-            .ok_or(RLPxError::NotFound(format!("Block {lastest_block}")))?;
+        let block_header =
+            storage
+                .get_block_header(lastest_block)?
+                .ok_or(PeerConnectionError::NotFound(format!(
+                    "Block {lastest_block}"
+                )))?;
 
         let genesis = genesis_header.hash();
         let lastest_block_hash = block_header.hash();

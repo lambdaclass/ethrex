@@ -25,6 +25,8 @@ use std::{
 };
 use tracing::Level;
 
+pub const DEFAULT_PROOF_COORDINATOR_QPL_TOOL_PATH: &str = "./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool";
+
 #[derive(Parser, Debug)]
 #[group(id = "L2Options")]
 pub struct Options {
@@ -84,7 +86,7 @@ pub struct SequencerOptions {
         value_name = "BOOLEAN",
         env = "ETHREX_L2_VALIDIUM",
         help_heading = "L2 options",
-        long_help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1."
+        long_help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish blobs to the L1."
     )]
     pub validium: bool,
     #[clap(
@@ -160,6 +162,8 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .block_producer_opts
                     .coinbase_address
                     .ok_or(SequencerOptionsError::NoCoinbaseAddress)?,
+                base_fee_vault_address: opts.block_producer_opts.base_fee_vault_address,
+                operator_fee_vault_address: opts.block_producer_opts.operator_fee_vault_address,
                 elasticity_multiplier: opts.block_producer_opts.elasticity_multiplier,
                 block_gas_limit: opts.block_producer_opts.block_gas_limit,
             },
@@ -185,6 +189,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 maximum_allowed_max_fee_per_blob_gas: opts
                     .eth_opts
                     .maximum_allowed_max_fee_per_blob_gas,
+                osaka_activation_time: opts.eth_opts.osaka_activation_time,
             },
             l1_watcher: L1WatcherConfig {
                 bridge_address: opts
@@ -194,6 +199,10 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 check_interval_ms: opts.watcher_opts.watch_interval_ms,
                 max_block_step: opts.watcher_opts.max_block_step.into(),
                 watcher_block_delay: opts.watcher_opts.watcher_block_delay,
+                l1_blob_base_fee_update_interval: opts.watcher_opts.l1_fee_update_interval_ms,
+                l2_rpc_urls: opts.watcher_opts.l2_rpc_urls.unwrap_or_default(),
+                l2_chain_ids: opts.watcher_opts.l2_chain_ids.unwrap_or_default(),
+                router_address: opts.watcher_opts.router_address.unwrap_or_default(),
             },
             proof_coordinator: ProofCoordinatorConfig {
                 listen_ip: opts.proof_coordinator_opts.listen_ip,
@@ -229,7 +238,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     &opts.aligned_opts.aligned_network.unwrap_or_default(),
                 ),
                 fee_estimate: opts.aligned_opts.fee_estimate,
-                aligned_sp1_elf_path: opts.aligned_opts.aligned_sp1_elf_path.unwrap_or_default(),
             },
             monitor: MonitorConfig {
                 enabled: !opts.no_monitor,
@@ -244,6 +252,38 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
     }
 }
 
+impl Options {
+    pub fn populate_with_defaults(&mut self) {
+        let defaults = Options::default();
+        self.sponsorable_addresses_file_path = self
+            .sponsorable_addresses_file_path
+            .clone()
+            .or(defaults.sponsorable_addresses_file_path.clone());
+        self.sequencer_opts
+            .populate_with_defaults(&defaults.sequencer_opts);
+    }
+}
+
+impl SequencerOptions {
+    pub fn populate_with_defaults(&mut self, defaults: &SequencerOptions) {
+        self.eth_opts.populate_with_defaults(&defaults.eth_opts);
+        self.watcher_opts
+            .populate_with_defaults(&defaults.watcher_opts);
+        self.block_producer_opts
+            .populate_with_defaults(&defaults.block_producer_opts);
+        self.committer_opts
+            .populate_with_defaults(&defaults.committer_opts);
+        self.proof_coordinator_opts
+            .populate_with_defaults(&defaults.proof_coordinator_opts);
+        self.based_opts.populate_with_defaults(&defaults.based_opts);
+        self.aligned_opts
+            .populate_with_defaults(&defaults.aligned_opts);
+        self.monitor_opts
+            .populate_with_defaults(&defaults.monitor_opts);
+        // admin_opts contains only non-optional fields.
+    }
+}
+
 #[derive(Parser, Debug)]
 pub struct EthOptions {
     #[arg(
@@ -254,7 +294,7 @@ pub struct EthOptions {
         help_heading = "Eth options",
         num_args = 1..
     )]
-    pub rpc_url: Vec<String>,
+    pub rpc_url: Vec<Url>,
     #[arg(
         long = "eth.maximum-allowed-max-fee-per-gas",
         default_value = "10000000000",
@@ -303,18 +343,36 @@ pub struct EthOptions {
         help_heading = "Eth options"
     )]
     pub max_retry_delay: u64,
+    #[clap(
+        long,
+        value_name = "UINT64",
+        env = "ETHREX_OSAKA_ACTIVATION_TIME",
+        help = "Block timestamp at which the Osaka fork is activated on L1. If not set, it will assume Osaka is already active."
+    )]
+    pub osaka_activation_time: Option<u64>,
 }
 
 impl Default for EthOptions {
     fn default() -> Self {
         Self {
-            rpc_url: vec!["http://localhost:8545".to_string()],
+            rpc_url: vec![
+                Url::parse("http://localhost:8545").expect("Unreachable error. URL is hardcoded"),
+            ],
             maximum_allowed_max_fee_per_gas: 10000000000,
             maximum_allowed_max_fee_per_blob_gas: 10000000000,
             max_number_of_retries: MAX_NUMBER_OF_RETRIES,
             backoff_factor: BACKOFF_FACTOR,
             min_retry_delay: MIN_RETRY_DELAY,
             max_retry_delay: MAX_RETRY_DELAY,
+            osaka_activation_time: None,
+        }
+    }
+}
+
+impl EthOptions {
+    fn populate_with_defaults(&mut self, defaults: &Self) {
+        if self.rpc_url.is_empty() {
+            self.rpc_url = defaults.rpc_url.clone();
         }
     }
 }
@@ -355,6 +413,35 @@ pub struct WatcherOptions {
         help_heading = "L1 Watcher options"
     )]
     pub watcher_block_delay: u64,
+    #[arg(
+        long = "watcher.l1-fee-update-interval-ms",
+        value_name = "ADDRESS",
+        default_value = "60000",
+        env = "ETHREX_WATCHER_L1_FEE_UPDATE_INTERVAL_MS",
+        help_heading = "Block producer options"
+    )]
+    pub l1_fee_update_interval_ms: u64,
+    #[arg(
+        long = "l1.router-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_WATCHER_ROUTER_ADDRESS",
+        help_heading = "L1 Watcher options"
+    )]
+    pub router_address: Option<Address>,
+    #[arg(
+        long = "watcher.l2-rpcs",
+        num_args = 1..,
+        env = "ETHREX_WATCHER_L2_RPCS",
+        help_heading = "L1 Watcher options"
+    )]
+    pub l2_rpc_urls: Option<Vec<Url>>,
+    #[arg(
+        long = "watcher.l2-chain-ids",
+        num_args = 1..,
+        env = "ETHREX_WATCHER_L2_CHAIN_IDS",
+        help_heading = "L1 Watcher options"
+    )]
+    pub l2_chain_ids: Option<Vec<u64>>,
 }
 
 impl Default for WatcherOptions {
@@ -364,7 +451,20 @@ impl Default for WatcherOptions {
             watch_interval_ms: 1000,
             max_block_step: 5000,
             watcher_block_delay: 0,
+            l1_fee_update_interval_ms: 60000,
+            router_address: None,
+            l2_rpc_urls: None,
+            l2_chain_ids: None,
         }
+    }
+}
+
+impl WatcherOptions {
+    fn populate_with_defaults(&mut self, defaults: &Self) {
+        self.bridge_address = self.bridge_address.or(defaults.bridge_address);
+        self.router_address = self.router_address.or(defaults.router_address);
+        self.l2_rpc_urls = self.l2_rpc_urls.clone().or(defaults.l2_rpc_urls.clone());
+        self.l2_chain_ids = self.l2_chain_ids.clone().or(defaults.l2_chain_ids.clone());
     }
 }
 
@@ -387,6 +487,37 @@ pub struct BlockProducerOptions {
         required_unless_present = "dev"
     )]
     pub coinbase_address: Option<Address>,
+    #[arg(
+        long = "block-producer.base-fee-vault-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS",
+        help_heading = "Block producer options"
+    )]
+    pub base_fee_vault_address: Option<Address>,
+    #[arg(
+        long = "block-producer.operator-fee-vault-address",
+        value_name = "ADDRESS",
+        requires = "operator_fee_per_gas",
+        env = "ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS",
+        help_heading = "Block producer options"
+    )]
+    pub operator_fee_vault_address: Option<Address>,
+    #[arg(
+        long = "block-producer.operator-fee-per-gas",
+        value_name = "UINT64",
+        env = "ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS",
+        requires = "operator_fee_vault_address",
+        help_heading = "Block producer options",
+        help = "Fee that the operator will receive for each unit of gas consumed in a block."
+    )]
+    pub operator_fee_per_gas: Option<u64>,
+    #[arg(
+        long = "block-producer.l1-fee-vault-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS",
+        help_heading = "Block producer options"
+    )]
+    pub l1_fee_vault_address: Option<Address>,
     #[arg(
         long,
         default_value = "2",
@@ -415,9 +546,19 @@ impl Default for BlockProducerOptions {
                     .parse()
                     .unwrap(),
             ),
+            base_fee_vault_address: None,
+            operator_fee_vault_address: None,
+            operator_fee_per_gas: None,
+            l1_fee_vault_address: None,
             elasticity_multiplier: 2,
             block_gas_limit: DEFAULT_BUILDER_GAS_CEIL,
         }
+    }
+}
+
+impl BlockProducerOptions {
+    fn populate_with_defaults(&mut self, defaults: &Self) {
+        self.coinbase_address = self.coinbase_address.or(defaults.coinbase_address);
     }
 }
 
@@ -517,6 +658,30 @@ impl Default for CommitterOptions {
     }
 }
 
+impl CommitterOptions {
+    fn populate_with_defaults(&mut self, defaults: &Self) {
+        if self.committer_remote_signer_url.is_none() {
+            self.committer_l1_private_key = self
+                .committer_l1_private_key
+                .or(defaults.committer_l1_private_key);
+        }
+        self.committer_remote_signer_url = self
+            .committer_remote_signer_url
+            .clone()
+            .or(defaults.committer_remote_signer_url.clone());
+        self.committer_remote_signer_public_key = self
+            .committer_remote_signer_public_key
+            .or(defaults.committer_remote_signer_public_key);
+        self.on_chain_proposer_address = self
+            .on_chain_proposer_address
+            .or(defaults.on_chain_proposer_address);
+        self.batch_gas_limit = self.batch_gas_limit.or(defaults.batch_gas_limit);
+        self.first_wake_up_time_ms = self
+            .first_wake_up_time_ms
+            .or(defaults.first_wake_up_time_ms);
+    }
+}
+
 #[derive(Parser, Debug)]
 pub struct ProofCoordinatorOptions {
     #[arg(
@@ -613,8 +778,34 @@ impl Default for ProofCoordinatorOptions {
             listen_port: 3900,
             proof_send_interval_ms: 5000,
             proof_coordinator_tdx_private_key: None,
-            proof_coordinator_qpl_tool_path: None,
+            proof_coordinator_qpl_tool_path: Some(
+                DEFAULT_PROOF_COORDINATOR_QPL_TOOL_PATH.to_string(),
+            ),
         }
+    }
+}
+
+impl ProofCoordinatorOptions {
+    fn populate_with_defaults(&mut self, defaults: &Self) {
+        if self.remote_signer_url.is_none() {
+            self.proof_coordinator_l1_private_key = self
+                .proof_coordinator_l1_private_key
+                .or(defaults.proof_coordinator_l1_private_key);
+        }
+        self.proof_coordinator_tdx_private_key = self
+            .proof_coordinator_tdx_private_key
+            .or(defaults.proof_coordinator_tdx_private_key);
+        self.proof_coordinator_qpl_tool_path = self
+            .proof_coordinator_qpl_tool_path
+            .clone()
+            .or(defaults.proof_coordinator_qpl_tool_path.clone());
+        self.remote_signer_url = self
+            .remote_signer_url
+            .clone()
+            .or(defaults.remote_signer_url.clone());
+        self.remote_signer_public_key = self
+            .remote_signer_public_key
+            .or(defaults.remote_signer_public_key);
     }
 }
 #[derive(Parser, Debug, Clone)]
@@ -666,15 +857,6 @@ pub struct AlignedOptions {
         help_heading = "Aligned options"
     )]
     pub fee_estimate: String,
-    #[arg(
-        long,
-        value_name = "ETHREX_ALIGNED_SP1_ELF_PATH",
-        required_if_eq("aligned", "true"),
-        env = "ETHREX_ALIGNED_SP1_ELF_PATH",
-        help_heading = "Aligned options",
-        help = "Path to the SP1 elf. This is used for proof verification."
-    )]
-    pub aligned_sp1_elf_path: Option<String>,
 }
 
 impl Default for AlignedOptions {
@@ -685,8 +867,17 @@ impl Default for AlignedOptions {
             beacon_url: None,
             aligned_network: Some("devnet".to_string()),
             fee_estimate: "instant".to_string(),
-            aligned_sp1_elf_path: None,
         }
+    }
+}
+
+impl AlignedOptions {
+    fn populate_with_defaults(&mut self, defaults: &Self) {
+        self.beacon_url = self.beacon_url.clone().or(defaults.beacon_url.clone());
+        self.aligned_network = self
+            .aligned_network
+            .clone()
+            .or(defaults.aligned_network.clone());
     }
 }
 
@@ -696,6 +887,14 @@ pub struct BasedOptions {
     pub state_updater_opts: StateUpdaterOptions,
     #[clap(flatten)]
     pub block_fetcher: BlockFetcherOptions,
+}
+
+impl BasedOptions {
+    fn populate_with_defaults(&mut self, defaults: &Self) {
+        self.state_updater_opts
+            .populate_with_defaults(&defaults.state_updater_opts);
+        // block fetcher contains only non-optional fields.
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -724,6 +923,12 @@ impl Default for StateUpdaterOptions {
             sequencer_registry: None,
             check_interval_ms: 1000,
         }
+    }
+}
+
+impl StateUpdaterOptions {
+    fn populate_with_defaults(&mut self, defaults: &Self) {
+        self.sequencer_registry = self.sequencer_registry.or(defaults.sequencer_registry);
     }
 }
 
@@ -771,6 +976,12 @@ impl Default for MonitorOptions {
             tick_rate: 1000,
             batch_widget_height: None,
         }
+    }
+}
+
+impl MonitorOptions {
+    fn populate_with_defaults(&mut self, defaults: &Self) {
+        self.batch_widget_height = self.batch_widget_height.or(defaults.batch_widget_height);
     }
 }
 
@@ -842,15 +1053,6 @@ pub struct ProverClientOptions {
         help_heading = "Prover client options"
     )]
     pub log_level: Level,
-    #[arg(
-        long,
-        default_value_t = false,
-        value_name = "BOOLEAN",
-        env = "PROVER_CLIENT_ALIGNED",
-        help = "Activate aligned proving system",
-        help_heading = "Prover client options"
-    )]
-    pub aligned: bool,
     #[cfg(all(feature = "sp1", feature = "gpu"))]
     #[arg(
         long,
@@ -868,7 +1070,6 @@ impl From<ProverClientOptions> for ProverConfig {
             backend: config.backend,
             proof_coordinators: config.proof_coordinator_endpoints,
             proving_time_ms: config.proving_time_ms,
-            aligned_mode: config.aligned,
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: config.sp1_server,
         }
@@ -883,7 +1084,6 @@ impl Default for ProverClientOptions {
             ],
             proving_time_ms: 5000,
             log_level: Level::INFO,
-            aligned: false,
             backend: Backend::Exec,
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: None,

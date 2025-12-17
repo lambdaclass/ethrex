@@ -1,5 +1,5 @@
 use crate::{
-    cli::Options,
+    cli::{LogColor, Options},
     utils::{
         display_chain_initialization, get_client_version, init_datadir, parse_socket_addr,
         read_jwtsecret_file, read_node_config_file,
@@ -11,17 +11,18 @@ use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
+use ethrex_metrics::rpc::initialize_rpc_metrics;
+use ethrex_p2p::rlpx::initiator::RLPxInitiator;
 use ethrex_p2p::{
-    discv4::peer_table::{PeerTable, PeerTableHandle},
+    discv4::peer_table::PeerTable,
     network::P2PContext,
     peer_handler::PeerHandler,
-    rlpx::l2::l2_connection::P2PBasedContext,
     sync::SyncMode,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
     utils::public_key_from_signing_key,
 };
-use ethrex_storage::{EngineType, Store};
+use ethrex_storage::{EngineType, Store, error::StoreError};
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
@@ -30,14 +31,13 @@ use std::env;
 use std::{
     fs,
     io::IsTerminal,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{debug, error, info, warn};
+use tracing::{Level, debug, error, info, warn};
 use tracing_subscriber::{
     EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt, reload,
 };
@@ -55,20 +55,23 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
 
     let (filter, filter_handle) = reload::Layer::new(log_filter);
 
-    let mut layer = fmt::layer();
-
-    if !std::io::stdout().is_terminal() {
-        layer = layer.with_ansi(false);
-    }
-
-    let fmt_layer = layer.with_filter(filter);
-
-    let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = if opts.metrics_enabled {
-        let profiling_layer = FunctionProfilingLayer::default();
-        Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
-    } else {
-        Box::new(Registry::default().with(fmt_layer))
+    let stdout_is_tty = std::io::stdout().is_terminal();
+    let use_color = match opts.log_color {
+        LogColor::Always => true,
+        LogColor::Never => false,
+        LogColor::Auto => stdout_is_tty,
     };
+
+    let include_target = matches!(opts.log_level, Level::DEBUG | Level::TRACE);
+
+    let fmt_layer = fmt::layer()
+        .with_target(include_target)
+        .with_ansi(use_color)
+        .with_filter(filter);
+
+    let profiling_layer = opts.metrics_enabled.then_some(FunctionProfilingLayer);
+
+    let subscriber = Registry::default().with(fmt_layer).with(profiling_layer);
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
@@ -87,40 +90,35 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
     );
 
     initialize_block_processing_profile();
+    initialize_rpc_metrics();
 
     tracker.spawn(metrics_api);
 }
 
 /// Opens a new or pre-existing Store and loads the initial state provided by the network
-pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Store {
-    let store = open_store(datadir.as_ref());
-    store
-        .add_initial_state(genesis)
-        .await
-        .expect("Failed to create genesis block");
-    store
+pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Result<Store, StoreError> {
+    let mut store = open_store(datadir.as_ref())?;
+    store.add_initial_state(genesis).await?;
+    Ok(store)
 }
 
 /// Initializes a pre-existing Store
-pub async fn load_store(datadir: &Path) -> Store {
-    let store = open_store(datadir);
-    store
-        .load_initial_state()
-        .await
-        .expect("Failed to load store");
-    store
+pub async fn load_store(datadir: &Path) -> Result<Store, StoreError> {
+    let store = open_store(datadir)?;
+    store.load_initial_state().await?;
+    Ok(store)
 }
 
 /// Opens a pre-existing Store or creates a new one
-pub fn open_store(datadir: &Path) -> Store {
+pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
     if datadir.ends_with("memory") {
-        Store::new(datadir, EngineType::InMemory).expect("Failed to create Store")
+        Store::new(datadir, EngineType::InMemory)
     } else {
         #[cfg(feature = "rocksdb")]
         let engine_type = EngineType::RocksDB;
         #[cfg(feature = "metrics")]
-        ethrex_metrics::metrics_process::set_datadir_path(datadir.to_path_buf());
-        Store::new(datadir, engine_type).expect("Failed to create Store")
+        ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
+        Store::new(datadir, engine_type)
     }
 }
 
@@ -129,7 +127,7 @@ pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<
     Blockchain::new(store, blockchain_opts).into()
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub async fn init_rpc_api(
     opts: &Options,
     peer_handler: PeerHandler,
@@ -140,8 +138,6 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-    gas_ceil: Option<u64>,
-    extra_data: String,
 ) {
     init_datadir(&opts.datadir);
 
@@ -162,8 +158,15 @@ pub async fn init_rpc_api(
     )
     .await;
 
+    let ws_socket_opts = if opts.ws_enabled {
+        Some(get_ws_socket_addr(opts))
+    } else {
+        None
+    };
+
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
+        ws_socket_opts,
         get_authrpc_socket_addr(opts),
         store,
         blockchain,
@@ -174,8 +177,8 @@ pub async fn init_rpc_api(
         peer_handler,
         get_client_version(),
         log_filter_handler,
-        gas_ceil,
-        extra_data,
+        opts.gas_limit,
+        opts.extra_data.clone(),
     );
 
     tracker.spawn(rpc_api);
@@ -186,14 +189,10 @@ pub async fn init_network(
     opts: &Options,
     network: &Network,
     datadir: &Path,
-    local_p2p_node: Node,
-    local_node_record: Arc<Mutex<NodeRecord>>,
-    signer: SecretKey,
     peer_handler: PeerHandler,
-    store: Store,
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
-    based_context: Option<P2PBasedContext>,
+    context: P2PContext,
 ) {
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
@@ -203,20 +202,6 @@ pub async fn init_network(
     }
 
     let bootnodes = get_bootnodes(opts, network, datadir);
-
-    let context = P2PContext::new(
-        local_p2p_node,
-        local_node_record,
-        tracker.clone(),
-        signer,
-        peer_handler.peer_table.clone(),
-        store,
-        blockchain.clone(),
-        get_client_version(),
-        based_context,
-    )
-    .await
-    .expect("P2P context could not be created");
 
     ethrex_p2p::start_network(context, bootnodes)
         .await
@@ -310,22 +295,22 @@ pub fn get_signer(datadir: &Path) -> SecretKey {
 }
 
 pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
-    let udp_socket_addr = parse_socket_addr("::", &opts.discovery_port)
-        .expect("Failed to parse discovery address and port");
-    let tcp_socket_addr =
-        parse_socket_addr("::", &opts.p2p_port).expect("Failed to parse addr and port");
+    let tcp_port = opts.p2p_port.parse().expect("Failed to parse p2p port");
+    let udp_port = opts
+        .discovery_port
+        .parse()
+        .expect("Failed to parse discovery port");
 
-    let p2p_node_ip = local_ip()
-        .unwrap_or_else(|_| local_ipv6().expect("Neither ipv4 nor ipv6 local address found"));
+    let p2p_node_ip: IpAddr = if let Some(addr) = &opts.p2p_addr {
+        addr.parse().expect("Failed to parse p2p address")
+    } else {
+        local_ip()
+            .unwrap_or_else(|_| local_ipv6().expect("Neither ipv4 nor ipv6 local address found"))
+    };
 
     let local_public_key = public_key_from_signing_key(signer);
 
-    let node = Node::new(
-        p2p_node_ip,
-        udp_socket_addr.port(),
-        tcp_socket_addr.port(),
-        local_public_key,
-    );
+    let node = Node::new(p2p_node_ip, udp_port, tcp_port, local_public_key);
 
     // TODO Find a proper place to show node information
     // https://github.com/lambdaclass/ethrex/issues/836
@@ -366,6 +351,11 @@ pub fn get_http_socket_addr(opts: &Options) -> SocketAddr {
         .expect("Failed to parse http address and port")
 }
 
+pub fn get_ws_socket_addr(opts: &Options) -> SocketAddr {
+    parse_socket_addr(&opts.ws_addr, &opts.ws_port)
+        .expect("Failed to parse websocket address and port")
+}
+
 #[cfg(feature = "sync-test")]
 async fn set_sync_block(store: &Store) {
     if let Ok(block_number) = env::var("SYNC_BLOCK_NUM") {
@@ -378,7 +368,7 @@ async fn set_sync_block(store: &Store) {
             .expect("Could not get hash for block number provided by env variable")
             .expect("Could not get hash for block number provided by env variable");
         store
-            .forkchoice_update(None, block_number, block_hash, None, None)
+            .forkchoice_update(vec![], block_number, block_hash, None, None)
             .await
             .expect("Could not set sync block");
     }
@@ -387,13 +377,12 @@ async fn set_sync_block(store: &Store) {
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<(
-    PathBuf,
-    CancellationToken,
-    PeerTableHandle,
-    Arc<Mutex<NodeRecord>>,
-)> {
-    let datadir = &opts.datadir;
+) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
+    let datadir: &PathBuf = if opts.dev && cfg!(feature = "dev") {
+        &opts.datadir.join("dev")
+    } else {
+        &opts.datadir
+    };
     init_datadir(datadir);
 
     let network = get_network(&opts);
@@ -402,8 +391,23 @@ pub async fn init_l1(
     display_chain_initialization(&genesis);
 
     raise_fd_limit()?;
+    debug!("Preloading KZG trusted setup");
+    ethrex_crypto::kzg::warm_up_trusted_setup();
 
-    let store = init_store(datadir, genesis).await;
+    let store = match init_store(datadir, genesis).await {
+        Ok(store) => store,
+        Err(err @ StoreError::IncompatibleDBVersion { .. })
+        | Err(err @ StoreError::NotFoundDBVersion { .. }) => {
+            return Err(eyre::eyre!(
+                "{err}. Please erase your DB by running `ethrex removedb` and restart node to resync. Note that this will take a while."
+            ));
+        }
+        Err(error) => return Err(eyre::eyre!("Failed to create Store: {error}")),
+    };
+
+    if opts.syncmode == SyncMode::Full {
+        store.generate_flatkeyvalue()?;
+    }
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
@@ -417,36 +421,50 @@ pub async fn init_l1(
         },
     );
 
+    regenerate_head_state(&store, &blockchain).await?;
+
     let signer = get_signer(datadir);
 
     let local_p2p_node = get_local_p2p_node(&opts, &signer);
 
-    let local_node_record = Arc::new(Mutex::new(get_local_node_record(
-        datadir,
-        &local_p2p_node,
-        &signer,
-    )));
+    let local_node_record = get_local_node_record(datadir, &local_p2p_node, &signer);
 
-    let peer_handler = PeerHandler::new(PeerTable::spawn());
+    let peer_table = PeerTable::spawn(opts.target_peers);
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
+    let p2p_context = P2PContext::new(
+        local_p2p_node.clone(),
+        tracker.clone(),
+        signer,
+        peer_table.clone(),
+        store.clone(),
+        blockchain.clone(),
+        get_client_version(),
+        None,
+        opts.tx_broadcasting_time_interval,
+        opts.lookup_interval,
+    )
+    .await
+    .expect("P2P context could not be created");
+
+    let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;
+
+    let peer_handler = PeerHandler::new(peer_table.clone(), initiator);
+
     init_rpc_api(
         &opts,
         peer_handler.clone(),
-        local_p2p_node.clone(),
-        local_node_record.lock().await.clone(),
+        local_p2p_node,
+        local_node_record.clone(),
         store.clone(),
         blockchain.clone(),
         cancel_token.clone(),
         tracker.clone(),
         log_filter_handler,
-        // TODO (#4482): Make this configurable.
-        None,
-        opts.extra_data.clone(),
     )
     .await;
 
@@ -457,19 +475,15 @@ pub async fn init_l1(
     if opts.dev {
         #[cfg(feature = "dev")]
         init_dev_network(&opts, &store, tracker.clone()).await;
-    } else if opts.p2p_enabled {
+    } else if !opts.p2p_disabled {
         init_network(
             &opts,
             &network,
             datadir,
-            local_p2p_node,
-            local_node_record.clone(),
-            signer,
             peer_handler.clone(),
-            store.clone(),
             tracker.clone(),
             blockchain.clone(),
-            None,
+            p2p_context,
         )
         .await;
     } else {
@@ -482,4 +496,76 @@ pub async fn init_l1(
         peer_handler.peer_table,
         local_node_record,
     ))
+}
+
+/// Regenerates the state up to the head block by re-applying blocks from the
+/// last known state root.
+///
+/// Since the path-based feature was added, the database stores the state 128
+/// blocks behind the head block while the state of the blocks in between are
+/// kept in in-memory-diff-layers.
+///
+/// After the node is shut down, those in-memory layers are lost, and the database
+/// won't have the state for those blocks. It will have the blocks though.
+///
+/// When the node is started again, the state needs to be regenerated by
+/// re-applying the blocks from the last known state root up to the head block.
+///
+/// This function performs that regeneration.
+pub async fn regenerate_head_state(
+    store: &Store,
+    blockchain: &Arc<Blockchain>,
+) -> eyre::Result<()> {
+    let head_block_number = store.get_latest_block_number().await?;
+
+    let Some(last_header) = store.get_block_header(head_block_number)? else {
+        unreachable!("Database is empty, genesis block should be present");
+    };
+
+    let mut current_last_header = last_header;
+
+    // Find the last block with a known state root
+    while !store.has_state_root(current_last_header.state_root)? {
+        if current_last_header.number == 0 {
+            return Err(eyre::eyre!(
+                "Unknown state found in DB. Please run `ethrex removedb` and restart node"
+            ));
+        }
+        let parent_number = current_last_header.number - 1;
+
+        debug!("Need to regenerate state for block {parent_number}");
+
+        let Some(parent_header) = store.get_block_header(parent_number)? else {
+            return Err(eyre::eyre!(
+                "Parent header for block {parent_number} not found"
+            ));
+        };
+
+        current_last_header = parent_header;
+    }
+
+    let last_state_number = current_last_header.number;
+
+    if last_state_number == head_block_number {
+        debug!("State is already up to date");
+        return Ok(());
+    }
+
+    info!("Regenerating state from block {last_state_number} to {head_block_number}");
+
+    // Re-apply blocks from the last known state root to the head block
+    for i in (last_state_number + 1)..=head_block_number {
+        debug!("Re-applying block {i} to regenerate state");
+
+        let block = store
+            .get_block_by_number(i)
+            .await?
+            .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
+
+        blockchain.add_block_pipeline(block)?;
+    }
+
+    info!("Finished regenerating state");
+
+    Ok(())
 }

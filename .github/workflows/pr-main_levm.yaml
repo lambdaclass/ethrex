@@ -17,6 +17,9 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  contents: read
+  actions: write
+  issues: write
   pull-requests: write
 
 jobs:
@@ -72,6 +75,9 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+        with:
+          ref: main
+
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 

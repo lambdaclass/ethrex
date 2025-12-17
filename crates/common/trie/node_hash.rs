@@ -1,14 +1,30 @@
 use ethereum_types::H256;
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError, structs::Encoder};
-use sha3::{Digest, Keccak256};
+
+use crate::rkyv_utils::H256Wrapper;
 
 /// Struct representing a trie node hash
 /// If the encoded node is less than 32 bits, contains the encoded node itself
 // TODO: Check if we can omit the Inline variant, as nodes will always be bigger than 32 bits in our use case
 // TODO: Check if making this `Copy` can make the code less verbose at a reasonable performance cost
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    rkyv::Archive,
+)]
 pub enum NodeHash {
-    Hashed(H256),
+    Hashed(#[rkyv(with=H256Wrapper)] H256),
     // Inline is always len < 32. We need to store the length of the data, a u8 is enough.
     Inline(([u8; 31], u8)),
 }
@@ -24,10 +40,10 @@ impl AsRef<[u8]> for NodeHash {
 
 impl NodeHash {
     /// Returns the `NodeHash` of an encoded node (encoded using the NodeEncoder)
-    pub fn from_encoded_raw(encoded: &[u8]) -> NodeHash {
+    pub fn from_encoded(encoded: &[u8]) -> NodeHash {
         if encoded.len() >= 32 {
-            let hash = Keccak256::new_with_prefix(encoded).finalize();
-            NodeHash::Hashed(H256::from_slice(hash.as_slice()))
+            let hash = keccak_hash(encoded);
+            NodeHash::Hashed(H256::from_slice(&hash))
         } else {
             NodeHash::from_slice(encoded)
         }
@@ -35,7 +51,7 @@ impl NodeHash {
 
     /// Converts a slice of an already hashed data (in case it's not inlineable) to a NodeHash.
     /// Panics if the slice is over 32 bytes
-    /// If you need to hash it in case its len >= 32 see `from_encoded_raw`
+    /// If you need to hash it in case its len >= 32 see `from_encoded`
     pub(crate) fn from_slice(slice: &[u8]) -> NodeHash {
         match slice.len() {
             0..32 => {
@@ -51,12 +67,7 @@ impl NodeHash {
     /// NOTE: This will hash smaller nodes, only use to get the final root hash, not for intermediate node hashes
     pub fn finalize(self) -> H256 {
         match self {
-            NodeHash::Inline(_) => H256::from_slice(
-                Keccak256::new()
-                    .chain_update(self.as_ref())
-                    .finalize()
-                    .as_slice(),
-            ),
+            NodeHash::Inline(_) => H256(keccak_hash(self.as_ref())),
             NodeHash::Hashed(x) => x,
         }
     }
@@ -124,6 +135,14 @@ impl Default for NodeHash {
 impl RLPEncode for NodeHash {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         RLPEncode::encode(&Into::<Vec<u8>>::into(self), buf)
+    }
+
+    fn length(&self) -> usize {
+        match self {
+            NodeHash::Hashed(_) => 33,                   // 1 byte prefix + 32 bytes
+            NodeHash::Inline((_, 0)) => 1,               // if empty then it's encoded to RLP_NULL
+            NodeHash::Inline((_, len)) => *len as usize, // already encoded
+        }
     }
 }
 

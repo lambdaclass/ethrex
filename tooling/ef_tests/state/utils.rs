@@ -17,13 +17,11 @@ use ethrex_vm::DynVmDatabase;
 pub async fn load_initial_state_revm(test: &EFTest) -> (RevmState, H256, Store) {
     let genesis = Genesis::from(test);
 
-    let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
+    let mut storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
     storage.add_initial_state(genesis.clone()).await.unwrap();
 
-    let vm_db: DynVmDatabase = Box::new(StoreVmDatabase::new(
-        storage.clone(),
-        genesis.get_block().hash(),
-    ));
+    let vm_db: DynVmDatabase =
+        Box::new(StoreVmDatabase::new(storage.clone(), genesis.get_block().header).unwrap());
 
     (revm_state(vm_db), genesis.get_block().hash(), storage)
 }
@@ -32,12 +30,11 @@ pub async fn load_initial_state_revm(test: &EFTest) -> (RevmState, H256, Store) 
 pub async fn load_initial_state_levm(test: &EFTest) -> GeneralizedDatabase {
     let genesis = Genesis::from(test);
 
-    let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
+    let mut storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
     storage.add_initial_state(genesis.clone()).await.unwrap();
 
-    let block_hash = genesis.get_block().hash();
-
-    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(storage, block_hash));
+    let store: DynVmDatabase =
+        Box::new(StoreVmDatabase::new(storage, genesis.get_block().header).unwrap());
 
     GeneralizedDatabase::new(Arc::new(store))
 }

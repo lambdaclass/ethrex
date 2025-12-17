@@ -4,17 +4,19 @@ use levm::LEVM;
 use crate::db::{DynVmDatabase, VmDatabase};
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
-use ethrex_common::Address;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
     AccessList, AccountUpdate, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction,
     Withdrawal,
 };
+use ethrex_common::{Address, types::fee_config::FeeConfig};
 pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::vm::VMType;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+use std::sync::mpsc::Sender;
 use tracing::instrument;
 
 #[derive(Clone)]
@@ -39,12 +41,15 @@ impl Evm {
         }
     }
 
-    pub fn new_for_l2(_db: impl VmDatabase + 'static) -> Result<Self, EvmError> {
-        let wrapped_db: DynVmDatabase = Box::new(_db);
+    pub fn new_for_l2(
+        db: impl VmDatabase + 'static,
+        fee_config: FeeConfig,
+    ) -> Result<Self, EvmError> {
+        let wrapped_db: DynVmDatabase = Box::new(db);
 
         let evm = Evm {
             db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
-            vm_type: VMType::L2,
+            vm_type: VMType::L2(fee_config),
         };
 
         Ok(evm)
@@ -54,8 +59,11 @@ impl Evm {
         Self::_new_from_db(store, VMType::L1)
     }
 
-    pub fn new_from_db_for_l2(store: Arc<impl LevmDatabase + 'static>) -> Self {
-        Self::_new_from_db(store, VMType::L2)
+    pub fn new_from_db_for_l2(
+        store: Arc<impl LevmDatabase + 'static>,
+        fee_config: FeeConfig,
+    ) -> Self {
+        Self::_new_from_db(store, VMType::L2(fee_config))
     }
 
     fn _new_from_db(store: Arc<impl LevmDatabase + 'static>, vm_type: VMType) -> Self {
@@ -65,9 +73,23 @@ impl Evm {
         }
     }
 
-    #[instrument(level = "trace", name = "Block execution", skip_all)]
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
         LEVM::execute_block(block, &mut self.db, self.vm_type)
+    }
+
+    #[instrument(
+        level = "trace",
+        name = "Block execution",
+        skip_all,
+        fields(namespace = "block_execution")
+    )]
+    pub fn execute_block_pipeline(
+        &mut self,
+        block: &Block,
+        merkleizer: Sender<Vec<AccountUpdate>>,
+        queue_length: &AtomicUsize,
+    ) -> Result<BlockExecutionResult, EvmError> {
+        LEVM::execute_block_pipeline(block, &mut self.db, self.vm_type, merkleizer, queue_length)
     }
 
     /// Wraps [LEVM::execute_tx].

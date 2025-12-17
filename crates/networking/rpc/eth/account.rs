@@ -99,6 +99,7 @@ impl RpcHandler for GetCodeRequest {
             .storage
             .get_code_by_account_address(block_number, self.address)
             .await?
+            .map(|c| c.bytecode)
             .unwrap_or_default();
 
         serde_json::to_value(format!("0x{code:x}"))
@@ -135,8 +136,7 @@ impl RpcHandler for GetStorageAtRequest {
 
         let storage_value = context
             .storage
-            .get_storage_at(block_number, self.address, self.storage_slot)
-            .await?
+            .get_storage_at(block_number, self.address, self.storage_slot)?
             .unwrap_or_default();
         let storage_value = H256::from_uint(&storage_value);
         serde_json::to_value(format!("{storage_value:#x}"))
@@ -218,44 +218,34 @@ impl RpcHandler for GetProofRequest {
         let Some(block_number) = self.block.resolve_block_number(storage).await? else {
             return Ok(Value::Null);
         };
+        let Some(header) = storage.get_block_header(block_number)? else {
+            return Ok(Value::Null);
+        };
         // Create account proof
         let Some(account_proof) = storage
-            .get_account_proof(block_number, &self.address)
+            .get_account_proof(header.state_root, self.address, &self.storage_keys)
             .await?
         else {
             return Err(RpcErr::Internal("Could not get account proof".to_owned()));
         };
-        let account = storage
-            .get_account_state(block_number, self.address)
-            .await?;
-        // Create storage proofs for all provided storage keys
-        let mut storage_proofs = Vec::new();
-        for storage_key in self.storage_keys.iter() {
-            let value = storage
-                .get_storage_at(block_number, self.address, *storage_key)
-                .await?
-                .unwrap_or_default();
-            let proof = if let Some(account) = &account {
-                storage.get_storage_proof(self.address, account.storage_root, storage_key)?
-            } else {
-                Vec::new()
-            };
-            let storage_proof = StorageProof {
-                key: storage_key.into_uint(),
-                proof,
-                value,
-            };
-            storage_proofs.push(storage_proof);
-        }
-        let account = account.unwrap_or_default();
+        let storage_proof = account_proof
+            .storage_proof
+            .into_iter()
+            .map(|sp| StorageProof {
+                key: sp.key.into_uint(),
+                value: sp.value,
+                proof: sp.proof,
+            })
+            .collect();
+        let account = account_proof.account;
         let account_proof = AccountProof {
-            account_proof,
+            account_proof: account_proof.proof,
             address: self.address,
             balance: account.balance,
             code_hash: account.code_hash,
             nonce: account.nonce,
             storage_hash: account.storage_root,
-            storage_proof: storage_proofs,
+            storage_proof,
         };
         serde_json::to_value(account_proof).map_err(|error| RpcErr::Internal(error.to_string()))
     }

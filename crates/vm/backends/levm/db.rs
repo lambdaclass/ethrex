@@ -1,6 +1,6 @@
 use ethrex_common::U256 as CoreU256;
 use ethrex_common::constants::EMPTY_KECCACK_HASH;
-use ethrex_common::types::AccountInfo;
+use ethrex_common::types::{AccountState, Code};
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::db::Database as LevmDatabase;
 
@@ -32,18 +32,18 @@ impl DatabaseLogger {
 }
 
 impl LevmDatabase for DatabaseLogger {
-    fn get_account_info(&self, address: CoreAddress) -> Result<AccountInfo, DatabaseError> {
+    fn get_account_state(&self, address: CoreAddress) -> Result<AccountState, DatabaseError> {
         self.state_accessed
             .lock()
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
             .entry(address)
             .or_default();
-        let info = self
+        let state = self
             .store
             .lock()
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
-            .get_account_info(address)?;
-        Ok(info)
+            .get_account_state(address)?;
+        Ok(state)
     }
 
     fn get_storage_value(
@@ -85,7 +85,7 @@ impl LevmDatabase for DatabaseLogger {
             .get_chain_config()
     }
 
-    fn get_account_code(&self, code_hash: CoreH256) -> Result<bytes::Bytes, DatabaseError> {
+    fn get_account_code(&self, code_hash: CoreH256) -> Result<Code, DatabaseError> {
         if code_hash != *EMPTY_KECCACK_HASH {
             let mut code_accessed = self
                 .code_accessed
@@ -101,12 +101,12 @@ impl LevmDatabase for DatabaseLogger {
 }
 
 impl LevmDatabase for DynVmDatabase {
-    fn get_account_info(&self, address: CoreAddress) -> Result<AccountInfo, DatabaseError> {
-        let acc_info = <dyn VmDatabase>::get_account_info(self.as_ref(), address)
+    fn get_account_state(&self, address: CoreAddress) -> Result<AccountState, DatabaseError> {
+        let acc_state = <dyn VmDatabase>::get_account_state(self.as_ref(), address)
             .map_err(|e| DatabaseError::Custom(e.to_string()))?
             .unwrap_or_default();
 
-        Ok(acc_info)
+        Ok(acc_state)
     }
 
     fn get_storage_value(
@@ -131,7 +131,7 @@ impl LevmDatabase for DynVmDatabase {
             .map_err(|e| DatabaseError::Custom(e.to_string()))
     }
 
-    fn get_account_code(&self, code_hash: CoreH256) -> Result<bytes::Bytes, DatabaseError> {
+    fn get_account_code(&self, code_hash: CoreH256) -> Result<Code, DatabaseError> {
         <dyn VmDatabase>::get_account_code(self.as_ref(), code_hash)
             .map_err(|e| DatabaseError::Custom(e.to_string()))
     }

@@ -5,9 +5,10 @@ use ethrex_l2_sdk::{get_last_committed_batch, get_last_verified_batch};
 #[cfg(feature = "metrics")]
 use ethrex_metrics::{
     l2::metrics::{METRICS, MetricsBlockType, MetricsOperationType},
-    metrics_transactions::METRICS_TX,
+    transactions::METRICS_TX,
 };
 use ethrex_rpc::clients::eth::EthClient;
+use reqwest::Url;
 use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
@@ -52,10 +53,10 @@ impl MetricsGatherer {
         rollup_store: StoreRollup,
         committer_config: &CommitterConfig,
         eth_config: &EthConfig,
-        l2_url: String,
+        l2_url: Url,
     ) -> Result<Self, MetricsGathererError> {
         let l1_eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
-        let l2_eth_client = EthClient::new(&l2_url)?;
+        let l2_eth_client = EthClient::new(l2_url)?;
         Ok(Self {
             l1_eth_client,
             l2_eth_client,
@@ -68,7 +69,7 @@ impl MetricsGatherer {
     pub async fn spawn(
         cfg: &SequencerConfig,
         rollup_store: StoreRollup,
-        l2_url: String,
+        l2_url: Url,
     ) -> Result<GenServerHandle<MetricsGatherer>, MetricsGathererError> {
         let mut metrics = Self::new(rollup_store, &(cfg.l1_committer.clone()), &cfg.eth, l2_url)
             .await?
@@ -80,7 +81,7 @@ impl MetricsGatherer {
         Ok(metrics)
     }
 
-    async fn gather_metrics(&mut self) -> Result<(), MetricsGathererError> {
+    async fn gather_metrics(&self) -> Result<(), MetricsGathererError> {
         let last_committed_batch =
             get_last_committed_batch(&self.l1_eth_client, self.on_chain_proposer_address).await?;
 

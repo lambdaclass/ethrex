@@ -33,19 +33,18 @@ async fn main() {
     info!("");
 
     run_test(&cmd_path, no_reorgs_full_sync_smoke_test).await;
+    run_test(&cmd_path, test_reorg_back_to_base).await;
 
-    // TODO: uncomment once #4676 is fixed
-    // run_test(&cmd_path, test_reorg_back_to_base).await;
-    // // This test is flaky 50% of the time, check that it runs correctly 30 times in a row
-    // // TODO(#4775): make it deterministic
-    // for _ in 0..30 {
-    //     run_test(&cmd_path, test_chain_split).await;
-    // }
-    // run_test(&cmd_path, test_one_block_reorg_and_back).await;
-    // run_test(&cmd_path, test_reorg_back_to_base_with_common_ancestor).await;
-    // run_test(&cmd_path, test_storage_slots_reorg).await;
+    // This test is flaky 50% of the time, check that it runs correctly multiple times in a row
+    // TODO(#4775): make it deterministic
+    for _ in 0..10 {
+        run_test(&cmd_path, test_chain_split).await;
+    }
 
-    // run_test(&cmd_path, test_many_blocks_reorg).await;
+    run_test(&cmd_path, test_one_block_reorg_and_back).await;
+    run_test(&cmd_path, test_reorg_back_to_base_with_common_ancestor).await;
+    run_test(&cmd_path, test_storage_slots_reorg).await;
+    run_test(&cmd_path, test_many_blocks_reorg).await;
 }
 
 async fn get_ethrex_version(cmd_path: &Path) -> String {
@@ -73,8 +72,7 @@ where
     // Run in another task to clean up properly on panic
     let result = tokio::spawn(test_fn(simulator.clone())).await;
 
-    simulator.lock_owned().await.stop();
-    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    simulator.lock_owned().await.stop().await;
 
     match result {
         Ok(_) => info!(test=%test_name, elapsed=?start.elapsed(), "test completed successfully"),
@@ -104,7 +102,6 @@ async fn no_reorgs_full_sync_smoke_test(simulator: Arc<Mutex<Simulator>>) {
     node1.update_forkchoice(&base_chain).await;
 }
 
-#[expect(unused)]
 async fn test_reorg_back_to_base(simulator: Arc<Mutex<Simulator>>) {
     let mut simulator = simulator.lock().await;
 
@@ -124,7 +121,6 @@ async fn test_reorg_back_to_base(simulator: Arc<Mutex<Simulator>>) {
     node0.update_forkchoice(&base_chain).await;
 }
 
-#[expect(unused)]
 async fn test_reorg_back_to_base_with_common_ancestor(simulator: Arc<Mutex<Simulator>>) {
     let mut simulator = simulator.lock().await;
 
@@ -149,7 +145,6 @@ async fn test_reorg_back_to_base_with_common_ancestor(simulator: Arc<Mutex<Simul
     node0.update_forkchoice(&base_chain).await;
 }
 
-#[expect(unused)]
 async fn test_chain_split(simulator: Arc<Mutex<Simulator>>) {
     let mut simulator = simulator.lock().await;
 
@@ -172,7 +167,6 @@ async fn test_chain_split(simulator: Arc<Mutex<Simulator>>) {
     node0.update_forkchoice(&base_chain).await;
 }
 
-#[expect(unused)]
 async fn test_one_block_reorg_and_back(simulator: Arc<Mutex<Simulator>>) {
     let mut simulator = simulator.lock().await;
     let signer: Signer = LocalSigner::new(
@@ -243,7 +237,6 @@ async fn test_one_block_reorg_and_back(simulator: Arc<Mutex<Simulator>>) {
     assert_eq!(new_balance, initial_balance);
 }
 
-#[expect(unused)]
 async fn test_many_blocks_reorg(simulator: Arc<Mutex<Simulator>>) {
     let mut simulator = simulator.lock().await;
     let signer: Signer = LocalSigner::new(
@@ -315,7 +308,6 @@ async fn test_many_blocks_reorg(simulator: Arc<Mutex<Simulator>>) {
     assert_eq!(new_balance, initial_balance + transfer_amount);
 }
 
-#[expect(unused)]
 async fn test_storage_slots_reorg(simulator: Arc<Mutex<Simulator>>) {
     let mut simulator = simulator.lock().await;
     // Initcode for deploying a contract that receives two `bytes32` parameters and sets `storage[param0] = param1`

@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use ethrex_common::types::{
-    Account as ethrexAccount, AccountInfo, Block as CoreBlock, BlockBody, EIP1559Transaction,
+    Account as ethrexAccount, AccountInfo, Block as CoreBlock, BlockBody, Code, EIP1559Transaction,
     EIP2930Transaction, EIP4844Transaction, EIP7702Transaction, LegacyTransaction,
     Transaction as ethrexTransaction, TxKind, code_hash,
 };
@@ -514,7 +514,7 @@ impl From<Transaction> for LegacyTransaction {
     fn from(val: Transaction) -> Self {
         LegacyTransaction {
             nonce: val.nonce.as_u64(),
-            gas_price: val.gas_price.unwrap_or_default().as_u64(), // TODO: Consider converting this into Option
+            gas_price: val.gas_price.unwrap_or_default(), // TODO: Consider converting this into Option
             gas: val.gas_limit.as_u64(),
             // to: match val.to {
             //     zero if zero == H160::zero() => TxKind::Create,
@@ -536,7 +536,7 @@ impl From<Transaction> for EIP2930Transaction {
         EIP2930Transaction {
             chain_id: val.chain_id.map(|id: U256| id.as_u64()).unwrap_or(1),
             nonce: val.nonce.as_u64(),
-            gas_price: val.gas_price.unwrap_or_default().as_u64(),
+            gas_price: val.gas_price.unwrap_or_default(),
             gas_limit: val.gas_limit.as_u64(),
             // to: match val.to {
             //     zero if zero == H160::zero() => TxKind::Create,
@@ -567,7 +567,7 @@ impl From<Account> for ethrexAccount {
                 balance: val.balance,
                 nonce: val.nonce.as_u64(),
             },
-            code: val.code,
+            code: Code::from_bytecode(val.code),
             storage: val
                 .storage
                 .into_iter()
@@ -605,5 +605,6 @@ pub enum BlockExpectedException {
     IncorrectBlockFormat,
     InvalidRequest,
     SystemContractCallFailed,
+    RlpBlockLimitExceeded,
     Other, //TODO: Implement exceptions
 }

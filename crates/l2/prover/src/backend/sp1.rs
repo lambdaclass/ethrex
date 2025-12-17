@@ -1,10 +1,8 @@
-use std::{fmt::Debug, sync::OnceLock};
-
 use ethrex_l2_common::{
     calldata::Value,
-    prover::{BatchProof, ProofBytes, ProofCalldata, ProverType},
+    prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
 };
-use guest_program::input::ProgramInput;
+use guest_program::{ZKVM_SP1_PROGRAM_ELF, input::ProgramInput};
 use rkyv::rancor::Error;
 use sp1_prover::components::CpuProverComponents;
 #[cfg(not(feature = "gpu"))]
@@ -15,18 +13,13 @@ use sp1_sdk::{
     HashableKey, Prover, SP1ProofMode, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
     SP1VerifyingKey,
 };
-use std::time::Instant;
+use std::{
+    fmt::Debug,
+    sync::OnceLock,
+    time::{Duration, Instant},
+};
 use tracing::info;
 use url::Url;
-
-#[cfg(not(clippy))]
-static PROGRAM_ELF: &[u8] =
-    include_bytes!("../guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf");
-
-// If we're running clippy, the file isn't generated.
-// To avoid compilation errors, we override it with an empty slice.
-#[cfg(clippy)]
-static PROGRAM_ELF: &[u8] = &[];
 
 pub struct ProverSetup {
     client: Box<dyn Prover<CpuProverComponents>>,
@@ -42,10 +35,11 @@ pub fn init_prover_setup(_endpoint: Option<Url>) -> ProverSetup {
         if let Some(endpoint) = _endpoint {
             CudaProverBuilder::default()
                 .server(
-                    &endpoint
+                    #[expect(clippy::expect_used)]
+                    endpoint
                         .join("/twirp/")
                         .expect("Failed to parse moongate server url")
-                        .to_string(),
+                        .as_ref(),
                 )
                 .build()
         } else {
@@ -54,7 +48,7 @@ pub fn init_prover_setup(_endpoint: Option<Url>) -> ProverSetup {
     };
     #[cfg(not(feature = "gpu"))]
     let client = { CpuProver::new() };
-    let (pk, vk) = client.setup(PROGRAM_ELF);
+    let (pk, vk) = client.setup(ZKVM_SP1_PROGRAM_ELF);
 
     ProverSetup {
         client: Box::new(client),
@@ -94,17 +88,28 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
 
     let setup = PROVER_SETUP.get_or_init(|| init_prover_setup(None));
 
-    let now = Instant::now();
-    setup.client.execute(PROGRAM_ELF, &stdin)?;
-    let elapsed = now.elapsed();
+    setup.client.execute(ZKVM_SP1_PROGRAM_ELF, &stdin)?;
 
-    info!("Successfully executed SP1 program in {:.2?}", elapsed);
     Ok(())
+}
+
+pub fn execute_timed(input: ProgramInput) -> Result<Duration, Box<dyn std::error::Error>> {
+    let mut stdin = SP1Stdin::new();
+    let bytes = rkyv::to_bytes::<Error>(&input)?;
+    stdin.write_slice(bytes.as_slice());
+
+    let setup = PROVER_SETUP.get_or_init(|| init_prover_setup(None));
+
+    let start = Instant::now();
+    setup.client.execute(ZKVM_SP1_PROGRAM_ELF, &stdin)?;
+    let duration = start.elapsed();
+
+    Ok(duration)
 }
 
 pub fn prove(
     input: ProgramInput,
-    aligned_mode: bool,
+    format: ProofFormat,
 ) -> Result<ProveOutput, Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
     let bytes = rkyv::to_bytes::<Error>(&input)?;
@@ -112,19 +117,36 @@ pub fn prove(
 
     let setup = PROVER_SETUP.get_or_init(|| init_prover_setup(None));
 
-    // contains the receipt along with statistics about execution of the guest
-    let proof = if aligned_mode {
-        setup
-            .client
-            .prove(&setup.pk, &stdin, SP1ProofMode::Compressed)?
-    } else {
-        setup
-            .client
-            .prove(&setup.pk, &stdin, SP1ProofMode::Groth16)?
+    let format = match format {
+        ProofFormat::Compressed => SP1ProofMode::Compressed,
+        ProofFormat::Groth16 => SP1ProofMode::Groth16,
     };
 
-    info!("Successfully generated SP1Proof.");
+    let proof = setup.client.prove(&setup.pk, &stdin, format)?;
+
     Ok(ProveOutput::new(proof, setup.vk.clone()))
+}
+
+pub fn prove_timed(
+    input: ProgramInput,
+    format: ProofFormat,
+) -> Result<(ProveOutput, Duration), Box<dyn std::error::Error>> {
+    let mut stdin = SP1Stdin::new();
+    let bytes = rkyv::to_bytes::<Error>(&input)?;
+    stdin.write_slice(bytes.as_slice());
+
+    let setup = PROVER_SETUP.get_or_init(|| init_prover_setup(None));
+
+    let format = match format {
+        ProofFormat::Compressed => SP1ProofMode::Compressed,
+        ProofFormat::Groth16 => SP1ProofMode::Groth16,
+    };
+
+    let start = Instant::now();
+    let proof = setup.client.prove(&setup.pk, &stdin, format)?;
+    let duration = start.elapsed();
+
+    Ok((ProveOutput::new(proof, setup.vk.clone()), duration))
 }
 
 pub fn verify(output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
@@ -136,15 +158,15 @@ pub fn verify(output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
 
 pub fn to_batch_proof(
     proof: ProveOutput,
-    aligned_mode: bool,
+    format: ProofFormat,
 ) -> Result<BatchProof, Box<dyn std::error::Error>> {
-    let batch_proof = if aligned_mode {
-        BatchProof::ProofBytes(ProofBytes {
+    let batch_proof = match format {
+        ProofFormat::Compressed => BatchProof::ProofBytes(ProofBytes {
+            prover_type: ProverType::SP1,
             proof: bincode::serialize(&proof.proof)?,
             public_values: proof.proof.public_values.to_vec(),
-        })
-    } else {
-        BatchProof::ProofCalldata(to_calldata(proof))
+        }),
+        ProofFormat::Groth16 => BatchProof::ProofCalldata(to_calldata(proof)),
     };
 
     Ok(batch_proof)
