@@ -517,7 +517,6 @@ contract CommonBridge is
             "CommonBridge: caller is not the shared bridge router"
         );
         deposits[tokenL1][tokenL2] += amount;
-        // TODO: missing hashes?
     }
 
     /// @inheritdoc ICommonBridge
