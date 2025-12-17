@@ -531,9 +531,9 @@ contract OnChainProposer is
         ICommonBridge.BalanceDiff[] memory balanceDiffs = batchCommitments[
             batchNumber
         ].balanceDiffs;
-        uint256 registered_chains = balanceDiffs.length;
+        uint256 targetedChainsCount = balanceDiffs.length;
         uint256 expected_length = 256;
-        for (uint256 i = 0; i < registered_chains; i++) {
+        for (uint256 i = 0; i < targetedChainsCount; i++) {
             expected_length += 32;
             expected_length += balanceDiffs[i].valuePerToken.length * 92;
             expected_length += balanceDiffs[i].message_hashes.length * 32;
@@ -595,7 +595,7 @@ contract OnChainProposer is
         }
 
         uint256 offset = 256;
-        for (uint256 i = 0; i < registered_chains; i++) {
+        for (uint256 i = 0; i < targetedChainsCount; i++) {
             uint256 verifiedChainId = uint256(
                 bytes32(publicData[offset:offset + 32])
             );
