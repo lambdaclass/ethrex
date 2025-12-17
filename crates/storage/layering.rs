@@ -1,8 +1,9 @@
 use ethrex_common::H256;
-use rustc_hash::FxHashMap;
-use std::sync::Arc;
+use rustc_hash::{FxHashMap, FxBuildHasher};
+use std::sync::{Arc, Mutex};
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
+use lru::LruCache;
 
 #[derive(Debug, Clone)]
 struct TrieLayer {
@@ -28,6 +29,7 @@ pub struct TrieLayerCache {
     /// so we never use it again, because if we don't we may be misled into believing a key is not present
     /// on a diff layer when it is (i.e. a false negative), leading to wrong executions.
     bloom: Option<qfilter::Filter>,
+    cache: Arc<Mutex<LruCache<Vec<u8>, Option<Vec<u8>>, FxBuildHasher>>>
 }
 
 impl Default for TrieLayerCache {
@@ -39,18 +41,16 @@ impl Default for TrieLayerCache {
             last_id: 0,
             layers: Default::default(),
             commit_threshold: 128,
+            cache: Arc::new(Mutex::new(LruCache::unbounded_with_hasher(FxBuildHasher)))
         }
     }
 }
 
 impl TrieLayerCache {
     pub fn new(commit_threshold: usize) -> Self {
-        let bloom = Self::create_filter().ok();
         Self {
-            bloom,
-            last_id: 0,
-            layers: Default::default(),
             commit_threshold,
+            ..TrieLayerCache::default()
         }
     }
 
@@ -187,6 +187,22 @@ impl TrieLayerCache {
             .rev()
             .flat_map(|layer| layer.nodes)
             .collect();
+        let Ok(mut cache) = self.cache.lock() else {
+            tracing::warn!("Node LRU is poisoned");
+            return Some(nodes_to_commit);
+        };
+        while cache.len() > 1_000_000 {
+            cache.pop_lru();
+        }
+        for (path, value) in &nodes_to_commit {
+            if let Some(old_value) = cache.peek_mut(path) {
+                *old_value = if !value.is_empty() {
+                    Some(value.clone())
+                } else {
+                    None
+                }
+            }
+        }
         Some(nodes_to_commit)
     }
 }
@@ -222,7 +238,13 @@ impl TrieDB for TrieWrapper {
         if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
             return Ok(Some(value));
         }
-        self.db.get(key)
+        let mut cache = self.inner.cache.lock().map_err(|_| TrieError::LockError)?;
+        if let Some(value) = cache.get(key.as_ref()) {
+            return Ok(value.clone());
+        };
+        let value = self.db.get(key.clone())?;
+        cache.put(key.into_vec(), value.clone());
+        Ok(value)
     }
 
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
