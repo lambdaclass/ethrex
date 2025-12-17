@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Transaction fees - Ethrex</title>
+        <title>Shared Bridge - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,130 +237,63 @@
 }
 
 </style>
-<h1 id="transaction-fees"><a class="header" href="#transaction-fees">Transaction Fees</a></h1>
-<p>This page describes the different types of transaction fees that the Ethrex L2 rollup can charge and how they can be configured.</p>
-<div class="mdbook-alerts mdbook-alerts-note">
-<p class="mdbook-alerts-title">
-  <span class="mdbook-alerts-icon"></span>
-  note
-</p>
-<p>Privileged transactions are exempt from all fees.</p>
-</div>
-<h2 id="priority-fee"><a class="header" href="#priority-fee">Priority Fee</a></h2>
-<p>The priority fee works exactly the same way as on Ethereum L1.<br />
-It is an additional tip paid by the transaction sender to incentivize the sequencer to prioritize the inclusion of their transaction.<br />
-The priority fee is always forwarded directly to the sequencer’s coinbase address.</p>
-<h2 id="base-fee"><a class="header" href="#base-fee">Base Fee</a></h2>
-<p>The base fee follows the same rules as the Ethereum L1 base fee. It adjusts dynamically depending on network congestion to ensure stable transaction pricing.<br />
-By default, base fees are burned. However, a sequencer can configure a <code>base fee vault</code> address to receive the collected base fees instead of burning them.</p>
-<pre><code class="language-sh">ethrex l2 --block-producer.base-fee-vault-address &lt;l2-base-fee-vault-address&gt;
-</code></pre>
-<div class="mdbook-alerts mdbook-alerts-caution">
-<p class="mdbook-alerts-title">
-  <span class="mdbook-alerts-icon"></span>
-  caution
-</p>
-<p>If the base fee vault and coinbase addresses are the same, its balance will change in a way that differs from the standard L1 behavior, which may break assumptions about EVM compatibility.</p>
-</div>
-<h2 id="operator-fee"><a class="header" href="#operator-fee">Operator Fee</a></h2>
-<p>The operator fee represents an additional per-gas cost charged by the sequencer to cover the operational costs of maintaining the L2 infrastructure.</p>
-<p>This fee works similarly to the base fee — it is <strong>multiplied by the gas used</strong> for each transaction.<br />
-All collected operator fees are deposited into a dedicated <code>operator fee vault</code> address.</p>
-<p>To set the operator fee amount:</p>
-<pre><code class="language-sh">ethrex l2 --block-producer.operator-fee-per-gas &lt;amount-in-wei&gt;
-</code></pre>
-<p>To set the operator fee vault address:</p>
-<pre><code class="language-sh">ethrex l2 --block-producer.operator-fee-vault-address &lt;operator-fee-vault-address&gt;
-</code></pre>
-<div class="mdbook-alerts mdbook-alerts-caution">
-<p class="mdbook-alerts-title">
-  <span class="mdbook-alerts-icon"></span>
-  caution
-</p>
-<p>If the operator fee vault and coinbase addresses are the same, its balance will change in a way that differs from the standard L1 behavior, which may break assumptions about EVM compatibility.</p>
-</div>
-<hr />
-<h2 id="fee-calculation"><a class="header" href="#fee-calculation">Fee Calculation</a></h2>
-<p>When executing a transaction, all gas-related fees are subject to the <strong><code>max_fee_per_gas</code></strong> value defined in the transaction.<br />
-This value acts as an absolute cap over the <strong>sum of all fee components</strong>.</p>
-<p>This means that the <strong>effective priority fee</strong> is capped to ensure the total does not exceed <code>max_fee_per_gas</code>.<br />
-Specifically:</p>
-<pre><code>effective_priority_fee_per_gas = min(
-    max_priority_fee_per_gas,
-    max_fee_per_gas - base_fee_per_gas - operator_fee_per_gas
-)
-</code></pre>
-<p>Then, the total fees are calculated as:</p>
-<pre><code class="language-sh">total_fees = (base_fee_per_gas + operator_fee_per_gas + priority_fee_per_gas) * gas_used
-</code></pre>
-<p>This behavior ensures that transaction senders <strong>never pay more than <code>max_fee_per_gas * gas_used</code></strong>, even when the operator fee is enabled.</p>
-<div class="mdbook-alerts mdbook-alerts-important">
-<p class="mdbook-alerts-title">
-  <span class="mdbook-alerts-icon"></span>
-  important
-</p>
-<p>The current <code>effective_gas_price</code> field in the transaction receipt <strong>does not include</strong> the operator fee component.<br />
-Therefore, <code>effective_gas_price * gas_used</code> will only reflect the <strong>base + priority</strong> portions of the total cost.</p>
-</div>
-<div class="mdbook-alerts mdbook-alerts-important">
-<p class="mdbook-alerts-title">
-  <span class="mdbook-alerts-icon"></span>
-  important
-</p>
-<p>The <code>eth_gasPrice</code> RPC endpoint has been <strong>modified</strong> to include the <code>operator_fee_per_gas</code> value when the operator fee mechanism is active.<br />
-This means that the value returned by <code>eth_gasPrice</code> corresponds to <code>base_fee_per_gas + operator_fee_per_gas + estimated_gas_tip</code>.</p>
-</div>
-<h2 id="l1-fees"><a class="header" href="#l1-fees">L1 Fees</a></h2>
-<p>L1 fees represent the cost of posting data from the L2 to the L1.<br />
-Each transaction is charged based on the amount of <strong>L1 Blob space</strong> it occupies (the size of the transaction when RLP-encoded).</p>
-<p>Each time a transaction is executed, the sequencer calculates its RLP-encoded size.
-Then, the L1 fee for that transaction is computed as:</p>
-<pre><code>l1_fee = blob_base_fee_per_byte * tx_encoded_size
-</code></pre>
-<p>An additional amount of gas (<code>l1_gas</code>) is added to the transaction execution so that:</p>
-<pre><code>l1_gas * gas_price = l1_fee
-</code></pre>
-<p>This guarantees that the total amount charged to the user never exceeds <code>gas_limit * gas_price</code>, while transparently accounting for the L1 posting cost.<br />
-Importantly, this process happens automatically — users do <strong>not</strong> need to perform any additional steps.<br />
-Calls to <code>eth_estimateGas</code> already inherit this behavior and will include the extra gas required for the L1 fee.</p>
-<p>The computed L1 fee is deducted from the sender’s balance and transferred to the <code>L1 Fee Vault</code> address.</p>
-<p>The <strong>blob base fee per byte</strong> is derived from the L1 <code>BlobBaseFee</code>.<br />
-The <code>L1Watcher</code> periodically fetches the <code>BlobBaseFee</code> from L1 (at a configured interval) and uses it to compute:</p>
-<pre><code>blob_base_fee_per_byte = (l1_fee_per_blob_gas * GAS_PER_BLOB) / SAFE_BYTES_PER_BLOB
-</code></pre>
-<p>See the <code>Data availability</code> section <a href="../architecture/overview.html">here</a> for more information about how data availability works.</p>
-<p>L1 fee is deactivated by default. To activate it, configure the <strong>L1 fee vault address</strong>:</p>
-<pre><code class="language-sh">ethrex l2 --block-producer.l1-fee-vault-address &lt;l1-fee-vault-address&gt;
-</code></pre>
-<p>To configure the <strong>interval</strong> at which the <code>BlobBaseFee</code> is fetched from L1:</p>
-<pre><code class="language-sh">ethrex l2 --block-producer.blob-base-fee-update-interval &lt;milliseconds&gt;
-</code></pre>
-<div class="mdbook-alerts mdbook-alerts-caution">
-<p class="mdbook-alerts-title">
-  <span class="mdbook-alerts-icon"></span>
-  caution
-</p>
-<p>If the L1 fee vault and coinbase addresses are the same, its balance will change in a way that differs from the standard L1 behavior, which may break assumptions about EVM compatibility.</p>
-</div>
-<h2 id="useful-rpc-methods"><a class="header" href="#useful-rpc-methods">Useful RPC Methods</a></h2>
-<p>The following custom RPC methods are available to query fee-related parameters directly from the L2 node.<br />
-Each method accepts a single argument: the <strong><code>block_number</code></strong> to query historical or current values.</p>
-<div class="table-wrapper"><table><thead><tr><th>Method Name</th><th>Description</th><th>Example</th></tr></thead><tbody>
-<tr><td><code>ethrex_getBaseFeeVaultAddress</code></td><td>Returns the address configured to receive the <strong>base fees</strong> collected in the specified block.</td><td><code>ethrex_getBaseFeeVaultAddress {"block_number": 12345}</code></td></tr>
-<tr><td><code>ethrex_getOperatorFeeVaultAddress</code></td><td>Returns the address configured as the <strong>operator fee vault</strong> in the specified block.</td><td><code>ethrex_getOperatorFeeVaultAddress {"block_number": 12345}</code></td></tr>
-<tr><td><code>ethrex_getOperatorFee</code></td><td>Returns the <strong>operator fee per gas</strong> value active at the specified block.</td><td><code>ethrex_getOperatorFee {"block_number": 12345}</code></td></tr>
-<tr><td><code>ethrex_getL1BlobBaseFee</code></td><td>Returns the <strong>L1 blob base fee per gas</strong> fetched from L1 and used for L1 fee computation at the specified block.</td><td><code>ethrex_getL1BlobBaseFee {"block_number": 12345}</code></td></tr>
-</tbody></table>
-</div>
+<h1 id="shared-bridge"><a class="header" href="#shared-bridge">Shared Bridge</a></h1>
+<h2 id="introduction"><a class="header" href="#introduction">Introduction</a></h2>
+<p>If a user wants to transfer funds from L2-A to an account on L2-B, the conventional process involves several steps: withdrawing assets from L2-A to Ethereum, claiming the unlocked funds on Ethereum, and then depositing those assets from Ethereum to L2-B. These multiple steps degrade the UX, and two of them require transactions on Ethereum, which are often expensive. This inefficiency arises because there is currently no direct communication channel between different L2s, forcing all interactions to route through their common hub: Ethereum.</p>
+<p>The Shared Bridge feature changes this by enabling seamless message passing between L2s. As a result, a user can achieve the same transfer by interacting only with the source chain (L2-A), with the outcome eventually reflecting on the destination chain (L2-B).</p>
+<p>While the user performs just one interaction and waits for the result, a similar process to the conventional flow occurs behind the scenes. In the following sections, we'll explore how it works.</p>
+<h2 id="high-level-overview"><a class="header" href="#high-level-overview">High-Level Overview</a></h2>
+<p>To understand the behind-the-scenes mechanics, we'll revisit the earlier example. For a quick recap, here's a high-level breakdown of what happens when Alice (on L2-A) wants to send ETH to Bob (on L2-B):</p>
+<p><img src="../img/shared_bridge.png" alt="Diagram illustrating the cross-L2 transfer flow from L2-A to L2-B" /></p>
+<ul>
+<li><strong>Source L2 (L2-A, Alice's side):</strong> Alice invokes the <code>sendToL2</code> function on the <code>CommonBridgeL2</code> contract, specifying the destination chain ID (L2-B), Bob's address on L2-B, the ETH amount to send, the gas limit she is willing to consume for the final transaction on L2-B (this gas is burned on L2-A), and optionally the calldata for any custom transaction to execute on L2-B.</li>
+<li><strong>Source L2 Sequencer (L2-A):</strong> Alice's transaction is included in a block on L2-A. Eventually, a batch containing that block is sealed, and a commitment is submitted to L1 (Ethereum). This commitment includes, among other things, the list of balances to transfer to destination L2s, as well as the hashes of all messages addressed to those L2s.</li>
+<li><strong>Source L2 Prover (L2-A):</strong> A zero-knowledge (ZK) proof is generated to validate the commitment for the batch containing Alice's message to Bob.</li>
+<li><strong>Source L2 Sequencer (L2-A):</strong> Once the prover delivers the ZK proof, it is submitted to L1 for verification. If the proof is valid, the commitment is marked as verified, the message is considered settled, the funds are transferred between bridges via the Router contract on L1, and the list of transaction hashes is stored in the respective target bridges.</li>
+<li><strong>Destination L2 Sequencer (L2-B):</strong> A dedicated process periodically polls a permissioned set of sequencers from other L2s to check for newly emitted messages. It receives Alice's message to Bob preemptively (i.e., possibly before the message is fully settled on L1). Upon receipt, it verifies the message's validity by checking whether the message hash is already present in its own bridge. If the message hash is not yet present (the batch has not been verified on L1), the message is discarded and retried in the next iteration. If the message validates, it is processed, and the transferred ETH is minted to Bob's address on L2-B.<br />
+Eventually, the sequencer commits and verifies a batch containing the received and processed messages in the OnChainProposer, clearing their hashes from the pending message hash list in the CommonBridge contract.</li>
+</ul>
+<h2 id="protocol-details"><a class="header" href="#protocol-details">Protocol Details</a></h2>
+<h3 id="cross-chain-messaging"><a class="header" href="#cross-chain-messaging">Cross-chain Messaging</a></h3>
+<p>A cross-chain message directed from a source L2 to a destination L2 is essentially an event emitted by the CommonBridgeL2 contract within a block on the source L2. These events are triggered upon successful invocations of the sendToL2 function in the CommonBridgeL2.</p>
+<p>During batch preparation on the source L2, cross-chain messages are collected. For each target L2, a list of message hashes is constructed, and the balance diffs generated by the messages are calculated. These values are included in the batch commitment submitted to L1 by the <code>L1Committer</code>.</p>
+<p>Once the <code>L1Committer</code> prepares the inputs for the prover, the prover requests them and initiates generation of the ZK proof for the specific batch. As part of this process, the prover recomputes hashes of the cross-chain messages and the balance diffs, returning them to be used as public values during on-chain verification. Upon completing proof generation, the prover sends it back to the sequencer—specifically, to the <code>ProofCoordinator</code>.</p>
+<p>After the prover delivers the ZK proof validating the batch prepared by the <code>L1Committer</code>, the <code>L1Sender</code> submits it along with the public values for on-chain verification. On-chain, before verifying the proof itself, the submitted public values are compared against the previously committed ones, confirming that the hashes of cross-chain messages and the balance diffs match. If verification succeeds, the involved cross-chain messages are deemed settled, and the state is transferred from the source bridge to the corresponding destination bridges.</p>
+<p>To execute a cross-chain message on the destination L2, the message(s) must first be settled on L1. Additionally, the <code>Watcher</code> on the destination L2 must obtain them in advance via internal communication among permissioned sequencers.
+While the source L2's batch is being prepared and verified, the destination L2 has already preemptively acquired its corresponding messages. This is feasible because L2s with the Shared Bridge feature enabled are aware of the other sequencers participating in the same Shared Bridge ecosystem. The Watcher—a sequencer component originally designed to handle L1-incoming privileged transactions—periodically scans for relevant correspondence across the permissioned set of L2s. Upon receiving potential matches, the L2 queries its <code>CommonBridge</code> contract on L1 to validate the message (i.e., confirm it has been settled) before processing it. If the message is not yet validated, it is discarded and retried in the next polling iteration.</p>
+<h3 id="replay-attack"><a class="header" href="#replay-attack">Replay Attack</a></h3>
+<p>Once a cross-chain message is settled on L1, the destination L2's sequencer processes it. To do so, it constructs a privileged transaction from the message's payload and adds it to the mempool only if the hash of this constructed transaction does not match the hash of any previously executed transaction. Hash collisions are prevented, among other measures, by incorporating the source L2's chain ID and the message's nonce (as recorded on the source L2). Each L2 maintains a mapping in its corresponding <code>CommonBridgeL2</code> contract, using the destination chain ID as the key and the message nonce as the value.</p>
+<h3 id="state-availability"><a class="header" href="#state-availability">State Availability</a></h3>
+<p>Cross-chain messages are forcibly included in recipient chains (see <a href="#forced-inclusion">Forced Inclusion</a>). In adverse scenarios—such as a sequencer shutdown, loss of communication with the source L2, or the destination L2's inability to retrieve messages directly—a security mechanism must enable recovery of these messages from L1. This fallback is not yet implemented. However, the necessary data is already available on L1 to support this functionality since the state of the L2 lives in the blobs, so it'd be available as long as the blob containing the L2's data is available.</p>
+<h3 id="proving"><a class="header" href="#proving">Proving</a></h3>
+<p>Batch proving encompasses several tasks, including recomputing cross-chain messages hashes within the batch and the associated balance diffs. These values are returned as part of the guest program execution output and serve as public inputs for on-chain proof verification.</p>
+<h3 id="source-l2-not-available"><a class="header" href="#source-l2-not-available">Source L2 not available</a></h3>
+<p>In situations where the destination L2 is unable to retrieve the relevant messages directly, because the source l2 is not available, we need a mechanism to still be able to retrieve them.
+What should be done is</p>
+<ul>
+<li>The destination L2 should periodically scan the L1 and store the blobs sent on the commitBatch call of the source L2.</li>
+<li>Run the state reconstruct command</li>
+<li>Initialize a sequencer with the reconstructed state</li>
+<li>Use that sequencer as the source for getting the messages</li>
+</ul>
+<p>Keep in mind that since you are not the owner of that source L2, the chain will not advance, but you will still be able to get all pending messages to execute, as long as they were previously verified.</p>
+<h3 id="forced-inclusion"><a class="header" href="#forced-inclusion">Forced Inclusion</a></h3>
+<p>Once a cross-chain message is settled, each target <code>commonBridge</code> receives, along with the resulting ETH value, a list of all message hashes with their associated timestamps. When a batch is verified, the prover outputs the rolling hash of the received messages processed in the batch, and the included message hashes are removed from the bridge after verification.
+A message is considered expired if a certain deadline is reached and it has not yet been included in a batch on the destination chain. The <code>commonBridge</code> then prevents the sequencer from committing batches that contain non-privileged transactions (deposits and received messages) until all expired messages are included.</p>
+<h3 id="rollbacks"><a class="header" href="#rollbacks">Rollbacks</a></h3>
+<p>Once a cross-chain message is settled, there is no rollback mechanism in scenarios where the destination L2 either cannot or chooses not to execute the transaction. <a href="#forced-inclusion">Forced Inclusion</a> guarantees that the destination sequencer will eventually have to execute the received message in order to include non-privileged transactions in a batch. Therefore, once a message is settled, the user waits for the destination L2 to include the message, just as when the user performs a deposit to that L2.</p>
+<h2 id="recommendations"><a class="header" href="#recommendations">Recommendations</a></h2>
+<p>We advice not to register more than 100 chains, since this will enquire a high cost when verifying a batch (About 1.6M gas), due to the transfers between bridges.</p>
+
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../l2/fundamentals/based.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../l2/fundamentals/transaction_fees.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../l2/fundamentals/shared_bridge.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../developers/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -370,11 +303,11 @@ Each method accepts a single argument: the <strong><code>block_number</code></st
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../l2/fundamentals/based.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../l2/fundamentals/transaction_fees.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../l2/fundamentals/shared_bridge.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../developers/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
