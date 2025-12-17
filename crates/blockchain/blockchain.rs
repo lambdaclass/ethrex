@@ -200,6 +200,8 @@ impl Blockchain {
     fn execute_block_pipeline(
         &self,
         block: &Block,
+        parent_header: &BlockHeader,
+        mut vm: Evm,
     ) -> Result<
         (
             BlockExecutionResult,
@@ -211,21 +213,12 @@ impl Blockchain {
         ChainError,
     > {
         let start_instant = Instant::now();
-        // Validate if it can be the new head and find the parent
-        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
-            // If the parent is not present, we store it as pending.
-            self.storage.add_pending_block(block.clone())?;
-            return Err(ChainError::ParentNotFound);
-        };
 
         let chain_config = self.storage.get_chain_config();
 
         // Validate the block pre-execution
-        validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        validate_block(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         let block_validated_instant = Instant::now();
-
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
-        let mut vm = self.new_evm(vm_db)?;
 
         let exec_merkle_start = Instant::now();
         let queue_length = AtomicUsize::new(0);
@@ -1096,8 +1089,18 @@ impl Blockchain {
     }
 
     pub fn add_block_pipeline(&self, block: Block) -> Result<(), ChainError> {
+        // Validate if it can be the new head and find the parent
+        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+            // If the parent is not present, we store it as pending.
+            self.storage.add_pending_block(block)?;
+            return Err(ChainError::ParentNotFound);
+        };
+
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
+        let vm = self.new_evm(vm_db)?;
+
         let (res, account_updates_list, merkle_queue_length, instants) =
-            self.execute_block_pipeline(&block)?;
+            self.execute_block_pipeline(&block, &parent_header, vm)?;
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -1676,6 +1679,7 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
                 .fee_config
                 .read()
                 .map_err(|_| EvmError::Custom("Fee config lock was poisoned".to_string()))?;
+
             Evm::new_for_l2(vm_db, fee_config)?
         }
     };
