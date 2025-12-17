@@ -50,6 +50,7 @@ services:
       - ETHREX_WATCHER_L2_RPCS
       - ETHREX_WATCHER_L2_CHAIN_IDS
       - ETHREX_WATCHER_ROUTER_ADDRESS
+      - ETHREX_LOG_LEVEL
     volumes:
       - ../../fixtures/genesis/l2b.json:/genesis/l2.json
       - envb:/env/
