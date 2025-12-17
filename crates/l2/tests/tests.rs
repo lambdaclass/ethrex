@@ -148,18 +148,6 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     acc_operator_fee += fee_token_fees.operator_fees;
     acc_l1_fees += fee_token_fees.l1_fees;
 
-    // Non thread-safe uses owner address
-    let fee_token_fees = test_fee_token(
-        l2_client.clone(),
-        private_keys.pop().unwrap(),
-        private_keys.pop().unwrap(),
-    )
-    .await?;
-    acc_priority_fees += fee_token_fees.priority_fees;
-    acc_base_fees += fee_token_fees.base_fees;
-    acc_operator_fee += fee_token_fees.operator_fees;
-    acc_l1_fees += fee_token_fees.l1_fees;
-
     let mut set = JoinSet::new();
 
     set.spawn(test_upgrade(l1_client.clone(), l2_client.clone()));
