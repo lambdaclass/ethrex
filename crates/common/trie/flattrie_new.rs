@@ -272,13 +272,7 @@ impl FlatTrie {
                     );
                     // Yields a new leaf with the path and value in it, and a new branch
                     // with the new and old leaf as children.
-                    let new_leaf_index = self.override_node(
-                        self_index,
-                        NodeHandle::Leaf {
-                            partial: Some(path.offset(match_index + 1)),
-                            value: None,
-                        },
-                    );
+                    let new_leaf_index = self.put_leaf(path.offset(match_index + 1), value);
                     let branch_index = {
                         let mut children_indices = [None; 16];
                         children_indices[new_leaf_choice_idx] = Some(Some(new_leaf_index));
@@ -509,7 +503,8 @@ impl FlatTrie {
                 },
                 NodeHandle::Branch { children_indices } => {
                     let mut children_hashes: [Option<NodeHash>; 16] = [None; 16];
-                    for (i, child) in children_indices.clone()
+                    for (i, child) in children_indices
+                        .clone()
                         .iter()
                         .enumerate()
                         .flat_map(|(i, c)| c.map(|c| (i, c)))
@@ -597,15 +592,26 @@ mod test {
     use super::*;
     use crate::{Nibbles, Trie};
 
+    const MAX_KEY_SIZE: usize = 2;
+    const MAX_VALUE_SIZE: usize = 1;
+    const MAX_KV_PAIRS: usize = 4;
+
     fn kv_pairs_strategy() -> impl Strategy<Value = (Vec<(Vec<u8>, Vec<u8>)>, Vec<usize>)> {
         // create random key-values, with keys all the same size, and a random permutation of indices
-        (1usize..2).prop_flat_map(|key_len| {
-            prop::collection::vec((vec(any::<u8>(), key_len), vec(any::<u8>(), 0..1)), 1..3)
-                .prop_flat_map(|kvs| {
-                    let len = kvs.len();
-                    let shuffle = vec(..len, ..len).prop_shuffle();
-                    (Just(kvs), shuffle)
-                })
+
+        (1usize..MAX_KEY_SIZE).prop_flat_map(|key_len| {
+            prop::collection::vec(
+                (
+                    vec(any::<u8>(), key_len),
+                    vec(any::<u8>(), 0..MAX_VALUE_SIZE),
+                ),
+                1..MAX_KV_PAIRS,
+            )
+            .prop_flat_map(|kvs| {
+                let len = kvs.len();
+                let shuffle = vec(..len, ..len).prop_shuffle();
+                (Just(kvs), shuffle)
+            })
         })
     }
 
