@@ -145,14 +145,7 @@ impl FlatTrie {
         };
 
         let data = match (override_partial, override_value) {
-            (None, None) => {
-                let encoded_items = self.get_encoded_items(index)?;
-                let (partial, _) = decode_bytes(encoded_items[0])?;
-                let partial = Nibbles::decode_compact(partial);
-                debug_assert!(partial.is_leaf());
-                let (value, _) = decode_bytes(encoded_items[1])?;
-                (partial, value)
-            }
+            (Some(partial), Some(value)) => (partial.clone(), value.as_slice()),
             (Some(partial), None) => {
                 let encoded_items = self.get_encoded_items(index)?;
                 let (value, _) = decode_bytes(encoded_items[1])?;
@@ -165,7 +158,14 @@ impl FlatTrie {
                 debug_assert!(partial.is_leaf());
                 (partial, value.as_slice())
             }
-            (Some(partial), Some(value)) => (partial.clone(), value.as_slice()),
+            (None, None) => {
+                let encoded_items = self.get_encoded_items(index)?;
+                let (partial, _) = decode_bytes(encoded_items[0])?;
+                let partial = Nibbles::decode_compact(partial);
+                debug_assert!(partial.is_leaf());
+                let (value, _) = decode_bytes(encoded_items[1])?;
+                (partial, value)
+            }
         };
         Ok(data)
     }
@@ -183,6 +183,7 @@ impl FlatTrie {
         };
 
         let data = match override_prefix {
+            Some(prefix) => prefix.clone(),
             None => {
                 let encoded_items = self.get_encoded_items(index)?;
                 let (prefix, _) = decode_bytes(encoded_items[0])?;
@@ -190,9 +191,17 @@ impl FlatTrie {
                 debug_assert!(!prefix.is_leaf());
                 prefix
             }
-            Some(prefix) => prefix.clone(),
         };
         Ok(data)
+    }
+
+    pub fn get_extension_encoded_child_hash(
+        &self,
+        index: usize,
+    ) -> Result<NodeHash, RLPDecodeError> {
+        let encoded_items = self.get_encoded_items(index)?;
+        let child_hash = decode_child(encoded_items[1]);
+        Ok(child_hash)
     }
 
     /// Gets the encoded items of a node based on its index.
@@ -231,7 +240,7 @@ impl FlatTrie {
         let self_view = &self.nodes[self_index];
         match self_view.handle {
             NodeHandle::Leaf { .. } => {
-                let (partial, self_value) = self.get_leaf_data(self_index)?;
+                let (partial, _) = self.get_leaf_data(self_index)?;
                 if partial == path {
                     let override_node_handle = NodeHandle::Leaf {
                         partial: None,
@@ -465,4 +474,114 @@ impl FlatTrie {
 
         index
     }
+
+    pub fn hash(&mut self) -> Result<NodeHash, RLPDecodeError> {
+        fn recursive(trie: &mut FlatTrie, index: usize) -> Result<NodeHash, RLPDecodeError> {
+            let node = &trie.nodes[index];
+            match &node.handle {
+                NodeHandle::Leaf { partial, value } => {
+                    if partial.is_some() || value.is_some() {
+                        // re-encode with new values
+                        let (partial, value) = trie.get_leaf_data(index)?;
+                        let encoded = encode_leaf(partial, value);
+                        Ok(NodeHash::from_encoded(&encoded))
+                    } else {
+                        // use already encoded
+                        Ok(trie.hash_encoded_data(index))
+                    }
+                }
+                NodeHandle::Extension {
+                    prefix,
+                    child_index,
+                } => match (prefix, child_index) {
+                    (None, None) => Ok(trie.hash_encoded_data(index)),
+                    (_, Some(child_index)) => {
+                        let child_hash = recursive(trie, *child_index)?;
+                        let prefix = trie.get_extension_data(index)?;
+                        let encoded = encode_extension(prefix, child_hash);
+                        Ok(NodeHash::from_encoded(&encoded))
+                    }
+                    (Some(prefix), None) => {
+                        let child_hash = trie.get_extension_encoded_child_hash(index)?;
+                        let encoded = encode_extension(prefix.clone(), child_hash);
+                        Ok(NodeHash::from_encoded(&encoded))
+                    }
+                },
+                NodeHandle::Branch { children_indices } => {
+                    let mut children_hashes: [Option<NodeHash>; 16] = [None; 16];
+                    for (i, child) in children_indices.clone()
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(i, c)| c.map(|c| (i, c)))
+                    {
+                        children_hashes[i] = Some(if let Some(child_index) = child {
+                            recursive(trie, child_index)?
+                        } else {
+                            let encoded_items = trie.get_encoded_items(index)?;
+                            decode_child(encoded_items[i])
+                        });
+                    }
+                    let encoded = encode_branch(children_hashes);
+                    Ok(NodeHash::from_encoded(&encoded))
+                }
+            }
+        }
+        let Some(root_index) = self.root_index else {
+            return Ok((*EMPTY_TRIE_HASH).into());
+        };
+        recursive(self, root_index)
+    }
+
+    pub fn hash_encoded_data(&self, index: usize) -> NodeHash {
+        let node = &self.nodes[index];
+        let range = node.encoded_range.unwrap();
+        let encoded = &self.encoded_data[range.0..range.1];
+        NodeHash::from_encoded(encoded)
+    }
+}
+
+fn encode_leaf(partial: Nibbles, value: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let mut encoder = Encoder::new(&mut buf);
+    encoder = encoder.encode_bytes(&partial.encode_compact());
+    encoder = encoder.encode_bytes(&value);
+    encoder.finish();
+    buf
+}
+
+fn encode_extension(path: Nibbles, child: NodeHash) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let mut encoder = Encoder::new(&mut buf);
+    encoder = encoder.encode_bytes(&path.encode_compact());
+    encoder = child.encode(encoder);
+    encoder.finish();
+    buf
+}
+
+fn encode_branch(children: [Option<NodeHash>; 16]) -> Vec<u8> {
+    // optimized encoding taken from rlp.rs
+    let payload_len = children.iter().fold(1, |acc, child| {
+        acc + if let Some(child) = child {
+            RLPEncode::length(child)
+        } else {
+            1
+        }
+    });
+
+    let mut buf: Vec<u8> = Vec::with_capacity(payload_len + 3); // 3 byte prefix headroom
+
+    encode_length(payload_len, &mut buf);
+    for child in children.iter() {
+        let Some(child) = child else {
+            buf.put_u8(RLP_NULL);
+            continue;
+        };
+        match child {
+            NodeHash::Hashed(hash) => hash.0.encode(&mut buf),
+            NodeHash::Inline((_, 0)) => buf.put_u8(RLP_NULL),
+            NodeHash::Inline((encoded, len)) => buf.put_slice(&encoded[..*len as usize]),
+        }
+    }
+    buf.put_u8(RLP_NULL);
+    buf
 }
