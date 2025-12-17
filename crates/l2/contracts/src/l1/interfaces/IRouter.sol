@@ -15,11 +15,7 @@ interface IRouter {
 
     /// @notice Sends messages to a specified chain via its CommonBridge.
     /// @param chainId The ID of the destination chain.
-    /// @param message_hashes The hashes of the messages to be sent.
-    function sendMessages(
-        uint256 chainId,
-        bytes32[] calldata message_hashes
-    ) external payable;
+    function sendETHValue(uint256 chainId) external payable;
 
     /// @notice Sends a ERC20 token message to a specified chain via its CommonBridge.
     /// @param senderChainId The ID of the source chain.
@@ -34,6 +30,11 @@ interface IRouter {
         address destTokenL2,
         uint256 amount
     ) external payable;
+
+    function injectMessageHashes(
+        uint256 chainId,
+        bytes32[] calldata message_hashes
+    ) external;
 
     /// @notice Retrieves the list of registered chain IDs.
     function getRegisteredChainIds() external view returns (uint256[] memory);

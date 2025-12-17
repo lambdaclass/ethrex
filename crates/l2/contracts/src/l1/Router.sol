@@ -65,10 +65,7 @@ contract Router is
     }
 
     /// @inheritdoc IRouter
-    function sendMessages(
-        uint256 chainId,
-        bytes32[] calldata message_hashes
-    ) public payable override {
+    function sendETHValue(uint256 chainId) public payable override {
         uint256 senderChainId = registeredAddresses[msg.sender];
         if (senderChainId == 0) {
             revert CallerNotBridge(msg.sender);
@@ -78,10 +75,9 @@ contract Router is
             revert TransferToChainNotRegistered(chainId);
         }
 
-        ICommonBridge(receiverBridge).receiveFromSharedBridge{value: msg.value}(
-            senderChainId,
-            message_hashes
-        );
+        ICommonBridge(receiverBridge).receiveETHFromSharedBridge{
+            value: msg.value
+        }();
     }
 
     /// @inheritdoc IRouter
@@ -117,6 +113,25 @@ contract Router is
                 return;
             }
         }
+    }
+
+    function injectMessageHashes(
+        uint256 chainId,
+        bytes32[] calldata message_hashes
+    ) external override {
+        uint256 senderChainId = registeredAddresses[msg.sender];
+        if (senderChainId == 0) {
+            revert CallerNotBridge(msg.sender);
+        }
+        address receiverBridge = bridges[chainId];
+        if (receiverBridge == address(0)) {
+            revert TransferToChainNotRegistered(chainId);
+        }
+
+        ICommonBridge(receiverBridge).pushMessageHashes(
+            chainId,
+            message_hashes
+        );
     }
 
     /// @inheritdoc IRouter

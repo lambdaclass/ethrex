@@ -158,15 +158,13 @@ interface ICommonBridge {
         BalanceDiff[] calldata balanceDiffs
     ) external;
 
-    /// @notice Receives messages from another chain via shared bridge router.
-    /// @dev This method should only be called by the shared bridge router, as this
-    /// method will not burn the L2 gas.
-    /// @param chainID The ID of the source chain.
-    /// @param message_hashes The hashes of the messages being received.
-    function receiveFromSharedBridge(
-        uint256 chainID,
+    function pushMessageHashes(
+        uint256 chainId,
         bytes32[] calldata message_hashes
-    ) external payable;
+    ) external;
+
+    /// @notice Receives messages from another chain via shared bridge router.
+    function receiveETHFromSharedBridge() external payable;
 
     /// @notice Receives an ERC20 message from another chain via shared bridge router.
     /// @dev This method should only be called by the shared bridge router, as this
