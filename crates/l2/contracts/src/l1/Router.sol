@@ -65,7 +65,7 @@ contract Router is
     }
 
     /// @inheritdoc IRouter
-    function sendMessage(
+    function sendMessages(
         uint256 chainId,
         bytes32[] calldata message_hashes
     ) public payable override {
@@ -96,7 +96,7 @@ contract Router is
             revert("Router: invalid sender, not authorized");
         }
         if (bridges[chainId] == address(0)) {
-            emit TransferToChainNotRegistered(chainId);
+            revert TransferToChainNotRegistered(chainId);
         } else {
             ICommonBridge(bridges[chainId]).receiveERC20FromSharedBridge(
                 tokenL1,

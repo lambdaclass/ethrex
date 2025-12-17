@@ -459,7 +459,7 @@ contract CommonBridge is
             for (uint j = 0; j < balanceDiffs[i].valuePerToken.length; j++) {
                 TokenValue memory tv = balanceDiffs[i].valuePerToken[j];
                 if (tv.tokenL1 == address(0)) {
-                    IRouter(SHARED_BRIDGE_ROUTER).sendMessage{value: tv.value}(
+                    IRouter(SHARED_BRIDGE_ROUTER).sendMessages{value: tv.value}(
                         balanceDiffs[i].chainId,
                         balanceDiffs[i].message_hashes
                     );
