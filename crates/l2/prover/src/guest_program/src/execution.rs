@@ -1,9 +1,11 @@
 use crate::input::ProgramInput;
 use crate::output::ProgramOutput;
+use crate::report_cycles;
 
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{
     validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
+    validate_state_root,
 };
 use ethrex_common::types::AccountUpdate;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
@@ -13,23 +15,22 @@ use ethrex_common::types::{
 };
 use ethrex_common::{Address, U256};
 use ethrex_common::{H256, types::Block};
-#[cfg(feature = "l2")]
-use ethrex_l2_common::l1_messages::L1Message;
+use ethrex_l2_common::privileged_transactions::get_block_l1_in_messages;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
+#[cfg(not(feature = "l2"))]
+use ethrex_common::types::ELASTICITY_MULTIPLIER;
 #[cfg(feature = "l2")]
 use ethrex_common::types::{
     BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, blob_from_bytes,
     kzg_commitment_to_versioned_hash,
 };
+#[cfg(feature = "l2")]
 use ethrex_l2_common::{
-    l1_messages::get_block_l1_messages,
-    privileged_transactions::{
-        PrivilegedTransactionError, compute_privileged_transactions_hash,
-        get_block_privileged_transactions,
-    },
+    messages::{L1Message, L2Message, get_block_l1_messages, get_block_l2_out_messages},
+    privileged_transactions::{PrivilegedTransactionError, compute_privileged_transactions_hash},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -116,35 +117,164 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         );
     }
 
-    stateless_validation_l1(&blocks, execution_witness, elasticity_multiplier, chain_id)
+    stateless_validation_l1(blocks, execution_witness, elasticity_multiplier, chain_id)
 }
 
 pub fn stateless_validation_l1(
-    blocks: &[Block],
+    blocks: Vec<Block>,
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
-    let StatelessResult {
-        initial_state_hash,
-        final_state_hash,
-        last_block_hash,
-        non_privileged_count,
-        ..
-    } = execute_stateless(blocks, execution_witness, elasticity_multiplier, None)?;
+    let guest_program_state: GuestProgramState =
+        report_cycles("guest_program_state_initialization", || {
+            execution_witness
+                .try_into()
+                .map_err(StatelessExecutionError::GuestProgramState)
+        })?;
+
+    let mut wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
+
+    let chain_config = wrapped_db.get_chain_config().map_err(|_| {
+        StatelessExecutionError::Internal("No chain config in execution witness".to_string())
+    })?;
+
+    // Hashing is an expensive operation in zkVMs, this way we avoid hashing twice
+    // (once in get_first_invalid_block_hash(), later in validate_block()).
+    report_cycles("initialize_block_header_hashes", || {
+        wrapped_db.initialize_block_header_hashes(&blocks)
+    })?;
+
+    // Validate execution witness' block hashes, except parent block hash (latest block hash).
+    report_cycles("get_first_invalid_block_hash", || {
+        if let Ok(Some(invalid_block_header)) = wrapped_db.get_first_invalid_block_hash() {
+            return Err(StatelessExecutionError::InvalidBlockHash(
+                invalid_block_header,
+            ));
+        }
+        Ok(())
+    })?;
+
+    // Validate the initial state
+    let parent_block_header = wrapped_db
+        .get_block_parent_header(
+            blocks
+                .first()
+                .ok_or(StatelessExecutionError::EmptyBatchError)?
+                .header
+                .number,
+        )
+        .map_err(StatelessExecutionError::GuestProgramState)?;
+
+    let initial_state_hash = report_cycles("state_trie_root", || {
+        wrapped_db
+            .state_trie_root()
+            .map_err(StatelessExecutionError::GuestProgramState)
+    })?;
+
+    if initial_state_hash != parent_block_header.state_root {
+        return Err(StatelessExecutionError::InvalidInitialStateTrie);
+    }
+
+    // Execute blocks
+    let mut parent_block_header = &parent_block_header;
+    let mut acc_account_updates: BTreeMap<Address, AccountUpdate> = BTreeMap::new();
+    let mut non_privileged_count = 0;
+
+    for block in blocks.iter() {
+        // Validate the block
+        report_cycles("validate_block", || {
+            validate_block(
+                block,
+                parent_block_header,
+                &chain_config,
+                elasticity_multiplier,
+            )
+            .map_err(StatelessExecutionError::BlockValidationError)
+        })?;
+
+        let mut vm = report_cycles("setup_evm", || {
+            let vm = Evm::new_for_l1(wrapped_db.clone());
+            Ok::<_, StatelessExecutionError>(vm)
+        })?;
+
+        let result = report_cycles("execute_block", || {
+            vm.execute_block(block)
+                .map_err(StatelessExecutionError::EvmError)
+        })?;
+
+        let account_updates = report_cycles("get_state_transitions", || {
+            vm.get_state_transitions()
+                .map_err(StatelessExecutionError::EvmError)
+        })?;
+
+        // Update db for the next block
+        report_cycles("apply_account_updates", || {
+            wrapped_db
+                .apply_account_updates(&account_updates)
+                .map_err(StatelessExecutionError::GuestProgramState)
+        })?;
+        // Update acc_account_updates
+        for account in account_updates {
+            let address = account.address;
+            if let Some(existing) = acc_account_updates.get_mut(&address) {
+                existing.merge(account);
+            } else {
+                acc_account_updates.insert(address, account);
+            }
+        }
+
+        report_cycles("validate_gas_and_receipts", || {
+            validate_gas_used(&result.receipts, &block.header)
+                .map_err(StatelessExecutionError::GasValidationError)
+        })?;
+
+        report_cycles("validate_receipts_root", || {
+            validate_receipts_root(&block.header, &result.receipts)
+                .map_err(StatelessExecutionError::ReceiptsRootValidationError)
+        })?;
+
+        // validate_requests_hash doesn't do anything for l2 blocks as this verifies l1 requests (messages, privileged transactions and consolidations)
+        report_cycles("validate_requests_hash", || {
+            validate_requests_hash(&block.header, &chain_config, &result.requests)
+                .map_err(StatelessExecutionError::RequestsRootValidationError)
+        })?;
+
+        non_privileged_count += block.body.transactions.len();
+        parent_block_header = &block.header;
+    }
+
+    let final_state_root = report_cycles("get_final_state_root", || {
+        wrapped_db
+            .state_trie_root()
+            .map_err(StatelessExecutionError::GuestProgramState)
+    })?;
+
+    let last_block = blocks
+        .last()
+        .ok_or(StatelessExecutionError::EmptyBatchError)?;
+
+    report_cycles("validate_state_root", || {
+        validate_state_root(&last_block.header, final_state_root)
+            .map_err(|_chain_err| StatelessExecutionError::InvalidFinalStateTrie)
+    })?;
 
     Ok(ProgramOutput {
         initial_state_hash,
-        final_state_hash,
+        final_state_hash: final_state_root,
         #[cfg(feature = "l2")]
-        l1messages_merkle_root: H256::zero(),
+        l1_out_messages_merkle_root: H256::zero(),
         #[cfg(feature = "l2")]
-        privileged_transactions_hash: H256::zero(),
+        l1_in_messages_rolling_hash: H256::zero(),
+        #[cfg(feature = "l2")]
+        l2_in_message_rolling_hashes: Vec::new(),
         #[cfg(feature = "l2")]
         blob_versioned_hash: H256::zero(),
-        last_block_hash,
+        last_block_hash: last_block.header.hash(),
         chain_id: chain_id.into(),
-        non_privileged_count,
+        non_privileged_count: non_privileged_count.into(),
+        #[cfg(feature = "l2")]
+        balance_diffs: vec![],
     })
 }
 
@@ -158,6 +288,8 @@ pub fn stateless_validation_l2(
     blob_proof: Proof,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
+    use ethrex_l2_common::messages::get_balance_diffs;
+
     let StatelessResult {
         receipts,
         initial_state_hash,
@@ -171,14 +303,17 @@ pub fn stateless_validation_l2(
         fee_configs.clone(),
     )?;
 
-    let (l1messages, privileged_transactions) =
-        get_batch_l1messages_and_privileged_transactions(blocks, &receipts)?;
+    let (l1_out_messages, l2_out_messages, l1_in_messages, l2_in_messages) =
+        get_batch_messages_and_deposit_transactions(blocks, &receipts, chain_id)?;
 
-    let (l1messages_merkle_root, privileged_transactions_hash) =
-        compute_l1messages_and_privileged_transactions_digests(
-            &l1messages,
-            &privileged_transactions,
+    let (l1_out_messages_merkle_root, l1_in_message_hash, l2_in_message_rolling_hashes) =
+        compute_messages_and_deposit_transactions_digests(
+            &l1_out_messages,
+            &l1_in_messages,
+            &l2_in_messages,
         )?;
+
+    let balance_diffs = get_balance_diffs(&l2_out_messages);
 
     // TODO: this could be replaced with something like a ProverConfig in the future.
     let validium = (blob_commitment, &blob_proof) == ([0; 48], &[0; 48]);
@@ -194,15 +329,18 @@ pub fn stateless_validation_l2(
     Ok(ProgramOutput {
         initial_state_hash,
         final_state_hash,
-        l1messages_merkle_root,
-        privileged_transactions_hash,
+        l1_out_messages_merkle_root,
+        l1_in_messages_rolling_hash: l1_in_message_hash,
+        l2_in_message_rolling_hashes,
         blob_versioned_hash,
         last_block_hash,
         chain_id: chain_id.into(),
         non_privileged_count,
+        balance_diffs,
     })
 }
 
+#[cfg_attr(not(feature = "l2"), expect(dead_code))]
 struct StatelessResult {
     receipts: Vec<Vec<ethrex_common::types::Receipt>>,
     initial_state_hash: H256,
@@ -307,8 +445,12 @@ fn execute_stateless(
             }
         }
 
-        non_privileged_count += block.body.transactions.len()
-            - get_block_privileged_transactions(&block.body.transactions).len();
+        non_privileged_count += block
+            .body
+            .transactions
+            .iter()
+            .filter(|tx| !tx.is_privileged())
+            .count();
 
         validate_gas_used(&receipts, &block.header)
             .map_err(StatelessExecutionError::GasValidationError)?;
@@ -346,42 +488,91 @@ fn execute_stateless(
 }
 
 #[cfg(feature = "l2")]
-fn get_batch_l1messages_and_privileged_transactions(
+type MessagesAndPrivilegedTransactions = (
+    Vec<L1Message>,
+    Vec<L2Message>,
+    Vec<PrivilegedL2Transaction>,
+    Vec<PrivilegedL2Transaction>,
+);
+
+#[cfg(feature = "l2")]
+type MessagesHashes = (H256, H256, Vec<(u64, H256)>);
+
+#[cfg(feature = "l2")]
+fn get_batch_messages_and_deposit_transactions(
     blocks: &[Block],
     receipts: &[Vec<Receipt>],
-) -> Result<(Vec<L1Message>, Vec<PrivilegedL2Transaction>), StatelessExecutionError> {
-    let mut l1messages = vec![];
-    let mut privileged_transactions = vec![];
+    chain_id: u64,
+) -> Result<MessagesAndPrivilegedTransactions, StatelessExecutionError> {
+    let mut l1_out_messages = vec![];
+    let mut l2_out_messages = vec![];
+    let mut l1_in_messages = vec![];
+    let mut l2_in_messages = vec![];
 
     for (block, receipts) in blocks.iter().zip(receipts) {
+        use ethrex_l2_common::privileged_transactions::get_block_l2_in_messages;
+
         let txs = &block.body.transactions;
-        privileged_transactions.extend(get_block_privileged_transactions(txs));
-        l1messages.extend(get_block_l1_messages(receipts));
+        l1_in_messages.extend(get_block_l1_in_messages(txs, chain_id));
+        l2_in_messages.extend(get_block_l2_in_messages(txs, chain_id));
+        l1_out_messages.extend(get_block_l1_messages(receipts));
+        l2_out_messages.extend(get_block_l2_out_messages(receipts, chain_id));
     }
 
-    Ok((l1messages, privileged_transactions))
+    Ok((
+        l1_out_messages,
+        l2_out_messages,
+        l1_in_messages,
+        l2_in_messages,
+    ))
 }
 
 #[cfg(feature = "l2")]
-fn compute_l1messages_and_privileged_transactions_digests(
-    l1messages: &[L1Message],
-    privileged_transactions: &[PrivilegedL2Transaction],
-) -> Result<(H256, H256), StatelessExecutionError> {
-    use ethrex_l2_common::{l1_messages::get_l1_message_hash, merkle_tree::compute_merkle_root};
+fn compute_messages_and_deposit_transactions_digests(
+    l1_out_messages: &[L1Message],
+    l1_in_messages: &[PrivilegedL2Transaction],
+    l2_in_messages: &[PrivilegedL2Transaction],
+) -> Result<MessagesHashes, StatelessExecutionError> {
+    use ethrex_l2_common::{merkle_tree::compute_merkle_root, messages::get_l1_message_hash};
 
-    let message_hashes: Vec<_> = l1messages.iter().map(get_l1_message_hash).collect();
-    let privileged_transactions_hashes: Vec<_> = privileged_transactions
+    let l1_out_message_hashes: Vec<_> = l1_out_messages.iter().map(get_l1_message_hash).collect();
+    let l1_out_messages_merkle_root = compute_merkle_root(&l1_out_message_hashes);
+
+    let l1_in_message_hashes: Vec<_> = l1_in_messages
         .iter()
         .map(PrivilegedL2Transaction::get_privileged_hash)
         .map(|hash| hash.ok_or(StatelessExecutionError::InvalidPrivilegedTransaction))
         .collect::<Result<_, _>>()?;
 
-    let l1message_merkle_root = compute_merkle_root(&message_hashes);
-    let privileged_transactions_hash =
-        compute_privileged_transactions_hash(privileged_transactions_hashes)
-            .map_err(StatelessExecutionError::PrivilegedTransactionError)?;
+    let l1_in_rolling_hash = compute_privileged_transactions_hash(l1_in_message_hashes)
+        .map_err(StatelessExecutionError::PrivilegedTransactionError)?;
 
-    Ok((l1message_merkle_root, privileged_transactions_hash))
+    // We need to guarantee that the rolling hashes are computed in the same order
+    // both in the prover and committer.
+    let mut l2_in_hashes_per_chain_id = BTreeMap::new();
+
+    for tx in l2_in_messages {
+        let tx_hash = tx
+            .get_privileged_hash()
+            .ok_or(StatelessExecutionError::InvalidPrivilegedTransaction)?;
+        l2_in_hashes_per_chain_id
+            .entry(tx.chain_id)
+            .or_insert_with(Vec::new)
+            .push(tx_hash);
+    }
+
+    let mut l2_in_rolling_hashes = Vec::new();
+    for (chain_id, hashes) in &l2_in_hashes_per_chain_id {
+        let rolling_hash = compute_privileged_transactions_hash(hashes.clone())
+            .map_err(StatelessExecutionError::PrivilegedTransactionError)?;
+        l2_in_rolling_hashes.push((*chain_id, rolling_hash));
+    }
+
+    Ok((
+        l1_out_messages_merkle_root,
+        l1_in_rolling_hash,
+        l2_in_rolling_hashes,
+    ))
 }
 
 #[cfg(feature = "l2")]

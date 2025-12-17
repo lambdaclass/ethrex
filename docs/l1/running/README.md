@@ -6,4 +6,4 @@ This section explains how to run an Ethereum L1 node using ethrex. Here you'll f
 - Step-by-step instructions for setup and configuration
 - Guidance for both new and experienced users
 
-If you already have a consensus client running, you can skip directly to the node startup instructions. Otherwise, continue to the next section for help setting up a consensus client.
+If you already have a consensus client running, you can skip directly to the [node startup instructions](./startup.md). Otherwise, continue to the next section for help [setting up a consensus client](./consensus_client.md).

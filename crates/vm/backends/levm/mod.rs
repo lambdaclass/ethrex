@@ -28,6 +28,7 @@ use ethrex_levm::constants::{
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
 use ethrex_levm::tracing::LevmCallTracer;
+use ethrex_levm::utils::get_base_fee_per_blob_gas;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
     Environment,
@@ -221,6 +222,7 @@ impl LEVM {
             None
         };
 
+        let block_excess_blob_gas = block_header.excess_blob_gas.map(U256::from);
         let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
         let env = Environment {
             origin: tx_sender,
@@ -232,8 +234,9 @@ impl LEVM {
             prev_randao: Some(block_header.prev_randao),
             chain_id: chain_config.chain_id.into(),
             base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
+            base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
             gas_price,
-            block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
+            block_excess_blob_gas,
             block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
             tx_blob_hashes: tx.blob_versioned_hashes(),
             tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
@@ -726,11 +729,12 @@ fn adjust_disabled_l2_fees(env: &Environment, vm_type: VMType) -> VMType {
 fn env_from_generic(
     tx: &GenericTransaction,
     header: &BlockHeader,
-    db: &GeneralizedDatabase,
+    db: &mut GeneralizedDatabase,
 ) -> Result<Environment, VMError> {
     let chain_config = db.store.get_chain_config()?;
     let gas_price =
         calculate_gas_price_for_generic(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
+    let block_excess_blob_gas = header.excess_blob_gas.map(U256::from);
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
     Ok(Environment {
         origin: tx.from.0.into(),
@@ -744,8 +748,9 @@ fn env_from_generic(
         prev_randao: Some(header.prev_randao),
         chain_id: chain_config.chain_id.into(),
         base_fee_per_gas: header.base_fee_per_gas.unwrap_or_default().into(),
+        base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
         gas_price,
-        block_excess_blob_gas: header.excess_blob_gas.map(U256::from),
+        block_excess_blob_gas,
         block_blob_gas_used: header.blob_gas_used.map(U256::from),
         tx_blob_hashes: tx.blob_versioned_hashes.clone(),
         tx_max_priority_fee_per_gas: tx.max_priority_fee_per_gas.map(U256::from),
@@ -756,12 +761,22 @@ fn env_from_generic(
         difficulty: header.difficulty,
         is_privileged: false,
         fee_token: tx.fee_token,
-        fee_ratio: if let Some(fee_token) = tx.fee_token
-        {
-            get_fee_token_ratio(header, db, VMType::L2(FeeConfig::default()), chain_config, fee_token)?
+        fee_ratio: if let Some(fee_token) = tx.fee_token {
+            get_fee_token_ratio(
+                header,
+                db,
+                VMType::L2(FeeConfig::default()),
+                chain_config,
+                fee_token,
+            )
+            .map_err(|_| {
+                VMError::Internal(InternalError::Custom(
+                    "Cannot get fee token ratio".to_owned(),
+                ))
+            })?
         } else {
             None
-        };,
+        },
     })
 }
 

@@ -4,7 +4,10 @@ use std::fmt::Debug;
 
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch, fee_config::FeeConfig},
+    types::{
+        AccountUpdate, Blob, BlockNumber, balance_diff::BalanceDiff, batch::Batch,
+        fee_config::FeeConfig,
+    },
 };
 use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
 
@@ -20,8 +23,8 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         block_number: BlockNumber,
     ) -> Result<Option<u64>, RollupStoreError>;
 
-    /// Gets the message hashes by a given batch number.
-    async fn get_message_hashes_by_batch(
+    /// Gets the L1 message hashes by a given batch number.
+    async fn get_l1_out_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, RollupStoreError>;
@@ -32,10 +35,26 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         batch_number: u64,
     ) -> Result<Option<Vec<BlockNumber>>, RollupStoreError>;
 
-    async fn get_privileged_transactions_hash_by_batch_number(
+    /// Returns the balance diffs by a given batch_number
+    async fn get_balance_diffs_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<BalanceDiff>>, RollupStoreError>;
+
+    async fn get_l1_in_messages_rolling_hash_by_batch_number(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError>;
+
+    async fn get_l2_in_message_rolling_hashes_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<(u64, H256)>>, RollupStoreError>;
+
+    async fn get_non_privileged_transactions_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<u64>, RollupStoreError>;
 
     async fn get_state_root_by_batch_number(
         &self,
@@ -59,6 +78,13 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
     ) -> Result<(), RollupStoreError>;
 
     async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError>;
+
+    async fn seal_batch_with_prover_input(
+        &self,
+        batch: Batch,
+        prover_version: &str,
+        prover_input_data: ProverInputData,
+    ) -> Result<(), RollupStoreError>;
 
     async fn get_last_batch_number(&self) -> Result<Option<u64>, RollupStoreError>;
 

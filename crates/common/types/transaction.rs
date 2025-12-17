@@ -1,14 +1,15 @@
 use std::{cmp::min, fmt::Display};
 
-use crate::utils::keccak;
+use crate::{errors::EcdsaError, utils::keccak};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, Signature, U256};
 use ethrex_crypto::keccak::keccak_hash;
 pub use mempool::MempoolTransaction;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
-use secp256k1::{Message, ecdsa::RecoveryId};
 use serde::{Serialize, ser::SerializeStruct};
-pub use serde_impl::{AccessListEntry, GenericTransaction, GenericTransactionError};
+pub use serde_impl::{
+    AccessListEntry, AuthorizationTupleEntry, GenericTransaction, GenericTransactionError,
+};
 
 /// The serialized length of a default eip1559 transaction
 pub const EIP1559_DEFAULT_SERIALIZED_LENGTH: usize = 15;
@@ -295,7 +296,6 @@ pub struct EIP7702Transaction {
     #[rkyv(with=rkyv::with::Skip)]
     pub inner_hash: OnceCell<H256>,
 }
-
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct PrivilegedL2Transaction {
     pub chain_id: u64,
@@ -601,11 +601,6 @@ impl EIP4844Transaction {
         let mut buf = Vec::new();
         self.rlp_encode_as_pooled_tx(&mut buf, blobs_bundle);
         buf.len()
-    }
-    pub fn rlp_encode_as_pooled_tx_to_vec(&self, blobs_bundle: &BlobsBundle) -> Vec<u8> {
-        let mut buf = Vec::new();
-        self.rlp_encode_as_pooled_tx(&mut buf, blobs_bundle);
-        buf
     }
 }
 
@@ -1047,7 +1042,7 @@ impl RLPDecode for FeeTokenTransaction {
 }
 
 impl Transaction {
-    pub fn sender(&self) -> Result<Address, secp256k1::Error> {
+    pub fn sender(&self) -> Result<Address, EcdsaError> {
         match self {
             Transaction::LegacyTransaction(tx) => {
                 let signature_y_parity = match self.chain_id() {
@@ -1411,24 +1406,76 @@ impl Transaction {
 pub fn recover_address_from_message(
     signature: Signature,
     message: &Bytes,
-) -> Result<Address, secp256k1::Error> {
+) -> Result<Address, EcdsaError> {
     // Hash message
     let payload = keccak(message);
-    recover_address(signature, payload)
+    recover_address(signature, payload).map_err(EcdsaError::from)
 }
 
+#[cfg(all(
+    not(feature = "zisk"),
+    not(feature = "risc0"),
+    not(feature = "sp1"),
+    feature = "secp256k1"
+))]
 pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, secp256k1::Error> {
     // Create signature
     let signature_bytes = signature.to_fixed_bytes();
     let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
         &signature_bytes[..64],
-        RecoveryId::try_from(signature_bytes[64] as i32)?, // cannot fail
+        secp256k1::ecdsa::RecoveryId::try_from(signature_bytes[64] as i32)?,
     )?;
     // Recover public key
-    let public = secp256k1::SECP256K1
-        .recover_ecdsa(&Message::from_digest(payload.to_fixed_bytes()), &signature)?;
+    let public = secp256k1::SECP256K1.recover_ecdsa(
+        &secp256k1::Message::from_digest(payload.to_fixed_bytes()),
+        &signature,
+    )?;
     // Hash public key to obtain address
     let hash = keccak_hash(&public.serialize_uncompressed()[1..]);
+    Ok(Address::from_slice(&hash[12..]))
+}
+
+#[cfg(any(
+    feature = "zisk",
+    feature = "risc0",
+    feature = "sp1",
+    not(feature = "secp256k1")
+))]
+pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, k256::ecdsa::Error> {
+    use sha2::Digest;
+    use sha3::Keccak256;
+
+    // Create signature
+    let signature_bytes = signature.to_fixed_bytes();
+
+    let mut signature = k256::ecdsa::Signature::from_slice(&signature_bytes[..64])?;
+
+    let mut recovery_id_byte = signature_bytes[64];
+
+    if let Some(low_s) = signature.normalize_s() {
+        signature = low_s;
+        recovery_id_byte ^= 1;
+    }
+
+    let recovery_id = k256::ecdsa::RecoveryId::from_byte(recovery_id_byte).ok_or(
+        k256::ecdsa::Error::from_source("Failed to parse recovery id"),
+    )?;
+
+    // Recover public key
+    let public = k256::ecdsa::VerifyingKey::recover_from_prehash(
+        payload.as_bytes(),
+        &signature,
+        recovery_id,
+    )?;
+
+    let uncompressed = public.to_encoded_point(false);
+
+    let mut uncompressed = uncompressed.to_bytes();
+
+    let xy = &mut uncompressed[1..65];
+
+    let hash = Keccak256::digest(xy);
+
     Ok(Address::from_slice(&hash[12..]))
 }
 
@@ -1459,7 +1506,7 @@ impl TxType {
 impl PrivilegedL2Transaction {
     /// Returns the formatted hash of the privileged transaction,
     /// or None if the transaction is not a privileged transaction.
-    /// The hash is computed as keccak256(from || to || transaction_id  || value || gas_limit || keccak256(calldata))
+    /// The hash is computed as keccak256(chain_id || from || to || transaction_id  || value || gas_limit || keccak256(calldata))
     pub fn get_privileged_hash(&self) -> Option<H256> {
         // Should this function be changed?
         let to = match self.to {
@@ -1476,6 +1523,7 @@ impl PrivilegedL2Transaction {
 
         Some(crate::utils::keccak(
             [
+                U256::from(self.chain_id).to_big_endian().as_ref(),
                 self.from.as_bytes(),
                 to.as_bytes(),
                 &nonce,
@@ -2401,8 +2449,8 @@ mod serde_impl {
         InvalidTxType(TxType),
         #[error("Blob bundle error: {0}")]
         BlobBundleError(#[from] BlobsBundleError),
-        #[error("Missing fee token address")]
-        MissingFeeToken,
+        #[error("Missing field: {0}")]
+        MissingField(String),
     }
 
     /// Unsigned Transaction struct generic to all types which may not contain all required transaction fields
@@ -2657,6 +2705,41 @@ mod serde_impl {
         }
     }
 
+    impl TryFrom<GenericTransaction> for EIP7702Transaction {
+        type Error = GenericTransactionError;
+
+        fn try_from(value: GenericTransaction) -> Result<Self, Self::Error> {
+            if value.r#type != TxType::EIP7702 {
+                return Err(GenericTransactionError::InvalidTxType(value.r#type));
+            }
+            let TxKind::Call(to) = value.to else {
+                return Err(GenericTransactionError::MissingField("to".to_owned()));
+            };
+            Ok(Self {
+                chain_id: value.chain_id.unwrap_or_default(),
+                nonce: value.nonce.unwrap_or_default(),
+                max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
+                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
+                gas_limit: value.gas.unwrap_or_default(),
+                to,
+                value: value.value,
+                data: value.input,
+                access_list: value
+                    .access_list
+                    .into_iter()
+                    .map(|v| (v.address, v.storage_keys))
+                    .collect::<Vec<_>>(),
+                authorization_list: value
+                    .authorization_list
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(AuthorizationTuple::from)
+                    .collect(),
+                ..Default::default()
+            })
+        }
+    }
+
     impl From<PrivilegedL2Transaction> for GenericTransaction {
         fn from(value: PrivilegedL2Transaction) -> Self {
             Self {
@@ -2765,7 +2848,9 @@ mod serde_impl {
                     .collect::<Vec<_>>(),
                 fee_token: value
                     .fee_token
-                    .ok_or(GenericTransactionError::MissingFeeToken)?,
+                    .ok_or(GenericTransactionError::MissingField(
+                        "fee token".to_owned(),
+                    ))?,
                 chain_id: value.chain_id.unwrap_or_default(),
                 ..Default::default()
             })
@@ -3392,10 +3477,12 @@ mod tests {
 
         let encoded = PrivilegedL2Transaction::encode_to_vec(&privileged_l2);
         println!("encoded length: {}", encoded.len());
+        assert_eq!(encoded.len(), privileged_l2.length());
 
         let deserialized_tx = PrivilegedL2Transaction::decode(&encoded)?;
 
         assert_eq!(deserialized_tx, privileged_l2);
+
         Ok(())
     }
 

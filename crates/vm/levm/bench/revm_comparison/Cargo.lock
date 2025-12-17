@@ -1084,7 +1084,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "ethrex-common",
@@ -1096,7 +1096,6 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "rustc-hash",
- "secp256k1 0.30.0",
  "thiserror",
  "tokio",
  "tokio-util",
@@ -1105,7 +1104,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -1114,6 +1113,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
+ "k256",
  "kzg-rs",
  "lazy_static",
  "libc",
@@ -1125,6 +1125,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sha3",
  "thiserror",
  "tinyvec",
  "tracing",
@@ -1133,7 +1134,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "kzg-rs",
  "thiserror",
@@ -1142,7 +1143,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1166,6 +1167,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sha3",
  "strum",
  "thiserror",
  "walkdir",
@@ -1173,7 +1175,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "ethrex-common",
  "serde",
@@ -1184,7 +1186,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1197,11 +1199,10 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "bincode",
  "bytes",
  "ethereum-types",
  "ethrex-common",
@@ -1209,12 +1210,14 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
+ "lru",
  "qfilter",
  "rayon",
  "rustc-hash",
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
  "tracing",
 ]
 
@@ -1227,7 +1230,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1239,6 +1242,8 @@ dependencies = [
  "ethrex-threadpool",
  "hex",
  "lazy_static",
+ "rkyv",
+ "rustc-hash",
  "serde",
  "serde_json",
  "smallvec",
@@ -1248,7 +1253,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "bincode",
  "bytes",
@@ -1260,7 +1265,6 @@ dependencies = [
  "ethrex-levm",
  "ethrex-rlp",
  "ethrex-trie",
- "hex",
  "lazy_static",
  "rkyv",
  "serde",
@@ -1366,6 +1370,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
+name = "foldhash"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
+
+[[package]]
 name = "form_urlencoded"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1447,8 +1457,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "335ff9f135e4384c8150d6f27c6daed433577f86b4750418338c01a1a2528592"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "wasi",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1497,7 +1509,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
  "allocator-api2",
- "foldhash",
+ "foldhash 0.1.5",
 ]
 
 [[package]]
@@ -1505,6 +1517,11 @@ name = "hashbrown"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5419bdc4f6a9207fbeba6d11b604d481addf78ecd10c11ad51e76c2f6482748d"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.2.0",
+]
 
 [[package]]
 name = "heck"
@@ -1785,6 +1802,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "keccak"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecc2af9a1119c51f12a14607e783cb977bde58bc069ff0c3da1095e635d70654"
+dependencies = [
+ "cpufeatures",
+]
+
+[[package]]
 name = "keccak-asm"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1810,10 +1836,14 @@ dependencies = [
 
 [[package]]
 name = "lambdaworks-math"
-version = "0.11.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "708d148956bcdc21ae5c432b4e20bbaa26fd68d5376a3a6c461f41095abea0ba"
+checksum = "018a95aa873eb49896a858dee0d925c33f3978d073c64b08dd4f2c9b35a017c6"
 dependencies = [
+ "getrandom 0.2.16",
+ "num-bigint 0.4.6",
+ "num-traits",
+ "rand 0.8.5",
  "rayon",
  "serde",
  "serde_json",
@@ -1869,6 +1899,15 @@ name = "log"
 version = "0.4.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
+
+[[package]]
+name = "lru"
+version = "0.16.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96051b46fc183dc9cd4a223960ef37b9af631b55191852a8274bfef064cda20f"
+dependencies = [
+ "hashbrown 0.16.0",
+]
 
 [[package]]
 name = "malachite"
@@ -2947,6 +2986,16 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest 0.10.7",
+]
+
+[[package]]
+name = "sha3"
+version = "0.10.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75872d278a8f37ef87fa0ddbda7802605cb18344497949862c0d4dcb291eba60"
+dependencies = [
+ "digest 0.10.7",
+ "keccak",
 ]
 
 [[package]]

@@ -5,7 +5,7 @@ use ethrex_l2_sdk::{get_last_committed_batch, get_last_verified_batch};
 #[cfg(feature = "metrics")]
 use ethrex_metrics::{
     l2::metrics::{METRICS, MetricsBlockType, MetricsOperationType},
-    metrics_transactions::METRICS_TX,
+    transactions::METRICS_TX,
 };
 use ethrex_rpc::clients::eth::EthClient;
 use reqwest::Url;
@@ -81,7 +81,7 @@ impl MetricsGatherer {
         Ok(metrics)
     }
 
-    async fn gather_metrics(&mut self) -> Result<(), MetricsGathererError> {
+    async fn gather_metrics(&self) -> Result<(), MetricsGathererError> {
         let last_committed_batch =
             get_last_committed_batch(&self.l1_eth_client, self.on_chain_proposer_address).await?;
 
