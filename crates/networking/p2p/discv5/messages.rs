@@ -220,10 +220,8 @@ impl Ordinary {
         let mut authdata = Vec::new();
         self.encode_authdata(&mut authdata)?;
 
-        let authdata_size: u8 = authdata
-            .len()
-            .try_into()
-            .map_err(|_| PacketDecodeErr::InvalidSize)?;
+        let authdata_size: u16 =
+            u16::try_from(authdata.len()).map_err(|_| PacketDecodeErr::InvalidSize)?;
 
         let mut static_header = Vec::new();
         static_header.put_slice(PROTOCOL_ID);
@@ -1034,6 +1032,41 @@ mod tests {
         });
 
         assert_eq!(packet, expected);
+    }
+
+    /// Ping message packet (flag 0) from https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire-test-vectors.md
+    #[test]
+    fn ordinary_ping_packet_vector_test_roundtrip() {
+        let node_b_key = SecretKey::from_byte_array(&hex!(
+            "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
+        ))
+        .unwrap();
+        let dest_id = node_id(&public_key_from_signing_key(&node_b_key));
+
+        let encoded = &hex!(
+            "00000000000000000000000000000000088b3d4342774649325f313964a39e55ea96c005ad52be8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08dab84102ed931f66d1492acb308fa1c6715b9d139b81acbdcc"
+        );
+        let nonce = hex!("ffffffffffffffffffffffff").to_vec();
+        let read_key = [0; 16].to_vec();
+
+        let packet = Packet::decode(&dest_id, &read_key, encoded).unwrap();
+        let expected = Packet::Ordinary(Ordinary {
+            src_id: H256::from_slice(&hex!(
+                "aaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb"
+            )),
+            message: Message::Ping(PingMessage {
+                req_id: hex!("00000001").to_vec(),
+                enr_seq: 2,
+            }),
+        });
+        assert_eq!(packet, expected);
+
+        let masking_iv = u128::from_be_bytes(encoded[..16].try_into().unwrap());
+        let mut buf = Vec::new();
+        packet
+            .encode(&mut buf, masking_iv, &nonce, &dest_id, &read_key)
+            .unwrap();
+        assert_eq!(buf, encoded.to_vec());
     }
 
     #[test]
