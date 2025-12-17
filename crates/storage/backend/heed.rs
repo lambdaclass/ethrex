@@ -23,7 +23,14 @@ pub struct HeedBackend {
 
 impl HeedBackend {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
-        let env = unsafe { EnvOpenOptions::new().read_txn_without_tls().open(path) }.unwrap();
+        let env = unsafe {
+            EnvOpenOptions::new()
+                .read_txn_without_tls()
+                .max_dbs(TABLES.len().try_into().unwrap())
+                .map_size(4 * 1024 * 1024 * 1024 * 1024) // 4 TB
+                .open(path)
+        }
+        .unwrap();
 
         // We open the default unnamed database
         let mut wtxn = env.write_txn().unwrap();
@@ -116,7 +123,10 @@ impl StorageReadView for HeedReadTx {
             .get(table)
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
 
-        let value = db.get(&self.rtxn, key).unwrap().map(|b| b.to_vec());
+        // LMDB does not support empty keys, so we prepend a zero byte
+        let key = [&[0], key].concat();
+
+        let value = db.get(&self.rtxn, &key).unwrap().map(|b| b.to_vec());
         Ok(value)
     }
 
@@ -159,7 +169,10 @@ impl StorageWriteBatch for HeedWriteTx {
             .dbs
             .get(table)
             .ok_or_else(|| StoreError::Custom(format!("Table {table:?} not found")))?;
-        db.put(self.wtxn.as_mut().unwrap(), key, value).unwrap();
+
+        // LMDB does not support empty keys, so we prepend a zero byte
+        let key = [&[0], key].concat();
+        db.put(self.wtxn.as_mut().unwrap(), &key, value).unwrap();
         Ok(())
     }
 
@@ -175,7 +188,9 @@ impl StorageWriteBatch for HeedWriteTx {
             .get(table)
             .ok_or_else(|| StoreError::Custom(format!("Table {table:?} not found")))?;
 
-        for (key, value) in batch {
+        for (mut key, value) in batch {
+            // LMDB does not support empty keys, so we prepend a zero byte
+            key.insert(0, 0);
             db.put(self.wtxn.as_mut().unwrap(), &key, &value).unwrap();
         }
         Ok(())
@@ -187,7 +202,9 @@ impl StorageWriteBatch for HeedWriteTx {
             .get(table)
             .ok_or_else(|| StoreError::Custom(format!("Table {table:?} not found")))?;
 
-        db.delete(self.wtxn.as_mut().unwrap(), key).unwrap();
+        // LMDB does not support empty keys, so we prepend a zero byte
+        let key = [&[0], key].concat();
+        db.delete(self.wtxn.as_mut().unwrap(), &key).unwrap();
         Ok(())
     }
 
@@ -209,12 +226,14 @@ pub struct HeedLocked {
 
 impl StorageLockedView for HeedLocked {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        // LMDB does not support empty keys, so we prepend a zero byte
+        let key = [&[0], key].concat();
         let db = self
             .dbs
             .get(self.table_name)
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", self.table_name)))?;
         let rtxn = self.rtxn.lock().unwrap();
-        let value = db.get(&rtxn, key).unwrap().map(|b| b.to_vec());
+        let value = db.get(&rtxn, &key).unwrap().map(|b| b.to_vec());
         Ok(value)
     }
 }
