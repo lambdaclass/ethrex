@@ -8,7 +8,10 @@ use ethrex_rlp::{
 };
 use rkyv::with::Skip;
 
-use crate::{EMPTY_TRIE_HASH, Nibbles, Node as OldTrieNode, NodeHash, NodeRef, rlp::decode_child};
+use crate::{
+    EMPTY_TRIE_HASH, Nibbles, Node as EthrexTrieNode, NodeHash, NodeRef as EthrexTrieNodeRef,
+    rlp::decode_child,
+};
 
 /// A trie implementation that is non recursive, POD and avoids deserialization
 /// by providing views into a RLP flat buffer
@@ -486,12 +489,14 @@ impl FlatTrie {
                 } => match (prefix, child_index) {
                     (None, None) => Ok(trie.hash_encoded_data(index)),
                     (_, Some(child_index)) => {
+                        // recurse to calculate the child hash and re-encode
                         let child_hash = recursive(trie, *child_index)?;
                         let prefix = trie.get_extension_data(index)?;
                         let encoded = encode_extension(prefix, child_hash);
                         Ok(NodeHash::from_encoded(&encoded))
                     }
                     (Some(prefix), None) => {
+                        // get encoded child hash and re-encode
                         let child_hash = trie.get_extension_encoded_child_hash(index)?;
                         let encoded = encode_extension(prefix.clone(), child_hash);
                         Ok(NodeHash::from_encoded(&encoded))
@@ -577,6 +582,60 @@ fn encode_branch(children: [Option<NodeHash>; 16]) -> Vec<u8> {
     buf
 }
 
+impl From<&EthrexTrieNode> for FlatTrie {
+    fn from(root: &EthrexTrieNode) -> Self {
+        let mut trie = FlatTrie::default();
+
+        fn recursive(value: &EthrexTrieNode, trie: &mut FlatTrie) {
+            let handle = match value {
+                EthrexTrieNode::Branch(node) => {
+                    let mut children_indices = [None; 16];
+                    for (i, choice) in node
+                        .choices
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, c)| c.is_valid())
+                    {
+                        if let EthrexTrieNodeRef::Node(choice, _) = choice {
+                            recursive(&(*choice), trie);
+                            children_indices[i] = Some(Some(trie.nodes.len() - 1));
+                        } else {
+                            children_indices[i] = Some(None);
+                        }
+                    }
+                    NodeHandle::Branch { children_indices }
+                }
+                EthrexTrieNode::Extension(node) => {
+                    let mut child_index = None;
+                    if let EthrexTrieNodeRef::Node(child_node, _) = &node.child {
+                        recursive(child_node, trie);
+                        child_index = Some(trie.nodes.len() - 1);
+                    }
+                    NodeHandle::Extension {
+                        prefix: None,
+                        child_index,
+                    }
+                }
+                EthrexTrieNode::Leaf(_) => NodeHandle::Leaf {
+                    partial: None,
+                    value: None,
+                },
+            };
+
+            let offset = trie.encoded_data.len();
+            trie.encoded_data.extend(value.encode_to_vec());
+            trie.nodes.push(Node {
+                handle,
+                encoded_range: Some((offset, trie.encoded_data.len())),
+            });
+        }
+
+        recursive(root, &mut trie);
+        trie.root_index = Some(trie.nodes.len() - 1); // last stored node is the root
+        trie
+    }
+}
+
 #[cfg(test)]
 mod test {
     use proptest::{collection::vec, prelude::*};
@@ -608,6 +667,23 @@ mod test {
     }
 
     proptest! {
+        #[test]
+        fn proptest_from_compare_hash((kv, _) in kv_pairs_strategy()) {
+            let mut trie = Trie::new_temp();
+
+            for (key, value) in kv.iter(){
+                trie.insert(key.clone(), value.clone()).unwrap();
+            }
+
+            let root_node = trie.get_root_node(Nibbles::default()).unwrap();
+            let mut flat_trie = FlatTrie::from(&(*root_node));
+
+            let hash = trie.hash_no_commit();
+            let flat_trie_hash = flat_trie.hash().unwrap();
+
+            prop_assert_eq!(hash, flat_trie_hash.finalize());
+        }
+
         #[test]
         fn proptest_insert_compare_hash((kv, _) in kv_pairs_strategy()) {
             let mut trie = Trie::new_temp();
