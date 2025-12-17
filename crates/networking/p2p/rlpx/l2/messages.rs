@@ -109,15 +109,16 @@ impl RLPxMessage for BatchSealed {
             .encode_field(&self.batch.first_block)
             .encode_field(&self.batch.last_block)
             .encode_field(&self.batch.state_root)
-            .encode_field(&self.batch.privileged_transactions_hash)
-            .encode_field(&self.batch.l1_message_hashes)
+            .encode_field(&self.batch.l1_in_messages_rolling_hash)
+            .encode_field(&self.batch.l2_in_message_rolling_hashes)
+            .encode_field(&self.batch.non_privileged_transactions)
+            .encode_field(&self.batch.l1_out_message_hashes)
             .encode_field(&self.batch.blobs_bundle.blobs)
             .encode_field(&self.batch.blobs_bundle.commitments)
             .encode_field(&self.batch.blobs_bundle.proofs)
             .encode_optional_field(&self.batch.commit_tx)
             .encode_optional_field(&self.batch.verify_tx)
             .encode_field(&self.signature)
-            .encode_field(&self.batch.l2_message_hashes)
             .encode_field(&self.batch.balance_diffs)
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
@@ -132,16 +133,19 @@ impl RLPxMessage for BatchSealed {
         let (first_block, decoder) = decoder.decode_field("first_block")?;
         let (last_block, decoder) = decoder.decode_field("last_block")?;
         let (state_root, decoder) = decoder.decode_field("state_root")?;
-        let (privileged_transactions_hash, decoder) =
-            decoder.decode_field("privileged_transactions_hash")?;
-        let (message_hashes, decoder) = decoder.decode_field("message_hashes")?;
+        let (l1_in_messages_rolling_hash, decoder) =
+            decoder.decode_field("l1_in_messages_rolling_hash")?;
+        let (l2_in_message_rolling_hashes, decoder) =
+            decoder.decode_field("l2_in_message_rolling_hashes")?;
+        let (non_privileged_transactions, decoder) =
+            decoder.decode_field("non_privileged_transactions")?;
+        let (l1_out_message_hashes, decoder) = decoder.decode_field("l1_out_message_hashes")?;
         let (blobs, decoder) = decoder.decode_field("blobs")?;
         let (commitments, decoder) = decoder.decode_field("commitments")?;
         let (proofs, decoder) = decoder.decode_field("proofs")?;
         let (commit_tx, decoder) = decoder.decode_optional_field();
         let (verify_tx, decoder) = decoder.decode_optional_field();
         let (signature, decoder) = decoder.decode_field("signature")?;
-        let (l2_message_hashes, decoder) = decoder.decode_field("l2_message_hashes")?;
         let (balance_diffs, decoder) = decoder.decode_field("balance_diffs")?;
         decoder.finish()?;
 
@@ -150,8 +154,10 @@ impl RLPxMessage for BatchSealed {
             first_block,
             last_block,
             state_root,
-            privileged_transactions_hash,
-            l1_message_hashes: message_hashes,
+            l1_in_messages_rolling_hash,
+            l2_in_message_rolling_hashes,
+            l1_out_message_hashes,
+            non_privileged_transactions,
             blobs_bundle: ethrex_common::types::blobs_bundle::BlobsBundle {
                 blobs,
                 commitments,
@@ -161,7 +167,6 @@ impl RLPxMessage for BatchSealed {
             commit_tx,
             verify_tx,
             balance_diffs,
-            l2_message_hashes,
         };
         Ok(BatchSealed::new(batch, signature))
     }

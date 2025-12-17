@@ -402,7 +402,7 @@ async fn set_sync_block(store: &Store) {
             .expect("Could not get hash for block number provided by env variable")
             .expect("Could not get hash for block number provided by env variable");
         store
-            .forkchoice_update(None, block_number, block_hash, None, None)
+            .forkchoice_update(vec![], block_number, block_hash, None, None)
             .await
             .expect("Could not set sync block");
     }
@@ -430,9 +430,10 @@ pub async fn init_l1(
 
     let store = match init_store(datadir, genesis).await {
         Ok(store) => store,
-        Err(StoreError::IncompatibleDBVersion) => {
+        Err(err @ StoreError::IncompatibleDBVersion { .. })
+        | Err(err @ StoreError::NotFoundDBVersion { .. }) => {
             return Err(eyre::eyre!(
-                "Incompatible DB version. Please run `ethrex removedb` and restart node"
+                "{err}. Please erase your DB by running `ethrex removedb` and restart node to resync. Note that this will take a while."
             ));
         }
         Err(error) => return Err(eyre::eyre!("Failed to create Store: {error}")),
@@ -479,6 +480,7 @@ pub async fn init_l1(
         get_client_version(),
         None,
         opts.tx_broadcasting_time_interval,
+        opts.lookup_interval,
     )
     .await
     .expect("P2P context could not be created");

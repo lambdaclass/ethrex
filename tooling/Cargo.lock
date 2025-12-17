@@ -3503,6 +3503,7 @@ dependencies = [
  "ethrex-blockchain",
  "ethrex-common 7.0.0",
  "ethrex-crypto",
+ "ethrex-metrics",
  "ethrex-rlp 7.0.0",
  "ethrex-storage 7.0.0",
  "ethrex-storage-rollup",
@@ -3691,7 +3692,6 @@ version = "7.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "bincode",
  "bytes",
  "ethereum-types 0.15.1",
  "ethrex-common 7.0.0",
@@ -3773,7 +3773,6 @@ dependencies = [
  "hex",
  "lazy_static",
  "rkyv",
- "rocksdb",
  "rustc-hash 2.1.1",
  "serde",
  "serde_json",
@@ -4309,6 +4308,7 @@ dependencies = [
 name = "guest_program"
 version = "7.0.0"
 dependencies = [
+ "bincode",
  "bytes",
  "ethrex-blockchain",
  "ethrex-common 7.0.0",
