@@ -124,7 +124,9 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable {
     }
 
     // Logic for updating Timelock contract. Should be triggered by the timelock itself so that it respects min time.
-    function _authorizeUpgrade(address newImplementation) internal override {
+    function _authorizeUpgrade(
+        address /*newImplementation*/
+    ) internal view override {
         address sender = _msgSender();
         if (sender != address(this)) {
             revert TimelockUnauthorizedCaller(sender);
