@@ -143,7 +143,7 @@ enum MerklizationRequest {
         state: PreMerkelizedAccountState,
     },
     CollectStorages {
-        tx: Sender<(H256, u8, Box<BranchNode>, Vec<TrieNode>)>,
+        tx: Sender<CollectedStorageMsg>,
     },
     CollectState {
         tx: Sender<CollectedStateMsg>,
@@ -155,6 +155,13 @@ struct CollectedStateMsg {
     subroot: Box<BranchNode>,
     state_nodes: Vec<TrieNode>,
     storage_nodes: Vec<(H256, Vec<TrieNode>)>,
+}
+
+struct CollectedStorageMsg {
+    index: u8,
+    prefix: H256,
+    subroot: Box<BranchNode>,
+    nodes: Vec<TrieNode>,
 }
 
 #[derive(Default)]
@@ -418,7 +425,13 @@ impl Blockchain {
         }
         drop(gatherer_tx);
 
-        for (prefix, index, mut subroot, nodes) in gatherer_rx {
+        for CollectedStorageMsg {
+            index,
+            prefix,
+            mut subroot,
+            nodes,
+        } in gatherer_rx
+        {
             let state = account_state.entry(prefix).or_default();
             match &mut state.storage_root {
                 Some(root) => {
@@ -653,8 +666,13 @@ impl Blockchain {
                 MerklizationRequest::CollectStorages { tx } => {
                     for (prefix, trie) in tree.drain() {
                         let (root, nodes) = collect_trie(index, trie)?;
-                        tx.send((prefix, index, root, nodes))
-                            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                        tx.send(CollectedStorageMsg {
+                            index,
+                            prefix,
+                            subroot: root,
+                            nodes,
+                        })
+                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                     }
                 }
                 MerklizationRequest::CollectState { tx } => {
