@@ -106,6 +106,7 @@
 - [Release Process](./developers/release-process/README.md)
   - [How to Release](./developers/release-process/release-process.md)
   - [Pre-Release Checklist](./developers/release-process/pre-release-checklist.md)
+  - [Post-Release Checklist](./developers/release-process/post-release-checklist.md)
 - [Troubleshooting]()
 
 # Roadmap

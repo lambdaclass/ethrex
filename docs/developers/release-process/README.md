@@ -4,3 +4,4 @@ This section outlines the steps involved in the ethrex release process, from pre
 
 - [Release Process](./release-process.md)
 - [Ethrex Pre-Release Checklist](./pre-release-checklist.md)
+= [Ethrex Post-Release Checklist](./post-release-checklist.md)
