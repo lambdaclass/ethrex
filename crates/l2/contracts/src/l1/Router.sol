@@ -129,7 +129,7 @@ contract Router is
         }
 
         ICommonBridge(receiverBridge).pushMessageHashes(
-            chainId,
+            senderChainId,
             message_hashes
         );
     }
