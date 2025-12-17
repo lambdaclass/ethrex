@@ -18,7 +18,7 @@ Before proceeding, note that this guide assumes you have ethrex installed. If yo
 Ensure you have the following installed on your system:
 
 - Rust and Cargo (install via [rustup](https://rustup.rs/))
-- Solidity compiler v0.8.29 (refer to [Solidity documentation](https://docs.soliditylang.org/en/latest/installing-solidity.html))
+- Solidity compiler v0.8.31 (refer to [Solidity documentation](https://docs.soliditylang.org/en/latest/installing-solidity.html))
 - SP1 Toolchain (if you plan to use SP1 proving, refer to [SP1 documentation](https://docs.succinct.xyz/docs/sp1/getting-started/install))
 - RISC0 Toolchain (if you plan to use RISC0 proving, refer to [RISC0 documentation](https://dev.risczero.com/api/zkvm/install))
 - CUDA Toolkit 12.9 (if you plan to use GPU acceleration for SP1 or RISC0 proving)

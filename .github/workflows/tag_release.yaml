@@ -114,15 +114,7 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install solc
-        run: |
-          if [[ "${{ matrix.os }}" == "linux" ]]; then
-            sudo curl -L -o /usr/local/bin/solc https://github.com/argotorg/solidity/releases/download/v0.8.29/solc-static-linux
-            sudo chmod +x /usr/local/bin/solc
-          elif [[ "${{ matrix.os }}" == "macos" ]]; then
-            sudo curl -L -o /usr/local/bin/solc https://github.com/argotorg/solidity/releases/download/v0.8.29/solc-macos
-            sudo chmod +x /usr/local/bin/solc
-          fi
-          solc --version
+        uses: ./.github/actions/install-solc
 
       - name: Build ethrex
         run: |
