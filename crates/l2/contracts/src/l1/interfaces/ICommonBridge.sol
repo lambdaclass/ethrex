@@ -151,12 +151,8 @@ interface ICommonBridge {
     /// @notice Publishes the L2 messages in the router contract.
     /// @dev This method is used by the L2 OnChainProposer to publish the L2
     /// messages when an L2 batch is committed.
-    /// @param chainId the chain id of the L2 where the messages were emitted.
     /// @param balanceDiffs Array of balance differences and associated message hashes to be sent to different chains.
-    function publishL2Messages(
-        uint256 chainId,
-        BalanceDiff[] calldata balanceDiffs
-    ) external;
+    function publishL2Messages(BalanceDiff[] calldata balanceDiffs) external;
 
     function pushMessageHashes(
         uint256 chainId,

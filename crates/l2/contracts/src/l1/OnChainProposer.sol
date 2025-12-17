@@ -423,7 +423,6 @@ contract OnChainProposer is
         }
 
         ICommonBridge(BRIDGE).publishL2Messages(
-            CHAIN_ID,
             batchCommitments[batchNumber].balanceDiffs
         );
 
