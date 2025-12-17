@@ -1302,18 +1302,18 @@ pub async fn register_fee_token_no_wait(
 }
 
 pub async fn wait_for_l2_deposit_receipt(
-    rpc_receipt: &RpcReceipt,
+    l1_rpc_receipt: &RpcReceipt,
     l1_client: &EthClient,
     l2_client: &EthClient,
 ) -> Result<RpcReceipt, EthClientError> {
-    let data = rpc_receipt
+    let data = l1_rpc_receipt
         .logs
         .iter()
         .find_map(|log| PrivilegedTransactionData::from_log(log.log.clone()).ok())
         .ok_or_else(|| {
             EthClientError::Custom(format!(
                 "RpcReceipt for transaction {:?} contains no valid logs",
-                rpc_receipt.tx_info.transaction_hash
+                l1_rpc_receipt.tx_info.transaction_hash
             ))
         })?;
 
