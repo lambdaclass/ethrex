@@ -1,7 +1,7 @@
 use bytes::BufMut;
 use ethrex_rlp::{
     constants::RLP_NULL,
-    decode::decode_bytes,
+    decode::{RLPDecode, decode_bytes},
     encode::{RLPEncode, encode_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
@@ -596,20 +596,34 @@ impl From<&EthrexTrieNode> for FlatTrie {
                         .enumerate()
                         .filter(|(_, c)| c.is_valid())
                     {
-                        if let EthrexTrieNodeRef::Node(choice, _) = choice {
-                            recursive(&(*choice), trie);
-                            children_indices[i] = Some(Some(trie.nodes.len() - 1));
-                        } else {
-                            children_indices[i] = Some(None);
+                        match choice {
+                            EthrexTrieNodeRef::Node(choice, _) => {
+                                recursive(&(*choice), trie);
+                                children_indices[i] = Some(Some(trie.nodes.len() - 1));
+                            }
+                            EthrexTrieNodeRef::Hash(inline @ NodeHash::Inline(_)) => {
+                                let choice = EthrexTrieNode::decode(inline.as_ref()).unwrap();
+                                recursive(&choice, trie);
+                                children_indices[i] = Some(Some(trie.nodes.len() - 1));
+                            }
+                            _ => children_indices[i] = Some(None),
                         }
                     }
                     NodeHandle::Branch { children_indices }
                 }
                 EthrexTrieNode::Extension(node) => {
                     let mut child_index = None;
-                    if let EthrexTrieNodeRef::Node(child_node, _) = &node.child {
-                        recursive(child_node, trie);
-                        child_index = Some(trie.nodes.len() - 1);
+                    match &node.child {
+                        EthrexTrieNodeRef::Node(child, _) => {
+                            recursive(&(*child), trie);
+                            child_index = Some(trie.nodes.len() - 1);
+                        }
+                        EthrexTrieNodeRef::Hash(inline @ NodeHash::Inline(_)) => {
+                            let child = EthrexTrieNode::decode(inline.as_ref()).unwrap();
+                            recursive(&child, trie);
+                            child_index = Some(trie.nodes.len() - 1);
+                        }
+                        _ => {}
                     }
                     NodeHandle::Extension {
                         prefix: None,
