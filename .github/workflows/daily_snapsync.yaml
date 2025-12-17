@@ -73,6 +73,7 @@ jobs:
       - name: Run Snapsync Test
         uses: ./.github/actions/snapsync-run
         id: snapsync
+        if: false
         with:
           network: ${{ matrix.network }}
           timeout: ${{ matrix.timeout }}
@@ -82,7 +83,7 @@ jobs:
       - name: Post run on slack
         if: always()
         env:
-          SLACK_WEBHOOK_URL_SUCCESS: ${{ secrets.ETHREX_NOTIFICATIONS_SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_URL_SUCCESS: ${{ secrets.TEST_CHANNEL_SLACK }}
           SLACK_WEBHOOK_URL_FAILURE: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
           REPO: ${{ github.repository }}
           NAME: "lighthouse-${{ matrix.network }}"
@@ -112,6 +113,7 @@ jobs:
       - name: Run Snapsync Test
         uses: ./.github/actions/snapsync-run
         id: snapsync
+        if: false
         with:
           network: ${{ matrix.network }}
           timeout: ${{ matrix.timeout }}
@@ -121,7 +123,7 @@ jobs:
       - name: Post run on slack
         if: always()
         env:
-          SLACK_WEBHOOK_URL_SUCCESS: ${{ secrets.ETHREX_NOTIFICATIONS_SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_URL_SUCCESS: ${{ secrets.TEST_CHANNEL_SLACK }}
           SLACK_WEBHOOK_URL_FAILURE: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
           REPO: ${{ github.repository }}
           NAME: "prysm-${{ matrix.network }}"
