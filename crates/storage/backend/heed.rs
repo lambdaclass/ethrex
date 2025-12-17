@@ -23,10 +23,8 @@ pub struct HeedBackend {
 
 impl HeedBackend {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
-        let mut env_opts = EnvOpenOptions::new();
-        env_opts
-            .read_txn_without_tls()
-            .max_dbs(TABLES.len().try_into().unwrap());
+        let mut env_opts = EnvOpenOptions::new().read_txn_without_tls();
+        env_opts.max_dbs(TABLES.len().try_into().unwrap());
         env_opts.map_size(4 * 1024 * 1024 * 1024 * 1024); // 4 TB
 
         unsafe {
