@@ -74,6 +74,7 @@
     - [L1MessageSender]()
   - [Based sequencing](./l2/fundamentals/based.md)
   - [Transaction fees](./l2/fundamentals/transaction_fees.md)
+  - [Shared Bridge](./l2/fundamentals/shared_bridge.md)
 
 # Ethrex for developers
 
