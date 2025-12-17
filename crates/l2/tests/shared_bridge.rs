@@ -38,11 +38,11 @@ const L1_RPC_URL: &str = "http://localhost:8545";
 const L2A_RPC_URL: &str = "http://localhost:1729";
 const L2B_RPC_URL: &str = "http://localhost:1730";
 
-const RECEIVER_ADDRESS: &str = "0xe25583099ba105d9ec0a67f5ae86d90e50036425";
-const SENDER_ADDRESS: &str = "0x0008a52c83d34f0791d07ffed04fb6b14f94e2d4";
+const RECEIVER_ADDRESS: &str = "0x000a523148845bee3ee1e9f83df8257a1191c85b";
+const SENDER_ADDRESS: &str = "0x000130bade00212be1aa2f4acfe965934635c9cd";
 const COMMON_BRIDGE_ADDRESS: &str = "0x000000000000000000000000000000000000FFFF";
 
-const SENDER_PRIVATE_KEY: &str = "c1354d508b68dc33e1dab6cfbe3ce46302285a245642a0be71a655dd1a925be1";
+const SENDER_PRIVATE_KEY: &str = "029227c59d8967cbfec97cffa4bcfb985852afbd96b7b5da7c9a9a42f92e9166";
 const SENDER_PRIVATE_KEY_ERC20: &str =
     "e4f7dc8b199fdaac6693c9c412ea68aed9e1584d193e1c3478d30a6f01f26057";
 
