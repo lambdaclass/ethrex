@@ -46,8 +46,8 @@ On L2:
 Back on L1:
 
 1. A sequencer commits a batch on L1 including the privileged transaction.
-2. The `OnChainProposer` asserts the included privileged transactions exist and are included in order.
-3. The `OnChainProposer` notifies the bridge of the consumed privileged transactions and they are removed from `pendingTxHashes`.
+2. The `Settlement` asserts the included privileged transactions exist and are included in order.
+3. The `Settlement` notifies the bridge of the consumed privileged transactions and they are removed from `pendingTxHashes`.
 
 ```mermaid
 ---
@@ -57,7 +57,7 @@ sequenceDiagram
     box rgb(33,66,99) L1
         actor L1Alice as Alice
         participant CommonBridge
-        participant OnChainProposer
+        participant Settlement
     end
 
     actor Sequencer
@@ -76,8 +76,8 @@ sequenceDiagram
     CommonBridgeL2->>CommonBridgeL2: calls mintETH
     CommonBridgeL2->>L2Alice: sends 42 ETH
 
-    Sequencer->>OnChainProposer: publishes batch
-    OnChainProposer->>CommonBridge: consumes pending deposits
+    Sequencer->>Settlement: publishes batch
+    Settlement->>CommonBridge: consumes pending deposits
     CommonBridge-->>CommonBridge: pendingTxHashes.pop()
 ```
 
@@ -122,8 +122,8 @@ On L2:
 Back on L1:
 
 1. A sequencer commits a batch on L1 including the privileged transaction.
-2. The `OnChainProposer` asserts the included privileged transactions exist and are included in order.
-3. The `OnChainProposer` notifies the bridge of the consumed privileged transactions and they are removed from `pendingTxHashes`.
+2. The `Settlement` asserts the included privileged transactions exist and are included in order.
+3. The `Settlement` notifies the bridge of the consumed privileged transactions and they are removed from `pendingTxHashes`.
 
 ```mermaid
 ---
@@ -134,7 +134,7 @@ sequenceDiagram
         actor L1Alice as Alice
         participant L1Token
         participant CommonBridge
-        participant OnChainProposer
+        participant Settlement
     end
 
     actor Sequencer
@@ -160,8 +160,8 @@ sequenceDiagram
     CommonBridgeL2->>L2Token: calls crosschainMint
     L2Token-->>L2Alice: mints 42 tokens
 
-    Sequencer->>OnChainProposer: publishes batch
-    OnChainProposer->>CommonBridge: consumes pending deposits
+    Sequencer->>Settlement: publishes batch
+    Settlement->>CommonBridge: consumes pending deposits
     CommonBridge-->>CommonBridge: pendingTxHashes.pop()
 ```
 
@@ -266,22 +266,22 @@ sequenceDiagram
         actor L1Alice
         actor Sequencer
         participant CommonBridge
-        participant OnChainProposer
+        participant Settlement
     end
 
     L1Alice ->> CommonBridge: Sends a privileged transaction
 
     Note over Sequencer: Sequencer goes offline for a long time
-    Sequencer ->> OnChainProposer: Sends batch as usual
-    OnChainProposer ->> Sequencer: Error
+    Sequencer ->> Settlement: Sends batch as usual
+    Settlement ->> Sequencer: Error
     Note over Sequencer: Operator configures the sequencer to catch up
-    Sequencer ->> OnChainProposer: Sends batch of only privileged transactions
-    OnChainProposer ->> Sequencer: OK
-    Sequencer ->> OnChainProposer: Sends batch with remaining expired privileged transactions, along with other transactions
-    OnChainProposer ->> Sequencer: OK
+    Sequencer ->> Settlement: Sends batch of only privileged transactions
+    Settlement ->> Sequencer: OK
+    Sequencer ->> Settlement: Sends batch with remaining expired privileged transactions, along with other transactions
+    Settlement ->> Sequencer: OK
     Note over Sequencer: Sequencer is now catched up
-    Sequencer ->> OnChainProposer: Sends batch as usual
-    OnChainProposer ->> Sequencer: OK
+    Sequencer ->> Settlement: Sends batch as usual
+    Settlement ->> Sequencer: OK
 ```
 
 ## Limitations

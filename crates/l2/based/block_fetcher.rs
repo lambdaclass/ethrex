@@ -78,7 +78,7 @@ pub enum OutMessage {
 
 pub struct BlockFetcher {
     eth_client: EthClient,
-    on_chain_proposer_address: Address,
+    settlement_address: Address,
     store: Store,
     rollup_store: StoreRollup,
     blockchain: Arc<Blockchain>,
@@ -103,7 +103,7 @@ impl BlockFetcher {
                 .into();
         Ok(Self {
             eth_client,
-            on_chain_proposer_address: cfg.l1_committer.on_chain_proposer_address,
+            settlement_address: cfg.l1_committer.settlement_address,
             store,
             rollup_store,
             blockchain,
@@ -132,7 +132,7 @@ impl BlockFetcher {
     async fn fetch(&mut self) -> Result<(), BlockFetcherError> {
         while !node_is_up_to_date::<BlockFetcherError>(
             &self.eth_client,
-            self.on_chain_proposer_address,
+            self.settlement_address,
             &self.rollup_store,
         )
         .await?
@@ -150,7 +150,7 @@ impl BlockFetcher {
                 )))?;
 
             let last_l2_committed_batch_number =
-                get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
+                get_last_committed_batch(&self.eth_client, self.settlement_address).await?;
 
             let l2_batches_behind = last_l2_committed_batch_number.checked_sub(last_l2_batch_number_known).ok_or(
                 BlockFetcherError::CalculationError(
@@ -200,7 +200,7 @@ impl BlockFetcher {
                 .get_logs(
                     self.last_l1_block_fetched + 1,
                     new_last_l1_fetched_block,
-                    self.on_chain_proposer_address,
+                    self.settlement_address,
                     vec![keccak(b"BatchCommitted(uint256,bytes32)")],
                 )
                 .await?;
@@ -211,7 +211,7 @@ impl BlockFetcher {
                 .get_logs(
                     self.last_l1_block_fetched + 1,
                     new_last_l1_fetched_block,
-                    self.on_chain_proposer_address,
+                    self.settlement_address,
                     vec![keccak(b"BatchVerified(uint256)")],
                 )
                 .await?;

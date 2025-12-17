@@ -91,7 +91,7 @@ const DEFAULT_PROPOSER_COINBASE_ADDRESS: Address = H160([
 ]);
 
 // 0x44669840b8f0aedaa707636272031b5e8d67516c
-const DEFAULT_ON_CHAIN_PROPOSER_ADDRESS: Address = H160([
+const DEFAULT_SETTLEMENT_ADDRESS: Address = H160([
     0x44, 0x66, 0x98, 0x40, 0xb8, 0xf0, 0xae, 0xda, 0xa7, 0x07, 0x63, 0x62, 0x72, 0x03, 0x1b, 0x5e,
     0x8d, 0x67, 0x51, 0x6c,
 ]);
@@ -2614,10 +2614,10 @@ fn transfer_value() -> U256 {
         .unwrap_or(U256::from(10_000_000_000u128))
 }
 
-fn on_chain_proposer_address() -> Address {
-    std::env::var("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS")
+fn settlement_address() -> Address {
+    std::env::var("ETHREX_COMMITTER_SETTLEMENT_ADDRESS")
         .map(|address| address.parse().expect("Invalid proposer address"))
-        .unwrap_or(DEFAULT_ON_CHAIN_PROPOSER_ADDRESS)
+        .unwrap_or(DEFAULT_SETTLEMENT_ADDRESS)
 }
 
 /// Waits until the batch containing L2->L1 message is verified on L1, and returns the proof for that message
@@ -2630,7 +2630,7 @@ async fn wait_for_verified_proof(
     let proof = proof.unwrap().into_iter().next().expect("proof not found");
 
     loop {
-        let latest = get_last_verified_batch(l1_client, on_chain_proposer_address())
+        let latest = get_last_verified_batch(l1_client, settlement_address())
             .await
             .unwrap();
 

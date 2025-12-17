@@ -39,7 +39,7 @@ ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true \
 ethrex l2 deploy \
   --eth-rpc-url <ETH_RPC_URL> \
   --private-key <YOUR_PRIVATE_KEY> \
-  --on-chain-proposer-owner <ON_CHAIN_PROPOSER_OWNER>  \
+  --settlement-owner <SETTLEMENT_OWNER>  \
   --bridge-owner <BRIDGE_OWNER_ADDRESS>  \
   --genesis-l2-path fixtures/genesis/l2.json \
   --proof-sender.l1-address <PROOF_SENDER_L1_ADDRESS>
@@ -47,7 +47,7 @@ ethrex l2 deploy \
 
 > [!NOTE]
 > This command requires the `COMPILE_CONTRACTS` env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.
-> In this step we are initializing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers; you can find the address for the aligned aggregator service [here](https://docs.alignedlayer.com/guides/7_contract_addresses).
+> In this step we are initializing the `Settlement` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers; you can find the address for the aligned aggregator service [here](https://docs.alignedlayer.com/guides/7_contract_addresses).
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
 > Accounts for the deployer, on-chain proposer owner, bridge owner, and proof sender must have funds. Add `--bridge-owner-pk <PRIVATE_KEY>` if you want the deployer to immediately call `acceptOwnership` on behalf of that owner; otherwise, they can accept later.
 > If you enable more than one proving system (e.g., both `--sp1 true` and `--risc0 true`), all selected proving systems will be required (i.e., every batch must include a proof from each enabled system to settle on L1).
@@ -74,7 +74,7 @@ ethrex l2 \
   --watcher.block-delay 0 \
   --network fixtures/genesis/l2.json \
   --l1.bridge-address <BRIDGE_ADDRESS> \
-  --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> \
+  --l1.settlement-address <SETTLEMENT_ADDRESS> \
   --eth.rpc-url <ETH_RPC_URL> \
   --aligned \
   --aligned-network <ALIGNED_NETWORK>  \
@@ -274,7 +274,7 @@ If successful, the `l1_proof_verifier` will print the following logs:
 
 ```
 INFO ethrex_l2::sequencer::l1_proof_verifier: Proof for batch 1 aggregated by Aligned with commitment 0xa9a0da5a70098b00f97d96cee43867c7aa8f5812ca5388da7378454580af2fb7 and Merkle root 0xa9a0da5a70098b00f97d96cee43867c7aa8f5812ca5388da7378454580af2fb7
-INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainProposer, with transaction hash 0x731d27d81b2e0f1bfc0f124fb2dd3f1a67110b7b69473cacb6a61dea95e63321
+INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in Settlement, with transaction hash 0x731d27d81b2e0f1bfc0f124fb2dd3f1a67110b7b69473cacb6a61dea95e63321
 ```
 
 ## Behavioral Differences in Aligned Mode
@@ -286,7 +286,7 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 
 ### Proof Sender
 
-- Sends proofs to the **Aligned Batcher** instead of the `OnChainProposer` contract.
+- Sends proofs to the **Aligned Batcher** instead of the `Settlement` contract.
 - Tracks the last proof sent using the rollup store.
 
 ![Proof Sender Aligned Mode](../img/aligned_mode_proof_sender.png)
@@ -295,11 +295,11 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 
 - Spawned only in Aligned mode.
 - Monitors whether the next proof has been aggregated by Aligned.
-- Once verified, collects all already aggregated proofs and triggers the advancement of the `OnChainProposer` contract by sending a single transaction.
+- Once verified, collects all already aggregated proofs and triggers the advancement of the `Settlement` contract by sending a single transaction.
 
 ![Aligned Mode Proof Verifier](../img/aligned_mode_proof_verifier.png)
 
-### OnChainProposer
+### Settlement
 
 - Uses `verifyBatchesAligned()` instead of `verifyBatch()`.
 - Receives an array of proofs to verify.

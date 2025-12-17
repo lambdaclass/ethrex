@@ -44,7 +44,7 @@ pub fn system_now_ms() -> Option<u128> {
 pub async fn send_verify_tx(
     encoded_calldata: Vec<u8>,
     eth_client: &EthClient,
-    on_chain_proposer_address: Address,
+    settlement_address: Address,
     l1_signer: &Signer,
 ) -> Result<H256, EthClientError> {
     let gas_price = eth_client
@@ -58,7 +58,7 @@ pub async fn send_verify_tx(
     let verify_tx = build_generic_tx(
         eth_client,
         TxType::EIP1559,
-        on_chain_proposer_address,
+        settlement_address,
         l1_signer.address(),
         encoded_calldata.into(),
         Overrides {
@@ -77,7 +77,7 @@ pub async fn send_verify_tx(
 
 pub async fn get_needed_proof_types(
     rpc_urls: Vec<Url>,
-    on_chain_proposer_address: Address,
+    settlement_address: Address,
 ) -> Result<Vec<ProverType>, EthClientError> {
     let eth_client = EthClient::new_with_multiple_urls(rpc_urls)?;
 
@@ -90,11 +90,7 @@ pub async fn get_needed_proof_types(
 
         // response is a boolean 0x00..01 or 0x00..00
         let response = eth_client
-            .call(
-                on_chain_proposer_address,
-                calldata.into(),
-                Overrides::default(),
-            )
+            .call(settlement_address, calldata.into(), Overrides::default())
             .await?;
 
         let required_proof_type = response
@@ -127,14 +123,14 @@ pub fn resolve_aligned_network(network: &str) -> Network {
 
 pub async fn node_is_up_to_date<E>(
     eth_client: &EthClient,
-    on_chain_proposer_address: Address,
+    settlement_address: Address,
     rollup_storage: &StoreRollup,
 ) -> Result<bool, E>
 where
     E: From<EthClientError> + From<RollupStoreError>,
 {
     let last_committed_batch_number =
-        get_last_committed_batch(eth_client, on_chain_proposer_address).await?;
+        get_last_committed_batch(eth_client, settlement_address).await?;
 
     let is_up_to_date = rollup_storage
         .contains_batch(&last_committed_batch_number)

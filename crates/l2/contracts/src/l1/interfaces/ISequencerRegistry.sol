@@ -42,7 +42,7 @@ interface ISequencerRegistry {
     ) external view returns (address);
 
     /// @notice A sequencer has committed a batch.
-    /// @dev Function that the onChainProposer calls once a sequencer has committed a batch.
+    /// @dev Function that the Settlement calls once a sequencer has committed a batch.
     /// @dev This is to keep track of the sequencers in the past.
     function pushSequencer(uint256 batchNumber, address sequencer) external;
 }

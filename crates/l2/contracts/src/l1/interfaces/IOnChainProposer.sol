@@ -3,11 +3,11 @@ pragma solidity =0.8.29;
 
 import {ICommonBridge} from "./ICommonBridge.sol";
 
-/// @title Interface for the OnChainProposer contract.
+/// @title Interface for the Settlement contract.
 /// @author LambdaClass
-/// @notice A OnChainProposer contract ensures the advancement of the L2. It is used
+/// @notice A Settlement contract ensures the advancement of the L2. It is used
 /// by the proposer to commit batches of l2 blocks and verify proofs.
-interface IOnChainProposer {
+interface ISettlement {
     /// @notice The latest committed batch number.
     /// @return The latest committed batch number as a uint256.
     function lastCommittedBatch() external view returns (uint256);
@@ -37,7 +37,7 @@ interface IOnChainProposer {
 
     /// @notice Set the bridge address for the first time.
     /// @dev This method is separated from initialize because both the CommonBridge
-    /// and the OnChainProposer need to know the address of the other. This solves
+    /// and the Settlement need to know the address of the other. This solves
     /// the circular dependency while allowing to initialize the proxy with the deploy.
     /// @param bridge the address of the bridge contract.
     function initializeBridgeAddress(address bridge) external;

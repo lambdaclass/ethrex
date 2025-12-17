@@ -56,7 +56,7 @@ ETHREX_OSAKA_ACTIVATION_TIME?=1761677592
 L2_PROMETHEUS_METRICS_PORT = 3702
 
 DEFAULT_BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS ../../cmd/.env | cut -d= -f2)
-DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS ../../cmd/.env | cut -d= -f2)
+DEFAULT_SETTLEMENT_ADDRESS=$$(grep ETHREX_COMMITTER_SETTLEMENT_ADDRESS ../../cmd/.env | cut -d= -f2)
 
 PROVER_SRC_FILES := $(shell find prover/src -type f)
 
@@ -91,7 +91,7 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- l2 deploy \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
-	--on-chain-proposer-owner ${L2_OWNER_ADDRESS} \
+	--settlement-owner ${L2_OWNER_ADDRESS} \
 	--bridge-owner ${L2_OWNER_ADDRESS} \
 	--bridge-owner-pk ${BRIDGE_OWNER_PRIVATE_KEY} \
 	--deposit-rich \
@@ -109,7 +109,7 @@ deploy-l1-sp1: ## 📜 Deploys the L1 contracts
 	--sp1.deploy-verifier \
 	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
 	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
-	--on-chain-proposer-owner ${L2_OWNER_ADDRESS} \
+	--settlement-owner ${L2_OWNER_ADDRESS} \
 	--bridge-owner ${L2_OWNER_ADDRESS} \
 	--bridge-owner-pk ${BRIDGE_OWNER_PRIVATE_KEY} \
 	--deposit-rich \
@@ -145,7 +145,7 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
 	--datadir ${ethrex_L2_DEV_DB} \
 	--l1.bridge-address ${DEFAULT_BRIDGE_ADDRESS} \
-	--l1.on-chain-proposer-address ${DEFAULT_ON_CHAIN_PROPOSER_ADDRESS} \
+	--l1.settlement-address ${DEFAULT_SETTLEMENT_ADDRESS} \
 	--eth.rpc-url ${L1_RPC_URL} \
 	--osaka-activation-time ${ETHREX_OSAKA_ACTIVATION_TIME} \
 	--block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
@@ -243,7 +243,7 @@ integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply becaus
 	docker compose up --detach --build
 	RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec & \
 	ETHREX_WATCHER_BRIDGE_ADDRESS=$(shell make bridge-address) \
-	ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=$(shell make on-chain-proposer-address) \
+	ETHREX_COMMITTER_SETTLEMENT_ADDRESS=$(shell make settlement-address) \
 	cargo test l2 --release -- --nocapture --test-threads=1
 	killall ethrex -s SIGINT
 

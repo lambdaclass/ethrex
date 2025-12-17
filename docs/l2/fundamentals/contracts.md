@@ -1,6 +1,6 @@
 # Ethrex L2 contracts
 
-There are two L1 contracts: OnChainProposer and CommonBridge. Both contracts are deployed using UUPS proxies, so they are upgradeables.
+There are two L1 contracts: Settlement and CommonBridge. Both contracts are deployed using UUPS proxies, so they are upgradeables.
 
 ## L1 Contracts
 
@@ -13,7 +13,7 @@ The `CommonBridge` is an upgradeable smart contract that facilitates cross-chain
 - **`batchWithdrawalLogsMerkleRoots`**: Mapping of L2 batch numbers to merkle roots of withdrawal logs
 - **`deposits`**: Tracks how much of each L1 token was deposited for each L2 token (L1 → L2 → amount)
 - **`claimedWithdrawalIDs`**: Tracks which withdrawals have been claimed by message ID
-- **`ON_CHAIN_PROPOSER`**: Address of the contract that can commit and verify batches
+- **`SETTLEMENT`**: Address of the contract that can commit and verify batches
 - **`L2_BRIDGE_ADDRESS`**: Constant address (0xffff) representing the L2 bridge
 
 #### **Core Functionality**
@@ -41,11 +41,11 @@ The `CommonBridge` is an upgradeable smart contract that facilitates cross-chain
     - **`publishWithdrawals()`**: Priviledged function to add merkle root of L2 withdrawal logs to `batchWithdrawalLogsMerkleRoots` mapping to make them claimable
 3. **Transaction Management**
     - **`getPendingTransactionHashes()`**: Returns pending privileged transaction hashes
-    - **`removePendingTransactionHashes()`**: Removes processed privileged transactions (only callable by OnChainProposer)
+    - **`removePendingTransactionHashes()`**: Removes processed privileged transactions (only callable by Settlement)
     - **`getPendingTransactionsVersionedHash()`**: Returns a versioned hash of the first `number` of pending privileged transactions
 
 ### `OnChainOperator`
-The `OnChainProposer` is an upgradeable smart contract that ensures the advancement of the L2. It's used by sequencers to commit batches of L2 blocks and verify their proofs.
+The `Settlement` is an upgradeable smart contract that ensures the advancement of the L2. It's used by sequencers to commit batches of L2 blocks and verify their proofs.
 
 #### **State Variables**
 

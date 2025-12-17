@@ -52,7 +52,7 @@ services:
       - ETHREX_SP1_VERIFICATION_KEY_PATH=${DOCKER_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk-bn254
       - ETHREX_RISC0_VERIFICATION_KEY_PATH=${DOCKER_ETHREX_WORKDIR}/riscv32im-risc0-vk
       - ETHREX_TDX_DEV_MODE=${ETHREX_TDX_DEV_MODE:-false}
-      - ETHREX_ON_CHAIN_PROPOSER_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
+      - ETHREX_SETTLEMENT_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
       - ETHREX_BRIDGE_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
       - ETHREX_BRIDGE_OWNER_PK=${ETHREX_BRIDGE_OWNER_PK:-0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e}
       - ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
@@ -62,7 +62,7 @@ services:
       - COMPILE_CONTRACTS=true
       - ETHREX_USE_COMPILED_GENESIS=true
       - ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER
-      - ETHREX_ON_CHAIN_PROPOSER_INCLUSION_MAX_WAIT
+      - ETHREX_SETTLEMENT_INCLUSION_MAX_WAIT
     depends_on:
       - ethrex_l1
     entrypoint:
@@ -112,7 +112,7 @@ services:
       - /bin/bash
       - -c
       - export $(xargs < /env/.env); ./ethrex l2 "$0" "$@"
-    # ETHREX_WATCHER_BRIDGE_ADDRESS and ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS are set in the .env file by the contract_deployer service.
+    # ETHREX_WATCHER_BRIDGE_ADDRESS and ETHREX_COMMITTER_SETTLEMENT_ADDRESS are set in the .env file by the contract_deployer service.
     command: >
       --network /genesis/l2.json
       --http.addr 0.0.0.0

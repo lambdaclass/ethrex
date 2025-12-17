@@ -17,7 +17,7 @@ ethrex l2 deploy \
   --private-key <PRIVATE_KEY> \
   --genesis-l2-path <PATH_TO_L2_GENESIS_FILE> \
   --bridge-owner <COMMON_BRIDGE_OWNER_ADDRESS> \
-  --on-chain-proposer-owner <ON_CHAIN_PROPOSER_OWNER_ADDRESS> \
+  --settlement-owner <SETTLEMENT_OWNER_ADDRESS> \
   --committer.l1-address <L1_COMMITTER_ADDRESS> \
   --proof-sender.l1-address <L1_PROOF_SENDER_ADDRESS> \
   --env-file-path <PATH_TO_ENV_FILE> \
@@ -53,8 +53,8 @@ ethrex l2 deploy \
 >
 > - Replace `L1_RPC_URL` with your preferred RPC provider endpoint.
 > - Replace `PRIVATE_KEY` with the private key of an account funded on the target L1. This key will sign the transactions during deployment.
-> - Replace `PATH_TO_L2_GENESIS_FILE` with the path to your L2 genesis file.A genesis example is available in the fixtures directory of the [official GitHub repository](https://github.com/lambdaclass/ethrex/blob/main/fixtures/genesis/l2.json). This file initializes the `OnChainProposer` contract with the genesis state root.
-> - The `CommonBridge` and `OnChainProposer` contracts are upgradeable and ownable, with implementations behind proxies initialized during deployment. Replace `COMMON_BRIDGE_OWNER_ADDRESS` and `ON_CHAIN_PROPOSER_OWNER_ADDRESS` with the address of the account you want as the owner. The owner can upgrade implementations or perform administrative actions; for more details, see the Architecture section.
+> - Replace `PATH_TO_L2_GENESIS_FILE` with the path to your L2 genesis file.A genesis example is available in the fixtures directory of the [official GitHub repository](https://github.com/lambdaclass/ethrex/blob/main/fixtures/genesis/l2.json). This file initializes the `Settlement` contract with the genesis state root.
+> - The `CommonBridge` and `Settlement` contracts are upgradeable and ownable, with implementations behind proxies initialized during deployment. Replace `COMMON_BRIDGE_OWNER_ADDRESS` and `SETTLEMENT_OWNER_ADDRESS` with the address of the account you want as the owner. The owner can upgrade implementations or perform administrative actions; for more details, see the Architecture section.
 > - The sequencer components (`L1Committer` and `L1ProofSender`) require funded accounts on the target L1 to advance the network. Replace `L1_COMMITTER_ADDRESS` and `L1_PROOF_SENDER_ADDRESS` with the addresses of those accounts.
 > - Replace `PATH_TO_ENV_FILE` with the path where you want to save the generated environment file. This file contains the deployed contract addresses and other configuration details needed to run the L2 node.
 > - L1 contract deployment uses the `CREATE2` opcode for deterministic addresses. To deploy non-deterministically, include the `--randomize-contract-deployment` flag.
@@ -67,7 +67,7 @@ Once the contracts are deployed, start the L2 node:
 ethrex l2 \
   --validium \
   --l1.bridge-address <COMMON_BRIDGE_ADDRESS> \
-  --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> \
+  --l1.settlement-address <SETTLEMENT_ADDRESS> \
   --block-producer.coinbase-address <L2_COINBASE_ADDRESS> \
   --proof-coordinator.l1-private-key <L1_PROOF_SENDER_PRIVATE_KEY> \
   --committer.l1-private-key <L1_COMMITTER_PRIVATE_KEY> \
@@ -85,7 +85,7 @@ ethrex l2 \
 
 > [!NOTE]
 >
-> - Replace `COMMON_BRIDGE_ADDRESS` and `ON_CHAIN_PROPOSER_ADDRESS` with the proxy addresses for the CommonBridge and OnChainProposer contracts from the deployment step.
+> - Replace `COMMON_BRIDGE_ADDRESS` and `SETTLEMENT_ADDRESS` with the proxy addresses for the CommonBridge and Settlement contracts from the deployment step.
 > - Replace `L2_COINBASE_ADDRESS` with the address that will collect L2 block fees. To access these funds on L1, you'll need to withdraw them (see the Withdrawals section for details).
 > - Replace `L1_PROOF_SENDER_PRIVATE_KEY` and `L1_COMMITTER_PRIVATE_KEY` with the private keys for the `L1_PROOF_SENDER_ADDRESS` and `L1_COMMITTER_ADDRESS` from the deployment step.
 > - Replace `L1_RPC_URL` and `PATH_TO_L2_GENESIS_FILE` with the same values used in the deployment step.

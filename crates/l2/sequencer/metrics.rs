@@ -35,7 +35,7 @@ pub enum OutMessage {
 pub struct MetricsGatherer {
     l1_eth_client: EthClient,
     l2_eth_client: EthClient,
-    on_chain_proposer_address: Address,
+    settlement_address: Address,
     check_interval: Duration,
     rollup_store: StoreRollup,
 }
@@ -44,7 +44,7 @@ pub struct MetricsGatherer {
 pub struct MetricsGathererHealth {
     pub l1_rpc_healthcheck: BTreeMap<String, serde_json::Value>,
     pub l2_rpc_healthcheck: BTreeMap<String, serde_json::Value>,
-    pub on_chain_proposer_address: Address,
+    pub settlement_address: Address,
     pub check_interval: Duration,
 }
 
@@ -61,7 +61,7 @@ impl MetricsGatherer {
             l1_eth_client,
             l2_eth_client,
             rollup_store,
-            on_chain_proposer_address: committer_config.on_chain_proposer_address,
+            settlement_address: committer_config.settlement_address,
             check_interval: Duration::from_millis(5000),
         })
     }
@@ -83,10 +83,10 @@ impl MetricsGatherer {
 
     async fn gather_metrics(&self) -> Result<(), MetricsGathererError> {
         let last_committed_batch =
-            get_last_committed_batch(&self.l1_eth_client, self.on_chain_proposer_address).await?;
+            get_last_committed_batch(&self.l1_eth_client, self.settlement_address).await?;
 
         let last_verified_batch =
-            get_last_verified_batch(&self.l1_eth_client, self.on_chain_proposer_address).await?;
+            get_last_verified_batch(&self.l1_eth_client, self.settlement_address).await?;
 
         let l1_gas_price = self.l1_eth_client.get_gas_price().await?;
         let l2_gas_price = self.l2_eth_client.get_gas_price().await?;
@@ -147,7 +147,7 @@ impl MetricsGatherer {
         CallResponse::Reply(OutMessage::Health(MetricsGathererHealth {
             l1_rpc_healthcheck,
             l2_rpc_healthcheck,
-            on_chain_proposer_address: self.on_chain_proposer_address,
+            settlement_address: self.settlement_address,
             check_interval: self.check_interval,
         }))
     }

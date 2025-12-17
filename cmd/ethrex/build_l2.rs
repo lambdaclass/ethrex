@@ -96,8 +96,8 @@ pub fn download_script() {
     // L1 contracts
     let l1_contracts = [
         (
-            &Path::new("../../crates/l2/contracts/src/l1/OnChainProposer.sol"),
-            "OnChainProposer",
+            &Path::new("../../crates/l2/contracts/src/l1/Settlement.sol"),
+            "Settlement",
         ),
         (
             &Path::new("../../crates/l2/contracts/src/l1/CommonBridge.sol"),
@@ -162,7 +162,7 @@ pub fn download_script() {
     );
     ethrex_l2_sdk::compile_contract(
         &output_contracts_path,
-        Path::new("../../crates/l2/contracts/src/l1/based/OnChainProposer.sol"),
+        Path::new("../../crates/l2/contracts/src/l1/based/Settlement.sol"),
         false,
         false,
         Some(&remappings),
@@ -171,9 +171,9 @@ pub fn download_script() {
     )
     .unwrap();
 
-    // To avoid colision with the original OnChainProposer bytecode, we rename it to OnChainProposerBased
-    let file_path = output_contracts_path.join("solc_out/OnChainProposer.bin");
-    let output_file_path = output_contracts_path.join("solc_out/OnChainProposerBased.bytecode");
+    // To avoid colision with the original Settlement bytecode, we rename it to SettlementBased
+    let file_path = output_contracts_path.join("solc_out/Settlement.bin");
+    let output_file_path = output_contracts_path.join("solc_out/SettlementBased.bytecode");
     decode_to_bytecode(&file_path, &output_file_path);
 }
 
@@ -184,14 +184,14 @@ fn write_empty_bytecode_files(output_contracts_path: &Path) {
     let contract_names = [
         "ERC1967Proxy",
         "SP1Verifier",
-        "OnChainProposer",
+        "Settlement",
         "CommonBridge",
         "Router",
         "CommonBridgeL2",
         "Messenger",
         "UpgradeableSystemContract",
         "SequencerRegistry",
-        "OnChainProposerBased",
+        "SettlementBased",
     ];
 
     for name in &contract_names {

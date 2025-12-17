@@ -32,7 +32,7 @@ ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER=true make deploy-l1
 
 ### Start the first L2
 
-Replace `L1_BRIDGE_ADDRESS`, `L1_ON_CHAIN_PROPOSER_ADDRESS` and `ROUTER_ADDRESS` with the outputs of the previous command, you can also check it under `cmd/.env`.
+Replace `L1_BRIDGE_ADDRESS`, `L1_SETTLEMENT_ADDRESS` and `ROUTER_ADDRESS` with the outputs of the previous command, you can also check it under `cmd/.env`.
 
 ```bash
 ../../target/release/ethrex \
@@ -45,7 +45,7 @@ Replace `L1_BRIDGE_ADDRESS`, `L1_ON_CHAIN_PROPOSER_ADDRESS` and `ROUTER_ADDRESS`
 	--metrics.port 3702 \
 	--datadir dev_ethrex_l2 \
 	--l1.bridge-address <L1_BRIDGE_ADDRESS> \
-	--l1.on-chain-proposer-address <L1_ON_CHAIN_PROPOSER_ADDRESS> \
+	--l1.settlement-address <L1_SETTLEMENT_ADDRESS> \
 	--eth.rpc-url http://localhost:8545 \
 	--osaka-activation-time 1761677592 \
 	--block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
@@ -72,7 +72,7 @@ Replace `ROUTER_ADDRESS` with the outputs of the first deploy
 ../../target/release/ethrex l2 deploy \
 	--eth-rpc-url http://localhost:8545 \
 	--private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
-	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--settlement-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
 	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
 	--deposit-rich \
 	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
@@ -85,7 +85,7 @@ Replace `ROUTER_ADDRESS` with the outputs of the first deploy
 
 ### Start the second L2
 
-Replace `L1_BRIDGE_ADDRESS` and `L1_ON_CHAIN_PROPOSER_ADDRESS` with the outputs of the previous command, you can also check it under `cmd/.env`.
+Replace `L1_BRIDGE_ADDRESS` and `L1_SETTLEMENT_ADDRESS` with the outputs of the previous command, you can also check it under `cmd/.env`.
 And `ROUTER_ADDRESS` with the outputs of the first deploy
 
 
@@ -100,7 +100,7 @@ And `ROUTER_ADDRESS` with the outputs of the first deploy
 	--metrics.port 3703 \
 	--datadir dev_ethrex_l2_2 \
 	--l1.bridge-address <L1_BRIDGE_ADDRESS> \
-	--l1.on-chain-proposer-address <L1_ON_CHAIN_PROPOSER_ADDRESS> \
+	--l1.settlement-address <L1_SETTLEMENT_ADDRESS> \
 	--eth.rpc-url http://localhost:8545 \
 	--osaka-activation-time 1761677592 \
 	--block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \

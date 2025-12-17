@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 import {ICommonBridge} from "./ICommonBridge.sol";
 
 interface IRouter {
-    /// @notice Registers a new chain with its OnChainProposer and CommonBridge addresses.
+    /// @notice Registers a new chain with its Settlement and CommonBridge addresses.
     /// @param chainId The ID of the chain to register.
     /// @param commonBridge The address of the CommonBridge for the chain.
     function register(uint256 chainId, address commonBridge) external;

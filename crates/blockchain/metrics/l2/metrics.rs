@@ -279,7 +279,7 @@ impl Metrics {
     }
 }
 
-/// [MetricsBlockType::LastCommittedBatch] and [MetricsBlockType::LastVerifiedBatch] Matche the crates/l2/contracts/src/l1/OnChainProposer.sol variables
+/// [MetricsBlockType::LastCommittedBatch] and [MetricsBlockType::LastVerifiedBatch] Matche the crates/l2/contracts/src/l1/Settlement.sol variables
 pub enum MetricsBlockType {
     LastCommittedBlock,
     LastVerifiedBlock,

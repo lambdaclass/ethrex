@@ -50,7 +50,7 @@ const TDX_REGISTER_FUNCTION_SIGNATURE: &str = "register(bytes)";
 pub async fn register_tdx_key(
     eth_client: &EthClient,
     private_key: &SecretKey,
-    on_chain_proposer_address: Address,
+    settlement_address: Address,
     quote: Bytes,
 ) -> Result<(), ProofCoordinatorError> {
     debug!("Registering TDX key");
@@ -67,7 +67,7 @@ pub async fn register_tdx_key(
             ProofCoordinatorError::InternalError("Failed to convert gas_price to a u64".to_owned())
         })?;
 
-    let tdx_address = get_tdx_address(eth_client, on_chain_proposer_address).await?;
+    let tdx_address = get_tdx_address(eth_client, settlement_address).await?;
     let verify_tx = build_generic_tx(
         eth_client,
         TxType::EIP1559,
@@ -94,16 +94,12 @@ pub async fn register_tdx_key(
 
 async fn get_tdx_address(
     eth_client: &EthClient,
-    on_chain_proposer_address: Address,
+    settlement_address: Address,
 ) -> Result<Address, ProofCoordinatorError> {
     let calldata = keccak("TDX_VERIFIER_ADDRESS()")[..4].to_vec();
 
     let response = eth_client
-        .call(
-            on_chain_proposer_address,
-            calldata.into(),
-            Overrides::default(),
-        )
+        .call(settlement_address, calldata.into(), Overrides::default())
         .await?;
     // trim to 20 bytes, also removes 0x prefix
     let trimmed_response = &response[26..];

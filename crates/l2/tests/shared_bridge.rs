@@ -53,15 +53,15 @@ const SIGNATURE: &str = "sendToL2(uint256,address,uint256,bytes)";
 const GAS_PRICE: u64 = 3946771033u64;
 
 // 0x84307998a57635ccc4ed1e5dba1e76344dcdfbe6
-const DEFAULT_ON_CHAIN_PROPOSER_ADDRESS: Address = H160([
+const DEFAULT_SETTLEMENT_ADDRESS: Address = H160([
     0x84, 0x30, 0x79, 0x98, 0xa5, 0x76, 0x35, 0xcc, 0xc4, 0xed, 0x1e, 0x5d, 0xba, 0x1e, 0x76, 0x34,
     0x4d, 0xcd, 0xfb, 0xe6,
 ]);
 
-fn on_chain_proposer_address() -> Address {
-    std::env::var("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS")
+fn settlement_address() -> Address {
+    std::env::var("ETHREX_COMMITTER_SETTLEMENT_ADDRESS")
         .map(|address| address.parse().expect("Invalid proposer address"))
-        .unwrap_or(DEFAULT_ON_CHAIN_PROPOSER_ADDRESS)
+        .unwrap_or(DEFAULT_SETTLEMENT_ADDRESS)
 }
 
 pub fn read_env_file_by_config() {
@@ -346,9 +346,9 @@ async fn test_forced_inclusion() {
     }
     println!("Waiting 10 minutes for L2A to try to verify the batch...");
     sleep(Duration::from_secs(600)).await; // Wait for the batch to be verified
-    let on_chain_proposer_address = on_chain_proposer_address();
-    println!("Using onChainProposer address: {on_chain_proposer_address:?}");
-    let last_verified_batch = get_last_verified_batch(&l2a_client, on_chain_proposer_address)
+    let settlement_address = settlement_address();
+    println!("Using Settlement address: {settlement_address:?}");
+    let last_verified_batch = get_last_verified_batch(&l2a_client, settlement_address)
         .await
         .expect("Failed to get last verified batch");
 

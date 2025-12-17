@@ -146,7 +146,7 @@ pub struct ProofCoordinator {
     listen_ip: IpAddr,
     port: u16,
     eth_client: EthClient,
-    on_chain_proposer_address: Address,
+    settlement_address: Address,
     rollup_store: StoreRollup,
     rpc_url: String,
     tdx_private_key: Option<SecretKey>,
@@ -173,7 +173,7 @@ impl ProofCoordinator {
             Some(config.eth.maximum_allowed_max_fee_per_gas),
             Some(config.eth.maximum_allowed_max_fee_per_blob_gas),
         )?;
-        let on_chain_proposer_address = config.l1_committer.on_chain_proposer_address;
+        let settlement_address = config.l1_committer.settlement_address;
 
         let rpc_url = config
             .eth
@@ -188,7 +188,7 @@ impl ProofCoordinator {
             listen_ip: config.proof_coordinator.listen_ip,
             port: config.proof_coordinator.listen_port,
             eth_client,
-            on_chain_proposer_address,
+            settlement_address,
             rollup_store,
             rpc_url,
             tdx_private_key: config.proof_coordinator.tdx_private_key,
@@ -393,13 +393,7 @@ impl ProofCoordinator {
                 .map_err(|e| {
                     ProofCoordinatorError::Custom(format!("Could not setup TDX key {e}"))
                 })?;
-                register_tdx_key(
-                    &self.eth_client,
-                    key,
-                    self.on_chain_proposer_address,
-                    payload,
-                )
-                .await?;
+                register_tdx_key(&self.eth_client, key, self.settlement_address, payload).await?;
             }
             _ => {
                 warn!("Setup requested for {prover_type}, which doesn't need setup.")

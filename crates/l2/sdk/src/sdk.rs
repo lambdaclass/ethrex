@@ -1106,35 +1106,30 @@ pub async fn wait_for_l1_message_proof(
 
 pub async fn get_last_committed_batch(
     client: &EthClient,
-    on_chain_proposer_address: Address,
+    settlement_address: Address,
 ) -> Result<u64, EthClientError> {
-    _call_u64_variable(client, b"lastCommittedBatch()", on_chain_proposer_address).await
+    _call_u64_variable(client, b"lastCommittedBatch()", settlement_address).await
 }
 
 pub async fn get_last_verified_batch(
     client: &EthClient,
-    on_chain_proposer_address: Address,
+    settlement_address: Address,
 ) -> Result<u64, EthClientError> {
-    _call_u64_variable(client, b"lastVerifiedBatch()", on_chain_proposer_address).await
+    _call_u64_variable(client, b"lastVerifiedBatch()", settlement_address).await
 }
 
 pub async fn get_sp1_vk(
     client: &EthClient,
-    on_chain_proposer_address: Address,
+    settlement_address: Address,
 ) -> Result<[u8; 32], EthClientError> {
-    _call_bytes32_variable(client, b"SP1_VERIFICATION_KEY()", on_chain_proposer_address).await
+    _call_bytes32_variable(client, b"SP1_VERIFICATION_KEY()", settlement_address).await
 }
 
 pub async fn get_risc0_vk(
     client: &EthClient,
-    on_chain_proposer_address: Address,
+    settlement_address: Address,
 ) -> Result<[u8; 32], EthClientError> {
-    _call_bytes32_variable(
-        client,
-        b"RISC0_VERIFICATION_KEY()",
-        on_chain_proposer_address,
-    )
-    .await
+    _call_bytes32_variable(client, b"RISC0_VERIFICATION_KEY()", settlement_address).await
 }
 
 pub async fn get_last_fetched_l1_block(
@@ -1242,9 +1237,9 @@ async fn _call_u64_variable(
 async fn _call_address_variable(
     eth_client: &EthClient,
     selector: &[u8],
-    on_chain_proposer_address: Address,
+    settlement_address: Address,
 ) -> Result<Address, EthClientError> {
-    let hex_string = _generic_call(eth_client, selector, on_chain_proposer_address).await?;
+    let hex_string = _generic_call(eth_client, selector, settlement_address).await?;
 
     let hex_str = &hex_string.strip_prefix("0x").ok_or(EthClientError::Custom(
         "Couldn't strip prefix from request.".to_owned(),

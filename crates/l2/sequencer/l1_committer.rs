@@ -100,7 +100,7 @@ pub enum OutMessage {
 pub struct L1Committer {
     eth_client: EthClient,
     blockchain: Arc<Blockchain>,
-    on_chain_proposer_address: Address,
+    settlement_address: Address,
     store: Store,
     rollup_store: StoreRollup,
     commit_time_ms: u64,
@@ -150,7 +150,7 @@ pub struct L1CommitterHealth {
     last_committed_batch: u64,
     signer_status: SignerHealth,
     running: bool,
-    on_chain_proposer_address: Address,
+    settlement_address: Address,
 }
 
 impl L1Committer {
@@ -177,8 +177,7 @@ impl L1Committer {
             Some(eth_config.maximum_allowed_max_fee_per_blob_gas),
         )?;
         let last_committed_batch =
-            get_last_committed_batch(&eth_client, committer_config.on_chain_proposer_address)
-                .await?;
+            get_last_committed_batch(&eth_client, committer_config.settlement_address).await?;
 
         let (current_checkpoint_store, _) = Self::get_checkpoint_from_path(
             genesis.clone(),
@@ -191,7 +190,7 @@ impl L1Committer {
         Ok(Self {
             eth_client,
             blockchain,
-            on_chain_proposer_address: committer_config.on_chain_proposer_address,
+            settlement_address: committer_config.settlement_address,
             store,
             rollup_store,
             commit_time_ms: committer_config.commit_time_ms,
@@ -258,7 +257,7 @@ impl L1Committer {
         info!("Running committer main loop");
         // Get the batch to commit
         let last_committed_batch_number =
-            get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
+            get_last_committed_batch(&self.eth_client, self.settlement_address).await?;
         let batch_to_commit = last_committed_batch_number + 1;
 
         let l1_fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
@@ -1184,7 +1183,7 @@ impl L1Committer {
             build_generic_tx(
                 &self.eth_client,
                 TxType::EIP4844,
-                self.on_chain_proposer_address,
+                self.settlement_address,
                 self.signer.address(),
                 calldata.into(),
                 Overrides {
@@ -1204,7 +1203,7 @@ impl L1Committer {
             build_generic_tx(
                 &self.eth_client,
                 TxType::EIP1559,
-                self.on_chain_proposer_address,
+                self.settlement_address,
                 self.signer.address(),
                 calldata.into(),
                 Overrides {
@@ -1286,14 +1285,14 @@ impl L1Committer {
             last_committed_batch: self.last_committed_batch,
             signer_status,
             running: self.cancellation_token.is_some(),
-            on_chain_proposer_address: self.on_chain_proposer_address,
+            settlement_address: self.settlement_address,
         })))
     }
 
     async fn handle_commit_message(&mut self, handle: &GenServerHandle<Self>) -> CastResponse {
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
             let current_last_committed_batch =
-                get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
+                get_last_committed_batch(&self.eth_client, self.settlement_address)
                     .await
                     .unwrap_or(self.last_committed_batch);
             let Some(current_time) = utils::system_now_ms() else {

@@ -4,7 +4,7 @@ pragma solidity =0.8.29;
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
-import "./interfaces/IOnChainProposer.sol";
+import "./interfaces/ISettlement.sol";
 import {CommonBridge} from "../CommonBridge.sol";
 import {ICommonBridge} from "../interfaces/ICommonBridge.sol";
 import {IRiscZeroVerifier} from "../interfaces/IRiscZeroVerifier.sol";
@@ -12,10 +12,10 @@ import {ISP1Verifier} from "../interfaces/ISP1Verifier.sol";
 import {ITDXVerifier} from "../interfaces/ITDXVerifier.sol";
 import {ISequencerRegistry} from "../interfaces/ISequencerRegistry.sol";
 
-/// @title OnChainProposer contract.
+/// @title Settlement contract.
 /// @author LambdaClass
-contract OnChainProposer is
-    IOnChainProposer,
+contract Settlement is
+    ISettlement,
     Initializable,
     UUPSUpgradeable,
     Ownable2StepUpgradeable
@@ -95,7 +95,7 @@ contract OnChainProposer is
         require(
             msg.sender ==
                 ISequencerRegistry(SEQUENCER_REGISTRY).leaderSequencer(),
-            "OnChainProposer: caller has no sequencing rights"
+            "Settlement: caller has no sequencing rights"
         );
         _;
     }
@@ -158,15 +158,15 @@ contract OnChainProposer is
         // Set the SequencerRegistry address
         require(
             SEQUENCER_REGISTRY == address(0),
-            "OnChainProposer: contract already initialized"
+            "Settlement: contract already initialized"
         );
         require(
             sequencer_registry != address(0),
-            "OnChainProposer: sequencer_registry is the zero address"
+            "Settlement: sequencer_registry is the zero address"
         );
         require(
             sequencer_registry != address(this),
-            "OnChainProposer: sequencer_registry is the contract address"
+            "Settlement: sequencer_registry is the contract address"
         );
         SEQUENCER_REGISTRY = sequencer_registry;
 
@@ -175,36 +175,30 @@ contract OnChainProposer is
         OwnableUpgradeable.__Ownable_init(owner);
     }
 
-    /// @inheritdoc IOnChainProposer
+    /// @inheritdoc ISettlement
     function initializeBridgeAddress(address bridge) public onlyOwner {
-        require(
-            BRIDGE == address(0),
-            "OnChainProposer: bridge already initialized"
-        );
-        require(
-            bridge != address(0),
-            "OnChainProposer: bridge is the zero address"
-        );
+        require(BRIDGE == address(0), "Settlement: bridge already initialized");
+        require(bridge != address(0), "Settlement: bridge is the zero address");
         require(
             bridge != address(this),
-            "OnChainProposer: bridge is the contract address"
+            "Settlement: bridge is the contract address"
         );
         BRIDGE = bridge;
     }
 
-    /// @inheritdoc IOnChainProposer
+    /// @inheritdoc ISettlement
     function upgradeSP1VerificationKey(bytes32 new_vk) public onlyOwner {
         SP1_VERIFICATION_KEY = new_vk;
         emit VerificationKeyUpgraded("SP1", new_vk);
     }
 
-    /// @inheritdoc IOnChainProposer
+    /// @inheritdoc ISettlement
     function upgradeRISC0VerificationKey(bytes32 new_vk) public onlyOwner {
         RISC0_VERIFICATION_KEY = new_vk;
         emit VerificationKeyUpgraded("RISC0", new_vk);
     }
 
-    /// @inheritdoc IOnChainProposer
+    /// @inheritdoc ISettlement
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
@@ -217,15 +211,15 @@ contract OnChainProposer is
         // TODO: Refactor validation
         require(
             batchNumber == lastCommittedBatch + 1,
-            "OnChainProposer: batchNumber is not the immediate successor of lastCommittedBatch"
+            "Settlement: batchNumber is not the immediate successor of lastCommittedBatch"
         );
         require(
             batchCommitments[batchNumber].newStateRoot == bytes32(0),
-            "OnChainProposer: tried to commit an already committed batch"
+            "Settlement: tried to commit an already committed batch"
         );
         require(
             lastBlockHash != bytes32(0),
-            "OnChainProposer: lastBlockHash cannot be zero"
+            "Settlement: lastBlockHash cannot be zero"
         );
 
         // Check if commitment is equivalent to blob's KZG commitment.
@@ -238,7 +232,7 @@ contract OnChainProposer is
             require(
                 claimedProcessedTransactions ==
                     processedPrivilegedTransactionsRollingHash,
-                "OnChainProposer: invalid privileged transactions log"
+                "Settlement: invalid privileged transactions log"
             );
         }
         if (withdrawalsLogsMerkleRoot != bytes32(0)) {
@@ -279,7 +273,7 @@ contract OnChainProposer is
         );
     }
 
-    /// @inheritdoc IOnChainProposer
+    /// @inheritdoc ISettlement
     /// @notice The first `require` checks that the batch number is the subsequent block.
     /// @notice The second `require` checks if the batch has been committed.
     /// @notice The order of these `require` statements is important.
@@ -297,11 +291,14 @@ contract OnChainProposer is
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature
     ) external {
-        require(!ALIGNED_MODE, "Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead.");
+        require(
+            !ALIGNED_MODE,
+            "Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead."
+        );
 
         require(
             batchCommitments[batchNumber].newStateRoot != bytes32(0),
-            "OnChainProposer: cannot verify an uncommitted batch"
+            "Settlement: cannot verify an uncommitted batch"
         );
 
         // The first 2 bytes are the number of privileged transactions.
@@ -331,10 +328,7 @@ contract OnChainProposer is
             string memory reason = _verifyPublicData(batchNumber, risc0Journal);
             if (bytes(reason).length != 0) {
                 revert(
-                    string.concat(
-                        "OnChainProposer: Invalid RISC0 proof: ",
-                        reason
-                    )
+                    string.concat("Settlement: Invalid RISC0 proof: ", reason)
                 );
             }
             try
@@ -345,7 +339,7 @@ contract OnChainProposer is
                 )
             {} catch {
                 revert(
-                    "OnChainProposer: Invalid RISC0 proof failed proof verification"
+                    "Settlement: Invalid RISC0 proof failed proof verification"
                 );
             }
         }
@@ -358,10 +352,7 @@ contract OnChainProposer is
             );
             if (bytes(reason).length != 0) {
                 revert(
-                    string.concat(
-                        "OnChainProposer: Invalid SP1 proof: ",
-                        reason
-                    )
+                    string.concat("Settlement: Invalid SP1 proof: ", reason)
                 );
             }
             try
@@ -372,7 +363,7 @@ contract OnChainProposer is
                 )
             {} catch {
                 revert(
-                    "OnChainProposer: Invalid SP1 proof failed proof verification"
+                    "Settlement: Invalid SP1 proof failed proof verification"
                 );
             }
         }
@@ -385,17 +376,17 @@ contract OnChainProposer is
             );
             if (bytes(reason).length != 0) {
                 revert(
-                    string.concat(
-                        "OnChainProposer: Invalid TDX proof: ",
-                        reason
-                    )
+                    string.concat("Settlement: Invalid TDX proof: ", reason)
                 );
             }
             try
-                ITDXVerifier(TDX_VERIFIER_ADDRESS).verify(tdxPublicValues, tdxSignature)
+                ITDXVerifier(TDX_VERIFIER_ADDRESS).verify(
+                    tdxPublicValues,
+                    tdxSignature
+                )
             {} catch {
                 revert(
-                    "OnChainProposer: Invalid TDX proof failed proof verification"
+                    "Settlement: Invalid TDX proof failed proof verification"
                 );
             }
         }
@@ -408,7 +399,7 @@ contract OnChainProposer is
         emit BatchVerified(lastVerifiedBatch);
     }
 
-    /// @inheritdoc IOnChainProposer
+    /// @inheritdoc ISettlement
     function verifyBatchesAligned(
         uint256 firstBatchNumber,
         bytes[] calldata publicInputsList,
@@ -421,19 +412,19 @@ contract OnChainProposer is
         );
         require(
             firstBatchNumber == lastVerifiedBatch + 1,
-            "OnChainProposer: incorrect first batch number"
+            "Settlement: incorrect first batch number"
         );
 
         if (REQUIRE_SP1_PROOF) {
             require(
                 publicInputsList.length == sp1MerkleProofsList.length,
-                "OnChainProposer: SP1 input/proof array length mismatch"
+                "Settlement: SP1 input/proof array length mismatch"
             );
         }
         if (REQUIRE_RISC0_PROOF) {
             require(
                 publicInputsList.length == risc0MerkleProofsList.length,
-                "OnChainProposer: Risc0 input/proof array length mismatch"
+                "Settlement: Risc0 input/proof array length mismatch"
             );
         }
 
@@ -442,7 +433,7 @@ contract OnChainProposer is
         for (uint256 i = 0; i < publicInputsList.length; i++) {
             require(
                 batchCommitments[batchNumber].newStateRoot != bytes32(0),
-                "OnChainProposer: cannot verify an uncommitted batch"
+                "Settlement: cannot verify an uncommitted batch"
             );
 
             // The first 2 bytes are the number of privileged transactions.
@@ -465,10 +456,7 @@ contract OnChainProposer is
             );
             if (bytes(reason).length != 0) {
                 revert(
-                    string.concat(
-                        "OnChainProposer: Invalid ALIGNED proof: ",
-                        reason
-                    )
+                    string.concat("Settlement: Invalid ALIGNED proof: ", reason)
                 );
             }
 
@@ -571,13 +559,10 @@ contract OnChainProposer is
             .staticcall(callData);
         require(
             callResult,
-            "OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed"
+            "Settlement: call to ALIGNEDPROOFAGGREGATOR failed"
         );
         bool proofVerified = abi.decode(response, (bool));
-        require(
-            proofVerified,
-            "OnChainProposer: Aligned proof verification failed"
-        );
+        require(proofVerified, "Settlement: Aligned proof verification failed");
     }
 
     /// @notice Allow owner to upgrade the contract.

@@ -67,7 +67,7 @@ pub enum CallMessage {
 pub struct L1ProofSender {
     eth_client: EthClient,
     signer: ethrex_l2_rpc::signer::Signer,
-    on_chain_proposer_address: Address,
+    settlement_address: Address,
     needed_proof_types: Vec<ProverType>,
     proof_send_interval_ms: u64,
     sequencer_state: SequencerState,
@@ -84,7 +84,7 @@ pub struct L1ProofSender {
 pub struct L1ProofSenderHealth {
     rpc_healthcheck: BTreeMap<String, serde_json::Value>,
     signer_status: SignerHealth,
-    on_chain_proposer_address: Address,
+    settlement_address: Address,
     needed_proof_types: Vec<String>,
     proof_send_interval_ms: u64,
     sequencer_state: String,
@@ -123,7 +123,7 @@ impl L1ProofSender {
         Ok(Self {
             eth_client,
             signer: cfg.signer.clone(),
-            on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
+            settlement_address: committer_cfg.settlement_address,
             needed_proof_types,
             proof_send_interval_ms: cfg.proof_send_interval_ms,
             sequencer_state,
@@ -164,7 +164,7 @@ impl L1ProofSender {
 
     async fn verify_and_send_proof(&self) -> Result<(), ProofSenderError> {
         let last_verified_batch =
-            get_last_verified_batch(&self.eth_client, self.on_chain_proposer_address).await?;
+            get_last_verified_batch(&self.eth_client, self.settlement_address).await?;
         let latest_sent_batch_db = self.rollup_store.get_latest_sent_batch_proof().await?;
         let batch_to_send = if self.aligned_mode {
             std::cmp::max(latest_sent_batch_db, last_verified_batch) + 1
@@ -180,7 +180,7 @@ impl L1ProofSender {
         };
 
         let last_committed_batch =
-            get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
+            get_last_committed_batch(&self.eth_client, self.settlement_address).await?;
 
         if last_committed_batch < batch_to_send {
             info!("Next batch to send ({batch_to_send}) is not yet committed");
@@ -400,7 +400,7 @@ impl L1ProofSender {
         let send_verify_tx_result = send_verify_tx(
             calldata,
             &self.eth_client,
-            self.on_chain_proposer_address,
+            self.settlement_address,
             &self.signer,
         )
         .await;
@@ -464,7 +464,7 @@ impl L1ProofSender {
         CallResponse::Reply(OutMessage::Health(Box::new(L1ProofSenderHealth {
             rpc_healthcheck,
             signer_status,
-            on_chain_proposer_address: self.on_chain_proposer_address,
+            settlement_address: self.settlement_address,
             needed_proof_types: self
                 .needed_proof_types
                 .iter()

@@ -112,7 +112,7 @@ interface ICommonBridge {
     function removePendingTransactionHashes(uint16 number) external;
 
     /// @notice Remove pending L2 messages from the queue.
-    /// @dev This method is used by the L2 OnChainProposer to remove the pending
+    /// @dev This method is used by the L2 Settlement to remove the pending
     /// L2 messages from the queue after the messages are included.
     /// @param chainId the chain id of the L2 messages to remove.
     /// @param number of pending transaction hashes to remove.
@@ -141,7 +141,7 @@ interface ICommonBridge {
     ) external;
 
     /// @notice Publishes the L2 messages in the router contract.
-    /// @dev This method is used by the L2 OnChainProposer to publish the L2
+    /// @dev This method is used by the L2 Settlement to publish the L2
     /// messages when an L2 batch is committed.
     /// @param balanceDiffs Array of balance differences and associated message hashes to be sent to different chains.
     function publishL2Messages(BalanceDiff[] calldata balanceDiffs) external;

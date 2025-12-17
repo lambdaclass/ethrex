@@ -5,7 +5,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "../interfaces/ISequencerRegistry.sol";
-import "./interfaces/IOnChainProposer.sol";
+import "./interfaces/ISettlement.sol";
 
 /// @title SequencerRegistry contract
 /// @author LambdaClass
@@ -25,9 +25,9 @@ contract SequencerRegistry is
     /// @dev After completing this amount, the lead sequencer is changed to the next one.
     uint256 public constant BATCHES_PER_SEQUENCER = 32;
 
-    /// @notice The address of the OnChainProposer contract.
+    /// @notice The address of the Settlement contract.
     /// @dev This address is set during initialization and is used to get the last committed batch.
-    address public ON_CHAIN_PROPOSER;
+    address public SETTLEMENT;
 
     /// @notice Mapping of sequencer addresses to their collateral amounts.
     /// @dev This mapping is used to check if a sequencer is registered and how much collateral they have put.
@@ -43,30 +43,27 @@ contract SequencerRegistry is
     /// @dev This mapping is used to keep track of which sequencer committed which batch.
     mapping(uint256 => address) public sequencerForBatch;
 
-    /// @notice Modifier to restrict access to the OnChainProposer contract.
+    /// @notice Modifier to restrict access to the Settlement contract.
     /// @dev This modifier is used to ensure the mapping of the batch and the sequencer that committed it
-    /// is only updated by the OnChainProposer contract.
-    modifier onlyOnChainProposer() {
+    /// is only updated by the Settlement contract.
+    modifier onlySettlement() {
         require(
-            msg.sender == ON_CHAIN_PROPOSER,
-            "SequencerRegistry: Only onChainProposer can push sequencer"
+            msg.sender == SETTLEMENT,
+            "SequencerRegistry: Only Settlement can push sequencer"
         );
         _;
     }
 
     /// @notice Initializes the SequencerRegistry contract.
     /// @dev This function is called during the deployment of the contract.
-    /// @dev It sets the address of the OnChainProposer contract and the owner of the contract.
-    function initialize(
-        address owner,
-        address onChainProposer
-    ) public initializer {
+    /// @dev It sets the address of the Settlement contract and the owner of the contract.
+    function initialize(address owner, address Settlement) public initializer {
         require(
-            onChainProposer != address(0),
-            "SequencerRegistry: Invalid onChainProposer"
+            Settlement != address(0),
+            "SequencerRegistry: Invalid Settlement"
         );
 
-        ON_CHAIN_PROPOSER = onChainProposer;
+        SETTLEMENT = Settlement;
 
         require(owner != address(0), "SequencerRegistry: Invalid owner");
 
@@ -77,7 +74,7 @@ contract SequencerRegistry is
     function pushSequencer(
         uint256 batchNumber,
         address sequencer
-    ) external override onlyOnChainProposer {
+    ) external override onlySettlement {
         sequencerForBatch[batchNumber] = sequencer;
     }
 
@@ -126,8 +123,8 @@ contract SequencerRegistry is
 
     /// @inheritdoc ISequencerRegistry
     function leaderSequencer() public view returns (address) {
-        uint256 _currentBatch = IOnChainProposer(ON_CHAIN_PROPOSER)
-            .lastCommittedBatch() + 1;
+        uint256 _currentBatch = ISettlement(SETTLEMENT).lastCommittedBatch() +
+            1;
         return leadSequencerForBatch(_currentBatch);
     }
 
@@ -135,8 +132,8 @@ contract SequencerRegistry is
     function leadSequencerForBatch(
         uint256 batchNumber
     ) public view returns (address) {
-        uint256 _currentBatch = IOnChainProposer(ON_CHAIN_PROPOSER)
-            .lastCommittedBatch() + 1;
+        uint256 _currentBatch = ISettlement(SETTLEMENT).lastCommittedBatch() +
+            1;
         if (batchNumber < _currentBatch) {
             return sequencerForBatch[batchNumber];
         }

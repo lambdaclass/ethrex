@@ -14,7 +14,7 @@ import {
 } from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 import "./interfaces/ICommonBridge.sol";
-import "./interfaces/IOnChainProposer.sol";
+import "./interfaces/ISettlement.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
 import {IRouter} from "./interfaces/IRouter.sol";
 import "../l2/interfaces/IFeeTokenRegistry.sol";
@@ -49,7 +49,7 @@ contract CommonBridge is
     /// @notice Array of hashed pending privileged transactions
     bytes32[] public pendingTxHashes;
 
-    address public ON_CHAIN_PROPOSER;
+    address public SETTLEMENT;
 
     /// @notice Block in which the CommonBridge was initialized.
     /// @dev Used by the L1Watcher to fetch logs starting from this block.
@@ -118,32 +118,32 @@ contract CommonBridge is
     mapping(uint256 chainId => uint256 index)
         public pendingMessagesIndexPerChain;
 
-    modifier onlyOnChainProposer() {
+    modifier onlySettlement() {
         require(
-            msg.sender == ON_CHAIN_PROPOSER,
-            "CommonBridge: caller is not the OnChainProposer"
+            msg.sender == SETTLEMENT,
+            "CommonBridge: caller is not the Settlement"
         );
         _;
     }
 
     /// @notice Initializes the contract.
     /// @dev This method is called only once after the contract is deployed.
-    /// @dev It sets the OnChainProposer address.
+    /// @dev It sets the Settlement address.
     /// @param owner the address of the owner who can perform upgrades.
-    /// @param onChainProposer the address of the OnChainProposer contract.
+    /// @param Settlement the address of the Settlement contract.
     /// @param inclusionMaxWait the maximum time the sequencer is allowed to take without processing a privileged transaction.
     function initialize(
         address owner,
-        address onChainProposer,
+        address Settlement,
         uint256 inclusionMaxWait,
         address _sharedBridgeRouter,
         uint256 chainId
     ) public initializer {
         require(
-            onChainProposer != address(0),
-            "CommonBridge: onChainProposer is the zero address"
+            Settlement != address(0),
+            "CommonBridge: Settlement is the zero address"
         );
-        ON_CHAIN_PROPOSER = onChainProposer;
+        SETTLEMENT = Settlement;
 
         lastFetchedL1Block = block.number;
         transactionId = 0;
@@ -364,7 +364,7 @@ contract CommonBridge is
     /// @inheritdoc ICommonBridge
     function removePendingTransactionHashes(
         uint16 number
-    ) public onlyOnChainProposer {
+    ) public onlySettlement {
         require(
             number <= pendingTxHashesLength(),
             "CommonBridge: number is greater than the length of pendingTxHashes (remove)"
@@ -377,7 +377,7 @@ contract CommonBridge is
     function removePendingL2Messages(
         uint256 chainId,
         uint16 number
-    ) public onlyOnChainProposer {
+    ) public onlySettlement {
         require(
             number <= pendingL2MessagesLength(chainId),
             "CommonBridge: number is greater than the length of pendingL2Messages (remove)"
@@ -435,7 +435,7 @@ contract CommonBridge is
     function publishWithdrawals(
         uint256 withdrawalLogsBatchNumber,
         bytes32 withdrawalsLogsMerkleRoot
-    ) public onlyOnChainProposer {
+    ) public onlySettlement {
         require(
             batchWithdrawalLogsMerkleRoots[withdrawalLogsBatchNumber] ==
                 bytes32(0),
@@ -453,7 +453,7 @@ contract CommonBridge is
     /// @inheritdoc ICommonBridge
     function publishL2Messages(
         BalanceDiff[] calldata balanceDiffs
-    ) public onlyOnChainProposer nonReentrant {
+    ) public onlySettlement nonReentrant {
         for (uint i = 0; i < balanceDiffs.length; i++) {
             IRouter(SHARED_BRIDGE_ROUTER).sendMessages{
                 value: balanceDiffs[i].value
@@ -547,7 +547,7 @@ contract CommonBridge is
         );
         require(
             withdrawalBatchNumber <=
-                IOnChainProposer(ON_CHAIN_PROPOSER).lastVerifiedBatch(),
+                ISettlement(SETTLEMENT).lastVerifiedBatch(),
             "CommonBridge: the batch that emitted the withdrawal logs was not verified"
         );
         require(

@@ -58,7 +58,7 @@ struct L1ProofVerifier {
     eth_client: EthClient,
     beacon_urls: Vec<String>,
     l1_signer: Signer,
-    on_chain_proposer_address: Address,
+    settlement_address: Address,
     proof_verify_interval_ms: u64,
     network: Network,
     rollup_store: StoreRollup,
@@ -87,15 +87,15 @@ impl L1ProofVerifier {
         )?;
         let beacon_urls = parse_beacon_urls(&aligned_cfg.beacon_urls);
 
-        let sp1_vk = get_sp1_vk(&eth_client, committer_cfg.on_chain_proposer_address).await?;
-        let risc0_vk = get_risc0_vk(&eth_client, committer_cfg.on_chain_proposer_address).await?;
+        let sp1_vk = get_sp1_vk(&eth_client, committer_cfg.settlement_address).await?;
+        let risc0_vk = get_risc0_vk(&eth_client, committer_cfg.settlement_address).await?;
 
         Ok(Self {
             eth_client,
             beacon_urls,
             network: aligned_cfg.network.clone(),
             l1_signer: proof_coordinator_cfg.signer,
-            on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
+            settlement_address: committer_cfg.settlement_address,
             proof_verify_interval_ms: aligned_cfg.aligned_verifier_interval_ms,
             rollup_store,
             sp1_vk,
@@ -117,16 +117,14 @@ impl L1ProofVerifier {
 
     async fn main_logic(&self) -> Result<(), ProofVerifierError> {
         let first_batch_to_verify =
-            1 + get_last_verified_batch(&self.eth_client, self.on_chain_proposer_address).await?;
+            1 + get_last_verified_batch(&self.eth_client, self.settlement_address).await?;
 
         match self
             .verify_proofs_aggregation(first_batch_to_verify)
             .await?
         {
             Some(verify_tx_hash) => {
-                info!(
-                    "Batches verified in OnChainProposer, with transaction hash {verify_tx_hash:#x}"
-                );
+                info!("Batches verified in Settlement, with transaction hash {verify_tx_hash:#x}");
             }
             None => {
                 info!(
@@ -139,7 +137,7 @@ impl L1ProofVerifier {
     }
 
     /// Checks that all consecutive batches starting from `first_batch_number` have been
-    /// verified and aggregated in Aligned Layer. This advances the OnChainProposer.
+    /// verified and aggregated in Aligned Layer. This advances the Settlement.
     async fn verify_proofs_aggregation(
         &self,
         first_batch_number: u64,
@@ -241,7 +239,7 @@ impl L1ProofVerifier {
         let send_verify_tx_result = send_verify_tx(
             calldata,
             &self.eth_client,
-            self.on_chain_proposer_address,
+            self.settlement_address,
             &self.l1_signer,
         )
         .await;

@@ -672,7 +672,7 @@ jobs:
           cd crates/l2
           if  [ "${{ matrix.forced_inclusion }}" = true ]; then
             # We set the inclusion max wait to 0 to force expired messages
-            export ETHREX_ON_CHAIN_PROPOSER_INCLUSION_MAX_WAIT=0
+            export ETHREX_SETTLEMENT_INCLUSION_MAX_WAIT=0
           fi
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \

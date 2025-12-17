@@ -58,7 +58,7 @@ services:
       - /bin/bash
       - -c
       - export $(xargs < /env/.env); ./ethrex l2 "$0" "$@"
-    # ETHREX_WATCHER_BRIDGE_ADDRESS and ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS are set in the .env file by the contract_deployer service.
+    # ETHREX_WATCHER_BRIDGE_ADDRESS and ETHREX_COMMITTER_SETTLEMENT_ADDRESS are set in the .env file by the contract_deployer service.
     command: >
       --network /genesis/l2.json
       --http.addr 0.0.0.0

@@ -37,8 +37,8 @@
   - is **elected through a Round-Robin** election in L1,
   - **produces** L2 blocks,
   - **posts** L2 batches to L1 during their allowed period.
-- `OnChainProposer`’s `verifyBatch` method is **callable by anyone**. **Only one valid proof is needed** to advance the network.
-- `OnChainProposer`’s `commitBatch` method is **callable by the lead Sequencer**.
+- `Settlement`’s `verifyBatch` method is **callable by anyone**. **Only one valid proof is needed** to advance the network.
+- `Settlement`’s `commitBatch` method is **callable by the lead Sequencer**.
 
 ### Milestone 2: P2P
 
@@ -139,7 +139,7 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
   --genesis-l2-path ../../fixtures/genesis/l2.json \
   --contracts-path contracts \
   --bridge-owner 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \
-  --on-chain-proposer-owner 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \
+  --settlement-owner 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \
   --deposit-rich \
   --private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
   --deploy-based-contracts \
@@ -148,7 +148,7 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
 
 This command will:
 
-1. Deploy the L1 contracts, including the based contracts `SequencerRegistry`, and a modified `OnChainProposer`.
+1. Deploy the L1 contracts, including the based contracts `SequencerRegistry`, and a modified `Settlement`.
 2. Deposit funds in the accounts from `../../fixtures/keys/private_keys_l1.txt`.
 3. Skip deploying the verifier contracts by specifying `0x00000000000000000000000000000000000000aa` as their address. This means that the node will run in "dev mode" and that the proof verification will not be performed. This is useful for local development and testing, but should not be used in production environments.
 
@@ -180,7 +180,7 @@ cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 \
   --proof-coordinator.port 4566 \
   --http.port 1729 \
   --state-updater.sequencer-registry $ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS \
-  --l1.on-chain-proposer-address $ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS \
+  --l1.settlement-address $ETHREX_COMMITTER_SETTLEMENT_ADDRESS \
   --l1.bridge-address $ETHREX_WATCHER_BRIDGE_ADDRESS \
   --based \
   --p2p.port 30303 \

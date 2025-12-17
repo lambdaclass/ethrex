@@ -135,8 +135,8 @@ pub enum ProofSenderError {
     ProofNotPresent(ProverType),
     #[error("Unexpected Error: {0}")]
     UnexpectedError(String),
-    #[error("Failed to parse OnChainProposer response: {0}")]
-    FailedToParseOnChainProposerResponse(String),
+    #[error("Failed to parse Settlement response: {0}")]
+    FailedToParseSettlementResponse(String),
     #[error("Internal Error: {0}")]
     InternalError(#[from] GenServerError),
     #[error("Proof Sender failed because of a rollup store error: {0}")]

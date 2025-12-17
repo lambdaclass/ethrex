@@ -17,7 +17,7 @@ use crate::{SequencerConfig, sequencer::errors::MonitorError};
 pub struct GlobalChainStatusTable {
     pub state: TableState,
     pub items: Vec<(String, String)>,
-    pub on_chain_proposer_address: Address,
+    pub settlement_address: Address,
     pub sequencer_registry_address: Option<Address>,
 }
 
@@ -30,7 +30,7 @@ impl GlobalChainStatusTable {
                 Some(cfg.based.state_updater.sequencer_registry)
             };
         Self {
-            on_chain_proposer_address: cfg.l1_committer.on_chain_proposer_address,
+            settlement_address: cfg.l1_committer.settlement_address,
             sequencer_registry_address,
             ..Default::default()
         }
@@ -44,7 +44,7 @@ impl GlobalChainStatusTable {
     ) -> Result<(), MonitorError> {
         self.items = Self::refresh_items(
             eth_client,
-            self.on_chain_proposer_address,
+            self.settlement_address,
             self.sequencer_registry_address,
             store,
             rollup_store,
@@ -55,7 +55,7 @@ impl GlobalChainStatusTable {
 
     async fn refresh_items(
         eth_client: &EthClient,
-        on_chain_proposer_address: Address,
+        settlement_address: Address,
         sequencer_registry_address: Option<Address>,
         store: &Store,
         rollup_store: &StoreRollup,
@@ -82,11 +82,11 @@ impl GlobalChainStatusTable {
             Address::default()
         };
 
-        let last_committed_batch = get_last_committed_batch(eth_client, on_chain_proposer_address)
+        let last_committed_batch = get_last_committed_batch(eth_client, settlement_address)
             .await
             .map_err(|_| MonitorError::GetLatestCommittedBatch)?;
 
-        let last_verified_batch = get_last_verified_batch(eth_client, on_chain_proposer_address)
+        let last_verified_batch = get_last_verified_batch(eth_client, settlement_address)
             .await
             .map_err(|_| MonitorError::GetLatestVerifiedBatch)?;
 

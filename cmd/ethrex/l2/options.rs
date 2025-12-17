@@ -134,7 +134,7 @@ pub enum SequencerOptionsError {
     #[error("No coinbase address was provided")]
     NoCoinbaseAddress,
     #[error("No on-chain proposer address was provided")]
-    NoOnChainProposerAddress,
+    NoSettlementAddress,
     #[error("No bridge address was provided")]
     NoBridgeAddress,
 }
@@ -168,10 +168,10 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 block_gas_limit: opts.block_producer_opts.block_gas_limit,
             },
             l1_committer: CommitterConfig {
-                on_chain_proposer_address: opts
+                settlement_address: opts
                     .committer_opts
-                    .on_chain_proposer_address
-                    .ok_or(SequencerOptionsError::NoOnChainProposerAddress)?,
+                    .settlement_address
+                    .ok_or(SequencerOptionsError::NoSettlementAddress)?,
                 first_wake_up_time_ms: opts.committer_opts.first_wake_up_time_ms.unwrap_or(0),
                 commit_time_ms: opts.committer_opts.commit_time_ms,
                 batch_gas_limit: opts.committer_opts.batch_gas_limit,
@@ -598,13 +598,13 @@ pub struct CommitterOptions {
     )]
     pub committer_remote_signer_public_key: Option<PublicKey>,
     #[arg(
-        long = "l1.on-chain-proposer-address",
+        long = "l1.settlement-address",
         value_name = "ADDRESS",
-        env = "ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS",
+        env = "ETHREX_COMMITTER_SETTLEMENT_ADDRESS",
         help_heading = "L1 Committer options",
         required_unless_present = "dev"
     )]
-    pub on_chain_proposer_address: Option<Address>,
+    pub settlement_address: Option<Address>,
     #[arg(
         long = "committer.commit-time",
         default_value = "60000",
@@ -647,7 +647,7 @@ impl Default for CommitterOptions {
                 "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
             )
             .ok(),
-            on_chain_proposer_address: None,
+            settlement_address: None,
             commit_time_ms: 60000,
             batch_gas_limit: None,
             first_wake_up_time_ms: None,
@@ -672,9 +672,7 @@ impl CommitterOptions {
         self.committer_remote_signer_public_key = self
             .committer_remote_signer_public_key
             .or(defaults.committer_remote_signer_public_key);
-        self.on_chain_proposer_address = self
-            .on_chain_proposer_address
-            .or(defaults.on_chain_proposer_address);
+        self.settlement_address = self.settlement_address.or(defaults.settlement_address);
         self.batch_gas_limit = self.batch_gas_limit.or(defaults.batch_gas_limit);
         self.first_wake_up_time_ms = self
             .first_wake_up_time_ms

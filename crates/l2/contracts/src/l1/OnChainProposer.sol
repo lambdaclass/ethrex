@@ -5,20 +5,20 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
-import "./interfaces/IOnChainProposer.sol";
+import "./interfaces/ISettlement.sol";
 import {CommonBridge} from "./CommonBridge.sol";
 import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 import {IRiscZeroVerifier} from "./interfaces/IRiscZeroVerifier.sol";
 import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
 import {ITDXVerifier} from "./interfaces/ITDXVerifier.sol";
 import "./interfaces/ICommonBridge.sol";
-import "./interfaces/IOnChainProposer.sol";
+import "./interfaces/ISettlement.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
 
-/// @title OnChainProposer contract.
+/// @title Settlement contract.
 /// @author LambdaClass
-contract OnChainProposer is
-    IOnChainProposer,
+contract Settlement is
+    ISettlement,
     Initializable,
     UUPSUpgradeable,
     Ownable2StepUpgradeable,
@@ -104,7 +104,7 @@ contract OnChainProposer is
     modifier onlySequencer() {
         require(
             authorizedSequencerAddresses[msg.sender],
-            "000" // OnChainProposer: caller is not the sequencer
+            "000" // Settlement: caller is not the sequencer
         );
         _;
     }
@@ -173,28 +173,28 @@ contract OnChainProposer is
         OwnableUpgradeable.__Ownable_init(owner);
     }
 
-    /// @inheritdoc IOnChainProposer
+    /// @inheritdoc ISettlement
     function initializeBridgeAddress(address bridge) public onlyOwner {
         require(
             bridge != address(0),
-            "001" // OnChainProposer: bridge is the zero address
+            "001" // Settlement: bridge is the zero address
         );
         BRIDGE = bridge;
     }
 
-    /// @inheritdoc IOnChainProposer
+    /// @inheritdoc ISettlement
     function upgradeSP1VerificationKey(bytes32 new_vk) public onlyOwner {
         SP1_VERIFICATION_KEY = new_vk;
         emit VerificationKeyUpgraded("SP1", new_vk);
     }
 
-    /// @inheritdoc IOnChainProposer
+    /// @inheritdoc ISettlement
     function upgradeRISC0VerificationKey(bytes32 new_vk) public onlyOwner {
         RISC0_VERIFICATION_KEY = new_vk;
         emit VerificationKeyUpgraded("RISC0", new_vk);
     }
 
-    /// @inheritdoc IOnChainProposer
+    /// @inheritdoc ISettlement
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
@@ -208,15 +208,15 @@ contract OnChainProposer is
         // TODO: Refactor validation
         require(
             batchNumber == lastCommittedBatch + 1,
-            "002" // OnChainProposer: batchNumber is not the immediate successor of lastCommittedBatch
+            "002" // Settlement: batchNumber is not the immediate successor of lastCommittedBatch
         );
         require(
             batchCommitments[batchNumber].newStateRoot == bytes32(0),
-            "003" // OnChainProposer: tried to commit an already committed batch
+            "003" // Settlement: tried to commit an already committed batch
         );
         require(
             lastBlockHash != bytes32(0),
-            "004" // OnChainProposer: lastBlockHash cannot be zero
+            "004" // Settlement: lastBlockHash cannot be zero
         );
 
         if (processedPrivilegedTransactionsRollingHash != bytes32(0)) {
@@ -227,7 +227,7 @@ contract OnChainProposer is
             require(
                 claimedProcessedTransactions ==
                     processedPrivilegedTransactionsRollingHash,
-                "005" // OnChainProposer: invalid privileged transaction logs
+                "005" // Settlement: invalid privileged transaction logs
             );
         }
 
@@ -240,7 +240,7 @@ contract OnChainProposer is
                 );
             require(
                 expectedRollingHash == receivedRollingHash,
-                "012" // OnChainProposer: invalid L2 message rolling hash
+                "012" // Settlement: invalid L2 message rolling hash
             );
         }
 
@@ -280,7 +280,7 @@ contract OnChainProposer is
         lastCommittedBatch = batchNumber;
     }
 
-    /// @inheritdoc IOnChainProposer
+    /// @inheritdoc ISettlement
     /// @notice The first `require` checks that the batch number is the subsequent block.
     /// @notice The second `require` checks if the batch has been committed.
     /// @notice The order of these `require` statements is important.
@@ -305,11 +305,11 @@ contract OnChainProposer is
 
         require(
             batchNumber == lastVerifiedBatch + 1,
-            "009" // OnChainProposer: batch already verified
+            "009" // Settlement: batch already verified
         );
         require(
             batchCommitments[batchNumber].newStateRoot != bytes32(0),
-            "00a" // OnChainProposer: cannot verify an uncommitted batch
+            "00a" // Settlement: cannot verify an uncommitted batch
         );
 
         // The first 2 bytes are the number of privileged transactions.
@@ -351,7 +351,7 @@ contract OnChainProposer is
             if (bytes(reason).length != 0) {
                 revert(
                     string.concat(
-                        "00b", // OnChainProposer: Invalid RISC0 proof:
+                        "00b", // Settlement: Invalid RISC0 proof:
                         reason
                     )
                 );
@@ -364,7 +364,7 @@ contract OnChainProposer is
                 )
             {} catch {
                 revert(
-                    "00c" // OnChainProposer: Invalid RISC0 proof failed proof verification
+                    "00c" // Settlement: Invalid RISC0 proof failed proof verification
                 );
             }
         }
@@ -378,7 +378,7 @@ contract OnChainProposer is
             if (bytes(reason).length != 0) {
                 revert(
                     string.concat(
-                        "00d", // OnChainProposer: Invalid SP1 proof:
+                        "00d", // Settlement: Invalid SP1 proof:
                         reason
                     )
                 );
@@ -391,7 +391,7 @@ contract OnChainProposer is
                 )
             {} catch {
                 revert(
-                    "00e" // OnChainProposer: Invalid SP1 proof failed proof verification
+                    "00e" // Settlement: Invalid SP1 proof failed proof verification
                 );
             }
         }
@@ -405,7 +405,7 @@ contract OnChainProposer is
             if (bytes(reason).length != 0) {
                 revert(
                     string.concat(
-                        "00f", // OnChainProposer: Invalid TDX proof:
+                        "00f", // Settlement: Invalid TDX proof:
                         reason
                     )
                 );
@@ -417,7 +417,7 @@ contract OnChainProposer is
                 )
             {} catch {
                 revert(
-                    "00g" // OnChainProposer: Invalid TDX proof failed proof verification
+                    "00g" // Settlement: Invalid TDX proof failed proof verification
                 );
             }
         }
@@ -434,7 +434,7 @@ contract OnChainProposer is
         emit BatchVerified(lastVerifiedBatch);
     }
 
-    /// @inheritdoc IOnChainProposer
+    /// @inheritdoc ISettlement
     function verifyBatchesAligned(
         uint256 firstBatchNumber,
         bytes[] calldata publicInputsList,
@@ -447,19 +447,19 @@ contract OnChainProposer is
         );
         require(
             firstBatchNumber == lastVerifiedBatch + 1,
-            "00i" // OnChainProposer: incorrect first batch number
+            "00i" // Settlement: incorrect first batch number
         );
 
         if (REQUIRE_SP1_PROOF) {
             require(
                 publicInputsList.length == sp1MerkleProofsList.length,
-                "00j" // OnChainProposer: SP1 input/proof array length mismatch
+                "00j" // Settlement: SP1 input/proof array length mismatch
             );
         }
         if (REQUIRE_RISC0_PROOF) {
             require(
                 publicInputsList.length == risc0MerkleProofsList.length,
-                "00k" // OnChainProposer: Risc0 input/proof array length mismatch
+                "00k" // Settlement: Risc0 input/proof array length mismatch
             );
         }
 
@@ -468,7 +468,7 @@ contract OnChainProposer is
         for (uint256 i = 0; i < publicInputsList.length; i++) {
             require(
                 batchCommitments[batchNumber].newStateRoot != bytes32(0),
-                "00l" // OnChainProposer: cannot verify an uncommitted batch
+                "00l" // Settlement: cannot verify an uncommitted batch
             );
 
             // The first 2 bytes are the number of transactions.
@@ -492,7 +492,7 @@ contract OnChainProposer is
             if (bytes(reason).length != 0) {
                 revert(
                     string.concat(
-                        "00m", // OnChainProposer: Invalid ALIGNED proof:
+                        "00m", // Settlement: Invalid ALIGNED proof:
                         reason
                     )
                 );
@@ -671,26 +671,26 @@ contract OnChainProposer is
             .staticcall(callData);
         require(
             callResult,
-            "00y" // OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed
+            "00y" // Settlement: call to ALIGNEDPROOFAGGREGATOR failed
         );
         bool proofVerified = abi.decode(response, (bool));
         require(
             proofVerified,
-            "00z" // OnChainProposer: Aligned proof verification failed
+            "00z" // Settlement: Aligned proof verification failed
         );
     }
 
-    /// @inheritdoc IOnChainProposer
+    /// @inheritdoc ISettlement
     function revertBatch(
         uint256 batchNumber
     ) external override onlySequencer whenPaused {
         require(
             batchNumber >= lastVerifiedBatch,
-            "010" // OnChainProposer: can't revert verified batch
+            "010" // Settlement: can't revert verified batch
         );
         require(
             batchNumber < lastCommittedBatch,
-            "011" // OnChainProposer: no batches are being reverted
+            "011" // Settlement: no batches are being reverted
         );
 
         // Remove old batches
@@ -709,12 +709,12 @@ contract OnChainProposer is
         address newImplementation
     ) internal virtual override onlyOwner {}
 
-    /// @inheritdoc IOnChainProposer
+    /// @inheritdoc ISettlement
     function pause() external override onlyOwner {
         _pause();
     }
 
-    /// @inheritdoc IOnChainProposer
+    /// @inheritdoc ISettlement
     function unpause() external override onlyOwner {
         _unpause();
     }

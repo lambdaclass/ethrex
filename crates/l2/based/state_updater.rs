@@ -51,7 +51,7 @@ pub enum OutMessage {
 }
 
 pub struct StateUpdater {
-    on_chain_proposer_address: Address,
+    settlement_address: Address,
     sequencer_registry_address: Address,
     sequencer_address: Address,
     eth_client: Arc<EthClient>,
@@ -71,7 +71,7 @@ impl StateUpdater {
         rollup_store: StoreRollup,
     ) -> Result<Self, StateUpdaterError> {
         Ok(Self {
-            on_chain_proposer_address: sequencer_cfg.l1_committer.on_chain_proposer_address,
+            settlement_address: sequencer_cfg.l1_committer.settlement_address,
             sequencer_registry_address: sequencer_cfg.based.state_updater.sequencer_registry,
             sequencer_address: sequencer_cfg.l1_committer.signer.address(),
             eth_client: Arc::new(EthClient::new_with_multiple_urls(
@@ -125,7 +125,7 @@ impl StateUpdater {
 
         let node_is_up_to_date = node_is_up_to_date::<StateUpdaterError>(
             &self.eth_client,
-            self.on_chain_proposer_address,
+            self.settlement_address,
             &self.rollup_store,
         )
         .await?;
@@ -176,7 +176,7 @@ impl StateUpdater {
     /// Reverts state to the last committed batch if known.
     async fn revert_uncommitted_state(&self) -> Result<(), StateUpdaterError> {
         let last_l2_committed_batch =
-            get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
+            get_last_committed_batch(&self.eth_client, self.settlement_address).await?;
 
         debug!("Last committed batch: {last_l2_committed_batch}");
 

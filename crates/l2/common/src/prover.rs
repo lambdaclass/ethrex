@@ -54,7 +54,7 @@ impl ProverType {
     }
 
     /// Used to get the empty_calldata structure for that specific prover
-    /// It has to match the `OnChainProposer.sol` verify() function
+    /// It has to match the `Settlement.sol` verify() function
     pub fn empty_calldata(&self) -> Vec<Value> {
         match self {
             ProverType::RISC0 => {
@@ -70,9 +70,9 @@ impl ProverType {
         }
     }
 
-    /// Used to call a getter for the REQUIRE_*_PROOF boolean in the OnChainProposer contract
+    /// Used to call a getter for the REQUIRE_*_PROOF boolean in the Settlement contract
     pub fn verifier_getter(&self) -> Option<String> {
-        // These values have to match with the OnChainProposer.sol contract
+        // These values have to match with the Settlement.sol contract
         match self {
             Self::RISC0 => Some("REQUIRE_RISC0_PROOF()".to_string()),
             Self::SP1 => Some("REQUIRE_SP1_PROOF()".to_string()),

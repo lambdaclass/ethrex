@@ -91,10 +91,8 @@ impl L2Command {
 
             l2_options.node_opts = crate::cli::Options::default_l2();
             l2_options.populate_with_defaults();
-            l2_options
-                .sequencer_opts
-                .committer_opts
-                .on_chain_proposer_address = Some(contract_addresses.on_chain_proposer_address);
+            l2_options.sequencer_opts.committer_opts.settlement_address =
+                Some(contract_addresses.settlement_address);
             l2_options.sequencer_opts.watcher_opts.bridge_address =
                 Some(contract_addresses.bridge_address);
             println!("Initializing L2");
@@ -177,7 +175,7 @@ pub enum Command {
             help = "URL of the L1 RPC"
         )]
         rpc_url: Url,
-        #[arg(help = "The address of the OnChainProposer contract")]
+        #[arg(help = "The address of the Settlement contract")]
         contract_address: Address,
         #[arg(
             long,
@@ -572,18 +570,18 @@ impl Command {
                     None
                 };
                 if pause_contracts {
-                    info!("Pausing OnChainProposer contract");
+                    info!("Pausing Settlement contract");
                     owner_contract_options
                         .call_contract(PAUSE_CONTRACT_SELECTOR, vec![])
                         .await?;
-                    info!("Paused OnChainProposer contract");
+                    info!("Paused Settlement contract");
                 }
                 if let Some(contract_opts) = sequencer_contract_options.as_ref() {
-                    info!("Doing revert on OnChainProposer...");
+                    info!("Doing revert on Settlement...");
                     contract_opts
                         .call_contract(REVERT_BATCH_SELECTOR, vec![Value::Uint(batch.into())])
                         .await?;
-                    info!("Reverted to batch {batch} on OnChainProposer")
+                    info!("Reverted to batch {batch} on Settlement")
                 } else {
                     info!("Private key not given, not updating contract.");
                 }
@@ -596,11 +594,11 @@ impl Command {
                 }
 
                 if pause_contracts {
-                    info!("Unpausing OnChainProposer contract");
+                    info!("Unpausing Settlement contract");
                     owner_contract_options
                         .call_contract(UNPAUSE_CONTRACT_SELECTOR, vec![])
                         .await?;
-                    info!("Unpaused OnChainProposer contract");
+                    info!("Unpaused Settlement contract");
                 }
             }
             Command::Pause {

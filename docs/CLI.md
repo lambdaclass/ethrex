@@ -441,8 +441,8 @@ L1 Committer options:
 
           [env: ETHREX_COMMITTER_REMOTE_SIGNER_PUBLIC_KEY=]
 
-      --l1.on-chain-proposer-address <ADDRESS>
-          [env: ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=]
+      --l1.settlement-address <ADDRESS>
+          [env: ETHREX_COMMITTER_SETTLEMENT_ADDRESS=]
 
       --committer.commit-time <UINT64>
           How often does the sequencer commit new blocks to the L1 in milliseconds.

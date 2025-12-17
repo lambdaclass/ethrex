@@ -47,7 +47,7 @@ sequenceDiagram
     actor Sequencer
 
     box rgb(33,66,99) L1
-        participant OnChainProposer
+        participant Settlement
         participant CommonBridge
         actor L1Alice as Alice
     end
@@ -59,8 +59,8 @@ sequenceDiagram
 
     Messenger-->>Sequencer: receives event
 
-    Sequencer->>OnChainProposer: publishes batch
-    OnChainProposer->>CommonBridge: publishes L1 message root
+    Sequencer->>Settlement: publishes batch
+    Settlement->>CommonBridge: publishes L1 message root
 
     L1Alice->>CommonBridge: submits withdrawal proof
     CommonBridge-->>CommonBridge: asserts proof is valid
@@ -113,7 +113,7 @@ sequenceDiagram
     actor Sequencer
 
     box rgb(33,66,99) L1
-        participant OnChainProposer
+        participant Settlement
         participant CommonBridge
         participant L1Token
         actor L1Alice as Alice
@@ -127,8 +127,8 @@ sequenceDiagram
 
     Messenger-->>Sequencer: receives event
 
-    Sequencer->>OnChainProposer: publishes batch
-    OnChainProposer->>CommonBridge: publishes L1 message root
+    Sequencer->>Settlement: publishes batch
+    Settlement->>CommonBridge: publishes L1 message root
 
     L1Alice->>CommonBridge: submits withdrawal proof
     CommonBridge->>L1Token: transfers tokens
@@ -206,7 +206,7 @@ It then sends a message to the L1 containing the details of this operation:
 - Destination: L1 address that can claim the deposit
 - Amount: how much was burnt
 
-When the batch is committed on the L1, the `OnChainProposer` notifies the bridge which saves the message tree root.
+When the batch is committed on the L1, the `Settlement` notifies the bridge which saves the message tree root.
 Once the batch containing this transaction is verified, the user can claim their funds on the L1.
 To do this, they compute a merkle proof for the included batch and call the L1 `CommonBridge` contract.
 

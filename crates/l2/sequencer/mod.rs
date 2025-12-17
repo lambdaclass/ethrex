@@ -79,12 +79,11 @@ pub async fn start_l2(
 
     let shared_state = SequencerState::from(initial_status);
 
-    let Ok(needed_proof_types) = get_needed_proof_types(
-        cfg.eth.rpc_url.clone(),
-        cfg.l1_committer.on_chain_proposer_address,
-    )
-    .await
-    .inspect_err(|e| error!("Error starting Sequencer: {e}")) else {
+    let Ok(needed_proof_types) =
+        get_needed_proof_types(cfg.eth.rpc_url.clone(), cfg.l1_committer.settlement_address)
+            .await
+            .inspect_err(|e| error!("Error starting Sequencer: {e}"))
+    else {
         return Ok((
             None,
             None,

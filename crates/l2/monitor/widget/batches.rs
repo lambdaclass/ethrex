@@ -37,14 +37,14 @@ pub struct BatchesTable {
     pub state: TableState,
     pub items: Vec<BatchLine>,
     last_l1_block_fetched: u64,
-    on_chain_proposer_address: Address,
+    settlement_address: Address,
     selected: bool,
 }
 
 impl BatchesTable {
-    pub fn new(on_chain_proposer_address: Address) -> Self {
+    pub fn new(settlement_address: Address) -> Self {
         Self {
-            on_chain_proposer_address,
+            settlement_address,
             ..Default::default()
         }
     }
@@ -57,7 +57,7 @@ impl BatchesTable {
     ) -> Result<(), MonitorError> {
         let mut new_latest_batches = Self::fetch_new_items(
             &mut self.last_l1_block_fetched,
-            self.on_chain_proposer_address,
+            self.settlement_address,
             eth_client,
             rollup_store,
             osaka_activation_time,
@@ -114,12 +114,12 @@ impl BatchesTable {
 
     async fn fetch_new_items(
         last_l2_batch_fetched: &mut u64,
-        on_chain_proposer_address: Address,
+        settlement_address: Address,
         eth_client: &EthClient,
         rollup_store: &StoreRollup,
         osaka_activation_time: Option<u64>,
     ) -> Result<Vec<BatchLine>, MonitorError> {
-        let last_l2_batch_number = get_last_committed_batch(eth_client, on_chain_proposer_address)
+        let last_l2_batch_number = get_last_committed_batch(eth_client, settlement_address)
             .await
             .map_err(|_| MonitorError::GetLatestBatch)?;
 

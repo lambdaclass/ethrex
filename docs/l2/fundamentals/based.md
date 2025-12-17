@@ -43,11 +43,11 @@ This component ensures that the node’s behavior aligns with its role, preventi
 
 ### Block Fetcher
 
-Decentralization poses a risk: a lead Sequencer could advance the L2 chain without sharing blocks, potentially isolating other nodes. To address this, the `OnChainProposer` contract (see [ethrex-L2-Contracts documentation](./contracts.md)) has been updated to include an RLP-encoded list of blocks committed in each batch. This makes block data publicly available on L1, enabling nodes to reconstruct the L2 state if needed.
+Decentralization poses a risk: a lead Sequencer could advance the L2 chain without sharing blocks, potentially isolating other nodes. To address this, the `Settlement` contract (see [ethrex-L2-Contracts documentation](./contracts.md)) has been updated to include an RLP-encoded list of blocks committed in each batch. This makes block data publicly available on L1, enabling nodes to reconstruct the L2 state if needed.
 
 The **Block Fetcher** is a new component designed to retrieve these blocks from L1 when the node is in the `Following` state. Its responsibilities include:
 
-- **Querying L1**: It queries the `OnChainProposer` contract to identify the last committed batch.
+- **Querying L1**: It queries the `Settlement` contract to identify the last committed batch.
 - **Scouting Transactions**: Similar to how the L1 Watcher monitors deposit transactions, the Block Fetcher scans L1 for commit transactions containing the RLP-encoded block list.
 - **State Reconstruction**: It uses the retrieved blocks to rebuild the L2 state, ensuring the node remains synchronized with the network.
 
@@ -61,9 +61,9 @@ In addition to the components described above, the based feature introduces new 
 > [!NOTE]
 > This is an extension of the [ethrex-L2-Contracts documentation](./contracts.md) and is intended to be merged with it in the future.
 
-### OnChainProposer (Modified)
+### Settlement (Modified)
 
-The `OnChainProposer` contract, which handles batch proposals and management on L1, has been updated with the following modifications:
+The `Settlement` contract, which handles batch proposals and management on L1, has been updated with the following modifications:
 
 - **New Constant:**
   A public constant `SEQUENCER_REGISTRY` has been added. This constant holds the address of the `SequencerRegistry` contract, linking the two contracts for sequencer management.
@@ -99,7 +99,7 @@ The `SequencerRegistry` is a new contract designed to manage the pool of Sequenc
   **Inputs:**
 
   - `sequencers`: An array of registered Sequencer addresses.
-  - `currentBatch`: The next batch to be committed, calculated as `lastCommittedBatch() + 1` from the `OnChainProposer` contract.
+  - `currentBatch`: The next batch to be committed, calculated as `lastCommittedBatch() + 1` from the `Settlement` contract.
   - `nBatchesInTheFuture`: A parameter specifying how many batches ahead to look.
   - `targetBatch`: Calculated as `currentBatch` + `nBatchesInTheFuture`.
   - `BATCHES_PER_SEQUENCER`: A constant set to 32, representing the number of batches each lead Sequencer gets to commit.
@@ -107,7 +107,7 @@ The `SequencerRegistry` is a new contract designed to manage the pool of Sequenc
   **Logic:**
 
   ```solidity
-  uint256 _currentBatch = IOnChainProposer(ON_CHAIN_PROPOSER).lastCommittedBatch() + 1;
+  uint256 _currentBatch = ISettlement(SETTLEMENT).lastCommittedBatch() + 1;
   uint256 _targetBatch = _currentBatch + nBatchesInTheFuture;
   uint256 _id = _targetBatch / BATCHES_PER_SEQUENCER;
   address _leader = sequencers[_id % sequencers.length];
