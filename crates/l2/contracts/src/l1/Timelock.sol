@@ -11,6 +11,8 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable {
     bytes32 public constant SEQUENCER = keccak256("SEQUENCER");
     bytes32 public constant SECURITY_COUNCIL = keccak256("SECURITY_COUNCIL");
 
+    event EmergencyExecution(address indexed target, uint256 value, bytes data);
+
     IOnChainProposer public onChainProposer;
 
     function initialize(
@@ -39,8 +41,7 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable {
         onChainProposer = IOnChainProposer(_onChainProposer);
     }
 
-    // TODO: In commit and verify we should probably modify logic so that we have a time window between commit and verify,
-    // or if we want to do it better we can have commit -> verify -> execute and the time window has to be between commit and execute.
+    //TODO: In the future commit and verify will have timelock logic incorporated in case there are any zkVM bugs and we want to avoid applying the changes in the L1. Probably the Security Council would act upon those changes.
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
@@ -109,6 +110,17 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable {
 
     function unpause() external onlyRole(SECURITY_COUNCIL) {
         onChainProposer.unpause();
+    }
+
+    // In case a bug is detected the Security Council can act immediately.
+    // Ideally in the future this should be possible only if the bug is detected on-chain with a proper mechanism.
+    function emergencyExecute(
+        address target,
+        uint256 value,
+        bytes calldata data
+    ) external payable onlyRole(SECURITY_COUNCIL) {
+        _execute(target, value, data);
+        emit EmergencyExecution(target, value, data);
     }
 
     // Logic for updating Timelock contract. Should be triggered by the timelock itself so that it respects min time.
