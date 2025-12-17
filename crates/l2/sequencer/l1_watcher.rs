@@ -7,7 +7,7 @@ use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::{Log, PrivilegedL2Transaction, Transaction, TxKind};
 use ethrex_common::utils::keccak;
 use ethrex_l2_common::messages::{
-    get_l2_message_hash, L2MESSAGE_EVENT_SELECTOR, L2Message, MESSENGER_ADDRESS,
+    L2MESSAGE_EVENT_SELECTOR, L2Message, MESSENGER_ADDRESS, get_l2_message_hash,
 };
 use ethrex_l2_sdk::privileged_data::PrivilegedTransactionData;
 use ethrex_l2_sdk::{get_last_fetched_l1_block, get_pending_l1_messages, get_pending_l2_messages};
