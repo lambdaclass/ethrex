@@ -2166,24 +2166,12 @@ async fn test_fee_token(
         .unwrap();
     assert_eq!(registry_state, expected, "{test}: fee token not registered");
 
-    // Validate the ratio on the L2
-    let ratio_call_data = encode_calldata(
-        "getFeeTokenRatio(address)",
-        &[Value::Address(fee_token_address)],
-    )
-    .unwrap();
-    let expected_ratio = "0x0000000000000000000000000000000000000000000000000000000000000002";
-    let ratio_state = l2_client
-        .call(
-            FEE_TOKEN_PRICER_ADDRESS,
-            ratio_call_data.into(),
-            Overrides::default(),
-        )
+    let ratio_contract = get_fee_token_ratio(&fee_token_address, &l2_client)
         .await
         .unwrap();
     assert_eq!(
-        ratio_state, expected_ratio,
-        "{test}: fee token ratio not set"
+        ratio_contract, 2,
+        "{test}: fee token ratio not set in contract"
     );
     let value_to_transfer = 100_000;
     let mut generic_tx = build_generic_tx(

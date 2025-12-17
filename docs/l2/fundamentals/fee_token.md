@@ -41,57 +41,7 @@ contract FeeToken is ERC20, IFeeToken {
 }
 ```
 
-Compile and deploy:
-
-```shell
-rex deploy 0 <PRIVATE_KEY> \
-    --rpc-url http://localhost:1729 \
-    --contract-path crates/l2/contracts/src/example/FeeToken.sol \
-    --remappings "@openzeppelin=https://github.com/OpenZeppelin/openzeppelin-contracts.git" \
-    -- "constructor(address)" 0000000000000000000000000000000000000000
-```
-
-Deployment mints tokens to the address derived from `<PRIVATE_KEY>`, and that same address can be use to cover the fees for fee-token transactions.
-
-## Operator Workflow
-
-Operators decide which ERC-20s are valid fee tokens:
-
-1. Deploy or reuse an `IFeeToken` implementation and note its L2 address. When initializing the network, the deployer binary can automatically register one by passing `--initial-fee-token <address>` so the bridge queues it during startup.
-2. Register additional tokens (or remove them) through the L1 `CommonBridge` using `registerNewFeeToken(address)` / `unregisterFeeToken(address)`. Each call enqueues a privileged transaction that the sequencer must force on L2.
-3. After a token is registered, the bridge owner must set its conversion ratio in the L2 `FeeTokenPricer` (`0x…fffb`). Call `setFeeTokenRatio(address,uint256)` on the L1 bridge (again a privileged transaction) to define the amount of fee token (in its smallest unit) equivalent to 1 wei. For example, a ratio of 2 means 2 fee token units per 1 wei. Without a ratio, fee-token transactions revert because the sequencer cannot price the gas.
-
-> ⚠️ **Warning:** Registration completes only after the L1 watcher processes the privileged transaction and the L2 registry emits `FeeTokenRegistered`. Until then, user transactions referencing the token will fail.
-
-If the token is not yet registered, the bridge owner can queue the privileged call from L1 with the `rex` CLI:
-
-```shell
-rex send <L1_BRIDGE_ADDRESS> \
-  "registerNewFeeToken(address)" \
-  <L2_FEE_TOKEN_ADDRESS> \
-  --rpc-url http://localhost:8545 \
-  --private-key <BRIDGE_OWNER_PK>
-
-# After the L1 watcher processes the privileged tx, the registry emits FeeTokenRegistered.
-```
-
-Setting the ratio uses a similar pattern:
-
-```shell
-rex send <L1_BRIDGE_ADDRESS> \
-  "setFeeTokenRatio(address,uint256)" \
-  <L2_FEE_TOKEN_ADDRESS> \
-  2 \
-  --rpc-url http://localhost:8545 \
-  --private-key <BRIDGE_OWNER_PK>
-
-# After the privileged tx lands on L2, confirm:
-rex call 0x000000000000000000000000000000000000fffb \
-  "getFeeTokenRatio(address)" \
-  <L2_FEE_TOKEN_ADDRESS> \
-  --rpc-url http://localhost:1729
-# 0x...02
-```
+For deployment and operator steps, see [Deploying a Fee Token](../deployment/fee_token.md).
 
 ## User Workflow
 
