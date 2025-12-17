@@ -533,25 +533,25 @@ impl Blockchain {
         mut root: BranchNode,
     ) -> Result<Option<Node>, StoreError> {
         root.choices.iter_mut().for_each(NodeRef::clear_hash);
-        let mut valid_children_iter = root
+        let children: Vec<(usize, &NodeRef)> = root
             .choices
             .iter()
             .enumerate()
-            .filter(|(_, choice)| choice.is_valid());
-        let child_a = valid_children_iter.next();
-        let child_b = valid_children_iter.next();
-        let (choice, only_child) = match (child_a, child_b) {
-            (None, None) => return Ok(None),
-            (None, Some(child)) => child,
-            (Some(child), None) => child,
-            (Some(_), Some(_)) => return Ok(Some(Node::Branch(Box::from(root)))),
+            .filter(|(_, choice)| choice.is_valid())
+            .take(2)
+            .collect();
+        if children.len() > 1 {
+            return Ok(Some(Node::Branch(Box::from(root))));
+        }
+        let Some((choice, only_child)) = children.first() else {
+            return Ok(None);
         };
         let only_child = Arc::unwrap_or_clone(match only_child {
             NodeRef::Node(node, _) => node.clone(),
             noderef @ NodeRef::Hash(_) => {
                 let trie = self.load_trie(parent_header, prefix)?;
                 let Some(node) =
-                    noderef.get_node(trie.db(), Nibbles::from_hex(vec![choice as u8]))?
+                    noderef.get_node(trie.db(), Nibbles::from_hex(vec![*choice as u8]))?
                 else {
                     return Ok(None);
                 };
@@ -560,14 +560,14 @@ impl Blockchain {
         });
         Ok(Some(match only_child {
             Node::Branch(_) => {
-                ExtensionNode::new(Nibbles::from_hex(vec![choice as u8]), only_child.into()).into()
+                ExtensionNode::new(Nibbles::from_hex(vec![*choice as u8]), only_child.into()).into()
             }
             Node::Extension(mut extension_node) => {
-                extension_node.prefix.prepend(choice as u8);
+                extension_node.prefix.prepend(*choice as u8);
                 extension_node.into()
             }
             Node::Leaf(mut leaf) => {
-                leaf.partial.prepend(choice as u8);
+                leaf.partial.prepend(*choice as u8);
                 leaf.into()
             }
         }))
