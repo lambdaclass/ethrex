@@ -126,7 +126,16 @@ impl Packet {
             <Aes128Ctr64BE as KeyIvInit>::new(dest_id[..16].into(), masking_as_bytes[..].into());
 
         match self {
-            Packet::Ordinary(_ordinary) => todo!(),
+            Packet::Ordinary(ordinary) => {
+                let (mut static_header, mut authdata, encrypted_message) =
+                    ordinary.encode(&nonce, &masking_as_bytes, encrypt_key)?;
+
+                cipher.try_apply_keystream(&mut static_header)?;
+                buf.put_slice(&static_header);
+                cipher.try_apply_keystream(&mut authdata)?;
+                buf.put_slice(&authdata);
+                buf.put_slice(&encrypted_message);
+            }
             Packet::WhoAreYou(who_are_you) => {
                 who_are_you.encode_header(buf, &mut cipher, nonce)?;
             }
@@ -186,10 +195,58 @@ impl Packet {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ordinary {
-    message: Message,
+    pub src_id: H256,
+    pub message: Message,
 }
 
 impl Ordinary {
+    fn encode_authdata(&self, buf: &mut dyn BufMut) -> Result<(), PacketDecodeErr> {
+        buf.put_slice(self.src_id.as_bytes());
+        Ok(())
+    }
+
+    /// Encodes the handshake returning the header, authdata and encrypted_message
+    #[allow(clippy::type_complexity)]
+    fn encode(
+        &self,
+        nonce: &[u8],
+        masking_iv: &[u8],
+        encrypt_key: &[u8],
+    ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), PacketDecodeErr> {
+        if encrypt_key.len() < 16 {
+            return Err(PacketDecodeErr::InvalidSize);
+        }
+
+        let mut authdata = Vec::new();
+        self.encode_authdata(&mut authdata)?;
+
+        let authdata_size: u8 = authdata
+            .len()
+            .try_into()
+            .map_err(|_| PacketDecodeErr::InvalidSize)?;
+
+        let mut static_header = Vec::new();
+        static_header.put_slice(PROTOCOL_ID);
+        static_header.put_slice(&PROTOCOL_VERSION.to_be_bytes());
+        static_header.put_u8(0x0);
+        static_header.put_slice(nonce);
+        static_header.put_slice(&authdata_size.to_be_bytes());
+
+        let mut message = Vec::new();
+        self.message.encode(&mut message);
+
+        let mut message_ad = masking_iv.to_vec();
+        message_ad.extend_from_slice(&static_header);
+        message_ad.extend_from_slice(&authdata);
+
+        let mut cipher = Aes128Gcm::new(encrypt_key[..16].into());
+        cipher
+            .encrypt_in_place(nonce.into(), &message_ad, &mut message)
+            .map_err(|e| PacketDecodeErr::ChipherError(e.to_string()))?;
+
+        Ok((static_header, authdata, message))
+    }
+
     pub fn decode(
         masking_iv: &[u8],
         static_header: Vec<u8>,
@@ -198,6 +255,10 @@ impl Ordinary {
         decrypt_key: &[u8],
         encrypted_message: &[u8],
     ) -> Result<Ordinary, PacketDecodeErr> {
+        if authdata.len() != 32 {
+            return Err(PacketDecodeErr::InvalidSize);
+        }
+
         // message    = aesgcm_encrypt(initiator-key, nonce, message-pt, message-ad)
         // message-pt = message-type || message-data
         // message-ad = masking-iv || header
@@ -208,8 +269,10 @@ impl Ordinary {
         let mut message = encrypted_message.to_vec();
         Self::decrypt(decrypt_key, nonce, &mut message, message_ad)?;
 
+        let src_id = H256::from_slice(&authdata);
+
         let message = Message::decode(&message)?;
-        Ok(Ordinary { message })
+        Ok(Ordinary { src_id, message })
     }
 
     fn decrypt(
@@ -943,11 +1006,17 @@ mod tests {
         // 00000000000000000000000000000000088b3d4342774649325f313964a39e55
         // ea96c005ad52be8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d3
         // 4c4f53245d08dab84102ed931f66d1492acb308fa1c6715b9d139b81acbdcc
+
+        let node_a_key = SecretKey::from_byte_array(&hex!(
+            "eef77acb6c6a6eebc5b363a475ac583ec7eccdb42b6481424c60f59aa326547f"
+        ))
+        .unwrap();
         let node_b_key = SecretKey::from_byte_array(&hex!(
             "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
         ))
         .unwrap();
 
+        let src_id = node_id(&public_key_from_signing_key(&node_a_key));
         let dest_id = node_id(&public_key_from_signing_key(&node_b_key));
 
         let encoded = &hex!(
@@ -957,6 +1026,7 @@ mod tests {
         let read_key = [0; 16].to_vec();
         let packet = Packet::decode(&dest_id, &read_key, encoded).unwrap();
         let expected = Packet::Ordinary(Ordinary {
+            src_id,
             message: Message::Ping(PingMessage {
                 req_id: hex!("00000001").to_vec(),
                 enr_seq: 2,
