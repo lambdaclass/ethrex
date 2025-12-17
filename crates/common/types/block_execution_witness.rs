@@ -10,7 +10,7 @@ use ethereum_types::{Address, H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::flattrie::FlatTrie;
+use ethrex_trie::flattrie_new::FlatTrie;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, Trie, TrieError};
 use rkyv::with::{Identity, MapKV};
 use serde::{Deserialize, Serialize};
@@ -143,9 +143,6 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
 
         // hash state trie nodes
         let state_trie = if let Some(mut state_trie) = state_trie {
-            if !state_trie.authenticate()? {
-                panic!();
-            }
             state_trie
         } else {
             FlatTrie::default()
@@ -153,10 +150,6 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
 
         let mut storage_tries = BTreeMap::new();
         for (address, mut storage_trie) in original_storage_tries {
-            // hash storage trie nodes
-            if !storage_trie.authenticate()? {
-                panic!();
-            }
             storage_tries.insert(address, storage_trie);
         }
 
@@ -201,10 +194,11 @@ impl GuestProgramState {
                 .or_insert_with(|| hash_address(&update.address));
 
             if update.removed {
+                dbg!("account removed");
                 // Remove account from trie
-                self.state_trie
-                    .remove(hashed_address)
-                    .expect("failed to remove from trie");
+                // self.state_trie
+                //     .remove(hashed_address)
+                //     .expect("failed to remove from trie");
             } else {
                 // Add or update AccountState in the trie
                 // Fetch current state or create a new state to be inserted
@@ -250,13 +244,13 @@ impl GuestProgramState {
                     }
 
                     for (hashed_key, _) in deletes {
-                        storage_trie
-                            .remove(&hashed_key)
-                            .expect("failed to remove key");
+                        dbg!("storage removed");
+                        // storage_trie
+                        //     .remove(&hashed_key)
+                        //     .expect("failed to remove key");
                     }
 
-                    storage_trie.authenticate()?;
-                    let storage_root = storage_trie.root_hash()?.unwrap().finalize();
+                    let storage_root = storage_trie.hash().unwrap().finalize();
                     account_state.storage_root = storage_root;
                 }
 
@@ -271,8 +265,7 @@ impl GuestProgramState {
     /// Returns the root hash of the state trie
     /// Returns an error if the state trie is not built yet
     pub fn state_trie_root(&mut self) -> Result<H256, GuestProgramStateError> {
-        self.state_trie.authenticate()?;
-        Ok(self.state_trie.root_hash()?.unwrap().finalize()) // TOOD: unwrap
+        Ok(self.state_trie.hash().unwrap().finalize()) // TOOD: unwrap
     }
 
     /// Returns Some(block_number) if the hash for block_number is not the parent
@@ -453,7 +446,7 @@ impl GuestProgramState {
             let storage_trie = match self.storage_tries.get_mut(&address) {
                 None if storage_root == *EMPTY_TRIE_HASH => return Ok(None),
                 Some(trie) => {
-                    if trie.root_hash()?.unwrap().finalize() == storage_root {
+                    if trie.hash().unwrap().finalize() == storage_root {
                         trie
                     } else {
                         panic!()
