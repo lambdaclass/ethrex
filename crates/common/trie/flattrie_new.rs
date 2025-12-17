@@ -585,3 +585,75 @@ fn encode_branch(children: [Option<NodeHash>; 16]) -> Vec<u8> {
     buf.put_u8(RLP_NULL);
     buf
 }
+
+#[cfg(test)]
+mod test {
+    use ethrex_rlp::encode::RLPEncode;
+    use proptest::{
+        collection::{btree_set, vec},
+        prelude::*,
+    };
+
+    use super::*;
+    use crate::{Nibbles, Trie};
+
+    fn kv_pairs_strategy() -> impl Strategy<Value = (Vec<(Vec<u8>, Vec<u8>)>, Vec<usize>)> {
+        // create random key-values, with keys all the same size, and a random permutation of indices
+        (1usize..32).prop_flat_map(|key_len| {
+            prop::collection::vec((vec(any::<u8>(), key_len), vec(any::<u8>(), 0..256)), 1..3)
+                .prop_flat_map(|kvs| {
+                    let len = kvs.len();
+                    let shuffle = vec(..len, ..len).prop_shuffle();
+                    (Just(kvs), shuffle)
+                })
+        })
+    }
+
+    proptest! {
+        #[test]
+        fn proptest_insert_compare_hash((kv, _) in kv_pairs_strategy()) {
+            let mut trie = Trie::new_temp();
+            let mut flat_trie = FlatTrie::default();
+
+            for (key, value) in kv.iter(){
+                trie.insert(key.clone(), value.clone()).unwrap();
+                flat_trie.insert(key.clone(), value.clone()).unwrap();
+
+                let hash = trie.hash_no_commit();
+
+                let flat_trie_hash = flat_trie.hash().unwrap();
+
+                prop_assert_eq!(hash, flat_trie_hash.finalize());
+            }
+        }
+
+        // #[test]
+        // fn proptest_insert_remove_compare_hash((kv, shuffle) in kv_pairs_strategy()) {
+        //     let mut trie = Trie::new_temp();
+        //     let mut flat_trie = FlatTrie::default();
+
+        //     for (key, value) in kv.iter() {
+        //         trie.insert(key.clone(), value.clone()).unwrap();
+        //         flat_trie.insert(key.clone(), value.clone()).unwrap();
+
+        //         let hash = trie.hash_no_commit();
+
+        //         let flat_trie_hash = flat_trie.hash().unwrap();
+
+        //         prop_assert_eq!(hash, flat_trie_hash.finalize());
+        //     }
+
+        //     for i in shuffle.iter() {
+        //         let key = &kv[*i].0;
+        //         trie.remove(key).unwrap();
+        //         flat_trie.remove(key).unwrap();
+
+        //         let hash = trie.hash_no_commit();
+
+        //         let flat_trie_hash = flat_trie.hash().unwrap();
+
+        //         prop_assert_eq!(hash, flat_trie_hash.finalize());
+        //     }
+        // }
+    }
+}
