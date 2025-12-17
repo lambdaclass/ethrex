@@ -1,11 +1,7 @@
-use std::collections::HashMap;
-
 use bytes::BufMut;
-use ethereum_types::H256;
-use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
     constants::RLP_NULL,
-    decode::{RLPDecode, decode_bytes},
+    decode::decode_bytes,
     encode::{RLPEncode, encode_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
@@ -354,10 +350,10 @@ impl FlatTrie {
                     .next_choice()
                     .expect("branch insertion yielded value on a branch");
                 let new_child_index = match children_indices[choice] {
-                    None => {
+                    Some(None) => {
                         panic!("Missing children of branch needed for insert")
                     }
-                    Some(None) => self.put_leaf(path, value),
+                    None => self.put_leaf(path, value),
                     Some(Some(index)) => self.insert_inner(index, path, value)?,
                 };
                 children_indices[choice] = Some(Some(new_child_index));
@@ -583,18 +579,14 @@ fn encode_branch(children: [Option<NodeHash>; 16]) -> Vec<u8> {
 
 #[cfg(test)]
 mod test {
-    use ethrex_rlp::encode::RLPEncode;
-    use proptest::{
-        collection::{btree_set, vec},
-        prelude::*,
-    };
+    use proptest::{collection::vec, prelude::*};
 
     use super::*;
-    use crate::{Nibbles, Trie};
+    use crate::Trie;
 
-    const MAX_KEY_SIZE: usize = 2;
-    const MAX_VALUE_SIZE: usize = 1;
-    const MAX_KV_PAIRS: usize = 3;
+    const MAX_KEY_SIZE: usize = 32;
+    const MAX_VALUE_SIZE: usize = 256;
+    const MAX_KV_PAIRS: usize = 100;
 
     fn kv_pairs_strategy() -> impl Strategy<Value = (Vec<(Vec<u8>, Vec<u8>)>, Vec<usize>)> {
         // create random key-values, with keys all the same size, and a random permutation of indices
