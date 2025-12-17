@@ -7,6 +7,8 @@ Key requirements:
 - `lockFee` must reserve funds when invoked by the l2 bridge (the L2 bridge/`COMMON_BRIDGE_L2_ADDRESS`), and `payFee` must release or burn those funds when the transaction finishes.
 - The token address must be registered in the L2 `FeeTokenRegistry` system contract (`0x…fffc`). Registration happens through the L1 `CommonBridge` by calling `registerNewFeeToken(address)`; only the bridge owner can do this, and the call queues a privileged transaction that the sequencer forces on L2. Likewise, `unregisterFeeToken(address)` removes it.
 
+Fee token ratios are also updated through the same privileged transaction path (deposits from L1 to L2). This is because we want the changes to be done through the L1, and via an owner that we want to be the same as the owner in the L1 bridge.
+
 ### Minimal Contract Surface
 
 ```solidity
