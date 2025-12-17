@@ -102,11 +102,12 @@ impl Prover {
                 input,
                 format,
             } => (batch_number, input, format),
-            ProofData::InvalidCodeVersion { commit_hash } => {
-                return Err(format!(
-                    "Invalid code version received. Server commit_hash: {}, Prover commit_hash: {}",
-                    commit_hash, self.commit_hash
-                ));
+            ProofData::NoBatchForVersion { commit_hash } => {
+                warn!(
+                    "Received no batch available to prove for current version: {}. The prover may be older or newer to the next batch to prove",
+                    commit_hash,
+                );
+                return Ok(None);
             }
             _ => return Err("Expecting ProofData::Response".to_owned()),
         };

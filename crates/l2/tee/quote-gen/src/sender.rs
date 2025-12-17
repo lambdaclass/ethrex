@@ -39,10 +39,10 @@ pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), Strin
             )),
             _ => Err("No blocks to prove.".to_owned()),
         },
-        ProofData::InvalidCodeVersion {
+        ProofData::NoBatchForVersion {
             commit_hash: server_code_version,
         } => Err(format!(
-            "Invalid code version received. Server code: {}, Prover code: {}",
+            "Next batch does not match with the current version. Server code: {}, Prover code: {}",
             server_code_version, commit_hash
         )),
         _ => Err("Expecting ProofData::Response".to_owned()),
