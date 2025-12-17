@@ -1956,7 +1956,7 @@ fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieN
     nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
 
     let Some(Node::Branch(root)) = trie.root_node()?.map(Arc::unwrap_or_clone) else {
-        return Err(TrieError::InvalidInput)
+        return Err(TrieError::InvalidInput);
     };
     Ok((root, nodes))
 }
