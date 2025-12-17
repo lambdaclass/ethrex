@@ -599,13 +599,13 @@ mod test {
     fn kv_pairs_strategy() -> impl Strategy<Value = (Vec<(Vec<u8>, Vec<u8>)>, Vec<usize>)> {
         // create random key-values, with keys all the same size, and a random permutation of indices
 
-        (1usize..MAX_KEY_SIZE).prop_flat_map(|key_len| {
+        (1usize..=MAX_KEY_SIZE).prop_flat_map(|key_len| {
             prop::collection::vec(
                 (
                     vec(any::<u8>(), key_len),
                     vec(any::<u8>(), 0..MAX_VALUE_SIZE),
                 ),
-                1..MAX_KV_PAIRS,
+                1..=MAX_KV_PAIRS,
             )
             .prop_flat_map(|kvs| {
                 let len = kvs.len();
