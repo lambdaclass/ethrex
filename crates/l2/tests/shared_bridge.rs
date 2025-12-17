@@ -56,6 +56,8 @@ const SIGNATURE: &str = "sendToL2(uint256,address,uint256,bytes)";
 
 const GAS_PRICE: u64 = 3946771033u64;
 
+const DEPOSIT_VALUE: u64 = 888899999999u64;
+
 // 0xe481f8ed3efe6ff14b58424a1905d72558951167
 const DEFAULT_ON_CHAIN_PROPOSER_ADDRESS: Address = H160([
     0xe4, 0x81, 0xf8, 0xed, 0x3e, 0xfe, 0x6f, 0xf1, 0x4b, 0x58, 0x42, 0x4a, 0x19, 0x05, 0xd7, 0x25,
@@ -148,11 +150,7 @@ async fn test_transfer_erc_20() -> Result<()> {
 
     let bridge_balance =
         test_balance_of(&l1_client, l1_erc20_contract_address, bridge_address()?).await;
-    assert_eq!(
-        bridge_balance,
-        U256::from(888899999999u64),
-        "invalid deposit"
-    );
+    assert_eq!(bridge_balance, U256::from(DEPOSIT_VALUE), "invalid deposit");
 
     // send ERC20 from L2a to L2b
     let transfer_amount = U256::from(999999u64);
@@ -306,7 +304,7 @@ async fn approve_and_deposit(
             Value::Address(l1_erc20_contract_address),
             Value::Address(l2_erc20_contract_address),
             Value::Address(sender_address),
-            Value::Uint(U256::from(888899999999u64)),
+            Value::Uint(U256::from(DEPOSIT_VALUE)),
         ],
     )?;
     let deposit_tx = build_generic_tx(
