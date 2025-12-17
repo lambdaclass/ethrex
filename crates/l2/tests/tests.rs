@@ -29,7 +29,7 @@ use ethrex_l2_sdk::{
     FEE_TOKEN_PRICER_ADDRESS, FEE_TOKEN_REGISTRY_ADDRESS, L1ToL2TransactionData,
     L2_WITHDRAW_SIGNATURE, REGISTER_FEE_TOKEN_SIGNATURE, SET_FEE_TOKEN_RATIO_SIGNATURE,
     build_generic_tx, get_fee_token_ratio, get_last_verified_batch, send_generic_transaction,
-    wait_for_message_proof,
+    wait_for_l1_message_proof,
 };
 
 use ethrex_rlp::encode::RLPEncode;
