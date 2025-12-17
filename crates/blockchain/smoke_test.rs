@@ -337,10 +337,7 @@ mod blockchain_integration_test {
         }
 
         // Verify chain length
-        assert_eq!(
-            store.get_latest_block_number().await.unwrap(),
-            CHAIN_LENGTH
-        );
+        assert_eq!(store.get_latest_block_number().await.unwrap(), CHAIN_LENGTH);
 
         // Verify fork block exists but is not canonical
         assert!(!is_canonical(&store, 2, fork_hash).await.unwrap());
