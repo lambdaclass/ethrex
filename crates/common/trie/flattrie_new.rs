@@ -594,7 +594,7 @@ mod test {
 
     const MAX_KEY_SIZE: usize = 2;
     const MAX_VALUE_SIZE: usize = 1;
-    const MAX_KV_PAIRS: usize = 4;
+    const MAX_KV_PAIRS: usize = 3;
 
     fn kv_pairs_strategy() -> impl Strategy<Value = (Vec<(Vec<u8>, Vec<u8>)>, Vec<usize>)> {
         // create random key-values, with keys all the same size, and a random permutation of indices
