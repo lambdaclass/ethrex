@@ -1951,9 +1951,8 @@ fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieN
     let (_, mut nodes) = trie.collect_changes_since_last_hash();
     nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
 
-    let root = match trie.root_node()?.map(Arc::unwrap_or_clone) {
-        Some(Node::Branch(branch)) => branch,
-        _ => unreachable!(), // we just put it in
+    let Some(Node::Branch(root)) = trie.root_node()?.map(Arc::unwrap_or_clone) else {
+        return Err(TrieError::InvalidInput)
     };
     Ok((root, nodes))
 }
