@@ -4,7 +4,7 @@ use crate::api::{
 };
 use crate::error::StoreError;
 use heed3::types::Bytes;
-use heed3::{Database, EnvOpenOptions, WithoutTls};
+use heed3::{Database, DatabaseFlags, DatabaseOpenOptions, EnvFlags, EnvOpenOptions, WithoutTls};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -23,21 +23,26 @@ pub struct HeedBackend {
 
 impl HeedBackend {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
-        let env = unsafe {
-            EnvOpenOptions::new()
-                .read_txn_without_tls()
-                .max_dbs(TABLES.len().try_into().unwrap())
-                .map_size(4 * 1024 * 1024 * 1024 * 1024) // 4 TB
-                .open(path)
-        }
-        .unwrap();
+        let mut env_opts = EnvOpenOptions::new();
+        env_opts
+            .read_txn_without_tls()
+            .max_dbs(TABLES.len().try_into().unwrap());
+        env_opts.map_size(4 * 1024 * 1024 * 1024 * 1024); // 4 TB
+
+        unsafe {
+            env_opts.flags(EnvFlags::NO_META_SYNC | EnvFlags::WRITE_MAP | EnvFlags::MAP_ASYNC)
+        };
+
+        let env = unsafe { env_opts.open(path) }.unwrap();
 
         // We open the default unnamed database
         let mut wtxn = env.write_txn().unwrap();
 
         let mut dbs = HashMap::new();
         for cf_name in TABLES {
-            let db: Database<Bytes, Bytes> = env.create_database(&mut wtxn, Some(cf_name)).unwrap();
+            let mut opts = DatabaseOpenOptions::new(&env).types::<Bytes, Bytes>();
+            opts.name(cf_name);
+            let db: Database<Bytes, Bytes> = opts.create(&mut wtxn).unwrap();
             dbs.insert(cf_name, db);
         }
         wtxn.commit().unwrap();
