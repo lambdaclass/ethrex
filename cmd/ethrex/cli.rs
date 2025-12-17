@@ -117,6 +117,7 @@ pub struct Options {
         long = "log.level",
         default_value_t = Level::INFO,
         value_name = "LOG_LEVEL",
+        env = "ETHREX_LOG_LEVEL",
         help = "The verbosity level used for logs.",
         long_help = "Possible values: info, debug, trace, warn, error",
         help_heading = "Node options")]
@@ -671,7 +672,7 @@ pub async fn import_blocks(
         if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
             store
                 .forkchoice_update(
-                    Some(numbers_and_hashes),
+                    numbers_and_hashes,
                     head_number,
                     head_hash,
                     Some(head_number),
@@ -786,7 +787,7 @@ pub async fn import_blocks_bench(
         if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
             store
                 .forkchoice_update(
-                    Some(numbers_and_hashes),
+                    numbers_and_hashes,
                     head_number,
                     head_hash,
                     Some(head_number),

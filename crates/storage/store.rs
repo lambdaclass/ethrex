@@ -811,7 +811,7 @@ impl Store {
 
     pub async fn forkchoice_update_inner(
         &self,
-        new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
+        new_canonical_blocks: Vec<(BlockNumber, BlockHash)>,
         head_number: BlockNumber,
         head_hash: BlockHash,
         safe: Option<BlockNumber>,
@@ -822,12 +822,10 @@ impl Store {
         tokio::task::spawn_blocking(move || {
             let mut txn = db.begin_write()?;
 
-            if let Some(canonical_blocks) = new_canonical_blocks {
-                for (block_number, block_hash) in canonical_blocks {
-                    let head_key = block_number.to_le_bytes();
-                    let head_value = block_hash.encode_to_vec();
-                    txn.put(CANONICAL_BLOCK_HASHES, &head_key, &head_value)?;
-                }
+            for (block_number, block_hash) in new_canonical_blocks {
+                let head_key = block_number.to_le_bytes();
+                let head_value = block_hash.encode_to_vec();
+                txn.put(CANONICAL_BLOCK_HASHES, &head_key, &head_value)?;
             }
 
             for number in (head_number + 1)..=(latest) {
@@ -1857,7 +1855,7 @@ impl Store {
         self.add_block(genesis_block).await?;
         self.update_earliest_block_number(genesis_block_number)
             .await?;
-        self.forkchoice_update(None, genesis_block_number, genesis_hash, None, None)
+        self.forkchoice_update(vec![], genesis_block_number, genesis_hash, None, None)
             .await?;
         Ok(())
     }
@@ -1928,7 +1926,7 @@ impl Store {
     /// All operations are performed in a single database transaction.
     pub async fn forkchoice_update(
         &self,
-        new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
+        new_canonical_blocks: Vec<(BlockNumber, BlockHash)>,
         head_number: BlockNumber,
         head_hash: BlockHash,
         safe: Option<BlockNumber>,
@@ -3077,7 +3075,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .forkchoice_update(None, block_number, hash, None, None)
+            .forkchoice_update(vec![], block_number, hash, None, None)
             .await
             .unwrap();
 
@@ -3181,7 +3179,7 @@ mod tests {
             .unwrap();
 
         store
-            .forkchoice_update(None, block_number, block_header.hash(), None, None)
+            .forkchoice_update(vec![], block_number, block_header.hash(), None, None)
             .await
             .unwrap();
 
@@ -3235,7 +3233,7 @@ mod tests {
             .unwrap();
         store
             .forkchoice_update(
-                None,
+                vec![],
                 latest_block_number,
                 hash,
                 Some(safe_block_number),
