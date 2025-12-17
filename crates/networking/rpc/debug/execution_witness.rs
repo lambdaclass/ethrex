@@ -147,7 +147,7 @@ pub fn execution_witness_from_rpc_chain_config(
         storage_tries.insert(address, trie.clone());
     }
 
-    dbg!(state_trie.get(&hash_address(SYSTEM_ADDRESS)));
+    dbg!(state_trie.get(&hash_address(&SYSTEM_ADDRESS)));
     let state_trie = state_trie_root.map(|n| FlatTrie::from(&n));
 
     let witness = ExecutionWitness {
