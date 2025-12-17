@@ -160,7 +160,7 @@ struct CollectedStateMsg {
 #[derive(Default)]
 struct PreMerkelizedAccountState {
     info: Option<AccountInfo>,
-    storage_root: Option<BranchNode>,
+    storage_root: Option<Box<BranchNode>>,
     nodes: Vec<TrieNode>,
 }
 
@@ -426,7 +426,7 @@ impl Blockchain {
                         std::mem::take(&mut subroot.choices[index as usize]);
                 }
                 rootptr => {
-                    *rootptr = Some(*subroot);
+                    *rootptr = Some(subroot);
                 }
             }
             state.nodes.extend(nodes);
@@ -612,7 +612,7 @@ impl Blockchain {
                     let mut storage_root = None;
                     if let Some(root) = state.storage_root {
                         if let Some(root) =
-                            self.collapse_root_node(parent_header, Some(hashed_account), root)?
+                            self.collapse_root_node(parent_header, Some(hashed_account), *root)?
                         {
                             let mut root = NodeRef::from(root);
                             let hash = root.commit(Nibbles::default(), &mut state.nodes);
