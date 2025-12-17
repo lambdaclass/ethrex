@@ -4,7 +4,7 @@ use crate::api::{
 };
 use crate::error::StoreError;
 use heed3::types::Bytes;
-use heed3::{Database, DatabaseFlags, DatabaseOpenOptions, EnvFlags, EnvOpenOptions, WithoutTls};
+use heed3::{Database, DatabaseOpenOptions, EnvFlags, EnvOpenOptions, WithoutTls};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -100,7 +100,7 @@ impl StorageBackend for HeedBackend {
         }))
     }
 
-    fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError> {
+    fn create_checkpoint(&self, _path: &Path) -> Result<(), StoreError> {
         todo!()
     }
 }
@@ -136,8 +136,8 @@ impl StorageReadView for HeedReadTx {
 
     fn prefix_iterator(
         &self,
-        table: &'static str,
-        prefix: &[u8],
+        _table: &'static str,
+        _prefix: &[u8],
     ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
         todo!("serving snapsync is a WIP")
         // let cf = self
