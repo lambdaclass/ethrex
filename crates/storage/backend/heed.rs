@@ -62,6 +62,7 @@ impl StorageBackend for HeedBackend {
         let mut wtxn = self.env.write_txn().unwrap();
 
         db.clear(&mut wtxn).unwrap();
+        wtxn.commit().unwrap();
         Ok(())
     }
 
