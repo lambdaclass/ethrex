@@ -546,11 +546,10 @@ const SP1_VERIFIER_BYTECODE: &[u8] = include_bytes!(concat!(
     "/contracts/solc_out/SP1Verifier.bytecode"
 ));
 
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,bool,bool,bool,bool,address,address,address,address,bytes32,bytes32,bytes32,address,uint256)";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,bool,bool,bool,bool,address,address,address,address,bytes32,bytes32,bytes32,address,uint256,address)";
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,bool,bool,bool,bool,address,address,address,address,bytes32,bytes32,bytes32,uint256,address)";
 const INITIALIZE_TIMELOCK_SIGNATURE: &str = "initialize(uint256,address[],address,address,address)";
 
-const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256,address, uint256)";
@@ -1114,7 +1113,7 @@ async fn initialize_contracts(
         // Initialize OnChainProposer with Based config and SequencerRegistry
         let calldata_values = vec![
             Value::Bool(opts.validium),
-            Value::Address(deployer_address),
+            Value::Address(opts.on_chain_proposer_owner),
             Value::Bool(opts.risc0),
             Value::Bool(opts.sp1),
             Value::Bool(opts.tdx),
@@ -1128,6 +1127,7 @@ async fn initialize_contracts(
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Address(contract_addresses.sequencer_registry_address),
             Value::Uint(genesis.config.chain_id.into()),
+            Value::Address(contract_addresses.bridge_address),
         ];
 
         trace!(calldata_values = ?calldata_values, "OnChainProposer initialization calldata values");
@@ -1264,110 +1264,6 @@ async fn initialize_contracts(
         .await?;
         info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "OnChainProposer initialized");
         tx_hashes.push(initialize_tx_hash);
-    }
-
-    if opts.deploy_based_contracts {
-        let initialize_bridge_address_tx_hash = {
-            let initializer_nonce = eth_client
-                .get_nonce(
-                    initializer.address(),
-                    BlockIdentifier::Tag(BlockTag::Pending),
-                )
-                .await?;
-            let calldata_values = vec![Value::Address(contract_addresses.bridge_address)];
-            let on_chain_proposer_initialization_calldata =
-                encode_calldata(INITIALIZE_BRIDGE_ADDRESS_SIGNATURE, &calldata_values)?;
-
-            initialize_contract_no_wait(
-                contract_addresses.on_chain_proposer_address,
-                on_chain_proposer_initialization_calldata,
-                initializer,
-                eth_client,
-                Overrides {
-                    nonce: Some(initializer_nonce),
-                    gas_limit: Some(TRANSACTION_GAS_LIMIT),
-                    max_fee_per_gas: Some(gas_price),
-                    max_priority_fee_per_gas: Some(gas_price),
-                    ..Default::default()
-                },
-            )
-            .await?
-        };
-
-        info!(
-            tx_hash = %format!("{initialize_bridge_address_tx_hash:#x}"),
-            "OnChainProposer bridge address initialized"
-        );
-
-        tx_hashes.push(initialize_bridge_address_tx_hash);
-    }
-
-    if opts.deploy_based_contracts && opts.on_chain_proposer_owner != initializer.address() {
-        let initializer_nonce = eth_client
-            .get_nonce(
-                initializer.address(),
-                BlockIdentifier::Tag(BlockTag::Pending),
-            )
-            .await?;
-        let transfer_ownership_tx_hash = {
-            let owner_transfer_calldata = encode_calldata(
-                TRANSFER_OWNERSHIP_SIGNATURE,
-                &[Value::Address(opts.on_chain_proposer_owner)],
-            )?;
-
-            initialize_contract_no_wait(
-                contract_addresses.on_chain_proposer_address,
-                owner_transfer_calldata,
-                initializer,
-                eth_client,
-                Overrides {
-                    nonce: Some(initializer_nonce),
-                    gas_limit: Some(TRANSACTION_GAS_LIMIT),
-                    max_fee_per_gas: Some(gas_price),
-                    max_priority_fee_per_gas: Some(gas_price),
-                    ..Default::default()
-                },
-            )
-            .await?
-        };
-
-        tx_hashes.push(transfer_ownership_tx_hash);
-
-        if let Some(owner_pk) = opts.on_chain_proposer_owner_pk {
-            let signer = Signer::Local(LocalSigner::new(owner_pk));
-            let owner_nonce = eth_client
-                .get_nonce(signer.address(), BlockIdentifier::Tag(BlockTag::Pending))
-                .await?;
-            let accept_ownership_calldata = encode_calldata(ACCEPT_OWNERSHIP_SIGNATURE, &[])?;
-            let accept_tx = build_generic_tx(
-                eth_client,
-                TxType::EIP1559,
-                contract_addresses.on_chain_proposer_address,
-                opts.on_chain_proposer_owner,
-                accept_ownership_calldata.into(),
-                Overrides {
-                    nonce: Some(owner_nonce),
-                    gas_limit: Some(TRANSACTION_GAS_LIMIT),
-                    max_fee_per_gas: Some(gas_price),
-                    max_priority_fee_per_gas: Some(gas_price),
-                    ..Default::default()
-                },
-            )
-            .await?;
-            let accept_tx_hash = send_generic_transaction(eth_client, accept_tx, &signer).await?;
-            tx_hashes.push(accept_tx_hash);
-
-            info!(
-                transfer_tx_hash = %format!("{transfer_ownership_tx_hash:#x}"),
-                accept_tx_hash = %format!("{accept_tx_hash:#x}"),
-                "OnChainProposer ownership transfered"
-            );
-        } else {
-            info!(
-                transfer_tx_hash = %format!("{transfer_ownership_tx_hash:#x}"),
-                "OnChainProposer ownership transfered but not accepted yet"
-            );
-        }
     }
 
     info!("Initializing CommonBridge");
