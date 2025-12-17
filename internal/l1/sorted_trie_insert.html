@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Introduction - Ethrex</title>
+        <title>Sorted Trie Insertion - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -12,33 +12,33 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="../favicon.svg">
-        <link rel="shortcut icon" href="../favicon.png">
-        <link rel="stylesheet" href="../css/variables.css">
-        <link rel="stylesheet" href="../css/general.css">
-        <link rel="stylesheet" href="../css/chrome.css">
-        <link rel="stylesheet" href="../css/print.css" media="print">
+        <link rel="icon" href="../../favicon.svg">
+        <link rel="shortcut icon" href="../../favicon.png">
+        <link rel="stylesheet" href="../../css/variables.css">
+        <link rel="stylesheet" href="../../css/general.css">
+        <link rel="stylesheet" href="../../css/chrome.css">
+        <link rel="stylesheet" href="../../css/print.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="../fonts/fonts.css">
+        <link rel="stylesheet" href="../../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
-        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
-        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
+        <link rel="stylesheet" id="highlight-css" href="../../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
 
 
         <!-- Provide site root and default themes to javascript -->
         <script>
-            const path_to_root = "../";
+            const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc.js"></script>
+        <script src="../../toc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -102,7 +102,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
             </noscript>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -137,7 +137,7 @@
                     <h1 class="menu-title">Ethrex</h1>
 
                     <div class="right-buttons">
-                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
                         <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
@@ -237,21 +237,94 @@
 }
 
 </style>
-<h1 id="introduction"><a class="header" href="#introduction">Introduction</a></h1>
-<p>Layer 2 (L2) solutions are protocols built on top of Ethereum to increase scalability and reduce transaction costs. L2s process transactions off-chain and, in the case of Rollups, they periodically post data or proofs back to Ethereum Layer 1, inheriting its security.</p>
-<p><strong>Ethrex</strong> is a framework that lets you launch your own L2 rollup or blockchain. With ethrex, you can deploy, run, and experiment with custom L2 networks, taking advantage of Ethereum's security while enabling high throughput and low fees.</p>
-<h2 id="get-started-with-your-l2"><a class="header" href="#get-started-with-your-l2">Get started with your L2</a></h2>
-<p>Check out the <a href="../getting-started/README.html#quickstart-l2">Quickstart L2 guide</a> to start your rollup in just a command, or jump right into the <a href="../l2/deployment/overview.html">Deploy an L2</a> for more detailed instructions.</p>
+<h1 id="sorted-trie-insertion"><a class="header" href="#sorted-trie-insertion">Sorted Trie Insertion</a></h1>
+<p>This document describes the algorithm implemented in <code>crates/common/trie/trie_sorted.rs</code>
+which is used to speed up the insertion time in snap sync.
+During that step we are inserting all of the accounts state and storage
+slots downloaded into the Ethereum world state Merkle Patricia Trie.
+To know how that trie works, it's recommended to <a href="https://epf.wiki/#/wiki/EL/data-structures?id=world-state-trie">read this primer first.</a></p>
+<h2 id="concept"><a class="header" href="#concept">Concept</a></h2>
+<p>Naive algorithm: we insert keys in arbitrary (unsorted) order.
+This version requires O(n*log(n)) reads and writes to disk.
+This is because each insertion creates a new leaf, which modifies
+the hash of its parent branch recursively. We could avoid reads
+to disk by having the trie in memory, but this is unviable
+for large amounts of state data.</p>
+<p>Example of the Naive implementation:
+<img src="sorted_trie_insert/NaiveInsertionExample1.png" alt="Image showing the insertion of 3 elements 0x0EBB, 0x12E6, 0x172E. Each one requiring multiple new reads and writes" /></p>
+<p>If the input data is sorted, the computation can be optimized to be O(n).
+In the example, just by reading 0x0EBB and 0x172E, we know that there is
+a branch node as root (because they start with different nibbles), and
+that the leaf will have a partial path of 0xEBB (because no node exists
+between 0x0EBB and 0x172E if it's sorted). The root branch node we know exists and will be modified, so we don't write until we have read all
+input.</p>
+<h2 id="implementation"><a class="header" href="#implementation">Implementation</a></h2>
+<p>The implementation maintains three pointers:</p>
+<ol>
+<li>The current element being processed.</li>
+<li>The next input value.</li>
+<li>The parent of the current element.</li>
+</ol>
+<p>All parents that can still be modified are stored in a "parent stack".
+Based on these, the algorithm can determine the next write operation to perform.</p>
+<h3 id="scenarios"><a class="header" href="#scenarios">Scenarios</a></h3>
+<p>Depending on the state of the three current pointers, one of 3 scenarios
+can happen:</p>
+<p>Scenario 1: Current and next value are siblings with the current
+parent being the parent of both values.
+This happens when the parent and both values share the same
+number of nibbles at the beginning of their paths.
+In our example, all node paths start with 0x1 and then diverge.</p>
+<p>In this scenario, we can compute the leaf for the current value, write it,
+update the parent to include a pointer to that leaf, and then continue.</p>
+<p><img src="sorted_trie_insert/SortedInsertionScenario1.png" alt="Image showing the insertion of 1 element with a current parent branch 0x1, the current element 0x12E6 and next element 0x172E. 0x12E6 is inserted with a single write" /></p>
+<p>Scenario 2: Current and next values are siblings of a new current parent.
+This happens when the parent shares less nibbles from their paths than what the siblings share.
+In our example, the current and next value share 0x17, while the parent only shares 0x1.</p>
+<p>In this scenario, we know the leaf we need to compute from the current value
+so we write that. Furthermore, we know that we need a new branch at 0x17,
+so we create it and insert the leaf we just computed and insert into the branch.
+The current parent is stored in the "parent stack", and the new branch becomes the
+current parent.</p>
+<p><img src="sorted_trie_insert/SortedInsertionScenario2.png" alt="Image showing the insertion of 1 element with a current parent branch 0x1, the current element 0x172E and next element 0x175B. 0x172E is inserted with a single write, while the current parent branch is put onto the stack, and a new current parent branch 0x17 is created" /></p>
+<p>Scenario 3: The current parent is not the parent of the
+next value. This happens when the parent doesn't have
+all of the nibbles of its path.</p>
+<p>In this scenario, we know the leaf we need to compute from the current value,
+so we write that. We change the current value to be the current parent, and
+the new current parent is popped from the "parent stack".</p>
+<p><img src="sorted_trie_insert/SortedInsertionScenario3.png" alt="Image showing the insertion of 1 element with a current parent branch 0x17, the current element 0x175B and next element 0x1825. 0x175B is inserted with a single write, while the current parent branch becomes the current value, and the current parent branch is popped from the stack" /></p>
+<p>These three scenarios keep repeating themselves until the trie is complete,
+at which point the algorithm returns a hash to the root node branch.</p>
+<h3 id="inserting-with-extensions"><a class="header" href="#inserting-with-extensions">Inserting with extensions</a></h3>
+<p>In general, each write to disk is prepared to properly handle extensions
+as the write function knows what it's writing and what was its parent
+and full path. As such, it can check if the insertion is a branch and
+if an extension is needed.</p>
+<p>A specific edge case is the root node, which is assumed to always be a branch
+node, but the code has a special case check to see if the root node has
+a single child, in which case it changes to an extension or leaf as needed,
+while modifying the other nodes in the trie.</p>
+<h3 id="concurrency"><a class="header" href="#concurrency">Concurrency</a></h3>
+<p>The slowest step in this process is flushing nodes to disk.
+To avoid stalling during writes, the algorithm uses an internal buffer that holds a fixed number of nodes. Once the buffer is filled, it
+creates a new task that writes it to disk in the background.</p>
+<p>We want to limit the amount of buffers we can have, so we allocate a
+fixed number of buffers at the beginning and we use a channel for the
+algorithm to receive empty buffers and the writing task clears the
+buffer and sends it back through the channels.</p>
+<p>These tasks are executed using a custom thread pool defined in
+<code>/crates/concurrency/concurrency.rs</code></p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../internal/l1/sorted_trie_insert.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../l1/fundamentals/snap_sync_concerns.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../l2/deployment/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../l2/introduction.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -261,11 +334,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../internal/l1/sorted_trie_insert.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../l1/fundamentals/snap_sync_concerns.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../l2/deployment/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../l2/introduction.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
@@ -280,17 +353,17 @@
         </script>
 
 
-        <script src="../elasticlunr.min.js"></script>
-        <script src="../mark.min.js"></script>
-        <script src="../searcher.js"></script>
+        <script src="../../elasticlunr.min.js"></script>
+        <script src="../../mark.min.js"></script>
+        <script src="../../searcher.js"></script>
 
-        <script src="../clipboard.min.js"></script>
-        <script src="../highlight.js"></script>
-        <script src="../book.js"></script>
+        <script src="../../clipboard.min.js"></script>
+        <script src="../../highlight.js"></script>
+        <script src="../../book.js"></script>
 
         <!-- Custom JS scripts -->
-        <script src="../mermaid.min.js"></script>
-        <script src="../mermaid-init.js"></script>
+        <script src="../../mermaid.min.js"></script>
+        <script src="../../mermaid-init.js"></script>
 
 
     </div>

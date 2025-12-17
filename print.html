@@ -1838,25 +1838,8 @@ Finally, with <code>node_c</code> we connect to <code>node_b</code>. When the lo
 <h2 id="full-sync"><a class="header" href="#full-sync">Full sync</a></h2>
 <p>Full syncing works by downloading and executing every block from genesis. This means that full syncing will only work for networks that started after <a href="https://ethereum.org/en/roadmap/merge/">The Merge</a>, as ethrex only supports post merge execution.</p>
 <h2 id="snap-sync"><a class="header" href="#snap-sync">Snap sync</a></h2>
-<p>Snap syncing is a much faster alternative to full sync that works by downloading and executing only the latest blocks from the network.</p>
-<p>A snap sync cycle begins by fetching all the block headers (via eth p2p) between the current head (latest canonical block) and the sync head (block hash sent by a forkChoiceUpdate).</p>
-<p>We will then fetch the block bodies from each header and at the same time select a pivot block (sync head - 64) and start rebuilding its state via snap p2p requests, if the pivot were to become stale during this rebuild we will select a newer pivot (sync head) and restart it.</p>
-<p>After we fully rebuilt the pivot state and fetched all the block bodies we will fetch and store the receipts for the range between the current head and the pivot (including it), and at the same time store all blocks in the same range and execute all blocks after the pivot (like in full sync).</p>
-<h3 id="snap-state-rebuild"><a class="header" href="#snap-state-rebuild">Snap State Rebuild</a></h3>
-<p>During snap sync we need to fully rebuild the pivot block's state.
-We can divide snap sync into 3 core processes: State Sync, Trie Rebuild, and Healing.
-The State Sync consists of downloading the plain state of the pivot block, aka the values on the leafs of the state &amp; storage tries. For this process we will divide the state trie into segments and fetch each segment in parallel. We will also be relying on two side processes, the <code>bytecode_fetcher</code> and the <code>storage_fetcher</code> which will both remain active throughout the state sync, and fetch the bytecodes and storages of each account downloaded during the state sync.
-The Trie Rebuild process works in the background while State Sync is active. It consists of two processes running in parallel, one to rebuild the state trie and one to rebuild the storage tries. Both will read the data downloaded by the State Sync but while the state rebuild works independently, the storage rebuild will wait for the <code>storage_fetcher</code> to advertise which storages have been fully downloaded before attempting to rebuild them.
-The Healing process consists of fixing any inconsistencies leftover from the State Sync &amp; Trie Rebuild processes after they finish. As state sync can spawn across multiple cycles with different pivot blocks the state will not be consistent with the latest pivot block, so we need to fetch all the nodes that the pivot's tries have and ours don't. The <code>bytecode_fetcher</code> and <code>storage_healer</code> processes will be involved to heal the bytecodes &amp; storages of each account healed by the main state heal process.
-Also, the <code>storage_healer</code> will be spawned earlier, during state sync so that it can begin healing the storages that couldn't be fetched due to pivot staleness.</p>
-<p>This diagram illustrates all the processes involved in snap sync:</p>
-<p><img src="l1/fundamentals/./diagrams/SnapSync.drawio.png" alt="SnapSync" />.</p>
-<p>And this diagram shows the interaction between the different processes involved in State Sync, Trie Rebuild and Healing:
-<img src="l1/fundamentals/./diagrams/StateSyncAndHealing.drawio.png" alt="StateSyncAndHealing" />.</p>
-<p>To exemplify how queue-like processes work we will explain how the <code>bytecode_fetcher</code> works:</p>
-<p>The <code>bytecode_fetcher</code> has its own channel where it receives code hashes from an active <code>rebuild_state_trie</code> process. Once a code hash is received, it is added to a pending queue. When the queue has enough messages for a full batch it will request a batch of bytecodes via snap p2p and store them. If a bytecode could not be fetched by the request (aka, we reached the response limit) it is added back to the pending queue. After the whole state is synced <code>fetch_snap_state</code> will send an empty list to the <code>bytecode_fetcher</code> to signal the end of the requests so it can request the last (incomplete) bytecode batch and end gracefully.</p>
-<p>This diagram illustrates the process described above:</p>
-<p><img src="l1/fundamentals/./diagrams/bytecode_fetcher.jpg" alt="snap_sync" /></p>
+<p>For snap sync, you can view the <a href="l1/fundamentals/./snap_sync.html">main document here</a>.
+`</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
@@ -1925,77 +1908,298 @@ Also, the <code>storage_healer</code> will be spawned earlier, during state sync
 }
 
 </style>
-<h1 id="healing-algorithm-explanation-and-documentation-before-path-based"><a class="header" href="#healing-algorithm-explanation-and-documentation-before-path-based">Healing Algorithm Explanation and Documentation (Before Path Based)</a></h1>
-<p>Healing is the last step of Snap Sync. Snap begins the downloading of the state and storage tries by downloading the leaves (account states and storage slots), and from those leaves we reconstruct the intermediate nodes (branches and extension). Afterwards we may be left with a malformed trie, as that step will resume the download of leaves with a new state root if the old one times out.</p>
-<p>The purpose of the healing algorithm is “heal” that trie so that it ends up in a consistent state.</p>
-<h1 id="healing-conceptually"><a class="header" href="#healing-conceptually">Healing Conceptually</a></h1>
-<p>The malformed trie is going to have large sections of the trie which are in a correct state, as we had all of the leaves in that sections and those accounts haven’t been modified in the blocks that happened concurrently to the snapsync algorithm.</p>
-<p><img src="internal/l1/healing/Example_1_Step_0.svg" alt="Image of a trie, where the root node is in red, indicating that it’s in an incorrect state. It points to two branches, one is correct and one was computed from faulty data, and such doesn’t exist in the latest block" /></p>
-<p>Example of a trie where 3 leaves where downloaded in block 1 and 1 was downloaded in block 2. The trie root is different from the state root of block 2, as one of the leaf nodes was modified in block 2.</p>
-<p>The algorithm attempts to rebuild the trie through downloading the missing nodes, starting from the top. If the node is present in the database that means that we have that and all of their child nodes present in the database. If not, we download the node and check if the children of the root are present, applying the algorithm recursively.</p>
-<p><img src="internal/l1/healing/Example_1_Step_1.svg" alt="Iteration 1 of algorithm" /></p>
-<p>Iteration 1 of algorithm</p>
-<p><img src="internal/l1/healing/Example_1_Step_2.svg" alt="Iteration 2 of algorithm" /></p>
-<p>Iteration 2 of algorithm</p>
-<p><img src="internal/l1/healing/Example_1_Step_3.svg" alt="Iteration 3 of algorithm" /></p>
-<p>Iteration 3 of algorithm</p>
-<p><img src="internal/l1/healing/Example_1_Step_4.svg" alt="Final state of trie after healing" /></p>
-<p>Final state of trie after healing</p>
-<h1 id="implementation"><a class="header" href="#implementation">Implementation</a></h1>
-<p>The algorithm is implemented in ethrex currently in <code>crates/networking/p2p/sync/state_healings.rs</code> and <code>crates/networking/p2p/sync/storage_healing.rs</code>. All of our code examples are from the account state trie.</p>
-<h3 id="api"><a class="header" href="#api">API</a></h3>
-<p>The API used is the ethereum capability snap/1, documented at https://github.com/ethereum/devp2p/blob/master/caps/snap.md and for healing the only method used is <code>GetTrieNodes</code>. This method allows us to ask our peers for nodes in a trie. We ask the nodes by <strong>path</strong> to the node, not by hash.</p>
-<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>pub struct GetTrieNodes {    
-    pub id: u64,    
-    pub root_hash: H256,    
-    // [[acc_path, slot_path_1, slot_path_2,...]...]    
-    // The paths can be either full paths (hash) or 
-    // only the partial path (compact-encoded nibbles)    
-    pub paths: Vec&lt;Vec&lt;Bytes&gt;&gt;,    
-    pub bytes: u64,
-}
-<span class="boring">}</span></code></pre></pre>
-<h3 id="staleness"><a class="header" href="#staleness">Staleness</a></h3>
-<p>The spec allows the nodes to stop responding if the request is older than 128 blocks. In that case, the response to the <code>GetTrieNodes</code> will be empty. As such, our algorithm checks periodically if the block is stale, and stops executing. In that scenario, we must be sure that the we leave the storage in a consistent state at any given time and doesn’t break our invariants.</p>
-<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>// Current Staleness logic code
-// We check with a clock if we are stale        
-if !is_stale &amp;&amp; current_unix_time() &gt; staleness_timestamp {
-    info!("state healing is stale");            
-    is_stale = true;       
-}
-// We make sure that we have stored everything that we need to the database
-if is_stale &amp;&amp; nodes_to_heal.is_empty() &amp;&amp; inflight_tasks == 0 {
-  info!("Finished inflight tasks");            
-  db_joinset.join_all().await;            
-  break;
-}
-<span class="boring">}</span></code></pre></pre>
-<h3 id="membatch"><a class="header" href="#membatch">Membatch</a></h3>
-<p>Currently, our algorithm has an invariant, which is that if we have a node in storage we have its and all of its children are present. Therefore, when we download for a node if some of it’s children are missing we can’t immediately store it on disk. Our implementation currently stores the nodes in temporary structure called membatch, which stores the node and how many of it’s children are missing. When a child gets stored, we reduce the counter of missing children of the parent. If that numbers reaches 0, we write the parent to the database.</p>
-<p>In code, the membatch is current <code>HashMap&lt;Nibbles, MembatchEntryValue&gt;</code> with the value being the following struct</p>
-<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>pub struct MembatchEntryValue {
-    /// The node to be flushed into storage
-    node: Node,
-    /// How many of the nodes that are child of this are not in storage
-    children_not_in_storage_count: u64,
-    /// Which is the parent of this node
-    parent_path: Nibbles,
-}
-<span class="boring">}</span></code></pre></pre>
-<h2 id="known-optimization-issues"><a class="header" href="#known-optimization-issues">Known Optimization Issues</a></h2>
+<h1 id="snap-sync-1"><a class="header" href="#snap-sync-1">Snap Sync</a></h1>
+<p>API reference: https://github.com/ethereum/devp2p/blob/master/caps/snap.md</p>
+<p>Terminology:</p>
 <ul>
-<li>Membatch gets cleared between iterations, while it could be preserved and the hash checked.</li>
-<li>When checking if a child is present in storage, we can also check if it’s in the membatch. If it is, we can skip that download and act like we have immediately downloaded that node.</li>
-<li>Membatch is currently a <code>HashMap</code>, a <code>BTreeMap</code> or other structures may be faster in real use.</li>
-<li>Storage healing receives as a parameter a list of accounts that need to be healed and it has get their state before it can run. Doing those reads could be more efficient.</li>
+<li>Peers: Other Ethereum execution clients we are connected to, and which can respond to snap requests.</li>
+<li>Pivot: The block we have chosen to snap-sync to. The pivot block changes continually as it becomes too old, because nodes don't serve old data (i.e. more than 128 blocks in the past). Read below for more details on this.</li>
 </ul>
-<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<h2 id="concept"><a class="header" href="#concept">Concept</a></h2>
+<h3 id="what"><a class="header" href="#what">What</a></h3>
+<p>Executing all blocks to rebuild the state is slow. It is also not possible on ethrex, because we don’t support pre-merge execution. Therefore, we need to download the current state from our peers. The largest challenge in snap sync is downloading the state (the account state trie and storage state tries). Secondary concerns are downloading headers and bytecodes.</p>
+<h3 id="first-solution-fast-sync"><a class="header" href="#first-solution-fast-sync">First solution: Fast-Sync</a></h3>
+<p>Fast-sync is the original method used in Ethereum to download a Patricia Merkle trie. The idea is to download the trie top-down, starting from the root, then recursively downloading child nodes until the entire trie is obtained.</p>
+<p><img src="l1/fundamentals/./snap_sync/FastSync-1.png" alt="Initial state of simple fast sync" />
+<img src="l1/fundamentals/./snap_sync/FastSync-2.png" alt="Root download of simple fast sync" />
+<img src="l1/fundamentals/./snap_sync/FastSync-3.png" alt="Branches download of simple fast sync" />
+<img src="l1/fundamentals/./snap_sync/FastSync-4.png" alt="Leaves download of simple fast sync" /></p>
+<p>There are two problems with this:</p>
+<ul>
+<li>Peers stop responding to node requests at some point. When requesting a trie node, you specify the state root for which you want the node. If the root is 128 or more blocks old, peers will not serve the request.</li>
+<li>Scanning the entire trie to find missing nodes is slow.</li>
+</ul>
+<p>For the first problem: once peers stop serving nodes for a given root<sup class="footnote-reference" id="fr-1-1"><a href="#footnote-1">1</a></sup>, we stop fast-syncing, update the pivot, and restart the process. The naïve approach would be to download the new root and recursively fetch all its children, checking each time whether they already exist in the DB.</p>
+<p>Example of a possible state after stopping fast sync due to staleness.</p>
+<p><img src="l1/fundamentals/./snap_sync/FastSyncRetakingExample-1.png" alt="Fast Sync Retaking Example - 1" /></p>
+<p>In the example, even if we find that node { hash: 0x317f, path: 0 } is correct, we still need to check all its children in the DB (in this case none are present).</p>
+<p>To solve the second problem, we introduce an optimization, which is called the "Membatch"<sup class="footnote-reference" id="fr-2-1"><a href="#footnote-2">2</a></sup>. This allows us to maintain a new invariant:</p>
+<blockquote>
+<p>If a node is present in the DB, then that node and all its children must be present.</p>
+</blockquote>
+<p>This removes the need to explore entire subtrees: when walking down the trie, if a node is in the DB, the whole subtree can be skipped.</p>
+<p>To maintain this invariant, we do the following:</p>
+<ul>
+<li>When we get a new node, we don't immediately store it in the database. We keep track of the amount of every node's children that are not yet in the database. As long as it's not zero, we keep it in a separate in-memory structure "Membatch" instead of on the db.</li>
+<li>When a node has all of its children in the db, we commit it and recursively go up the tree to see if its parent needs to be commited, etc.</li>
+<li>When the nodes are written to the database, all it's parents are deleted from the db, which preserves the subtree invariant. Because lower down nodes are always written first, we never delete a valid node.</li>
+</ul>
+<p>Example of a possible state after stopping fast sync due to staleness with membatch.</p>
+<p><img src="l1/fundamentals/./snap_sync/FastSyncMembatchExample-1.png" alt="Fast Sync Membatch Example - 1" /></p>
+<h3 id="speeding-up-snap-sync"><a class="header" href="#speeding-up-snap-sync">Speeding up: Snap-Sync</a></h3>
+<p>Fast-sync is slow (ethrex fast-sync of a fresh “hoodi” state takes ~45 minutes—4.5× slower than snap-sync). To accelerate it, we use a key property of fast-sync:</p>
+<blockquote>
+<p>Fast-sync can “heal” any partial trie that obeys the invariant, even if that trie is not consistent with any real on-chain state.</p>
+</blockquote>
+<p>Snap sync exploits this by:</p>
+<ul>
+<li>downloading only the leaves (the accounts and storage slots) from any recent state</li>
+<li>assembling a trie from these leaves</li>
+<li>running fast-sync (“healing”) to repair it into a consistent trie.
+In our code, we call the fast-sync step "healing".</li>
+</ul>
+<p>Example run:</p>
+<p>- We download the 4 accounts in the state trie from two different blocks</p>
+<p><img src="l1/fundamentals/./snap_sync/SnapSyncLeaves-1.png" alt="Snap Sync Leaves - 1" /></p>
+<p>- We rebuild the trie</p>
+<p><img src="l1/fundamentals/./snap_sync/SnapSyncHealing-1.png" alt="Snap Sync Healing - 1" /></p>
+<p>- We run the healing algorithm and get a correct tree at the end of it</p>
+<p>This method alone provides up to a 4-5 times boost in performance, as computing the trie is way faster than downloading it.</p>
+<h2 id="implementation"><a class="header" href="#implementation">Implementation</a></h2>
+<p>Generalized Flowchart of snapsync</p>
+<p><img src="l1/fundamentals/./snap_sync/Flow-SnapSync.png" alt="Flow - Snap Sync" /></p>
+<h3 id="flags"><a class="header" href="#flags">Flags</a></h3>
+<p>When developing snap sync there are flags to take into account that are used only for testing:</p>
+<ul>
+<li>
+<p>If the <code>SKIP_START_SNAP_SYNC</code> environment variable is set and isn't empty, it will skip the step of downloading the leaves and will immediately begin healing. This simulates the behaviour of fast-sync.</p>
+</li>
+<li>
+<p>If debug assertions are on, the program will validate that the entire state and storage tries are valid by traversing the entire trie and recomputing the roots. If any is found to be wrong, it will print an error and exit the program. This is used for debugging purposes; a validation error here means that there is 100% a bug in snap sync.</p>
+</li>
+<li>
+<p><code>--syncmode [full, default:snap]</code> which defines what kind of sync we use. Full is executing each block, and isn't possible on a fresh sync for mainnet and sepolia.</p>
+</li>
+</ul>
+<h3 id="file-structure"><a class="header" href="#file-structure">File Structure</a></h3>
+<p>The sync module is a component of the <code>ethrex-p2p</code> crate, found in <code>crates/networking/p2p</code> folder. The main sync functions are found in:</p>
+<ul>
+<li><code>crates/networking/p2p/sync.rs</code></li>
+<li><code>crates/networking/p2p/peer_handler.rs</code></li>
+<li><code>crates/networking/p2p/sync/state_healing.rs</code></li>
+<li><code>crates/networking/p2p/sync/storage_healing.rs</code></li>
+<li><code>crates/networking/p2p/sync/code_collector.rs</code></li>
+</ul>
+<h3 id="syncer-and-sync-modes"><a class="header" href="#syncer-and-sync-modes">Syncer and Sync Modes</a></h3>
+<p>The struct that handles the needed handles for syncing is the <code>Syncer</code>, and it has a variable to indicate if the snap mode is enabled. The Sync Modes are defined in <code>sync.rs</code> as follows.</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span>
+<span class="boring">fn main() {
+</span>/// Manager in charge the sync process
+#[derive(Debug)]
+pub struct Syncer {
+    /// This is also held by the SyncManager allowing it to track the latest syncmode, without modifying it
+    /// No outside process should modify this value, only being modified by the sync cycle
+    snap_enabled: Arc&lt;AtomicBool&gt;,
+    peers: PeerHandler,
+    // Used for cancelling long-living tasks upon shutdown
+    cancel_token: CancellationToken,
+    blockchain: Arc&lt;Blockchain&gt;,
+    /// This string indicates a folder where the snap algorithm will store temporary files that are
+    /// used during the syncing process
+    datadir: PathBuf,
+}
+
+pub enum SyncMode {
+    #[default]
+    Full,
+    Snap,
+}
+<span class="boring">}</span></code></pre></pre>
+<p>The flow of the program in default mode is to start by doing snap sync, then we switch to fullsync at the end and continue catching up by executing blocks.</p>
+<h3 id="downloading-headers"><a class="header" href="#downloading-headers">Downloading Headers</a></h3>
+<p>The first step is downloading all the headers, through the <code>request_block_headers</code> function. This function does the following steps:</p>
+<ul>
+<li>Request from peers the number of the sync_head that we received from the consensus client</li>
+<li>Divide the headers into discrete "chunks" to ask our peers
+<ul>
+<li>Currently, the headers are divided into 800 chunks<sup class="footnote-reference" id="fr-3-1"><a href="#footnote-3">3</a></sup></li>
+</ul>
+</li>
+<li>Queue those chunks as tasks into a channel
+<ul>
+<li>These tasks ask the peers for their data, and respond through a channel</li>
+</ul>
+</li>
+<li>Read from the channel to get a task</li>
+<li>Finds the best free peers</li>
+<li>Spawn a new async job to ask the peer for the task</li>
+<li>If the channel for new is empty, check if everything is downloaded</li>
+<li>Read from the channel of responses</li>
+<li>Store the read result</li>
+</ul>
+<p><img src="l1/fundamentals/./snap_sync/Flow-DownloadHeaders.png" alt="request_block_header flowchart" /></p>
+<h3 id="downloading-account-values"><a class="header" href="#downloading-account-values">Downloading Account Values</a></h3>
+<h4 id="api"><a class="header" href="#api">API</a></h4>
+<p>When downloading the account values, we use the snap function <a href="https://github.com/ethereum/devp2p/blob/master/caps/snap.md#getaccountrange-0x00"><code>GetAccountRange</code></a>. This requests receives:</p>
+<ul>
+<li>rootHash: state_root of the block we're trying to download</li>
+<li>startingHash: Account hash<sup class="footnote-reference" id="fr-4-1"><a href="#footnote-4">4</a></sup> of the first to retrieve</li>
+<li>limitHash: Account hash after which to stop serving data</li>
+<li>responseBytes: Soft limit at which to stop returning data</li>
+</ul>
+<p>This method returns the following</p>
+<ul>
+<li>accounts: List of consecutive accounts from the trie
+<ul>
+<li>accHash: Hash of the account address (trie path)</li>
+<li>accBody: Account body in slim format</li>
+</ul>
+</li>
+<li>proof: List of trie nodes proving the account range</li>
+</ul>
+<p>The proof is a merkle proof of the accounts provided, and the root of that merkle must equal to the rootHash.
+In ethrex this is checked by the <code>verify_range</code> function.</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>/// Verifies that the key value range belongs to the trie with the given root given the edge proofs for the range
+/// Also returns true if there is more state to be fetched (aka if there are more keys to the right of the given range)
+pub fn verify_range(
+    root: H256,
+    left_bound: &amp;H256,
+    keys: &amp;[H256],
+    values: &amp;[ValueRLP],
+    proof: &amp;[Vec&lt;u8&gt;],
+) -&gt; Result&lt;bool, TrieError&gt;
+<span class="boring">}</span></code></pre></pre>
+<p>We know we have finished a range if the last of the accounts downloaded is to the right of the bound we have set to the request, or if the <code>verify_range</code> returns true.</p>
+<h4 id="dump-to-file"><a class="header" href="#dump-to-file">Dump to file</a></h4>
+<p>To avoid having all of the accounts in memory, when their size in memory exceeds 64MiB we dump them to a new file.
+These files are a subfolder of the datadir folder called <code>"account_state_snapshots"</code>.
+For an optimization for faster insertion, these are stored ordered in the RocksDB sst file format.</p>
+<h4 id="flowchart"><a class="header" href="#flowchart">Flowchart</a></h4>
+<p><img src="l1/fundamentals/./snap_sync/Flow-DownloadAccounts.png" alt="request_account_range flowchart" /></p>
+<h3 id="insertion-of-accounts"><a class="header" href="#insertion-of-accounts">Insertion of Accounts</a></h3>
+<p>The sst files in the <code>"account_state_snapshots"</code> subfolder are ingested into a RocksDB database. This provides an ordered array that is used for insertion.</p>
+<p><a href="l1/fundamentals/../../internal/l1/sorted_trie_insert.html">More detailed documentation found in sorted_trie_insert.md</a>.
+<a href="l1/fundamentals/../../internal/l1/sorted_trie_insert.html">More detailed documentation found in sorted_trie_insert.md</a>.</p>
+<h3 id="downloading-storage-slots"><a class="header" href="#downloading-storage-slots">Downloading Storage Slots</a></h3>
+<p>The download of the storage slots is conceptually similar to the download of accounts, but very different in implementation. The method uses the snap function <a href="https://github.com/ethereum/devp2p/blob/master/caps/snap.md#getstorageranges-0x02"><code>GetStorageRanges</code></a>. This requests has the following parameters:</p>
+<ul>
+<li>rootHash: state_root of the block we're trying to download</li>
+<li>accountHashes: List of all the account address hashes of the storage tries to serve</li>
+<li>startingHash: Storage slot hash of the first to retrieve</li>
+<li>limitHash: Storage slot hash after which to stop serving</li>
+<li>responseBytes: Soft limit at which to stop returning data</li>
+</ul>
+<p>The parameters <code>startingHash</code> and <code>limitHash</code> are only read when <code>accountHashes</code> is a single account.</p>
+<p>The return is similar to the one from <code>GetAccountRange</code>, but with multiple results, one for each account provided, with the following parameters:</p>
+<ul>
+<li>slots: List of list of consecutive slots from the trie (one list per account)
+<ul>
+<li>slotHash: Hash of the storage slot key (trie path)</li>
+<li>slotData: Data content of the slot</li>
+</ul>
+</li>
+<li>proof: List of trie nodes proving the slot range</li>
+</ul>
+<p>From these parameters, there is a couple of difficulties that pop up.</p>
+<ul>
+<li>We need to know which accounts have storage that needs to be downloaded</li>
+<li>We need to know what storage root each account has to be able to verify it</li>
+</ul>
+<p>To solve these issues we take two actions:</p>
+<ul>
+<li>Before we download the storage slots we ensure that the state trie is in a consistent complete state. This is accomplished by doing the insertion of accounts step first and then healing the trie. If during the storage slot download the pivot becomes stale, we heal the trie again with the new pivot, to keep the trie up to date.</li>
+<li>When inserting the accounts, we grab a list of all the accounts with their storage root. If the account is healed, we marked the storage root as <code>None</code>, to indicate we should check in the DB what is the state of the storage root.</li>
+</ul>
+<h4 id="the-time-traveling-problem"><a class="header" href="#the-time-traveling-problem">The time traveling problem</a></h4>
+<p>During snap sync development, we kept running into a problematic edge case: what we call "time traveling". This is when a certain account is in state A at a certain pivot, then changes to B in the next pivot, <strong>then goes back to A</strong> on a subsequent pivot change. This was a huge source of problems because it broke an invariant we assumed to be true, namely:</p>
+<ul>
+<li>If an account changes its state on pivot change, we will encounter it during state healing. This is NOT true if the trie is hash based.</li>
+</ul>
+<p>The reason for this is the time traveling scenario. When an account goes back to a state we already have on our database, we do not heal it (because we already have it), even though its state has changed. This means the code won't realize the account has changed its storage root and won't update it.</p>
+<p>This should not be a problem in a path based trie (which we currently have), but it's important to keep it in mind and make sure that whatever code we write keeps this time traveling edge case in mind and solves it.</p>
+<h4 id="repeated-storage-roots"><a class="header" href="#repeated-storage-roots">Repeated Storage Roots</a></h4>
+<p>A large amount of the accounts with storage have exactly the same storage as other accounts.<sup class="footnote-reference" id="fr-5-1"><a href="#footnote-5">5</a></sup> As such, when we are creating tasks for download, it's important to group the tasks by storage root and not download them twice.</p>
+<h4 id="big-accounts"><a class="header" href="#big-accounts">Big Accounts</a></h4>
+<p>Storage trie sizes have a very uneven distribution. Around 70% of all ethereum mainnet contracts have only 1 or 2 storage slots. However, a few contracts have more storage slots than all account leaves in the entire state trie. As such, the code needs to take this pareto distribution into account to download storage tries fast.</p>
+<p>At the beginning of the algorithm, we divide the accounts into chunks of 300 storage roots and their corresponding accounts. We start downloading the storage slots, until we find an account whose storage doesn't fit into a single requests. This will be indicated by the proof field having the data indicating that there are still more nodes to download in that account.</p>
+<p><img src="l1/fundamentals/./snap_sync/SnapSyncDownloadingStorages-1.png" alt="proofs for missing slots" /></p>
+<p>When we reach that situation, we chunk the big account based on the "density"<sup class="footnote-reference" id="fr-7-1"><a href="#footnote-7">6</a></sup> of storage slots we downloaded, following this code to get chunks of 10,000 slots<sup class="footnote-reference" id="fr-6-1"><a href="#footnote-6">7</a></sup>. We create the tasks to download those intervals, and store all of the intervals in a struct to check when everything for that account was properly download.</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>    // start_hash_u256 is the hash of the address of the last slot
+    // slot_count is the amount of slots we have downloaded
+    // The division gives us the density (maximum possible slots/actual slots downloaded) 
+    // we want chunks of 10.000 slots, so we multiply those two numbers
+    let storage_density = start_hash_u256 / slot_count;
+    let slots_per_chunk = U256::from(10000);
+    let chunk_size = storage_density
+        .checked_mul(slots_per_chunk)
+        .unwrap_or(U256::MAX);
+<span class="boring">}</span></code></pre></pre>
+<h4 id="tasks-api"><a class="header" href="#tasks-api">Tasks API</a></h4>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>struct StorageTask {
+    // Index of the first storage account we want to download
+    start_index: usize,
+    // Index of the last storage account we want to download (not inclusive)
+    end_index: usize,
+    // startingHash, used when the task is downloading a single account
+    start_hash: H256,
+    // end_hash is Some if the task is to download a big task
+    end_hash: Option&lt;H256&gt;,
+}
+
+struct StorageTaskResult {
+    // Index of the first storage account we want to download
+    start_index: usize,
+    // Slots we have successfully downloaded with the hash of the slot + value
+    account_storages: Vec&lt;Vec&lt;(H256, U256)&gt;&gt;,
+    // Which peer answered the task, used for scoring
+    peer_id: H256,
+    // Index of the first storage account we still need to download
+    remaining_start: usize,
+    // Index of the last storage account we still need to download
+    remaining_end: usize,
+    // remaining_hash_range[0] is the hash of the last slot we downloaded (so we need to download starting from there)
+    // remaining_hash_range[1] is the end_hash from the original StorageTask
+    remaining_hash_range: (H256, Option&lt;H256&gt;),
+}
+<span class="boring">}</span></code></pre></pre>
+<h4 id="big-accounts-flow"><a class="header" href="#big-accounts-flow">Big Accounts Flow</a></h4>
+<p><img src="l1/fundamentals/./snap_sync/Flow-BigAccountLogic.png" alt="Big Account logic" /></p>
+<h4 id="retry-limit"><a class="header" href="#retry-limit">Retry Limit</a></h4>
+<p>Currently, if ethrex has been downloading storages for more than 2 pivots, the node will stop trying to download storage, and fallback to heal (fast sync) all the storage accounts that were still missing downloads. This prevents snap sync from hanging due to an edge case we do not currently handle if an account time travels. See the "snap sync concerns" document for details on what this edge case is.</p>
+<h3 id="downloading-bytecodes"><a class="header" href="#downloading-bytecodes">Downloading Bytecodes</a></h3>
+<p>Whenever an account is download or healed we check if the code is not empty. If it isn't, we store it for future download. This is added to a list, and when the list grows beyond a certain size it is written to disk. After the healing is done and we have a complete state and storage tree, we start with the download of bytecodes, chunking them to avoid memory overflow.</p>
+<h3 id="forkchoice-update"><a class="header" href="#forkchoice-update">Forkchoice update</a></h3>
+<p>Once the entire state trie, all storage tries and contract bytecodes are downloaded, we switch the sync mode from <code>snap</code> to <code>full</code>, and we do an <code>apply_forkchoice</code> to mark that as the last pivot as the last block.</p>
+<hr>
+<ol class="footnote-definition"><li id="footnote-1">
+<p>We update pivots based only on the timestamp, not on the peer response. According to the spec, stale roots return empty responses, but Byzantine peers may return empty responses at arbitrary times. Therefore, we rely on the rule that nodes must keep at least 128 blocks. Once <code>time &gt; timestamp + 128 * 12</code> we mark the pivot as stale. <a href="#fr-1-1">↩</a></p>
+</li>
+<li id="footnote-2">
+<p>The membatch is an idea taken from geth, and the name comes from their code. The name should be updated to "pendingNodes" as it reflects it current use. <a href="#fr-2-1">↩</a></p>
+</li>
+<li id="footnote-3">
+<p>This currently isn't a named constant, we should change that <a href="#fr-3-1">↩</a></p>
+</li>
+<li id="footnote-4">
+<p>All accounts and storages are sent and found through the hash of their address. Example: the account with address 0xf003 would be found through the 0x26c2...38c1 hash, and would be found before the account with adress 0x0001 whose hash would be 0x49d0...49d5 <a href="#fr-4-1">↩</a></p>
+</li>
+<li id="footnote-5">
+<p>This may be for a variety of reasons, but the most likely is ERC20 tokens that were deployed and never used. <a href="#fr-5-1">↩</a></p>
+</li>
+<li id="footnote-7">
+<p>actually <a href="https://en.wikipedia.org/wiki/Specific_volume">specific volume</a> (maximum possible slots/actual slots downloaded) <a href="#fr-7-1">↩</a></p>
+</li>
+<li id="footnote-6">
+<p>10_000 slots is a number chosen without hard data, we should review that number. <a href="#fr-6-1">↩</a></p>
+</li>
+</ol><div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
   padding: 8px 16px;
@@ -2084,6 +2288,243 @@ if is_stale &amp;&amp; nodes_to_heal.is_empty() &amp;&amp; inflight_tasks == 0 {
 <p>During the test of snapsync mainnet, we started seeing that storage healing was panicking, so we added some logs to see what account hashes were being accessed and when where they healed vs accessed. Exploring the database we saw that the offending account was present in a previous state and missing in the next one, with the corresponding merkle proof matching the block state root. Originally we suspected a reorg, but searching the blocks we saw they were finalized in the chain.</p>
 <p>The account state present indicated an account with nonce 0, no code and no storage but with balance. We didn't have access to the account address, as the state trie only stores the hash of the account address so we turned to another strategy to find it. Using <a href="https://docs.etherscan.io/api-endpoints/accounts#get-internal-transactions-by-block-range">etherscan's API</a> allowing to search internal transactions from a block range, we explored the range where we knew the account existed in the state trie. Hashing all of the <code>to</code> and <code>from</code> of the transactions <a href="https://etherscan.io/tx/0xf23b2c233410141cda0c6d24f21f0074c494565bfd54ce008c5ce1b30b23b0da">we found the transaction</a> that deleted the account with a self destruct. Despite the account becoming a contract just during that transaction, we saw that 900 blocks before it was <a href="https://etherscan.io/tx/0xbc9f52ba45a6915878318be944cb20bd3bb1bbf36b2ce8ff5e6575ce1689f1b6">created with a transfer</a>. The result of the self destruct was the transfer of 0.044 ETH from one account to another.</p>
 <p>The specific transaction that created the contract: https://etherscan.io/tx/0xf23b2c233410141cda0c6d24f21f0074c494565bfd54ce008c5ce1b30b23b0da</p>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="snap-sync-concerns"><a class="header" href="#snap-sync-concerns">Snap Sync Concerns</a></h1>
+<h2 id="code-improvement-opportunities"><a class="header" href="#code-improvement-opportunities">Code Improvement opportunities</a></h2>
+<h3 id="storage-downloads"><a class="header" href="#storage-downloads">Storage downloads</a></h3>
+<p>When downloading storages, there's a possibility that storage leaves never finish downloading. This can happen if an account time travels (i.e. if it goes from state A to state B on a pivot change, then back to state A on a subsequent pivot). The reason for this is that we have an in-memory cache where we keep track of the storage root for every account that needs to be downloaded. On every state healing phase on a pivot change, we update the storage root of every account we encounter. However, if an account time travels, we will not encounter it during healing because we already had it, and thus our storage root for it will be wrong.</p>
+<p>NOTE: this should no longer be a problem now that our trie is path based, because on every state healing phase we erase the account's previous state. However, it's important to keep this scenario in mind when developing snap sync; any change in how we handle our trie or our assumptions may run into a problem it does not properly handle time traveling accounts.</p>
+<h3 id="handling-the-pivot-and-reorgs"><a class="header" href="#handling-the-pivot-and-reorgs">Handling the pivot and reorgs</a></h3>
+<p>We are currently asking the pivot from our peers. We should have a system for handling the pivot from our consensus client. We should also be able to understand if the new pivot received is a reorg. In that case, we can't fullsync, but we can fast-sync between those pivots relatively easily.</p>
+<h3 id="potential-bytecode-nonresponse"><a class="header" href="#potential-bytecode-nonresponse">Potential Bytecode Nonresponse</a></h3>
+<p>We are currently asking for all the bytecodes that we have seen, never checking if those bytecodes are currently in the tree. This isn't a problem for most codes that are immutable, but EOA may change their code to be a delegated, and the old code may be deleted from other peers in that scenario. We should consider pruning the bytecode requests if one is downloaded during healing.</p>
+<h2 id="performance"><a class="header" href="#performance">Performance</a></h2>
+<p>For performance, having an efficient cache of accounts that need to have their storage downloaded in memory is key, and we should avoid going to the db as much as possible. In particular in storage healing we start by trying to get all of the storage healing roots, and this can be sped up considerably if we avoid going to the db.</p>
+<h3 id="improving-debug"><a class="header" href="#improving-debug">Improving debug</a></h3>
+<p>The functions <code>validate_state_root</code> and <code>validate_storage_roots</code> are very slow, as they rebuild the entire state trie in memory. This is</p>
+<h2 id="code-quality"><a class="header" href="#code-quality">Code Quality</a></h2>
+<p>In general, snap sync lacks explanation comments that detail the functioning on the algorithm. Variables and structs should be renamed to make it properly readable.</p>
+<h3 id="storage-downloads-1"><a class="header" href="#storage-downloads-1">Storage downloads</a></h3>
+<p>Request storages is a very hard function to read, as the data structures were constantly modified to introduce speed optimizations. As such, this function is critical to restructure and manage it taking into account memory concerns.</p>
+<p>This function also has a lot of numeric constants inserted in the code directly, and should be handled better by having defined consts with explanations.</p>
+<h3 id="healing"><a class="header" href="#healing">Healing</a></h3>
+<p>There are two healing challenges. We should have a single main algorithm for healing, not have the code duplicated across two files. On top of that, the Membatch structure should be replaced with "PendingNodes" as it's a far more descriptive name.</p>
+<h2 id="memory-concerns"><a class="header" href="#memory-concerns">Memory Concerns</a></h2>
+<h3 id="storage-accounts"><a class="header" href="#storage-accounts">Storage accounts</a></h3>
+<p>Currently, we use a struct <code>accounts_by_root_hash</code> that has an unbounded size in memory. When rewriting this algorithm we should make sure that we never use more than a certain amount of memory for it; the rest should be on disk.</p>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="sorted-trie-insertion"><a class="header" href="#sorted-trie-insertion">Sorted Trie Insertion</a></h1>
+<p>This document describes the algorithm implemented in <code>crates/common/trie/trie_sorted.rs</code>
+which is used to speed up the insertion time in snap sync.
+During that step we are inserting all of the accounts state and storage
+slots downloaded into the Ethereum world state Merkle Patricia Trie.
+To know how that trie works, it's recommended to <a href="https://epf.wiki/#/wiki/EL/data-structures?id=world-state-trie">read this primer first.</a></p>
+<h2 id="concept-1"><a class="header" href="#concept-1">Concept</a></h2>
+<p>Naive algorithm: we insert keys in arbitrary (unsorted) order.
+This version requires O(n*log(n)) reads and writes to disk.
+This is because each insertion creates a new leaf, which modifies
+the hash of its parent branch recursively. We could avoid reads
+to disk by having the trie in memory, but this is unviable
+for large amounts of state data.</p>
+<p>Example of the Naive implementation:
+<img src="internal/l1/sorted_trie_insert/NaiveInsertionExample1.png" alt="Image showing the insertion of 3 elements 0x0EBB, 0x12E6, 0x172E. Each one requiring multiple new reads and writes" /></p>
+<p>If the input data is sorted, the computation can be optimized to be O(n).
+In the example, just by reading 0x0EBB and 0x172E, we know that there is
+a branch node as root (because they start with different nibbles), and
+that the leaf will have a partial path of 0xEBB (because no node exists
+between 0x0EBB and 0x172E if it's sorted). The root branch node we know exists and will be modified, so we don't write until we have read all
+input.</p>
+<h2 id="implementation-1"><a class="header" href="#implementation-1">Implementation</a></h2>
+<p>The implementation maintains three pointers:</p>
+<ol>
+<li>The current element being processed.</li>
+<li>The next input value.</li>
+<li>The parent of the current element.</li>
+</ol>
+<p>All parents that can still be modified are stored in a "parent stack".
+Based on these, the algorithm can determine the next write operation to perform.</p>
+<h3 id="scenarios"><a class="header" href="#scenarios">Scenarios</a></h3>
+<p>Depending on the state of the three current pointers, one of 3 scenarios
+can happen:</p>
+<p>Scenario 1: Current and next value are siblings with the current
+parent being the parent of both values.
+This happens when the parent and both values share the same
+number of nibbles at the beginning of their paths.
+In our example, all node paths start with 0x1 and then diverge.</p>
+<p>In this scenario, we can compute the leaf for the current value, write it,
+update the parent to include a pointer to that leaf, and then continue.</p>
+<p><img src="internal/l1/sorted_trie_insert/SortedInsertionScenario1.png" alt="Image showing the insertion of 1 element with a current parent branch 0x1, the current element 0x12E6 and next element 0x172E. 0x12E6 is inserted with a single write" /></p>
+<p>Scenario 2: Current and next values are siblings of a new current parent.
+This happens when the parent shares less nibbles from their paths than what the siblings share.
+In our example, the current and next value share 0x17, while the parent only shares 0x1.</p>
+<p>In this scenario, we know the leaf we need to compute from the current value
+so we write that. Furthermore, we know that we need a new branch at 0x17,
+so we create it and insert the leaf we just computed and insert into the branch.
+The current parent is stored in the "parent stack", and the new branch becomes the
+current parent.</p>
+<p><img src="internal/l1/sorted_trie_insert/SortedInsertionScenario2.png" alt="Image showing the insertion of 1 element with a current parent branch 0x1, the current element 0x172E and next element 0x175B. 0x172E is inserted with a single write, while the current parent branch is put onto the stack, and a new current parent branch 0x17 is created" /></p>
+<p>Scenario 3: The current parent is not the parent of the
+next value. This happens when the parent doesn't have
+all of the nibbles of its path.</p>
+<p>In this scenario, we know the leaf we need to compute from the current value,
+so we write that. We change the current value to be the current parent, and
+the new current parent is popped from the "parent stack".</p>
+<p><img src="internal/l1/sorted_trie_insert/SortedInsertionScenario3.png" alt="Image showing the insertion of 1 element with a current parent branch 0x17, the current element 0x175B and next element 0x1825. 0x175B is inserted with a single write, while the current parent branch becomes the current value, and the current parent branch is popped from the stack" /></p>
+<p>These three scenarios keep repeating themselves until the trie is complete,
+at which point the algorithm returns a hash to the root node branch.</p>
+<h3 id="inserting-with-extensions"><a class="header" href="#inserting-with-extensions">Inserting with extensions</a></h3>
+<p>In general, each write to disk is prepared to properly handle extensions
+as the write function knows what it's writing and what was its parent
+and full path. As such, it can check if the insertion is a branch and
+if an extension is needed.</p>
+<p>A specific edge case is the root node, which is assumed to always be a branch
+node, but the code has a special case check to see if the root node has
+a single child, in which case it changes to an extension or leaf as needed,
+while modifying the other nodes in the trie.</p>
+<h3 id="concurrency"><a class="header" href="#concurrency">Concurrency</a></h3>
+<p>The slowest step in this process is flushing nodes to disk.
+To avoid stalling during writes, the algorithm uses an internal buffer that holds a fixed number of nodes. Once the buffer is filled, it
+creates a new task that writes it to disk in the background.</p>
+<p>We want to limit the amount of buffers we can have, so we allocate a
+fixed number of buffers at the beginning and we use a channel for the
+algorithm to receive empty buffers and the writing task clears the
+buffer and sends it back through the channels.</p>
+<p>These tasks are executed using a custom thread pool defined in
+<code>/crates/concurrency/concurrency.rs</code></p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {

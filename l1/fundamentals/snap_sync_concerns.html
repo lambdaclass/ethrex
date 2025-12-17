@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Introduction - Ethrex</title>
+        <title>Future Rewrite Concerns - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -12,33 +12,33 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="../favicon.svg">
-        <link rel="shortcut icon" href="../favicon.png">
-        <link rel="stylesheet" href="../css/variables.css">
-        <link rel="stylesheet" href="../css/general.css">
-        <link rel="stylesheet" href="../css/chrome.css">
-        <link rel="stylesheet" href="../css/print.css" media="print">
+        <link rel="icon" href="../../favicon.svg">
+        <link rel="shortcut icon" href="../../favicon.png">
+        <link rel="stylesheet" href="../../css/variables.css">
+        <link rel="stylesheet" href="../../css/general.css">
+        <link rel="stylesheet" href="../../css/chrome.css">
+        <link rel="stylesheet" href="../../css/print.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="../fonts/fonts.css">
+        <link rel="stylesheet" href="../../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
-        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
-        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
+        <link rel="stylesheet" id="highlight-css" href="../../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
 
 
         <!-- Provide site root and default themes to javascript -->
         <script>
-            const path_to_root = "../";
+            const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc.js"></script>
+        <script src="../../toc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -102,7 +102,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
             </noscript>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -137,7 +137,7 @@
                     <h1 class="menu-title">Ethrex</h1>
 
                     <div class="right-buttons">
-                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
                         <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
@@ -237,21 +237,39 @@
 }
 
 </style>
-<h1 id="introduction"><a class="header" href="#introduction">Introduction</a></h1>
-<p>Layer 2 (L2) solutions are protocols built on top of Ethereum to increase scalability and reduce transaction costs. L2s process transactions off-chain and, in the case of Rollups, they periodically post data or proofs back to Ethereum Layer 1, inheriting its security.</p>
-<p><strong>Ethrex</strong> is a framework that lets you launch your own L2 rollup or blockchain. With ethrex, you can deploy, run, and experiment with custom L2 networks, taking advantage of Ethereum's security while enabling high throughput and low fees.</p>
-<h2 id="get-started-with-your-l2"><a class="header" href="#get-started-with-your-l2">Get started with your L2</a></h2>
-<p>Check out the <a href="../getting-started/README.html#quickstart-l2">Quickstart L2 guide</a> to start your rollup in just a command, or jump right into the <a href="../l2/deployment/overview.html">Deploy an L2</a> for more detailed instructions.</p>
+<h1 id="snap-sync-concerns"><a class="header" href="#snap-sync-concerns">Snap Sync Concerns</a></h1>
+<h2 id="code-improvement-opportunities"><a class="header" href="#code-improvement-opportunities">Code Improvement opportunities</a></h2>
+<h3 id="storage-downloads"><a class="header" href="#storage-downloads">Storage downloads</a></h3>
+<p>When downloading storages, there's a possibility that storage leaves never finish downloading. This can happen if an account time travels (i.e. if it goes from state A to state B on a pivot change, then back to state A on a subsequent pivot). The reason for this is that we have an in-memory cache where we keep track of the storage root for every account that needs to be downloaded. On every state healing phase on a pivot change, we update the storage root of every account we encounter. However, if an account time travels, we will not encounter it during healing because we already had it, and thus our storage root for it will be wrong.</p>
+<p>NOTE: this should no longer be a problem now that our trie is path based, because on every state healing phase we erase the account's previous state. However, it's important to keep this scenario in mind when developing snap sync; any change in how we handle our trie or our assumptions may run into a problem it does not properly handle time traveling accounts.</p>
+<h3 id="handling-the-pivot-and-reorgs"><a class="header" href="#handling-the-pivot-and-reorgs">Handling the pivot and reorgs</a></h3>
+<p>We are currently asking the pivot from our peers. We should have a system for handling the pivot from our consensus client. We should also be able to understand if the new pivot received is a reorg. In that case, we can't fullsync, but we can fast-sync between those pivots relatively easily.</p>
+<h3 id="potential-bytecode-nonresponse"><a class="header" href="#potential-bytecode-nonresponse">Potential Bytecode Nonresponse</a></h3>
+<p>We are currently asking for all the bytecodes that we have seen, never checking if those bytecodes are currently in the tree. This isn't a problem for most codes that are immutable, but EOA may change their code to be a delegated, and the old code may be deleted from other peers in that scenario. We should consider pruning the bytecode requests if one is downloaded during healing.</p>
+<h2 id="performance"><a class="header" href="#performance">Performance</a></h2>
+<p>For performance, having an efficient cache of accounts that need to have their storage downloaded in memory is key, and we should avoid going to the db as much as possible. In particular in storage healing we start by trying to get all of the storage healing roots, and this can be sped up considerably if we avoid going to the db.</p>
+<h3 id="improving-debug"><a class="header" href="#improving-debug">Improving debug</a></h3>
+<p>The functions <code>validate_state_root</code> and <code>validate_storage_roots</code> are very slow, as they rebuild the entire state trie in memory. This is</p>
+<h2 id="code-quality"><a class="header" href="#code-quality">Code Quality</a></h2>
+<p>In general, snap sync lacks explanation comments that detail the functioning on the algorithm. Variables and structs should be renamed to make it properly readable.</p>
+<h3 id="storage-downloads-1"><a class="header" href="#storage-downloads-1">Storage downloads</a></h3>
+<p>Request storages is a very hard function to read, as the data structures were constantly modified to introduce speed optimizations. As such, this function is critical to restructure and manage it taking into account memory concerns.</p>
+<p>This function also has a lot of numeric constants inserted in the code directly, and should be handled better by having defined consts with explanations.</p>
+<h3 id="healing"><a class="header" href="#healing">Healing</a></h3>
+<p>There are two healing challenges. We should have a single main algorithm for healing, not have the code duplicated across two files. On top of that, the Membatch structure should be replaced with "PendingNodes" as it's a far more descriptive name.</p>
+<h2 id="memory-concerns"><a class="header" href="#memory-concerns">Memory Concerns</a></h2>
+<h3 id="storage-accounts"><a class="header" href="#storage-accounts">Storage accounts</a></h3>
+<p>Currently, we use a struct <code>accounts_by_root_hash</code> that has an unbounded size in memory. When rewriting this algorithm we should make sure that we never use more than a certain amount of memory for it; the rest should be on disk.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../internal/l1/sorted_trie_insert.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../internal/l1/delete_accounts.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../l2/deployment/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../internal/l1/sorted_trie_insert.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -261,11 +279,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../internal/l1/sorted_trie_insert.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../internal/l1/delete_accounts.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../l2/deployment/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../internal/l1/sorted_trie_insert.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
@@ -280,17 +298,17 @@
         </script>
 
 
-        <script src="../elasticlunr.min.js"></script>
-        <script src="../mark.min.js"></script>
-        <script src="../searcher.js"></script>
+        <script src="../../elasticlunr.min.js"></script>
+        <script src="../../mark.min.js"></script>
+        <script src="../../searcher.js"></script>
 
-        <script src="../clipboard.min.js"></script>
-        <script src="../highlight.js"></script>
-        <script src="../book.js"></script>
+        <script src="../../clipboard.min.js"></script>
+        <script src="../../highlight.js"></script>
+        <script src="../../book.js"></script>
 
         <!-- Custom JS scripts -->
-        <script src="../mermaid.min.js"></script>
-        <script src="../mermaid-init.js"></script>
+        <script src="../../mermaid.min.js"></script>
+        <script src="../../mermaid-init.js"></script>
 
 
     </div>
