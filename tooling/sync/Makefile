@@ -2,7 +2,8 @@
 flamegraph-branch flamegraph-inner flamegraph-mainnet flamegraph-sepolia flamegraph-holesky \
 flamegraph-hoodi start-lighthouse start-ethrex backup-db start-mainnet-metrics-docker \
 start-sepolia-metrics-docker start-holesky-metrics-docker start-hoodi-metrics-docker \
-start-metrics-docker tail-syncing-logs tail-metrics-logs copy_flamegraph import-with-metrics
+start-metrics-docker tail-syncing-logs tail-metrics-logs copy_flamegraph import-with-metrics \
+clear-lighthouse clear-ethrex clear-data
 
 ETHREX_DIR ?= "../.."
 EVM ?= levm
@@ -199,6 +200,15 @@ $(error Unknown network $(SERVER_SYNC_NETWORK))
 endif
 
 LOGS_FILE ?= output.log
+
+clear-lighthouse: ## Clear lighthouse for the network given by NETWORK.
+	rm -rf  $(DATA_PATH)/${NETWORK}_data/lighthouse_${NODE_NAME}_$(EVM)/beacon
+
+clear-ethrex: ## Clear ethrex for the network given by NETWORK.
+	rm -rf  "$(DATA_PATH)/${NETWORK}_data/ethrex/$(EVM)"
+
+clear-data: clear-lighthouse clear-ethrex ## Clear lighthouse and ethrex data for the network given by NETWORK.
+
 
 # Use make server-sync SERVER_SYNC_BRANCH=branch_name SERVER_SYNC_NETWORK=network_name LOGS_FILE=logs_file_name  HEALING=1 MEMORY=1 FULL_SYNC=1
 # SERVER_SYNC_BRANCH is the branch to checkout before syncing, SERVER_SYNC_NETWORK is the network to sync, LOGS_FILE is the file to output logs to, HEALING enables healing mode, MEMORY uses memory datadir, FULL_SYNC switches to full-sync mode.
