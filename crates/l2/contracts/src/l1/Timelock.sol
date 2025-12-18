@@ -15,6 +15,15 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable {
 
     IOnChainProposer public onChainProposer;
 
+    // Used for functions in the timelock that should be triggered
+    modifier onlySelf() {
+        require(
+            msg.sender == address(this),
+            "Timelock: caller is not the timelock itself"
+        );
+        _;
+    }
+
     function initialize(
         uint256 minDelay, // This should be the minimum delay for contract upgrades in seconds (e.g. 7 days = 604800 sec).
         address[] memory sequencers, // Will be able to commit and verify batches.
@@ -123,13 +132,9 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable {
         emit EmergencyExecution(target, value, data);
     }
 
-    // Logic for updating Timelock contract. Should be triggered by the timelock itself so that it respects min time.
+    /// @notice Allow timelock itself to upgrade the contract in order to respect min time.
+    /// @param newImplementation the address of the new implementation
     function _authorizeUpgrade(
-        address /*newImplementation*/
-    ) internal view override {
-        address sender = _msgSender();
-        if (sender != address(this)) {
-            revert TimelockUnauthorizedCaller(sender);
-        }
-    }
+        address newImplementation
+    ) internal virtual override onlySelf {}
 }
