@@ -74,6 +74,7 @@
     - [L1MessageSender]()
   - [Based sequencing](./l2/fundamentals/based.md)
   - [Transaction fees](./l2/fundamentals/transaction_fees.md)
+  - [Exit Window](./l2/fundamentals/exit_window.md)
 
 # Ethrex for developers
 
