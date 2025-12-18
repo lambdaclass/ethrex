@@ -2166,11 +2166,11 @@ async fn test_fee_token(
         .unwrap();
     assert_eq!(registry_state, expected, "{test}: fee token not registered");
 
-    let ratio_contract = get_fee_token_ratio(&fee_token_address, &l2_client)
+    let fee_token_ratio = get_fee_token_ratio(&fee_token_address, &l2_client)
         .await
         .unwrap();
     assert_eq!(
-        ratio_contract, 2,
+        fee_token_ratio, 2,
         "{test}: fee token ratio not set in contract"
     );
     let value_to_transfer = 100_000;
@@ -2230,9 +2230,6 @@ async fn test_fee_token(
     });
     let tx_size = tx.encode_canonical_to_vec().len().try_into().unwrap();
     let transfer_fees = get_fees_details_l2(&transfer_receipt, &l2_client, tx_size).await?;
-    let fee_token_ratio = get_fee_token_ratio(&fee_token_address, &l2_client)
-        .await
-        .unwrap();
 
     let sender_fee_token_spent = sender_token_balance_before_transfer
         .checked_sub(sender_token_balance_after_transfer)
