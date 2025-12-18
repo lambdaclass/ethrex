@@ -40,7 +40,6 @@ pub struct Environment {
     pub block_gas_limit: u64,
     pub is_privileged: bool,
     pub fee_token: Option<Address>,
-    pub fee_ratio: Option<U256>,
 }
 
 /// This struct holds special configuration variables specific to the

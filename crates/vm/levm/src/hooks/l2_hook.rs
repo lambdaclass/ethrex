@@ -30,6 +30,10 @@ pub const FEE_TOKEN_REGISTRY_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xff, 0xfc,
 ]);
+pub const FEE_TOKEN_RATIO_ADDRESS: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xff, 0xfb,
+]);
 
 // lockFee(address payer, uint256 amount) public onlyBridge
 const LOCK_FEE_SELECTOR: [u8; 4] = [0x89, 0x9c, 0x86, 0xe2];
@@ -37,6 +41,8 @@ const LOCK_FEE_SELECTOR: [u8; 4] = [0x89, 0x9c, 0x86, 0xe2];
 const PAY_FEE_SELECTOR: [u8; 4] = [0x72, 0x74, 0x6e, 0xaf];
 // isFeeToken(address token) external view override returns (bool)
 const IS_FEE_TOKEN_SELECTOR: [u8; 4] = [0x16, 0xad, 0x82, 0xd7];
+// getFeeTokenRatio(address token) external view returns (uint256)
+const FEE_TOKEN_RATIO_SELECTOR: [u8; 4] = [0xc6, 0xab, 0x85, 0xd8];
 const SIMULATION_GAS_LIMIT: u64 = 21000 * 100;
 const SIMULATION_MAX_FEE: u64 = 100;
 
@@ -127,7 +133,30 @@ fn finalize_non_privileged_execution(
 
     default_hook::delete_self_destruct_accounts(vm)?;
 
-    let fee_token_ratio = vm.env.fee_ratio.map(|ratio| ratio.as_u64()).unwrap_or(1u64);
+    let fee_token_ratio =
+        if let Some(fee_token) = vm.env.fee_token {
+            let (fee_token_ratio, _) = simulate_common_bridge_call(
+                vm,
+                FEE_TOKEN_RATIO_ADDRESS,
+                encode_fee_token_ratio_call(fee_token),
+            )?;
+            if !fee_token_ratio.is_success() || fee_token_ratio.output.len() != 32 {
+                return Err(VMError::Internal(InternalError::Custom(
+                    "Failed to get fee token ratio".to_owned(),
+                )));
+            }
+            U256::from_big_endian(fee_token_ratio.output.get(0..32).ok_or(
+                InternalError::Custom("Failed to parse fee token ratio".to_owned()),
+            )?)
+            .try_into()
+            .map_err(|_| {
+                VMError::Internal(InternalError::Custom(
+                    "Failed to convert fee token ratio".to_owned(),
+                ))
+            })?
+        } else {
+            1u64
+        };
 
     if let Some(l1_fee_config) = fee_config.l1_fee_config {
         pay_to_l1_fee_vault(
@@ -420,7 +449,20 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
         ));
     }
 
-    let fee_token_ratio = vm.env.fee_ratio.unwrap_or(U256::one());
+    let fee_token_ratio = simulate_common_bridge_call(
+        vm,
+        FEE_TOKEN_RATIO_ADDRESS,
+        encode_fee_token_ratio_call(fee_token),
+    )?
+    .0;
+    if !fee_token_ratio.is_success() || fee_token_ratio.output.len() != 32 {
+        return Err(VMError::Internal(InternalError::Custom(
+            "Failed to get fee token ratio".to_owned(),
+        )));
+    }
+    let fee_token_ratio = U256::from_big_endian(fee_token_ratio.output.get(0..32).ok_or(
+        InternalError::Custom("Failed to parse fee token ratio".to_owned()),
+    )?);
 
     let sender_address = vm.env.origin;
     let sender_info = vm.db.get_account(sender_address)?.info.clone();
@@ -541,6 +583,14 @@ fn encode_fee_token_call(selector: [u8; 4], address: Address, amount: U256) -> B
 fn encode_is_fee_token_call(token: Address) -> Bytes {
     let mut data = Vec::with_capacity(4 + 32);
     data.extend_from_slice(&IS_FEE_TOKEN_SELECTOR);
+    data.extend_from_slice(&[0u8; 12]);
+    data.extend_from_slice(&token.0);
+    data.into()
+}
+
+fn encode_fee_token_ratio_call(token: Address) -> Bytes {
+    let mut data = Vec::with_capacity(4 + 32);
+    data.extend_from_slice(&FEE_TOKEN_RATIO_SELECTOR);
     data.extend_from_slice(&[0u8; 12]);
     data.extend_from_slice(&token.0);
     data.into()
