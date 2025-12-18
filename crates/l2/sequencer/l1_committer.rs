@@ -232,7 +232,7 @@ impl L1Committer {
     }
 
     async fn rebuild_checkpoint_to_block(
-        source_store: &Store,
+        store: &Store,
         rollup_store: &StoreRollup,
         checkpoint_store: &Store,
         checkpoint_blockchain: &Arc<Blockchain>,
@@ -243,7 +243,7 @@ impl L1Committer {
         }
 
         for block_number in 1..=target_block_number {
-            let block = source_store
+            let block = store
                 .get_block_by_number(block_number)
                 .await?
                 .ok_or_else(|| {
@@ -332,7 +332,7 @@ impl L1Committer {
             .get_batch(last_committed_batch, l1_fork)
             .await?
         else {
-            debug!(
+            warn!(
                 "Missing sealed batch {} in rollup store; cannot rebuild checkpoint yet",
                 last_committed_batch
             );
@@ -400,11 +400,6 @@ impl L1Committer {
 
     async fn commit_next_batch_to_l1(&mut self) -> Result<(), CommitterError> {
         info!("Running committer main loop");
-        let status = self.sequencer_state.status().await;
-        if !matches!(status, SequencerStatus::Sequencing) {
-            debug!("Committer is idle, sequencer status is {status}");
-            return Ok(());
-        }
         // Get the batch to commit
         let last_committed_batch_number =
             get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
@@ -883,7 +878,7 @@ impl L1Committer {
                         &account_updates,
                     )?
                     .ok_or(CommitterError::FailedToGetInformationFromStorage(
-                        "parent state not found in checkpoint store".to_owned(),
+                        "no account updated".to_owned(),
                     ))?;
                 checkpoint_blockchain.store_block(
                     potential_batch_block.clone(),
@@ -1450,7 +1445,6 @@ impl L1Committer {
     }
 
     async fn handle_commit_message(&mut self, handle: &GenServerHandle<Self>) -> CastResponse {
-        // No-op: removed debug spam.
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
             let current_last_committed_batch =
                 get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)

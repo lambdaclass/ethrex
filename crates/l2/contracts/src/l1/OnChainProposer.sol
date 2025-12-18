@@ -197,9 +197,6 @@ contract OnChainProposer is
         CHAIN_ID = chainId;
 
         OwnableUpgradeable.__Ownable_init(owner);
-
-        emit VerificationKeyUpgraded("SP1", commitHash, sp1Vk);
-        emit VerificationKeyUpgraded("RISC0", commitHash, risc0Vk);
     }
 
     /// @inheritdoc IOnChainProposer
