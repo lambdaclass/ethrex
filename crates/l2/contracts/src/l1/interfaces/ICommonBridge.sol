@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity =0.8.31;
 
 /// @title Interface for the CommonBridge contract.
 /// @author LambdaClass
@@ -34,15 +34,6 @@ interface ICommonBridge {
         bytes32 indexed withdrawalsLogsMerkleRoot
     );
 
-    /// @notice L2 messages have been published on L1.
-    /// @dev Event emitted when the L2 messages are published on L1.
-    /// @param l2MessagesBatchNumber the batch number where the l2 messages were emitted.
-    /// @param l2MessagesMerkleRoot the merkle root of the l2 messages.
-    event L2MessagesPublished(
-        uint256 indexed l2MessagesBatchNumber,
-        bytes32 indexed l2MessagesMerkleRoot
-    );
-
     /// @notice A withdrawal has been claimed.
     /// @dev Event emitted when a withdrawal is claimed.
     /// @param withdrawalId the message Id of the claimed withdrawal
@@ -59,6 +50,12 @@ interface ICommonBridge {
     struct BalanceDiff {
         uint256 chainId;
         uint256 value;
+        bytes32[] message_hashes;
+    }
+
+    struct L2MessageRollingHash {
+        uint256 chainId;
+        bytes32 rollingHash;
     }
 
     /// @notice Method to retrieve all the pending transaction hashes.
@@ -68,6 +65,13 @@ interface ICommonBridge {
         external
         view
         returns (bytes32[] memory);
+
+    /// @notice Method to retrieve all the pending L2 message hashes for a given chain.
+    /// @dev This method is used by the L1 watcher to get the pending L2 messages
+    /// to be processed for a given chain.
+    function getPendingL2MessagesHashes(
+        uint256 chainId
+    ) external view returns (bytes32[] memory);
 
     /// @notice Method that sends a transaction to L2.
     /// @dev The deposit process starts here by emitting a L1ToL2Message
@@ -90,6 +94,15 @@ interface ICommonBridge {
         uint16 number
     ) external view returns (bytes32);
 
+    /// @notice Method to retrieve the versioned hash of the first `number`
+    /// pending L2 messages.
+    /// @param chainId the chain id of the L2 messages to retrieve.
+    /// @param number of pending L2 messages to retrieve the versioned hash.
+    function getPendingL2MessagesVersionedHash(
+        uint256 chainId,
+        uint16 number
+    ) external view returns (bytes32);
+
     /// @notice Remove pending transaction hashes from the queue.
     /// @dev This method is used by the L2 OnChainOperator to remove the pending
     /// privileged transactions from the queue after the transaction is included.
@@ -97,6 +110,15 @@ interface ICommonBridge {
     /// As transactions are processed in order, we don't need to specify
     /// the transaction hashes to remove, only the number of them.
     function removePendingTransactionHashes(uint16 number) external;
+
+    /// @notice Remove pending L2 messages from the queue.
+    /// @dev This method is used by the L2 OnChainProposer to remove the pending
+    /// L2 messages from the queue after the messages are included.
+    /// @param chainId the chain id of the L2 messages to remove.
+    /// @param number of pending transaction hashes to remove.
+    /// As transactions are processed in order, we don't need to specify
+    /// the transaction hashes to remove, only the number of them.
+    function removePendingL2Messages(uint256 chainId, uint16 number) external;
 
     /// @notice Method to retrieve the merkle root of the withdrawal logs of a
     /// given block.
@@ -121,31 +143,18 @@ interface ICommonBridge {
     /// @notice Publishes the L2 messages in the router contract.
     /// @dev This method is used by the L2 OnChainProposer to publish the L2
     /// messages when an L2 batch is committed.
-    /// @param l2MessagesBatchNumber the batch number in L2 where the l2 messages were emitted.
-    /// @param l2MessagesMerkleRoot the merkle root of the l2 messages.
-    /// @param balanceDiffs Array of balance differences for cross-chain accounting.
-    function publishL2Messages(
-        uint256 l2MessagesBatchNumber,
-        bytes32 l2MessagesMerkleRoot,
-        BalanceDiff[] calldata balanceDiffs
-    ) external;
+    /// @param balanceDiffs Array of balance differences and associated message hashes to be sent to different chains.
+    function publishL2Messages(BalanceDiff[] calldata balanceDiffs) external;
 
-    /// @notice Verifies a message from L2 using a Merkle proof.
-    /// @dev This method is used to verify that a message from L2 was indeed
-    /// included in a committed L2 batch.
-    /// @param l2MessageLeaf The leaf of the L2 message to verify.
-    /// @param l2MessageBatchNumber The batch number where the L2 message was emitted.
-    /// @param l2MessageProof The Merkle proof for the L2 message.
-    function verifyMessage(
-        bytes32 l2MessageLeaf,
-        uint256 l2MessageBatchNumber,
-        bytes32[] calldata l2MessageProof
-    ) external view returns (bool);
-
-    /// @notice Receives funds from another chain via shared bridge router.
+    /// @notice Receives messages from another chain via shared bridge router.
     /// @dev This method should only be called by the shared bridge router, as this
     /// method will not burn the L2 gas.
-    function receiveFromSharedBridge() external payable;
+    /// @param chainID The ID of the source chain.
+    /// @param message_hashes The hashes of the messages being received.
+    function receiveFromSharedBridge(
+        uint256 chainID,
+        bytes32[] calldata message_hashes
+    ) external payable;
 
     /// @notice Method that claims an L2 withdrawal.
     /// @dev For a user to claim a withdrawal, this method verifies:

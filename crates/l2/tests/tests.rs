@@ -90,10 +90,10 @@ const DEFAULT_PROPOSER_COINBASE_ADDRESS: Address = H160([
     0xad, 0x62, 0x0c, 0x8d,
 ]);
 
-// 0x84307998a57635ccc4ed1e5dba1e76344dcdfbe6
+// 0x084dfbbd10db1d3303181dc17439bb0108725fd8
 const DEFAULT_ON_CHAIN_PROPOSER_ADDRESS: Address = H160([
-    0x84, 0x30, 0x79, 0x98, 0xa5, 0x76, 0x35, 0xcc, 0xc4, 0xed, 0x1e, 0x5d, 0xba, 0x1e, 0x76, 0x34,
-    0x4d, 0xcd, 0xfb, 0xe6,
+    0x08, 0x4d, 0xfb, 0xbd, 0x10, 0xdb, 0x1d, 0x33, 0x03, 0x18, 0x1d, 0xc1, 0x74, 0x39, 0xbb, 0x01,
+    0x08, 0x72, 0x5f, 0xd8,
 ]);
 
 const DEFAULT_RICH_KEYS_FILE_PATH: &str = "../../fixtures/keys/private_keys_l1.txt";
@@ -311,6 +311,7 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<Fees
         false,
         Some(&remappings),
         &[contracts_path],
+        None,
     )?;
 
     let bridge_code = hex::decode(std::fs::read("contracts/solc_out/CommonBridgeL2.bin")?)?;
@@ -565,6 +566,7 @@ async fn test_erc20_roundtrip(
         false,
         Some(&remappings),
         &[contracts_path],
+        None,
     )?;
     let init_code_l2_inner = hex::decode(String::from_utf8(std::fs::read(
         "contracts/solc_out/TestTokenL2.bin",
@@ -2033,6 +2035,7 @@ async fn test_fee_token(
         false,
         Some(&remappings),
         &allow_paths,
+        None,
     )?;
 
     let mut fee_token_contract =
