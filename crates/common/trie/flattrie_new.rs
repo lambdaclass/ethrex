@@ -146,13 +146,11 @@ impl FlatTrie {
         let data = match (override_partial, override_value) {
             (Some(partial), Some(value)) => (partial.clone(), value.as_slice()),
             (Some(partial), None) => {
-                dbg!("a");
                 let encoded_items = self.get_encoded_items(index)?;
                 let (value, _) = decode_bytes(encoded_items[1])?;
                 (partial.clone(), value)
             }
             (None, Some(value)) => {
-                dbg!("b");
                 let encoded_items = self.get_encoded_items(index)?;
                 let (partial, _) = decode_bytes(encoded_items[0])?;
                 let partial = Nibbles::decode_compact(partial);
@@ -160,7 +158,6 @@ impl FlatTrie {
                 (partial, value.as_slice())
             }
             (None, None) => {
-                dbg!("c");
                 let encoded_items = self.get_encoded_items(index)?;
                 let (partial, _) = decode_bytes(encoded_items[0])?;
                 let partial = Nibbles::decode_compact(partial);
@@ -187,7 +184,6 @@ impl FlatTrie {
         let data = match override_prefix {
             Some(prefix) => prefix.clone(),
             None => {
-                dbg!("d");
                 let encoded_items = self.get_encoded_items(index)?;
                 let (prefix, _) = decode_bytes(encoded_items[0])?;
                 let prefix = Nibbles::decode_compact(prefix);
@@ -202,7 +198,6 @@ impl FlatTrie {
         &self,
         index: usize,
     ) -> Result<NodeHash, RLPDecodeError> {
-        dbg!("e");
         let encoded_items = self.get_encoded_items(index)?;
         let child_hash = decode_child(encoded_items[1]);
         Ok(child_hash)
@@ -648,7 +643,6 @@ impl FlatTrie {
                         children_hashes[i] = Some(if let Some(child_index) = child {
                             recursive(trie, child_index)?
                         } else {
-                            dbg!("f");
                             let encoded_items = trie.get_encoded_items(index)?;
                             decode_child(encoded_items[i])
                         });
