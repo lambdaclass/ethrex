@@ -10,7 +10,11 @@ import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 /// @author LambdaClass
 /// @notice The Timelock contract is the owner of the OnChainProposer contract, it gates access to it by managing roles
 /// and adding delay to specific operations for some roles (e.g. updating the contract, in order to provide an exit window).
-contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable, IOnChainProposer {
+contract Timelock is
+    TimelockControllerUpgradeable,
+    UUPSUpgradeable,
+    IOnChainProposer
+{
     /// @notice Role identifier for sequencers.
     /// @dev Accounts with this role can commit and verify batches.
     bytes32 public constant SEQUENCER = keccak256("SEQUENCER");
@@ -88,24 +92,6 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable, IOnChainPro
     /// @inheritdoc IOnChainProposer
     function lastVerifiedBatch() external view returns (uint256) {
         return onChainProposer.lastVerifiedBatch();
-    }
-
-    /// @inheritdoc IOnChainProposer
-    /// @custom:access Only callable by the timelock itself.
-    function upgradeSP1VerificationKey(
-        bytes32 commit_hash,
-        bytes32 new_vk
-    ) external onlySelf {
-        onChainProposer.upgradeSP1VerificationKey(commit_hash, new_vk);
-    }
-
-    /// @inheritdoc IOnChainProposer
-    /// @custom:access Only callable by the timelock itself.
-    function upgradeRISC0VerificationKey(
-        bytes32 commit_hash,
-        bytes32 new_vk
-    ) external onlySelf {
-        onChainProposer.upgradeRISC0VerificationKey(commit_hash, new_vk);
     }
 
     // NOTE: In the future commit and verify will have timelock logic incorporated in case there are any zkVM bugs and we want to avoid applying the changes in the L1. Probably the Security Council would act upon those changes.
@@ -191,6 +177,24 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable, IOnChainPro
     /// @custom:access Restricted to accounts with the `SECURITY_COUNCIL` role.
     function unpause() external onlyRole(SECURITY_COUNCIL) {
         onChainProposer.unpause();
+    }
+
+    /// @inheritdoc IOnChainProposer
+    /// @custom:access Restricted to accounts with the `SECURITY_COUNCIL` role.
+    function upgradeSP1VerificationKey(
+        bytes32 commit_hash,
+        bytes32 new_vk
+    ) external onlyRole(SECURITY_COUNCIL) {
+        onChainProposer.upgradeSP1VerificationKey(commit_hash, new_vk);
+    }
+
+    /// @inheritdoc IOnChainProposer
+    /// @custom:access Restricted to accounts with the `SECURITY_COUNCIL` role.
+    function upgradeRISC0VerificationKey(
+        bytes32 commit_hash,
+        bytes32 new_vk
+    ) external onlyRole(SECURITY_COUNCIL) {
+        onChainProposer.upgradeRISC0VerificationKey(commit_hash, new_vk);
     }
 
     /// @notice Executes an operation immediately, bypassing the timelock delay.
