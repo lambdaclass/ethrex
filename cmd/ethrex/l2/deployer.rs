@@ -1078,7 +1078,7 @@ async fn initialize_contracts(
             .get_nonce(deployer_address, BlockIdentifier::Tag(BlockTag::Pending))
             .await?;
         let calldata_values = vec![
-            Value::Uint(U256::from(30)), // TODO: change minDelay for testing: 30s
+            Value::Uint(U256::from(30)), // TODO: Make minDelay parametrizable. For now this is for testing purposes.
             Value::Array(vec![
                 // sequencers
                 Value::Address(opts.committer_l1_address),

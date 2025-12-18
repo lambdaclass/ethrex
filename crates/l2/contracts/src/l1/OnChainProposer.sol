@@ -76,7 +76,7 @@ contract OnChainProposer is
     /// @dev Deprecated variable.
     bytes32 public SP1_VERIFICATION_KEY;
 
-    /// @notice Indicates whether the contract operates in validium mode.Add commentMore actions
+    /// @notice Indicates whether the contract operates in validium mode.
     /// @dev This value is immutable and can only be set during contract deployment.
     bool public VALIDIUM;
 
