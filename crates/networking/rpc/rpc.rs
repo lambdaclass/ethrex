@@ -1,6 +1,6 @@
 use crate::authentication::authenticate;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
-use crate::engine::blobs::BlobsV2Request;
+use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::payload::GetPayloadV5Request;
 use crate::engine::{
     ExchangeCapabilitiesRequest,
@@ -605,6 +605,7 @@ pub async fn map_engine_requests(
         }
         "engine_getBlobsV1" => BlobsV1Request::call(req, context).await,
         "engine_getBlobsV2" => BlobsV2Request::call(req, context).await,
+        "engine_getBlobsV3" => BlobsV3Request::call(req, context).await,
         unknown_engine_method => Err(RpcErr::MethodNotFound(unknown_engine_method.to_owned())),
     }
 }
