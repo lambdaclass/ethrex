@@ -76,14 +76,14 @@ const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug)]
 struct CodeCache {
-    cache: LruCache<H256, Code, FxBuildHasher>,
+    inner_cache: LruCache<H256, Code, FxBuildHasher>,
     cache_size: u64,
 }
 
 impl Default for CodeCache {
     fn default() -> Self {
         Self {
-            cache: LruCache::unbounded_with_hasher(FxBuildHasher),
+            inner_cache: LruCache::unbounded_with_hasher(FxBuildHasher),
             cache_size: 0,
         }
     }
@@ -91,12 +91,12 @@ impl Default for CodeCache {
 
 impl CodeCache {
     fn get(&mut self, code_hash: &H256) -> Result<Option<Code>, StoreError> {
-        Ok(self.cache.get(code_hash).cloned())
+        Ok(self.inner_cache.get(code_hash).cloned())
     }
 
     fn insert(&mut self, code: &Code) -> Result<(), StoreError> {
         let code_size = code.size();
-        let cache_len = self.cache.len() + 1;
+        let cache_len = self.inner_cache.len() + 1;
         self.cache_size += code_size as u64;
         let current_size = self.cache_size;
         debug!(
@@ -104,14 +104,14 @@ impl CodeCache {
         );
 
         while self.cache_size > CODE_CACHE_MAX_SIZE {
-            if let Some((_, code)) = self.cache.pop_lru() {
+            if let Some((_, code)) = self.inner_cache.pop_lru() {
                 self.cache_size -= code.size() as u64;
             } else {
                 break;
             }
         }
 
-        self.cache.get_or_insert(code.hash, || code.clone());
+        self.inner_cache.get_or_insert(code.hash, || code.clone());
         Ok(())
     }
 }
