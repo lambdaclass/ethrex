@@ -669,7 +669,11 @@ impl FlatTrie {
                     }
                 },
                 NodeHandle::Branch { children_indices } => {
-                    let mut children_hashes: [Option<NodeHash>; 16] = [None; 16];
+                    let is_node_encoded = node.encoded_range.is_some();
+                    let children_indices = children_indices.clone();
+
+                    // Recursively hash non-pruned children only
+                    let mut non_pruned_children_hashes: [Option<NodeHash>; 16] = [None; 16];
                     for (i, child_index) in children_indices
                         .clone()
                         .iter()
@@ -678,23 +682,44 @@ impl FlatTrie {
                     {
                         if let Some(child_index) = child_index {
                             let child_hash = recursive(trie, child_index)?;
-                            children_hashes[i] = Some(child_hash);
+                            non_pruned_children_hashes[i] = Some(child_hash);
                         };
                     }
 
-                    let encoded_items = trie.get_encoded_items(index)?;
-                    let mut non_pruned_hashes = children_hashes
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, c)| c.map(|c| (i, c)));
-                    let hash_mismatch = non_pruned_hashes
-                        .any(|(i, child_hash)| child_hash.as_ref() != &(encoded_items[i])[1..]);
-
-                    if !hash_mismatch {
-                        trie.hash_encoded_data(index)
-                    } else {
-                        let encoded = encode_branch(children_hashes);
+                    if !is_node_encoded {
+                        // This is a new node, all its children are non-pruned
+                        let encoded = encode_branch(non_pruned_children_hashes);
                         NodeHash::from_encoded(&encoded)
+                    } else {
+                        let encoded_items = trie.get_encoded_items(index)?;
+                        let mut non_pruned_hashes = non_pruned_children_hashes
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, c)| c.map(|c| (i, c)));
+                        let hash_mismatch = non_pruned_hashes
+                            .any(|(i, child_hash)| child_hash.as_ref() != &(encoded_items[i])[1..]);
+
+                        if !hash_mismatch {
+                            // If all non-pruned hashes match the node's RLP, then it's valid
+                            trie.hash_encoded_data(index)
+                        } else {
+                            // If not, re-encode the node and hash.
+
+                            // First fill in the hashes of pruned nodes
+                            let mut children_hashes = non_pruned_children_hashes;
+                            for (i, child_hash) in children_hashes
+                                .iter_mut()
+                                .enumerate()
+                                .filter(|(_, c)| c.is_none())
+                            {
+                                let is_child_valid = children_indices[i].is_some();
+                                if is_child_valid {
+                                    *child_hash = Some(decode_child(encoded_items[i]));
+                                }
+                            }
+                            let encoded = encode_branch(children_hashes);
+                            NodeHash::from_encoded(&encoded)
+                        }
                     }
                 }
             };
