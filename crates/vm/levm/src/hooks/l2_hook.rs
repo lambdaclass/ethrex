@@ -133,30 +133,17 @@ fn finalize_non_privileged_execution(
 
     default_hook::delete_self_destruct_accounts(vm)?;
 
-    let fee_token_ratio =
-        if let Some(fee_token) = vm.env.fee_token {
-            let (fee_token_ratio, _) = simulate_common_bridge_call(
-                vm,
-                FEE_TOKEN_RATIO_ADDRESS,
-                encode_fee_token_ratio_call(fee_token),
-            )?;
-            if !fee_token_ratio.is_success() || fee_token_ratio.output.len() != 32 {
-                return Err(VMError::Internal(InternalError::Custom(
-                    "Failed to get fee token ratio".to_owned(),
-                )));
-            }
-            U256::from_big_endian(fee_token_ratio.output.get(0..32).ok_or(
-                InternalError::Custom("Failed to parse fee token ratio".to_owned()),
-            )?)
+    let fee_token_ratio = if let Some(fee_token) = vm.env.fee_token {
+        get_fee_token_ratio(vm, fee_token)?
             .try_into()
             .map_err(|_| {
                 VMError::Internal(InternalError::Custom(
                     "Failed to convert fee token ratio".to_owned(),
                 ))
             })?
-        } else {
-            1u64
-        };
+    } else {
+        1u64
+    };
 
     if let Some(l1_fee_config) = fee_config.l1_fee_config {
         pay_to_l1_fee_vault(
@@ -448,21 +435,7 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
             TxValidationError::InsufficientAccountFunds,
         ));
     }
-
-    let fee_token_ratio = simulate_common_bridge_call(
-        vm,
-        FEE_TOKEN_RATIO_ADDRESS,
-        encode_fee_token_ratio_call(fee_token),
-    )?
-    .0;
-    if !fee_token_ratio.is_success() || fee_token_ratio.output.len() != 32 {
-        return Err(VMError::Internal(InternalError::Custom(
-            "Failed to get fee token ratio".to_owned(),
-        )));
-    }
-    let fee_token_ratio = U256::from_big_endian(fee_token_ratio.output.get(0..32).ok_or(
-        InternalError::Custom("Failed to parse fee token ratio".to_owned()),
-    )?);
+    let fee_token_ratio = get_fee_token_ratio(vm, fee_token)?;
 
     let sender_address = vm.env.origin;
     let sender_info = vm.db.get_account(sender_address)?.info.clone();
@@ -805,4 +778,26 @@ fn pay_to_l1_fee_vault(
             .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
     }
     Ok(())
+}
+
+fn get_fee_token_ratio(vm: &mut VM<'_>, fee_token: H160) -> Result<U256, VMError> {
+    let fee_token_ratio = simulate_common_bridge_call(
+        vm,
+        FEE_TOKEN_RATIO_ADDRESS,
+        encode_fee_token_ratio_call(fee_token),
+    )?
+    .0;
+    if !fee_token_ratio.is_success() || fee_token_ratio.output.len() != 32 {
+        return Err(VMError::Internal(InternalError::Custom(
+            "Failed to get fee token ratio".to_owned(),
+        )));
+    }
+    Ok(U256::from_big_endian(
+        fee_token_ratio
+            .output
+            .get(0..32)
+            .ok_or(InternalError::Custom(
+                "Failed to parse fee token ratio".to_owned(),
+            ))?,
+    ))
 }
