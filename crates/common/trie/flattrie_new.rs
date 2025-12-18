@@ -497,7 +497,7 @@ impl FlatTrie {
                     }
                     _ => {
                         let handle = NodeHandle::Branch { children_indices };
-                        Ok(Some(self.put_node(handle)))
+                        Ok(Some(self.override_node(index, handle)))
                     }
                 }
             }
