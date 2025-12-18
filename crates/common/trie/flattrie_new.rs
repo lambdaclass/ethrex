@@ -81,8 +81,6 @@ pub enum NodeHandle {
     },
 }
 
-impl Node {}
-
 impl FlatTrie {
     /// Get an element from the trie
     pub fn get(&self, path: &[u8]) -> Result<Option<&[u8]>, RLPDecodeError> {
@@ -319,13 +317,32 @@ impl FlatTrie {
                     let branch_index = if prefix.len() == 1 {
                         let mut children_indices = [None; 16];
                         children_indices[prefix.at(0)] = Some(child_index);
-                        self.put_node(NodeHandle::Branch { children_indices })
+                        if child_index.is_some() {
+                            self.put_node(NodeHandle::Branch { children_indices })
+                        } else {
+                            // pruned child, we must make its hash available by encoding the branch
+                            // TODO: hacky
+                            let child_hash = self.get_extension_encoded_child_hash(self_index)?;
+                            let mut children_hashes = [None; 16];
+                            children_hashes[prefix.at(0)] = Some(child_hash);
+                            let encoded = encode_branch(children_hashes);
+                            self.put_node_encoded(NodeHandle::Branch { children_indices }, encoded)
+                        }
                     } else {
                         // New extension with self_node as a child
-                        let new_node_index = self.put_node(NodeHandle::Extension {
+                        let handle = NodeHandle::Extension {
                             prefix: Some(prefix.offset(1)),
                             child_index,
-                        });
+                        };
+                        let new_node_index = if child_index.is_some() {
+                            self.put_node(handle)
+                        } else {
+                            // pruned child, we must make its hash available by encoding the branch
+                            // TODO: hacky
+                            let child_hash = self.get_extension_encoded_child_hash(self_index)?;
+                            let encoded = encode_extension(prefix.offset(1), child_hash);
+                            self.put_node_encoded(handle, encoded)
+                        };
                         {
                             let mut children_indices = [None; 16];
                             children_indices[prefix.at(0)] = Some(Some(new_node_index));
@@ -511,6 +528,19 @@ impl FlatTrie {
         let node = Node {
             handle,
             encoded_range: None,
+        };
+        self.nodes.push(node);
+        self.nodes.len() - 1
+    }
+
+    /// Adds a new node to the trie with a specific handle, already encoded.
+    pub fn put_node_encoded(&mut self, handle: NodeHandle, encoded: Vec<u8>) -> usize {
+        let start = self.encoded_data.len();
+        self.encoded_data.extend(encoded);
+        let end = self.encoded_data.len();
+        let node = Node {
+            handle,
+            encoded_range: Some((start, end)),
         };
         self.nodes.push(node);
         self.nodes.len() - 1
