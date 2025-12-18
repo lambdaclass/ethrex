@@ -6,15 +6,29 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IOnChainProposer} from "./interfaces/IOnChainProposer.sol";
 import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 
+/// @title Timelock contract.
+/// @author LambdaClass
+/// @notice The Timelock contract is the owner of the OnChainProposer contract, it gates access to it by managing roles
+/// and adding delay to specific operations for some roles (e.g. updating the contract, in order to provide an exit window).
 contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable {
+    /// @notice Role identifier for sequencers.
+    /// @dev Accounts with this role can commit and verify batches.
     bytes32 public constant SEQUENCER = keccak256("SEQUENCER");
+
+    /// @notice Role identifier for the Security Council.
+    /// @dev Accounts with this role can manage roles and bypass the timelock delay.
     bytes32 public constant SECURITY_COUNCIL = keccak256("SECURITY_COUNCIL");
 
+    /// @notice Emitted when the Security Council executes a call bypassing the delay.
+    /// @param target The address that was called.
+    /// @param value The ETH value that was sent.
+    /// @param data The calldata that was forwarded to `target`.
     event EmergencyExecution(address indexed target, uint256 value, bytes data);
 
+    /// @notice The OnChainProposer contract controlled by this timelock.
     IOnChainProposer public onChainProposer;
 
-    // Used for functions in the timelock that should be triggered
+    /// @dev Restricts calls to the timelock itself.
     modifier onlySelf() {
         require(
             msg.sender == address(this),
@@ -23,12 +37,19 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable {
         _;
     }
 
+    /// @notice Initializes the timelock contract.
+    /// @dev Called once after proxy deployment.
+    /// @param minDelay The minimum delay (in seconds) for scheduled operations.
+    /// @param sequencers Accounts that can commit and verify batches.
+    /// @param owner The account that can propose and execute operations, respecting the delay.
+    /// @param securityCouncil The Security Council account that can manage roles and bypass the delay.
+    /// @param _onChainProposer The deployed `OnChainProposer` contract address.
     function initialize(
-        uint256 minDelay, // This should be the minimum delay for contract upgrades in seconds (e.g. 7 days = 604800 sec).
-        address[] memory sequencers, // Will be able to commit and verify batches.
-        address owner, // Will be able to propose and execute functions, respecting the delay.
-        address securityCouncil, // Can manage roles (admin) and also can bypass delay times thanks to the SECURITY_COUNCIL role.
-        address _onChainProposer // deployed OnChainProposer contract.
+        uint256 minDelay,
+        address[] memory sequencers,
+        address owner,
+        address securityCouncil,
+        address _onChainProposer
     ) public initializer {
         for (uint256 i = 0; i < sequencers.length; ++i) {
             _grantRole(SEQUENCER, sequencers[i]);
@@ -122,8 +143,11 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable {
         onChainProposer.unpause();
     }
 
-    // In case a bug is detected the Security Council can act immediately.
-    // Ideally in the future this should be possible only if the bug is detected on-chain with a proper mechanism.
+    /// @notice Executes an operation immediately, bypassing the timelock delay.
+    /// @dev Intended for emergency use by the Security Council.
+    /// @param target The address to call.
+    /// @param value The ETH value to send with the call.
+    /// @param data The calldata to forward to `target`.
     function emergencyExecute(
         address target,
         uint256 value,
