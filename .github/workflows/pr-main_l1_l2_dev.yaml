@@ -33,10 +33,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
+        uses: ./.github/actions/install-solc
 
       - name: Start ethrex
         run: |

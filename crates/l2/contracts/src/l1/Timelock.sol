@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity =0.8.31;
 
 import "@openzeppelin/contracts-upgradeable/governance/TimelockControllerUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
@@ -58,6 +58,7 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable {
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash,
         uint256 nonPrivilegedTransactions,
+        bytes32 commitHash,
         ICommonBridge.BalanceDiff[] calldata balanceDiffs,
         ICommonBridge.L2MessageRollingHash[] calldata l2MessageRollingHashes
     ) external onlyRole(SEQUENCER) {
@@ -68,6 +69,7 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable {
             processedPrivilegedTransactionsRollingHash,
             lastBlockHash,
             nonPrivilegedTransactions,
+            commitHash,
             balanceDiffs,
             l2MessageRollingHashes
         );

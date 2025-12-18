@@ -174,10 +174,7 @@ jobs:
         run: npm install -g yarn
 
       - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
+        uses: ./.github/actions/install-solc
 
       - name: Install rex
         run: |
@@ -299,10 +296,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
+        uses: ./.github/actions/install-solc
 
       - name: Build prover
         run: |
@@ -447,10 +441,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
+        uses: ./.github/actions/install-solc
 
       - name: Download ethrex image artifact
         uses: actions/download-artifact@v4
@@ -572,10 +563,7 @@ jobs:
           docker load --input /tmp/ethrex_image_l2.tar
 
       - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
+        uses: ./.github/actions/install-solc
 
       - name: Start L1 & Deploy contracts
         run: |
@@ -622,10 +610,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
+        uses: ./.github/actions/install-solc
 
       - name: Build prover
         run: |

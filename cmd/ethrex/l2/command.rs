@@ -477,7 +477,7 @@ impl Command {
                         }
 
                         // Execute block
-                        blockchain.add_block(block.clone())?;
+                        blockchain.add_block_pipeline(block.clone())?;
 
                         // Add fee config to rollup store
                         rollup_store
