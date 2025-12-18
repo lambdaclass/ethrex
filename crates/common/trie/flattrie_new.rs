@@ -696,8 +696,9 @@ impl FlatTrie {
                             .iter()
                             .enumerate()
                             .filter_map(|(i, c)| c.map(|c| (i, c)));
-                        let hash_mismatch = non_pruned_hashes
-                            .any(|(i, child_hash)| child_hash.as_ref() != &(encoded_items[i])[1..]);
+                        let hash_mismatch = non_pruned_hashes.any(|(i, child_hash)| {
+                            child_hash.as_ref() != decode_bytes(encoded_items[i]).unwrap().0
+                        });
 
                         if !hash_mismatch {
                             // If all non-pruned hashes match the node's RLP, then it's valid
