@@ -2,7 +2,7 @@
 
 An exit window is a time window, or period, during which users can opt to exit the network before the execution of an upgrade or system modification. The purpose of exit windows in L2 rollups is to protect users from unwanted changes to the system, such as those mentioned above.
 
-The [Stages Framework](https://medium.com/l2beat/introducing-stages-a-framework-to-evaluate-rollups-maturity-d290bb22befe) defines 7-day exit windows for Stage 1 rollups and 30-day exit windows for Stage 2 rollups. This period may vary if there is a withdrawal delay, as it is subtracted from the total exit window.
+The [Stages Framework](https://forum.l2beat.com/t/the-stages-framework/291) defines exit windows for rollup upgrades with subtle differences between stages. For Stage 1 rollups, updates initiated outside the Security Council require an exit window of at least 7 days, though the Security Council can upgrade instantly. For Stage 2 rollups, the Security Council can upgrade immediately only if a bug is detected on-chain; otherwise, the exit window should be at least 30 days. This period may vary if there is a withdrawal delay, as it is subtracted from the total exit window.
 
 The ethrex L2 stack provides this security functionality through a `Timelock` contract that is deployed and configured with the exit window duration, which we will learn more about in the next section.
 
@@ -39,7 +39,7 @@ As said before, the settlement window must be taken into account to calculate th
 
 Whoever owns the `Timelock` decides its functioning. In our stack, the owner of the contract is established during its initialization, and then that owner can transfer the ownership to another account if desired.
 
-Our recommendation is that the owner of the contract be a security council. The [Stages Framework](https://medium.com/l2beat/introducing-stages-a-framework-to-evaluate-rollups-maturity-d290bb22befe) recommends that the security council be in the form of a multisig composed of at least 8 people with a consensus threshold of 50%, and at least 50% of the participants must be external to the organization that operates the rollup.
+Our recommendation is that the owner of the contract be a security council. The [Stages Framework](https://forum.l2beat.com/t/the-stages-framework/291) recommends that the security council be in the form of a multisig composed of at least 8 people with a consensus threshold of 50%, and at least 50% of the participants must be external to the organization that operates the rollup.
 
 In the case of our `Timelock`, the owner is not the only one who can act on it. In fact, it is recommended that the security council only act in specific emergencies. The `Timelock` is also AccessControl, which means it has special functionality for managing accesses, in this case, in the form of roles.
 
