@@ -141,7 +141,6 @@ pub fn get_vm_env_for_test(
         block_gas_limit: test_env.current_gas_limit,
         is_privileged: false,
         fee_token: None,
-        fee_ratio: None,
     })
 }
 
