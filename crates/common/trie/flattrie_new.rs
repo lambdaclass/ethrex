@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use bytes::BufMut;
 use ethrex_rlp::{
     constants::RLP_NULL,
@@ -31,10 +33,11 @@ pub struct FlatTrie {
     pub encoded_data: Vec<u8>,
     /// The index of the view for the root of this trie
     pub root_index: Option<usize>,
-    /// Root hash that gets initialized when calling `Self::authenticate`
+    /// Node hashes get cached when hashing the trie for the first time
+    /// This also allows to store the hashes of pruned nodes
     #[serde(skip)]
     #[rkyv(with = Skip)]
-    root_hash: Option<NodeHash>,
+    hashes: BTreeMap<usize, NodeHash>,
 }
 
 /// A view into a particular node
@@ -146,13 +149,11 @@ impl FlatTrie {
         let data = match (override_partial, override_value) {
             (Some(partial), Some(value)) => (partial.clone(), value.as_slice()),
             (Some(partial), None) => {
-                dbg!("a");
                 let encoded_items = self.get_encoded_items(index)?;
                 let (value, _) = decode_bytes(encoded_items[1])?;
                 (partial.clone(), value)
             }
             (None, Some(value)) => {
-                dbg!("b");
                 let encoded_items = self.get_encoded_items(index)?;
                 let (partial, _) = decode_bytes(encoded_items[0])?;
                 let partial = Nibbles::decode_compact(partial);
@@ -160,7 +161,6 @@ impl FlatTrie {
                 (partial, value.as_slice())
             }
             (None, None) => {
-                dbg!("c");
                 let encoded_items = self.get_encoded_items(index)?;
                 let (partial, _) = decode_bytes(encoded_items[0])?;
                 let partial = Nibbles::decode_compact(partial);
@@ -187,7 +187,6 @@ impl FlatTrie {
         let data = match override_prefix {
             Some(prefix) => prefix.clone(),
             None => {
-                dbg!("d");
                 let encoded_items = self.get_encoded_items(index)?;
                 let (prefix, _) = decode_bytes(encoded_items[0])?;
                 let prefix = Nibbles::decode_compact(prefix);
@@ -202,7 +201,6 @@ impl FlatTrie {
         &self,
         index: usize,
     ) -> Result<NodeHash, RLPDecodeError> {
-        dbg!("e");
         let encoded_items = self.get_encoded_items(index)?;
         let child_hash = decode_child(encoded_items[1]);
         Ok(child_hash)
@@ -231,7 +229,6 @@ impl FlatTrie {
         } else {
             self.root_index = Some(self.put_leaf(path, value));
         }
-        self.root_hash = None;
         Ok(())
     }
 
@@ -241,6 +238,7 @@ impl FlatTrie {
         mut path: Nibbles,
         value: Vec<u8>,
     ) -> Result<usize, RLPDecodeError> {
+        self.hashes.remove(&self_index);
         let self_view = &self.nodes[self_index];
         match self_view.handle {
             NodeHandle::Leaf { .. } => {
@@ -375,7 +373,6 @@ impl FlatTrie {
         if let Some(root_index) = self.root_index {
             self.root_index = self.remove_inner(root_index, path)?;
         }
-        self.root_hash = None;
         Ok(())
     }
 
@@ -384,6 +381,7 @@ impl FlatTrie {
         index: usize,
         mut path: Nibbles,
     ) -> Result<Option<usize>, RLPDecodeError> {
+        self.hashes.remove(&index);
         let node = &self.nodes[index];
         match node.handle {
             NodeHandle::Leaf { .. } => {
@@ -605,36 +603,39 @@ impl FlatTrie {
 
     pub fn hash(&mut self) -> Result<NodeHash, RLPDecodeError> {
         fn recursive(trie: &mut FlatTrie, index: usize) -> Result<NodeHash, RLPDecodeError> {
+            if let Some(hash) = trie.hashes.get(&index) {
+                return Ok(hash.clone());
+            }
             let node = &trie.nodes[index];
-            match &node.handle {
+            let hash = match &node.handle {
                 NodeHandle::Leaf { partial, value } => {
                     if partial.is_some() || value.is_some() {
                         // re-encode with new values
                         let (partial, value) = trie.get_leaf_data(index)?;
                         let encoded = encode_leaf(partial, value);
-                        Ok(NodeHash::from_encoded(&encoded))
+                        NodeHash::from_encoded(&encoded)
                     } else {
                         // use already encoded
-                        Ok(trie.hash_encoded_data(index))
+                        trie.hash_encoded_data(index)
                     }
                 }
                 NodeHandle::Extension {
                     prefix,
                     child_index,
                 } => match (prefix, child_index) {
-                    (None, None) => Ok(trie.hash_encoded_data(index)),
+                    (None, None) => trie.hash_encoded_data(index),
                     (_, Some(child_index)) => {
                         // recurse to calculate the child hash and re-encode
                         let child_hash = recursive(trie, *child_index)?;
                         let prefix = trie.get_extension_data(index)?;
                         let encoded = encode_extension(prefix, child_hash);
-                        Ok(NodeHash::from_encoded(&encoded))
+                        NodeHash::from_encoded(&encoded)
                     }
                     (Some(prefix), None) => {
                         // get encoded child hash and re-encode
                         let child_hash = trie.get_extension_encoded_child_hash(index)?;
                         let encoded = encode_extension(prefix.clone(), child_hash);
-                        Ok(NodeHash::from_encoded(&encoded))
+                        NodeHash::from_encoded(&encoded)
                     }
                 },
                 NodeHandle::Branch { children_indices } => {
@@ -648,15 +649,16 @@ impl FlatTrie {
                         children_hashes[i] = Some(if let Some(child_index) = child {
                             recursive(trie, child_index)?
                         } else {
-                            dbg!("f");
                             let encoded_items = trie.get_encoded_items(index)?;
                             decode_child(encoded_items[i])
                         });
                     }
                     let encoded = encode_branch(children_hashes);
-                    Ok(NodeHash::from_encoded(&encoded))
+                    NodeHash::from_encoded(&encoded)
                 }
-            }
+            };
+            trie.hashes.insert(index, hash.clone());
+            Ok(hash)
         }
         let Some(root_index) = self.root_index else {
             return Ok((*EMPTY_TRIE_HASH).into());
