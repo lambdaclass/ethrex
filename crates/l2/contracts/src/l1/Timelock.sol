@@ -3,7 +3,6 @@ pragma solidity =0.8.31;
 
 import "@openzeppelin/contracts-upgradeable/governance/TimelockControllerUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {IOnChainProposer} from "./interfaces/IOnChainProposer.sol";
 import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 
@@ -28,7 +27,7 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable {
         uint256 minDelay, // This should be the minimum delay for contract upgrades in seconds (e.g. 7 days = 604800 sec).
         address[] memory sequencers, // Will be able to commit and verify batches.
         address owner, // Will be able to propose and execute functions, respecting the delay.
-        address securityCouncil, // TODO: Admin role -> Can manage roles. But it can't schedule/execute by itself, maybe we should add that
+        address securityCouncil, // Can manage roles (admin) and also can bypass delay times thanks to the SECURITY_COUNCIL role.
         address _onChainProposer // deployed OnChainProposer contract.
     ) public initializer {
         for (uint256 i = 0; i < sequencers.length; ++i) {
@@ -50,7 +49,7 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable {
         onChainProposer = IOnChainProposer(_onChainProposer);
     }
 
-    //TODO: In the future commit and verify will have timelock logic incorporated in case there are any zkVM bugs and we want to avoid applying the changes in the L1. Probably the Security Council would act upon those changes.
+    // NOTE: In the future commit and verify will have timelock logic incorporated in case there are any zkVM bugs and we want to avoid applying the changes in the L1. Probably the Security Council would act upon those changes.
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
