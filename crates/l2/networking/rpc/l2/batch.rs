@@ -19,7 +19,7 @@ pub struct RpcBatch {
 }
 
 impl RpcBatch {
-    pub async fn build(batch: Batch, block_hashes: bool, store: &Store) -> Result<Self, RpcErr> {
+    pub fn build(batch: Batch, block_hashes: bool, store: &Store) -> Result<Self, RpcErr> {
         let block_hashes = if block_hashes {
             Some(get_block_hashes(
                 batch.first_block,
@@ -101,7 +101,7 @@ impl RpcHandler for GetBatchByBatchNumberRequest {
         else {
             return Ok(Value::Null);
         };
-        let rpc_batch = RpcBatch::build(batch, self.block_hashes, &context.l1_ctx.storage).await?;
+        let rpc_batch = RpcBatch::build(batch, self.block_hashes, &context.l1_ctx.storage)?;
 
         serde_json::to_value(&rpc_batch).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -158,7 +158,7 @@ impl RpcHandler for GetBatchByBatchBlockNumberRequest {
             )));
         };
 
-        let rpc_batch = RpcBatch::build(batch, false, &context.l1_ctx.storage).await?;
+        let rpc_batch = RpcBatch::build(batch, false, &context.l1_ctx.storage)?;
 
         serde_json::to_value(&rpc_batch).map_err(|error| RpcErr::Internal(error.to_string()))
     }

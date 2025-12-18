@@ -160,7 +160,7 @@ pub struct ProofCoordinator {
 }
 
 impl ProofCoordinator {
-    pub async fn new(
+    pub fn new(
         config: &SequencerConfig,
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
@@ -207,7 +207,7 @@ impl ProofCoordinator {
         cfg: SequencerConfig,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<(), ProofCoordinatorError> {
-        let state = Self::new(&cfg, rollup_store, needed_proof_types).await?;
+        let state = Self::new(&cfg, rollup_store, needed_proof_types)?;
         let listener =
             Arc::new(TcpListener::bind(format!("{}:{}", state.listen_ip, state.port)).await?);
         let mut proof_coordinator = ProofCoordinator::start(state);
