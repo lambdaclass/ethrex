@@ -69,7 +69,7 @@ l2 = ["dep:ethrex-storage-rollup"]
 test-utils = []
 metrics = ["dep:ethrex-metrics"]
 # discv5 is currently experimental and should only be enabled for development purposes
-discv5 = []
+experimental-discv5 = []
 
 [lints.clippy]
 unwrap_used = "deny"
