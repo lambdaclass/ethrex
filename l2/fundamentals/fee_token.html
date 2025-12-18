@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Fundamentals - Ethrex</title>
+        <title>Fee token - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,47 +237,121 @@
 }
 
 </style>
-<h1 id="fundamentals"><a class="header" href="#fundamentals">Fundamentals</a></h1>
-<p>In L2 mode, the ethrex code is repurposed to run a rollup that settles on Ethereum as the L1.</p>
-<p>The main differences between this mode and regular ethrex are:</p>
+<h1 id="fee-token-overview"><a class="header" href="#fee-token-overview">Fee Token Overview</a></h1>
+<p>Ethrex lets L2 transactions pay execution costs with an ERC-20 instead of ETH. A fee-token-enabled transaction behaves like a normal call or transfer, but the sequencer locks fees in the ERC-20 and distributes them (sender refund, coinbase priority fee, base-fee vault, operator vault, L1 data fee) using the hooks in <code>l2_hook.rs</code>.</p>
+<p>Key requirements:</p>
 <ul>
-<li>In regular rollup mode, there is no consensus; the node is turned into a sequencer that proposes blocks for the chain. In based rollup mode, consensus is achieved by a mechanism that rotates sequencers, enforced by the L1.</li>
-<li>Block execution is proven using a RISC-V zkVM (or attested to using TDX, a Trusted Execution Environment) and its proofs (or signatures/attestations) are sent to L1 for verification.</li>
-<li>A set of Solidity contracts to be deployed to the L1 are included as part of chain initialization.</li>
-<li>Two new types of transactions are included: deposits (native token mints) and withdrawals.</li>
+<li>The token must implement <code>IFeeToken</code> (see <code>crates/l2/contracts/src/example/FeeToken.sol</code>), which extends <code>IERC20L2</code> and adds the <code>lockFee</code> / <code>payFee</code> entry points consumed by the sequencer.</li>
+<li><code>lockFee</code> must reserve funds when invoked by the l2 bridge (the L2 bridge/<code>COMMON_BRIDGE_L2_ADDRESS</code>), and <code>payFee</code> must release or burn those funds when the transaction finishes.</li>
+<li>The token address must be registered in the L2 <code>FeeTokenRegistry</code> system contract (<code>0x…fffc</code>). Registration happens through the L1 <code>CommonBridge</code> by calling <code>registerNewFeeToken(address)</code>; only the bridge owner can do this, and the call queues a privileged transaction that the sequencer forces on L2. Likewise, <code>unregisterFeeToken(address)</code> removes it.</li>
 </ul>
-<p>At a high level, the following new parts are added to the node:</p>
-<ul>
-<li>A <code>proposer</code> component, in charge of continually creating new blocks from the mempool transactions. This replaces the regular flow that an Ethereum L1 node has, where new blocks come from the consensus layer through the <code>forkChoiceUpdate</code> -&gt; <code>getPayload</code> -&gt; <code>NewPayload</code> Engine API flow in communication with the consensus layer.</li>
-<li>A <code>prover</code> subsystem, which itself consists of two parts:
-<ul>
-<li>A <code>proverClient</code> that takes new blocks from the node, proves them, then sends the proof back to the node to send to the L1. This is a separate binary running outside the node, as proving has very different (and higher) hardware requirements than the sequencer.</li>
-<li>A <code>proverServer</code> component inside the node that communicates with the prover, sending witness data for proving and receiving proofs for settlement on L1.</li>
-</ul>
-</li>
-<li>L1 contracts with functions to commit to new state and then verify the state transition function, only advancing the state of the L2 if the proof verifies. It also has functionality to process deposits and withdrawals to/from the L2.</li>
-<li>The EVM is lightly modified with new features to process deposits and withdrawals accordingly.</li>
-</ul>
-<h2 id="ethrex-l2-documentation"><a class="header" href="#ethrex-l2-documentation">Ethrex L2 documentation</a></h2>
-<p>For general documentation, see:</p>
-<ul>
-<li><a href="../architecture/overview.html">Architecture overview</a> for a high-level view of the ethrex L2 stack.</li>
-<li><a href="./contracts.html">Smart contracts</a> has information on L1 and L2 smart contracts including steps to upgrade and transfer ownserhip.</li>
-<li><a href="./based.html">Based sequencing</a> contains ethrex's roadmap for becoming based.</li>
-<li><a href="./state_diffs.html">State diffs</a> explains the mechanism needed to provide data availability.</li>
-<li>How asset <a href="./deposits.html">deposits</a> and <a href="./withdrawals.html">withdrawals</a> work.</li>
-<li><a href="./fee_token.html">Fee token</a></li>
-</ul>
+<p>Fee token ratios are also updated through the same privileged transaction path (deposits from L1 to L2). This is because we want the changes to be done through the L1, and via an owner that we want to be the same as the owner in the L1 bridge.</p>
+<h3 id="minimal-contract-surface"><a class="header" href="#minimal-contract-surface">Minimal Contract Surface</a></h3>
+<pre><code class="language-solidity">contract FeeToken is ERC20, IFeeToken {
+    address internal constant BRIDGE = 0x000000000000000000000000000000000000FFFF;
+
+    ...
+
+    modifier onlyBridge() {
+        require(msg.sender == BRIDGE, "only bridge");
+        _;
+    }
+    function lockFee(address payer, uint256 amount)
+        external
+        override(IFeeToken)
+        onlyBridge
+    {
+        _transfer(payer, BRIDGE, amount);
+    }
+
+    function payFee(address receiver, uint256 amount)
+        external
+        override(IFeeToken)
+        onlyBridge
+    {
+        if (receiver == address(0)) {
+            _burn(BRIDGE, amount);
+        } else {
+            _transfer(BRIDGE, receiver, amount);
+        }
+    }
+}
+</code></pre>
+<p>For deployment and operator steps, see <a href="../deployment/fee_token.html">Deploying a Fee Token</a>.</p>
+<h2 id="user-workflow"><a class="header" href="#user-workflow">User Workflow</a></h2>
+<p>Once a token is registered, users can submit fee-token transactions:</p>
+<ol>
+<li>Instantiate an <code>EthClient</code> connected to L2 and create a signer.</li>
+<li>Build a <code>TxType::FeeToken</code> transaction with <code>build_generic_tx</code>, setting <code>Overrides::fee_token = Some(&lt;token&gt;)</code> and the desired <code>value</code> / calldata.</li>
+<li>Send the transaction with <code>send_generic_transaction</code> and wait for the receipt.</li>
+</ol>
+<p>Fee locking and distribution happen automatically inside <code>l2_hook.rs</code>.</p>
+<h3 id="minimal-cargotoml"><a class="header" href="#minimal-cargotoml">Minimal <code>Cargo.toml</code></a></h3>
+<pre><code class="language-toml">[package]
+name = "fee-token-client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.86"
+hex = "0.4.3"
+secp256k1 = { version = "0.30.0", default-features = false, features = ["global-context", "recovery", "rand"] }
+tokio = { version = "1.41.1", features = ["macros", "rt-multi-thread"] }
+url = { version = "2.5.4", features = ["serde"] }
+ethrex_l2_sdk = { package = "ethrex-sdk", git = "https://github.com/lambdaclass/ethrex", tag = "v6.0.0" }
+ethrex-rpc = { git = "https://github.com/lambdaclass/ethrex", tag = "v6.0.0" }
+ethrex-common = { git = "https://github.com/lambdaclass/ethrex", tag = "v6.0.0" }
+ethrex-l2-rpc = { git = "https://github.com/lambdaclass/ethrex", tag = "v6.0.0" }
+</code></pre>
+<pre><pre class="playground"><code class="language-rust edition2024">use anyhow::Result;
+use ethrex_l2_sdk::{build_generic_tx, send_generic_transaction};
+use ethrex_rpc::clients::eth::{EthClient, Overrides};
+use ethrex_common::types::TxType;
+use ethrex_common::{Address, Bytes, U256};
+use ethrex_l2_sdk::wait_for_transaction_receipt;
+use ethrex_l2_rpc::signer::{LocalSigner, Signer};
+use secp256k1::SecretKey;
+use url::Url;
+
+#[tokio::main]
+async fn main() -&gt; Result&lt;()&gt; {
+    // 1. Connect and create the signer.
+    let l2 = EthClient::new(Url::parse("http://localhost:1729")?)?;
+    let private_key = SecretKey::from_slice(&amp;hex::decode("&lt;hex-private-key&gt;")?)?;
+    let signer = Signer::Local(LocalSigner::new(private_key));
+
+    // 2. Build the fee-token transaction.
+    let fee_token: Address = "&lt;fee-token-address&gt;".parse()?;
+    let recipient: Address = "&lt;recipient-address&gt;".parse()?;
+    let mut tx = build_generic_tx(
+        &amp;l2,
+        TxType::FeeToken,
+        recipient,
+        signer.address(),
+        Bytes::default(),
+        Overrides {
+            fee_token: Some(fee_token),
+            value: Some(U256::from(100_000u64)),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    // 3. Send and wait for the receipt.
+    let tx_hash = send_generic_transaction(&amp;l2, tx, &amp;signer).await?;
+    wait_for_transaction_receipt(tx_hash, &amp;l2, 100).await?;
+    Ok(())
+}</code></pre></pre>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../l2/interacting/shared_bridge.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../l2/fundamentals/transaction_fees.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../l2/fundamentals/state_diffs.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../l2/fundamentals/shared_bridge.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -287,11 +361,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../l2/interacting/shared_bridge.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../l2/fundamentals/transaction_fees.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../l2/fundamentals/state_diffs.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../l2/fundamentals/shared_bridge.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
