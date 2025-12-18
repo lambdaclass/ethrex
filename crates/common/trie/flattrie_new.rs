@@ -669,27 +669,33 @@ impl FlatTrie {
                     }
                 },
                 NodeHandle::Branch { children_indices } => {
-                    let mut children_hashes = Vec::new();
+                    let mut children_hashes: [Option<NodeHash>; 16] = [None; 16];
                     for (i, child_index) in children_indices
                         .clone()
                         .iter()
                         .enumerate()
-                        .flat_map(|(i, c)| c.map(|c| (i, c)))
+                        .filter_map(|(i, c)| c.map(|c| (i, c)))
                     {
                         if let Some(child_index) = child_index {
                             let child_hash = recursive(trie, child_index)?;
-                            children_hashes.push((i, child_hash))
+                            children_hashes[i] = Some(child_hash);
                         };
                     }
+
                     let encoded_items = trie.get_encoded_items(index)?;
-                    for (i, child_hash) in children_hashes {
-                        if child_hash.as_ref() != decode_bytes(encoded_items[i])?.0 {
-                            dbg!(child_hash.as_ref());
-                            dbg!(decode_bytes(encoded_items[i]));
-                            panic!("wrong child hash encoded in branch node")
-                        }
+                    let mut non_pruned_hashes = children_hashes
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, c)| c.map(|c| (i, c)));
+                    let hash_mismatch = non_pruned_hashes
+                        .any(|(i, child_hash)| child_hash.as_ref() != &(encoded_items[i])[1..]);
+
+                    if !hash_mismatch {
+                        trie.hash_encoded_data(index)
+                    } else {
+                        let encoded = encode_branch(children_hashes);
+                        NodeHash::from_encoded(&encoded)
                     }
-                    trie.hash_encoded_data(index)
                 }
             };
             trie.hashes.insert(index, hash.clone());
