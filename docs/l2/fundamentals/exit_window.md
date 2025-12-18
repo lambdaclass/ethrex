@@ -6,7 +6,7 @@ The [Stages Framework](https://medium.com/l2beat/introducing-stages-a-framework-
 
 The ethrex L2 stack provides this security functionality through a `Timelock` contract that is deployed and configured with the exit window duration, which we will learn more about in the next section.
 
-## How Exit Windows Work
+## How exit windows work
 
 Before understanding how exit windows work, it is necessary to keep in mind which specific functionality of the L1 contracts we need to protect. For this, we recommend reading in advance about the OnChainProposer and CommonBridge contracts. To make it simpler, we will initially focus only on the upgrade logic, as the same logic applies to the rest of the modifications.
 
@@ -27,7 +27,7 @@ It is in the second and final step where the previously scheduled operation is e
 
 We achieve an exit window by configuring the `Timelock` contract as the owner of the L1 contracts. In this way, it is the only one capable of executing upgrades on the L1 contracts, and it will do so through the scheduling and execution of operations, which provide the desired delay. With this, it is sufficient to add the onlyOwner modifier to the functions we want to execute with a certain delay.
 
-## Settlement Window
+## Settlement window
 
 Also known as “withdrawal delay”, the settlement window is the batch verification delay that needs to be fulfilled for the sequencer to be able to verify a committed batch, even if the proof is already available for verification.
 
@@ -35,7 +35,7 @@ The goal of the settlement window is to give enough time to the rollup operator 
 
 As said before, the settlement window must be taken into account to calculate the real exit window.
 
-## Who Owns the `Timelock`
+## Who owns the `Timelock`
 
 Whoever owns the `Timelock` decides its functioning. In our stack, the owner of the contract is established during its initialization, and then that owner can transfer the ownership to another account if desired.
 
