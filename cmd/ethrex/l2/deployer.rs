@@ -333,7 +333,7 @@ pub struct DeployerOptions {
     #[arg(
         long,
         default_value = "3000",
-        env = "ETHREX_ON_CHAIN_PROPOSER_INCUSION_MAX_WAIT",
+        env = "ETHREX_ON_CHAIN_PROPOSER_INCLUSION_MAX_WAIT",
         help_heading = "Deployer options",
         help = "Deadline in seconds for the sequencer to process a privileged transaction."
     )]
@@ -546,7 +546,7 @@ const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,bo
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
-const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256,address)";
+const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256,address, uint256)";
 const ROUTER_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 const ROUTER_REGISTER_SIGNATURE: &str = "register(uint256,address)";
 
@@ -1311,6 +1311,7 @@ async fn initialize_contracts(
             Value::Address(contract_addresses.on_chain_proposer_address),
             Value::Uint(opts.inclusion_max_wait.into()),
             Value::Address(contract_addresses.router.unwrap_or_default()),
+            Value::Uint(genesis.config.chain_id.into()),
         ];
         let bridge_initialization_calldata =
             encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;

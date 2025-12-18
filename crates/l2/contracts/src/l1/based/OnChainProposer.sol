@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity =0.8.31;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
@@ -34,12 +34,13 @@ contract OnChainProposer is
         bytes32 processedPrivilegedTransactionsRollingHash;
         bytes32 withdrawalsLogsMerkleRoot;
         bytes32 lastBlockHash;
+        uint256 nonPrivilegedTransactions;
         /// @dev git commit hash that produced the proof/verification key used for this batch
         bytes32 commitHash;
     }
 
-    uint8 internal constant VK_SP1 = 1;
-    uint8 internal constant VK_RISC0 = 2;
+    uint8 internal constant SP1_VERIFIER_ID = 1;
+    uint8 internal constant RISC0_VERIFIER_ID = 2;
 
     /// @notice The commitments of the committed batches.
     /// @dev If a batch is committed, the commitment is stored here.
@@ -166,8 +167,8 @@ contract OnChainProposer is
             !REQUIRE_RISC0_PROOF || risc0Vk != bytes32(0),
             "OnChainProposer: missing RISC0 verification key"
         );
-        verificationKeys[commitHash][VK_SP1] = sp1Vk;
-        verificationKeys[commitHash][VK_RISC0] = risc0Vk;
+        verificationKeys[commitHash][SP1_VERIFIER_ID] = sp1Vk;
+        verificationKeys[commitHash][RISC0_VERIFIER_ID] = risc0Vk;
 
         batchCommitments[0] = BatchCommitmentInfo(
             genesisStateRoot,
@@ -175,6 +176,7 @@ contract OnChainProposer is
             bytes32(0),
             bytes32(0),
             bytes32(0),
+            0,
             commitHash
         );
 
@@ -229,7 +231,7 @@ contract OnChainProposer is
         );
         // we don't want to restrict setting the vk to zero
         // as we may want to disable the version
-        verificationKeys[commit_hash][VK_SP1] = new_vk;
+        verificationKeys[commit_hash][SP1_VERIFIER_ID] = new_vk;
         emit VerificationKeyUpgraded("SP1", commit_hash, new_vk);
     }
 
@@ -244,7 +246,7 @@ contract OnChainProposer is
         );
         // we don't want to restrict setting the vk to zero
         // as we may want to disable the version
-        verificationKeys[commit_hash][VK_RISC0] = new_vk;
+        verificationKeys[commit_hash][RISC0_VERIFIER_ID] = new_vk;
         emit VerificationKeyUpgraded("RISC0", commit_hash, new_vk);
     }
 
@@ -255,6 +257,7 @@ contract OnChainProposer is
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash,
+        uint256 nonPrivilegedTransactions,
         bytes32 commitHash,
         bytes[] calldata //rlpEncodedBlocks
     ) external override onlyLeaderSequencer {
@@ -296,9 +299,10 @@ contract OnChainProposer is
         require(commitHash != bytes32(0), "012");
         require(
             (!REQUIRE_SP1_PROOF ||
-                verificationKeys[commitHash][VK_SP1] != bytes32(0)) &&
+                verificationKeys[commitHash][SP1_VERIFIER_ID] != bytes32(0)) &&
                 (!REQUIRE_RISC0_PROOF ||
-                    verificationKeys[commitHash][VK_RISC0] != bytes32(0)),
+                    verificationKeys[commitHash][RISC0_VERIFIER_ID] !=
+                    bytes32(0)),
             "013" // missing verification key for commit hash
         );
 
@@ -322,6 +326,7 @@ contract OnChainProposer is
             processedPrivilegedTransactionsRollingHash,
             withdrawalsLogsMerkleRoot,
             lastBlockHash,
+            nonPrivilegedTransactions,
             commitHash
         );
         emit BatchCommitted(batchNumber, newStateRoot);
@@ -374,6 +379,15 @@ contract OnChainProposer is
             );
         }
 
+        if (
+            ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() &&
+            batchCommitments[batchNumber].nonPrivilegedTransactions != 0
+        ) {
+            revert(
+                "exceeded privileged transaction inclusion deadline, can't include non-privileged transactions"
+            );
+        }
+
         if (REQUIRE_RISC0_PROOF) {
             // If the verification fails, it will revert.
             string memory reason = _verifyPublicData(batchNumber, risc0Journal);
@@ -386,7 +400,9 @@ contract OnChainProposer is
                 );
             }
             bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
-            bytes32 risc0Vk = verificationKeys[batchCommitHash][VK_RISC0];
+            bytes32 risc0Vk = verificationKeys[batchCommitHash][
+                RISC0_VERIFIER_ID
+            ];
             try
                 IRiscZeroVerifier(RISC0_VERIFIER_ADDRESS).verify(
                     risc0BlockProof,
@@ -415,7 +431,7 @@ contract OnChainProposer is
                 );
             }
             bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
-            bytes32 sp1Vk = verificationKeys[batchCommitHash][VK_SP1];
+            bytes32 sp1Vk = verificationKeys[batchCommitHash][SP1_VERIFIER_ID];
             try
                 ISP1Verifier(SP1_VERIFIER_ADDRESS).verifyProof(
                     sp1Vk,
@@ -531,7 +547,7 @@ contract OnChainProposer is
                 _verifyProofInclusionAligned(
                     sp1MerkleProofsList[i],
                     verificationKeys[batchCommitments[batchNumber].commitHash][
-                        VK_SP1
+                        SP1_VERIFIER_ID
                     ],
                     publicInputsList[i]
                 );
@@ -541,7 +557,7 @@ contract OnChainProposer is
                 _verifyProofInclusionAligned(
                     risc0MerkleProofsList[i],
                     verificationKeys[batchCommitments[batchNumber].commitHash][
-                        VK_RISC0
+                        RISC0_VERIFIER_ID
                     ],
                     publicInputsList[i]
                 );
@@ -606,11 +622,11 @@ contract OnChainProposer is
             bytes32(publicData[192:224])
         );
         if (
-            ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() &&
-            nonPrivilegedTransactions != 0
+            batchCommitments[batchNumber].nonPrivilegedTransactions !=
+            nonPrivilegedTransactions
         ) {
             return
-                "exceeded privileged transaction inclusion deadline, can't include non-privileged transactions";
+                "non-privileged transactions public input does not match with committed transactions";
         }
         return "";
     }

@@ -248,6 +248,7 @@ pub async fn init_l2(
                 ),
             }),
             opts.node_opts.tx_broadcasting_time_interval,
+            opts.node_opts.lookup_interval,
         )
         .await
         .expect("P2P context could not be created");

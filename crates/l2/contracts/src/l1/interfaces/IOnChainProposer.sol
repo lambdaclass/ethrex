@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity =0.8.31;
 
 import {ICommonBridge} from "./ICommonBridge.sol";
 
@@ -73,19 +73,20 @@ interface IOnChainProposer {
     /// @param processedPrivilegedTransactionsRollingHash the rolling hash of the processed
     /// privileged transactions of the batch to be committed.
     /// @param lastBlockHash the hash of the last block of the batch to be committed.
-    /// @param l2MessagesMerkleRoot the merkle root of the l2 messages
-    /// of the batch to be committed.
+    /// @param nonPrivilegedTransactions the number of non-privileged transactions in the batch to be committed.
     /// @param commitHash git commit hash that produced the verifier keys for this batch.
     /// @param balanceDiffs the balance diffs of the batch to be committed.
+    /// @param l2MessageRollingHashes the L2 message rolling hashes of the batch to be committed.
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash,
-        bytes32 l2MessagesMerkleRoot,
+        uint256 nonPrivilegedTransactions,
         bytes32 commitHash,
-        ICommonBridge.BalanceDiff[] calldata balanceDiffs
+        ICommonBridge.BalanceDiff[] calldata balanceDiffs,
+        ICommonBridge.L2MessageRollingHash[] calldata l2MessageRollingHashes
     ) external;
 
     /// @notice Method used to verify a batch of L2 blocks.

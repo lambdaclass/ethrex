@@ -24,8 +24,10 @@
   - [Databases](./l1/fundamentals/databases.md)
   - [Networking](./l1/fundamentals/networking.md)
   - [Sync modes](./l1/fundamentals/sync_modes.md)
-  - [Snap sync internals](./internal/l1/healing.md)
+  - [Snap sync internals](./l1/fundamentals/snap_sync.md)
     - [Can an account disappear from Ethereum's state trie?](./internal/l1/delete_accounts.md)
+    - [Future Rewrite Concerns](./l1/fundamentals/snap_sync_concerns.md)
+    - [Sorted Trie Insertion](./internal/l1/sorted_trie_insert.md)
   - [Pruning]()
 
 # Ethrex for L2 chains
@@ -36,6 +38,7 @@
   - [Deploying a vanilla ethrex L2](./l2/deployment/vanilla.md)
   - [Deploying a validium ethrex L2](./l2/deployment/validium.md)
   - [Deploying a based ethrex L2](./l2/deployment/based.md)
+  - [Ethrex <> Aligned](./l2/deployment/aligned.md)
   - [Synchronous Composability PoC](./l2/deployment/synchronous_composability_poc.md)
   - [Deploying a shared bridge enabled L2](./l2/deployment/shared_bridge.md)
   - [Migrations](./l2/deployment/migrations.md)
@@ -47,7 +50,6 @@
   - [Run multiple provers](./l2/deployment/prover/multi-prover.md)
 - [Monitoring and metrics](./l2/monitoring.md)
 - [Admin server](./l2/admin.md)
-- [Ethrex <> Aligned](./l2/aligned_integration.md)
 - [Architecture](./l2/architecture/README.md)
   - [Overview](./l2/architecture/overview.md)
   - [Sequencer](./l2/architecture/sequencer.md)
@@ -74,6 +76,7 @@
     - [L1MessageSender]()
   - [Based sequencing](./l2/fundamentals/based.md)
   - [Transaction fees](./l2/fundamentals/transaction_fees.md)
+  - [Shared Bridge](./l2/fundamentals/shared_bridge.md)
 
 # Ethrex for developers
 
@@ -85,6 +88,7 @@
   - [Kurtosis localnet](./developers/l1/kurtosis-localnet.md)
   - [Metrics](./developers/l1/metrics.md)
   - [Dashboards](./developers/l1/dashboards.md)
+  - [Integrating with other DBs](./developers/l1/storage_api.md)
   - [Testing](./developers/l1/testing/README.md)
     - [Ethereum foundation tests](./developers/l1/testing/ef-tests.md)
     - [Hive tests](./developers/l1/testing/hive.md)

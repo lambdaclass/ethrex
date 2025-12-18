@@ -2,7 +2,7 @@
 
 ## Sequencer and prover versions
 
-Each committed batch stores the git commit hash of the sequencer build that produced it. The OnChainProposer uses that commit hash to look up the verifier key in its `verificationKeys` mapping. When you upgrade the sequencer, all batches committed before the upgrade must be proved with the prover matching the old version, and all batches committed after the upgrade must be proved with a prover built from the new version.
+Each committed batch stores the git commit hash of the sequencer build that produced it. The OnChainProposer uses that commit hash to look up the verifier key in its `verificationKeys` mapping. When the sequencer is upgraded, all batches committed before the upgrade must be proved with the prover matching the old version, and all batches committed after the upgrade must be proved with a prover built from the new version.
 
 ## Registering a new verification key
 
@@ -24,10 +24,17 @@ To allow proofs from a new sequencer/prover build, register its verification key
      <KECCAK_GIT_COMMIT> \
      <PROVER_ID>
    ```
-   `1` is the SP1 verifier ID (`2` is RISC0).
+   `1` is the SP1 verifier ID, `2` is RISC0.
 
 ### Verification key artifacts
 
-- The SP1 verification key that goes on-chain is obtained when you build the prover. It is stored at `crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254`.
+The verification key that goes on-chain is obtained when you build the prover.
 
-- For Aligned proving, use the `u32` form generated alongside it at `crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32`.
+For SP1 it is stored at:
+
+  - `crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254`.
+
+  - If proving with Aligned, use the `u32` form generated alongside it at `crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32`.
+
+For RISC0 it is stored at:
+  - `crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk`
