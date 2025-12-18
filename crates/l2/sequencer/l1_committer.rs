@@ -878,7 +878,10 @@ impl L1Committer {
                 // account updates of each block as we go, to be able to continue
                 // re-executing the next blocks in the batch.
                 let account_updates_list = checkpoint_store
-                    .apply_account_updates_batch(parent_hash, &account_updates)?
+                    .apply_account_updates_batch(
+                        potential_batch_block.header.parent_hash,
+                        &account_updates,
+                    )?
                     .ok_or(CommitterError::FailedToGetInformationFromStorage(
                         "parent state not found in checkpoint store".to_owned(),
                     ))?;
