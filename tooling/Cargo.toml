@@ -9,6 +9,7 @@ members = [
   "loc",
   "migrations",
   "reorgs",
+  "geth2ethrex"
 ]
 exclude = ["ef_tests/state"]
 resolver = "2"
