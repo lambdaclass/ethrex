@@ -6,7 +6,7 @@ use crate::{
 };
 use ethrex_common::{H256, U256};
 use indexmap::{IndexMap, map::Entry};
-use rand::seq::SliceRandom;
+use rand::seq::{IteratorRandom, SliceRandom};
 use spawned_concurrency::{
     error::GenServerError,
     tasks::{CallResponse, CastResponse, GenServer, GenServerHandle, InitResult, send_message_on},
@@ -706,9 +706,7 @@ impl PeerTableServer {
                     && !c.disposable
                     && c.is_fork_id_valid != Some(false)
             })
-            .collect::<Vec<_>>()
             .choose(&mut rand::rngs::OsRng)
-            .cloned()
             .cloned()
     }
 
@@ -721,9 +719,7 @@ impl PeerTableServer {
                     && c.record.is_none()
                     && !c.disposable
             })
-            .collect::<Vec<_>>()
             .choose(&mut rand::rngs::OsRng)
-            .cloned()
             .cloned()
     }
 
