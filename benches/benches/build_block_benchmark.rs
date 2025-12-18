@@ -138,7 +138,7 @@ async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
     (store, genesis)
 }
 
-async fn create_payload_block(genesis_block: &Block, store: &Store) -> (Block, u64) {
+fn create_payload_block(genesis_block: &Block, store: &Store) -> (Block, u64) {
     let payload_args = BuildPayloadArgs {
         parent: genesis_block.hash(),
         timestamp: genesis_block.header.timestamp + 1,
@@ -186,7 +186,7 @@ pub async fn bench_payload(input: &(Arc<Blockchain>, Block, &Store)) -> (Duratio
     // the RPC handling. The payload is then sent to `Blockchain` to initiate the payload building
     // Blockchain::initiate_payload_build eventually calls 'fill_transactions'
     // which should take transactions from the previously filled mempool
-    let (payload_block, payload_id) = create_payload_block(genesis_block, store).await;
+    let (payload_block, payload_id) = create_payload_block(genesis_block, store);
     blockchain
         .clone()
         .initiate_payload_build(payload_block, payload_id)
