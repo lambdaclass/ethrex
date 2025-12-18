@@ -52,9 +52,9 @@ impl MempoolInner {
             if matches!(tx.tx_type(), TxType::EIP4844)
                 && let Some(h) = self.blobs_bundle_pool.remove(hash)
             {
-                for commintment in &h.commitments {
+                for commitment in &h.commitments {
                     self.blobs_bundle_by_versioned_hash
-                        .remove(&kzg_commitment_to_versioned_hash(commintment));
+                        .remove(&kzg_commitment_to_versioned_hash(commitment));
                 }
             }
 
@@ -338,8 +338,9 @@ impl Mempool {
         &self,
         versioned_hashes: &[H256],
     ) -> Result<Vec<Option<BlobTuple>>, MempoolError> {
-        let blobs_bundle_pool = &self.read()?.blobs_bundle_pool;
-        let blobs_bundle_by_versioned_hash = &self.read()?.blobs_bundle_by_versioned_hash;
+        let mempool = self.read()?;
+        let blobs_bundle_pool = &mempool.blobs_bundle_pool;
+        let blobs_bundle_by_versioned_hash = &mempool.blobs_bundle_by_versioned_hash;
         let mut res = vec![None; versioned_hashes.len()];
         for (idx, vh) in versioned_hashes.iter().enumerate() {
             if let Some((found_hash, inner_pos)) = blobs_bundle_by_versioned_hash.get(vh) {

@@ -177,7 +177,12 @@ async fn get_blobs_and_proof(
 
     let res = blob_tuples
         .into_iter()
-        .map(|b| b.map(|(blob, _, proofs)| BlobAndProofV2 { blob, proofs }))
+        .map(|b| {
+            b.map(|(blob, _, proofs)| BlobAndProofV2 {
+                blob: *blob,
+                proofs: proofs.into_vec(),
+            })
+        })
         .collect();
 
     Ok(res)

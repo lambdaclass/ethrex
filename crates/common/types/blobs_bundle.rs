@@ -20,7 +20,7 @@ pub type Bytes48 = [u8; 48];
 pub type Blob = [u8; BYTES_PER_BLOB];
 pub type Commitment = Bytes48;
 pub type Proof = Bytes48;
-pub type BlobTuple = (Blob, Commitment, Vec<Proof>);
+pub type BlobTuple = (Box<Blob>, Commitment, Box<[Proof]>);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -128,12 +128,15 @@ impl BlobsBundle {
     /// Given an index returns all or nothing `BlobTuple` if either of the commitment, proof or
     /// blob is not found then it will return None instead of Partial data.
     pub fn get_blob_tuple_by_index(&self, index: usize) -> Option<BlobTuple> {
-        let result = (
-            *self.blobs.get(index)?,
-            *self.commitments.get(index)?,
-            self.proofs.chunks(CELLS_PER_EXT_BLOB).nth(index)?.to_vec(),
-        );
-        Some(result)
+        let blob = Box::new(*self.blobs.get(index)?);
+        let commitment = *self.commitments.get(index)?;
+        let proofs = if self.version == 0 {
+            Box::from([*self.proofs.get(index)?])
+        } else {
+            let proofs = self.proofs.chunks(CELLS_PER_EXT_BLOB).nth(index)?;
+            Box::from(proofs)
+        };
+        Some((blob, commitment, proofs))
     }
 
     #[cfg(feature = "c-kzg")]
