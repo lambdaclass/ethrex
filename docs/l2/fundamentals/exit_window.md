@@ -8,7 +8,7 @@ The ethrex L2 stack provides this security functionality through a `Timelock` co
 
 ## How exit windows work
 
-Before understanding how exit windows work, it is necessary to keep in mind which specific functionality of the L1 contracts we need to protect. For this, we recommend reading in advance about the OnChainProposer and CommonBridge contracts. To make it simpler, we will initially focus only on the upgrade logic, as the same logic applies to the rest of the modifications.
+Before understanding how exit windows work, it is necessary to keep in mind which specific functionality of the L1 contracts we need to protect. For this, we recommend reading in advance about the `OnChainProposer` and `CommonBridge` contracts in the [contracts fundamentals section](./contracts.md). To make it simpler, we will initially focus only on the upgrade logic, as the same logic applies to the rest of the modifications.
 
 All our contracts are [`UUPSUpgradeable`](https://docs.openzeppelin.com/contracts/5.x/api/proxy#UUPSUpgradeable) (an upgradeability pattern recommended by OpenZeppelin). In particular, to upgrade this type of contract, the operator must call the `upgradeAndCall` function, which invokes an internal function called `_authorizeUpgrade`. It is recommended to override this function by implementing authorization logic. This is the function we must protect in the case of both contracts, and we do so by “delaying” its execution.
 
