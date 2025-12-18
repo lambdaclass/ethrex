@@ -669,22 +669,25 @@ impl FlatTrie {
                     }
                 },
                 NodeHandle::Branch { children_indices } => {
-                    let mut children_hashes: [Option<NodeHash>; 16] = [None; 16];
-                    for (i, child) in children_indices
+                    let mut children_hashes = Vec::new();
+                    for (i, child_index) in children_indices
                         .clone()
                         .iter()
                         .enumerate()
                         .flat_map(|(i, c)| c.map(|c| (i, c)))
                     {
-                        children_hashes[i] = Some(if let Some(child_index) = child {
-                            recursive(trie, child_index)?
-                        } else {
-                            let encoded_items = trie.get_encoded_items(index)?;
-                            decode_child(encoded_items[i])
-                        });
+                        if let Some(child_index) = child_index {
+                            let child_hash = recursive(trie, child_index)?;
+                            children_hashes.push((i, child_hash))
+                        };
                     }
-                    let encoded = encode_branch(children_hashes);
-                    NodeHash::from_encoded(&encoded)
+                    let encoded_items = trie.get_encoded_items(index)?;
+                    for (i, child_hash) in children_hashes {
+                        if child_hash.as_ref() != encoded_items[i] {
+                            panic!("wrong child hash encoded in branch node")
+                        }
+                    }
+                    trie.hash_encoded_data(index)
                 }
             };
             trie.hashes.insert(index, hash.clone());
