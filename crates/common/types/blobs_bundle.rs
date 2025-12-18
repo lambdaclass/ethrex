@@ -14,12 +14,13 @@ use ethrex_rlp::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{BYTES_PER_BLOB, SAFE_BYTES_PER_BLOB};
+use super::{BYTES_PER_BLOB, CELLS_PER_EXT_BLOB, SAFE_BYTES_PER_BLOB};
 
 pub type Bytes48 = [u8; 48];
 pub type Blob = [u8; BYTES_PER_BLOB];
 pub type Commitment = Bytes48;
 pub type Proof = Bytes48;
+pub type BlobTuple = (Blob, Commitment, Vec<Proof>);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -122,6 +123,17 @@ impl BlobsBundle {
             .iter()
             .map(kzg_commitment_to_versioned_hash)
             .collect()
+    }
+
+    /// Given an index returns all or nothing `BlobTuple` if either of the commitment, proof or
+    /// blob is not found then it will return None instead of Partial data.
+    pub fn get_blob_tuple_by_index(&self, index: usize) -> Option<BlobTuple> {
+        let result = (
+            *self.blobs.get(index)?,
+            *self.commitments.get(index)?,
+            self.proofs.chunks(CELLS_PER_EXT_BLOB).nth(index)?.to_vec(),
+        );
+        Some(result)
     }
 
     #[cfg(feature = "c-kzg")]

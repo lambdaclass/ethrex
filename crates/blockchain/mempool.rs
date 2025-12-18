@@ -13,7 +13,10 @@ use crate::{
 };
 use ethrex_common::{
     Address, H160, H256, U256,
-    types::{BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType},
+    types::{
+        BlobTuple, BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType,
+        kzg_commitment_to_versioned_hash,
+    },
 };
 use ethrex_storage::error::StoreError;
 use std::collections::HashSet;
@@ -24,6 +27,7 @@ struct MempoolInner {
     broadcast_pool: HashSet<H256>,
     transaction_pool: HashMap<H256, MempoolTransaction>,
     blobs_bundle_pool: HashMap<H256, BlobsBundle>,
+    blobs_bundle_by_versioned_hash: HashMap<H256, (H256, usize)>,
     txs_by_sender_nonce: BTreeMap<(H160, u64), H256>,
     txs_order: VecDeque<H256>,
     max_mempool_size: usize,
@@ -45,8 +49,13 @@ impl MempoolInner {
     /// Remove a transaction from the pool with the transaction pool lock already taken
     fn remove_transaction_with_lock(&mut self, hash: &H256) -> Result<(), StoreError> {
         if let Some(tx) = self.transaction_pool.get(hash) {
-            if matches!(tx.tx_type(), TxType::EIP4844) {
-                self.blobs_bundle_pool.remove(hash);
+            if matches!(tx.tx_type(), TxType::EIP4844)
+                && let Some(h) = self.blobs_bundle_pool.remove(hash)
+            {
+                for commintment in &h.commitments {
+                    self.blobs_bundle_by_versioned_hash
+                        .remove(&kzg_commitment_to_versioned_hash(commintment));
+                }
             }
 
             self.txs_by_sender_nonce.remove(&(tx.sender(), tx.nonce()));
@@ -154,9 +163,14 @@ impl Mempool {
         tx_hash: H256,
         blobs_bundle: BlobsBundle,
     ) -> Result<(), StoreError> {
-        self.write()?
-            .blobs_bundle_pool
-            .insert(tx_hash, blobs_bundle);
+        let mut mempool = self.write()?;
+        for (i, c) in blobs_bundle.commitments.iter().enumerate() {
+            let versioned_hash = kzg_commitment_to_versioned_hash(c);
+            mempool
+                .blobs_bundle_by_versioned_hash
+                .insert(versioned_hash, (tx_hash, i));
+        }
+        mempool.blobs_bundle_pool.insert(tx_hash, blobs_bundle);
         Ok(())
     }
 
@@ -317,6 +331,24 @@ impl Mempool {
     pub fn get_blobs_bundle_pool(&self) -> Result<Vec<BlobsBundle>, MempoolError> {
         let blobs_bundle_pool = &self.read()?.blobs_bundle_pool;
         Ok(blobs_bundle_pool.values().cloned().collect())
+    }
+
+    /// Returns blobs data (blob, commitment, proof) associated with the versioned hashes
+    pub fn get_blobs_data_by_versioned_hashes(
+        &self,
+        versioned_hashes: &[H256],
+    ) -> Result<Vec<Option<BlobTuple>>, MempoolError> {
+        let blobs_bundle_pool = &self.read()?.blobs_bundle_pool;
+        let blobs_bundle_by_versioned_hash = &self.read()?.blobs_bundle_by_versioned_hash;
+        let mut res = vec![None; versioned_hashes.len()];
+        for (idx, vh) in versioned_hashes.iter().enumerate() {
+            if let Some((found_hash, inner_pos)) = blobs_bundle_by_versioned_hash.get(vh) {
+                res[idx] = blobs_bundle_pool
+                    .get(found_hash)
+                    .and_then(|b| b.get_blob_tuple_by_index(*inner_pos))
+            }
+        }
+        Ok(res)
     }
 
     /// Returns the status of the mempool, which is the number of transactions currently in

@@ -1,7 +1,7 @@
 use ethrex_common::{
     H256,
     serde_utils::{self},
-    types::{Blob, CELLS_PER_EXT_BLOB, Proof, blobs_bundle::kzg_commitment_to_versioned_hash},
+    types::{Blob, Proof, blobs_bundle::kzg_commitment_to_versioned_hash},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -168,33 +168,18 @@ async fn get_blobs_and_proof(
         )));
     };
 
-    let mut res: Vec<Option<BlobAndProofV2>> = vec![None; blob_versioned_hashes.len()];
+    let blob_tuples = context
+        .blockchain
+        .mempool
+        .get_blobs_data_by_versioned_hashes(blob_versioned_hashes)?;
 
-    for blobs_bundle in context.blockchain.mempool.get_blobs_bundle_pool()? {
-        // Go over all blobs bundles from the blobs bundle pool.
-        let blobs_in_bundle = blobs_bundle.blobs;
-        let commitments_in_bundle = blobs_bundle.commitments;
-        let proofs_in_bundle = blobs_bundle.proofs;
+    debug_assert_eq!(blob_versioned_hashes.len(), blob_tuples.len());
 
-        // Go over all the commitments in each blobs bundle to calculate the blobs versioned hash.
-        for (commitment, (blob, proofs)) in commitments_in_bundle.iter().zip(
-            blobs_in_bundle
-                .iter()
-                .zip(proofs_in_bundle.chunks(CELLS_PER_EXT_BLOB)),
-        ) {
-            let current_versioned_hash = kzg_commitment_to_versioned_hash(commitment);
-            if let Some(index) = blob_versioned_hashes
-                .iter()
-                .position(|&hash| hash == current_versioned_hash)
-            {
-                // If the versioned hash is one of the requested we save its corresponding blob and proof in the returned vector. We store them in the same position as the versioned hash was received.
-                res[index] = Some(BlobAndProofV2 {
-                    blob: *blob,
-                    proofs: proofs.to_vec(),
-                });
-            }
-        }
-    }
+    let res = blob_tuples
+        .into_iter()
+        .map(|b| b.map(|(blob, _, proofs)| BlobAndProofV2 { blob, proofs }))
+        .collect();
+
     Ok(res)
 }
 
@@ -204,7 +189,7 @@ mod tests {
     use crate::test_utils::default_context_with_storage;
     use ethrex_common::{
         Address, H256,
-        types::{BYTES_PER_BLOB, BlobsBundle, ChainConfig, Commitment, Proof},
+        types::{BYTES_PER_BLOB, BlobsBundle, CELLS_PER_EXT_BLOB, ChainConfig, Commitment, Proof},
     };
     use ethrex_storage::{EngineType, Store};
 
