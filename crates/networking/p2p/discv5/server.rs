@@ -2,7 +2,7 @@ use crate::{
     discv5::{
         codec::Discv5Codec,
         messages::{
-            FindNodeMessage, Message, NodesMessage, Packet, PacketDecodeErr, PingMessage,
+            FindNodeMessage, Message, NodesMessage, Packet, PacketCodecError, PingMessage,
             PongMessage,
         },
     },
@@ -48,9 +48,9 @@ pub enum DiscoveryServerError {
     #[error(transparent)]
     IoError(#[from] std::io::Error),
     #[error("Failed to decode packet")]
-    InvalidPacket(#[from] PacketDecodeErr),
+    InvalidPacket(#[from] PacketCodecError),
     #[error("Failed to send message")]
-    MessageSendFailure(PacketDecodeErr),
+    MessageSendFailure(PacketCodecError),
     #[error("Only partial message was sent")]
     PartialMessageSent,
     #[error("Unknown or invalid contact")]
