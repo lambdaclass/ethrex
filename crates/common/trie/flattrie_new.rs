@@ -409,7 +409,7 @@ impl FlatTrie {
                 };
 
                 let new_child = &self.nodes[new_child_index];
-                let new_view_index = match new_child.handle {
+                let new_index = match new_child.handle {
                     NodeHandle::Branch { .. } => {
                         let handle = NodeHandle::Extension {
                             prefix: Some(prefix),
@@ -436,7 +436,7 @@ impl FlatTrie {
                         self.put_node(handle)
                     }
                 };
-                Ok(Some(new_view_index))
+                Ok(Some(new_index))
             }
             NodeHandle::Branch {
                 mut children_indices,
@@ -595,11 +595,7 @@ impl FlatTrie {
                     children_indices: override_children_indices,
                 },
             ) => {
-                for i in 0..16 {
-                    if override_children_indices[i].is_some() {
-                        original_children_indices[i] = override_children_indices[i];
-                    }
-                }
+                *original_children_indices = override_children_indices;
             }
             _ => unreachable!(),
         }
@@ -874,34 +870,5 @@ mod test {
                 prop_assert_eq!(hash, flat_trie_hash.finalize());
             }
         }
-
-        // #[test]
-        // fn proptest_insert_remove_compare_hash((kv, shuffle) in kv_pairs_strategy()) {
-        //     let mut trie = Trie::new_temp();
-        //     let mut flat_trie = FlatTrie::default();
-
-        //     for (key, value) in kv.iter() {
-        //         trie.insert(key.clone(), value.clone()).unwrap();
-        //         flat_trie.insert(key.clone(), value.clone()).unwrap();
-
-        //         let hash = trie.hash_no_commit();
-
-        //         let flat_trie_hash = flat_trie.hash().unwrap();
-
-        //         prop_assert_eq!(hash, flat_trie_hash.finalize());
-        //     }
-
-        //     for i in shuffle.iter() {
-        //         let key = &kv[*i].0;
-        //         trie.remove(key).unwrap();
-        //         flat_trie.remove(key).unwrap();
-
-        //         let hash = trie.hash_no_commit();
-
-        //         let flat_trie_hash = flat_trie.hash().unwrap();
-
-        //         prop_assert_eq!(hash, flat_trie_hash.finalize());
-        //     }
-        // }
     }
 }
