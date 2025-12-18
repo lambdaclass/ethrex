@@ -37,6 +37,16 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable {
         _;
     }
 
+    /// @notice Disables the parent initialize function to prevent accidental misuse.
+    function initialize(
+        uint256,
+        address[] memory,
+        address[] memory,
+        address
+    ) public pure override {
+        revert("Timelock: use the custom initialize function");
+    }
+
     /// @notice Initializes the timelock contract.
     /// @dev Called once after proxy deployment.
     /// @param minDelay The minimum delay (in seconds) for scheduled operations.
