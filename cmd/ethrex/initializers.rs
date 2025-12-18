@@ -164,24 +164,39 @@ pub async fn init_rpc_api(
         None
     };
 
-    let rpc_api = ethrex_rpc::start_api(
-        get_http_socket_addr(opts),
-        ws_socket_opts,
-        get_authrpc_socket_addr(opts),
-        store,
-        blockchain,
-        read_jwtsecret_file(&opts.authrpc_jwtsecret),
-        local_p2p_node,
-        local_node_record,
-        syncer,
-        peer_handler,
-        get_client_version(),
-        log_filter_handler,
-        opts.gas_limit,
-        opts.extra_data.clone(),
-    );
+    let http_socket = get_http_socket_addr(opts);
+    let authrpc_socket = get_authrpc_socket_addr(opts);
+    let jwt_secret = read_jwtsecret_file(&opts.authrpc_jwtsecret);
+    let client_version = get_client_version();
+    let gas_limit = opts.gas_limit;
+    let extra_data = opts.extra_data.clone();
 
-    tracker.spawn(rpc_api);
+    tracker.spawn(async move {
+        match ethrex_rpc::start_api(
+            http_socket,
+            ws_socket_opts,
+            authrpc_socket,
+            store,
+            blockchain,
+            jwt_secret,
+            local_p2p_node,
+            local_node_record,
+            syncer,
+            peer_handler,
+            client_version,
+            log_filter_handler,
+            gas_limit,
+            extra_data,
+        )
+        .await
+        {
+            Ok(()) => info!("RPC API server shut down gracefully"),
+            Err(e) => {
+                error!("Failed to start RPC API: {e}");
+                std::process::exit(1);
+            }
+        }
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
