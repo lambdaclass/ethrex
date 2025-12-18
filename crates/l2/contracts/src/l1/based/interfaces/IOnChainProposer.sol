@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity =0.8.31;
 
 /// @title Interface for the OnChainProposer contract.
 /// @author LambdaClass
@@ -26,8 +26,13 @@ interface IOnChainProposer {
     /// @notice A verification key has been upgraded.
     /// @dev Event emitted when a verification key is upgraded.
     /// @param verifier The name of the verifier whose key was upgraded.
+    /// @param commitHash The git commit hash associated to the verification key.
     /// @param newVerificationKey The new verification key.
-    event VerificationKeyUpgraded(string verifier, bytes32 newVerificationKey);
+    event VerificationKeyUpgraded(
+        string verifier,
+        bytes32 commitHash,
+        bytes32 newVerificationKey
+    );
 
     /// @notice Set the bridge address for the first time.
     /// @dev This method is separated from initialize because both the CommonBridge
@@ -37,12 +42,20 @@ interface IOnChainProposer {
     function initializeBridgeAddress(address bridge) external;
 
     /// @notice Upgrades the SP1 verification key that represents the sequencer's code.
+    /// @param commitHash git commit hash that produced the verifier keys for this batch.
     /// @param new_vk new verification key for SP1 verifier
-    function upgradeSP1VerificationKey(bytes32 new_vk) external;
+    function upgradeSP1VerificationKey(
+        bytes32 commitHash,
+        bytes32 new_vk
+    ) external;
 
     /// @notice Upgrades the RISC0 verification key that represents the sequencer's code.
+    /// @param commitHash git commit hash that produced the verifier keys for this batch.
     /// @param new_vk new verification key for RISC0 verifier
-    function upgradeRISC0VerificationKey(bytes32 new_vk) external;
+    function upgradeRISC0VerificationKey(
+        bytes32 commitHash,
+        bytes32 new_vk
+    ) external;
 
     /// @notice Commits to a batch of L2 blocks.
     /// @dev Committing to an L2 batch means to store the batch's commitment
@@ -55,6 +68,7 @@ interface IOnChainProposer {
     /// deposits logs of the batch to be committed.
     /// @param lastBlockHash the hash of the last block of the batch to be committed.
     /// @param nonPrivilegedTransactions the number of non-privileged transactions in the batch.
+    /// @param commitHash git commit hash that produced the verifier keys for this batch.
     /// @param _rlpEncodedBlocks the list of RLP-encoded blocks in the batch.
     function commitBatch(
         uint256 batchNumber,
@@ -63,6 +77,7 @@ interface IOnChainProposer {
         bytes32 processedDepositLogsRollingHash,
         bytes32 lastBlockHash,
         uint256 nonPrivilegedTransactions,
+        bytes32 commitHash,
         bytes[] calldata _rlpEncodedBlocks
     ) external;
 
