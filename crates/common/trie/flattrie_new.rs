@@ -365,6 +365,140 @@ impl FlatTrie {
         }
     }
 
+    pub fn remove(&mut self, path: &[u8]) -> Result<(), RLPDecodeError> {
+        let path = Nibbles::from_bytes(path);
+        if let Some(root_index) = self.root_index {
+            self.root_index = self.remove_inner(root_index, path)?;
+        }
+        self.root_hash = None;
+        Ok(())
+    }
+
+    pub fn remove_inner(
+        &mut self,
+        index: usize,
+        mut path: Nibbles,
+    ) -> Result<Option<usize>, RLPDecodeError> {
+        let node = &self.nodes[index];
+        match node.handle {
+            NodeHandle::Leaf { .. } => {
+                let (partial, _) = self.get_leaf_data(index)?;
+                if partial == path {
+                    Ok(None)
+                } else {
+                    Ok(Some(index))
+                }
+            }
+            NodeHandle::Extension { child_index, .. } => {
+                let mut prefix = self.get_extension_data(index)?;
+
+                if !path.skip_prefix(&prefix) {
+                    return Ok(Some(index));
+                }
+                let new_child_index = self.remove_inner(
+                    child_index.expect("missing child of extension node at remove"),
+                    path,
+                )?;
+                let Some(new_child_index) = new_child_index else {
+                    return Ok(None);
+                };
+
+                let new_child = &self.nodes[new_child_index];
+                let new_view_index = match new_child.handle {
+                    NodeHandle::Branch { .. } => {
+                        let handle = NodeHandle::Extension {
+                            prefix: Some(prefix),
+                            child_index: Some(new_child_index),
+                        };
+                        self.put_node(handle)
+                    }
+                    NodeHandle::Extension { child_index, .. } => {
+                        let new_child_prefix = self.get_extension_data(new_child_index)?;
+                        prefix.extend(&new_child_prefix);
+                        let handle = NodeHandle::Extension {
+                            prefix: Some(prefix),
+                            child_index,
+                        };
+                        self.override_node(index, handle)
+                    }
+                    NodeHandle::Leaf { .. } => {
+                        let (partial, value) = self.get_leaf_data(new_child_index)?;
+                        prefix.extend(&partial);
+                        let handle = NodeHandle::Leaf {
+                            partial: Some(prefix),
+                            value: Some(value.to_vec()),
+                        };
+                        self.put_node(handle)
+                    }
+                };
+                Ok(Some(new_view_index))
+            }
+            NodeHandle::Branch {
+                mut children_indices,
+            } => {
+                let choice = path
+                    .next_choice()
+                    .expect("branch removal yielded value on a branch");
+
+                let Some(child_index) = children_indices[choice] else {
+                    return Ok(Some(index));
+                };
+
+                let new_child_index = self.remove_inner(
+                    child_index.expect("pruned branch choice needed for remove"),
+                    path,
+                )?;
+                children_indices[choice] = new_child_index.map(|i| Some(i));
+
+                let new_valid_children: Vec<_> = children_indices
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, c)| c.map(|c| (i, c)))
+                    .collect();
+
+                match new_valid_children.len() {
+                    0 => Ok(None),
+                    1 => {
+                        let (choice_idx, child_idx) = new_valid_children[0];
+                        let child_idx = child_idx.expect("missing child of branch at remove");
+                        let child = &self.nodes[child_idx];
+
+                        match child.handle {
+                            NodeHandle::Leaf { .. } => {
+                                let (mut partial, value) = self.get_leaf_data(child_idx)?;
+                                partial.prepend(choice_idx as u8);
+                                Ok(Some(self.put_leaf(partial, value.to_vec())))
+                            }
+                            NodeHandle::Extension { child_index, .. } => {
+                                let mut prefix = self.get_extension_data(child_idx)?;
+                                prefix.prepend(choice_idx as u8);
+                                let child_index = child_index
+                                    .expect("missing child of extension at remove for branch case");
+                                let handle = NodeHandle::Extension {
+                                    prefix: Some(prefix),
+                                    child_index: Some(child_index),
+                                };
+                                Ok(Some(self.put_node(handle)))
+                            }
+                            NodeHandle::Branch { .. } => {
+                                let prefix = Nibbles::from_hex(vec![choice_idx as u8]);
+                                let handle = NodeHandle::Extension {
+                                    prefix: Some(prefix),
+                                    child_index: Some(child_idx),
+                                };
+                                Ok(Some(self.put_node(handle)))
+                            }
+                        }
+                    }
+                    _ => {
+                        let handle = NodeHandle::Branch { children_indices };
+                        Ok(Some(self.put_node(handle)))
+                    }
+                }
+            }
+        }
+    }
+
     /// Adds a new node to the trie with a specific handle
     ///
     /// # Warning
@@ -706,11 +840,31 @@ mod test {
             for (key, value) in kv.iter(){
                 trie.insert(key.clone(), value.clone()).unwrap();
                 flat_trie.insert(key.clone(), value.clone()).unwrap();
-
                 let hash = trie.hash_no_commit();
-
                 let flat_trie_hash = flat_trie.hash().unwrap();
+                prop_assert_eq!(hash, flat_trie_hash.finalize());
+            }
+        }
 
+        #[test]
+        fn proptest_insert_remove_compare_hash((kv, shuffle) in kv_pairs_strategy()) {
+            let mut trie = Trie::new_temp();
+            let mut flat_trie = FlatTrie::default();
+
+            for (key, value) in kv.iter() {
+                trie.insert(key.clone(), value.clone()).unwrap();
+                flat_trie.insert(key.clone(), value.clone()).unwrap();
+                let hash = trie.hash_no_commit();
+                let flat_trie_hash = flat_trie.hash().unwrap();
+                prop_assert_eq!(hash, flat_trie_hash.finalize());
+            }
+
+            for i in shuffle.iter() {
+                let key = &kv[*i].0;
+                trie.remove(key).unwrap();
+                flat_trie.remove(key).unwrap();
+                let hash = trie.hash_no_commit();
+                let flat_trie_hash = flat_trie.hash().unwrap();
                 prop_assert_eq!(hash, flat_trie_hash.finalize());
             }
         }
