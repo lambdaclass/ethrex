@@ -75,12 +75,12 @@ enum FKVGeneratorControlMessage {
 const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug)]
-struct InnerCodeCache {
+struct CodeCache {
     cache: LruCache<H256, Code, FxBuildHasher>,
     cache_size: u64,
 }
 
-impl Default for InnerCodeCache {
+impl Default for CodeCache {
     fn default() -> Self {
         Self {
             cache: LruCache::unbounded_with_hasher(FxBuildHasher),
@@ -89,7 +89,7 @@ impl Default for InnerCodeCache {
     }
 }
 
-impl InnerCodeCache {
+impl CodeCache {
     fn get(&mut self, code_hash: &H256) -> Result<Option<Code>, StoreError> {
         Ok(self.cache.get(code_hash).cloned())
     }
@@ -116,31 +116,6 @@ impl InnerCodeCache {
     }
 }
 
-#[derive(Debug)]
-struct CodeCache {
-    inner_cache: Mutex<InnerCodeCache>,
-}
-
-impl Default for CodeCache {
-    fn default() -> Self {
-        Self {
-            inner_cache: Mutex::new(InnerCodeCache::default()),
-        }
-    }
-}
-
-impl CodeCache {
-    fn get(&self, code_hash: &H256) -> Result<Option<Code>, StoreError> {
-        let mut cache = self.inner_cache.lock().map_err(|_| StoreError::LockError)?;
-        cache.get(code_hash)
-    }
-
-    fn insert(&self, code: &Code) -> Result<(), StoreError> {
-        let mut cache = self.inner_cache.lock().map_err(|_| StoreError::LockError)?;
-        cache.insert(code)
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Store {
     db_path: PathBuf,
@@ -162,7 +137,7 @@ pub struct Store {
     /// Note that we don't remove entries on account code changes, since
     /// those changes already affect the code hash stored in the account, and only
     /// may result in this cache having useless data.
-    account_code_cache: Arc<CodeCache>,
+    account_code_cache: Arc<Mutex<CodeCache>>,
 }
 
 pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
@@ -618,7 +593,12 @@ impl Store {
     /// reads the database, and if it exists, decodes and returns it.
     pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError> {
         // check cache first
-        if let Some(code) = self.account_code_cache.get(&code_hash)? {
+        if let Some(code) = self
+            .account_code_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get(&code_hash)?
+        {
             return Ok(Some(code));
         }
 
@@ -640,7 +620,10 @@ impl Store {
         };
 
         // insert into cache and evict if needed
-        self.account_code_cache.insert(&code)?;
+        self.account_code_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .insert(&code)?;
 
         Ok(Some(code))
     }
@@ -1407,7 +1390,7 @@ impl Store {
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
-            account_code_cache: Arc::new(CodeCache::default()),
+            account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
         };
         let backend_clone = store.backend.clone();
         let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
