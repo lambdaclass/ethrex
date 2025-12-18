@@ -41,13 +41,13 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable {
     /// @dev Called once after proxy deployment.
     /// @param minDelay The minimum delay (in seconds) for scheduled operations.
     /// @param sequencers Accounts that can commit and verify batches.
-    /// @param owner The account that can propose and execute operations, respecting the delay.
+    /// @param governance The account that can propose and execute operations, respecting the delay.
     /// @param securityCouncil The Security Council account that can manage roles and bypass the delay.
     /// @param _onChainProposer The deployed `OnChainProposer` contract address.
     function initialize(
         uint256 minDelay,
         address[] memory sequencers,
-        address owner,
+        address governance,
         address securityCouncil,
         address _onChainProposer
     ) public initializer {
@@ -57,13 +57,13 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable {
 
         _grantRole(SECURITY_COUNCIL, securityCouncil);
 
-        address[] memory owners = new address[](1);
-        owners[0] = owner;
+        address[] memory governanceAccounts = new address[](1);
+        governanceAccounts[0] = governance;
 
         TimelockControllerUpgradeable.__TimelockController_init(
             minDelay,
-            owners, // proposers
-            owners, // executors
+            governanceAccounts, // proposers
+            governanceAccounts, // executors
             securityCouncil // admin
         );
 
