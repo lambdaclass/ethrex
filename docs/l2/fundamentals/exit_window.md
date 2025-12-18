@@ -37,9 +37,13 @@ As said before, the settlement window must be taken into account to calculate th
 
 ## Who owns the `Timelock`
 
+There's no such thing as a unique owner of the `Timelock` necessarily. `Timelock` is a `TimelockController`, which is also an `AccessControl`, so we can define different roles and assign them to different entities. By "owner" of the `Timelock`, we refer to the account that has the role to update the contract (i.e. the one that can modify the delay).
+
+This said, whoever owns the `Timelock` decides its functioning. In our stack, the owner of the contract is established during its initialization, and then that owner can transfer the ownership to another account if desired.
+
 Whoever owns the `Timelock` decides its functioning. In our stack, the owner of the contract is established during its initialization, and then that owner can transfer the ownership to another account if desired.
 
-Our recommendation is that the owner of the contract be a security council. The [Stages Framework](https://forum.l2beat.com/t/the-stages-framework/291) recommends that the security council be in the form of a multisig composed of at least 8 people with a consensus threshold of 75%, and the participants in the set need to be decentralized and diverse enough, possibly coming from different companies and jurisdictions.
+It's worth noting that the designated security council can execute operations instantly in case of emergencies, so it's crucial that the members are trustworthy and committed to the network's security. The [Stages Framework](https://forum.l2beat.com/t/the-stages-framework/291) recommends that the security council be in the form of a multisig composed of at least 8 people with a consensus threshold of 75%, and the participants in the set need to be decentralized and diverse enough, possibly coming from different companies and jurisdictions.
 
 In the case of our `Timelock`, the owner is not the only one who can act on it. In fact, it is recommended that the security council only act in specific emergencies. The `Timelock` is also AccessControl, which means it has special functionality for managing accesses, in this case, in the form of roles.
 
