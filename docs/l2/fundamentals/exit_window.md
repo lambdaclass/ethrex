@@ -39,7 +39,7 @@ As said before, the settlement window must be taken into account to calculate th
 
 Whoever owns the `Timelock` decides its functioning. In our stack, the owner of the contract is established during its initialization, and then that owner can transfer the ownership to another account if desired.
 
-Our recommendation is that the owner of the contract be a security council. The [Stages Framework](https://forum.l2beat.com/t/the-stages-framework/291) recommends that the security council be in the form of a multisig composed of at least 8 people with a consensus threshold of 50%, and at least 50% of the participants must be external to the organization that operates the rollup.
+Our recommendation is that the owner of the contract be a security council. The [Stages Framework](https://forum.l2beat.com/t/the-stages-framework/291) recommends that the security council be in the form of a multisig composed of at least 8 people with a consensus threshold of 75%, and the participants in the set need to be decentralized and diverse enough, possibly coming from different companies and jurisdictions.
 
 In the case of our `Timelock`, the owner is not the only one who can act on it. In fact, it is recommended that the security council only act in specific emergencies. The `Timelock` is also AccessControl, which means it has special functionality for managing accesses, in this case, in the form of roles.
 
