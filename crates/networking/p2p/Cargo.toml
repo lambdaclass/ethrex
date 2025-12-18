@@ -50,6 +50,8 @@ aes-gcm = "0.10.3"
 ctr = "0.9.2"
 rand = "0.8.5"
 
+hkdf = "0.12.4"
+
 rayon = "1.10.0"
 crossbeam.workspace = true
 
