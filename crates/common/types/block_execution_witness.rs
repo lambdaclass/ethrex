@@ -266,6 +266,12 @@ impl GuestProgramState {
         Ok(self.state_trie.hash().unwrap().finalize()) // TOOD: unwrap
     }
 
+    /// Returns the root hash of the state trie
+    /// Returns an error if the state trie is not built yet
+    pub fn auth_state(&mut self) -> Result<H256, GuestProgramStateError> {
+        Ok(self.state_trie.authenticate().unwrap().finalize())
+    }
+
     /// Returns Some(block_number) if the hash for block_number is not the parent
     /// hash of block_number + 1. None if there's no such hash.
     ///

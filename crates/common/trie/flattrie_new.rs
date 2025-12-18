@@ -631,6 +631,59 @@ impl FlatTrie {
         index
     }
 
+    pub fn authenticate(&mut self) -> Result<NodeHash, RLPDecodeError> {
+        fn recursive(trie: &mut FlatTrie, index: usize) -> Result<(), RLPDecodeError> {
+            if trie.hashes.contains_key(&index) {
+                return Ok(());
+            }
+            match &trie.nodes[index].handle.clone() {
+                NodeHandle::Leaf { .. } => {}
+                NodeHandle::Extension { child_index, .. } => {
+                    if let Some(child_index) = child_index {
+                        recursive(trie, *child_index)?;
+                        let child_hash = trie.hashes[child_index];
+                        let encoded_items = trie.get_encoded_items(index)?;
+                        let encoded_child_hash = decode_bytes(encoded_items[1])?.0;
+                        if child_hash.as_ref() != encoded_child_hash {
+                            panic!("invalid encoded child hash for extension node");
+                        }
+                    }
+                }
+                NodeHandle::Branch { children_indices } => {
+                    for (_, child_index) in children_indices
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, c)| c.flatten().map(|c| (i, c)))
+                    {
+                        recursive(trie, child_index)?;
+                    }
+
+                    let encoded_items = trie.get_encoded_items(index)?;
+                    for (i, child_index) in children_indices
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, c)| c.flatten().map(|c| (i, c)))
+                    {
+                        let child_hash = trie.hashes[&child_index];
+                        let encoded_child_hash = decode_bytes(encoded_items[i])?.0;
+                        if child_hash.as_ref() != encoded_child_hash {
+                            panic!("invalid encoded child hash for branch node");
+                        }
+                    }
+                }
+            }
+
+            let hash = trie.hash_encoded_data(index);
+            trie.hashes.insert(index, hash.clone());
+            Ok(())
+        }
+        let Some(root_index) = self.root_index else {
+            return Ok((*EMPTY_TRIE_HASH).into());
+        };
+        recursive(self, root_index)?;
+        Ok(self.hashes[&root_index])
+    }
+
     pub fn hash(&mut self) -> Result<NodeHash, RLPDecodeError> {
         fn recursive(trie: &mut FlatTrie, index: usize) -> Result<NodeHash, RLPDecodeError> {
             if let Some(hash) = trie.hashes.get(&index) {
@@ -669,58 +722,22 @@ impl FlatTrie {
                     }
                 },
                 NodeHandle::Branch { children_indices } => {
-                    let is_node_encoded = node.encoded_range.is_some();
-                    let children_indices = children_indices.clone();
-
-                    // Recursively hash non-pruned children only
-                    let mut non_pruned_children_hashes: [Option<NodeHash>; 16] = [None; 16];
-                    for (i, child_index) in children_indices
+                    let mut children_hashes: [Option<NodeHash>; 16] = [None; 16];
+                    for (i, child) in children_indices
                         .clone()
                         .iter()
                         .enumerate()
-                        .filter_map(|(i, c)| c.map(|c| (i, c)))
+                        .flat_map(|(i, c)| c.map(|c| (i, c)))
                     {
-                        if let Some(child_index) = child_index {
-                            let child_hash = recursive(trie, child_index)?;
-                            non_pruned_children_hashes[i] = Some(child_hash);
-                        };
-                    }
-
-                    if !is_node_encoded {
-                        // This is a new node, all its children are non-pruned
-                        let encoded = encode_branch(non_pruned_children_hashes);
-                        NodeHash::from_encoded(&encoded)
-                    } else {
-                        let encoded_items = trie.get_encoded_items(index)?;
-                        let mut non_pruned_hashes = non_pruned_children_hashes
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, c)| c.map(|c| (i, c)));
-                        let hash_mismatch = non_pruned_hashes
-                            .any(|(i, child_hash)| child_hash != decode_child(encoded_items[i]));
-
-                        if !hash_mismatch {
-                            // If all non-pruned hashes match the node's RLP, then it's valid
-                            trie.hash_encoded_data(index)
+                        children_hashes[i] = Some(if let Some(child_index) = child {
+                            recursive(trie, child_index)?
                         } else {
-                            // If not, re-encode the node and hash.
-
-                            // First fill in the hashes of pruned nodes
-                            let mut children_hashes = non_pruned_children_hashes;
-                            for (i, child_hash) in children_hashes
-                                .iter_mut()
-                                .enumerate()
-                                .filter(|(_, c)| c.is_none())
-                            {
-                                let is_child_valid = children_indices[i].is_some();
-                                if is_child_valid {
-                                    *child_hash = Some(decode_child(encoded_items[i]));
-                                }
-                            }
-                            let encoded = encode_branch(children_hashes);
-                            NodeHash::from_encoded(&encoded)
-                        }
+                            let encoded_items = trie.get_encoded_items(index)?;
+                            decode_child(encoded_items[i])
+                        });
                     }
+                    let encoded = encode_branch(children_hashes);
+                    NodeHash::from_encoded(&encoded)
                 }
             };
             trie.hashes.insert(index, hash.clone());
