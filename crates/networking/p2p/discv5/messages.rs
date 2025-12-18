@@ -41,7 +41,7 @@ pub enum PacketCodecError {
     #[error("Invalid protocol: {0}")]
     InvalidProtocol(String),
     #[error("Stream Cipher Error: {0}")]
-    ChipherError(String),
+    CipherError(String),
     #[error("TryFromSliceError: {0}")]
     TryFromSliceError(#[from] TryFromSliceError),
     #[error("Io Error: {0}")]
@@ -50,7 +50,7 @@ pub enum PacketCodecError {
 
 impl From<StreamCipherError> for PacketCodecError {
     fn from(error: StreamCipherError) -> Self {
-        PacketCodecError::ChipherError(error.to_string())
+        PacketCodecError::CipherError(error.to_string())
     }
 }
 
@@ -242,7 +242,7 @@ impl Ordinary {
         let mut cipher = Aes128Gcm::new(encrypt_key[..16].into());
         cipher
             .encrypt_in_place(nonce.into(), &message_ad, &mut message)
-            .map_err(|e| PacketCodecError::ChipherError(e.to_string()))?;
+            .map_err(|e| PacketCodecError::CipherError(e.to_string()))?;
 
         Ok((static_header, authdata, message))
     }
@@ -287,7 +287,7 @@ impl Ordinary {
         let mut cipher = Aes128Gcm::new(key[..16].into());
         cipher
             .decrypt_in_place(nonce.as_slice().into(), &message_ad, message)
-            .map_err(|e| PacketCodecError::ChipherError(e.to_string()))?;
+            .map_err(|e| PacketCodecError::CipherError(e.to_string()))?;
         Ok(())
     }
 }
@@ -406,7 +406,7 @@ impl Handshake {
         let mut cipher = Aes128Gcm::new(encrypt_key[..16].into());
         cipher
             .encrypt_in_place(nonce.into(), &message_ad, &mut message)
-            .map_err(|e| PacketCodecError::ChipherError(e.to_string()))?;
+            .map_err(|e| PacketCodecError::CipherError(e.to_string()))?;
 
         Ok((static_header, authdata, message))
     }
