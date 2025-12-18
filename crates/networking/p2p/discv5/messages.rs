@@ -636,14 +636,14 @@ impl RLPDecode for PongMessage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FindNodeMessage {
     pub req_id: u64,
-    pub distance: Vec<u64>,
+    pub distances: Vec<[u8; 32]>,
 }
 
 impl RLPEncode for FindNodeMessage {
     fn encode(&self, buf: &mut dyn BufMut) {
         Encoder::new(buf)
             .encode_field(&self.req_id)
-            .encode_field(&self.distance)
+            .encode_field(&self.distances)
             .finish();
     }
 }
@@ -654,7 +654,13 @@ impl RLPDecode for FindNodeMessage {
         let (req_id, decoder) = decoder.decode_field("req_id")?;
         let (distance, decoder) = decoder.decode_field("distance")?;
 
-        Ok((Self { req_id, distance }, decoder.finish()?))
+        Ok((
+            Self {
+                req_id,
+                distances: distance,
+            },
+            decoder.finish()?,
+        ))
     }
 }
 
@@ -1188,7 +1194,9 @@ mod tests {
     fn findnode_packet_codec_roundtrip() {
         let pkt = FindNodeMessage {
             req_id: 1234,
-            distance: vec![1, 2, 3, 4],
+            distances: vec![hex!(
+                "0000000000000000000000000000000000000000000000000000000000000000"
+            )],
         };
 
         let buf = pkt.encode_to_vec();

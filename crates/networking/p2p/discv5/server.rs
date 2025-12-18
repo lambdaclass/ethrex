@@ -2,8 +2,8 @@ use crate::{
     discv5::{
         codec::Discv5Codec,
         messages::{
-            FindNodeMessage, Message, NodesMessage, Packet, PacketCodecError, PingMessage,
-            PongMessage,
+            FindNodeMessage, Message, NodesMessage, Ordinary, Packet, PacketCodecError,
+            PingMessage, PongMessage,
         },
     },
     metrics::METRICS,
@@ -66,7 +66,6 @@ pub enum InMessage {
     Message(Box<Discv5Message>),
     Revalidate,
     Lookup,
-    EnrLookup,
     Prune,
     ChangeFindNodeMessage,
     Shutdown,
@@ -156,8 +155,8 @@ impl DiscoveryServer {
         let random_pub_key = public_key_from_signing_key(&random_priv_key);
         // TODO build proper FindNodeMessage
         let msg = Message::FindNode(FindNodeMessage {
-            req_id: 0,
-            distance: vec![],
+            req_id: 1234,
+            distances: vec![[0; 32]],
         });
         let mut buf = BytesMut::new();
         msg.encode(&mut buf);
@@ -177,10 +176,7 @@ impl DiscoveryServer {
 
     async fn lookup(&mut self) -> Result<(), DiscoveryServerError> {
         if let Some(contact) = self.peer_table.get_contact_for_lookup().await? {
-            if let Err(e) = self
-                .send_encoded(&self.find_node_message.0, &self.find_node_message.1, &contact.node)
-                .await
-            {
+            if let Err(e) = self.send(&self.find_node_message.0, &contact.node).await {
                 error!(sending = "FindNode", addr = ?&contact.node.udp_addr(), err=?e, "Error sending message");
                 self.peer_table
                     .set_disposable(&contact.node.node_id())
@@ -211,11 +207,6 @@ impl DiscoveryServer {
             self.initial_lookup_interval,
             LOOKUP_INTERVAL_MS,
         )
-    }
-
-    async fn enr_lookup(&mut self) -> Result<(), DiscoveryServerError> {
-        // TODO
-        Ok(())
     }
 
     async fn send_find_node(&mut self, node: &Node) -> Result<(), DiscoveryServerError> {
@@ -384,15 +375,16 @@ impl DiscoveryServer {
         Ok(())
     }
 
-    async fn send(
-        &self,
-        message: Message,
-        addr: SocketAddr,
-        node: &Node,
-    ) -> Result<usize, DiscoveryServerError> {
+    async fn send(&self, message: &Message, node: &Node) -> Result<usize, DiscoveryServerError> {
+        let packet = Packet::Ordinary(Ordinary {
+            src_id: self.node_id,
+            message: message.clone(),
+        });
         let mut buf = BytesMut::new();
-        message.encode(&mut buf);
-        self.send_encoded(&message, &buf, &node).await
+        packet
+            .encode(&mut buf, 0, &[1; 12], &node.node_id(), &[0; 16])
+            .unwrap();
+        self.send_encoded(message, &buf, &node).await
     }
 
     async fn send_encoded(
@@ -467,7 +459,6 @@ impl GenServer for DiscoveryServer {
             InMessage::ChangeFindNodeMessage,
         );
         let _ = handle.clone().cast(InMessage::Lookup).await;
-        let _ = handle.clone().cast(InMessage::EnrLookup).await;
         send_message_on(handle.clone(), tokio::signal::ctrl_c(), InMessage::Shutdown);
 
         Ok(Success(self))
@@ -501,16 +492,6 @@ impl GenServer for DiscoveryServer {
 
                 let interval = self.get_lookup_interval().await;
                 send_after(interval, handle.clone(), Self::CastMsg::Lookup);
-            }
-            Self::CastMsg::EnrLookup => {
-                trace!(received = "EnrLookup");
-                let _ = self
-                    .enr_lookup()
-                    .await
-                    .inspect_err(|e| error!(err=?e, "Error performing Discovery lookup"));
-
-                let interval = self.get_lookup_interval().await;
-                send_after(interval, handle.clone(), Self::CastMsg::EnrLookup);
             }
             Self::CastMsg::Prune => {
                 trace!(received = "Prune");
