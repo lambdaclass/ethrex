@@ -197,7 +197,7 @@ impl LEVM {
         tx: &Transaction,
         tx_sender: Address,
         block_header: &BlockHeader,
-        db: &mut GeneralizedDatabase,
+        db: &GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<Environment, EvmError> {
         let chain_config = db.store.get_chain_config()?;
@@ -684,7 +684,7 @@ fn adjust_disabled_l2_fees(env: &Environment, vm_type: VMType) -> VMType {
 fn env_from_generic(
     tx: &GenericTransaction,
     header: &BlockHeader,
-    db: &mut GeneralizedDatabase,
+    db: &GeneralizedDatabase,
 ) -> Result<Environment, VMError> {
     let chain_config = db.store.get_chain_config()?;
     let gas_price =
