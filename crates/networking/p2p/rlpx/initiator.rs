@@ -1,10 +1,8 @@
 use crate::discv4::server::lookup_interval_function;
 use crate::types::Node;
 use crate::{
-    discv4::{peer_table::PeerTableError, server::LOOKUP_INTERVAL_MS},
-    metrics::METRICS,
-    network::P2PContext,
-    rlpx::connection::server::PeerConnection,
+    discv4::server::LOOKUP_INTERVAL_MS, metrics::METRICS, network::P2PContext,
+    peer_table::PeerTableError, rlpx::connection::server::PeerConnection,
 };
 use spawned_concurrency::{
     messages::Unused,
@@ -33,7 +31,7 @@ impl RLPxInitiator {
         info!("Starting RLPx Initiator");
         let state = RLPxInitiator::new(context);
         let mut server = RLPxInitiator::start(state.clone());
-        let _ = server.cast(InMessage::LookForPeer).await;
+        //let _ = server.cast(InMessage::LookForPeer).await;
         server
     }
 

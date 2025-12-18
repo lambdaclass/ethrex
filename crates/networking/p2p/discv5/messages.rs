@@ -1,4 +1,4 @@
-use std::{array::TryFromSliceError, net::IpAddr};
+use std::{array::TryFromSliceError, fmt::Display, net::IpAddr};
 
 use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherError};
 use aes_gcm::{Aes128Gcm, KeyInit, aead::AeadMutInPlace};
@@ -537,6 +537,20 @@ impl Message {
                 Ok(Message::Ticket(ticket_msg))
             }
             _ => Err(RLPDecodeError::MalformedData),
+        }
+    }
+}
+
+impl Display for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Message::Ping(_) => write!(f, "Ping"),
+            Message::Pong(_) => write!(f, "Pong"),
+            Message::FindNode(_) => write!(f, "FindNode"),
+            Message::Nodes(_) => write!(f, "Nodes"),
+            Message::TalkReq(_) => write!(f, "TalkReq"),
+            Message::TalkRes(_) => write!(f, "TalkRes"),
+            Message::Ticket(_) => write!(f, "Ticket"),
         }
     }
 }
