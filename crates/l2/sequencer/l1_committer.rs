@@ -1175,7 +1175,9 @@ impl L1Committer {
 
         let target_address = if !self.based {
             self.timelock_address
-                .unwrap_or(self.on_chain_proposer_address)
+                .ok_or(CommitterError::UnexpectedError(
+                    "Timelock address is not set".to_string(),
+                ))?
         } else {
             self.on_chain_proposer_address
         };
