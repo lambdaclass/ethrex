@@ -1,4 +1,4 @@
-use std::{array::TryFromSliceError, fmt::Display, net::IpAddr, ops::Range};
+use std::{array::TryFromSliceError, fmt::Display, net::IpAddr};
 
 use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherError};
 use aes_gcm::{Aes128Gcm, KeyInit, aead::AeadMutInPlace};
@@ -54,6 +54,36 @@ pub enum PacketCodecError {
 impl From<StreamCipherError> for PacketCodecError {
     fn from(error: StreamCipherError) -> Self {
         PacketCodecError::ChipherError(error.to_string())
+    }
+}
+
+pub struct DestPacket {
+    dest_id: H256,
+    packet: Packet,
+}
+
+impl DestPacket {
+    pub fn decode(
+        dest_id: H256,
+        decrypt_key: &[u8],
+        encoded_packet: &[u8],
+    ) -> Result<DestPacket, PacketCodecError> {
+        Ok(Self {
+            dest_id,
+            packet: Packet::decode(&dest_id, decrypt_key, encoded_packet)?,
+        })
+    }
+
+    pub fn encode(
+        &self,
+        buf: &mut dyn BufMut,
+        masking_iv: u128,
+        nonce: &[u8],
+        encrypt_key: &[u8],
+    ) -> Result<(), PacketCodecError> {
+        let Self { dest_id, packet } = self;
+        packet.encode(buf, masking_iv, nonce, dest_id, encrypt_key)?;
+        Ok(())
     }
 }
 

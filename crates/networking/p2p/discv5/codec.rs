@@ -3,12 +3,13 @@ use crate::discv5::session::Session;
 
 use bytes::BytesMut;
 use ethrex_common::H256;
-use rand::{RngCore, thread_rng};
+use rand::{Rng, RngCore, thread_rng};
 use tokio_util::codec::{Decoder, Encoder};
 
 #[derive(Debug)]
 pub struct Discv5Codec {
-    dest_id: H256,
+    /// Local node id, used to decode incoming Packets
+    local_node_id: H256,
     /// Outgoing message count, used for nonce generation as per the spec.
     counter: u32,
     session: Option<Session>,
@@ -17,7 +18,7 @@ pub struct Discv5Codec {
 impl Discv5Codec {
     pub fn new(dest_id: H256) -> Self {
         Self {
-            dest_id,
+            local_node_id: dest_id,
             counter: 0,
             session: None,
         }
@@ -25,7 +26,7 @@ impl Discv5Codec {
 
     pub fn with_session(dest_id: H256, session: Session) -> Self {
         Self {
-            dest_id,
+            local_node_id: dest_id,
             counter: 0,
             session: Some(session),
         }
@@ -61,7 +62,7 @@ impl Decoder for Discv5Codec {
                 None => &[],
             };
             Ok(Some(Packet::decode(
-                &self.dest_id,
+                &self.local_node_id,
                 key,
                 &buf.split_to(buf.len()),
             )?))
@@ -75,16 +76,23 @@ impl Encoder<Packet> for Discv5Codec {
     type Error = PacketCodecError;
 
     fn encode(&mut self, packet: Packet, buf: &mut BytesMut) -> Result<(), Self::Error> {
-        let masking_iv: u128 = rand::random();
         let mut rng = thread_rng();
+        let masking_iv: u128 = rng.r#gen();
         let nonce = self.next_nonce(&mut rng);
+        // TODO:
+        // - We need to receive remote node dest_id in order to be able to obtain session data (also used for encoding later)
+        //   Probably use a Packet wrapper struct that includes it.
+        // - With dest_id, we fetch Session data from peer_table
+        //   If no session is present, or WhoAreYou, we just use a random key
+        // - We need to save the message by nonce, as it can be used to identify dest_id from a future WhoAreYou incoming messages
+        //
         // key isnt needed in WHOAREYOU packets
         let key = match (&packet, &mut self.session) {
             (Packet::WhoAreYou(_), _) => &[][..],
             (_, Some(session)) => session.outbound_key(),
             (_, None) => return Err(PacketCodecError::SessionNotEstablished),
         };
-
-        packet.encode(buf, masking_iv, &nonce, &self.dest_id, key)
+        // FIX: we have to use remote dest_id here instead of self.local_node_id
+        packet.encode(buf, masking_iv, &nonce, &self.local_node_id, key)
     }
 }

@@ -14,7 +14,10 @@ use crate::{
 use bytes::BytesMut;
 use ethrex_common::{H256, H512, types::ForkId};
 use ethrex_storage::{Store, error::StoreError};
-use futures::StreamExt;
+use futures::{
+    SinkExt as _, Stream, StreamExt,
+    stream::{SplitSink, SplitStream},
+};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
 use spawned_concurrency::{
@@ -59,6 +62,8 @@ pub enum DiscoveryServerError {
     PeerTable(#[from] PeerTableError),
     #[error(transparent)]
     Store(#[from] StoreError),
+    #[error("Internal error {0}")]
+    InternalError(String),
 }
 
 #[derive(Debug, Clone)]
@@ -80,8 +85,9 @@ pub struct DiscoveryServer {
     local_node: Node,
     local_node_record: NodeRecord,
     signer: SecretKey,
+    sink: SplitSink<UdpFramed<Discv5Codec>, (Packet, SocketAddr)>,
+    stream: Option<SplitStream<UdpFramed<Discv5Codec>>>,
     node_id: H256,
-    udp_socket: Arc<UdpSocket>,
     store: Store,
     peer_table: PeerTable,
     initial_lookup_interval: f64,
@@ -92,9 +98,10 @@ impl DiscoveryServer {
         storage: Store,
         local_node: Node,
         signer: SecretKey,
-        udp_socket: Arc<UdpSocket>,
+        udp_socket: UdpSocket,
         mut peer_table: PeerTable,
         bootnodes: Vec<Node>,
+        // Sending part of the UdpFramed to send messages to remote nodes
         initial_lookup_interval: f64,
     ) -> Result<(), DiscoveryServerError> {
         info!("Starting Discovery Server");
@@ -107,12 +114,19 @@ impl DiscoveryServer {
                 .expect("Failed to set fork_id on local node record");
         }
 
+        let (sink, stream) =
+            UdpFramed::new(udp_socket, Discv5Codec::new(local_node.node_id())).split();
+
         let mut discovery_server = Self {
             local_node: local_node.clone(),
             local_node_record,
             signer,
+            sink,
+            // This stream will be used in `init()` and replaced by None.
+            // TODO: We should provide a mechanism in spawned to allow
+            // parameters for `init()` function instead
+            stream: Some(stream),
             node_id: local_node.node_id(),
-            udp_socket,
             store: storage.clone(),
             peer_table: peer_table.clone(),
             initial_lookup_interval,
@@ -359,48 +373,17 @@ impl DiscoveryServer {
         Ok(())
     }
 
-    async fn send(&self, message: &Message, node: &Node) -> Result<usize, DiscoveryServerError> {
+    async fn send(&mut self, message: &Message, node: &Node) -> Result<(()), DiscoveryServerError> {
         let packet = Packet::Ordinary(Ordinary {
             src_id: self.node_id,
             message: message.clone(),
         });
-        let mut buf = BytesMut::new();
-        packet
-            .encode(&mut buf, 0, &[1; 12], &node.node_id(), &[0; 16])
-            .unwrap();
-        self.send_encoded(message, &buf, &node).await
-    }
-
-    async fn send_encoded(
-        &self,
-        message: &Message,
-        buf: &BytesMut,
-        node: &Node,
-    ) -> Result<usize, DiscoveryServerError> {
         let addr = node.udp_addr();
-        let size = self.udp_socket.send_to(&buf, &addr).await.inspect_err(
+        let _ = self.sink.send((packet, addr)).await.inspect_err(
             |e| error!(sending = ?message, addr = ?addr, err=?e, "Error sending message"),
         )?;
         trace!(msg = %message, node = %node.public_key, address= %addr, "Discv5 message sent");
-        Ok(size)
-    }
-
-    async fn send_else_dispose(
-        &mut self,
-        message: Message,
-        node: &Node,
-    ) -> Result<H256, DiscoveryServerError> {
-        let mut buf = BytesMut::new();
-        message.encode(&mut buf);
-        let message_hash: [u8; 32] = buf[..32]
-            .try_into()
-            .expect("first 32 bytes are the message hash");
-        if let Err(e) = self.udp_socket.send_to(&buf, node.udp_addr()).await {
-            error!(sending = ?message, addr = ?node.udp_addr(), to = ?node.node_id(), err=?e, "Error sending message");
-            self.peer_table.set_disposable(&node.node_id()).await?;
-            METRICS.record_new_discarded_node().await;
-        }
-        Ok(H256::from(message_hash))
+        Ok(())
     }
 }
 
@@ -411,11 +394,14 @@ impl GenServer for DiscoveryServer {
     type Error = DiscoveryServerError;
 
     async fn init(
-        self,
+        mut self,
         handle: &GenServerHandle<Self>,
     ) -> Result<spawned_concurrency::tasks::InitResult<Self>, Self::Error> {
-        let stream = UdpFramed::new(self.udp_socket.clone(), Discv5Codec::new(self.node_id));
-
+        let Some(stream) = std::mem::take(&mut self.stream) else {
+            return Err(DiscoveryServerError::InternalError(
+                "Failed to set up Udp Socket".to_string(),
+            ));
+        };
         spawn_listener(
             handle.clone(),
             stream.filter_map(|result| async move {
