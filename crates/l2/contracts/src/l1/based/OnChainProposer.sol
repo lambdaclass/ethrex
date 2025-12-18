@@ -202,7 +202,7 @@ contract OnChainProposer is
 
         require(
             bridge != address(0),
-            "001" // OnChainProposer: bridge is the zero address
+            "OnChainProposer: bridge is the zero address"
         );
         BRIDGE = bridge;
 
