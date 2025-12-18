@@ -31,11 +31,13 @@ const IV_MASKING_SIZE: usize = 16;
 const STATIC_HEADER_END: usize = IV_MASKING_SIZE + 23;
 
 #[derive(Debug, thiserror::Error)]
-pub enum PacketDecodeErr {
+pub enum PacketCodecError {
     #[error("RLP decoding error")]
     RLPDecodeError(#[from] RLPDecodeError),
     #[error("Invalid packet size")]
     InvalidSize,
+    #[error("Session not established yet")]
+    SessionNotEstablished,
     #[error("Invalid protocol: {0}")]
     InvalidProtocol(String),
     #[error("Stream Cipher Error: {0}")]
@@ -46,9 +48,9 @@ pub enum PacketDecodeErr {
     IoError(#[from] std::io::Error),
 }
 
-impl From<StreamCipherError> for PacketDecodeErr {
+impl From<StreamCipherError> for PacketCodecError {
     fn from(error: StreamCipherError) -> Self {
-        PacketDecodeErr::ChipherError(error.to_string())
+        PacketCodecError::ChipherError(error.to_string())
     }
 }
 
@@ -74,9 +76,9 @@ impl Packet {
         dest_id: &H256,
         decrypt_key: &[u8],
         encoded_packet: &[u8],
-    ) -> Result<Packet, PacketDecodeErr> {
+    ) -> Result<Packet, PacketCodecError> {
         if encoded_packet.len() < MIN_PACKET_SIZE || encoded_packet.len() > MAX_PACKET_SIZE {
-            return Err(PacketDecodeErr::InvalidSize);
+            return Err(PacketCodecError::InvalidSize);
         }
 
         // the packet structure is
@@ -118,7 +120,7 @@ impl Packet {
         nonce: &[u8],
         dest_id: &H256,
         encrypt_key: &[u8],
-    ) -> Result<(), PacketDecodeErr> {
+    ) -> Result<(), PacketCodecError> {
         let masking_as_bytes = masking_iv.to_be_bytes();
         buf.put_slice(&masking_as_bytes);
 
@@ -156,7 +158,7 @@ impl Packet {
     fn decode_header<T: StreamCipher>(
         cipher: &mut T,
         encoded_packet: &[u8],
-    ) -> Result<PacketHeader, PacketDecodeErr> {
+    ) -> Result<PacketHeader, PacketCodecError> {
         // static header
         let mut static_header = encoded_packet[IV_MASKING_SIZE..STATIC_HEADER_END].to_vec();
 
@@ -167,7 +169,7 @@ impl Packet {
         let protocol_id = &static_header[..6];
         let version = u16::from_be_bytes(static_header[6..8].try_into()?);
         if protocol_id != PROTOCOL_ID || version != PROTOCOL_VERSION {
-            return Err(PacketDecodeErr::InvalidProtocol(
+            return Err(PacketCodecError::InvalidProtocol(
                 match str::from_utf8(protocol_id) {
                     Ok(result) => format!("{} v{}", result, version),
                     Err(_) => format!("{:?} v{}", protocol_id, version),
@@ -200,7 +202,7 @@ pub struct Ordinary {
 }
 
 impl Ordinary {
-    fn encode_authdata(&self, buf: &mut dyn BufMut) -> Result<(), PacketDecodeErr> {
+    fn encode_authdata(&self, buf: &mut dyn BufMut) -> Result<(), PacketCodecError> {
         buf.put_slice(self.src_id.as_bytes());
         Ok(())
     }
@@ -212,16 +214,16 @@ impl Ordinary {
         nonce: &[u8],
         masking_iv: &[u8],
         encrypt_key: &[u8],
-    ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), PacketDecodeErr> {
+    ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), PacketCodecError> {
         if encrypt_key.len() < 16 {
-            return Err(PacketDecodeErr::InvalidSize);
+            return Err(PacketCodecError::InvalidSize);
         }
 
         let mut authdata = Vec::new();
         self.encode_authdata(&mut authdata)?;
 
         let authdata_size: u16 =
-            u16::try_from(authdata.len()).map_err(|_| PacketDecodeErr::InvalidSize)?;
+            u16::try_from(authdata.len()).map_err(|_| PacketCodecError::InvalidSize)?;
 
         let mut static_header = Vec::new();
         static_header.put_slice(PROTOCOL_ID);
@@ -240,7 +242,7 @@ impl Ordinary {
         let mut cipher = Aes128Gcm::new(encrypt_key[..16].into());
         cipher
             .encrypt_in_place(nonce.into(), &message_ad, &mut message)
-            .map_err(|e| PacketDecodeErr::ChipherError(e.to_string()))?;
+            .map_err(|e| PacketCodecError::ChipherError(e.to_string()))?;
 
         Ok((static_header, authdata, message))
     }
@@ -252,9 +254,12 @@ impl Ordinary {
         nonce: Vec<u8>,
         decrypt_key: &[u8],
         encrypted_message: &[u8],
-    ) -> Result<Ordinary, PacketDecodeErr> {
+    ) -> Result<Ordinary, PacketCodecError> {
         if authdata.len() != 32 {
-            return Err(PacketDecodeErr::InvalidSize);
+            return Err(PacketCodecError::InvalidSize);
+        }
+        if decrypt_key.len() < 16 {
+            return Err(PacketCodecError::InvalidSize);
         }
 
         // message    = aesgcm_encrypt(initiator-key, nonce, message-pt, message-ad)
@@ -278,11 +283,11 @@ impl Ordinary {
         nonce: Vec<u8>,
         message: &mut Vec<u8>,
         message_ad: Vec<u8>,
-    ) -> Result<(), PacketDecodeErr> {
+    ) -> Result<(), PacketCodecError> {
         let mut cipher = Aes128Gcm::new(key[..16].into());
         cipher
             .decrypt_in_place(nonce.as_slice().into(), &message_ad, message)
-            .map_err(|e| PacketDecodeErr::ChipherError(e.to_string()))?;
+            .map_err(|e| PacketCodecError::ChipherError(e.to_string()))?;
         Ok(())
     }
 }
@@ -299,7 +304,7 @@ impl WhoAreYou {
         buf: &mut dyn BufMut,
         cipher: &mut T,
         nonce: &[u8],
-    ) -> Result<(), PacketDecodeErr> {
+    ) -> Result<(), PacketCodecError> {
         let mut static_header = Vec::new();
         static_header.put_slice(PROTOCOL_ID);
         static_header.put_slice(&PROTOCOL_VERSION.to_be_bytes());
@@ -322,7 +327,7 @@ impl WhoAreYou {
         buf.put_slice(&self.enr_seq.to_be_bytes());
     }
 
-    pub fn decode(authdata: &[u8]) -> Result<WhoAreYou, PacketDecodeErr> {
+    pub fn decode(authdata: &[u8]) -> Result<WhoAreYou, PacketCodecError> {
         let id_nonce = u128::from_be_bytes(authdata[..16].try_into()?);
         let enr_seq = u64::from_be_bytes(authdata[16..].try_into()?);
 
@@ -342,17 +347,17 @@ pub struct Handshake {
 }
 
 impl Handshake {
-    fn encode_authdata(&self, buf: &mut dyn BufMut) -> Result<(), PacketDecodeErr> {
+    fn encode_authdata(&self, buf: &mut dyn BufMut) -> Result<(), PacketCodecError> {
         let sig_size: u8 = self
             .id_signature
             .len()
             .try_into()
-            .map_err(|_| PacketDecodeErr::InvalidSize)?;
+            .map_err(|_| PacketCodecError::InvalidSize)?;
         let eph_key_size: u8 = self
             .eph_pubkey
             .len()
             .try_into()
-            .map_err(|_| PacketDecodeErr::InvalidSize)?;
+            .map_err(|_| PacketCodecError::InvalidSize)?;
 
         buf.put_slice(self.src_id.as_bytes());
         buf.put_u8(sig_size);
@@ -373,12 +378,12 @@ impl Handshake {
         nonce: &[u8],
         masking_iv: &[u8],
         encrypt_key: &[u8],
-    ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), PacketDecodeErr> {
+    ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), PacketCodecError> {
         let mut authdata = Vec::new();
         self.encode_authdata(&mut authdata)?;
 
         let authdata_size =
-            u16::try_from(authdata.len()).map_err(|_| PacketDecodeErr::InvalidSize)?;
+            u16::try_from(authdata.len()).map_err(|_| PacketCodecError::InvalidSize)?;
 
         let mut static_header = Vec::new();
         static_header.put_slice(PROTOCOL_ID);
@@ -391,7 +396,7 @@ impl Handshake {
         self.message.encode(&mut message);
 
         if encrypt_key.len() < 16 {
-            return Err(PacketDecodeErr::InvalidSize);
+            return Err(PacketCodecError::InvalidSize);
         }
 
         let mut message_ad = masking_iv.to_vec();
@@ -401,7 +406,7 @@ impl Handshake {
         let mut cipher = Aes128Gcm::new(encrypt_key[..16].into());
         cipher
             .encrypt_in_place(nonce.into(), &message_ad, &mut message)
-            .map_err(|e| PacketDecodeErr::ChipherError(e.to_string()))?;
+            .map_err(|e| PacketCodecError::ChipherError(e.to_string()))?;
 
         Ok((static_header, authdata, message))
     }
@@ -412,7 +417,10 @@ impl Handshake {
         header: PacketHeader,
         decrypt_key: &[u8],
         encrypted_message: &[u8],
-    ) -> Result<Handshake, PacketDecodeErr> {
+    ) -> Result<Handshake, PacketCodecError> {
+        if decrypt_key.len() < 16 {
+            return Err(PacketCodecError::InvalidSize);
+        }
         let PacketHeader {
             static_header,
             nonce,
@@ -421,7 +429,7 @@ impl Handshake {
         } = header;
 
         if authdata.len() < HANDSHAKE_AUTHDATA_HEAD {
-            return Err(PacketDecodeErr::InvalidSize);
+            return Err(PacketCodecError::InvalidSize);
         }
 
         let src_id = H256::from_slice(&authdata[..32]);
@@ -430,7 +438,7 @@ impl Handshake {
 
         let authdata_head = HANDSHAKE_AUTHDATA_HEAD + sig_size + eph_key_size;
         if authdata.len() < authdata_head {
-            return Err(PacketDecodeErr::InvalidSize);
+            return Err(PacketCodecError::InvalidSize);
         }
 
         let id_signature =
@@ -781,6 +789,7 @@ mod tests {
         types::NodeRecordPairs,
         utils::{node_id, public_key_from_signing_key},
     };
+    use aes_gcm::{Aes128Gcm, KeyInit, aead::AeadMutInPlace};
     use bytes::BytesMut;
     use ethrex_common::H512;
     use hex_literal::hex;
@@ -798,6 +807,25 @@ mod tests {
     //     "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
     // ))
     // .unwrap();
+
+    #[test]
+    fn test_aes_gcm_vector() {
+        // https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire-test-vectors.md#encryptiondecryption
+        let key = hex!("9f2d77db7004bf8a1a85107ac686990b");
+        let nonce = hex!("27b5af763c446acd2749fe8e");
+        let ad = hex!("93a7400fa0d6a694ebc24d5cf570f65d04215b6ac00757875e3f3a5f42107903");
+        let mut pt = hex!("01c20101").to_vec();
+
+        let mut cipher = Aes128Gcm::new_from_slice(&key).unwrap();
+        cipher
+            .encrypt_in_place(nonce.as_slice().into(), &ad, &mut pt)
+            .unwrap();
+
+        assert_eq!(
+            pt,
+            hex!("a5d12a2d94b8ccb3ba55558229867dc13bfa3648").to_vec()
+        );
+    }
 
     #[test]
     fn handshake_packet_roundtrip() {
