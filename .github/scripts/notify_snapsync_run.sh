@@ -3,9 +3,14 @@ set -euo pipefail
 
 # Usage: notify_snapsync_run.sh
 # Expects the following env vars (provided by the caller workflow):
-#   REPO, NAME, OUTCOME, HEAD_SHA, START_TIME
+#   SLACK_WEBHOOK_URL_SUCCESS, SLACK_WEBHOOK_URL_FAILURE, REPO, NAME, OUTCOME, HEAD_SHA, START_TIME
 
-if [[ -z "${SLACK_WEBHOOK_URL}" ]]; then
+if [[ -z "${SLACK_WEBHOOK_URL_SUCCESS}" ]]; then
+  echo "Slack webhook URL not provided; skipping notification." >&2
+  exit 0
+fi
+
+if [[ -z "${SLACK_WEBHOOK_URL_FAILURE}" ]]; then
   echo "Slack webhook URL not provided; skipping notification." >&2
   exit 0
 fi
@@ -48,6 +53,10 @@ if [[ "$OUTCOME" == "success" ]]; then
       }
     ]
   }')
+  curl -sS --fail -X POST \
+  -H 'Content-type: application/json' \
+  --data "$PAYLOAD" \
+  "$SLACK_WEBHOOK_URL_SUCCESS" || echo "Failed to send Slack notification" >&2
 else
   PAYLOAD=$(jq -n \
   --arg name "$NAME" \
@@ -73,9 +82,8 @@ else
       }
     ]
   }')
-fi
-
-curl -sS --fail -X POST \
+  curl -sS --fail -X POST \
   -H 'Content-type: application/json' \
   --data "$PAYLOAD" \
-  "$SLACK_WEBHOOK_URL" || echo "Failed to send Slack notification" >&2
+  "$SLACK_WEBHOOK_URL_FAILURE" || echo "Failed to send Slack notification" >&2
+fi
