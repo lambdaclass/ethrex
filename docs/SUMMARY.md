@@ -41,6 +41,7 @@
   - [Ethrex <> Aligned](./l2/deployment/aligned.md)
   - [Synchronous Composability PoC](./l2/deployment/synchronous_composability_poc.md)
   - [Deploying a shared bridge enabled L2](./l2/deployment/shared_bridge.md)
+  - [Deploying a fee token](./l2/deployment/fee_token.md)
   - [Migrations](./l2/deployment/migrations.md)
 - [Run a prover](./l2/deployment/prover/README.md)
   - [Overview](./l2/deployment/prover/overview.md)
@@ -76,6 +77,7 @@
     - [L1MessageSender]()
   - [Based sequencing](./l2/fundamentals/based.md)
   - [Transaction fees](./l2/fundamentals/transaction_fees.md)
+  - [Fee token](./l2/fundamentals/fee_token.md)
   - [Shared Bridge](./l2/fundamentals/shared_bridge.md)
 
 # Ethrex for developers
