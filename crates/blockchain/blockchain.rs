@@ -1009,7 +1009,6 @@ impl Blockchain {
             storage_tries.insert(address, FlatTrie::from(&(*node)));
         }
 
-        dbg!(state_trie.get(&hash_address(&SYSTEM_ADDRESS)));
         let state_trie = state_trie_root.map(|n| FlatTrie::from(&n));
 
         Ok(ExecutionWitness {

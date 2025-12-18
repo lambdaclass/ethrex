@@ -194,11 +194,10 @@ impl GuestProgramState {
                 .or_insert_with(|| hash_address(&update.address));
 
             if update.removed {
-                dbg!("account removed");
                 // Remove account from trie
-                // self.state_trie
-                //     .remove(hashed_address)
-                //     .expect("failed to remove from trie");
+                self.state_trie
+                    .remove(hashed_address)
+                    .expect("failed to remove from trie");
             } else {
                 // Add or update AccountState in the trie
                 // Fetch current state or create a new state to be inserted
@@ -244,10 +243,9 @@ impl GuestProgramState {
                     }
 
                     for (hashed_key, _) in deletes {
-                        dbg!("storage removed");
-                        // storage_trie
-                        //     .remove(&hashed_key)
-                        //     .expect("failed to remove key");
+                        storage_trie
+                            .remove(&hashed_key)
+                            .expect("failed to remove key");
                     }
 
                     let storage_root = storage_trie.hash().unwrap().finalize();
