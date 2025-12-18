@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity =0.8.31;
 
 /// @title IFeeTokenPricer
 /// @notice Interface for a contract that provides pricing information for fee tokens.

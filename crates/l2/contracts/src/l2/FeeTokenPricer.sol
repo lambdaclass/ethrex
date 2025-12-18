@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity =0.8.31;
 import "./interfaces/IFeeTokenPricer.sol";
 
 contract FeeTokenPricer is IFeeTokenPricer {
