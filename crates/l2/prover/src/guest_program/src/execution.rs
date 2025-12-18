@@ -4,12 +4,12 @@ use crate::report_cycles;
 
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{
-    validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
-    validate_state_root,
+    validate_block_pre_execution, validate_gas_used, validate_receipts_root,
+    validate_requests_hash, validate_state_root,
 };
-use ethrex_common::types::AccountUpdate;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
+use ethrex_common::types::{AccountUpdate, InvalidBlockBodyError, validate_block_body};
 use ethrex_common::types::{
     block_execution_witness::GuestProgramState, block_execution_witness::GuestProgramStateError,
 };
@@ -35,6 +35,8 @@ use ethrex_l2_common::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum StatelessExecutionError {
+    #[error("Block body and header don't match: {0}")]
+    BlockBodyValidationError(InvalidBlockBodyError),
     #[error("Block validation error: {0}")]
     BlockValidationError(ChainError),
     #[error("Gas validation error: {0}")]
@@ -182,9 +184,15 @@ pub fn stateless_validation_l1(
     let mut non_privileged_count = 0;
 
     for block in blocks.iter() {
+        // Validate header and body match
+        report_cycles("validate_block_body", || {
+            validate_block_body(&block.header, &block.body)
+                .map_err(StatelessExecutionError::BlockBodyValidationError)
+        })?;
+
         // Validate the block
-        report_cycles("validate_block", || {
-            validate_block(
+        report_cycles("validate_block_pre_execution", || {
+            validate_block_pre_execution(
                 block,
                 parent_block_header,
                 &chain_config,
@@ -402,8 +410,12 @@ fn execute_stateless(
     let mut non_privileged_count = 0;
 
     for (i, block) in blocks.iter().enumerate() {
+        // Validate header and body match
+        validate_block_body(&block.header, &block.body)
+            .map_err(StatelessExecutionError::BlockBodyValidationError)?;
+
         // Validate the block
-        validate_block(
+        validate_block_pre_execution(
             block,
             parent_block_header,
             &chain_config,
