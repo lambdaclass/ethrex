@@ -683,9 +683,9 @@ impl FlatTrie {
                     }
                     let encoded_items = trie.get_encoded_items(index)?;
                     for (i, child_hash) in children_hashes {
-                        if child_hash.as_ref() != encoded_items[i] {
+                        if child_hash.as_ref() != decode_bytes(encoded_items[i])?.0 {
                             dbg!(child_hash.as_ref());
-                            dbg!(encoded_items[i]);
+                            dbg!(decode_bytes(encoded_items[i]));
                             panic!("wrong child hash encoded in branch node")
                         }
                     }
