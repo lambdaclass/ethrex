@@ -1,4 +1,4 @@
-use std::{array::TryFromSliceError, fmt::Display, net::IpAddr};
+use std::{array::TryFromSliceError, fmt::Display, net::IpAddr, ops::Range};
 
 use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherError};
 use aes_gcm::{Aes128Gcm, KeyInit, aead::AeadMutInPlace};
@@ -10,6 +10,7 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
+use rand::{Rng, distributions::Standard, prelude::Distribution};
 
 use crate::types::NodeRecord;
 
@@ -29,6 +30,8 @@ const PROTOCOL_VERSION: u16 = 0x0001;
 const IV_MASKING_SIZE: usize = 16;
 // static_header end limit: 23 bytes from static_header + 16 from iv_masking
 const STATIC_HEADER_END: usize = IV_MASKING_SIZE + 23;
+// Number of distances to include in a FindNode message
+const DISTANCES_PER_FIND_NODE_MSG: usize = 3;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PacketCodecError {
@@ -661,6 +664,19 @@ impl RLPDecode for FindNodeMessage {
             },
             decoder.finish()?,
         ))
+    }
+}
+
+impl Distribution<FindNodeMessage> for Standard {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> FindNodeMessage {
+        let mut distances = Vec::new();
+        for _ in [..DISTANCES_PER_FIND_NODE_MSG] {
+            distances.push(rng.r#gen());
+        }
+        FindNodeMessage {
+            req_id: rng.r#gen(),
+            distances,
+        }
     }
 }
 

@@ -67,7 +67,6 @@ pub enum InMessage {
     Revalidate,
     Lookup,
     Prune,
-    ChangeFindNodeMessage,
     Shutdown,
 }
 
@@ -85,9 +84,6 @@ pub struct DiscoveryServer {
     udp_socket: Arc<UdpSocket>,
     store: Store,
     peer_table: PeerTable,
-    /// The last `FindNode` message sent, cached due to message
-    /// signatures being expensive.
-    find_node_message: (Message, BytesMut),
     initial_lookup_interval: f64,
 }
 
@@ -119,7 +115,6 @@ impl DiscoveryServer {
             udp_socket,
             store: storage.clone(),
             peer_table: peer_table.clone(),
-            find_node_message: Self::random_message(&signer),
             initial_lookup_interval,
         };
 
@@ -140,27 +135,13 @@ impl DiscoveryServer {
         &mut self,
         Discv5Message { from, packet }: Discv5Message,
     ) -> Result<(), DiscoveryServerError> {
+        trace!(msg = ?packet, address= ?from, "Discv5 message received");
         match packet {
             Packet::Ordinary(ordinary) => todo!(),
             Packet::WhoAreYou(who_are_you) => todo!(),
             Packet::Handshake(handshake) => todo!(),
         }
         Ok(())
-    }
-
-    /// Generate and store a FindNodeMessage with a random key. We then send the same message on Disovery lookup.
-    /// We change this message every CHANGE_FIND_NODE_MESSAGE_INTERVAL.
-    fn random_message(signer: &SecretKey) -> (Message, BytesMut) {
-        let random_priv_key = SecretKey::new(&mut OsRng);
-        let random_pub_key = public_key_from_signing_key(&random_priv_key);
-        // TODO build proper FindNodeMessage
-        let msg = Message::FindNode(FindNodeMessage {
-            req_id: 1234,
-            distances: vec![[0; 32]],
-        });
-        let mut buf = BytesMut::new();
-        msg.encode(&mut buf);
-        (msg, buf)
     }
 
     async fn revalidate(&mut self) -> Result<(), DiscoveryServerError> {
@@ -176,7 +157,10 @@ impl DiscoveryServer {
 
     async fn lookup(&mut self) -> Result<(), DiscoveryServerError> {
         if let Some(contact) = self.peer_table.get_contact_for_lookup().await? {
-            if let Err(e) = self.send(&self.find_node_message.0, &contact.node).await {
+            if let Err(e) = self
+                .send(&Message::FindNode(rand::random()), &contact.node)
+                .await
+            {
                 error!(sending = "FindNode", addr = ?&contact.node.udp_addr(), err=?e, "Error sending message");
                 self.peer_table
                     .set_disposable(&contact.node.node_id())
@@ -453,11 +437,6 @@ impl GenServer for DiscoveryServer {
             InMessage::Revalidate,
         );
         send_interval(PRUNE_INTERVAL, handle.clone(), InMessage::Prune);
-        send_interval(
-            CHANGE_FIND_NODE_MESSAGE_INTERVAL,
-            handle.clone(),
-            InMessage::ChangeFindNodeMessage,
-        );
         let _ = handle.clone().cast(InMessage::Lookup).await;
         send_message_on(handle.clone(), tokio::signal::ctrl_c(), InMessage::Shutdown);
 
@@ -499,9 +478,6 @@ impl GenServer for DiscoveryServer {
                     .prune()
                     .await
                     .inspect_err(|e| error!(err=?e, "Error Pruning peer table"));
-            }
-            Self::CastMsg::ChangeFindNodeMessage => {
-                self.find_node_message = Self::random_message(&self.signer);
             }
             Self::CastMsg::Shutdown => return CastResponse::Stop,
         }
