@@ -323,7 +323,8 @@ impl FlatTrie {
                             // pruned child, we must make its hash available by encoding the branch
                             // TODO: hacky
                             let child_hash = self.get_extension_encoded_child_hash(self_index)?;
-                            let children_hashes = vec![(prefix.at(0), child_hash)];
+                            let mut children_hashes = [None; 16];
+                            children_hashes[prefix.at(0)] = Some(child_hash);
                             let encoded = encode_branch(children_hashes);
                             self.put_node_encoded(NodeHandle::Branch { children_indices }, encoded)
                         }
@@ -661,8 +662,12 @@ impl FlatTrie {
                     }
                 }
                 NodeHandle::Branch { children_indices } => {
-                    for child_index in children_indices.iter().flatten().flatten() {
-                        recursive(trie, *child_index)?;
+                    for (_, child_index) in children_indices
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, c)| c.flatten().map(|c| (i, c)))
+                    {
+                        recursive(trie, child_index)?;
                     }
 
                     let encoded_items = trie.get_encoded_items(index)?;
@@ -740,29 +745,31 @@ impl FlatTrie {
                         }
                     }
 
-                    let mut children_hashes = Vec::new();
+                    let mut children_hashes: [Option<NodeHash>; 16] = [None; 16];
 
                     if any_pruned {
                         let encoded_items = trie.get_encoded_items(index)?;
                         for (i, child) in children_indices.iter().enumerate() {
                             let Some(child_index) = child else {
+                                // no child for this index
                                 continue;
                             };
 
                             if let Some(child_index) = child_index {
-                                children_hashes.push((i, trie.hashes[*child_index].unwrap()));
+                                children_hashes[i] = Some(trie.hashes[*child_index].unwrap());
                             } else {
-                                children_hashes.push((i, decode_child(encoded_items[i])));
+                                children_hashes[i] = Some(decode_child(encoded_items[i]))
                             }
                         }
                     } else {
                         for (i, child) in children_indices.iter().enumerate() {
                             let Some(child_index) = child else {
+                                // no child for this index
                                 continue;
                             };
 
                             if let Some(child_index) = child_index {
-                                children_hashes.push((i, trie.hashes[*child_index].unwrap()));
+                                children_hashes[i] = Some(trie.hashes[*child_index].unwrap());
                             }
                         }
                     }
@@ -806,21 +813,21 @@ fn encode_extension(path: Nibbles, child: NodeHash) -> Vec<u8> {
     buf
 }
 
-fn encode_branch(children: Vec<(usize, NodeHash)>) -> Vec<u8> {
+fn encode_branch(children: [Option<NodeHash>; 16]) -> Vec<u8> {
     // optimized encoding taken from rlp.rs
-    let mut payload_len = children
-        .iter()
-        .fold(1, |acc, child| acc + RLPEncode::length(&child.1));
-    payload_len += 16 - children.len();
+    let payload_len = children.iter().fold(1, |acc, child| {
+        acc + if let Some(child) = child {
+            RLPEncode::length(child)
+        } else {
+            1
+        }
+    });
 
     let mut buf: Vec<u8> = Vec::with_capacity(payload_len + 3); // 3 byte prefix headroom
 
     encode_length(payload_len, &mut buf);
-    for i in 0..16 {
-        let Some(child) = children
-            .iter()
-            .find_map(|(child_idx, child)| if *child_idx == i { Some(child) } else { None })
-        else {
+    for child in children.iter() {
+        let Some(child) = child else {
             buf.put_u8(RLP_NULL);
             continue;
         };
