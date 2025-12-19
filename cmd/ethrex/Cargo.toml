@@ -52,6 +52,7 @@ reqwest.workspace = true
 thiserror.workspace = true
 itertools = "0.14.0"
 url.workspace = true
+tracing-appender = "0.2"
 
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
