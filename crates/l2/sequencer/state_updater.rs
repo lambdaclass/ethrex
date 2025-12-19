@@ -96,13 +96,13 @@ impl StateUpdater {
             stop_at: None,
             start_at: sequencer_cfg.admin_server.start_at,
             based: sequencer_cfg.based.enabled,
-            l2_client: if let Some(l2_head_check_rpc_url) =
+            l2_client: Arc::new(if let Some(l2_head_check_rpc_url) =
                 sequencer_cfg.admin_server.l2_head_check_rpc_url
             {
-                Arc::new(EthClient::new(l2_head_check_rpc_url)?)
+                EthClient::new_with_multiple_urls(vec![l2_head_check_rpc_url, l2_url])?
             } else {
-                Arc::new(EthClient::new(l2_url)?)
-            },
+                EthClient::new(l2_url)?
+            }),
         })
     }
 
