@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity =0.8.31;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
@@ -9,12 +9,16 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+import {
+    MerkleProof
+} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
+import {IRouter} from "./interfaces/IRouter.sol";
 import "../l2/interfaces/IFeeTokenRegistry.sol";
+import "../l2/interfaces/IFeeTokenPricer.sol";
 
 /// @title CommonBridge contract.
 /// @author LambdaClass
@@ -64,6 +68,10 @@ contract CommonBridge is
     /// @dev It's used to allow new tokens to pay fees
     address public constant L2_FEE_TOKEN_REGISTRY = address(0xfffc);
 
+    /// @notice Address of the fee token pricer on the L2
+    /// @dev It's used to set ratios for the allowed fee tokens
+    address public constant L2_FEE_TOKEN_PRICER = address(0xfffb);
+
     /// @notice How much of each L1 token was deposited to each L2 token.
     /// @dev Stored as L1 -> L2 -> amount
     /// @dev Prevents L2 tokens from faking their L1 address and stealing tokens
@@ -101,6 +109,20 @@ contract CommonBridge is
     /// @dev Index pointing to the first unprocessed privileged transaction in the queue.
     uint256 private pendingPrivilegedTxIndex;
 
+    /// @notice Address of the SharedBridgeRouter contract
+    address public SHARED_BRIDGE_ROUTER = address(0);
+
+    /// @notice Chain ID of the network
+    uint256 public CHAIN_ID;
+
+    /// @notice Mapping of chain ID to array of pending message hashes received from that chain.
+    mapping(uint256 chainId => bytes32[] hashes)
+        public pendingMessagesHashesPerChain;
+
+    /// @notice Mapping of chain ID to index of the first unprocessed message hash in the array.
+    mapping(uint256 chainId => uint256 index)
+        public pendingMessagesIndexPerChain;
+
     modifier onlyOnChainProposer() {
         require(
             msg.sender == ON_CHAIN_PROPOSER,
@@ -118,7 +140,9 @@ contract CommonBridge is
     function initialize(
         address owner,
         address onChainProposer,
-        uint256 inclusionMaxWait
+        uint256 inclusionMaxWait,
+        address _sharedBridgeRouter,
+        uint256 chainId
     ) public initializer {
         require(
             onChainProposer != address(0),
@@ -132,8 +156,12 @@ contract CommonBridge is
 
         PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = inclusionMaxWait;
 
+        SHARED_BRIDGE_ROUTER = _sharedBridgeRouter;
+
         OwnableUpgradeable.__Ownable_init(owner);
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
+
+        CHAIN_ID = chainId;
     }
 
     /// @inheritdoc ICommonBridge
@@ -145,6 +173,24 @@ contract CommonBridge is
         bytes32[] memory buffer = new bytes32[](pendingTxHashesLength());
         for (uint256 i = 0; i < pendingTxHashesLength(); i++) {
             buffer[i] = pendingTxHashes[i + pendingPrivilegedTxIndex];
+        }
+
+        return buffer;
+    }
+
+    /// @inheritdoc ICommonBridge
+    function getPendingL2MessagesHashes(
+        uint256 chainId
+    ) public view returns (bytes32[] memory) {
+        uint256 pendingMessageIndex = pendingMessagesIndexPerChain[chainId];
+        bytes32[] memory pendingMessagesHashes = pendingMessagesHashesPerChain[
+            chainId
+        ];
+        bytes32[] memory buffer = new bytes32[](
+            pendingL2MessagesLength(chainId)
+        );
+        for (uint256 i = 0; i < pendingL2MessagesLength(chainId); i++) {
+            buffer[i] = pendingMessagesHashes[i + pendingMessageIndex];
         }
 
         return buffer;
@@ -186,10 +232,9 @@ contract CommonBridge is
     }
 
     function _sendToL2(address from, SendValues memory sendValues) private {
-        _burnGas(sendValues.gasLimit);
-
         bytes32 l2MintTxHash = keccak256(
             bytes.concat(
+                bytes32(CHAIN_ID),
                 bytes20(from),
                 bytes20(sendValues.to),
                 bytes32(transactionId),
@@ -220,6 +265,7 @@ contract CommonBridge is
     function sendToL2(
         SendValues calldata sendValues
     ) public override whenNotPaused {
+        _burnGas(sendValues.gasLimit);
         _sendToL2(_getSenderAlias(), sendValues);
     }
 
@@ -292,6 +338,35 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
+    function getPendingL2MessagesVersionedHash(
+        uint256 chainId,
+        uint16 number
+    ) public view returns (bytes32) {
+        require(number > 0, "CommonBridge: number is zero (get)");
+        require(
+            uint256(number) <= pendingL2MessagesLength(chainId),
+            "CommonBridge: number is greater than the length of pendingL2Messages (get)"
+        );
+
+        bytes memory hashes;
+        bytes32[] memory pendingMessagesHashes = pendingMessagesHashesPerChain[
+            chainId
+        ];
+        uint256 pendingMessageIndex = pendingMessagesIndexPerChain[chainId];
+
+        for (uint i = 0; i < number; i++) {
+            hashes = bytes.concat(
+                hashes,
+                pendingMessagesHashes[i + pendingMessageIndex]
+            );
+        }
+
+        return
+            bytes32(bytes2(number)) |
+            bytes32(uint256(uint240(uint256(keccak256(hashes)))));
+    }
+
+    /// @inheritdoc ICommonBridge
     function removePendingTransactionHashes(
         uint16 number
     ) public onlyOnChainProposer {
@@ -304,13 +379,54 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
+    function removePendingL2Messages(
+        uint256 chainId,
+        uint16 number
+    ) public onlyOnChainProposer {
+        require(
+            number <= pendingL2MessagesLength(chainId),
+            "CommonBridge: number is greater than the length of pendingL2Messages (remove)"
+        );
+
+        pendingMessagesIndexPerChain[chainId] += number;
+    }
+
+    /// @inheritdoc ICommonBridge
     function hasExpiredPrivilegedTransactions() public view returns (bool) {
-        if (pendingTxHashesLength() == 0) {
+        if (pendingTxHashesLength() != 0) {
+            if (
+                block.timestamp >
+                privilegedTxDeadline[pendingTxHashes[pendingPrivilegedTxIndex]]
+            ) {
+                return true;
+            }
+        }
+        if (SHARED_BRIDGE_ROUTER == address(0)) {
             return false;
         }
-        return
-            block.timestamp >
-            privilegedTxDeadline[pendingTxHashes[pendingPrivilegedTxIndex]];
+        uint256[] memory registeredChainIDs = IRouter(SHARED_BRIDGE_ROUTER)
+            .getRegisteredChainIds();
+
+        for (uint256 i = 0; i < registeredChainIDs.length; i++) {
+            uint256 chainId = registeredChainIDs[i];
+            if (chainId == CHAIN_ID) {
+                continue;
+            }
+            uint256 pendingMessageIndex = pendingMessagesIndexPerChain[chainId];
+            bytes32[]
+                memory pendingMessagesHashes = pendingMessagesHashesPerChain[
+                    chainId
+                ];
+            if (
+                pendingMessageIndex < pendingMessagesHashes.length &&
+                block.timestamp >
+                privilegedTxDeadline[pendingMessagesHashes[pendingMessageIndex]]
+            ) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// @inheritdoc ICommonBridge
@@ -337,6 +453,38 @@ contract CommonBridge is
             withdrawalLogsBatchNumber,
             withdrawalsLogsMerkleRoot
         );
+    }
+
+    /// @inheritdoc ICommonBridge
+    function publishL2Messages(
+        BalanceDiff[] calldata balanceDiffs
+    ) public onlyOnChainProposer nonReentrant {
+        for (uint i = 0; i < balanceDiffs.length; i++) {
+            IRouter(SHARED_BRIDGE_ROUTER).sendMessages{
+                value: balanceDiffs[i].value
+            }(balanceDiffs[i].chainId, balanceDiffs[i].message_hashes);
+        }
+    }
+
+    /// @inheritdoc ICommonBridge
+    function receiveFromSharedBridge(
+        uint256 senderChainId,
+        bytes32[] calldata message_hashes
+    ) public payable override {
+        require(
+            msg.sender == SHARED_BRIDGE_ROUTER,
+            "CommonBridge: caller is not the shared bridge router"
+        );
+        // Append new hashes instead of overwriting
+        for (uint i = 0; i < message_hashes.length; i++) {
+            pendingMessagesHashesPerChain[senderChainId].push(
+                message_hashes[i]
+            );
+
+            privilegedTxDeadline[message_hashes[i]] =
+                block.timestamp +
+                PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION;
+        }
     }
 
     /// @inheritdoc ICommonBridge
@@ -440,9 +588,15 @@ contract CommonBridge is
                 withdrawalLeaf
             );
     }
-
     function pendingTxHashesLength() private view returns (uint256) {
         return pendingTxHashes.length - pendingPrivilegedTxIndex;
+    }
+    function pendingL2MessagesLength(
+        uint256 chainId
+    ) private view returns (uint256) {
+        return
+            pendingMessagesHashesPerChain[chainId].length -
+            pendingMessagesIndexPerChain[chainId];
     }
 
     function upgradeL2Contract(
@@ -491,6 +645,39 @@ contract CommonBridge is
         );
         SendValues memory sendValues = SendValues({
             to: L2_FEE_TOKEN_REGISTRY,
+            gasLimit: 21000 * 10,
+            value: 0,
+            data: callData
+        });
+        _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
+    }
+
+    /// @inheritdoc ICommonBridge
+    function setFeeTokenRatio(
+        address feeToken,
+        uint256 ratio
+    ) external override onlyOwner {
+        bytes memory callData = abi.encodeCall(
+            IFeeTokenPricer.setFeeTokenRatio,
+            (feeToken, ratio)
+        );
+        SendValues memory sendValues = SendValues({
+            to: L2_FEE_TOKEN_PRICER,
+            gasLimit: 21000 * 10,
+            value: 0,
+            data: callData
+        });
+        _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
+    }
+
+    /// @inheritdoc ICommonBridge
+    function unsetFeeTokenRatio(address feeToken) external override onlyOwner {
+        bytes memory callData = abi.encodeCall(
+            IFeeTokenPricer.unsetFeeTokenRatio,
+            (feeToken)
+        );
+        SendValues memory sendValues = SendValues({
+            to: L2_FEE_TOKEN_PRICER,
             gasLimit: 21000 * 10,
             value: 0,
             data: callData

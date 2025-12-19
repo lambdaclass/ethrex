@@ -226,6 +226,8 @@ pub enum BlockProducerError {
     InternalError(#[from] GenServerError),
     #[error("EthClientError error: {0}")]
     EthClientError(#[from] EthClientError),
+    #[error("Failed to encode calldata: {0}")]
+    CalldataEncodeError(#[from] CalldataEncodeError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -290,6 +292,8 @@ pub enum CommitterError {
     ChainError(#[from] ChainError),
     #[error("Failed due to invalid fork choice: {0}")]
     InvalidForkChoice(#[from] InvalidForkChoice),
+    #[error("Privileged transaction hash could not be computed")]
+    InvalidPrivilegedTransaction,
 }
 
 #[derive(Debug, thiserror::Error)]

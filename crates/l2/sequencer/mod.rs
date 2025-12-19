@@ -48,7 +48,7 @@ pub async fn start_l2(
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
     cancellation_token: CancellationToken,
-    _l2_url: Url,
+    l2_url: Url,
     genesis: Genesis,
     checkpoints_dir: PathBuf,
 ) -> Result<
@@ -110,8 +110,8 @@ pub async fn start_l2(
         blockchain.clone(),
         cfg.clone(),
         shared_state.clone(),
+        l2_url.clone(),
     )
-    .await
     .inspect_err(|err| {
         error!("Error starting Watcher: {err}");
     });
@@ -154,6 +154,7 @@ pub async fn start_l2(
         blockchain.clone(),
         cfg.clone(),
         shared_state.clone(),
+        cfg.l1_watcher.router_address,
     )
     .await
     .inspect_err(|err| {
@@ -161,7 +162,7 @@ pub async fn start_l2(
     });
 
     #[cfg(feature = "metrics")]
-    let metrics_gatherer = MetricsGatherer::spawn(&cfg, rollup_store.clone(), _l2_url)
+    let metrics_gatherer = MetricsGatherer::spawn(&cfg, rollup_store.clone(), l2_url)
         .await
         .inspect_err(|err| {
             error!("Error starting Block Producer: {err}");
@@ -239,9 +240,9 @@ pub async fn start_l2(
                 if let Err(e) = server_res {
                     error!("Admin server task error: {e}");
                 }
-                handle_verifier_result(verifier_res).await;
+                handle_verifier_result(verifier_res);
             }
-            (Some(handle), None) => handle_verifier_result(tokio::join!(handle).0).await,
+            (Some(handle), None) => handle_verifier_result(tokio::join!(handle).0),
             (None, Some(admin_server)) => {
                 if let Err(e) = admin_server.into_future().await {
                     error!("Admin server task error: {e}");
@@ -255,7 +256,7 @@ pub async fn start_l2(
     Ok((l1_committer_handle, block_producer_handle, driver))
 }
 
-async fn handle_verifier_result(res: Result<Result<(), SequencerError>, tokio::task::JoinError>) {
+fn handle_verifier_result(res: Result<Result<(), SequencerError>, tokio::task::JoinError>) {
     match res {
         Ok(Ok(_)) => {}
         Ok(Err(err)) => error!("verifier error: {err}"),

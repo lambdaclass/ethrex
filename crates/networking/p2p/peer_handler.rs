@@ -281,6 +281,8 @@ impl PeerHandler {
 
         *METRICS.headers_download_start_time.lock().await = Some(SystemTime::now());
 
+        let mut logged_no_free_peers_count = 0;
+
         loop {
             if let Ok((headers, peer_id, _connection, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
@@ -337,7 +339,14 @@ impl PeerHandler {
                 .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await?
             else {
-                trace!("We didn't get a peer from the table");
+                // Log ~ once every 10 seconds
+                if logged_no_free_peers_count == 0 {
+                    trace!("We are missing peers in request_block_headers");
+                    logged_no_free_peers_count = 1000;
+                }
+                logged_no_free_peers_count -= 1;
+                // Sleep a bit to avoid busy polling
+                tokio::time::sleep(Duration::from_millis(10)).await;
                 continue;
             };
 
@@ -656,6 +665,8 @@ impl PeerHandler {
         let mut last_update: SystemTime = SystemTime::now();
         let mut write_set = tokio::task::JoinSet::new();
 
+        let mut logged_no_free_peers_count = 0;
+
         loop {
             if all_accounts_state.len() * size_of::<AccountState>() >= RANGE_FILE_CHUNK_SIZE {
                 let current_account_hashes = std::mem::take(&mut all_account_hashes);
@@ -733,10 +744,17 @@ impl PeerHandler {
                 .peer_table
                 .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await
-                .inspect_err(|err| error!(err= ?err, "Error requesting a peer for account range"))
+                .inspect_err(|err| warn!(%err, "Error requesting a peer for account range"))
                 .unwrap_or(None)
             else {
-                trace!("We are missing peers in request_account_range_request");
+                // Log ~ once every 10 seconds
+                if logged_no_free_peers_count == 0 {
+                    trace!("We are missing peers in request_account_range");
+                    logged_no_free_peers_count = 1000;
+                }
+                logged_no_free_peers_count -= 1;
+                // Sleep a bit to avoid busy polling
+                tokio::time::sleep(Duration::from_millis(10)).await;
                 continue;
             };
 
@@ -974,6 +992,8 @@ impl PeerHandler {
 
         let mut completed_tasks = 0;
 
+        let mut logged_no_free_peers_count = 0;
+
         loop {
             if let Ok(result) = task_receiver.try_recv() {
                 let TaskResult {
@@ -1010,8 +1030,18 @@ impl PeerHandler {
             let Some((peer_id, mut connection)) = self
                 .peer_table
                 .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
-                .await?
+                .await
+                .inspect_err(|err| warn!(%err, "Error requesting a peer for bytecodes"))
+                .unwrap_or(None)
             else {
+                // Log ~ once every 10 seconds
+                if logged_no_free_peers_count == 0 {
+                    trace!("We are missing peers in request_bytecodes");
+                    logged_no_free_peers_count = 1000;
+                }
+                logged_no_free_peers_count -= 1;
+                // Sleep a bit to avoid busy polling
+                tokio::time::sleep(Duration::from_millis(10)).await;
                 continue;
             };
 
@@ -1180,6 +1210,8 @@ impl PeerHandler {
         // Maps storage root to vector of hashed addresses matching that root and
         // vector of hashed storage keys and storage values.
         let mut current_account_storages: BTreeMap<H256, AccountsWithStorage> = BTreeMap::new();
+
+        let mut logged_no_free_peers_count = 0;
 
         debug!("Starting request_storage_ranges loop");
         loop {
@@ -1524,8 +1556,18 @@ impl PeerHandler {
             let Some((peer_id, connection)) = self
                 .peer_table
                 .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
-                .await?
+                .await
+                .inspect_err(|err| warn!(%err, "Error requesting a peer for storage ranges"))
+                .unwrap_or(None)
             else {
+                // Log ~ once every 10 seconds
+                if logged_no_free_peers_count == 0 {
+                    trace!("We are missing peers in request_storage_ranges");
+                    logged_no_free_peers_count = 1000;
+                }
+                logged_no_free_peers_count -= 1;
+                // Sleep a bit to avoid busy polling
+                tokio::time::sleep(Duration::from_millis(10)).await;
                 continue;
             };
 

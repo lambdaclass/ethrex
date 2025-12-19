@@ -6,7 +6,8 @@ use ethrex_common::Address;
 use ethrex_common::H256;
 use ethrex_common::U256;
 use ethrex_common::types::{AuthorizationList, AuthorizationTupleEntry};
-use ethrex_l2_common::l1_messages::L1MessageProof;
+use ethrex_l2_common::messages::L1MessageProof;
+use ethrex_rpc::clients::eth::errors::GetBatchByBlockNumberError;
 use ethrex_rpc::clients::eth::errors::GetL1BlobBaseFeeRequestError;
 use ethrex_rpc::clients::eth::errors::GetL1FeeVaultAddressError;
 use ethrex_rpc::clients::eth::errors::GetOperatorFeeError;
@@ -30,12 +31,12 @@ use ethrex_rpc::{
 use hex;
 use serde_json::json;
 
-pub async fn get_message_proof(
+pub async fn get_l1_message_proof(
     client: &EthClient,
     transaction_hash: H256,
 ) -> Result<Option<Vec<L1MessageProof>>, EthClientError> {
     let params = Some(vec![json!(format!("{:#x}", transaction_hash))]);
-    let request = RpcRequest::new("ethrex_getMessageProof", params);
+    let request = RpcRequest::new("ethrex_getL1MessageProof", params);
 
     match client.send_request(request).await? {
         RpcResponse::Success(result) => serde_json::from_value(result.result)
@@ -43,6 +44,23 @@ pub async fn get_message_proof(
             .map_err(EthClientError::from),
         RpcResponse::Error(error_response) => {
             Err(GetMessageProofError::RPCError(error_response.error.message).into())
+        }
+    }
+}
+
+pub async fn get_batch_by_block(
+    client: &EthClient,
+    block: BlockIdentifier,
+) -> Result<Option<RpcBatch>, EthClientError> {
+    let params = Some(vec![block.into()]);
+    let request = RpcRequest::new("ethrex_getBatchByBlock", params);
+
+    match client.send_request(request).await? {
+        RpcResponse::Success(result) => serde_json::from_value(result.result)
+            .map_err(GetBatchByBlockNumberError::SerdeJSONError)
+            .map_err(EthClientError::from),
+        RpcResponse::Error(error_response) => {
+            Err(GetBatchByBlockNumberError::RPCError(error_response.error.message).into())
         }
     }
 }

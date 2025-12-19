@@ -296,7 +296,6 @@ pub struct EIP7702Transaction {
     #[rkyv(with=rkyv::with::Skip)]
     pub inner_hash: OnceCell<H256>,
 }
-
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct PrivilegedL2Transaction {
     pub chain_id: u64,
@@ -1507,7 +1506,7 @@ impl TxType {
 impl PrivilegedL2Transaction {
     /// Returns the formatted hash of the privileged transaction,
     /// or None if the transaction is not a privileged transaction.
-    /// The hash is computed as keccak256(from || to || transaction_id  || value || gas_limit || keccak256(calldata))
+    /// The hash is computed as keccak256(chain_id || from || to || transaction_id  || value || gas_limit || keccak256(calldata))
     pub fn get_privileged_hash(&self) -> Option<H256> {
         // Should this function be changed?
         let to = match self.to {
@@ -1524,6 +1523,7 @@ impl PrivilegedL2Transaction {
 
         Some(crate::utils::keccak(
             [
+                U256::from(self.chain_id).to_big_endian().as_ref(),
                 self.from.as_bytes(),
                 to.as_bytes(),
                 &nonce,

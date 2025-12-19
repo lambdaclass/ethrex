@@ -52,6 +52,7 @@ reqwest.workspace = true
 thiserror.workspace = true
 itertools = "0.14.0"
 url.workspace = true
+tracing-appender = "0.2"
 
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
@@ -91,7 +92,7 @@ c-kzg = [
   "ethrex-p2p/c-kzg",
   "ethrex-crypto/c-kzg",
 ]
-metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics"]
+metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics", "ethrex-p2p/metrics"]
 rocksdb = ["ethrex-storage/rocksdb", "ethrex-p2p/rocksdb", "ethrex-l2?/rocksdb"]
 jemalloc = ["dep:tikv-jemallocator"]
 jemalloc_profiling = [

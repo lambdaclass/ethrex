@@ -33,10 +33,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
+        uses: ./.github/actions/install-solc
 
       - name: Start ethrex
         run: |
@@ -67,12 +64,12 @@ jobs:
       - name: Show ENVs
         run: |
           cat .env
+          cp .env cmd/.env
 
       - name: Run test
         run: |
           cd crates/l2
           tail -n +1 -f /tmp/ethrex.log &
           tail -n +1 -f /tmp/prover.log &
-          export $(xargs < .env)
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d \
           cargo test l2 --release -- --nocapture --test-threads=1
