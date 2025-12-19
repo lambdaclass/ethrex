@@ -1,7 +1,6 @@
 #[cfg(feature = "l2")]
 use crate::rlpx::l2::{
     PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL,
-    PERIODIC_PROOF_BROADCAST_INTERVAL,
     l2_connection::{
         self, L2Cast, L2ConnState, handle_based_capability_message, handle_l2_broadcast,
     },
@@ -413,14 +412,6 @@ impl GenServer for PeerConnectionServer {
                                 res
                             }
                         }
-                        L2Cast::ProofBroadcast => {
-                            let res = l2_connection::send_next_proof(established_state).await;
-                            if res.is_ok() {
-                                l2_connection::process_proofs_on_queue(established_state).await
-                            } else {
-                                res
-                            }
-                        }
                     }
                 }
                 #[cfg(feature = "l2")]
@@ -590,11 +581,6 @@ where
             PERIODIC_BATCH_BROADCAST_INTERVAL,
             handle.clone(),
             CastMessage::L2(L2Cast::BatchBroadcast),
-        );
-        send_interval(
-            PERIODIC_PROOF_BROADCAST_INTERVAL,
-            handle.clone(),
-            CastMessage::L2(L2Cast::ProofBroadcast),
         );
     }
 
