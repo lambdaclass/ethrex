@@ -120,8 +120,8 @@ export $(cat cmd/.env | xargs); export COMPILE_CONTRACTS=true;
     --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
     --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
   --admin.start-at 10 \
-	--bootnodes enode://bbdc069e0513b13e92093e0b51d75c0fa7c5dd7c6aad40ee5055ed307c0516c8e78499696c77f1bab41aaf8ec827e7d319f393705c8f7d876f1bd9462e5b94ab@127.0.0.1:30303 \
-	--admin.l2-safe-url http://localhost:1729
+  --bootnodes enode://bbdc069e0513b13e92093e0b51d75c0fa7c5dd7c6aad40ee5055ed307c0516c8e78499696c77f1bab41aaf8ec827e7d319f393705c8f7d876f1bd9462e5b94ab@127.0.0.1:30303 \
+  --admin.l2-safe-url http://localhost:1729
 ```
 
 6. Finally, stop the first sequencer at the same number:
