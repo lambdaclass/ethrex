@@ -738,8 +738,8 @@ impl FlatTrie {
                 NodeHandle::Branch { children_indices } => {
                     let mut children_hashes: [Option<NodeHash>; 16] = [None; 16];
                     let mut any_pruned = false;
+                    let mut all_pruned = true;
                     for (i, child) in children_indices
-                        .clone()
                         .iter()
                         .enumerate()
                         .flat_map(|(i, c)| c.map(|c| (i, c)))
@@ -747,15 +747,17 @@ impl FlatTrie {
                         if let Some(child_index) = child {
                             recursive(trie, child_index)?;
                             children_hashes[i] = Some(trie.hashes[child_index].unwrap());
+                            all_pruned = false;
                         } else {
                             any_pruned = true;
                         }
                     }
 
-                    if any_pruned {
+                    if all_pruned {
+                        trie.hashes[index] = Some(trie.hash_encoded_data(index));
+                    } else if any_pruned {
                         let encoded_items = trie.get_encoded_items(index)?;
                         for (i, child) in children_indices
-                            .clone()
                             .iter()
                             .enumerate()
                             .flat_map(|(i, c)| c.map(|c| (i, c)))
@@ -764,10 +766,10 @@ impl FlatTrie {
                                 children_hashes[i] = Some(decode_child(encoded_items[i]))
                             }
                         }
-                    }
 
-                    let encoded = encode_branch(children_hashes);
-                    trie.hashes[index] = Some(NodeHash::from_encoded(&encoded));
+                        let encoded = encode_branch(children_hashes);
+                        trie.hashes[index] = Some(NodeHash::from_encoded(&encoded));
+                    }
                 }
             }
             Ok(())
