@@ -102,6 +102,14 @@ contract OnChainProposer is
     /// @notice True if verification is done through Aligned Layer instead of smart contract verifiers.
     bool public ALIGNED_MODE;
 
+    /// @inheritdoc IOnChainProposer
+    function authorizedSequencerAddresses(
+        address addr
+    ) external view returns (bool) {
+        return
+            IOnChainProposer(owner()).authorizedSequencerAddresses(addr);
+    }
+
     /// @notice Verification keys keyed by git commit hash (keccak of the commit SHA string) and verifier type.
     mapping(bytes32 commitHash => mapping(uint8 verifierId => bytes32 vk))
         public verificationKeys;

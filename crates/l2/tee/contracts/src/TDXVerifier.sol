@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-import "../lib/openzeppelin-contracts/contracts/utils/cryptography/ECDSA.sol";
-import "../lib/openzeppelin-contracts/contracts/utils/cryptography/MessageHashUtils.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import {IOnChainProposer} from "../../../contracts/src/l1/interfaces/IOnChainProposer.sol";
 
 interface IAttestation {
     function verifyAndAttestOnChain(bytes calldata rawQuote)
         external
         payable
         returns (bool success, bytes memory output);
-}
-
-interface IOnChainProposer {
-    function authorizedSequencerAddresses(address addr) external returns (bool isAuthorized);
 }
 
 contract TDXVerifier {
