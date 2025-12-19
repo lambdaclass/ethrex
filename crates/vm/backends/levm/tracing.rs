@@ -1,9 +1,7 @@
 use ethrex_common::types::{Block, Transaction};
 use ethrex_common::{tracing::CallTrace, types::BlockHeader};
-use ethrex_levm::opcodes::Opcode;
 use ethrex_levm::vm::VMType;
-use ethrex_levm::{db::gen_db::GeneralizedDatabase, tracing::LevmCallTracer, vm::VM, OpcodeTiming};
-use std::collections::HashMap;
+use ethrex_levm::{db::gen_db::GeneralizedDatabase, tracing::LevmCallTracer, vm::VM};
 
 use crate::{EvmError, backends::levm::LEVM};
 
@@ -69,8 +67,7 @@ impl LEVM {
             vm_type,
         )?;
 
-        let mut opcode_timings: HashMap<Opcode, OpcodeTiming> = Default::default();
-        vm.execute(&mut opcode_timings)?;
+        vm.execute()?;
 
         let callframe = vm.get_trace_result()?;
 

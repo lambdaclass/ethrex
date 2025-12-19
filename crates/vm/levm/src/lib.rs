@@ -14,6 +14,6 @@ pub mod precompiles;
 pub mod tracing;
 pub mod utils;
 pub mod vm;
-pub use vm::OpcodeTiming;
 pub use environment::*;
 pub mod account;
+pub mod timings;

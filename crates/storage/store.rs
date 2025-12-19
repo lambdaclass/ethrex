@@ -49,7 +49,8 @@ use std::{
         Arc, Mutex,
         atomic::AtomicU64,
         mpsc::{SyncSender, TryRecvError, sync_channel},
-    }, time::Instant,
+    },
+    time::Instant,
 };
 use tracing::{debug, error, info};
 /// Number of state trie segments to fetch concurrently during state sync

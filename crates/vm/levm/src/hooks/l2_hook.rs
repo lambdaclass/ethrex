@@ -5,7 +5,6 @@ use crate::{
     hooks::{DefaultHook, default_hook, hook::Hook},
     opcodes::Opcode,
     tracing::LevmCallTracer,
-    OpcodeTiming,
     vm::{VM, VMType},
 };
 
@@ -22,7 +21,6 @@ use ethrex_common::{
     },
 };
 use ethrex_rlp::encode::RLPEncode;
-use std::collections::HashMap;
 
 pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -669,8 +667,7 @@ fn simulate_common_bridge_call(
     )?;
     new_vm.hooks = vec![];
     default_hook::set_bytecode_and_code_address(&mut new_vm)?;
-    let mut opcode_timings: HashMap<Opcode, OpcodeTiming> = Default::default();
-    let execution_result = new_vm.execute(&mut opcode_timings)?;
+    let execution_result = new_vm.execute()?;
 
     Ok((execution_result, db_clone))
 }

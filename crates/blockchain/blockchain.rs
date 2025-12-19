@@ -389,7 +389,7 @@ impl Blockchain {
         let mut storage_updates_map: StoreUpdatesMap = Default::default();
         let mut code_updates: FxHashMap<H256, Code> = Default::default();
         let mut hashed_address_cache: FxHashMap<H160, H256> = Default::default();
-         let start = Instant::now();
+        let start = Instant::now();
         for updates in rx {
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
             *max_queue_length = current_length.max(*max_queue_length);
