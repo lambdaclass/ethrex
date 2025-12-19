@@ -517,8 +517,6 @@ impl Blockchain {
 
     /// Collapses a root branch node into an extension or leaf node if it has only one valid child.
     /// Returns None if there are no valid children.
-    ///
-    /// Precondition: the branch node's reference to their children are of type NodeRef::Node
     fn collapse_root_node(
         &self,
         parent_header: &BlockHeader,
