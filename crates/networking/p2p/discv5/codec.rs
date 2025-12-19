@@ -57,9 +57,9 @@ impl Decoder for Discv5Codec {
 
     fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         if !buf.is_empty() {
-            let key: &[u8] = match &self.session {
+            let key: &[u8; 16] = match &self.session {
                 Some(session) => session.inbound_key(),
-                None => &[],
+                None => &[0; 16],
             };
             Ok(Some(Packet::decode(
                 &self.local_node_id,

@@ -179,7 +179,7 @@ impl DiscoveryServer {
                 self.peer_table
                     .set_disposable(&contact.node.node_id())
                     .await?;
-                METRICS.record_new_discarded_node().await;
+                METRICS.record_new_discarded_node();
             }
 
             self.peer_table
