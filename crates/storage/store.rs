@@ -167,6 +167,10 @@ impl std::fmt::Debug for BackgroundThreadHandles {
 }
 
 impl Clone for Store {
+    /// Clones the Store, creating a new instance that shares the same backend and background threads.
+    /// This is needed because Store is used in many async contexts where it needs to be shared across
+    /// different tasks and iterators (e.g., `AncestorIterator`). All clones share the same underlying
+    /// storage backend and background threads through `Arc`, so operations are safe and efficient.
     fn clone(&self) -> Self {
         Self {
             db_path: self.db_path.clone(),
@@ -1519,7 +1523,7 @@ impl Store {
 
     /// Shutdown the store and wait for background threads to finish.
     /// This should be called before dropping the Store to ensure all background
-    /// threads have completed their work and RocksDB can be safely closed.
+    /// threads have completed their work and the backend can be safely closed.
     ///
     /// This method consumes the Store. After calling shutdown, the Store should not be used.
     pub fn shutdown(self) {
@@ -3012,12 +3016,10 @@ mod tests {
         let store = Store::new(&path, engine_type).expect("Failed to create test db");
         // Run the test and get the store back
         let store = test_func(store).await;
-        // For RocksDB, we need to shutdown the store to wait for background threads
-        // before dropping it, otherwise RocksDB's background threads may try to
-        // access the database after it's been dropped, causing "pthread lock: Invalid argument" errors.
-        if matches!(engine_type, EngineType::RocksDB) {
-            store.shutdown();
-        }
+        // We need to shutdown the store to wait for background threads before dropping it,
+        // otherwise background threads may try to access the database after it's been dropped,
+        // causing "pthread lock: Invalid argument" errors. This applies to all backends.
+        store.shutdown();
         // Remove store (if needed)
         if !matches!(engine_type, EngineType::InMemory) {
             remove_test_dbs(&path);
