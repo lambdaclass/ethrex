@@ -146,11 +146,7 @@ impl Iterator for TrieIterator {
         let next_node = next_node_ref
             .get_node_checked(self.db.as_ref(), path.clone())
             .ok()
-            .flatten();
-        if next_node.is_none() {
-            println!("hole found: {next_node_ref:?} at {path:?}");
-        }
-        let next_node = next_node?;
+            .flatten()?;
         match &(*next_node) {
             Node::Branch(branch_node) => {
                 // Add all children to the stack (in reverse order so we process first child frist)
