@@ -40,7 +40,7 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable, ITimelock {
         address[] memory,
         address[] memory,
         address
-    ) public pure override(ITimelock, TimelockControllerUpgradeable) {
+    ) public pure override(TimelockControllerUpgradeable) {
         revert TimelockUseCustomInitialize();
     }
 
