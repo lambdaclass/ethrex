@@ -30,16 +30,13 @@ pub enum ProverType {
     TDX,
 }
 
-impl TryFrom<u32> for ProverType {
-    type Error = ();
-
-    fn try_from(value: u32) -> Result<Self, Self::Error> {
+impl From<ProverType> for u32 {
+    fn from(value: ProverType) -> u32 {
         match value {
-            0 => Ok(ProverType::Exec),
-            1 => Ok(ProverType::RISC0),
-            2 => Ok(ProverType::SP1),
-            3 => Ok(ProverType::TDX),
-            _ => Err(()),
+            ProverType::Exec => 0,
+            ProverType::RISC0 => 1,
+            ProverType::SP1 => 2,
+            ProverType::TDX => 3,
         }
     }
 }
