@@ -458,7 +458,7 @@ impl GuestProgramState {
             let storage_trie = match self.storage_tries.get_mut(&address) {
                 None if storage_root == *EMPTY_TRIE_HASH => return Ok(None),
                 Some(trie) => {
-                    if trie.hash().unwrap().finalize() == storage_root {
+                    if trie.authenticate().unwrap().finalize() == storage_root {
                         trie
                     } else {
                         panic!()
