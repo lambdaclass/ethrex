@@ -116,14 +116,14 @@ contract OnChainProposer is
 
     /// @notice Initializes the contract.
     /// @dev This method is called only once after the contract is deployed.
-    /// @dev It sets the bridge address.
-    /// @param owner the address of the owner who can perform upgrades.
+    /// @dev The owner is expected to be the Timelock contract.
+    /// @param timelock_owner the Timelock address that can perform upgrades.
     /// @param alignedProofAggregator the address of the alignedProofAggregatorService contract.
     /// @param r0verifier the address of the risc0 groth16 verifier.
     /// @param sp1verifier the address of the sp1 groth16 verifier.
     function initialize(
         bool _validium,
-        address owner,
+        address timelock_owner,
         bool requireRisc0Proof,
         bool requireSp1Proof,
         bool requireTdxProof,
@@ -192,7 +192,7 @@ contract OnChainProposer is
         );
         BRIDGE = bridge;
 
-        OwnableUpgradeable.__Ownable_init(owner);
+        OwnableUpgradeable.__Ownable_init(timelock_owner);
     }
 
     /// @inheritdoc IOnChainProposer
