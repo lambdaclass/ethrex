@@ -356,7 +356,7 @@ fn geth2ethrex(mut store: Store, block_number: BlockNumber, args: &Args) -> eyre
         let migration_time = migration_start.elapsed().as_secs_f64();
         if args.fkv {
             store.generate_flatkeyvalue()?;
-            while store.last_written()? != vec![0xff] {
+            while store.last_written()? != vec![0xff; 64] {
                 std::thread::sleep(std::time::Duration::from_secs(60));
                 let current = store.last_written()?;
                 info!("FKV generation in progress. Current={current:?}");
