@@ -38,3 +38,82 @@ For SP1 it is stored at:
 
 For RISC0 it is stored at:
   - `crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk`
+
+
+## Upgrade sequencer
+
+Init L1:
+
+```bash
+cd crates/l2
+make rm-db-l1 init-l1
+```
+
+Deploy contracts:
+
+```bash
+cd crates/l2
+rm -rf ../../dev_ethrex_l*; make deploy-l1
+```
+
+Start first sequencer (on root):
+
+```bash
+export $(cat cmd/.env | xargs); export COMPILE_CONTRACTS=true; target/release/ethrex \
+    l2 --no-monitor \
+    --network fixtures/genesis/l2.json \
+    --datadir dev_ethrex_l2_a \
+    --http.addr 127.0.0.1 --http.port 1729 --authrpc.port 8551 \
+    --metrics --metrics.port 3702 \
+    --p2p.addr 127.0.0.1 --p2p.port 30303 --discovery.port 30303 \
+    --admin-server.addr 127.0.0.1 --admin-server.port 5555 \
+    --proof-coordinator.addr 127.0.0.1 --proof-coordinator.port 3900 \
+    --state-updater.sequencer-registry ${ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS} \
+    --l1.bridge-address ${ETHREX_WATCHER_BRIDGE_ADDRESS} \
+    --l1.on-chain-proposer-address ${ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS} \
+    --eth.rpc-url http://localhost:8545 \
+    --watcher.block-delay 0 \
+    --osaka-activation-time 1761677592 \
+    --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
+    --block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+    --block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+    --block-producer.operator-fee-per-gas 1000000000 \
+    --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+    --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
+```
+
+Start second sequencer (set start-at to the desire number):
+
+```bash
+export $(cat cmd/.env | xargs); export COMPILE_CONTRACTS=true;
+  target/release/ethrex \
+    l2 --no-monitor \
+    --network fixtures/genesis/l2.json \
+    --datadir dev_ethrex_l2_b \
+    --http.addr 127.0.0.1 --http.port 1730 --authrpc.port 8552 \
+    --metrics --metrics.port 3703 \
+    --p2p.addr 127.0.0.1 --p2p.port 30304 --discovery.port 30304 \
+    --admin-server.addr 127.0.0.1 --admin-server.port 5556 \
+    --proof-coordinator.addr 127.0.0.1 --proof-coordinator.port 3901 \
+    --state-updater.sequencer-registry ${ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS} \
+    --l1.bridge-address ${ETHREX_WATCHER_BRIDGE_ADDRESS} \
+    --l1.on-chain-proposer-address ${ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS} \
+    --eth.rpc-url http://localhost:8545 \
+    --watcher.block-delay 0 \
+    --osaka-activation-time 1761677592 \
+    --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
+    --block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+    --block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+    --block-producer.operator-fee-per-gas 1000000000 \
+    --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+    --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+  --admin.start-at 10 \
+--bootnodes enode://bbdc069e0513b13e92093e0b51d75c0fa7c5dd7c6aad40ee5055ed307c0516c8e78499696c77f1bab41aaf8ec827e7d319f393705c8f7d876f1bd9462e5b94ab@127.0.0.1:30303 \
+--admin.l2-safe-url http://localhost:1729
+```
+
+Stop the first sequencer the same number:
+
+```bash
+curl http://localhost:5555/stop-at/10
+```
