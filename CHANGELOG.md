@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-12-15
+
+- Parallelize storage merkelization [#5497](https://github.com/lambdaclass/ethrex/pull/5497)
+
 ### 2025-12-02
 
 - Avoid unnecessary hashing of init codes and already hashed codes [#5397](https://github.com/lambdaclass/ethrex/pull/5397)
