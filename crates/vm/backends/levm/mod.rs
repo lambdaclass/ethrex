@@ -33,6 +33,7 @@ use ethrex_levm::{
     Environment,
     errors::{ExecutionReport, TxResult, VMError},
     vm::VM,
+    OpcodeTiming,
 };
 use ::tracing::info;
 use std::cmp::min;
@@ -45,6 +46,7 @@ use std::time::{Duration, Instant};
 #[derive(Default, Debug)]
 struct OpcodeTimingAccumulator {
     totals: HashMap<Opcode, Duration>,
+    counts: HashMap<Opcode, u64>,
     blocks: usize,
     txs: usize,
 }
@@ -52,35 +54,49 @@ struct OpcodeTimingAccumulator {
 impl OpcodeTimingAccumulator {
     fn update(
         &mut self,
-        timings: &HashMap<Opcode, Duration>,
+        timings: &HashMap<Opcode, OpcodeTiming>,
         tx_count: usize,
-    ) -> (HashMap<Opcode, Duration>, usize, usize) {
+    ) -> (Vec<(Opcode, Duration, u64)>, usize, usize) {
         self.blocks += 1;
         self.txs += tx_count;
-        for (opcode, duration) in timings {
-            *self.totals.entry(*opcode).or_default() += *duration;
+        for (opcode, timing) in timings {
+            *self.totals.entry(*opcode).or_default() += timing.total;
+            *self.counts.entry(*opcode).or_default() += timing.count;
         }
-        let average = if self.blocks == 0 {
-            HashMap::new()
-        } else {
-            self.totals
-                .iter()
-                .map(|(opcode, total)| {
+        let mut average: Vec<(Opcode, Duration, u64)> = self
+            .totals
+            .iter()
+            .filter_map(|(opcode, total)| {
+                let count = *self.counts.get(opcode).unwrap_or(&0);
+                (count > 0).then(|| {
                     (
                         *opcode,
-                        Duration::from_secs_f64(
-                            total.as_secs_f64() / self.blocks as f64,
-                        ),
+                        Duration::from_secs_f64(total.as_secs_f64() / count as f64),
+                        count,
                     )
                 })
-                .collect()
-        };
+            })
+            .collect();
+        average.sort_by(|a, b| b.1.cmp(&a.1));
         (average, self.blocks, self.txs)
     }
 }
 
 static OPCODE_TIMINGS_AVERAGE: LazyLock<Mutex<OpcodeTimingAccumulator>> =
     LazyLock::new(|| Mutex::new(OpcodeTimingAccumulator::default()));
+
+fn format_opcode_timings(sorted: &[(Opcode, Duration, u64)]) -> String {
+    let mut out = String::new();
+    for (opcode, dur, count) in sorted {
+        out.push_str(&format!(
+            "{:<16} {:>18?} ({:>10} calls)\n",
+            format!("{opcode:?}"),
+            dur,
+            count
+        ));
+    }
+    out
+}
 
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
@@ -169,7 +185,7 @@ impl LEVM {
         info!("[PERF] txs_with_sender {:?}", time_ms);
 
           let start = Instant::now();
-          let mut timings = Default::default();
+          let mut timings: HashMap<Opcode, OpcodeTiming> = Default::default();
         for (tx, tx_sender) in txs_with_sender {
             if cumulative_gas_used + tx.gas_limit() > block.header.gas_limit {
                 return Err(EvmError::Transaction(format!(
@@ -209,15 +225,16 @@ impl LEVM {
         info!("[PERF] execute_tx_in_block  {:?}", time_ms);
         info!("[PERF] execute vm opcodes aggregate:\n{:#?}", timings);
         let tx_count = receipts.len();
-        let (avg_timings, blocks_seen, txs_seen) = {
+        let (avg_timings_sorted, blocks_seen, txs_seen) = {
             let mut guard = OPCODE_TIMINGS_AVERAGE
                 .lock()
                 .expect("opcode timings accumulator poisoned");
             guard.update(&timings, tx_count)
         };
+        let pretty_avg = format_opcode_timings(&avg_timings_sorted);
         info!(
-            "[PERF] opcode timings avg per block (blocks={}, txs={}):\n{:#?}",
-            blocks_seen, txs_seen, avg_timings
+            "[PERF] opcode timings avg per block (blocks={}, txs={}, sorted desc):\n{}",
+            blocks_seen, txs_seen, pretty_avg
         );
         if queue_length.load(Ordering::Relaxed) == 0 {
             LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
@@ -323,7 +340,8 @@ impl LEVM {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
-        vm.execute(&mut Default::default()).map_err(VMError::into)
+        let mut opcode_timings: HashMap<Opcode, OpcodeTiming> = Default::default();
+        vm.execute(&mut opcode_timings).map_err(VMError::into)
     }
 
     // Like execute_tx but allows reusing the stack pool
@@ -337,7 +355,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         stack_pool: &mut Vec<Stack>,
-        timings: &mut HashMap<Opcode, Duration>,
+        timings: &mut HashMap<Opcode, OpcodeTiming>,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
@@ -369,7 +387,8 @@ impl LEVM {
 
         let mut vm = vm_from_generic(tx, env, db, vm_type)?;
 
-        vm.execute(&mut Default::default())
+        let mut opcode_timings: HashMap<Opcode, OpcodeTiming> = Default::default();
+        vm.execute(&mut opcode_timings)
             .map(|value| value.into())
             .map_err(VMError::into)
     }
@@ -623,7 +642,8 @@ pub fn generic_system_contract_levm(
     let mut vm =
         VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type).map_err(EvmError::from)?;
 
-    let report = vm.execute(&mut Default::default()).map_err(EvmError::from)?;
+    let mut opcode_timings: HashMap<Opcode, OpcodeTiming> = Default::default();
+    let report = vm.execute(&mut opcode_timings).map_err(EvmError::from)?;
 
     if let Some(system_account) = system_account_backup {
         db.current_accounts_state

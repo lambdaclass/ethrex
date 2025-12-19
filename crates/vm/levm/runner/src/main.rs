@@ -14,10 +14,12 @@ use ethrex_levm::{
     opcodes::Opcode,
     tracing::LevmCallTracer,
     vm::{VM, VMType},
+    OpcodeTiming,
 };
 use ethrex_storage::Store;
 use ethrex_vm::DynVmDatabase;
 use log::{debug, error, info};
+use std::collections::HashMap;
 use num_bigint::BigUint;
 use num_traits::Num;
 use runner::input::{InputAccount, InputTransaction, RunnerInput};
@@ -176,7 +178,8 @@ fn main() {
         .store_data(0, &runner_input.initial_memory);
 
     // Execute Transaction
-    let result = vm.execute(&mut Default::default());
+    let mut opcode_timings: HashMap<Opcode, OpcodeTiming> = Default::default();
+    let result = vm.execute(&mut opcode_timings);
 
     // Print execution result
     info!("\n\nResult:");

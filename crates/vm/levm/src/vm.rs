@@ -29,6 +29,12 @@ use std::{
 
 pub type Storage = HashMap<U256, H256>;
 
+#[derive(Debug, Default, Clone, Copy)]
+pub struct OpcodeTiming {
+    pub total: Duration,
+    pub count: u64,
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub enum VMType {
     #[default]
@@ -404,7 +410,7 @@ impl<'a> VM<'a> {
     }
 
     /// Executes a whole external transaction. Performing validations at the beginning.
-    pub fn execute(&mut self, timings: &mut HashMap<Opcode, Duration>) -> Result<ExecutionReport, VMError> {
+    pub fn execute(&mut self, timings: &mut HashMap<Opcode, OpcodeTiming>) -> Result<ExecutionReport, VMError> {
         if let Err(e) = self.prepare_execution() {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.
             self.restore_cache_state()?;
@@ -438,7 +444,7 @@ impl<'a> VM<'a> {
     }
 
     /// Main execution loop.
-    pub fn run_execution(&mut self, timings: &mut HashMap<Opcode, Duration>) -> Result<ContextResult, VMError> {
+    pub fn run_execution(&mut self, timings: &mut HashMap<Opcode, OpcodeTiming>) -> Result<ContextResult, VMError> {
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         if precompiles::is_precompile(
             &self.current_call_frame.to,
@@ -472,7 +478,8 @@ impl<'a> VM<'a> {
             let op_result = self.opcode_table[opcode as usize].call(self);
             let time = start.elapsed();
             let timing = timings.entry(Opcode::from(opcode)).or_default();
-            *timing = timing.add(time);
+            timing.total = timing.total.add(time);
+            timing.count = timing.count.saturating_add(1);
 
             let result = match op_result {
                 Ok(OpcodeResult::Continue) => continue,
@@ -518,7 +525,8 @@ impl<'a> VM<'a> {
     pub fn stateless_execute(&mut self) -> Result<ExecutionReport, VMError> {
         // Add backup hook to restore state after execution.
         self.add_hook(BackupHook::default());
-        let report = self.execute(&mut Default::default())?;
+        let mut opcode_timings: HashMap<Opcode, OpcodeTiming> = Default::default();
+        let report = self.execute(&mut opcode_timings)?;
         // Restore cache to the state before execution.
         self.db.undo_last_transaction()?;
         Ok(report)
