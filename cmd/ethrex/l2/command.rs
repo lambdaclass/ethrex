@@ -72,7 +72,7 @@ impl L2Command {
 
         let matches = app.try_get_matches_from(args_with_program)?;
         let init_options = Options::from_arg_matches(&matches)?;
-        let log_filter_handler = l2::init_tracing(&init_options);
+        let (log_filter_handler, _guard) = l2::init_tracing(&init_options);
         let mut l2_options = init_options;
 
         if l2_options.node_opts.dev {
@@ -398,6 +398,8 @@ impl Command {
                 )
                 .await?;
 
+                let chain_id = store.get_chain_config().chain_id;
+
                 let rollup_store =
                     StoreRollup::new(&store_path.join("rollup_store"), rollup_store_type)?;
                 rollup_store
@@ -473,7 +475,7 @@ impl Command {
                         }
 
                         // Execute block
-                        blockchain.add_block(block.clone())?;
+                        blockchain.add_block_pipeline(block.clone())?;
 
                         // Add fee config to rollup store
                         rollup_store
@@ -517,6 +519,7 @@ impl Command {
                         U256::from(batch_number),
                         None,
                         blobs_bundle,
+                        chain_id,
                     )
                     .await?;
 
@@ -712,7 +715,7 @@ async fn delete_blocks_from_batch(
         .get_block_header(last_kept_block)?
         .ok_or_else(|| eyre::eyre!("Block number {} not found", last_kept_block))?;
     store
-        .forkchoice_update(None, last_kept_block, last_kept_header.hash(), None, None)
+        .forkchoice_update(vec![], last_kept_block, last_kept_header.hash(), None, None)
         .await?;
     Ok(())
 }

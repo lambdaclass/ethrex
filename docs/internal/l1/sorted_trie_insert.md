@@ -1,6 +1,6 @@
 # Sorted Trie Insertion
 
-This document describes the algorithm implemented in [crates/common/trie/trie_sorted.rs](/crates/common/trie/trie_sorted.rs)
+This document describes the algorithm implemented in `crates/common/trie/trie_sorted.rs`
 which is used to speed up the insertion time in snap sync.
 During that step we are inserting all of the accounts state and storage
 slots downloaded into the Ethereum world state Merkle Patricia Trie.
@@ -16,7 +16,7 @@ to disk by having the trie in memory, but this is unviable
 for large amounts of state data.
 
 Example of the Naive implementation:
-![Image showing the insertion of 3 elements 0x0EBB, 0x12E6, 0x172E. Each one requiring multiple new reads and writes](sorted_trie_insert/Naive%20Insertion%20Example%201.png)
+![Image showing the insertion of 3 elements 0x0EBB, 0x12E6, 0x172E. Each one requiring multiple new reads and writes](sorted_trie_insert/NaiveInsertionExample1.png)
 
 If the input data is sorted, the computation can be optimized to be O(n).
 In the example, just by reading 0x0EBB and 0x172E, we know that there is 
@@ -50,7 +50,7 @@ In our example, all node paths start with 0x1 and then diverge.
 In this scenario, we can compute the leaf for the current value, write it,
 update the parent to include a pointer to that leaf, and then continue.
 
-![Image showing the insertion of 1 element with a current parent branch 0x1, the current element 0x12E6 and next element 0x172E. 0x12E6 is inserted with a single write](sorted_trie_insert/Sorted%20Insertion%20Scenario%201.png)
+![Image showing the insertion of 1 element with a current parent branch 0x1, the current element 0x12E6 and next element 0x172E. 0x12E6 is inserted with a single write](sorted_trie_insert/SortedInsertionScenario1.png)
 
 Scenario 2: Current and next values are siblings of a new current parent.
 This happens when the parent shares less nibbles from their paths than what the siblings share.
@@ -62,7 +62,7 @@ so we create it and insert the leaf we just computed and insert into the branch.
 The current parent is stored in the "parent stack", and the new branch becomes the 
 current parent.
 
-![Image showing the insertion of 1 element with a current parent branch 0x1, the current element 0x172E and next element 0x175B. 0x172E is inserted with a single write, while the current parent branch is put onto the stack, and a new current parent branch 0x17 is created](sorted_trie_insert/Sorted%20Insertion%20Scenario%202.png)
+![Image showing the insertion of 1 element with a current parent branch 0x1, the current element 0x172E and next element 0x175B. 0x172E is inserted with a single write, while the current parent branch is put onto the stack, and a new current parent branch 0x17 is created](sorted_trie_insert/SortedInsertionScenario2.png)
 
 Scenario 3: The current parent is not the parent of the
 next value. This happens when the parent doesn't have
@@ -72,7 +72,7 @@ In this scenario, we know the leaf we need to compute from the current value,
 so we write that. We change the current value to be the current parent, and 
 the new current parent is popped from the "parent stack".
 
-![Image showing the insertion of 1 element with a current parent branch 0x17, the current element 0x175B and next element 0x1825. 0x175B is inserted with a single write, while the current parent branch becomes the current value, and the current parent branch is popped from the stack](sorted_trie_insert/Sorted%20Insertion%20Scenario%203.png)
+![Image showing the insertion of 1 element with a current parent branch 0x17, the current element 0x175B and next element 0x1825. 0x175B is inserted with a single write, while the current parent branch becomes the current value, and the current parent branch is popped from the stack](sorted_trie_insert/SortedInsertionScenario3.png)
 
 These three scenarios keep repeating themselves until the trie is complete,
 at which point the algorithm returns a hash to the root node branch.
@@ -101,4 +101,4 @@ algorithm to receive empty buffers and the writing task clears the
 buffer and sends it back through the channels.
 
 These tasks are executed using a custom thread pool defined in
-[/crates/concurrency/concurrency.rs](/crates/concurrency/concurrency.rs)
+`/crates/concurrency/concurrency.rs`

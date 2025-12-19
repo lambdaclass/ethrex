@@ -99,13 +99,7 @@ async fn add_blocks_with_transactions(
         return;
     };
     storage
-        .forkchoice_update(
-            Some(new_canonical_blocks),
-            last_number,
-            last_hash,
-            None,
-            None,
-        )
+        .forkchoice_update(new_canonical_blocks, last_number, last_hash, None, None)
         .await
         .unwrap();
 }
@@ -334,6 +328,5 @@ pub async fn dummy_p2p_context(peer_table: PeerTable) -> P2PContext {
         1000,
         100.0,
     )
-    .await
     .unwrap()
 }
