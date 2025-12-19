@@ -1409,6 +1409,34 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overr
 </ol>
 <p>This will launch Prometheus and Grafana, already set up to scrape ethrex metrics.</p>
 <p><strong>Note: We depend on <code>ethereum-metrics-exporter</code> for some key metrics to define variables on the Grafana dashboards. For it to work properly we need the consensus client to expose its RPC endpoints. For example if you are running lighthhouse you may need to add <code>--http</code> and <code>--http-address 0.0.0.0</code> flags to it before the dashboards pick up all metrics. This wont be needed in the near future</strong></p>
+<h2 id="logs"><a class="header" href="#logs">Logs</a></h2>
+<p>Ethrex logs are written to stdout by default. To enable file logging, you must specify the <code>--log.dir</code> argument, with this you'll be able to have Promtail collect the logs and send them to Grafana Loki for log visualization.</p>
+<ul>
+<li><strong>Promtail Configuration:</strong> <code>metrics/provisioning/promtail/promtail.yaml</code></li>
+</ul>
+<p>The promtail configuration expects by default that logs are stored in <code>./logs</code> (relative to the repo root). To correctly see the logs in Grafana, ensure that Promtail can access the logs directory:</p>
+<ul>
+<li>If running via <strong>Docker</strong>, ensure you map a volume to the log directory and pass <code>--log.dir</code> to the container.</li>
+<li>If running <strong>standalone</strong>, use <code>--log.dir ./logs</code> when running ethrex.</li>
+</ul>
+<pre><code class="language-bash">ethrex --log.dir ./logs ...
+</code></pre>
+<p>If you choose to use a different directory, you must set the <code>ETHREX_LOGS_DIR</code> environment variable when running the metrics stack to point to your custom logs directory.</p>
+<pre><code class="language-bash">ETHREX_LOGS_DIR=/path/to/your/logs docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up
+</code></pre>
+<p>You can view the logs in Grafana by navigating to the <a href="l1/running/../../developers/l1/dashboards.html#logs">logs row</a> in our dashboard.</p>
+<h3 id="running-docker-container-manually"><a class="header" href="#running-docker-container-manually">Running Docker Container Manually</a></h3>
+<p>If you run the <code>ethrex</code> Docker container manually (e.g., <code>docker run ...</code>) or use a custom <code>docker-compose.yaml</code> outside of this repository, you must ensure the logs are accessible to the monitoring stack.</p>
+<p>The <code>ethrex</code> container writes logs to the directory specified by <code>--log.dir</code>. You should mount this directory to a location on your host machine that Promtail can access.</p>
+<p>Example:</p>
+<pre><code class="language-bash">docker run -d \
+  --name ethrex \
+  -v $(pwd)/logs:/data/logs \
+  ghcr.io/lambdaclass/ethrex:main \
+  --datadir /data \
+  --log.dir /data/logs
+</code></pre>
+<p>If you are using the provided monitoring stack in <code>metrics/</code>, it expects logs to be in the <code>logs</code> directory at the root of the repository (or <code>../logs</code> relative to the <code>metrics</code> folder). Ensure your volume mount matches this expectation or update the Promtail volume configuration.</p>
 <h2 id="accessing-metrics-and-dashboards"><a class="header" href="#accessing-metrics-and-dashboards">Accessing Metrics and Dashboards</a></h2>
 <ul>
 <li><strong>Prometheus:</strong> <a href="http://localhost:9091">http://localhost:9091</a></li>
@@ -9934,7 +9962,7 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overr
 }
 
 </style>
-<h1 id="ethrex-l1-performance-dashboard-nov-2025"><a class="header" href="#ethrex-l1-performance-dashboard-nov-2025">Ethrex L1 Performance Dashboard (Nov 2025)</a></h1>
+<h1 id="ethrex-l1-performance-dashboard-dec-2025"><a class="header" href="#ethrex-l1-performance-dashboard-dec-2025">Ethrex L1 Performance Dashboard (Dec 2025)</a></h1>
 <p>Our Grafana dashboard provides a comprehensive overview of key metrics to help developers and operators ensure optimal performance and reliability of their Ethrex nodes. The only configured datasource today is <code>prometheus</code>, and the <code>job</code> variable defaults to <code>ethrex L1</code>, which is the job configured by default in our provisioning.</p>
 <p><img src="developers/l1/img/overview.png" alt="Overview" /></p>
 <h2 id="how-to-use-it"><a class="header" href="#how-to-use-it">How to use it</a></h2>
@@ -9950,6 +9978,9 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overr
 <h3 id="consensus-fork"><a class="header" href="#consensus-fork">Consensus Fork</a></h3>
 <p>Highlights the active fork reported by <code>ethereum-metrics-exporter</code>, which is a useful signal during planned upgrades.</p>
 <p><img src="developers/l1/img/consensus_fork.png" alt="Consensus Fork" /></p>
+<h2 id="logs-1"><a class="header" href="#logs-1">Logs</a></h2>
+<p>Collapsed row that allows you to view the logs of the selected instances directly within the dashboard. This is useful for correlating metrics with log events without leaving Grafana.</p>
+<p><img src="developers/l1/img/logs_row.png" alt="Logs row" /></p>
 <h2 id="block-processing"><a class="header" href="#block-processing">Block processing</a></h2>
 <p>Row panels showing key block processing metrics across all selected instances.</p>
 <p><img src="developers/l1/img/block_processing_row.png" alt="Block Processing row" /></p>
@@ -12552,6 +12583,9 @@ Node options:
           Possible values: auto, always, never
 
           [default: auto]
+
+      --log.dir &lt;LOG_DIR&gt;
+          Directory to store log files.
 
       --mempool.maxsize &lt;MEMPOOL_MAX_SIZE&gt;
           Maximum size of the mempool in number of transactions

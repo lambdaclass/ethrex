@@ -237,7 +237,7 @@
 }
 
 </style>
-<h1 id="ethrex-l1-performance-dashboard-nov-2025"><a class="header" href="#ethrex-l1-performance-dashboard-nov-2025">Ethrex L1 Performance Dashboard (Nov 2025)</a></h1>
+<h1 id="ethrex-l1-performance-dashboard-dec-2025"><a class="header" href="#ethrex-l1-performance-dashboard-dec-2025">Ethrex L1 Performance Dashboard (Dec 2025)</a></h1>
 <p>Our Grafana dashboard provides a comprehensive overview of key metrics to help developers and operators ensure optimal performance and reliability of their Ethrex nodes. The only configured datasource today is <code>prometheus</code>, and the <code>job</code> variable defaults to <code>ethrex L1</code>, which is the job configured by default in our provisioning.</p>
 <p><img src="img/overview.png" alt="Overview" /></p>
 <h2 id="how-to-use-it"><a class="header" href="#how-to-use-it">How to use it</a></h2>
@@ -253,6 +253,9 @@
 <h3 id="consensus-fork"><a class="header" href="#consensus-fork">Consensus Fork</a></h3>
 <p>Highlights the active fork reported by <code>ethereum-metrics-exporter</code>, which is a useful signal during planned upgrades.</p>
 <p><img src="img/consensus_fork.png" alt="Consensus Fork" /></p>
+<h2 id="logs"><a class="header" href="#logs">Logs</a></h2>
+<p>Collapsed row that allows you to view the logs of the selected instances directly within the dashboard. This is useful for correlating metrics with log events without leaving Grafana.</p>
+<p><img src="img/logs_row.png" alt="Logs row" /></p>
 <h2 id="block-processing"><a class="header" href="#block-processing">Block processing</a></h2>
 <p>Row panels showing key block processing metrics across all selected instances.</p>
 <p><img src="img/block_processing_row.png" alt="Block Processing row" /></p>
