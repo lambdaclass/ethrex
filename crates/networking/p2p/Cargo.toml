@@ -63,7 +63,7 @@ hex-literal = "0.4.1"
 path = "./p2p.rs"
 
 [features]
-default = ["c-kzg", "discv5"]
+default = ["c-kzg", "experimental-discv5"]
 c-kzg = ["ethrex-blockchain/c-kzg", "ethrex-common/c-kzg"]
 sync-test = []
 l2 = ["dep:ethrex-storage-rollup"]
