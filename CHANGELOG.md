@@ -4,7 +4,7 @@
 
 ### 2025-12-19
 
-- Validate tx blobs after checking if its already in the mempool [#5686](https://github.com/lambdaclass/ethrex/pull/5686)
+- Validate tx blobs after checking if it's already in the mempool [#5686](https://github.com/lambdaclass/ethrex/pull/5686)
 
 ### 2025-12-02
 
