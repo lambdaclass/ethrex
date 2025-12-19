@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity =0.8.31;
 
 /// @title Interface for the CommonBridge contract.
 /// @author LambdaClass
@@ -215,4 +215,13 @@ interface ICommonBridge {
     /// @notice Unregister a fee token on the L2.
     /// @param existingFeeToken Address of the token to be removed.
     function unregisterFeeToken(address existingFeeToken) external;
+
+    /// @notice Set a new ratio for fee token on the L2.
+    /// @param feeToken Address of the token to set the ratio
+    /// @param ratio The ratio of the fee token to Eth in wei.
+    function setFeeTokenRatio(address feeToken, uint256 ratio) external;
+
+    /// @notice Unset a ratio for fee token on the L2.
+    /// @param feeToken Address of the token to unset the ratio.
+    function unsetFeeTokenRatio(address feeToken) external;
 }

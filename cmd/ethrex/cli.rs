@@ -131,6 +131,13 @@ pub struct Options {
     )]
     pub log_color: LogColor,
     #[arg(
+        long = "log.dir",
+        value_name = "LOG_DIR",
+        help = "Directory to store log files.",
+        help_heading = "Node options"
+    )]
+    pub log_dir: Option<PathBuf>,
+    #[arg(
         help = "Maximum size of the mempool in number of transactions",
         long = "mempool.maxsize",
         default_value_t = 10_000,
@@ -325,6 +332,7 @@ impl Default for Options {
             ws_port: Default::default(),
             log_level: Level::INFO,
             log_color: Default::default(),
+            log_dir: None,
             authrpc_addr: Default::default(),
             authrpc_port: Default::default(),
             authrpc_jwtsecret: Default::default(),
@@ -435,13 +443,15 @@ pub enum Subcommand {
 impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
         // L2 has its own init_tracing because of the ethrex monitor
-        match self {
+        let _guard = match &self {
             #[cfg(feature = "l2")]
-            Self::L2(_) => {}
+            Self::L2(_) => None,
             _ => {
-                init_tracing(opts);
+                let (_, guard) = init_tracing(opts);
+                guard
             }
-        }
+        };
+
         match self {
             Subcommand::RemoveDB { datadir, force } => {
                 remove_db(&datadir, force);
