@@ -63,6 +63,9 @@ Node options:
 
           [default: auto]
 
+      --log.dir <LOG_DIR>
+          Directory to store log files.
+
       --mempool.maxsize <MEMPOOL_MAX_SIZE>
           Maximum size of the mempool in number of transactions
 

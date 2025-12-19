@@ -3622,6 +3622,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "tracing-appender",
  "tracing-subscriber 0.3.21",
  "tui-logger",
  "url",
