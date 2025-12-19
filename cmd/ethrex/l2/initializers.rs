@@ -311,6 +311,9 @@ pub async fn init_l2(
         opts.node_opts.http_addr, opts.node_opts.http_port
     ))
     .map_err(|err| eyre::eyre!("Failed to parse L2 RPC URL: {err}"))?;
+    // Keep clones of stores for shutdown - they share the same background threads via Arc
+    let store_for_shutdown = store.clone();
+    let rollup_store_for_shutdown = rollup_store.clone();
     let (committer_handle, block_producer_handle, l2_sequencer) = ethrex_l2::start_l2(
         store,
         rollup_store,
@@ -346,6 +349,9 @@ pub async fn init_l2(
         store_node_config_file(node_config, node_config_path).await;
     }
     tokio::time::sleep(Duration::from_secs(1)).await;
+    info!("Shutting down stores...");
+    store_for_shutdown.shutdown();
+    rollup_store_for_shutdown.shutdown();
     info!("Server shutting down!");
     Ok(())
 }
