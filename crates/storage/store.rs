@@ -1422,7 +1422,7 @@ impl Store {
     pub fn shutdown(self) {
         // Take the thread handles out of the Mutex before dropping self
         let handles = {
-            let mut threads = self.background_threads.lock().unwrap();
+            let mut threads = self.background_threads.lock().unwrap_or_else(|e| e.into_inner());
             threads.take()
         };
 
