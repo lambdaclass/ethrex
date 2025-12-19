@@ -261,7 +261,6 @@ async fn receive_handshake_msg<S: AsyncRead + std::marker::Unpin>(
 
     // Read the rest of the message
     stream.read_exact(&mut buf[2..]).await?;
-    buf.truncate(msg_size + 2);
     Ok(buf)
 }
 
