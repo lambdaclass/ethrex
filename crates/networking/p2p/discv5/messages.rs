@@ -44,7 +44,7 @@ pub enum PacketCodecError {
     #[error("Invalid protocol: {0}")]
     InvalidProtocol(String),
     #[error("Stream Cipher Error: {0}")]
-    ChipherError(String),
+    CipherError(String),
     #[error("TryFromSliceError: {0}")]
     TryFromSliceError(#[from] TryFromSliceError),
     #[error("Io Error: {0}")]
@@ -53,7 +53,7 @@ pub enum PacketCodecError {
 
 impl From<StreamCipherError> for PacketCodecError {
     fn from(error: StreamCipherError) -> Self {
-        PacketCodecError::ChipherError(error.to_string())
+        PacketCodecError::CipherError(error.to_string())
     }
 }
 
@@ -98,7 +98,7 @@ pub enum Packet {
 pub struct PacketHeader {
     pub static_header: Vec<u8>,
     pub flag: u8,
-    pub nonce: Vec<u8>,
+    pub nonce: [u8; 12],
     pub authdata: Vec<u8>,
     /// Offset in the encoded packet where authdata ends, i.e where the header ends.
     pub header_end_offset: usize,
@@ -107,7 +107,7 @@ pub struct PacketHeader {
 impl Packet {
     pub fn decode(
         dest_id: &H256,
-        decrypt_key: &[u8],
+        decrypt_key: &[u8; 16],
         encoded_packet: &[u8],
     ) -> Result<Packet, PacketCodecError> {
         if encoded_packet.len() < MIN_PACKET_SIZE || encoded_packet.len() > MAX_PACKET_SIZE {
@@ -150,7 +150,7 @@ impl Packet {
         &self,
         buf: &mut dyn BufMut,
         masking_iv: u128,
-        nonce: &[u8],
+        nonce: &[u8; 12],
         dest_id: &H256,
         encrypt_key: &[u8],
     ) -> Result<(), PacketCodecError> {
@@ -275,7 +275,7 @@ impl Ordinary {
         let mut cipher = Aes128Gcm::new(encrypt_key[..16].into());
         cipher
             .encrypt_in_place(nonce.into(), &message_ad, &mut message)
-            .map_err(|e| PacketCodecError::ChipherError(e.to_string()))?;
+            .map_err(|e| PacketCodecError::CipherError(e.to_string()))?;
 
         Ok((static_header, authdata, message))
     }
@@ -320,7 +320,7 @@ impl Ordinary {
         let mut cipher = Aes128Gcm::new(key[..16].into());
         cipher
             .decrypt_in_place(nonce.as_slice().into(), &message_ad, message)
-            .map_err(|e| PacketCodecError::ChipherError(e.to_string()))?;
+            .map_err(|e| PacketCodecError::CipherError(e.to_string()))?;
         Ok(())
     }
 }
@@ -439,7 +439,7 @@ impl Handshake {
         let mut cipher = Aes128Gcm::new(encrypt_key[..16].into());
         cipher
             .encrypt_in_place(nonce.into(), &message_ad, &mut message)
-            .map_err(|e| PacketCodecError::ChipherError(e.to_string()))?;
+            .map_err(|e| PacketCodecError::CipherError(e.to_string()))?;
 
         Ok((static_header, authdata, message))
     }
@@ -599,7 +599,7 @@ impl Display for Message {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PingMessage {
     /// The request id of the sender.
-    pub req_id: Vec<u8>,
+    pub req_id: u64,
     /// The ENR sequence number of the sender.
     pub enr_seq: u64,
 }
@@ -613,7 +613,7 @@ impl PingMessage {
 impl RLPEncode for PingMessage {
     fn encode(&self, buf: &mut dyn BufMut) {
         Encoder::new(buf)
-            .encode_field(&Bytes::from(self.req_id.clone()))
+            .encode_field(self.req_id.as_slice())
             .encode_field(&self.enr_seq)
             .finish();
     }
@@ -621,7 +621,7 @@ impl RLPEncode for PingMessage {
 
 impl RLPDecode for PingMessage {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let ((req_id, enr_seq), remaining): ((Bytes, u64), &[u8]) =
+        let ((req_id, enr_seq), remaining): ((&[u8], u64), &[u8]) =
             RLPDecode::decode_unfinished(rlp)?;
         let ping = PingMessage {
             req_id: req_id.to_vec(),

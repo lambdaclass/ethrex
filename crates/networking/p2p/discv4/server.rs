@@ -261,7 +261,7 @@ impl DiscoveryServer {
                 self.peer_table
                     .set_disposable(&contact.node.node_id())
                     .await?;
-                METRICS.record_new_discarded_node().await;
+                METRICS.record_new_discarded_node();
             }
 
             self.peer_table
@@ -668,7 +668,7 @@ impl DiscoveryServer {
         if let Err(e) = self.udp_socket.send_to(&buf, node.udp_addr()).await {
             error!(sending = ?message, addr = ?node.udp_addr(), to = ?node.node_id(), err=?e, "Error sending message");
             self.peer_table.set_disposable(&node.node_id()).await?;
-            METRICS.record_new_discarded_node().await;
+            METRICS.record_new_discarded_node();
         }
         Ok(H256::from(message_hash))
     }
