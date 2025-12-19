@@ -1084,13 +1084,7 @@ async fn initialize_contracts(
     let deployer_address = get_address_from_secret_key(&opts.private_key.secret_bytes())
         .map_err(DeployerError::InternalError)?;
 
-    if !opts.deploy_based_contracts {
-        let timelock_address =
-            contract_addresses
-                .timelock_address
-                .ok_or(DeployerError::InternalError(
-                    "Timelock address missing".to_string(),
-                ))?;
+    if let Some(timelock_address) = contract_addresses.timelock_address {
         info!("Initializing Timelock");
         let initialize_tx_hash = {
             let deployer = Signer::Local(LocalSigner::new(opts.private_key));
