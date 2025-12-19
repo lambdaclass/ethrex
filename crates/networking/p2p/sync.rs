@@ -27,8 +27,8 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
-use ethrex_trie::TrieError;
 use ethrex_trie::trie_sorted::TrieGenerationError;
+use ethrex_trie::{Trie, TrieError};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -1008,10 +1008,7 @@ fn compute_storage_roots(
     let mut storage_trie = store.open_direct_storage_trie(account_hash, trie_hash)?;
 
     for (hashed_key, value) in key_value_pairs {
-        if let Err(err) = storage_trie.insert(
-            hashed_key.0.to_vec(),
-            ethrex_rlp::encode::RLPEncode::encode_to_vec(value),
-        ) {
+        if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec()) {
             warn!(
                 "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
             );
@@ -1334,10 +1331,7 @@ async fn insert_accounts(
                 let mut trie = store_clone.open_direct_state_trie(computed_state_root)?;
 
                 for (account_hash, account) in account_states_snapshot {
-                    trie.insert(
-                        account_hash.0.to_vec(),
-                        ethrex_rlp::encode::RLPEncode::encode_to_vec(&account),
-                    )?;
+                    trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
                 }
                 info!("Comitting to disk");
                 let current_state_root = trie.hash()?;
@@ -1561,7 +1555,7 @@ async fn insert_storages(
                     .expect("Should be able to open trie"),
             )
         })
-        .collect::<Vec<(H256, ethrex_trie::Trie)>>();
+        .collect::<Vec<(H256, Trie)>>();
 
     let (sender, receiver) = unbounded::<()>();
     let mut counter = 0;
