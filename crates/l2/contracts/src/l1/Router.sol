@@ -89,7 +89,7 @@ contract Router is
         uint256 amount
     ) public payable override {
         if (bridges[senderChainId] != msg.sender) {
-            revert("Router: invalid sender, not authorized");
+            revert InvalidSender(senderChainId, msg.sender);
         }
         if (bridges[chainId] == address(0)) {
             revert TransferToChainNotRegistered(chainId);

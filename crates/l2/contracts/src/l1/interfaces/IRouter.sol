@@ -67,6 +67,11 @@ interface IRouter {
     /// @param caller The address of the caller.
     error CallerNotBridge(address caller);
 
+    /// @notice Error indicating the caller is not the authorized bridge for `senderChainId`.
+    /// @param senderChainId The claimed source chain ID.
+    /// @param caller The address of the caller.
+    error InvalidSender(uint256 senderChainId, address caller);
+
     /// @notice Error indicating a chain is not registered.
     /// @param chainId The ID of the chain that is not registered.
     error ChainNotRegistered(uint256 chainId);
