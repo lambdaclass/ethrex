@@ -22,23 +22,12 @@ pub struct ProverInputData {
 }
 
 /// Enum used to identify the different proving systems.
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProverType {
     Exec,
     RISC0,
     SP1,
     TDX,
-}
-
-impl From<ProverType> for u32 {
-    fn from(value: ProverType) -> u32 {
-        match value {
-            ProverType::Exec => 0,
-            ProverType::RISC0 => 1,
-            ProverType::SP1 => 2,
-            ProverType::TDX => 3,
-        }
-    }
 }
 
 impl TryFrom<u32> for ProverType {
