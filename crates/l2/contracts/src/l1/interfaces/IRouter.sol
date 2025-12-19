@@ -13,7 +13,7 @@ interface IRouter {
     /// @param chainId The ID of the chain to deregister.
     function deregister(uint256 chainId) external;
 
-    /// @notice Sends messages to a specified chain via its CommonBridge.
+    /// @notice Sends ETH to a specified chain via its CommonBridge.
     /// @param chainId The ID of the destination chain.
     function sendETHValue(uint256 chainId) external payable;
 
