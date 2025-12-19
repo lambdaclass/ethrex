@@ -268,7 +268,7 @@ impl Ordinary {
         // message-pt = message-type || message-data
         // message-ad = masking-iv || header
         let mut message_ad = masking_iv.to_vec();
-        message_ad.extend_from_slice(&static_header.as_slice());
+        message_ad.extend_from_slice(static_header.as_slice());
         message_ad.extend_from_slice(&authdata);
 
         let mut message = encrypted_message.to_vec();
@@ -577,14 +577,9 @@ impl RLPEncode for PingMessage {
 impl RLPDecode for PingMessage {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
-        // let (req_id, decoder): (Bytes, Decoder) = decoder.decode_field("req_id")?;
         let (req_id, decoder) = decoder.decode_field("req_id")?;
         let (enr_seq, decoder) = decoder.decode_field("enr_seq")?;
-        let ping = PingMessage {
-            // req_id: req_id.to_vec(),
-            req_id: req_id,
-            enr_seq,
-        };
+        let ping = PingMessage { req_id, enr_seq };
         Ok((ping, decoder.finish()?))
     }
 }
