@@ -113,6 +113,7 @@ contract OnChainProposer is
     /// @notice Initializes the contract.
     /// @dev This method is called only once after the contract is deployed.
     /// @dev The owner is expected to be the Timelock contract.
+    /// @dev It sets the bridge address.
     /// @param timelock_owner the Timelock address that can perform upgrades.
     /// @param alignedProofAggregator the address of the alignedProofAggregatorService contract.
     /// @param r0verifier the address of the risc0 groth16 verifier.
