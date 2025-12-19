@@ -209,7 +209,8 @@ impl Syncer {
                     return Ok(());
                 }
                 attempts += 1;
-                tokio::time::sleep(Duration::from_millis(200)).await;
+                tokio::time::sleep(Duration::from_millis(1.1_f64.powf(attempts as f64) as u64))
+                    .await;
                 continue;
             };
 
@@ -348,7 +349,8 @@ impl Syncer {
                     return Ok(());
                 }
                 attempts += 1;
-                tokio::time::sleep(Duration::from_millis(200)).await;
+                tokio::time::sleep(Duration::from_millis(1.1_f64.powf(attempts as f64) as u64))
+                    .await;
                 continue;
             };
             debug!("Sync Log 9: Received {} block headers", block_headers.len());
