@@ -13,18 +13,25 @@ pub struct MetricsNode {
 impl MetricsNode {
     /// Initialize the node metrics with version information.
     /// This should be called once at startup from the main entry point.
-    pub fn init(version: &str, commit: &str, rust_version: &str, target: &str) {
+    pub fn init(
+        version: &str,
+        commit: &str,
+        branch: &str,
+        rust_version: &str,
+        target: &str,
+        network: &str,
+    ) {
         let info = IntGaugeVec::new(
             Opts::new(
                 "ethrex_info",
                 "Node information including version and build details",
             ),
-            &["version", "commit", "rust_version", "target"],
+            &["version", "commit", "branch", "rust_version", "target", "network"],
         )
         .expect("Failed to create ethrex_info metric");
 
         // Set the gauge to 1 with the version labels
-        info.with_label_values(&[version, commit, rust_version, target])
+        info.with_label_values(&[version, commit, branch, rust_version, target, network])
             .set(1);
 
         // Ignore error if already initialized
