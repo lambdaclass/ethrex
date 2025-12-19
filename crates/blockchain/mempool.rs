@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque, hash_map::Entry},
     sync::RwLock,
 };
 
@@ -27,7 +27,7 @@ struct MempoolInner {
     broadcast_pool: HashSet<H256>,
     transaction_pool: HashMap<H256, MempoolTransaction>,
     blobs_bundle_pool: HashMap<H256, BlobsBundle>,
-    blobs_bundle_by_versioned_hash: HashMap<H256, (H256, usize)>,
+    blobs_bundle_by_versioned_hash: HashMap<H256, HashMap<H256, usize>>,
     txs_by_sender_nonce: BTreeMap<(H160, u64), H256>,
     txs_order: VecDeque<H256>,
     max_mempool_size: usize,
@@ -48,22 +48,38 @@ impl MempoolInner {
 
     /// Remove a transaction from the pool with the transaction pool lock already taken
     fn remove_transaction_with_lock(&mut self, hash: &H256) -> Result<(), StoreError> {
-        if let Some(tx) = self.transaction_pool.get(hash) {
-            if matches!(tx.tx_type(), TxType::EIP4844)
-                && let Some(h) = self.blobs_bundle_pool.remove(hash)
-            {
-                for commitment in &h.commitments {
-                    self.blobs_bundle_by_versioned_hash
-                        .remove(&kzg_commitment_to_versioned_hash(commitment));
-                }
-            }
-
-            self.txs_by_sender_nonce.remove(&(tx.sender(), tx.nonce()));
-            self.transaction_pool.remove(hash);
-            self.broadcast_pool.remove(hash);
+        let Some(tx) = self.transaction_pool.remove(hash) else {
+            return Ok(());
         };
+        if matches!(tx.tx_type(), TxType::EIP4844) {
+            self.remove_blob_bundle(hash);
+        }
+
+        self.txs_by_sender_nonce.remove(&(tx.sender(), tx.nonce()));
+        self.transaction_pool.remove(hash);
+        self.broadcast_pool.remove(hash);
 
         Ok(())
+    }
+
+    /// Remove a blobs bundle from the pool
+    fn remove_blob_bundle(&mut self, hash: &H256) {
+        let Some(h) = self.blobs_bundle_pool.remove(hash) else {
+            return;
+        };
+
+        for commitment in &h.commitments {
+            let versioned_hash = kzg_commitment_to_versioned_hash(commitment);
+            if let Entry::Occupied(mut entry) =
+                self.blobs_bundle_by_versioned_hash.entry(versioned_hash)
+            {
+                let txn_to_bundle = entry.get_mut();
+                txn_to_bundle.remove(hash);
+                if txn_to_bundle.is_empty() {
+                    entry.remove();
+                }
+            }
+        }
     }
 
     /// Remove the oldest transaction in the pool
@@ -168,7 +184,9 @@ impl Mempool {
             let versioned_hash = kzg_commitment_to_versioned_hash(c);
             mempool
                 .blobs_bundle_by_versioned_hash
-                .insert(versioned_hash, (tx_hash, i));
+                .entry(versioned_hash)
+                .or_insert(HashMap::new())
+                .insert(tx_hash, i);
         }
         mempool.blobs_bundle_pool.insert(tx_hash, blobs_bundle);
         Ok(())
@@ -343,7 +361,10 @@ impl Mempool {
         let blobs_bundle_by_versioned_hash = &mempool.blobs_bundle_by_versioned_hash;
         let mut res = vec![None; versioned_hashes.len()];
         for (idx, vh) in versioned_hashes.iter().enumerate() {
-            if let Some((found_hash, inner_pos)) = blobs_bundle_by_versioned_hash.get(vh) {
+            if let Some((found_hash, inner_pos)) = blobs_bundle_by_versioned_hash
+                .get(vh)
+                .and_then(|h| h.iter().next())
+            {
                 res[idx] = blobs_bundle_pool
                     .get(found_hash)
                     .and_then(|b| b.get_blob_tuple_by_index(*inner_pos))
@@ -520,6 +541,7 @@ mod tests {
     use ethrex_common::types::{
         BYTES_PER_BLOB, BlobsBundle, BlockHeader, ChainConfig, EIP1559Transaction,
         EIP4844Transaction, MempoolTransaction, Transaction, TxKind,
+        kzg_commitment_to_versioned_hash,
     };
     use ethrex_common::{Address, Bytes, H256, U256};
     use ethrex_storage::EngineType;
@@ -912,5 +934,54 @@ mod tests {
             };
             mempool.add_blobs_bundle(H256::random(), bundle).unwrap();
         }
+    }
+
+    #[test]
+    fn blobs_bundle_insert_and_remove() {
+        // Insert two bundles with 2 blobs, and where both bundles contain one specific blob.
+        // Then remove one bundle making sure that blob-version-hash to tx-hash cache still points to
+        // the other txn. And finally remove second bundle as well.
+        let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+        let (blob, commitment, proof) = ([255u8; BYTES_PER_BLOB], [255u8; 48], [255u8; 48]);
+        let versioned_hash = kzg_commitment_to_versioned_hash(&commitment);
+        let txn_hash = vec![H256::random(), H256::random()];
+
+        for i in 1..=2 {
+            let blobs = [blob, [i as u8; BYTES_PER_BLOB]];
+            let commitments = [commitment, [i as u8; 48]];
+            let proofs = [proof, [i as u8; 48]];
+            let bundle = BlobsBundle {
+                blobs: blobs.to_vec(),
+                commitments: commitments.to_vec(),
+                proofs: proofs.to_vec(),
+                version: 0,
+            };
+            mempool
+                .add_blobs_bundle(txn_hash[i as usize - 1], bundle)
+                .unwrap();
+        }
+
+        let mut mempool_inner = mempool.inner.write().unwrap();
+
+        for (i, txn_hash) in txn_hash.into_iter().enumerate().rev() {
+            let expect = i + 1;
+            assert_eq!(
+                mempool_inner
+                    .blobs_bundle_by_versioned_hash
+                    .get(&versioned_hash)
+                    .unwrap()
+                    .len(),
+                expect
+            );
+
+            mempool_inner.remove_blob_bundle(&txn_hash);
+        }
+
+        assert_eq!(
+            mempool_inner
+                .blobs_bundle_by_versioned_hash
+                .get(&versioned_hash),
+            None
+        );
     }
 }
