@@ -761,6 +761,17 @@ impl FlatTrie {
                                 children_hashes[i] = Some(decode_child(encoded_items[i]))
                             }
                         }
+                    } else {
+                        for (i, child) in children_indices.iter().enumerate() {
+                            let Some(child_index) = child else {
+                                // no child for this index
+                                continue;
+                            };
+
+                            if let Some(child_index) = child_index {
+                                children_hashes[i] = Some(trie.hashes[*child_index].unwrap());
+                            }
+                        }
                     }
 
                     let encoded = encode_branch(children_hashes);
