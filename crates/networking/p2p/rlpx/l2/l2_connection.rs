@@ -26,8 +26,8 @@ pub struct L2ConnectedState {
     pub latest_batch_sent: u64,
     pub blocks_on_queue: BTreeMap<u64, QueuedBlock>,
     pub batch_on_queue: BTreeMap<u64, Arc<Batch>>,
-    pub proofs_on_queue: BTreeMap<(u64, u32), Arc<BatchProof>>,
-    pub latest_proof_sent: (u64, u32),
+    pub proofs_on_queue: BTreeMap<(u64, ProverType), Arc<BatchProof>>,
+    pub latest_proof_sent: (u64, ProverType),
     pub store_rollup: StoreRollup,
     pub committer_key: Arc<SecretKey>,
     pub next_block_broadcast: Instant,
@@ -111,7 +111,7 @@ impl L2ConnState {
                     batch_on_queue: BTreeMap::new(),
                     proofs_on_queue: BTreeMap::new(),
                     latest_batch_sent: 0,
-                    latest_proof_sent: (0, 0),
+                    latest_proof_sent: (0, ProverType::Exec),
                     store_rollup: ctxt.store_rollup.clone(),
                     committer_key: ctxt.committer_key.clone(),
                     next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
@@ -165,12 +165,12 @@ pub(crate) async fn handle_based_capability_message(
         }
         L2Message::BatchProof(ref proof_msg) => {
             if should_process_batch_proof(established, proof_msg).await? {
-                let proof_type: u32 = proof_msg.proof.prover_type().into();
+                let prover_type = proof_msg.proof.prover_type();
                 established
                     .l2_state
                     .connection_state_mut()?
                     .proofs_on_queue
-                    .entry((proof_msg.batch_number, proof_type))
+                    .entry((proof_msg.batch_number, prover_type))
                     .or_insert_with(|| proof_msg.proof.clone());
                 info!(
                     peer=%established.node,
@@ -378,76 +378,85 @@ pub(crate) async fn send_new_block(
 pub(crate) async fn send_next_proof(
     established: &mut Established,
 ) -> Result<(), PeerConnectionError> {
-    let next = {
+    let latest_batch = {
         let l2_state = established.l2_state.connection_state_mut()?;
-        let Some(latest_batch) = l2_state.store_rollup.get_batch_number().await? else {
-            return Ok(());
-        };
+        l2_state.store_rollup.get_batch_number().await?
+    };
+    let Some(latest_batch) = latest_batch else {
+        return Ok(());
+    };
 
-        let (mut batch_number, mut prover_type_idx) = l2_state.latest_proof_sent;
-        let mut next: Option<(Message, (u64, u32))> = None;
+    let next: Option<(Message, u64, ProverType, (u64, ProverType))> = {
+        let l2_state = established.l2_state.connection_state_mut()?;
+        let (mut batch_number, mut next_prover_type) = l2_state.latest_proof_sent;
+        let mut next: Option<(Message, u64, ProverType, (u64, ProverType))> = None;
 
         while batch_number <= latest_batch {
-            let prover_type = match prover_type_idx {
-                0 => ProverType::Exec,
-                1 => ProverType::RISC0,
-                2 => ProverType::SP1,
-                3 => ProverType::TDX,
-                _ => {
-                    batch_number += 1;
-                    prover_type_idx = 0;
-                    continue;
-                }
+            let prover_types = [
+                ProverType::Exec,
+                ProverType::RISC0,
+                ProverType::SP1,
+                ProverType::TDX,
+            ];
+            let start_idx = match next_prover_type {
+                ProverType::Exec => 0,
+                ProverType::RISC0 => 1,
+                ProverType::SP1 => 2,
+                ProverType::TDX => 3,
             };
 
-            if let Some(proof) = l2_state
-                .store_rollup
-                .get_proof_by_batch_and_type(batch_number, prover_type)
-                .await?
-            {
+            for prover_type in prover_types.iter().copied().skip(start_idx) {
+                let Some(proof) = l2_state
+                    .store_rollup
+                    .get_proof_by_batch_and_type(batch_number, prover_type)
+                    .await?
+                else {
+                    continue;
+                };
+
                 let msg: Message = BatchProofMessage {
                     batch_number,
                     proof: Arc::new(proof),
                 }
                 .into();
-                next = Some((msg, (batch_number, prover_type_idx)));
+
+                let next_prover_type = match prover_type {
+                    ProverType::Exec => ProverType::RISC0,
+                    ProverType::RISC0 => ProverType::SP1,
+                    ProverType::SP1 => ProverType::TDX,
+                    ProverType::TDX => ProverType::Exec,
+                };
+                let next_latest_proof_sent = if prover_type == ProverType::TDX {
+                    (batch_number + 1, ProverType::Exec)
+                } else {
+                    (batch_number, next_prover_type)
+                };
+
+                next = Some((msg, batch_number, prover_type, next_latest_proof_sent));
                 break;
             }
 
-            prover_type_idx += 1;
-            if prover_type_idx > 3 {
-                batch_number += 1;
-                prover_type_idx = 0;
+            if next.is_some() {
+                break;
             }
+            batch_number += 1;
+            next_prover_type = ProverType::Exec;
         }
 
         next
     };
 
-    let Some((msg, latest_proof_sent)) = next else {
+    let Some((msg, batch_number, prover_type, next_latest_proof_sent)) = next else {
         return Ok(());
     };
 
     send(established, msg).await?;
-    let (batch_number, prover_type_idx) = latest_proof_sent;
-    let prover_type = match prover_type_idx {
-        0 => ProverType::Exec,
-        1 => ProverType::RISC0,
-        2 => ProverType::SP1,
-        3 => ProverType::TDX,
-        _ => ProverType::Exec,
-    };
     info!(
         peer=%established.node,
         batch_number,
         prover_type=?prover_type,
         "Sent batch proof via L2 P2P",
     );
-    let next_latest_proof_sent = if prover_type_idx >= 3 {
-        (batch_number + 1, 0)
-    } else {
-        (batch_number, prover_type_idx + 1)
-    };
     established
         .l2_state
         .connection_state_mut()?
@@ -516,7 +525,7 @@ async fn should_process_batch_proof(
     {
         return Ok(false);
     }
-    let proof_type: u32 = msg.proof.prover_type().into();
+    let prover_type = msg.proof.prover_type();
     if l2_state
         .store_rollup
         .get_proof_by_batch_and_type(msg.batch_number, msg.proof.prover_type())
@@ -524,7 +533,7 @@ async fn should_process_batch_proof(
         .is_some()
         || l2_state
             .proofs_on_queue
-            .contains_key(&(msg.batch_number, proof_type))
+            .contains_key(&(msg.batch_number, prover_type))
     {
         return Ok(false);
     }
@@ -639,19 +648,12 @@ pub async fn process_proofs_on_queue(
         let Some(key) = l2_state.proofs_on_queue.keys().next().cloned() else {
             return Ok(());
         };
-        let (batch_number, proof_type) = key;
+        let (batch_number, prover_type) = key;
         if !l2_state.store_rollup.contains_batch(&batch_number).await? {
             return Ok(());
         }
         let Some(proof) = l2_state.proofs_on_queue.remove(&key) else {
             return Ok(());
-        };
-        let prover_type = match proof_type {
-            0 => ProverType::Exec,
-            1 => ProverType::RISC0,
-            2 => ProverType::SP1,
-            3 => ProverType::TDX,
-            _ => continue,
         };
         if l2_state
             .store_rollup

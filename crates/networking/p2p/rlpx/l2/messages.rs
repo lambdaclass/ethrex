@@ -72,11 +72,9 @@ impl RLPxMessage for BatchProofMessage {
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let proof_bytes = serde_json::to_vec(self.proof.deref())
             .map_err(|e| RLPEncodeError::Custom(format!("proof encode: {e}")))?;
-        let proof_type: u32 = self.proof.prover_type().into();
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.batch_number)
-            .encode_field(&proof_type)
             .encode_field(&proof_bytes)
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
@@ -88,9 +86,9 @@ impl RLPxMessage for BatchProofMessage {
         let decompressed_data = snappy_decompress(msg_data)?;
         let decoder = Decoder::new(&decompressed_data)?;
         let (batch_number, decoder) = decoder.decode_field("batch_number")?;
-        let (_proof_type, decoder): (u32, _) = decoder.decode_field("proof_type")?;
         let (proof_bytes, decoder): (Vec<u8>, _) = decoder.decode_field("proof")?;
         decoder.finish()?;
+
         let proof: BatchProof = serde_json::from_slice(&proof_bytes)
             .map_err(|e| RLPDecodeError::Custom(format!("proof decode: {e}")))?;
         Ok(Self {
