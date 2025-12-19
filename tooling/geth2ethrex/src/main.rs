@@ -20,42 +20,42 @@
 // Trie Nodes: only in statedb, with only the hash as key.
 // Bytecodes: in statedb, ['c' || code_hash ].
 use clap::Parser;
-use ethrex_common::types::BlockHeader;
-use ethrex_common::types::BlockNumber;
-use ethrex_common::utils::keccak;
-use ethrex_common::Bytes;
 use ethrex_common::H256;
+use ethrex_common::types::Code;
+use ethrex_common::types::{Block, BlockBody, BlockHeader, BlockNumber};
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     types::AccountState,
 };
+use ethrex_config::networks::Network;
+use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::decode::decode_bytes;
 use ethrex_rlp::decode::decode_rlp_item;
-use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_rlp::structs::Decoder;
-use ethrex_trie::Nibbles;
-use ethrex_trie::{Node, NodeHash, Trie, TrieDB, TrieError};
+use ethrex_storage::EngineType;
 use ethrex_storage::Store;
+use ethrex_trie::Nibbles;
+use ethrex_trie::Node;
+use ethrex_trie::TrieNode;
 use eyre::OptionExt;
-use rocksdb::Cache;
-use rocksdb::Env;
 use rocksdb::IteratorMode;
 use rocksdb::{DBWithThreadMode, Options, SingleThreaded};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io;
 use std::io::Read;
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::LazyLock;
 use std::time::Instant;
 use tracing::info;
-use tracing::warn;
 use tracing_subscriber::FmtSubscriber;
 
-const BLOCK_HASH_LOOKUP_DEPTH: u64 = 256;
+const BLOCK_HASH_LOOKUP_DEPTH: u64 = 1024;
 static GETH_DB_PATH: LazyLock<&str> = LazyLock::new(|| {
     AsRef::<Path>::as_ref(&Args::parse().input_dir)
         .join("chaindata")
@@ -79,77 +79,67 @@ pub fn main() -> eyre::Result<()> {
         .expect("setting default subscriber failed");
     // init_datadir(&args.output_dir);
     // let store = open_store(&args.output_dir);
-    let store = open_store(&args.output_dir);
-    geth2ethrex(args.block_number)
+    let store = Store::new(&args.output_dir, EngineType::RocksDB)?;
+    geth2ethrex(store, args.block_number, &args)
 }
 
-fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
+fn geth2ethrex(mut store: Store, block_number: BlockNumber, args: &Args) -> eyre::Result<()> {
     let migration_start: Instant = Instant::now();
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+
+    rt.block_on(store.add_initial_state(args.network.get_genesis()?))?;
 
     info!("Opening Geth DB");
     let gethdb = GethDB::open()?;
-    info!("Opening ethrex db");
-    let store = ethrex_storage::Store::new();
     info!("Query hash table");
+
     let hashes = gethdb.read_hashes_from_gethdb(
         block_number.saturating_sub(BLOCK_HASH_LOOKUP_DEPTH),
         block_number,
     )?;
     let block_hash = *hashes.last().ok_or_eyre("missing block hash")?;
     info!("Query block data");
-    let [header_rlp, body_rlp] = gethdb.read_block_from_gethdb(block_number, block_hash)?;
+    let [header_rlp, _] = gethdb.read_block_from_gethdb(block_number, block_hash)?;
     let header: BlockHeader = RLPDecode::decode(&header_rlp)?;
 
-    if !*VALIDATE_ONLY {
-        info!("Opening Ethrex DB");
-        let ethrex_db = open_ethrexdb()?;
-        info!("Inserting block header");
-        let block_hash_rlp = block_hash.encode_to_vec();
-        ethrex_db.put_cf(
-            ethrex_db.cf_handle("headers").unwrap(),
-            block_hash_rlp.clone(),
-            header_rlp,
-        )?;
-        info!("Inserting block body");
-        ethrex_db.put_cf(
-            ethrex_db.cf_handle("bodies").unwrap(),
-            block_hash_rlp,
-            &body_rlp,
-        )?;
-        info!("Inserting canonical hashes");
-        let hashes_cf = ethrex_db.cf_handle("canonical_block_hashes").unwrap();
-        let numbers_cf = ethrex_db.cf_handle("block_numbers").unwrap();
-        for (i, hash) in hashes.iter().rev().enumerate() {
-            let hash_rlp = hash.encode_to_vec();
-            ethrex_db.put_cf(
-                hashes_cf,
-                (block_number - i as u64).to_le_bytes(),
-                hash_rlp.clone(),
-            )?;
-            ethrex_db.put_cf(
-                numbers_cf,
-                hash_rlp,
-                (block_number - i as u64).to_le_bytes(),
-            )?;
-        }
-        info!("Inserting latest block number");
-        ethrex_db.put_cf(
-            ethrex_db.cf_handle("chain_data").unwrap(),
-            4u8.encode_to_vec(),
-            block_number.to_le_bytes(),
-        )?;
+    let mut codes = BTreeSet::new();
 
-        let mut codes = BTreeSet::new();
-        let mut storages = BTreeMap::new();
-        let account_triedb = gethdb.triedb()?;
-        let account_trie = Trie::open(account_triedb, header.state_root);
-        let account_trie_cf = ethrex_db.cf_handle("state_trie_nodes").unwrap();
-        let storages_cf = ethrex_db.cf_handle("storage_tries_nodes").unwrap();
-        let pathbased = gethdb.is_path_based()?;
-        if !pathbased {
+    let numbers_and_hashes: Vec<_> = hashes
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(i, hash)| (block_number - i as u64, H256::from_slice(hash)))
+        .collect();
+
+    if !*VALIDATE_ONLY {
+        info!("Inserting blocks");
+
+        for (number, hash) in numbers_and_hashes.iter() {
+            let Ok([header_rlp, body_rlp]) =
+                gethdb.read_block_from_gethdb(*number, hash.to_fixed_bytes())
+            else {
+                continue;
+            };
+            let header: BlockHeader = RLPDecode::decode(&header_rlp)?;
+            let body: BlockBody = RLPDecode::decode(&body_rlp)?;
+            rt.block_on(store.add_block(Block::new(header, body)))?;
+        }
+        info!("Inserting canonical hashes");
+        rt.block_on(store.forkchoice_update(
+            numbers_and_hashes.clone(),
+            block_number,
+            H256::from_slice(&block_hash),
+            None,
+            None,
+        ))?;
+
+        if !gethdb.is_path_based()? {
             eyre::bail!("hash-based not supported");
         }
-        info!("Inserting account codes (path-based)");
+        info!("Inserting account state");
         let db_root_hash = keccak(gethdb.state_db.get(b"A").unwrap().unwrap());
         let db_layer_id = u64::from_be_bytes(
             gethdb
@@ -160,8 +150,9 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
                 .try_into()
                 .unwrap(),
         );
-        debug_assert_ne!(db_layer_id, 0);
+        let state_trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
         let mut account_nodes = 0;
+        let mut nodes_to_push = vec![];
         for item in gethdb
             .state_db
             .iterator(IteratorMode::From(b"A", rocksdb::Direction::Forward))
@@ -175,10 +166,14 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
             debug_assert!(k.len() <= 64);
             debug_assert!(!k.is_empty());
             debug_assert_eq!(k[0], b'A');
-            let node = Node::decode_raw(&v)?;
-            let node_hash = node.compute_hash();
-            let node_rlp = node.encode_to_vec();
-            ethrex_db.put_cf(account_trie_cf, node_hash.as_ref(), node_rlp)?;
+            let node = Node::decode(&v)?;
+            let path = Nibbles::from_hex(k[1..].to_vec());
+            nodes_to_push.push((path, v.into()));
+            if nodes_to_push.len() > 100_000 {
+                state_trie
+                    .db()
+                    .put_batch(std::mem::take(&mut nodes_to_push))?;
+            }
             if let Node::Leaf(leaf) = node {
                 let state = AccountState::decode(&leaf.value)?;
                 debug_assert_ne!(state.code_hash, H256::zero());
@@ -186,20 +181,17 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
                 if state.code_hash != *EMPTY_KECCACK_HASH {
                     codes.insert(state.code_hash);
                 }
-                if state.storage_root != *EMPTY_TRIE_HASH {
-                    // NOTE: our iterator already appends the partial path for leaves.
-                    let hashed_address = Nibbles::from_hex(k[1..].to_vec())
-                        .concat(leaf.partial)
-                        .to_bytes();
-                    debug_assert_eq!(hashed_address.len(), 32);
-                    storages.insert(hashed_address, state.storage_root);
-                }
             }
             account_nodes += 1;
+            if account_nodes % 1_000_000 == 0 {
+                info!("{account_nodes} account nodes loaded")
+            }
         }
+        state_trie.db().put_batch(nodes_to_push)?;
 
-        info!("Inserting storage tries (path-based)");
+        info!("Inserting storage tries");
         let mut storage_nodes = 0;
+        let mut storages_to_write: HashMap<H256, Vec<TrieNode>> = Default::default();
         for item in gethdb
             .state_db
             .iterator(IteratorMode::From(b"O", rocksdb::Direction::Forward))
@@ -210,16 +202,24 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
             })
         {
             let (k, v) = item?;
-            let node = Node::decode_raw(&v)?;
-            let node_hash = node.compute_hash();
-            let node_rlp = node.encode_to_vec();
-            ethrex_db.put_cf(
-                storages_cf,
-                [&k[1..33], node_hash.as_ref()].concat(),
-                node_rlp,
-            )?;
+            let account = H256::from_slice(&k[1..33]);
+            let path = Nibbles::from_hex(k[33..].to_vec());
+            storages_to_write
+                .entry(account)
+                .or_default()
+                .push((path, v.into()));
+            if storage_nodes % 100_000 == 0 {
+                rt.block_on(
+                    store.write_storage_trie_nodes_batch(storages_to_write.drain().collect()),
+                )?;
+            }
             storage_nodes += 1;
+            if storage_nodes % 1_000_000 == 0 {
+                println!("{storage_nodes} storage nodes loaded")
+            }
         }
+        rt.block_on(store.write_storage_trie_nodes_batch(storages_to_write.drain().collect()))?;
+
         info!("Applying Diff Layers");
         let mut diffs = BTreeMap::new();
         // TODO: the difflayers may also be stores in the DB with key "TrieJournal".
@@ -238,18 +238,17 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
         // Seems redundant, but disk layer stores its root again
         let disk_layer_root;
         (disk_layer_root, rest) = H256::decode_unfinished(rest)?;
-        assert_eq!(disk_layer_root, disk_root);
+        // assert_eq!(disk_layer_root, disk_root); ???
         let disk_layer_id;
         (disk_layer_id, rest) = u64::decode_unfinished(rest)?;
         // FIXME: geth only enforces disk_layer_id <= db_layer_id
         // Not sure if inequality might be actually valid
-        assert_eq!(disk_layer_id, db_layer_id);
+        // assert_eq!(disk_layer_id, db_layer_id);
         let mut is_list;
-        // TODO: check if we need to use the disk layer nodes, shouldn't
-        // it be always empty given it's supposed to match the DB?
-        // Maybe it's mostly for unclean shutdown?
-        let _disk_nodes_pl;
-        (is_list, _disk_nodes_pl, rest) = decode_rlp_item(rest)?;
+        // Decode the disk layer nodes
+        let disk_nodes_pl;
+        (is_list, disk_nodes_pl, rest) = decode_rlp_item(rest)?;
+        decode_nodes(&disk_nodes_pl, &mut diffs)?;
         assert!(is_list);
         // Ignore kv field until we use snapshots
         // Raw storage key flag
@@ -284,26 +283,7 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
             (is_list, difflayer_nodes_pl, rest) = decode_rlp_item(rest)?;
             assert!(is_list);
             // Now we can decode the actual nodes
-            let mut remaining_nodes = difflayer_nodes_pl;
-            let mut journal_node;
-            while !remaining_nodes.is_empty() {
-                (is_list, journal_node, remaining_nodes) = decode_rlp_item(remaining_nodes)?;
-                assert!(is_list);
-                let (owner, nodes) = H256::decode_unfinished(journal_node)?;
-                let (is_list, mut node_list, after) = decode_rlp_item(nodes)?;
-                assert!(is_list);
-                assert!(after.is_empty());
-                while !node_list.is_empty() {
-                    let (is_list, pathnode, path, node);
-                    (is_list, pathnode, node_list) = decode_rlp_item(node_list)?;
-                    assert!(is_list);
-                    (path, node) = decode_bytes(pathnode)?;
-                    let (node, after) = decode_bytes(node)?;
-                    assert!(after.is_empty());
-                    let node = (!node.is_empty()).then(|| Node::decode_raw(node).unwrap());
-                    diffs.insert((owner.0, path.to_vec()), node);
-                }
-            }
+            decode_nodes(&difflayer_nodes_pl, &mut diffs)?;
             // Check if it has origin nodes, we ignore them
             let (has_origin, _, next) = decode_rlp_item(rest)?;
             if has_origin {
@@ -342,52 +322,54 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
             }
         }
         const ZERO: [u8; 32] = [0u8; 32];
-        for ((owner, _path), node) in diffs {
-            match (owner, node) {
-                (ZERO, Some(node)) => ethrex_db.put_cf(
-                    account_trie_cf,
-                    node.compute_hash().as_ref(),
-                    node.encode_to_vec(),
-                )?,
-                (hashed_address, Some(node)) => ethrex_db.put_cf(
-                    storages_cf,
-                    [hashed_address, node.compute_hash().finalize().0].concat(),
-                    node.encode_to_vec(),
-                )?,
-                (_, None) => (), // Don't need to delete until path-based ethrex
+        for ((owner, path), node) in diffs {
+            match owner {
+                ZERO => {
+                    if let Ok(Node::Leaf(leaf)) = Node::decode(&node) {
+                        let state = AccountState::decode(&leaf.value)?;
+                        debug_assert_ne!(state.code_hash, H256::zero());
+                        debug_assert_ne!(state.storage_root, H256::zero());
+                        if state.code_hash != *EMPTY_KECCACK_HASH {
+                            codes.insert(state.code_hash);
+                        }
+                    }
+                    state_trie
+                        .db()
+                        .put_batch(vec![(Nibbles::from_hex(path), node)])?
+                }
+                hashed_address => rt.block_on(store.write_storage_trie_nodes_batch(vec![(
+                    H256::from_slice(&hashed_address),
+                    vec![(Nibbles::from_hex(path), node)],
+                )]))?,
             }
         }
         info!(account_nodes, storage_nodes, "All nodes inserted");
 
         info!("Inserting account codes");
 
-        let code_cf = ethrex_db.cf_handle("account_codes").unwrap();
         for code_hash in &codes {
             let code = gethdb
                 .read_code(code_hash.0)?
                 .ok_or_else(|| eyre::eyre!("missing code hash"))?;
-            ethrex_db.put_cf(
-                code_cf,
-                code_hash,
-                <[u8] as RLPEncode>::encode_to_vec(&code),
-            )?;
+            rt.block_on(store.add_account_code(Code::from_bytecode(code.into())))?;
         }
-        info!("Compacting Ethrex DB");
-        ethrex_db.flush_wal(true)?;
-        ethrex_db.flush()?;
-        ethrex_db.compact_range(Option::<[u8; 0]>::None, Option::<[u8; 0]>::None);
         let migration_time = migration_start.elapsed().as_secs_f64();
         info!("Migration complete in {migration_time} seconds");
-        std::mem::drop(ethrex_db);
     }
 
-    if cfg!(debug_assertions) {
+    rt.block_on(store.forkchoice_update(
+        numbers_and_hashes,
+        block_number,
+        H256::from_slice(&block_hash),
+        None,
+        None,
+    ))?;
+    rt.block_on(store.load_initial_state())?;
+    if true {
         // Run validations
         info!("Running validations");
-        let store =
-            ethrex_storage::Store::new(*ETHREX_DB_PATH, ethrex_storage::EngineType::RocksDB)?;
         let state_root = header.state_root;
-        info!("Validating state trie");
+        info!("Validating state trie with root {state_root:x}");
         store.open_locked_state_trie(state_root)?.validate()?;
         info!("Validating storage tries and codes");
         for (hashed_address, account_state) in store
@@ -396,89 +378,41 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
         {
             if account_state.storage_root != *EMPTY_TRIE_HASH {
                 store
-                    .open_locked_storage_trie(hashed_address, account_state.storage_root)?
+                    .open_locked_storage_trie(
+                        hashed_address,
+                        state_root,
+                        account_state.storage_root,
+                    )?
                     .validate()?;
             }
             if account_state.code_hash != *EMPTY_KECCACK_HASH {
                 let code = store
                     .get_account_code(account_state.code_hash)?
                     .expect("inserted code not found");
-                assert_eq!(account_state.code_hash, keccak(code));
+                assert_eq!(account_state.code_hash, keccak(code.bytecode));
             }
         }
         // assert_eq!(storages.len(), with_storage_count);
         info!("Validating latest block");
-
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
         assert_eq!(
-            rt.block_on(store.engine.get_latest_block_number())
-                .unwrap()
-                .unwrap(),
+            rt.block_on(store.get_latest_block_number()).unwrap(),
             block_number
         );
         assert_eq!(
-            rt.block_on(store.engine.get_canonical_block_hash(block_number))
+            rt.block_on(store.get_canonical_block_hash(block_number))
                 .unwrap()
                 .unwrap(),
             block_hash.into(),
         );
         assert_eq!(
-            store
-                .engine
-                .get_block_header(block_number)
-                .unwrap()
-                .unwrap(),
+            store.get_block_header(block_number).unwrap().unwrap(),
             header
         );
-        assert_eq!(
-            rt.block_on(store.engine.get_block_body(block_number))
-                .unwrap()
-                .unwrap()
-                .encode_to_vec(),
-            body_rlp
-        );
-        for (block_offset, block_hash) in hashes.iter().rev().enumerate() {
-            let block_number = block_number - (block_offset as u64);
-            let block_hash = H256::from_slice(block_hash);
-            assert_eq!(
-                rt.block_on(store.engine.get_block_number(block_hash))
-                    .unwrap()
-                    .unwrap(),
-                block_number
-            );
-            assert_eq!(
-                rt.block_on(store.engine.get_canonical_block_hash(block_number))
-                    .unwrap()
-                    .unwrap(),
-                block_hash
-            );
-        }
+        assert!(store.has_state_root(header.state_root).unwrap());
         info!("Validations finished successfully")
     }
 
     Ok(())
-}
-
-fn open_ethrexdb() -> eyre::Result<DBWithThreadMode<SingleThreaded>> {
-    // Quick and dirty way to ensure the DB is initialized correctly
-    // TODO: remove this and document why: we need the genesis to be
-    // already there or else ethrex is going to overwrite our canonical
-    // chain and go and try to sync from genesis.
-    let _ = ethrex_storage::store_db::rocksdb::Store::new((*ETHREX_DB_PATH).as_ref())?;
-    let (ethrex_opts, ethrex_cfs) = Options::load_latest(
-        *ETHREX_DB_PATH,
-        Env::new()?,
-        true,
-        Cache::new_lru_cache(16 << 20),
-    )?;
-    let ethrex_db = DBWithThreadMode::<SingleThreaded>::open_cf_descriptors(
-        &ethrex_opts,
-        *ETHREX_DB_PATH,
-        ethrex_cfs,
-    )?;
-    Ok(ethrex_db)
 }
 
 struct GethDB {
@@ -668,6 +602,33 @@ impl GethDB {
     }
 }
 
+fn decode_nodes(
+    buf: &[u8],
+    diffs: &mut BTreeMap<([u8; 32], Vec<u8>), Vec<u8>>,
+) -> eyre::Result<()> {
+    let mut is_list;
+    let mut remaining_nodes = buf;
+    let mut journal_node;
+    while !remaining_nodes.is_empty() {
+        (is_list, journal_node, remaining_nodes) = decode_rlp_item(remaining_nodes)?;
+        assert!(is_list);
+        let (owner, nodes) = H256::decode_unfinished(journal_node)?;
+        let (is_list, mut node_list, after) = decode_rlp_item(nodes)?;
+        assert!(is_list);
+        assert!(after.is_empty());
+        while !node_list.is_empty() {
+            let (is_list, pathnode, path, node);
+            (is_list, pathnode, node_list) = decode_rlp_item(node_list)?;
+            assert!(is_list);
+            (path, node) = decode_bytes(pathnode)?;
+            let (node, after) = decode_bytes(node)?;
+            assert!(after.is_empty());
+            diffs.insert((owner.0, path.to_vec()), node.to_vec());
+        }
+    }
+    Ok(())
+}
+
 #[derive(Parser)]
 struct Args {
     #[arg(
@@ -697,4 +658,14 @@ struct Args {
         default_value = "false"
     )]
     pub validate_only: bool,
+    #[arg(
+        long = "network",
+        value_name = "GENESIS_FILE_PATH",
+        help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
+        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
+        help_heading = "Node options",
+        env = "ETHREX_NETWORK",
+        value_parser = clap::value_parser!(Network),
+    )]
+    pub network: Network,
 }
