@@ -1408,7 +1408,7 @@ impl Blockchain {
             return Ok(hash);
         }
 
-        // Validate blobs bundle after checking if its already added.
+        // Validate blobs bundle after checking if it's already added.
         if let Transaction::EIP4844Transaction(transaction) = &transaction {
             blobs_bundle.validate(transaction, fork)?;
         }
