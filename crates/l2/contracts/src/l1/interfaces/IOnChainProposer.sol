@@ -16,12 +16,6 @@ interface IOnChainProposer {
     /// @return The latest verified batch number as a uint256.
     function lastVerifiedBatch() external view returns (uint256);
 
-    /// @notice Returns whether an address is authorized to commit and verify batches.
-    /// @param addr The address to query.
-    function authorizedSequencerAddresses(
-        address addr
-    ) external view returns (bool);
-
     /// @notice A batch has been committed.
     /// @dev Event emitted when a batch is committed.
     /// @param newStateRoot The new state root of the batch that was committed.

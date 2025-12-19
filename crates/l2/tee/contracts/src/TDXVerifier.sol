@@ -3,7 +3,7 @@ pragma solidity ^0.8.13;
 
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
-import {IOnChainProposer} from "../../../contracts/src/l1/interfaces/IOnChainProposer.sol";
+import {ITimelock} from "../../../contracts/src/l1/interfaces/ITimelock.sol";
 
 interface IAttestation {
     function verifyAndAttestOnChain(bytes calldata rawQuote)
@@ -14,7 +14,7 @@ interface IAttestation {
 
 contract TDXVerifier {
     IAttestation public quoteVerifier = IAttestation(address(0));
-    IOnChainProposer public onChainProposer = IOnChainProposer(address(0));
+    ITimelock public timelock = ITimelock(address(0));
 
     address public authorizedSignature = address(0);
     bool public isDevMode = false;
@@ -26,14 +26,14 @@ contract TDXVerifier {
 
     /// @notice Initializes the contract
     /// @param _dcap DCAP contract.
-    /// @param _ocp OnChainProposer contract, used for permission checks
+    /// @param _timelock Timelock contract, used for permission checks
     /// @param _isDevMode Disables quote verification
-    constructor(address _dcap, address _ocp, bool _isDevMode) {
+    constructor(address _dcap, address _timelock, bool _isDevMode) {
         require(_dcap != address(0), "TDXVerifier: DCAP address can't be null");
-        require(_ocp != address(0), "TDXVerifier: OnChainPropser address can't be null");
+        require(_timelock != address(0), "TDXVerifier: Timelock address can't be null");
 
         quoteVerifier = IAttestation(_dcap);
-        onChainProposer = IOnChainProposer(_ocp);
+        timelock = ITimelock(_timelock);
         isDevMode = _isDevMode;
     }
 
@@ -57,7 +57,7 @@ contract TDXVerifier {
         bytes calldata quote
     ) external {
         require(
-            onChainProposer.authorizedSequencerAddresses(msg.sender),
+            timelock.authorizedSequencerAddresses(msg.sender),
             "TDXVerifier: only sequencer can update keys"
         );
         // TODO: only allow the owner to update the key, to avoid DoS
