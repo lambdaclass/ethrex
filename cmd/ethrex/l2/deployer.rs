@@ -1083,14 +1083,14 @@ async fn initialize_contracts(
 
     let deployer_address = get_address_from_secret_key(&opts.private_key.secret_bytes())
         .map_err(DeployerError::InternalError)?;
+    let deployer = Signer::Local(LocalSigner::new(opts.private_key));
+    let mut deployer_nonce = eth_client
+        .get_nonce(deployer_address, BlockIdentifier::Tag(BlockTag::Pending))
+        .await?;
 
     if let Some(timelock_address) = contract_addresses.timelock_address {
         info!("Initializing Timelock");
         let initialize_tx_hash = {
-            let deployer = Signer::Local(LocalSigner::new(opts.private_key));
-            let deployer_nonce = eth_client
-                .get_nonce(deployer_address, BlockIdentifier::Tag(BlockTag::Pending))
-                .await?;
             let calldata_values = vec![
                 Value::Uint(U256::from(30)), // TODO: Make minDelay parametrizable. For now this is for testing purposes.
                 Value::Array(vec![
@@ -1120,6 +1120,7 @@ async fn initialize_contracts(
             )
             .await?
         };
+        deployer_nonce += 1;
         info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "Timelock initialized");
         tx_hashes.push(initialize_tx_hash);
     } else {
@@ -1156,11 +1157,6 @@ async fn initialize_contracts(
             &calldata_values,
         )?;
 
-        let deployer = Signer::Local(LocalSigner::new(opts.private_key));
-        let deployer_nonce = eth_client
-            .get_nonce(deployer.address(), BlockIdentifier::Tag(BlockTag::Pending))
-            .await?;
-
         let initialize_tx_hash = initialize_contract_no_wait(
             contract_addresses.on_chain_proposer_address,
             on_chain_proposer_initialization_calldata,
@@ -1175,6 +1171,7 @@ async fn initialize_contracts(
             },
         )
         .await?;
+        deployer_nonce += 1;
 
         info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "OnChainProposer initialized");
 
@@ -1182,9 +1179,6 @@ async fn initialize_contracts(
 
         info!("Initializing SequencerRegistry");
         let initialize_tx_hash = {
-            let deployer_nonce = eth_client
-                .get_nonce(deployer.address(), BlockIdentifier::Tag(BlockTag::Pending))
-                .await?;
             let calldata_values = vec![
                 Value::Address(opts.sequencer_registry_owner.ok_or(
                     DeployerError::ConfigValueNotSet("--sequencer-registry-owner".to_string()),
@@ -1209,6 +1203,7 @@ async fn initialize_contracts(
             )
             .await?
         };
+        deployer_nonce += 1;
         info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "SequencerRegistry initialized");
         tx_hashes.push(initialize_tx_hash);
     } else {
