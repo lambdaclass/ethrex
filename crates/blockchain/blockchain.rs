@@ -519,6 +519,7 @@ impl Blockchain {
         prefix: Option<H256>,
         mut root: BranchNode,
     ) -> Result<Option<Node>, StoreError> {
+        // Ensures the children are included in the final commit
         root.choices.iter_mut().for_each(NodeRef::clear_hash);
         let children: Vec<(usize, &NodeRef)> = root
             .choices
@@ -1911,9 +1912,9 @@ pub fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
     GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u32
 }
 
-fn branchify(node: Node) -> BranchNode {
+fn branchify(node: Node) -> Box<BranchNode> {
     match node {
-        Node::Branch(branch_node) => *branch_node,
+        Node::Branch(branch_node) => branch_node,
         Node::Extension(extension_node) => {
             let index = extension_node.prefix.as_ref()[0];
             let noderef = if extension_node.prefix.len() == 1 {
@@ -1925,14 +1926,14 @@ fn branchify(node: Node) -> BranchNode {
             };
             let mut choices = BranchNode::EMPTY_CHOICES;
             choices[index as usize] = noderef;
-            BranchNode::new(choices)
+            Box::new(BranchNode::new(choices))
         }
         Node::Leaf(leaf_node) => {
             let index = leaf_node.partial.as_ref()[0];
             let node = LeafNode::new(leaf_node.partial.offset(1), leaf_node.value);
             let mut choices = BranchNode::EMPTY_CHOICES;
             choices[index as usize] = NodeRef::from(Arc::new(node.into()));
-            BranchNode::new(choices)
+            Box::new(BranchNode::new(choices))
         }
     }
 }
@@ -1943,7 +1944,7 @@ fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieN
             .map(Arc::unwrap_or_clone)
             .unwrap_or_else(|| Node::Branch(Box::default())),
     );
-    trie.root = Node::Branch(Box::new(root)).into();
+    trie.root = Node::Branch(root).into();
     let (_, mut nodes) = trie.collect_changes_since_last_hash();
     nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
 
