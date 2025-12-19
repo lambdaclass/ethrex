@@ -378,7 +378,7 @@ pub const CREATE2DEPLOYER_ADDRESS: Address = H160([
     0x1a, 0xe9, 0xbe, 0xf2,
 ]);
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ProxyDeployment {
     pub proxy_address: Address,
     pub proxy_tx_hash: H256,
