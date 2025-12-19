@@ -493,7 +493,7 @@ impl Syncer {
 
         store
             .forkchoice_update(
-                Some(numbers_and_hashes),
+                numbers_and_hashes,
                 last_block_number,
                 last_block_hash,
                 None,
@@ -785,6 +785,9 @@ impl Syncer {
                         );
                     }
 
+                    warn!("Storage could not be downloaded after multiple attempts. Marking for healing.
+                        This could impact snap sync time (healing may take a while).");
+
                     storage_accounts.accounts_with_storage_root.clear();
                 }
 
@@ -867,7 +870,10 @@ impl Syncer {
         store.generate_flatkeyvalue()?;
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
-        debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
+        debug_assert!(validate_storage_root(
+            store.clone(),
+            pivot_header.state_root
+        ));
 
         info!("Finished healing");
 
@@ -949,7 +955,7 @@ impl Syncer {
 
         *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
 
-        debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root).await);
+        debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root));
 
         store_block_bodies(
             vec![pivot_header.clone()],
@@ -975,7 +981,7 @@ impl Syncer {
 
         store
             .forkchoice_update(
-                Some(numbers_and_hashes),
+                numbers_and_hashes,
                 pivot_header.number,
                 pivot_header.hash(),
                 None,
@@ -1232,7 +1238,7 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
     tree_validated
 }
 
-pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
+pub fn validate_storage_root(store: Store, state_root: H256) -> bool {
     info!("Starting validate_storage_root");
     let is_valid = store
         .clone()
@@ -1268,7 +1274,7 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     is_valid
 }
 
-pub async fn validate_bytecodes(store: Store, state_root: H256) -> bool {
+pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
     info!("Starting validate_bytecodes");
     let mut is_valid = true;
     for (account_hash, account_state) in store

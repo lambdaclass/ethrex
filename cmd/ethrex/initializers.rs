@@ -22,7 +22,7 @@ use ethrex_p2p::{
     types::{Node, NodeRecord},
     utils::public_key_from_signing_key,
 };
-use ethrex_storage::{EngineType, Store};
+use ethrex_storage::{EngineType, Store, error::StoreError};
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
@@ -48,7 +48,12 @@ const _: () = {
     compile_error!("Database feature must be enabled (Available: `rocksdb`).");
 };
 
-pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
+pub fn init_tracing(
+    opts: &Options,
+) -> (
+    reload::Handle<EnvFilter, Registry>,
+    Option<tracing_appender::non_blocking::WorkerGuard>,
+) {
     let log_filter = EnvFilter::builder()
         .with_default_directive(Directive::from(opts.log_level))
         .from_env_lossy();
@@ -66,16 +71,45 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
 
     let fmt_layer = fmt::layer()
         .with_target(include_target)
-        .with_ansi(use_color)
-        .with_filter(filter);
+        .with_ansi(use_color);
+
+    let (file_layer, guard) = if let Some(log_dir) = &opts.log_dir {
+        if !log_dir.exists() {
+            std::fs::create_dir_all(log_dir).expect("Failed to create log directory");
+        }
+
+        let branch = env!("VERGEN_GIT_BRANCH").replace('/', "-");
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let log_file = log_dir.join(format!("ethrex_{}_{}.log", branch, timestamp));
+
+        let file = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(log_file)
+            .expect("Failed to open log file");
+
+        let (non_blocking, guard) = tracing_appender::non_blocking(file);
+        let file_layer = fmt::layer()
+            .with_target(include_target)
+            .with_ansi(false)
+            .with_writer(non_blocking);
+        (Some(file_layer), Some(guard))
+    } else {
+        (None, None)
+    };
 
     let profiling_layer = opts.metrics_enabled.then_some(FunctionProfilingLayer);
 
-    let subscriber = Registry::default().with(fmt_layer).with(profiling_layer);
+    let subscriber = Registry::default()
+        .with(fmt_layer.and_then(file_layer).with_filter(filter))
+        .with(profiling_layer);
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
-    filter_handle
+    (filter_handle, guard)
 }
 
 pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
@@ -96,35 +130,29 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
 }
 
 /// Opens a new or pre-existing Store and loads the initial state provided by the network
-pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Store {
-    let mut store = open_store(datadir.as_ref());
-    store
-        .add_initial_state(genesis)
-        .await
-        .expect("Failed to create genesis block");
-    store
+pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Result<Store, StoreError> {
+    let mut store = open_store(datadir.as_ref())?;
+    store.add_initial_state(genesis).await?;
+    Ok(store)
 }
 
 /// Initializes a pre-existing Store
-pub async fn load_store(datadir: &Path) -> Store {
-    let store = open_store(datadir);
-    store
-        .load_initial_state()
-        .await
-        .expect("Failed to load store");
-    store
+pub async fn load_store(datadir: &Path) -> Result<Store, StoreError> {
+    let store = open_store(datadir)?;
+    store.load_initial_state().await?;
+    Ok(store)
 }
 
 /// Opens a pre-existing Store or creates a new one
-pub fn open_store(datadir: &Path) -> Store {
+pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
     if datadir.ends_with("memory") {
-        Store::new(datadir, EngineType::InMemory).expect("Failed to create Store")
+        Store::new(datadir, EngineType::InMemory)
     } else {
         #[cfg(feature = "rocksdb")]
         let engine_type = EngineType::RocksDB;
         #[cfg(feature = "metrics")]
         ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
-        Store::new(datadir, engine_type).expect("Failed to create Store")
+        Store::new(datadir, engine_type)
     }
 }
 
@@ -374,7 +402,7 @@ async fn set_sync_block(store: &Store) {
             .expect("Could not get hash for block number provided by env variable")
             .expect("Could not get hash for block number provided by env variable");
         store
-            .forkchoice_update(None, block_number, block_hash, None, None)
+            .forkchoice_update(vec![], block_number, block_hash, None, None)
             .await
             .expect("Could not set sync block");
     }
@@ -400,7 +428,17 @@ pub async fn init_l1(
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
-    let store = init_store(datadir, genesis).await;
+    let store = match init_store(datadir, genesis).await {
+        Ok(store) => store,
+        Err(err @ StoreError::IncompatibleDBVersion { .. })
+        | Err(err @ StoreError::NotFoundDBVersion { .. }) => {
+            return Err(eyre::eyre!(
+                "{err}. Please erase your DB by running `ethrex removedb` and restart node to resync. Note that this will take a while."
+            ));
+        }
+        Err(error) => return Err(eyre::eyre!("Failed to create Store: {error}")),
+    };
+
     if opts.syncmode == SyncMode::Full {
         store.generate_flatkeyvalue()?;
     }
@@ -442,8 +480,8 @@ pub async fn init_l1(
         get_client_version(),
         None,
         opts.tx_broadcasting_time_interval,
+        opts.lookup_interval,
     )
-    .await
     .expect("P2P context could not be created");
 
     let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;
