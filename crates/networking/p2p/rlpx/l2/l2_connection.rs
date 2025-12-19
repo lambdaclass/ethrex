@@ -594,9 +594,7 @@ pub async fn process_blocks_on_queue(
         }
         let block_hash = block.hash();
         let block_number = block.header.number;
-        let block = Arc::<Block>::try_unwrap(block).map_err(|_| {
-            PeerConnectionError::InternalError("Failed to take ownership of block".to_string())
-        })?;
+        let block = Arc::unwrap_or_clone(block);
         established
             .blockchain
             .add_block_pipeline(block)
