@@ -115,6 +115,7 @@ contract Router is
         }
     }
 
+    /// @inheritdoc IRouter
     function injectMessageHashes(
         uint256 chainId,
         bytes32[] calldata message_hashes

@@ -31,6 +31,9 @@ interface IRouter {
         uint256 amount
     ) external payable;
 
+    /// @notice Injects message hashes for a specified chain in the CommonBridge for force inclusion.
+    /// @param chainId The ID of the destination chain.
+    /// @param message_hashes The array of message hashes to inject.
     function injectMessageHashes(
         uint256 chainId,
         bytes32[] calldata message_hashes
