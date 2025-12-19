@@ -19,7 +19,11 @@ use axum::extract::{Path, State};
 use axum::http::Uri;
 use axum::response::IntoResponse;
 use axum::serve::WithGracefulShutdown;
-use axum::{Json, Router, http::StatusCode, routing::get};
+use axum::{
+    Json, Router,
+    http::StatusCode,
+    routing::{get, post},
+};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use spawned_concurrency::error::GenServerError;
@@ -96,7 +100,7 @@ pub async fn start_api(
         .route("/committer/stop", get(stop_committer))
         .route("/admin/health", get(admin_health))
         .route("/health", get(health))
-        .route("/stop-at/{block_number}", get(set_sequencer_stop_at))
+        .route("/stop-at/{block_number}", post(set_sequencer_stop_at))
         .with_state(admin.clone())
         .fallback(not_found);
     let http_listener = TcpListener::bind(http_addr)
