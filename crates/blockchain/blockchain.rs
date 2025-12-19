@@ -340,7 +340,6 @@ impl Blockchain {
         'a: 's,
         'b: 's,
     {
-        let start = Instant::now();
         // Fetch the old root from the DB and decode it
         let old_root_opt = self
             .storage
@@ -350,8 +349,6 @@ impl Blockchain {
             .get(Nibbles::default())?
             .map(|v| Node::decode(&v))
             .transpose()?;
-        let time_ms = start.elapsed();
-        info!("[PERF] handle_merkleization old root fetch {:?}", time_ms);
 
         // If there's no root, or it's not a branch node, we fallback to sequential processing.
         let Some(Node::Branch(old_root)) = old_root_opt else {
@@ -389,7 +386,6 @@ impl Blockchain {
         let mut storage_updates_map: StoreUpdatesMap = Default::default();
         let mut code_updates: FxHashMap<H256, Code> = Default::default();
         let mut hashed_address_cache: FxHashMap<H160, H256> = Default::default();
-
         for updates in rx {
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
             *max_queue_length = current_length.max(*max_queue_length);

@@ -39,7 +39,6 @@ use ethrex_levm::{
 use std::cmp::min;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
-use std::time::Instant;
 
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
@@ -106,10 +105,7 @@ impl LEVM {
         merkleizer: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
     ) -> Result<BlockExecutionResult, EvmError> {
-        let start = Instant::now();
         Self::prepare_block(block, db, vm_type)?;
-        let time_ms = start.elapsed();
-        info!("[PERF] prepare block {:?}", time_ms);
 
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
@@ -120,11 +116,9 @@ impl LEVM {
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
 
-        let txs_with_sender = block.body.get_transactions_with_sender().map_err(|error| {
+        for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-        })?;
-
-        for (tx, tx_sender) in txs_with_sender {
+        })? {
             if cumulative_gas_used + tx.gas_limit() > block.header.gas_limit {
                 return Err(EvmError::Transaction(format!(
                     "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
@@ -267,6 +261,7 @@ impl LEVM {
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
+
         vm.execute().map_err(VMError::into)
     }
 
