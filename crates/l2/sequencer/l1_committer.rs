@@ -13,7 +13,6 @@ use bytes::Bytes;
 use ethrex_blockchain::{
     Blockchain, BlockchainOptions, BlockchainType, L2Config, error::ChainError,
 };
-use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -22,6 +21,7 @@ use ethrex_common::{
         fee_config::FeeConfig,
     },
 };
+use ethrex_common::{types::Blob, utils::keccak};
 use ethrex_l2_common::{
     calldata::Value,
     merkle_tree::compute_merkle_root,
@@ -56,7 +56,7 @@ use rand::Rng;
 use serde::Serialize;
 use std::{
     collections::BTreeMap,
-    fs::remove_dir_all,
+    fs::{self, remove_dir_all},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -1255,6 +1255,8 @@ impl L1Committer {
 
         info!("Commitment sent: {commit_tx_hash:#x}");
 
+        store_blobs(batch.blobs_bundle.blobs.clone(), batch.number);
+
         Ok(commit_tx_hash)
     }
 
@@ -1609,4 +1611,8 @@ pub async fn regenerate_head_state(
     info!("Finished regenerating state");
 
     Ok(())
+}
+fn store_blobs(blobs: Vec<Blob>, current_blob: u64) {
+    let blob = blobs.first().unwrap();
+    fs::write(format!("{current_blob}-1.blob"), blob).unwrap();
 }

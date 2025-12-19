@@ -498,7 +498,7 @@ services:
       EOF
         echo inserting CommonBridge name
         psql postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db:5432/blockscout_l1 <<EOF
-        INSERT INTO address_names (address_hash, name, inserted_at, updated_at) VALUES (decode('fd5b0ad8e7a83941ccd1cc543287193c2d58f840', 'hex'),'CommonBridge',NOW(),NOW());
+        INSERT INTO address_names (address_hash, name, inserted_at, updated_at) VALUES (decode('b391ba1d8f94df53475d6bc873dee7a451e7b0c3', 'hex'),'CommonBridge',NOW(),NOW());
       EOF
         echo inserting CommonBridgeL2 name
         psql postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db:5432/blockscout_l2 <<EOF

@@ -117,6 +117,10 @@ pub async fn fill_transactions(
 
     // Execute and add transactions to payload (if suitable)
     loop {
+        if context.payload.body.transactions.len() >= 10 {
+            println!("Reached max transactions per block limit");
+            break;
+        }
         // Check if we have enough gas to run more transactions
         if context.remaining_gas < TX_GAS_COST {
             debug!("No more gas to run transactions");
