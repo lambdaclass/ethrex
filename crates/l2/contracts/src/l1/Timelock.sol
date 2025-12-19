@@ -94,6 +94,14 @@ contract Timelock is
         return onChainProposer.lastVerifiedBatch();
     }
 
+    /// @notice Returns whether an address has the sequencer role.
+    /// @dev This matches the legacy OnChainProposer mapping used by TDXVerifier.
+    function authorizedSequencerAddresses(
+        address addr
+    ) external view returns (bool) {
+        return hasRole(SEQUENCER, addr);
+    }
+
     // NOTE: In the future commit and verify will have timelock logic incorporated in case there are any zkVM bugs and we want to avoid applying the changes in the L1. Probably the Security Council would act upon those changes.
     /// @inheritdoc IOnChainProposer
     /// @custom:access Restricted to accounts with the `SEQUENCER` role.

@@ -897,13 +897,16 @@ async fn deploy_contracts(
         _ => Address::zero(),
     };
 
+    let tdx_controller_address =
+        timelock_address.unwrap_or(on_chain_proposer_deployment.proxy_address);
+
     // if it's a required proof type, but no address has been specified, deploy it.
     let tdx_verifier_address = match opts.tdx_verifier_address {
         Some(addr) if opts.tdx => addr,
         None if opts.tdx => {
             info!("Deploying TDXVerifier (if tdx_deploy_verifier is true)");
             let tdx_verifier_address =
-                deploy_tdx_contracts(opts, on_chain_proposer_deployment.proxy_address)?;
+                deploy_tdx_contracts(opts, tdx_controller_address)?;
 
             info!(address = %format!("{tdx_verifier_address:#x}"), "TDXVerifier deployed");
             tdx_verifier_address
