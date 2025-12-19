@@ -40,23 +40,35 @@ For RISC0 it is stored at:
   - `crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk`
 
 
-## Upgrade sequencer
+## Upgrade sequencer with zero downtime
 
-Init L1:
+This is a **test/example** flow for local development. It demonstrates a zero-downtime handover by running two sequencers in parallel and coordinating the handoff using `--admin.start-at` and `/stop-at/<N>`.
+
+1. First, initialize L1:
 
 ```bash
 cd crates/l2
 make rm-db-l1 init-l1
 ```
 
-Deploy contracts:
+2. Then deploy the contracts:
 
 ```bash
 cd crates/l2
 rm -rf ../../dev_ethrex_l*; make deploy-l1
 ```
 
-Start first sequencer (on root):
+3. Start the prover and point it at both proof coordinators:
+
+```bash
+cd crates/l2
+./../target/release/ethrex \
+        l2 prover \
+        --proof-coordinators tcp://127.0.0.1:3900 tcp://127.0.0.1:3901 \
+        --backend exec
+```
+
+4. Start the first sequencer (from the repo root):
 
 ```bash
 export $(cat cmd/.env | xargs); export COMPILE_CONTRACTS=true; target/release/ethrex \
@@ -82,7 +94,7 @@ export $(cat cmd/.env | xargs); export COMPILE_CONTRACTS=true; target/release/et
     --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
 ```
 
-Start second sequencer (set start-at to the desire number):
+5. In a second terminal, start the second sequencer and set `--admin.start-at` to the desired number. Keep it connected to the first sequencer via `--bootnodes` and point `--admin.l2-safe-url` to the first sequencer’s HTTP endpoint:
 
 ```bash
 export $(cat cmd/.env | xargs); export COMPILE_CONTRACTS=true;
@@ -108,11 +120,11 @@ export $(cat cmd/.env | xargs); export COMPILE_CONTRACTS=true;
     --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
     --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
   --admin.start-at 10 \
---bootnodes enode://bbdc069e0513b13e92093e0b51d75c0fa7c5dd7c6aad40ee5055ed307c0516c8e78499696c77f1bab41aaf8ec827e7d319f393705c8f7d876f1bd9462e5b94ab@127.0.0.1:30303 \
---admin.l2-safe-url http://localhost:1729
+	--bootnodes enode://bbdc069e0513b13e92093e0b51d75c0fa7c5dd7c6aad40ee5055ed307c0516c8e78499696c77f1bab41aaf8ec827e7d319f393705c8f7d876f1bd9462e5b94ab@127.0.0.1:30303 \
+	--admin.l2-safe-url http://localhost:1729
 ```
 
-Stop the first sequencer the same number:
+6. Finally, stop the first sequencer at the same number:
 
 ```bash
 curl http://localhost:5555/stop-at/10

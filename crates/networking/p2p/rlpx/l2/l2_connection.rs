@@ -386,10 +386,10 @@ pub(crate) async fn send_next_proof(
         return Ok(());
     };
 
-    let next: Option<(Message, u64, ProverType, (u64, ProverType))> = {
+    let next = {
         let l2_state = established.l2_state.connection_state_mut()?;
         let (mut batch_number, mut next_prover_type) = l2_state.latest_proof_sent;
-        let mut next: Option<(Message, u64, ProverType, (u64, ProverType))> = None;
+        let mut next = None;
 
         while batch_number <= latest_batch {
             let prover_types = [
