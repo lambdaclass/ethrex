@@ -96,7 +96,7 @@ impl Packet {
                 masking_iv,
                 packet_header.static_header,
                 packet_header.authdata,
-                packet_header.nonce,
+                &packet_header.nonce,
                 decrypt_key,
                 encrypted_message,
             )?)),
@@ -130,7 +130,7 @@ impl Packet {
         match self {
             Packet::Ordinary(ordinary) => {
                 let (mut static_header, mut authdata, encrypted_message) =
-                    ordinary.encode(&nonce, &masking_as_bytes, encrypt_key)?;
+                    ordinary.encode(nonce, &masking_as_bytes, encrypt_key)?;
 
                 cipher.try_apply_keystream(&mut static_header)?;
                 buf.put_slice(&static_header);
@@ -143,7 +143,7 @@ impl Packet {
             }
             Packet::Handshake(handshake) => {
                 let (mut static_header, mut authdata, encrypted_message) =
-                    handshake.encode(&nonce, &masking_as_bytes, encrypt_key)?;
+                    handshake.encode(nonce, &masking_as_bytes, encrypt_key)?;
 
                 cipher.try_apply_keystream(&mut static_header)?;
                 buf.put_slice(&static_header);
@@ -178,7 +178,7 @@ impl Packet {
         }
 
         let flag = static_header[8];
-        let nonce = static_header[9..21].to_vec();
+        let nonce = static_header[9..21].try_into()?;
         let authdata_size = u16::from_be_bytes(static_header[21..23].try_into()?) as usize;
         let authdata_end = STATIC_HEADER_END + authdata_size;
         let authdata = &mut encoded_packet[STATIC_HEADER_END..authdata_end].to_vec();
@@ -211,7 +211,7 @@ impl Ordinary {
     #[allow(clippy::type_complexity)]
     fn encode(
         &self,
-        nonce: &[u8],
+        nonce: &[u8; 12],
         masking_iv: &[u8],
         encrypt_key: &[u8],
     ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), PacketCodecError> {
@@ -251,7 +251,7 @@ impl Ordinary {
         masking_iv: &[u8],
         static_header: Vec<u8>,
         authdata: Vec<u8>,
-        nonce: Vec<u8>,
+        nonce: &[u8; 12],
         decrypt_key: &[u8],
         encrypted_message: &[u8],
     ) -> Result<Ordinary, PacketCodecError> {
@@ -280,7 +280,7 @@ impl Ordinary {
 
     fn decrypt(
         key: &[u8],
-        nonce: Vec<u8>,
+        nonce: &[u8; 12],
         message: &mut Vec<u8>,
         message_ad: Vec<u8>,
     ) -> Result<(), PacketCodecError> {
@@ -375,7 +375,7 @@ impl Handshake {
     #[allow(clippy::type_complexity)]
     fn encode(
         &self,
-        nonce: &[u8],
+        nonce: &[u8; 12],
         masking_iv: &[u8],
         encrypt_key: &[u8],
     ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), PacketCodecError> {
@@ -462,7 +462,7 @@ impl Handshake {
         message_ad.extend_from_slice(&authdata);
 
         let mut message = encrypted_message.to_vec();
-        Ordinary::decrypt(decrypt_key, nonce, &mut message, message_ad)?;
+        Ordinary::decrypt(decrypt_key, &nonce, &mut message, message_ad)?;
         let message = Message::decode(&message)?;
 
         Ok(Handshake {
@@ -552,13 +552,13 @@ impl Message {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PingMessage {
     /// The request id of the sender.
-    pub req_id: u64,
+    pub req_id: Bytes,
     /// The ENR sequence number of the sender.
     pub enr_seq: u64,
 }
 
 impl PingMessage {
-    pub fn new(req_id: Vec<u8>, enr_seq: u64) -> Self {
+    pub fn new(req_id: Bytes, enr_seq: u64) -> Self {
         Self { req_id, enr_seq }
     }
 }
@@ -566,7 +566,7 @@ impl PingMessage {
 impl RLPEncode for PingMessage {
     fn encode(&self, buf: &mut dyn BufMut) {
         Encoder::new(buf)
-            .encode_field(self.req_id.as_slice())
+            .encode_field(&self.req_id)
             .encode_field(&self.enr_seq)
             .finish();
     }
@@ -574,19 +574,22 @@ impl RLPEncode for PingMessage {
 
 impl RLPDecode for PingMessage {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let ((req_id, enr_seq), remaining): ((&[u8], u64), &[u8]) =
-            RLPDecode::decode_unfinished(rlp)?;
+        let decoder = Decoder::new(rlp)?;
+        // let (req_id, decoder): (Bytes, Decoder) = decoder.decode_field("req_id")?;
+        let (req_id, decoder) = decoder.decode_field("req_id")?;
+        let (enr_seq, decoder) = decoder.decode_field("enr_seq")?;
         let ping = PingMessage {
-            req_id: req_id.to_vec(),
+            // req_id: req_id.to_vec(),
+            req_id: req_id,
             enr_seq,
         };
-        Ok((ping, remaining))
+        Ok((ping, decoder.finish()?))
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PongMessage {
-    pub req_id: u64,
+    pub req_id: Bytes,
     pub enr_seq: u64,
     pub recipient_addr: IpAddr,
 }
@@ -621,7 +624,7 @@ impl RLPDecode for PongMessage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FindNodeMessage {
-    pub req_id: u64,
+    pub req_id: Bytes,
     pub distance: Vec<u64>,
 }
 
@@ -646,7 +649,7 @@ impl RLPDecode for FindNodeMessage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodesMessage {
-    pub req_id: u64,
+    pub req_id: Bytes,
     pub total: u64,
     pub nodes: Vec<NodeRecord>,
 }
@@ -681,7 +684,7 @@ impl RLPDecode for NodesMessage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TalkReqMessage {
-    pub req_id: u64,
+    pub req_id: Bytes,
     pub protocol: Bytes,
     pub request: Bytes,
 }
@@ -716,7 +719,7 @@ impl RLPDecode for TalkReqMessage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TalkResMessage {
-    pub req_id: u64,
+    pub req_id: Bytes,
     pub response: Vec<u8>,
 }
 
@@ -731,7 +734,8 @@ impl RLPEncode for TalkResMessage {
 
 impl RLPDecode for TalkResMessage {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let ((req_id, response), remaining) = <(u64, Bytes) as RLPDecode>::decode_unfinished(rlp)?;
+        let ((req_id, response), remaining) =
+            <(Bytes, Bytes) as RLPDecode>::decode_unfinished(rlp)?;
 
         Ok((
             Self {
@@ -745,7 +749,7 @@ impl RLPDecode for TalkResMessage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TicketMessage {
-    pub req_id: u64,
+    pub req_id: Bytes,
     pub ticket: Bytes,
     pub wait_time: u64,
 }
@@ -809,7 +813,7 @@ mod tests {
     // .unwrap();
 
     #[test]
-    fn test_aes_gcm_vector() {
+    fn aes_gcm_vector() {
         // https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire-test-vectors.md#encryptiondecryption
         let key = hex!("9f2d77db7004bf8a1a85107ac686990b");
         let nonce = hex!("27b5af763c446acd2749fe8e");
@@ -847,13 +851,13 @@ mod tests {
             eph_pubkey: vec![2; 33],
             record: None,
             message: Message::Ping(PingMessage {
-                req_id: vec![3],
+                req_id: Bytes::from_static(&[3]),
                 enr_seq: 4,
             }),
         };
 
-        let key = vec![0x10; 16];
-        let nonce = hex!("000102030405060708090a0b").to_vec();
+        let key = [0x10; 16];
+        let nonce = hex!("000102030405060708090a0b");
         let mut buf = Vec::new();
         let packet = Packet::Handshake(handshake.clone());
         packet.encode(&mut buf, 0, &nonce, &dest_id, &key).unwrap();
@@ -864,7 +868,7 @@ mod tests {
 
     /// Ping handshake packet (flag 2) from https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire-test-vectors.md
     #[test]
-    fn handshake_packet_vector_test_roundtrip() {
+    fn handshake_packet_vector_roundtrip() {
         /*
         # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
         # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
@@ -899,7 +903,7 @@ mod tests {
         let encoded = &hex!(
             "00000000000000000000000000000000088b3d4342774649305f313964a39e55ea96c005ad521d8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08da4bb252012b2cba3f4f374a90a75cff91f142fa9be3e0a5f3ef268ccb9065aeecfd67a999e7fdc137e062b2ec4a0eb92947f0d9a74bfbf44dfba776b21301f8b65efd5796706adff216ab862a9186875f9494150c4ae06fa4d1f0396c93f215fa4ef524f1eadf5f0f4126b79336671cbcf7a885b1f8bd2a5d839cf8"
         );
-        let read_key = hex!("4f9fac6de7567d1e3b1241dffe90f662").to_vec();
+        let read_key = hex!("4f9fac6de7567d1e3b1241dffe90f662");
 
         let packet = Packet::decode(&dest_id, &read_key, encoded).unwrap();
         let handshake = match packet {
@@ -921,13 +925,13 @@ mod tests {
         assert_eq!(
             handshake.message,
             Message::Ping(PingMessage {
-                req_id: hex!("00000001").to_vec(),
+                req_id: Bytes::from(hex!("00000001").as_slice()),
                 enr_seq: 1,
             })
         );
 
         let masking_iv = u128::from_be_bytes(encoded[..16].try_into().unwrap());
-        let nonce = hex!("ffffffffffffffffffffffff").to_vec();
+        let nonce = hex!("ffffffffffffffffffffffff");
         let mut buf = Vec::new();
         Packet::Handshake(handshake)
             .encode(&mut buf, masking_iv, &nonce, &dest_id, &read_key)
@@ -938,7 +942,7 @@ mod tests {
 
     /// Ping handshake message packet (flag 2, with ENR) from https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire-test-vectors.md
     #[test]
-    fn handshake_packet_with_enr_vector_test_roundtrip() {
+    fn handshake_packet_with_enr_vector_roundtrip() {
         let node_b_key = SecretKey::from_byte_array(&hex!(
             "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
         ))
@@ -948,8 +952,8 @@ mod tests {
         let encoded = &hex!(
             "00000000000000000000000000000000088b3d4342774649305f313964a39e55ea96c005ad539c8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08da4bb23698868350aaad22e3ab8dd034f548a1c43cd246be98562fafa0a1fa86d8e7a3b95ae78cc2b988ded6a5b59eb83ad58097252188b902b21481e30e5e285f19735796706adff216ab862a9186875f9494150c4ae06fa4d1f0396c93f215fa4ef524e0ed04c3c21e39b1868e1ca8105e585ec17315e755e6cfc4dd6cb7fd8e1a1f55e49b4b5eb024221482105346f3c82b15fdaae36a3bb12a494683b4a3c7f2ae41306252fed84785e2bbff3b022812d0882f06978df84a80d443972213342d04b9048fc3b1d5fcb1df0f822152eced6da4d3f6df27e70e4539717307a0208cd208d65093ccab5aa596a34d7511401987662d8cf62b139471"
         );
-        let nonce = hex!("ffffffffffffffffffffffff").to_vec();
-        let read_key = hex!("53b1c075f41876423154e157470c2f48").to_vec();
+        let nonce = hex!("ffffffffffffffffffffffff");
+        let read_key = hex!("53b1c075f41876423154e157470c2f48");
 
         let packet = Packet::decode(&dest_id, &read_key, encoded).unwrap();
         let handshake = match packet {
@@ -970,7 +974,7 @@ mod tests {
         assert_eq!(
             handshake.message,
             Message::Ping(PingMessage {
-                req_id: hex!("00000001").to_vec(),
+                req_id: Bytes::from(hex!("00000001").as_slice()),
                 enr_seq: 1,
             })
         );
@@ -990,7 +994,7 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_whoareyou_packet() {
+    fn encode_whoareyou_packet() {
         // # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
         // # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
         // # whoareyou.challenge-data = 0x000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000
@@ -1033,7 +1037,7 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_whoareyou_packet() {
+    fn decode_whoareyou_packet() {
         // # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
         // # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
         // # whoareyou.challenge-data = 0x000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000
@@ -1069,7 +1073,7 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_ping_packet() {
+    fn decode_ping_packet() {
         // # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
         // # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
         // # nonce = 0xffffffffffffffffffffffff
@@ -1097,12 +1101,12 @@ mod tests {
             "00000000000000000000000000000000088b3d4342774649325f313964a39e55ea96c005ad52be8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08dab84102ed931f66d1492acb308fa1c6715b9d139b81acbdcc"
         );
         // # read-key = 0x00000000000000000000000000000000
-        let read_key = [0; 16].to_vec();
+        let read_key = [0; 16];
         let packet = Packet::decode(&dest_id, &read_key, encoded).unwrap();
         let expected = Packet::Ordinary(Ordinary {
             src_id,
             message: Message::Ping(PingMessage {
-                req_id: hex!("00000001").to_vec(),
+                req_id: Bytes::from(hex!("00000001").as_slice()),
                 enr_seq: 2,
             }),
         });
@@ -1112,7 +1116,7 @@ mod tests {
 
     /// Ping message packet (flag 0) from https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire-test-vectors.md
     #[test]
-    fn ordinary_ping_packet_vector_test_roundtrip() {
+    fn ordinary_ping_packet_vector_roundtrip() {
         let node_b_key = SecretKey::from_byte_array(&hex!(
             "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
         ))
@@ -1122,8 +1126,8 @@ mod tests {
         let encoded = &hex!(
             "00000000000000000000000000000000088b3d4342774649325f313964a39e55ea96c005ad52be8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08dab84102ed931f66d1492acb308fa1c6715b9d139b81acbdcc"
         );
-        let nonce = hex!("ffffffffffffffffffffffff").to_vec();
-        let read_key = [0; 16].to_vec();
+        let nonce = hex!("ffffffffffffffffffffffff");
+        let read_key = [0; 16];
 
         let packet = Packet::decode(&dest_id, &read_key, encoded).unwrap();
         let expected = Packet::Ordinary(Ordinary {
@@ -1131,7 +1135,7 @@ mod tests {
                 "aaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb"
             )),
             message: Message::Ping(PingMessage {
-                req_id: hex!("00000001").to_vec(),
+                req_id: Bytes::from(hex!("00000001").as_slice()),
                 enr_seq: 2,
             }),
         });
@@ -1148,7 +1152,7 @@ mod tests {
     #[test]
     fn ping_packet_codec_roundtrip() {
         let pkt = PingMessage {
-            req_id: [1, 2, 3, 4].to_vec(),
+            req_id: Bytes::from_static(&[1, 2, 3, 4]),
             enr_seq: 4321,
         };
 
@@ -1161,7 +1165,7 @@ mod tests {
     #[test]
     fn pong_packet_codec_roundtrip() {
         let pkt = PongMessage {
-            req_id: 1234,
+            req_id: Bytes::from_static(&[1, 2, 3, 4]),
             enr_seq: 4321,
             recipient_addr: Ipv4Addr::BROADCAST.into(),
         };
@@ -1173,7 +1177,7 @@ mod tests {
     #[test]
     fn findnode_packet_codec_roundtrip() {
         let pkt = FindNodeMessage {
-            req_id: 1234,
+            req_id: Bytes::from_static(&[1, 2, 3, 4]),
             distance: vec![1, 2, 3, 4],
         };
 
@@ -1190,7 +1194,7 @@ mod tests {
         .into();
 
         let pkt = NodesMessage {
-            req_id: 1234,
+            req_id: Bytes::from_static(&[1, 2, 3, 4]),
             total: 2,
             nodes: vec![NodeRecord {
                 seq: 4321,
@@ -1206,7 +1210,7 @@ mod tests {
     #[test]
     fn talkreq_packet_codec_roundtrip() {
         let pkt = TalkReqMessage {
-            req_id: 1234,
+            req_id: Bytes::from_static(&[1, 2, 3, 4]),
             protocol: Bytes::from_static(&[1, 2, 3, 4]),
             request: Bytes::from_static(&[1, 2, 3, 4]),
         };
@@ -1218,7 +1222,7 @@ mod tests {
     #[test]
     fn talk_res_packet_codec_roundtrip() {
         let pkt = TalkResMessage {
-            req_id: 1234,
+            req_id: Bytes::from_static(&[1, 2, 3, 4]),
             response: b"\x00\x01\x02\x03".into(),
         };
 
@@ -1229,7 +1233,7 @@ mod tests {
     #[test]
     fn ticket_packet_codec_roundtrip() {
         let pkt = TicketMessage {
-            req_id: 1234,
+            req_id: Bytes::from_static(&[1, 2, 3, 4]),
             ticket: Bytes::from_static(&[1, 2, 3, 4]),
             wait_time: 5,
         };
