@@ -278,7 +278,7 @@ impl L1Committer {
 
             let block_hash = block.hash();
             checkpoint_blockchain
-                .add_block(block)
+                .add_block_pipeline(block)
                 .map_err(|err| CommitterError::FailedToCreateCheckpoint(err.to_string()))?;
 
             apply_fork_choice(checkpoint_store, block_hash, block_hash, block_hash)
