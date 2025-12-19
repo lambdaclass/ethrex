@@ -905,8 +905,7 @@ async fn deploy_contracts(
         Some(addr) if opts.tdx => addr,
         None if opts.tdx => {
             info!("Deploying TDXVerifier (if tdx_deploy_verifier is true)");
-            let tdx_verifier_address =
-                deploy_tdx_contracts(opts, tdx_controller_address)?;
+            let tdx_verifier_address = deploy_tdx_contracts(opts, tdx_controller_address)?;
 
             info!(address = %format!("{tdx_verifier_address:#x}"), "TDXVerifier deployed");
             tdx_verifier_address
