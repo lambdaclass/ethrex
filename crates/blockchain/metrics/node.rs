@@ -26,7 +26,14 @@ impl MetricsNode {
                 "ethrex_info",
                 "Node information including version and build details",
             ),
-            &["version", "commit", "branch", "rust_version", "target", "network"],
+            &[
+                "version",
+                "commit",
+                "branch",
+                "rust_version",
+                "target",
+                "network",
+            ],
         )
         .expect("Failed to create ethrex_info metric");
 
