@@ -16,15 +16,12 @@ geth --snapshot=false --state.scheme=path --history.chain=postmerge --history.lo
 
 You don't need a consensus node for this step, as you'll be telling Geth exactly which block you need.
 
-## Step 2: Initialize the Ethrex DB
 
-You'll need to run `ethrex` so it initializes the DB with the correct Genesis. Failing to do that will cause it to set the Genesis after the migration, removing the blocks we added from the canonical chain, making it try to sync from the first block.
-
-### Step 3: Run the `geth2ethrex` executable
+### Step 2: Run the `geth2ethrex` executable
 
 Usage is:
 ```shell
-./geth2ethrex --input_dir <geth_db_path> --output_dir <ethrex_db_path> <block_number>
+./geth2ethrex --input_dir <geth_db_path> --output_dir <ethrex_db_path> --network <network> <block_number>
 ```
 where:
 * `<geth_db_path>` is the path to Geth's database (by default `.ethereum/geth/<chain>`). The DB is opened read-only.
@@ -32,3 +29,5 @@ where:
 * `<BLOCK_NUMBER>` is the target block, typically the first post-merge block of the chain.
   * For Sepolia: 1450410
   * For Mainnet: 15537395
+
+If your goal is related to performance, you might want to add `--flatkeyvalue` to generate flatkeyvalues. Otherwise the measurements would likely not be representative of real life.
