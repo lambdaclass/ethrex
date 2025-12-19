@@ -736,26 +736,28 @@ impl FlatTrie {
                     }
                 },
                 NodeHandle::Branch { children_indices } => {
-                    let mut children_hashes: [Option<NodeHash>; 16] = [None; 16];
                     let mut any_pruned = false;
-                    for (i, child) in children_indices.iter().enumerate() {
-                        let Some(child_index) = child else {
-                            // no child for this index
-                            continue;
-                        };
-
+                    for child_index in children_indices.iter().flatten() {
                         if let Some(child_index) = child_index {
                             recursive(trie, *child_index)?;
-                            children_hashes[i] = Some(trie.hashes[*child_index].unwrap());
                         } else {
                             any_pruned = true;
                         }
                     }
 
+                    let mut children_hashes: [Option<NodeHash>; 16] = [None; 16];
+
                     if any_pruned {
                         let encoded_items = trie.get_encoded_items(index)?;
                         for (i, child) in children_indices.iter().enumerate() {
-                            if child.is_some_and(|index| index.is_none()) {
+                            let Some(child_index) = child else {
+                                // no child for this index
+                                continue;
+                            };
+
+                            if let Some(child_index) = child_index {
+                                children_hashes[i] = Some(trie.hashes[*child_index].unwrap());
+                            } else {
                                 children_hashes[i] = Some(decode_child(encoded_items[i]))
                             }
                         }
