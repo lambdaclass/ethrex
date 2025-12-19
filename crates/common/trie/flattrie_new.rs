@@ -530,6 +530,7 @@ impl FlatTrie {
             encoded_range: None,
         };
         self.nodes.push(node);
+        self.hashes.push(None);
         self.nodes.len() - 1
     }
 
@@ -543,6 +544,7 @@ impl FlatTrie {
             encoded_range: Some((start, end)),
         };
         self.nodes.push(node);
+        self.hashes.push(None);
         self.nodes.len() - 1
     }
 
