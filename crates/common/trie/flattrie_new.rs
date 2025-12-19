@@ -734,11 +734,21 @@ impl FlatTrie {
                         if let Some(child_index) = child {
                             recursive(trie, child_index)?;
                             children_hashes[i] = Some(trie.hashes[&child_index]);
-                        } else {
-                            let encoded_items = trie.get_encoded_items(index)?;
+                        }
+                    }
+
+                    let encoded_items = trie.get_encoded_items(index)?;
+                    for (i, child) in children_indices
+                        .clone()
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(i, c)| c.map(|c| (i, c)))
+                    {
+                        if child.is_none() {
                             children_hashes[i] = Some(decode_child(encoded_items[i]))
                         }
                     }
+
                     let encoded = encode_branch(children_hashes);
                     trie.hashes.insert(index, NodeHash::from_encoded(&encoded));
                 }
