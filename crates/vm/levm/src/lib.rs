@@ -16,4 +16,5 @@ pub mod utils;
 pub mod vm;
 pub use environment::*;
 pub mod account;
+#[cfg(feature = "perf_opcode_timings")]
 pub mod timings;

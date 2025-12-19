@@ -14,7 +14,6 @@ use crate::{
     precompiles::{
         self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
     },
-    timings::OPCODE_TIMINGS,
     tracing::LevmCallTracer,
 };
 use bytes::Bytes;
@@ -28,7 +27,6 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     mem,
     rc::Rc,
-    time::Instant,
 };
 
 pub type Storage = HashMap<U256, H256>;
@@ -459,19 +457,22 @@ impl<'a> VM<'a> {
             return result;
         }
 
-        let mut timings = OPCODE_TIMINGS.lock().expect("poison");
+        #[cfg(feature = "perf_opcode_timings")]
+        let mut timings = crate::timings::OPCODE_TIMINGS.lock().expect("poison");
 
         loop {
             let opcode = self.current_call_frame.next_opcode();
             self.advance_pc(1)?;
 
-            let opcode_time_start = Instant::now();
+            #[cfg(feature = "perf_opcode_timings")]
+            let opcode_time_start = std::time::Instant::now();
 
             // Call the opcode, using the opcode function lookup table.
             // Indexing will not panic as all the opcode values fit within the table.
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
             let op_result = self.opcode_table[opcode as usize].call(self);
 
+            #[cfg(feature = "perf_opcode_timings")]
             {
                 let time = opcode_time_start.elapsed();
                 timings.update(opcode, time);

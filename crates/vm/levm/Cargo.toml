@@ -65,6 +65,7 @@ sp1 = ["dep:substrate-bn"]
 risc0 = ["dep:substrate-bn", "c-kzg"]
 zisk = ["dep:substrate-bn", "dep:ziskos"]
 openvm = ["ethrex-common/openvm"]
+perf_opcode_timings = []
 
 [lints.rust]
 unsafe_code = "warn"

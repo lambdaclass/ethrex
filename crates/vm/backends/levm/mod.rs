@@ -26,6 +26,7 @@ use ethrex_levm::constants::{
 };
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
+#[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::OPCODE_TIMINGS;
 use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::utils::get_base_fee_per_blob_gas;
@@ -158,6 +159,7 @@ impl LEVM {
             receipts.push(receipt);
         }
 
+        #[cfg(feature = "perf_opcode_timings")]
         {
             let mut timings = OPCODE_TIMINGS.lock().expect("poison");
             timings.inc_tx_count(receipts.len());
