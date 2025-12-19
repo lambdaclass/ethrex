@@ -94,7 +94,7 @@ export $(cat cmd/.env | xargs); export COMPILE_CONTRACTS=true; target/release/et
     --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
 ```
 
-5. In a second terminal, start the second sequencer and set `--admin.start-at` to the desired number. Keep it connected to the first sequencer via `--bootnodes` and point `--admin.l2-safe-url` to the first sequencer’s HTTP endpoint:
+5. In a second terminal, start the second sequencer and set `--admin.start-at` to the desired number. Keep it connected to the first sequencer via `--bootnodes` and point `--admin.l2-head-check-rpc-url` to the first sequencer’s HTTP endpoint:
 
 ```bash
 export $(cat cmd/.env | xargs); export COMPILE_CONTRACTS=true;
@@ -121,7 +121,7 @@ export $(cat cmd/.env | xargs); export COMPILE_CONTRACTS=true;
     --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
     --admin.start-at 10 \
     --bootnodes enode://bbdc069e0513b13e92093e0b51d75c0fa7c5dd7c6aad40ee5055ed307c0516c8e78499696c77f1bab41aaf8ec827e7d319f393705c8f7d876f1bd9462e5b94ab@127.0.0.1:30303 \
-    --admin.l2-safe-url http://localhost:1729
+    --admin.l2-head-check-rpc-url http://localhost:1729
 ```
 
 6. Finally, stop the first sequencer at the same number:

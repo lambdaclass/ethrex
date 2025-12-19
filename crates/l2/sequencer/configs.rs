@@ -117,5 +117,5 @@ pub struct AdminConfig {
     pub listen_ip: IpAddr,
     pub listen_port: u16,
     pub start_at: u64,
-    pub l2_safe_url: Option<Url>,
+    pub l2_head_check_rpc_url: Option<Url>,
 }

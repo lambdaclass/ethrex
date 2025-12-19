@@ -248,7 +248,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 listen_ip: opts.admin_opts.admin_listen_ip,
                 listen_port: opts.admin_opts.admin_listen_port,
                 start_at: opts.admin_opts.start_at,
-                l2_safe_url: opts.admin_opts.l2_safe_url,
+                l2_head_check_rpc_url: opts.admin_opts.l2_head_check_rpc_url,
             },
         })
     }
@@ -1011,20 +1011,20 @@ pub struct AdminOptions {
         default_value = "0",
         value_name = "UINT64",
         env = "ETHREX_ADMIN_START_AT",
-        requires = "l2_safe_url",
+        requires = "l2_head_check_rpc_url",
         help = "Starting L2 block to start producing blocks",
         help_heading = "Admin server options"
     )]
     pub start_at: u64,
     #[arg(
-        long = "admin.l2-safe-url",
+        long = "admin.l2-head-check-rpc-url",
         value_name = "URL",
-        env = "ETHREX_ADMIN_L2_SAFE_URL",
+        env = "ETHREX_ADMIN_L2_HEAD_CHECK_RPC_URL",
         requires = "start_at",
-        help = "Which RPC node to know if it is up to date",
+        help = "L2 JSON-RPC endpoint used only to query the L2 head when `--admin.start-at` is set",
         help_heading = "Admin server options"
     )]
-    pub l2_safe_url: Option<Url>,
+    pub l2_head_check_rpc_url: Option<Url>,
 }
 
 impl Default for AdminOptions {
@@ -1033,7 +1033,7 @@ impl Default for AdminOptions {
             admin_listen_ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             admin_listen_port: 5555,
             start_at: 0,
-            l2_safe_url: None,
+            l2_head_check_rpc_url: None,
         }
     }
 }
