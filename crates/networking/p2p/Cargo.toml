@@ -46,11 +46,12 @@ serde_json = "1.0.117"
 concat-kdf = "0.1.0"
 hmac = "0.12.1"
 aes = "0.8.4"
-aes-gcm = "0.10.3"
 ctr = "0.9.2"
 rand = "0.8.5"
 
-hkdf = "0.12.4"
+# discv5
+aes-gcm = { version = "0.10.3", optional = true }
+hkdf = { version = "0.12.4", optional = true }
 
 rayon = "1.10.0"
 crossbeam.workspace = true
@@ -69,7 +70,7 @@ l2 = ["dep:ethrex-storage-rollup"]
 test-utils = []
 metrics = ["dep:ethrex-metrics"]
 # discv5 is currently experimental and should only be enabled for development purposes
-experimental-discv5 = []
+experimental-discv5 = ["dep:aes-gcm", "dep:hkdf"]
 
 [lints.clippy]
 unwrap_used = "deny"
