@@ -39,7 +39,48 @@ use std::cmp::min;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
+
+#[derive(Default, Debug)]
+struct OpcodeTimingAccumulator {
+    totals: HashMap<Opcode, Duration>,
+    blocks: usize,
+    txs: usize,
+}
+
+impl OpcodeTimingAccumulator {
+    fn update(
+        &mut self,
+        timings: &HashMap<Opcode, Duration>,
+        tx_count: usize,
+    ) -> (HashMap<Opcode, Duration>, usize, usize) {
+        self.blocks += 1;
+        self.txs += tx_count;
+        for (opcode, duration) in timings {
+            *self.totals.entry(*opcode).or_default() += *duration;
+        }
+        let average = if self.blocks == 0 {
+            HashMap::new()
+        } else {
+            self.totals
+                .iter()
+                .map(|(opcode, total)| {
+                    (
+                        *opcode,
+                        Duration::from_secs_f64(
+                            total.as_secs_f64() / self.blocks as f64,
+                        ),
+                    )
+                })
+                .collect()
+        };
+        (average, self.blocks, self.txs)
+    }
+}
+
+static OPCODE_TIMINGS_AVERAGE: LazyLock<Mutex<OpcodeTimingAccumulator>> =
+    LazyLock::new(|| Mutex::new(OpcodeTimingAccumulator::default()));
 
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
@@ -167,6 +208,17 @@ impl LEVM {
         let time_ms = start.elapsed();
         info!("[PERF] execute_tx_in_block  {:?}", time_ms);
         info!("[PERF] execute vm opcodes aggregate:\n{:#?}", timings);
+        let tx_count = receipts.len();
+        let (avg_timings, blocks_seen, txs_seen) = {
+            let mut guard = OPCODE_TIMINGS_AVERAGE
+                .lock()
+                .expect("opcode timings accumulator poisoned");
+            guard.update(&timings, tx_count)
+        };
+        info!(
+            "[PERF] opcode timings avg per block (blocks={}, txs={}):\n{:#?}",
+            blocks_seen, txs_seen, avg_timings
+        );
         if queue_length.load(Ordering::Relaxed) == 0 {
             LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
         }
