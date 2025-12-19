@@ -67,6 +67,10 @@ contract OnChainProposer is
     /// @dev This is crucial for ensuring that only subsequents batches are committed in the contract.
     uint256 public lastCommittedBatch;
 
+    /// @dev Deprecated variable. This is managed inside the Timelock.
+    mapping(address _authorizedAddress => bool)
+        public authorizedSequencerAddresses;
+
     address public BRIDGE;
     /// @dev Deprecated variable.
     address public PICO_VERIFIER_ADDRESS;
