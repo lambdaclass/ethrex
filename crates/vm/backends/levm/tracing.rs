@@ -67,7 +67,7 @@ impl LEVM {
             vm_type,
         )?;
 
-        vm.execute()?;
+        vm.execute(&mut Default::default())?;
 
         let callframe = vm.get_trace_result()?;
 

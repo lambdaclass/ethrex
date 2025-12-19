@@ -49,7 +49,7 @@ use std::{
         Arc, Mutex,
         atomic::AtomicU64,
         mpsc::{SyncSender, TryRecvError, sync_channel},
-    },
+    }, time::Instant,
 };
 use tracing::{debug, error, info};
 /// Number of state trie segments to fetch concurrently during state sync
@@ -1142,6 +1142,7 @@ impl Store {
     }
 
     fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+        let start = Instant::now();
         let db = self.backend.clone();
         let parent_state_root = self
             .get_block_header_by_hash(
@@ -1227,6 +1228,8 @@ impl Store {
             .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
         // After top-level is added, we can make the rest of the changes visible.
         tx.commit()?;
+        let time_ms = start.elapsed();
+        info!("[PERF] store block {:?}", time_ms);
 
         Ok(())
     }

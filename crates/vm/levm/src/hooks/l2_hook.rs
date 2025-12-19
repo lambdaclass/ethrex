@@ -667,7 +667,7 @@ fn simulate_common_bridge_call(
     )?;
     new_vm.hooks = vec![];
     default_hook::set_bytecode_and_code_address(&mut new_vm)?;
-    let execution_result = new_vm.execute()?;
+    let execution_result = new_vm.execute(&mut Default::default())?;
 
     Ok((execution_result, db_clone))
 }

@@ -176,7 +176,7 @@ fn main() {
         .store_data(0, &runner_input.initial_memory);
 
     // Execute Transaction
-    let result = vm.execute();
+    let result = vm.execute(&mut Default::default());
 
     // Print execution result
     info!("\n\nResult:");

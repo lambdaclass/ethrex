@@ -10,7 +10,7 @@ use crate::{
         hook::{Hook, get_hooks},
     },
     memory::Memory,
-    opcodes::OpCodeFn,
+    opcodes::{OpCodeFn, Opcode},
     precompiles::{
         self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
     },
@@ -22,11 +22,9 @@ use ethrex_common::{
     tracing::CallType,
     types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
 };
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::{
-    cell::RefCell,
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-    mem,
-    rc::Rc,
+    cell::RefCell, collections::{BTreeMap, BTreeSet, HashMap, HashSet}, mem, ops::Add, rc::Rc, time::{Duration, Instant}
 };
 
 pub type Storage = HashMap<U256, H256>;
@@ -406,7 +404,7 @@ impl<'a> VM<'a> {
     }
 
     /// Executes a whole external transaction. Performing validations at the beginning.
-    pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
+    pub fn execute(&mut self, timings: &mut HashMap<Opcode, Duration>) -> Result<ExecutionReport, VMError> {
         if let Err(e) = self.prepare_execution() {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.
             self.restore_cache_state()?;
@@ -426,15 +424,21 @@ impl<'a> VM<'a> {
         }
 
         self.substate.push_backup();
-        let context_result = self.run_execution()?;
+        let start = Instant::now();
+        let context_result = self.run_execution(timings)?;
+        let time_ms = start.elapsed();
+        println!("[PERF] vm run_execution {:?}", time_ms);
 
+        let start = Instant::now();
         let report = self.finalize_execution(context_result)?;
+        let time_ms = start.elapsed();
+        println!("[PERF] vm finalize exec {:?}", time_ms);
 
         Ok(report)
     }
 
     /// Main execution loop.
-    pub fn run_execution(&mut self) -> Result<ContextResult, VMError> {
+    pub fn run_execution(&mut self, timings: &mut HashMap<Opcode, Duration>) -> Result<ContextResult, VMError> {
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         if precompiles::is_precompile(
             &self.current_call_frame.to,
@@ -461,10 +465,14 @@ impl<'a> VM<'a> {
             let opcode = self.current_call_frame.next_opcode();
             self.advance_pc(1)?;
 
+            let start = Instant::now();
             // Call the opcode, using the opcode function lookup table.
             // Indexing will not panic as all the opcode values fit within the table.
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
             let op_result = self.opcode_table[opcode as usize].call(self);
+            let time = start.elapsed();
+            let timing = timings.entry(Opcode::from(opcode)).or_default();
+            *timing = timing.add(time);
 
             let result = match op_result {
                 Ok(OpcodeResult::Continue) => continue,
@@ -475,6 +483,7 @@ impl<'a> VM<'a> {
             // Return the ExecutionReport if the executed callframe was the first one.
             if self.is_initial_call_frame() {
                 self.handle_state_backup(&result)?;
+
                 return Ok(result);
             }
 
@@ -509,7 +518,7 @@ impl<'a> VM<'a> {
     pub fn stateless_execute(&mut self) -> Result<ExecutionReport, VMError> {
         // Add backup hook to restore state after execution.
         self.add_hook(BackupHook::default());
-        let report = self.execute()?;
+        let report = self.execute(&mut Default::default())?;
         // Restore cache to the state before execution.
         self.db.undo_last_transaction()?;
         Ok(report)

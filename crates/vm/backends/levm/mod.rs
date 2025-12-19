@@ -25,6 +25,7 @@ use ethrex_levm::constants::{
 };
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
+use ethrex_levm::opcodes::Opcode;
 use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::utils::get_base_fee_per_blob_gas;
 use ethrex_levm::vm::VMType;
@@ -33,9 +34,12 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::VM,
 };
+use ::tracing::info;
 use std::cmp::min;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
+use std::time::{Duration, Instant};
 
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
@@ -102,7 +106,10 @@ impl LEVM {
         merkleizer: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
     ) -> Result<BlockExecutionResult, EvmError> {
+        let start = Instant::now();
         Self::prepare_block(block, db, vm_type)?;
+        let time_ms = start.elapsed();
+        info!("[PERF] prepare block {:?}", time_ms);
 
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
@@ -113,9 +120,16 @@ impl LEVM {
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
 
-        for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
+          let start = Instant::now();
+        let txs_with_sender = block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-        })? {
+        })?;
+        let time_ms = start.elapsed();
+        info!("[PERF] txs_with_sender {:?}", time_ms);
+
+          let start = Instant::now();
+          let mut timings = Default::default();
+        for (tx, tx_sender) in txs_with_sender {
             if cumulative_gas_used + tx.gas_limit() > block.header.gas_limit {
                 return Err(EvmError::Transaction(format!(
                     "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
@@ -131,6 +145,7 @@ impl LEVM {
                 db,
                 vm_type,
                 &mut shared_stack_pool,
+                &mut timings
             )?;
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
@@ -149,10 +164,14 @@ impl LEVM {
 
             receipts.push(receipt);
         }
+        let time_ms = start.elapsed();
+        info!("[PERF] execute_tx_in_block  {:?}", time_ms);
+        info!("[PERF] execute vm opcodes aggregate:\n{:#?}", timings);
         if queue_length.load(Ordering::Relaxed) == 0 {
             LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
         }
 
+           let start = Instant::now();
         for (address, increment) in block
             .body
             .withdrawals
@@ -167,6 +186,8 @@ impl LEVM {
 
             account.info.balance += increment.into();
         }
+        let time_ms = start.elapsed();
+        info!("[PERF] withdrawals  {:?}", time_ms);
 
         // TODO: I don't like deciding the behavior based on the VMType here.
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
@@ -250,7 +271,7 @@ impl LEVM {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
-        vm.execute().map_err(VMError::into)
+        vm.execute(&mut Default::default()).map_err(VMError::into)
     }
 
     // Like execute_tx but allows reusing the stack pool
@@ -264,12 +285,13 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         stack_pool: &mut Vec<Stack>,
+        timings: &mut HashMap<Opcode, Duration>,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         std::mem::swap(&mut vm.stack_pool, stack_pool);
-        let result = vm.execute().map_err(VMError::into);
+        let result = vm.execute(timings).map_err(VMError::into);
         std::mem::swap(&mut vm.stack_pool, stack_pool);
         result
     }
@@ -295,7 +317,7 @@ impl LEVM {
 
         let mut vm = vm_from_generic(tx, env, db, vm_type)?;
 
-        vm.execute()
+        vm.execute(&mut Default::default())
             .map(|value| value.into())
             .map_err(VMError::into)
     }
@@ -549,7 +571,7 @@ pub fn generic_system_contract_levm(
     let mut vm =
         VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type).map_err(EvmError::from)?;
 
-    let report = vm.execute().map_err(EvmError::from)?;
+    let report = vm.execute(&mut Default::default()).map_err(EvmError::from)?;
 
     if let Some(system_account) = system_account_backup {
         db.current_accounts_state
