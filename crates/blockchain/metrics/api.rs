@@ -25,7 +25,7 @@ pub(crate) async fn get_metrics() -> String {
     let mut ret_string = match METRICS_TX.gather_metrics() {
         Ok(string) => string,
         Err(_) => {
-            tracing::error!("Failed to register METRICS_TX");
+            tracing::error!("Failed to gather METRICS_TX");
             String::new()
         }
     };
@@ -33,38 +33,32 @@ pub(crate) async fn get_metrics() -> String {
     ret_string.push('\n');
     match gather_default_metrics() {
         Ok(string) => ret_string.push_str(&string),
-        Err(_) => {
-            tracing::error!("Failed to gather default Prometheus metrics");
-            return String::new();
-        }
+        Err(_) => tracing::error!("Failed to gather default Prometheus metrics"),
     };
 
     ret_string.push('\n');
     match METRICS_BLOCKS.gather_metrics() {
         Ok(string) => ret_string.push_str(&string),
-        Err(_) => {
-            tracing::error!("Failed to register METRICS_BLOCKS");
-            return String::new();
-        }
-    }
+        Err(_) => tracing::error!("Failed to gather METRICS_BLOCKS"),
+    };
 
     ret_string.push('\n');
     match METRICS_PROCESS.gather_metrics() {
         Ok(s) => ret_string.push_str(&s),
-        Err(_) => tracing::error!("Failed to register METRICS_PROCESS"),
+        Err(_) => tracing::error!("Failed to gather METRICS_PROCESS"),
     };
 
     ret_string.push('\n');
     match METRICS_P2P.gather_metrics() {
         Ok(s) => ret_string.push_str(&s),
-        Err(_) => tracing::error!("Failed to register METRICS_P2P"),
+        Err(_) => tracing::error!("Failed to gather METRICS_P2P"),
     };
 
     ret_string.push('\n');
     if let Some(node_metrics) = METRICS_NODE.get() {
         match node_metrics.gather_metrics() {
             Ok(s) => ret_string.push_str(&s),
-            Err(_) => tracing::error!("Failed to register METRICS_NODE"),
+            Err(_) => tracing::error!("Failed to gather METRICS_NODE"),
         };
     }
 
