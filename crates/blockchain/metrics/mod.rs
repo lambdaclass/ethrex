@@ -14,6 +14,8 @@ pub mod profiling;
 pub mod rpc;
 #[cfg(any(feature = "api", feature = "transactions"))]
 pub mod transactions;
+#[cfg(feature = "api")]
+pub mod node;
 
 /// A macro to conditionally enable metrics-related code.
 ///

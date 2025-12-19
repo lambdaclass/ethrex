@@ -113,6 +113,14 @@ pub fn init_tracing(
 }
 
 pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
+    // Initialize node version metrics
+    ethrex_metrics::node::MetricsNode::init(
+        env!("CARGO_PKG_VERSION"),
+        env!("VERGEN_GIT_SHA"),
+        env!("VERGEN_RUSTC_SEMVER"),
+        env!("VERGEN_RUSTC_HOST_TRIPLE"),
+    );
+
     tracing::info!(
         "Starting metrics server on {}:{}",
         opts.metrics_addr,
