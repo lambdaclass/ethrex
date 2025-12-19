@@ -224,10 +224,7 @@ jobs:
           tool: hyperfine@1.16
 
       - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
+        uses: ./.github/actions/install-solc
 
       - name: Run benchmarks
         run: |
