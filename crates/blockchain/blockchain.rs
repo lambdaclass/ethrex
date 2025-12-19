@@ -26,7 +26,7 @@ use ethrex_common::types::{
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
-use ethrex_common::{Address, H256, TrieLogger};
+use ethrex_common::{Address, H256, TrieLogger, U256};
 use ethrex_metrics::metrics;
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
@@ -136,7 +136,7 @@ enum MerklizationRequest {
     MerklizeStorage {
         prefix: H256,
         key: H256,
-        value: Vec<u8>,
+        value: U256,
     },
     MerklizeAccount {
         hashed_account: H256,
@@ -384,11 +384,7 @@ impl Blockchain {
                         .send(MerklizationRequest::MerklizeStorage {
                             prefix: hashed_address,
                             key: hashed_key,
-                            value: if value.is_zero() {
-                                vec![]
-                            } else {
-                                value.encode_to_vec()
-                            },
+                            value,
                         })
                         .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                 }
@@ -601,10 +597,10 @@ impl Blockchain {
                             vacant_entry.insert(self.load_trie(parent_header, Some(prefix))?)
                         }
                     };
-                    if value.is_empty() {
+                    if value.is_zero() {
                         trie.remove(&key.as_bytes().to_vec())?;
                     } else {
-                        trie.insert(key.as_bytes().to_vec(), value)?;
+                        trie.insert(key.as_bytes().to_vec(), value.encode_to_vec())?;
                     }
                 }
                 MerklizationRequest::MerklizeAccount {
