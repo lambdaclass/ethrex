@@ -1410,7 +1410,7 @@ impl Blockchain {
 
         // Validate blobs bundle after checking if its already added.
         if let Transaction::EIP4844Transaction(transaction) = &transaction {
-            blobs_bundle.validate(&transaction, fork)?;
+            blobs_bundle.validate(transaction, fork)?;
         }
 
         let sender = transaction.sender()?;
