@@ -27,8 +27,9 @@ const PROTOCOL_ID: &[u8] = b"discv5";
 const PROTOCOL_VERSION: u16 = 0x0001;
 // masking-iv size for a u128
 const IV_MASKING_SIZE: usize = 16;
-// static_header end limit: 23 bytes from static_header + 16 from iv_masking
-const STATIC_HEADER_END: usize = IV_MASKING_SIZE + 23;
+// static_header size is 23 bytes
+const STATIC_HEADER_SIZE: usize = 23;
+const STATIC_HEADER_END: usize = IV_MASKING_SIZE + STATIC_HEADER_SIZE;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PacketCodecError {
@@ -63,7 +64,7 @@ pub enum Packet {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PacketHeader {
-    pub static_header: Vec<u8>,
+    pub static_header: [u8; STATIC_HEADER_SIZE],
     pub flag: u8,
     pub nonce: [u8; 12],
     pub authdata: Vec<u8>,
@@ -94,7 +95,7 @@ impl Packet {
         match packet_header.flag {
             0x00 => Ok(Packet::Ordinary(Ordinary::decode(
                 masking_iv,
-                packet_header.static_header,
+                &packet_header.static_header,
                 packet_header.authdata,
                 &packet_header.nonce,
                 decrypt_key,
@@ -160,7 +161,8 @@ impl Packet {
         encoded_packet: &[u8],
     ) -> Result<PacketHeader, PacketCodecError> {
         // static header
-        let mut static_header = encoded_packet[IV_MASKING_SIZE..STATIC_HEADER_END].to_vec();
+        let mut static_header: [u8; STATIC_HEADER_SIZE] =
+            encoded_packet[IV_MASKING_SIZE..STATIC_HEADER_END].try_into()?;
 
         cipher.try_apply_keystream(&mut static_header)?;
 
@@ -249,7 +251,7 @@ impl Ordinary {
 
     pub fn decode(
         masking_iv: &[u8],
-        static_header: Vec<u8>,
+        static_header: &[u8; STATIC_HEADER_SIZE],
         authdata: Vec<u8>,
         nonce: &[u8; 12],
         decrypt_key: &[u8],
@@ -266,7 +268,7 @@ impl Ordinary {
         // message-pt = message-type || message-data
         // message-ad = masking-iv || header
         let mut message_ad = masking_iv.to_vec();
-        message_ad.extend_from_slice(&static_header);
+        message_ad.extend_from_slice(&static_header.as_slice());
         message_ad.extend_from_slice(&authdata);
 
         let mut message = encrypted_message.to_vec();
