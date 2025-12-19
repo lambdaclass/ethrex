@@ -210,6 +210,7 @@ impl Blockchain {
         ),
         ChainError,
     > {
+        coz::scope!("execute_block_pipeline");
         let start_instant = Instant::now();
 
         let chain_config = self.storage.get_chain_config();
@@ -228,6 +229,7 @@ impl Blockchain {
             let execution_handle = std::thread::Builder::new()
                 .name("block_executor_execution".to_string())
                 .spawn_scoped(s, move || -> Result<_, ChainError> {
+                    coz::scope!("block_execution");
                     let execution_result =
                         vm.execute_block_pipeline(block, tx, queue_length_ref)?;
 
@@ -248,6 +250,7 @@ impl Blockchain {
             let merkleize_handle = std::thread::Builder::new()
                 .name("block_executor_merkleizer".to_string())
                 .spawn_scoped(s, move || -> Result<_, StoreError> {
+                    coz::scope!("block_merklization");
                     let account_updates_list = self.handle_merkleization(
                         s,
                         rx,
@@ -294,6 +297,7 @@ impl Blockchain {
         rx: Receiver<Vec<(H256, AccountUpdate)>>,
         parent_header: &BlockHeader,
     ) -> Result<PartialMerkleizationResults, StoreError> {
+        coz::scope!("merklization_subtrie");
         let mut state_trie = self
             .storage
             .state_trie(parent_header.hash())?
@@ -340,6 +344,7 @@ impl Blockchain {
         'a: 's,
         'b: 's,
     {
+        coz::scope!("merklization");
         // Fetch the old root from the DB and decode it
         let old_root_opt = self
             .storage
@@ -1030,6 +1035,7 @@ impl Blockchain {
         account_updates_list: AccountUpdatesList,
         execution_result: BlockExecutionResult,
     ) -> Result<(), ChainError> {
+        coz::scope!("store");
         // Check state root matches the one in block header
         validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
 
@@ -1084,6 +1090,7 @@ impl Blockchain {
     }
 
     pub fn add_block_pipeline(&self, block: Block) -> Result<(), ChainError> {
+        coz::scope!("add_block_pipeline");
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
