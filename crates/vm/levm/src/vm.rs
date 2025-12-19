@@ -459,6 +459,8 @@ impl<'a> VM<'a> {
             return result;
         }
 
+        let mut timings = OPCODE_TIMINGS.lock().expect("poison");
+
         loop {
             let opcode = self.current_call_frame.next_opcode();
             self.advance_pc(1)?;
@@ -472,7 +474,7 @@ impl<'a> VM<'a> {
 
             {
                 let time = opcode_time_start.elapsed();
-                OPCODE_TIMINGS.lock().expect("poison").update(opcode, time);
+                timings.update(opcode, time);
             }
 
             let result = match op_result {
