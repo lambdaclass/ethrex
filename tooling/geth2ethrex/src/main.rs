@@ -354,6 +354,15 @@ fn geth2ethrex(mut store: Store, block_number: BlockNumber, args: &Args) -> eyre
             rt.block_on(store.add_account_code(Code::from_bytecode(code.into())))?;
         }
         let migration_time = migration_start.elapsed().as_secs_f64();
+        if args.fkv {
+            store.generate_flatkeyvalue()?;
+            while store.last_written()? != vec![0xff] {
+                std::thread::sleep(Duration::from_secs(60));
+                let current = store.store.last_written()?;
+                info!("FKV generation in progress. Current={current:?}");
+            }
+            info!("FKV generation complete");
+        }
         info!("Migration complete in {migration_time} seconds");
     }
 
@@ -668,4 +677,10 @@ struct Args {
         value_parser = clap::value_parser!(Network),
     )]
     pub network: Network,
+    #[arg(
+        long = "flatkeyvalue",
+        help = "If true, generates FlatKeyValues",
+        default_value = "false"
+    )]
+    pub fkv: bool,
 }
