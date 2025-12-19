@@ -348,8 +348,8 @@ pub async fn init_l2(
     }
     tokio::time::sleep(Duration::from_secs(1)).await;
     info!("Shutting down stores...");
-    store_for_shutdown.shutdown();
     rollup_store_for_shutdown.shutdown();
+    store_for_shutdown.shutdown();
     info!("Server shutting down!");
     Ok(())
 }
