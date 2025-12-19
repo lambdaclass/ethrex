@@ -135,7 +135,7 @@ async fn main() -> eyre::Result<()> {
         return subcommand.run(&opts).await;
     }
 
-    let log_filter_handler = init_tracing(&opts);
+    let (log_filter_handler, _guard) = init_tracing(&opts);
 
     info!("ethrex version: {}", get_client_version());
     tokio::spawn(periodically_check_version_update());

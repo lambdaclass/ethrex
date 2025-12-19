@@ -63,6 +63,9 @@ Node options:
 
           [default: auto]
 
+      --log.dir <LOG_DIR>
+          Directory to store log files.
+
       --mempool.maxsize <MEMPOOL_MAX_SIZE>
           Maximum size of the mempool in number of transactions
 
@@ -157,7 +160,7 @@ Block building options:
       --builder.extra-data <EXTRA_DATA>
           Block extra data message.
 
-          [default: "ethrex 7.0.0"]
+          [default: "ethrex 8.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -329,7 +332,7 @@ Block building options:
       --builder.extra-data <EXTRA_DATA>
           Block extra data message.
 
-          [default: "ethrex 7.0.0"]
+          [default: "ethrex 8.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
