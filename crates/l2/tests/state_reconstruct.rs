@@ -60,7 +60,7 @@ async fn test_state_reconstruct() {
     // test_state_block(&addresses, 6, 50).await;
     // test_state_block(&addresses, 11, 100).await;
     // test_state_block(&addresses, 16, 150).await;
-    test_state_block(&addresses, 24, addresses.len() as u64).await;
+    test_state_block(&addresses, 33, addresses.len() as u64).await;
 }
 
 async fn test_state_block(addresses: &[Address], block_number: u64, rich_accounts: u64) {

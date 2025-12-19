@@ -137,6 +137,10 @@ pub fn download_script() {
             &Path::new("../../crates/l2/contracts/src/l2/FeeTokenRegistry.sol"),
             "FeeTokenRegistry",
         ),
+        (
+            &Path::new("../../crates/l2/contracts/src/l2/FeeTokenPricer.sol"),
+            "FeeTokenPricer",
+        ),
     ];
     for (path, name) in l2_contracts {
         compile_contract_to_bytecode(
@@ -167,6 +171,7 @@ pub fn download_script() {
         false,
         Some(&remappings),
         &[contracts_path],
+        Some(999999),
     )
     .unwrap();
 
@@ -259,6 +264,7 @@ fn compile_contract_to_bytecode(
         abi_json,
         remappings,
         allow_paths,
+        Some(999999),
     )
     .expect("Failed to compile contract");
     println!("Successfully compiled {contract_name} contract");
@@ -291,8 +297,8 @@ fn decode_to_bytecode(input_file_path: &Path, output_file_path: &Path) {
 
 use ethrex_l2_sdk::{
     COMMON_BRIDGE_L2_ADDRESS, CREATE2DEPLOYER_ADDRESS, DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS,
-    FEE_TOKEN_REGISTRY_ADDRESS, L2_TO_L1_MESSENGER_ADDRESS, SAFE_SINGLETON_FACTORY_ADDRESS,
-    address_to_word, get_erc1967_slot,
+    FEE_TOKEN_PRICER_ADDRESS, FEE_TOKEN_REGISTRY_ADDRESS, L2_TO_L1_MESSENGER_ADDRESS,
+    SAFE_SINGLETON_FACTORY_ADDRESS, address_to_word, get_erc1967_slot,
 };
 
 #[allow(clippy::enum_variant_names)]
@@ -352,6 +358,12 @@ fn l2_to_l1_messenger_runtime(out_dir: &Path) -> Vec<u8> {
 /// Bytecode of the FeeTokenRegistry contract.
 fn fee_token_registry_runtime(out_dir: &Path) -> Vec<u8> {
     let path = out_dir.join("contracts/solc_out/FeeTokenRegistry.bytecode");
+    fs::read(path).expect("Failed to read bytecode file")
+}
+
+/// Bytecode of the FeeTokenPricer contract.
+fn fee_token_pricer_runtime(out_dir: &Path) -> Vec<u8> {
+    let path = out_dir.join("contracts/solc_out/FeeTokenPricer.bytecode");
     fs::read(path).expect("Failed to read bytecode file")
 }
 
@@ -465,7 +477,14 @@ pub fn update_genesis_file(
         out_dir,
     )?;
 
-    for address in 0xff00..0xfffc {
+    add_with_proxy(
+        &mut genesis,
+        FEE_TOKEN_PRICER_ADDRESS,
+        fee_token_pricer_runtime(out_dir),
+        out_dir,
+    )?;
+
+    for address in 0xff00..0xfffb {
         add_placeholder_proxy(&mut genesis, Address::from_low_u64_be(address), out_dir)?;
     }
 

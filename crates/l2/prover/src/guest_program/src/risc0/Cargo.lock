@@ -1137,7 +1137,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "bytes",
  "ethrex-common",
@@ -1157,7 +1157,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -1186,7 +1186,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "c-kzg",
  "kzg-rs",
@@ -1196,7 +1196,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1218,7 +1218,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1250,7 +1250,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "ethrex-common",
  "serde",
@@ -1261,7 +1261,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1274,11 +1274,10 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "bincode",
  "bytes",
  "ethereum-types",
  "ethrex-common",
@@ -1293,6 +1292,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
  "tracing",
 ]
 
@@ -1305,7 +1305,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1328,7 +1328,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "bincode",
  "bytes",
@@ -1568,7 +1568,7 @@ dependencies = [
 
 [[package]]
 name = "guest_program"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "bincode",
  "bytes",
@@ -4055,7 +4055,7 @@ dependencies = [
 
 [[package]]
 name = "zkvm-risc0-program"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "c-kzg",
  "ethrex-blockchain",
