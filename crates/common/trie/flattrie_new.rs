@@ -755,10 +755,7 @@ impl FlatTrie {
 
                     if all_pruned {
                         trie.hashes[index] = Some(trie.hash_encoded_data(index));
-                        return Ok(());
-                    }
-
-                    if any_pruned {
+                    } else if any_pruned {
                         let encoded_items = trie.get_encoded_items(index)?;
                         for (i, child) in children_indices
                             .iter()
@@ -769,9 +766,10 @@ impl FlatTrie {
                                 children_hashes[i] = Some(decode_child(encoded_items[i]))
                             }
                         }
+
+                        let encoded = encode_branch(children_hashes);
+                        trie.hashes[index] = Some(NodeHash::from_encoded(&encoded));
                     }
-                    let encoded = encode_branch(children_hashes);
-                    trie.hashes[index] = Some(NodeHash::from_encoded(&encoded));
                 }
             }
             Ok(())
