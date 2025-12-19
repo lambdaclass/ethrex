@@ -94,12 +94,13 @@ contract Router is
         if (bridges[chainId] == address(0)) {
             revert TransferToChainNotRegistered(chainId);
         } else {
-            ICommonBridge(bridges[chainId]).receiveERC20FromSharedBridge(
+            address receiverBridge = bridges[chainId];
+            ICommonBridge(receiverBridge).receiveERC20FromSharedBridge(
                 tokenL1,
                 destTokenL2,
                 amount
             );
-            IERC20(tokenL1).safeTransfer(bridges[chainId], amount);
+            IERC20(tokenL1).safeTransferFrom(msg.sender, receiverBridge, amount);
         }
     }
 

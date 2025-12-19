@@ -472,7 +472,7 @@ contract CommonBridge is
                         "CommonBridge: trying to withdraw more tokens than were deposited"
                     );
                     deposits[tv.tokenL1][tv.tokenL2] -= tv.value;
-                    IERC20(tv.tokenL1).safeTransfer(
+                    IERC20(tv.tokenL1).forceApprove(
                         SHARED_BRIDGE_ROUTER,
                         tv.value
                     );

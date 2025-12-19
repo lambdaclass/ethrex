@@ -18,6 +18,7 @@ interface IRouter {
     function sendETHValue(uint256 chainId) external payable;
 
     /// @notice Sends a ERC20 token message to a specified chain via its CommonBridge.
+    /// @dev The caller (source chain CommonBridge) must approve the Router to spend at least `amount` of `tokenL1`.
     /// @param senderChainId The ID of the source chain.
     /// @param chainId The ID of the destination chain.
     /// @param tokenL1 The address of the ERC20 L1 token to send.
