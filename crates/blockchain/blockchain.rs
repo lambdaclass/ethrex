@@ -1400,17 +1400,19 @@ impl Blockchain {
         transaction: EIP4844Transaction,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, MempoolError> {
-        // Validate blobs bundle
-
         let fork = self.current_fork().await?;
-
-        blobs_bundle.validate(&transaction, fork)?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
         let hash = transaction.hash();
         if self.mempool.contains_tx(hash)? {
             return Ok(hash);
         }
+
+        // Validate blobs bundle after checking if its already added.
+        if let Transaction::EIP4844Transaction(transaction) = &transaction {
+            blobs_bundle.validate(&transaction, fork)?;
+        }
+
         let sender = transaction.sender()?;
 
         // Validate transaction
