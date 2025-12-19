@@ -431,6 +431,8 @@ pub async fn process_blocks_on_queue(
     {
         next_block_to_add = next_block_to_add.max(latest_batch.last_block + 1);
     }
+    filter_potential_old_blocks(l2_state, next_block_to_add);
+
     while let Some(queued) = l2_state.blocks_on_queue.remove(&next_block_to_add) {
         let QueuedBlock { block, fee_config } = queued;
         // This check is necessary if a connection to another peer already applied the block but this connection
@@ -477,6 +479,27 @@ pub async fn process_blocks_on_queue(
         next_block_to_add += 1;
     }
     Ok(())
+}
+
+fn filter_potential_old_blocks(l2_state: &mut L2ConnectedState, next_block_to_add: u64) {
+    let keys_to_remove = if let Some(block_entry) = l2_state.blocks_on_queue.first_entry()
+        && block_entry.key() < &next_block_to_add
+    {
+        let mut keys = vec![];
+        for key in l2_state.blocks_on_queue.keys() {
+            if *key < next_block_to_add {
+                keys.push(*key);
+            } else {
+                break;
+            }
+        }
+        keys
+    } else {
+        vec![]
+    };
+    for key in keys_to_remove {
+        l2_state.blocks_on_queue.remove(&key);
+    }
 }
 
 pub(crate) async fn send_sealed_batch(
