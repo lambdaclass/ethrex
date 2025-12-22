@@ -79,9 +79,7 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable, ITimelock {
 
     /// @notice Returns whether an address has the sequencer role.
     /// @dev This matches the legacy OnChainProposer mapping used by TDXVerifier.
-    function authorizedSequencerAddresses(
-        address addr
-    ) external view returns (bool) {
+    function isSequencer(address addr) external view returns (bool) {
         return hasRole(SEQUENCER, addr);
     }
 

@@ -33,9 +33,7 @@ interface ITimelock {
     ) external;
 
     /// @notice Returns whether an address has the sequencer role.
-    function authorizedSequencerAddresses(
-        address addr
-    ) external view returns (bool);
+    function isSequencer(address addr) external view returns (bool);
 
     /// @notice Commits a batch through the timelock.
     function commitBatch(
