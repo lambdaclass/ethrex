@@ -45,7 +45,7 @@ pub struct EncodedTrie {
     hashes: Vec<Option<NodeHash>>,
 }
 
-/// A view into a particular node
+/// A handle into a particular node
 #[derive(
     Clone, serde::Serialize, serde::Deserialize, rkyv::Serialize, rkyv::Deserialize, rkyv::Archive,
 )]
@@ -67,14 +67,8 @@ pub struct Node {
 )]
 pub enum NodeHandle {
     Leaf {
-        /// Overrides the encoded partial
-        partial: Option<Nibbles>,
-        /// Overrides the encoded value
-        value: Option<Vec<u8>>,
     },
     Extension {
-        /// Overrides the encoded prefix
-        prefix: Option<Nibbles>,
         /// Reference to the child. If None, then the child is pruned.
         child_index: Option<usize>,
     },
@@ -83,6 +77,21 @@ pub enum NodeHandle {
         /// - If None, then there is no child for that choice.
         /// - If Some(None), then there is a child but its pruned.
         children_indices: [Option<Option<usize>>; 16],
+    },
+}
+
+pub enum NodeOverride {
+    Leaf {
+        /// Overrides the encoded partial
+        partial: Option<Nibbles>,
+        /// Overrides the encoded value
+        value: Option<Vec<u8>>,
+    },
+    Extension {
+        /// Overrides the encoded prefix
+        prefix: Option<Nibbles>,
+    },
+    Branch {
     },
 }
 
