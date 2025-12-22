@@ -980,9 +980,7 @@ fn deploy_tdx_contracts(
         .stderr(Stdio::inherit())
         .status()
         .map_err(|err| {
-            DeployerError::DeploymentSubtaskFailed(format!(
-                "Failed to run make deploy-all: {err}"
-            ))
+            DeployerError::DeploymentSubtaskFailed(format!("Failed to run make deploy-all: {err}"))
         })?;
     if !status.success() {
         return Err(DeployerError::DeploymentSubtaskFailed(format!(
