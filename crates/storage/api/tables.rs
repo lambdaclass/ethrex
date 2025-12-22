@@ -87,7 +87,12 @@ pub const STORAGE_FLATKEYVALUE: &str = "storage_flatkeyvalue";
 
 pub const MISC_VALUES: &str = "misc_values";
 
-pub const TABLES: [&str; 17] = [
+/// Execution witnesses column family: [`Vec<u8>`] => [`Vec<u8>`]
+/// - [`Vec<u8>`] = `block_hash.as_bytes().to_vec()`
+/// - [`Vec<u8>`] = `witness.encode_to_vec()`
+pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
+
+pub const TABLES: [&str; 18] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     BODIES,
@@ -105,4 +110,5 @@ pub const TABLES: [&str; 17] = [
     ACCOUNT_FLATKEYVALUE,
     STORAGE_FLATKEYVALUE,
     MISC_VALUES,
+    EXECUTION_WITNESSES,
 ];

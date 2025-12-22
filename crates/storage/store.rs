@@ -6,9 +6,9 @@ use crate::{
         StorageBackend,
         tables::{
             ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
-            CANONICAL_BLOCK_HASHES, CHAIN_DATA, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS,
-            MISC_VALUES, PENDING_BLOCKS, RECEIPTS, SNAP_STATE, STORAGE_FLATKEYVALUE,
-            STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS,
+            INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS, SNAP_STATE,
+            STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -26,7 +26,7 @@ use ethrex_common::{
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
         BlockNumber, ChainConfig, Code, ForkId, Genesis, GenesisAccount, Index, Receipt,
-        Transaction,
+        Transaction, block_execution_witness::ExecutionWitness,
     },
     utils::keccak,
 };
@@ -57,6 +57,9 @@ pub const STATE_TRIE_SEGMENTS: usize = 2;
 /// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
 /// This will always be the amount yielded by snapshot reads unless there are less elements left
 pub const MAX_SNAPSHOT_READS: usize = 100;
+
+/// Maximum number of execution witnesses to keep in the database
+pub const MAX_WITNESSES: u64 = 128;
 
 // We use one constant for in-memory and another for on-disk backends.
 // This is due to tests requiring state older than 128 blocks.
@@ -1699,6 +1702,92 @@ impl Store {
         tx.commit()?;
 
         Ok(state_root)
+    }
+
+    // Key format: block_number (8 bytes, big-endian) + block_hash (32 bytes)
+    fn make_witness_key(block_number: u64, block_hash: &BlockHash) -> Vec<u8> {
+        let mut key = Vec::with_capacity(8 + 32);
+        key.extend_from_slice(&block_number.to_be_bytes());
+        key.extend_from_slice(block_hash.as_bytes());
+        key
+    }
+
+    pub async fn store_witness(
+        &self,
+        block_hash: BlockHash,
+        block_number: u64,
+        witness: ExecutionWitness,
+    ) -> Result<(), StoreError> {
+        let key = Self::make_witness_key(block_number, &block_hash);
+        let value = serde_json::to_vec(&witness)?;
+        self.write(EXECUTION_WITNESSES, key, value)?;
+        // Clean up old witnesses (keep only last 128)
+        self.cleanup_old_witnesses(block_number).await
+    }
+
+    async fn cleanup_old_witnesses(&self, latest_block_number: u64) -> Result<(), StoreError> {
+        // If we have less than 128 blocks, no cleanup needed
+        if latest_block_number <= MAX_WITNESSES {
+            return Ok(());
+        }
+
+        let threshold = latest_block_number - MAX_WITNESSES;
+
+        // Get iterator for all witness keys
+        let db = self.backend.clone();
+        let old_witnesses =
+            tokio::task::spawn_blocking(move || -> Result<Vec<Vec<u8>>, StoreError> {
+                let tx = db.begin_read()?;
+                let mut iter = tx.prefix_iterator(EXECUTION_WITNESSES, &[])?;
+                let mut old_witnesses = Vec::new();
+
+                while let Some(result) = iter.next() {
+                    let (key, _) = result?;
+
+                    // Ensure key has at least 8 bytes for block number
+                    if key.len() < 8 {
+                        tracing::warn!("Invalid witness key length: {}", key.len());
+                        continue;
+                    }
+
+                    // Parse block number from key (first 8 bytes after prefix)
+                    let block_num_bytes: [u8; 8] = key[..8].try_into().map_err(|_| {
+                        StoreError::Custom("Failed to parse block number".to_string())
+                    })?;
+                    let block_number = u64::from_be_bytes(block_num_bytes);
+
+                    if block_number <= threshold {
+                        old_witnesses.push(key.to_vec()); // Convert Box<[u8]> to Vec<u8>
+                    }
+                }
+                Ok(old_witnesses)
+            })
+            .await
+            .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))??;
+
+        // Delete old witnesses in batch
+        if !old_witnesses.is_empty() {
+            for key in old_witnesses {
+                self.delete(EXECUTION_WITNESSES, key)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn get_witness_by_number_and_hash(
+        &self,
+        block_number: u64,
+        block_hash: BlockHash,
+    ) -> Result<Option<ExecutionWitness>, StoreError> {
+        let key = Self::make_witness_key(block_number, &block_hash);
+        match self.read(EXECUTION_WITNESSES, key)? {
+            Some(value) => {
+                let witness: ExecutionWitness = serde_json::from_slice(&value)?;
+                Ok(Some(witness))
+            }
+            None => Ok(None),
+        }
     }
 
     pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
