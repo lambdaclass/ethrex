@@ -100,7 +100,10 @@ pub async fn start_api(
         .route("/committer/stop", get(stop_committer))
         .route("/admin/health", get(admin_health))
         .route("/health", get(health))
-        .route("/stop-at/{block_number}", post(set_sequencer_stop_at))
+        .route(
+            "/state-updater/stop-at/{block_number}",
+            post(set_sequencer_stop_at),
+        )
         .with_state(admin.clone())
         .fallback(not_found);
     let http_listener = TcpListener::bind(http_addr)

@@ -42,7 +42,7 @@ For RISC0 it is stored at:
 
 ## Upgrade sequencer with zero downtime
 
-This is a **test/example** flow for local development. It demonstrates a zero-downtime handover by running two sequencers in parallel and coordinating the handoff using `--admin.start-at` and `POST /stop-at/<N>`.
+This is a **test/example** flow for local development. It demonstrates a zero-downtime handover by running two sequencers in parallel and coordinating the handoff using `--admin.start-at` and `POST /state-updater/stop-at/<N>`.
 
 1. First, initialize L1:
 
@@ -127,5 +127,5 @@ export $(cat cmd/.env | xargs); export COMPILE_CONTRACTS=true;
 6. Finally, stop the first sequencer at the same number:
 
 ```bash
-curl -X POST http://localhost:5555/stop-at/10
+curl -X POST http://localhost:5555/state-updater/stop-at/10
 ```
