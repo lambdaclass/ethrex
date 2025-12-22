@@ -21,13 +21,8 @@ pub static L2MESSAGE_EVENT_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
     keccak("L2Message(uint256,address,address,uint256,uint256,uint256,bytes)".as_bytes())
 });
 
-// keccak256("crosschainMintERC20(address,address,address,address,uint256)")
-pub static CROSSCHAIN_MINT_ERC20_SELECTOR: LazyLock<[u8; 4]> = LazyLock::new(|| {
-    let h = keccak("crosschainMintERC20(address,address,address,address,uint256)".as_bytes());
-    let mut sel = [0u8; 4];
-    sel.copy_from_slice(&h.0[..4]);
-    sel
-});
+// crosschainMintERC20(address,address,address,address,uint256)
+pub static CROSSCHAIN_MINT_ERC20_SELECTOR: [u8; 4] = [0xf0, 0x26, 0x31, 0x95];
 
 pub const BRIDGE_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -175,7 +170,7 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
     for message in messages {
         let mut offset = 4;
         let value_per_token_decoded = if let Some(selector) = message.data.get(..4)
-            && *selector == *CROSSCHAIN_MINT_ERC20_SELECTOR
+            && *selector == CROSSCHAIN_MINT_ERC20_SELECTOR
         {
             let Some(token_l1) = message.data.get(offset + 12..offset + 32) else {
                 continue;
