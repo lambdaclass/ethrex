@@ -346,7 +346,19 @@ pub fn execute_precompile(
         .flatten()
         .ok_or(VMError::Internal(InternalError::InvalidPrecompileAddress))?;
 
-    precompile(calldata, gas_remaining, fork)
+    #[cfg(feature = "perf_opcode_timings")]
+    let precompile_time_start = std::time::Instant::now();
+
+    let result = precompile(calldata, gas_remaining, fork);
+
+    #[cfg(feature = "perf_opcode_timings")]
+    {
+        let time = precompile_time_start.elapsed();
+        let mut timings = crate::timings::PRECOMPILES_TIMINGS.lock().expect("poison");
+        timings.update(address, time);
+    }
+
+    result
 }
 
 /// Consumes gas and if it's higher than the gas limit returns an error.
