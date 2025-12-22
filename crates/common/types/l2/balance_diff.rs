@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ValuePerToken {
     pub token_l1: Address,
-    pub token_l2: Address,
-    pub other_chain_token_l2: Address,
+    pub token_src_l2: Address,
+    pub token_dst_l2: Address,
     pub value: U256,
 }
 
@@ -46,8 +46,8 @@ impl RLPDecode for BalanceDiff {
 impl RLPEncode for ValuePerToken {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.token_l1.encode(buf);
-        self.token_l2.encode(buf);
-        self.other_chain_token_l2.encode(buf);
+        self.token_src_l2.encode(buf);
+        self.token_dst_l2.encode(buf);
         self.value.encode(buf);
     }
 }
@@ -55,14 +55,14 @@ impl RLPEncode for ValuePerToken {
 impl RLPDecode for ValuePerToken {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (token_l1, rlp) = Address::decode_unfinished(rlp)?;
-        let (token_l2, rlp) = Address::decode_unfinished(rlp)?;
-        let (other_chain_token_l2, rlp) = Address::decode_unfinished(rlp)?;
+        let (token_src_l2, rlp) = Address::decode_unfinished(rlp)?;
+        let (token_dst_l2, rlp) = Address::decode_unfinished(rlp)?;
         let (value, rlp) = U256::decode_unfinished(rlp)?;
         Ok((
             ValuePerToken {
                 token_l1,
-                token_l2,
-                other_chain_token_l2,
+                token_src_l2,
+                token_dst_l2,
                 value,
             },
             rlp,

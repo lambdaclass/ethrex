@@ -56,8 +56,8 @@ impl ProgramOutput {
             encoded.extend_from_slice(&balance_diff.chain_id.to_big_endian());
             for value_per_token in &balance_diff.value_per_token {
                 encoded.extend_from_slice(&value_per_token.token_l1.to_fixed_bytes());
-                encoded.extend_from_slice(&value_per_token.token_l2.to_fixed_bytes());
-                encoded.extend_from_slice(&value_per_token.other_chain_token_l2.to_fixed_bytes());
+                encoded.extend_from_slice(&value_per_token.token_src_l2.to_fixed_bytes());
+                encoded.extend_from_slice(&value_per_token.token_dst_l2.to_fixed_bytes());
                 encoded.extend_from_slice(&value_per_token.value.to_big_endian());
             }
             encoded.extend(

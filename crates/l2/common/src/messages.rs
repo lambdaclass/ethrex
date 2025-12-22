@@ -181,11 +181,11 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
                 continue;
             };
             offset += 32;
-            let Some(token_l2) = message.data.get(offset + 12..offset + 32) else {
+            let Some(token_src_l2) = message.data.get(offset + 12..offset + 32) else {
                 continue;
             };
             offset += 32;
-            let Some(other_chain_token_l2) = message.data.get(offset + 12..offset + 32) else {
+            let Some(token_dst_l2) = message.data.get(offset + 12..offset + 32) else {
                 continue;
             };
             offset += 32;
@@ -195,8 +195,8 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
             };
             ValuePerToken {
                 token_l1: Address::from_slice(token_l1),
-                token_l2: Address::from_slice(token_l2),
-                other_chain_token_l2: Address::from_slice(other_chain_token_l2),
+                token_src_l2: Address::from_slice(token_src_l2),
+                token_dst_l2: Address::from_slice(token_dst_l2),
                 value: U256::from_big_endian(value_bytes),
             }
         } else {
@@ -207,8 +207,8 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
             }
             ValuePerToken {
                 token_l1: Address::zero(),
-                token_l2: Address::zero(),
-                other_chain_token_l2: Address::zero(),
+                token_src_l2: Address::zero(),
+                token_dst_l2: Address::zero(),
                 value,
             }
         };
@@ -222,9 +222,8 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
         let mut found = false;
         for value_per_token in &mut entry.value_per_token {
             if value_per_token.token_l1 == value_per_token_decoded.token_l1
-                && value_per_token.token_l2 == value_per_token_decoded.token_l2
-                && value_per_token.other_chain_token_l2
-                    == value_per_token_decoded.other_chain_token_l2
+                && value_per_token.token_src_l2 == value_per_token_decoded.token_src_l2
+                && value_per_token.token_dst_l2 == value_per_token_decoded.token_dst_l2
             {
                 value_per_token.value += value_per_token_decoded.value;
                 found = true;
@@ -234,8 +233,8 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
         if !found {
             entry.value_per_token.push(ValuePerToken {
                 token_l1: value_per_token_decoded.token_l1,
-                token_l2: value_per_token_decoded.token_l2,
-                other_chain_token_l2: value_per_token_decoded.other_chain_token_l2,
+                token_src_l2: value_per_token_decoded.token_src_l2,
+                token_dst_l2: value_per_token_decoded.token_dst_l2,
                 value: value_per_token_decoded.value,
             });
         }
