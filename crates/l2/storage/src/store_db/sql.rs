@@ -36,7 +36,7 @@ const DB_SCHEMA: [&str; 20] = [
     "CREATE TABLE IF NOT EXISTS blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE IF NOT EXISTS l1_messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE IF NOT EXISTS l2_rolling_hashes (batch INT PRIMARY KEY, value BLOB)",
-    "CREATE TABLE IF NOT EXISTS balance_diffs (batch INT, chain_id BLOB, value BLOB, value BLOB, message_hashes BLOB, PRIMARY KEY (batch, chain_id))",
+    "CREATE TABLE IF NOT EXISTS balance_diffs (batch INT, chain_id BLOB, value BLOB, value_per_token BLOB, message_hashes BLOB, PRIMARY KEY (batch, chain_id))",
     "CREATE TABLE IF NOT EXISTS privileged_transactions (batch INT PRIMARY KEY, transactions_hash BLOB)",
     "CREATE TABLE IF NOT EXISTS non_privileged_transactions (batch INT PRIMARY KEY, transactions INT)",
     "CREATE TABLE IF NOT EXISTS state_roots (batch INT PRIMARY KEY, state_root BLOB)",
