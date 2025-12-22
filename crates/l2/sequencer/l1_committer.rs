@@ -10,7 +10,6 @@ use crate::{
     utils::sequencer_state::{SequencerState, SequencerStatus},
 };
 use bytes::Bytes;
-use ethrex_blockchain::fork_choice::apply_fork_choice;
 use ethrex_blockchain::{
     Blockchain, BlockchainOptions, BlockchainType, L2Config, error::ChainError,
 };
@@ -1607,29 +1606,22 @@ pub async fn regenerate_state(
     blockchain: &Arc<Blockchain>,
     target_block_number: Option<u64>,
 ) -> Result<(), CommitterError> {
-    let (from_block, to_block) = if let Some(target_block_number) = target_block_number {
-        let (last_state_number, _) =
-            find_last_known_state_root(store, target_block_number - 1).await?;
-        if target_block_number == 0 {
-            return Ok(());
-        }
-
-        (last_state_number + 1, target_block_number)
+    let target_block_number = if let Some(target_block_number) = target_block_number {
+        target_block_number - 1
     } else {
-        let head_block_number = store.get_latest_block_number().await?;
-        let (last_state_number, head_block_number) =
-            find_last_known_state_root(store, head_block_number).await?;
-
-        if last_state_number == head_block_number {
-            debug!("State is already up to date");
-            return Ok(());
-        }
-
-        (last_state_number + 1, head_block_number)
+        store.get_latest_block_number().await?
     };
+    let last_state_number = find_last_known_state_root(store, target_block_number).await?;
+    if target_block_number == 0 {
+        return Ok(());
+    }
+    if last_state_number == target_block_number {
+        debug!("State is already up to date");
+        return Ok(());
+    }
 
-    info!("Regenerating state from block {from_block} to {to_block}");
-    for block_number in from_block..=to_block {
+    info!("Regenerating state from block {last_state_number} to {target_block_number}");
+    for block_number in last_state_number + 1..=target_block_number {
         debug!("Re-applying block {block_number} to regenerate state");
 
         let Some(block) = store.get_block_by_number(block_number).await? else {
@@ -1660,7 +1652,6 @@ pub async fn regenerate_state(
             *fee_config_guard = fee_config;
         }
 
-        let block_hash = block.hash();
         if let Err(err) = blockchain.add_block_pipeline(block) {
             return Err(CommitterError::FailedToCreateCheckpoint(err.to_string()));
         }
@@ -1674,7 +1665,7 @@ pub async fn regenerate_state(
 pub async fn find_last_known_state_root(
     store: &Store,
     head_block_number: u64,
-) -> Result<(u64, u64), CommitterError> {
+) -> Result<u64, CommitterError> {
     let Some(last_header) = store.get_block_header(head_block_number)? else {
         unreachable!("Database is empty, genesis block should be present");
     };
@@ -1698,10 +1689,11 @@ pub async fn find_last_known_state_root(
                 "parent header for block {parent_number} not found"
             )));
         };
+
         current_last_header = parent_header;
     }
 
     let last_state_number = current_last_header.number;
 
-    Ok((last_state_number, head_block_number))
+    Ok(last_state_number)
 }
