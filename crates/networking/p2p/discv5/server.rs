@@ -2,7 +2,8 @@ use crate::{
     discv5::{
         codec::Discv5Codec,
         messages::{
-            DecodedPacket, FindNodeMessage, Message, NodesMessage, Ordinary, Packet, PacketCodecError, PingMessage, PongMessage
+            DecodedPacket, FindNodeMessage, Message, NodesMessage, Ordinary, Packet,
+            PacketCodecError, PingMessage, PongMessage, WhoAreYou,
         },
     },
     metrics::METRICS,
@@ -10,13 +11,14 @@ use crate::{
     types::{Endpoint, Node, NodeRecord},
     utils::{get_msg_expiration_from_seconds, public_key_from_signing_key},
 };
-use bytes::BytesMut;
+use bytes::{BufMut, BytesMut};
 use ethrex_common::{H256, H512, types::ForkId};
 use ethrex_storage::{Store, error::StoreError};
 use futures::{
     SinkExt as _, Stream, StreamExt,
     stream::{SplitSink, SplitStream},
 };
+use indexmap::IndexMap;
 use rand::{Rng, RngCore, rngs::OsRng, thread_rng};
 use secp256k1::SecretKey;
 use spawned_concurrency::{
@@ -26,7 +28,7 @@ use spawned_concurrency::{
         send_message_on, spawn_listener,
     },
 };
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
 use tracing::{debug, error, info, trace};
@@ -90,6 +92,7 @@ pub struct DiscoveryServer {
     initial_lookup_interval: f64,
     /// Outgoing message count, used for nonce generation as per the spec.
     counter: u32,
+    messages_by_nonce: IndexMap<[u8; 12], Message>,
 }
 
 impl DiscoveryServer {
@@ -122,6 +125,7 @@ impl DiscoveryServer {
             peer_table: peer_table.clone(),
             initial_lookup_interval,
             counter: 0,
+            messages_by_nonce: Default::default(),
         };
 
         info!(count = bootnodes.len(), "Adding bootnodes");
@@ -142,6 +146,25 @@ impl DiscoveryServer {
         Discv5Message { from, packet }: Discv5Message,
     ) -> Result<(), DiscoveryServerError> {
         trace!(?packet, address= ?from, "Discv5 packet received");
+        // TODO retrieve session info
+        match packet.header.flag {
+            0x00 => tracing::info!("Ordinary"),
+            0x01 => {
+                let whoareyou = WhoAreYou::decode(&packet.header.authdata)?;
+                let nonce = packet.header.nonce;
+                tracing::info!(nonce=?nonce, id_nonce=?whoareyou.id_nonce, enr_seq=?whoareyou.enr_seq,  "WhoAreYou packet received");
+                let message = self.messages_by_nonce.get(&nonce);
+                tracing::info!(msg=?message, "Message retrieved");
+            }
+            0x02 => tracing::info!("Handshake"),
+            _ => Err(PacketCodecError::MalformedData)?,
+        };
+        // - With dest_id, we fetch Session data from peer_table
+        //   If no session is present, or WhoAreYou, we just use a random key
+        // - We need to save the message by nonce, as it can be used to identify dest_id from a future WhoAreYou incoming messages
+        //
+        // let session = self.peer_table.get_session_info(node.node_id());
+        // let encrypt_key = session.get_encrypt_key();
         Ok(())
     }
 
@@ -367,6 +390,21 @@ impl DiscoveryServer {
         });
         let addr = node.udp_addr();
         let mut buf = BytesMut::new();
+        let nonce = self.encode_packet(&mut buf, packet, &node.node_id())?;
+        let _ = self.udp_socket.send_to(&buf, addr).await.inspect_err(
+            |e| error!(sending = ?message, addr = ?addr, err=?e, "Error sending message"),
+        )?;
+        trace!(msg = %message, node = %node.public_key, address= %addr, nonce=?nonce, "Discv5 message sent");
+        self.messages_by_nonce.insert(nonce, message.clone());
+        Ok(())
+    }
+
+    fn encode_packet(
+        &mut self,
+        buf: &mut dyn BufMut,
+        packet: DecodedPacket,
+        dest_id: &H256,
+    ) -> Result<[u8; 12], PacketCodecError> {
         let mut rng = OsRng;
         let masking_iv: u128 = rng.r#gen();
         let nonce = self.next_nonce(&mut rng);
@@ -377,13 +415,9 @@ impl DiscoveryServer {
         //
         // let session = self.peer_table.get_session_info(node.node_id());
         // let encrypt_key = session.get_encrypt_key();
-        let encrypt_key = &[0];
-        packet.encode(&mut buf, masking_iv, &nonce, &node.node_id(), encrypt_key)?;
-        let _ = self.udp_socket.send_to(&buf, addr).await.inspect_err(
-            |e| error!(sending = ?message, addr = ?addr, err=?e, "Error sending message"),
-        )?;
-        trace!(msg = %message, node = %node.public_key, address= %addr, "Discv5 message sent");
-        Ok(())
+        let encrypt_key = &[0; 16];
+        packet.encode(buf, masking_iv, &nonce, dest_id, encrypt_key)?;
+        Ok(nonce)
     }
 
     /// Generates a 96-bit AES-GCM nonce
@@ -411,15 +445,18 @@ impl GenServer for DiscoveryServer {
         self,
         handle: &GenServerHandle<Self>,
     ) -> Result<spawned_concurrency::tasks::InitResult<Self>, Self::Error> {
-        let stream = UdpFramed::new(self.udp_socket.clone(), Discv5Codec::new(self.local_node.node_id()));
+        let stream = UdpFramed::new(
+            self.udp_socket.clone(),
+            Discv5Codec::new(self.local_node.node_id()),
+        );
 
         spawn_listener(
             handle.clone(),
             stream.filter_map(|result| async move {
                 match result {
-                    Ok((packet, addr)) => {
-                        Some(InMessage::Message(Box::new(Discv5Message::from(packet, addr))))
-                    }
+                    Ok((packet, addr)) => Some(InMessage::Message(Box::new(Discv5Message::from(
+                        packet, addr,
+                    )))),
                     Err(e) => {
                         debug!(error=?e, "Error receiving Discv5 message");
                         // Skipping invalid data
@@ -508,8 +545,6 @@ pub fn lookup_interval_function(progress: f64, lower_limit: f64, upper_limit: f6
     //     (1000f64 * (ease_in_out_cubic * (upper_limit - lower_limit) + lower_limit)).round() as u64,
     // )
 }
-
-
 
 #[cfg(test)]
 mod tests {

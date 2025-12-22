@@ -1,4 +1,3 @@
-use std::{array::TryFromSliceError, fmt::Display, net::IpAddr};
 use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherError};
 use aes_gcm::{Aes128Gcm, KeyInit, aead::AeadMutInPlace};
 use bytes::{BufMut, Bytes};
@@ -10,6 +9,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use rand::{Rng, distributions::Standard, prelude::Distribution};
+use std::{array::TryFromSliceError, fmt::Display, net::IpAddr};
 
 use crate::types::NodeRecord;
 
@@ -49,6 +49,8 @@ pub enum PacketCodecError {
     TryFromSliceError(#[from] TryFromSliceError),
     #[error("Io Error: {0}")]
     IoError(#[from] std::io::Error),
+    #[error("Malformed Data")]
+    MalformedData,
 }
 
 impl From<StreamCipherError> for PacketCodecError {
@@ -59,15 +61,12 @@ impl From<StreamCipherError> for PacketCodecError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Packet {
-    header: PacketHeader,
-    encrypted_message: Vec<u8>,
+    pub(crate) header: PacketHeader,
+    pub(crate) encrypted_message: Vec<u8>,
 }
 
 impl Packet {
-    pub fn decode(
-        dest_id: &H256,
-        encoded_packet: &[u8],
-    ) -> Result<Packet, PacketCodecError> {
+    pub fn decode(dest_id: &H256, encoded_packet: &[u8]) -> Result<Packet, PacketCodecError> {
         if encoded_packet.len() < MIN_PACKET_SIZE || encoded_packet.len() > MAX_PACKET_SIZE {
             return Err(PacketCodecError::InvalidSize);
         }
@@ -81,7 +80,7 @@ impl Packet {
 
         let header = PacketHeader::decode(&mut cipher, encoded_packet)?;
         let encrypted_message = encoded_packet[header.header_end_offset..].to_vec();
-        Ok(Packet{
+        Ok(Packet {
             header,
             encrypted_message,
         })
@@ -102,10 +101,9 @@ impl Packet {
 
         self.header.encode(buf, &mut cipher, nonce)?;
         buf.put_slice(&self.encrypted_message);
-        
+
         Ok(())
     }
-
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -936,7 +934,7 @@ mod tests {
     use crate::{
         discv5::{
             codec::Discv5Codec,
-            messages::{Message, Ordinary, DecodedPacket, PingMessage, WhoAreYou},
+            messages::{DecodedPacket, Message, Ordinary, PingMessage, WhoAreYou},
         },
         types::NodeRecordPairs,
         utils::{node_id, public_key_from_signing_key},
