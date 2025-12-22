@@ -328,8 +328,8 @@ impl GuestProgramState {
             Ok(Some(encoded_state)) => encoded_state,
             Ok(None) => return Ok(None),
             Err(_) => {
-                // In the case of ethrex-replay this is normal when asking for the Witness of a non-ethrex node.
-                // This print is mostly for L2 Prover, if ethrex returns incomplete Witness then this will help for debugging a state mismatch.
+                // In the case of ethrex-replay this is normal when asking for the Witness of a block to a non-ethrex node.
+                // This log is mostly for L2 Prover, if witness is incomplete then this will help for debugging a state mismatch.
                 // Note that logs aren't printed inside zkVMs, so for debugging this it's best to use "execute" backend.
                 debug!(
                     "Getting node from state trie when getting info for {:#x} failed unexpectedly. Nodes might be missing. Defaulting to empty account.",
@@ -377,8 +377,8 @@ impl GuestProgramState {
                 .map(Some),
             Ok(None) => Ok(None),
             Err(_) => {
-                // In the case of ethrex-replay this is normal when asking for the Witness of a non-ethrex node.
-                // This print is mostly for L2 Prover, if input has an incomplete witness then this will help for debugging a state mismatch.
+                // In the case of ethrex-replay this is normal when asking for the Witness of a block to a non-ethrex node.
+                // This log is mostly for L2 Prover, if witness is incomplete then this will help for debugging a state mismatch.
                 // Note that logs aren't printed inside zkVMs, so for debugging this it's best to use "execute" backend.
                 debug!(
                     "Getting node from state trie when getting storage key {:#x} for {:#x} failed unexpectedly. Nodes might be missing. Defaulting to empty storage.",
