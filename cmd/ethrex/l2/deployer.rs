@@ -970,23 +970,32 @@ fn deploy_tdx_contracts(
     opts: &DeployerOptions,
     on_chain_proposer: Address,
 ) -> Result<Address, DeployerError> {
-    Command::new("make")
+    let status = Command::new("make")
         .arg("deploy-all")
         .env("PRIVATE_KEY", hex::encode(opts.private_key.as_ref()))
         .env("RPC_URL", opts.rpc_url.as_str())
         .env("ON_CHAIN_PROPOSER", format!("{on_chain_proposer:#x}"))
         .current_dir("tee/contracts")
-        .stdout(Stdio::null())
-        .spawn()
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
         .map_err(|err| {
-            DeployerError::DeploymentSubtaskFailed(format!("Failed to spawn make: {err}"))
-        })?
-        .wait()
-        .map_err(|err| {
-            DeployerError::DeploymentSubtaskFailed(format!("Failed to wait for make: {err}"))
+            DeployerError::DeploymentSubtaskFailed(format!(
+                "Failed to run make deploy-all: {err}"
+            ))
         })?;
+    if !status.success() {
+        return Err(DeployerError::DeploymentSubtaskFailed(format!(
+            "make deploy-all failed with status {status}"
+        )));
+    }
 
     let address = read_tdx_deployment_address("TDXVerifier");
+    if address == Address::zero() {
+        return Err(DeployerError::DeploymentSubtaskFailed(
+            "TDXVerifier address not found after deploy-all".to_string(),
+        ));
+    }
     Ok(address)
 }
 
