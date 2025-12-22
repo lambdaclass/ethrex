@@ -606,7 +606,7 @@ contract OnChainProposer is
         uint256 expected_length = 256;
         for (uint256 i = 0; i < targetedChainsCount; i++) {
             expected_length += 32;
-            expected_length += balanceDiffs[i].assetDiff.length * 92;
+            expected_length += balanceDiffs[i].assetDiffs.length * 92;
             expected_length += balanceDiffs[i].message_hashes.length * 32;
         }
         expected_length +=
@@ -676,7 +676,7 @@ contract OnChainProposer is
                 return "00x"; // balance diffs public inputs don't match with committed balance diffs
             }
 
-            for (uint256 j = 0; j < balanceDiffs[i].assetDiff.length; j++) {
+            for (uint256 j = 0; j < balanceDiffs[i].assetDiffs.length; j++) {
                 (
                     address tokenL1,
                     address tokenL2,
@@ -692,10 +692,10 @@ contract OnChainProposer is
                 offset += 92;
 
                 if (
-                    tokenL1 != balanceDiffs[i].assetDiff[j].tokenL1 ||
-                    tokenL2 != balanceDiffs[i].assetDiff[j].tokenL2 ||
-                    destTokenL2 != balanceDiffs[i].assetDiff[j].destTokenL2 ||
-                    tokenValue != balanceDiffs[i].assetDiff[j].value
+                    tokenL1 != balanceDiffs[i].assetDiffs[j].tokenL1 ||
+                    tokenL2 != balanceDiffs[i].assetDiffs[j].tokenL2 ||
+                    destTokenL2 != balanceDiffs[i].assetDiffs[j].destTokenL2 ||
+                    tokenValue != balanceDiffs[i].assetDiffs[j].value
                 ) {
                     return "00v"; // balance diffs public inputs don't match with committed balance diffs
                 }
