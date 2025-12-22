@@ -184,7 +184,7 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
                 continue;
             };
             offset += 32;
-            offset += 32; // skip to
+            offset += 32; // skip "to" param
             let Some(value_bytes) = message.data.get(offset..offset + 32) else {
                 continue;
             };
