@@ -242,53 +242,15 @@ impl L1Committer {
             return Ok(());
         }
 
-        for block_number in 1..=target_block_number {
-            let block = store
-                .get_block_by_number(block_number)
-                .await?
-                .ok_or_else(|| {
-                    CommitterError::FailedToCreateCheckpoint(format!(
-                        "Block {block_number} not found in source store"
-                    ))
-                })?;
-
-            let fee_config = rollup_store
-                .get_fee_config_by_block(block_number)
-                .await?
-                .ok_or_else(|| {
-                    CommitterError::FailedToCreateCheckpoint(format!(
-                        "Fee config for block {block_number} not found"
-                    ))
-                })?;
-
-            let BlockchainType::L2(l2_config) = &checkpoint_blockchain.options.r#type else {
-                return Err(CommitterError::FailedToCreateCheckpoint(
-                    "Invalid blockchain type. Expected L2.".into(),
-                ));
-            };
-
-            {
-                let Ok(mut fee_config_guard) = l2_config.fee_config.write() else {
-                    return Err(CommitterError::FailedToCreateCheckpoint(
-                        "Fee config lock was poisoned when rebuilding checkpoint".into(),
-                    ));
-                };
-                *fee_config_guard = fee_config;
-            }
-
-            let block_hash = block.hash();
-            checkpoint_blockchain
-                .add_block_pipeline(block)
-                .map_err(|err| CommitterError::FailedToCreateCheckpoint(err.to_string()))?;
-
-            apply_fork_choice(checkpoint_store, block_hash, block_hash, block_hash)
-                .await
-                .map_err(|e| {
-                    CommitterError::FailedToCreateCheckpoint(format!(
-                        "Failed to apply fork choice while rebuilding checkpoint: {e}"
-                    ))
-                })?;
-        }
+        fn_1(
+            store,
+            rollup_store,
+            Some(checkpoint_store),
+            checkpoint_blockchain,
+            1,
+            target_block_number,
+        )
+        .await?;
 
         Ok(())
     }
@@ -1668,6 +1630,32 @@ pub async fn regenerate_head_state(
     rollup_store: &StoreRollup,
     blockchain: &Arc<Blockchain>,
 ) -> Result<(), CommitterError> {
+    let (last_state_number, head_block_number) = find_last_known_state_root(store).await?;
+
+    if last_state_number == head_block_number {
+        debug!("State is already up to date");
+        return Ok(());
+    }
+
+    info!("Regenerating state from block {last_state_number} to {head_block_number}");
+
+    // Re-apply blocks from the last known state root to the head block
+    fn_1(
+        store,
+        rollup_store,
+        None,
+        blockchain,
+        last_state_number + 1,
+        head_block_number,
+    )
+    .await?;
+
+    info!("Finished regenerating state");
+
+    Ok(())
+}
+
+pub async fn find_last_known_state_root(store: &Store) -> Result<(u64, u64), CommitterError> {
     let head_block_number = store.get_latest_block_number().await?;
 
     let Some(last_header) = store.get_block_header(head_block_number)? else {
@@ -1699,15 +1687,18 @@ pub async fn regenerate_head_state(
 
     let last_state_number = current_last_header.number;
 
-    if last_state_number == head_block_number {
-        debug!("State is already up to date");
-        return Ok(());
-    }
+    Ok((last_state_number, head_block_number))
+}
 
-    info!("Regenerating state from block {last_state_number} to {head_block_number}");
-
-    // Re-apply blocks from the last known state root to the head block
-    for i in (last_state_number + 1)..=head_block_number {
+async fn fn_1(
+    store: &Store,
+    rollup_store: &StoreRollup,
+    checkpoint_store: Option<&Store>,
+    blockchain: &Arc<Blockchain>,
+    from: u64,
+    to: u64,
+) -> Result<(), CommitterError> {
+    for i in from..=to {
         debug!("Re-applying block {i} to regenerate state");
 
         let block = store.get_block_by_number(i).await?.ok_or_else(|| {
@@ -1739,12 +1730,20 @@ pub async fn regenerate_head_state(
             *fee_config_guard = fee_config;
         }
 
+        let block_hash = block.hash();
         blockchain
             .add_block(block)
             .map_err(|err| CommitterError::FailedToCreateCheckpoint(err.to_string()))?;
+
+        if let Some(checkpoint_store) = checkpoint_store {
+            apply_fork_choice(checkpoint_store, block_hash, block_hash, block_hash)
+                .await
+                .map_err(|e| {
+                    CommitterError::FailedToCreateCheckpoint(format!(
+                        "Failed to apply fork choice while rebuilding checkpoint: {e}"
+                    ))
+                })?;
+        }
     }
-
-    info!("Finished regenerating state");
-
     Ok(())
 }
