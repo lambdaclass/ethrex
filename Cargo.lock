@@ -3934,6 +3934,7 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "rocksdb",
+ "rustc-hash 2.1.1",
  "secp256k1",
  "serde",
  "serde_json",
