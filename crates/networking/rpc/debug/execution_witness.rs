@@ -143,11 +143,11 @@ pub fn execution_witness_from_rpc_chain_config(
                 "execution witness does not contain non-empty storage trie".to_string(),
             ));
         };
-        let trie = EncodedTrie::from(&(*node));
+        let trie = EncodedTrie::try_from(&(*node))?;
         storage_tries.insert(address, trie.clone());
     }
 
-    let state_trie = state_trie_root.map(|n| EncodedTrie::from(&n));
+    let state_trie = state_trie_root.map(|n| EncodedTrie::try_from(&n)).transpose()?;
 
     let witness = ExecutionWitness {
         codes: rpc_witness.codes.into_iter().map(|b| b.to_vec()).collect(),
