@@ -372,6 +372,12 @@ pub async fn start_api(
     info!("Starting Auth-RPC server at {authrpc_addr}");
 
     if let Some(address) = ws_addr {
+        if address.port() == http_addr.port() {
+            warn!(
+                "WebSocket server port is the same as HTTP server port: {}. This may cause conflicts.",
+                address.port()
+            );
+        }
         let ws_handler = |ws: WebSocketUpgrade, ctx| async {
             ws.on_upgrade(|socket| handle_websocket(socket, ctx))
         };
