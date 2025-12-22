@@ -105,7 +105,17 @@ pub async fn init_rollup_store(datadir: &Path) -> StoreRollup {
     rollup_store
 }
 
-fn init_metrics(opts: &L1Options, tracker: TaskTracker) {
+fn init_metrics(opts: &L1Options, network: &str, tracker: TaskTracker) {
+    // Initialize node version metrics
+    ethrex_metrics::node::MetricsNode::init(
+        env!("CARGO_PKG_VERSION"),
+        env!("VERGEN_GIT_SHA"),
+        env!("VERGEN_GIT_BRANCH"),
+        env!("VERGEN_RUSTC_SEMVER"),
+        env!("VERGEN_RUSTC_HOST_TRIPLE"),
+        network,
+    );
+
     tracing::info!(
         "Starting metrics server on {}:{}",
         opts.metrics_addr,
@@ -118,7 +128,12 @@ fn init_metrics(opts: &L1Options, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-pub fn init_tracing(opts: &L2Options) -> Option<reload::Handle<EnvFilter, Registry>> {
+pub fn init_tracing(
+    opts: &L2Options,
+) -> (
+    Option<reload::Handle<EnvFilter, Registry>>,
+    Option<tracing_appender::non_blocking::WorkerGuard>,
+) {
     if !opts.sequencer_opts.no_monitor {
         let level_filter = EnvFilter::builder()
             .parse_lossy("debug,tower_http::trace=debug,reqwest_tracing=off,hyper=off,libsql=off,ethrex::initializers=off,ethrex::l2::initializers=off,ethrex::l2::command=off");
@@ -130,9 +145,10 @@ pub fn init_tracing(opts: &L2Options) -> Option<reload::Handle<EnvFilter, Regist
         tui_logger::init_logger(LevelFilter::max()).expect("Failed to initialize tui_logger");
 
         // Monitor already registers all log levels
-        None
+        (None, None)
     } else {
-        Some(initializers::init_tracing(&opts.node_opts))
+        let (handle, guard) = initializers::init_tracing(&opts.node_opts);
+        (Some(handle), guard)
     }
 }
 
@@ -300,7 +316,7 @@ pub async fn init_l2(
 
     // Initialize metrics if enabled
     if opts.node_opts.metrics_enabled {
-        init_metrics(&opts.node_opts, tracker);
+        init_metrics(&opts.node_opts, &network.to_string(), tracker);
     }
 
     let sequencer_cancellation_token = CancellationToken::new();
