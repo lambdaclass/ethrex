@@ -7,8 +7,9 @@ import socket
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 import requests
@@ -18,6 +19,10 @@ SYNC_TIMEOUT = 4 * 60  # 4 hours default sync timeout (in minutes)
 BLOCK_PROCESSING_DURATION = 22 * 60 # Monitor block processing for 20 minutes
 BLOCK_STALL_TIMEOUT = 10 * 60  # Fail if no new block for 10 minutes
 STATUS_PRINT_INTERVAL = 30
+
+# Logging configuration
+LOGS_DIR = Path("./snapsync_logs")
+RUN_LOG_FILE = LOGS_DIR / "run_history.log"  # Append-only text log
 
 STATUS_EMOJI = {
     "waiting": "⏳", "syncing": "🔄", "synced": "✅",
@@ -85,6 +90,101 @@ def slack_notify(header: str, msg: str, success: bool = True):
             ]}, timeout=10)
         except Exception:
             pass
+
+
+def ensure_logs_dir():
+    """Ensure the logs directory exists."""
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def save_container_logs(container: str, run_id: str, suffix: str = ""):
+    """Save container logs to a file."""
+    log_file = LOGS_DIR / f"run_{run_id}" / f"{container}{suffix}.log"
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        logs = subprocess.check_output(
+            ["docker", "logs", container], 
+            stderr=subprocess.STDOUT,
+            timeout=60
+        ).decode(errors='replace')
+        log_file.write_text(logs)
+        print(f"  📄 Saved logs: {log_file}")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"  ⚠️ Failed to get logs for {container}: {e}")
+        return False
+    except subprocess.TimeoutExpired:
+        print(f"  ⚠️ Timeout getting logs for {container}")
+        return False
+    except Exception as e:
+        print(f"  ⚠️ Error saving logs for {container}: {e}")
+        return False
+
+
+def save_all_logs(instances: list[Instance], run_id: str, compose_file: str):
+    """Save logs for all containers (ethrex + consensus)."""
+    print(f"\n📁 Saving logs for run {run_id}...")
+    
+    for inst in instances:
+        # Save ethrex logs
+        save_container_logs(inst.container, run_id)
+        # Save consensus logs (convention: consensus-{network})
+        consensus_container = inst.container.replace("ethrex-", "consensus-")
+        save_container_logs(consensus_container, run_id)
+    
+    print(f"📁 Logs saved to {LOGS_DIR}/run_{run_id}/\n")
+
+
+def log_run_result(run_id: str, run_count: int, instances: list[Instance], hostname: str, commit: str):
+    """Append run result to the persistent log file."""
+    ensure_logs_dir()
+    
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    all_success = all(i.status == "success" for i in instances)
+    status_icon = "✅" if all_success else "❌"
+    
+    # Build log entry as plain text
+    lines = [
+        f"\n{'='*60}",
+        f"{status_icon} Run #{run_count} (ID: {run_id})",
+        f"{'='*60}",
+        f"Time:   {timestamp}",
+        f"Host:   {hostname}",
+        f"Commit: {commit}",
+        f"Result: {'SUCCESS' if all_success else 'FAILED'}",
+        "",
+    ]
+    
+    for inst in instances:
+        icon = "✅" if inst.status == "success" else "❌"
+        line = f"  {icon} {inst.name}: {inst.status}"
+        if inst.sync_time:
+            line += f" (sync: {fmt_time(inst.sync_time)})"
+        if inst.last_block:
+            line += f" block: {inst.last_block}"
+        if inst.initial_block and inst.last_block > inst.initial_block:
+            line += f" (+{inst.last_block - inst.initial_block})"
+        if inst.error:
+            line += f"\n       Error: {inst.error}"
+        lines.append(line)
+    
+    lines.append("")
+    
+    # Append to log file
+    with open(RUN_LOG_FILE, "a") as f:
+        f.write("\n".join(lines) + "\n")
+    
+    print(f"📝 Run logged to {RUN_LOG_FILE}")
+    
+    # Also write summary to the run folder
+    summary_file = LOGS_DIR / f"run_{run_id}" / "summary.txt"
+    summary_file.parent.mkdir(parents=True, exist_ok=True)
+    summary_file.write_text("\n".join(lines))
+
+
+def generate_run_id() -> str:
+    """Generate a unique run ID based on timestamp."""
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
 def restart_containers(compose_file: str, compose_dir: str):
@@ -229,10 +329,16 @@ def main():
     
     hostname, commit = socket.gethostname(), git_commit()
     run_count = 1
+    run_id = generate_run_id()
+    
+    # Ensure logs directory exists
+    ensure_logs_dir()
+    print(f"📁 Logs will be saved to {LOGS_DIR.absolute()}")
+    print(f"📝 Run history: {RUN_LOG_FILE.absolute()}\n")
     
     try:
         while True:
-            print(f"🔍 Run #{run_count}: Monitoring {len(instances)} instances (timeout: {args.timeout}m)", flush=True)
+            print(f"🔍 Run #{run_count} (ID: {run_id}): Monitoring {len(instances)} instances (timeout: {args.timeout}m)", flush=True)
             last_print = 0
             
             while True:
@@ -255,6 +361,10 @@ def main():
                 
                 time.sleep(CHECK_INTERVAL)
             
+            # Log the run result and save container logs BEFORE any restart
+            save_all_logs(instances, run_id, args.compose_file)
+            log_run_result(run_id, run_count, instances, hostname, commit)
+            
             # Check results
             if all(i.status == "success" for i in instances):
                 print(f"🎉 Run #{run_count}: All instances synced successfully!")
@@ -265,11 +375,22 @@ def main():
                     for inst in instances:
                         reset_instance(inst)
                     run_count += 1
+                    run_id = generate_run_id()  # New run ID for the new cycle
                     time.sleep(30)  # Wait for containers to start
                 else:
                     sys.exit("❌ Failed to restart containers")
             else:
-                sys.exit("⚠️ Some instances failed")
+                # On failure: containers are NOT stopped, you can inspect the DB
+                print("\n" + "="*60)
+                print("⚠️  FAILURE - Containers are still running for inspection")
+                print("="*60)
+                print("\nYou can:")
+                print("  - Inspect the database in the running containers")
+                print("  - Check logs: docker logs <container-name>")
+                print(f"  - View saved logs: {LOGS_DIR}/run_{run_id}/")
+                print(f"  - View run history: {RUN_LOG_FILE}")
+                print("\nTo restart manually: make snapsync-docker-restart")
+                sys.exit(1)
     except KeyboardInterrupt:
         print("\n⚠️ Interrupted")
         print_status(instances)

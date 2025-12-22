@@ -288,3 +288,26 @@ snapsync-docker-loop: ## Continuous loop: sync all networks, restart on success,
 	@echo "Waiting 10s for containers to start..."
 	@sleep 10
 	python3 docker_monitor.py --ports 8545,8546,8547 --names hoodi,sepolia,mainnet --containers ethrex-hoodi,ethrex-sepolia,ethrex-mainnet --compose-file docker-compose.snapsync.yaml --compose-dir $(CURDIR)
+
+snapsync-docker-history: ## View the run history log.
+	@if [ -f snapsync_logs/run_history.log ]; then \
+		cat snapsync_logs/run_history.log; \
+	else \
+		echo "No run history found. Run 'make snapsync-docker-loop' first."; \
+	fi
+
+snapsync-docker-list-logs: ## List all saved run logs.
+	@if [ -d snapsync_logs ]; then \
+		echo "=== Saved Run Logs ===" && \
+		ls -la snapsync_logs/ && \
+		echo "" && \
+		for dir in snapsync_logs/run_*/; do \
+			if [ -d "$$dir" ]; then \
+				echo "$$dir:"; \
+				ls "$$dir"; \
+				echo ""; \
+			fi; \
+		done; \
+	else \
+		echo "No logs directory found."; \
+	fi
