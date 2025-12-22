@@ -32,22 +32,22 @@ pub struct OpcodeTiming {
 }
 
 #[derive(Default, Debug)]
-pub struct OpcodeTimingAccumulator {
+pub struct OpcodeTimings {
     totals: HashMap<Opcode, Duration>,
     counts: HashMap<Opcode, u64>,
     blocks: usize,
     txs: usize,
 }
 
-impl OpcodeTimingAccumulator {
+impl OpcodeTimings {
     pub fn update(&mut self, opcode: u8, time: Duration) {
         let opcode = Opcode::from(opcode);
         *self.totals.entry(opcode).or_default() += time;
         *self.counts.entry(opcode).or_default() += 1;
     }
 
-    pub fn info(&self) -> (Vec<(Opcode, Duration, u64)>, usize, usize) {
-        let mut average: Vec<(Opcode, Duration, u64)> = self
+    pub fn info(&self) -> (Vec<(Opcode, Duration, Duration, u64)>, usize, usize) {
+        let mut average: Vec<(Opcode, Duration, Duration, u64)> = self
             .totals
             .iter()
             .filter_map(|(opcode, total)| {
@@ -56,6 +56,7 @@ impl OpcodeTimingAccumulator {
                     (
                         *opcode,
                         Duration::from_secs_f64(total.as_secs_f64() / count as f64),
+                        *total,
                         count,
                     )
                 })
@@ -68,9 +69,13 @@ impl OpcodeTimingAccumulator {
     pub fn info_pretty(&self) -> String {
         let (avg_timings_sorted, blocks_seen, txs_seen) = self.info();
         let pretty_avg = format_opcode_timings(&avg_timings_sorted);
+        let total_accumulated = self
+            .totals
+            .values()
+            .fold(Duration::from_secs(0), |acc, dur| acc + *dur);
         format!(
-            "[PERF] opcode timings avg per block (blocks={}, txs={}, sorted desc):\n{}",
-            blocks_seen, txs_seen, pretty_avg
+            "[PERF] opcode timings avg per block (blocks={}, txs={}, total={:?}, sorted desc):\n{}",
+            blocks_seen, txs_seen, total_accumulated, pretty_avg
         )
     }
 
@@ -83,16 +88,17 @@ impl OpcodeTimingAccumulator {
     }
 }
 
-pub static OPCODE_TIMINGS: LazyLock<Mutex<OpcodeTimingAccumulator>> =
-    LazyLock::new(|| Mutex::new(OpcodeTimingAccumulator::default()));
+pub static OPCODE_TIMINGS: LazyLock<Mutex<OpcodeTimings>> =
+    LazyLock::new(|| Mutex::new(OpcodeTimings::default()));
 
-fn format_opcode_timings(sorted: &[(Opcode, Duration, u64)]) -> String {
+fn format_opcode_timings(sorted: &[(Opcode, Duration, Duration, u64)]) -> String {
     let mut out = String::new();
-    for (opcode, dur, count) in sorted {
+    for (opcode, avg_dur, total_dur, count) in sorted {
         out.push_str(&format!(
-            "{:<16} {:>18?} ({:>10} calls)\n",
+            "{:<16} {:>18?} {:>18?} ({:>10} calls)\n",
             format!("{opcode:?}"),
-            dur,
+            avg_dur,
+            total_dur,
             count
         ));
     }
