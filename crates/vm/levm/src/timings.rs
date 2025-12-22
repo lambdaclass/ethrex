@@ -1,35 +1,12 @@
 use std::{
     collections::HashMap,
-    ops::Add,
     sync::{LazyLock, Mutex},
     time::Duration,
 };
 
 use crate::opcodes::Opcode;
-
-pub struct Timings {
-    timings: HashMap<Opcode, OpcodeTiming>,
-}
-
-impl Timings {
-    pub fn new() -> Self {
-        Self {
-            timings: HashMap::new(),
-        }
-    }
-
-    pub fn add_timing(&mut self, opcode: u8, time: Duration) {
-        let timing = self.timings.entry(Opcode::from(opcode)).or_default();
-        timing.total = timing.total.add(time);
-        timing.count = timing.count.saturating_add(1);
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy)]
-pub struct OpcodeTiming {
-    pub total: Duration,
-    pub count: u64,
-}
+use crate::precompiles::PRECOMPILES;
+use ethrex_common::Address;
 
 #[derive(Default, Debug)]
 pub struct OpcodeTimings {
@@ -91,6 +68,54 @@ impl OpcodeTimings {
 pub static OPCODE_TIMINGS: LazyLock<Mutex<OpcodeTimings>> =
     LazyLock::new(|| Mutex::new(OpcodeTimings::default()));
 
+#[derive(Default, Debug)]
+pub struct PrecompilesTimings {
+    totals: HashMap<Address, Duration>,
+    counts: HashMap<Address, u64>,
+}
+
+impl PrecompilesTimings {
+    pub fn update(&mut self, address: Address, time: Duration) {
+        *self.totals.entry(address).or_default() += time;
+        *self.counts.entry(address).or_default() += 1;
+    }
+
+    pub fn info(&self) -> Vec<(Address, Duration, Duration, u64)> {
+        let mut average: Vec<(Address, Duration, Duration, u64)> = self
+            .totals
+            .iter()
+            .filter_map(|(address, total)| {
+                let count = *self.counts.get(address).unwrap_or(&0);
+                (count > 0).then(|| {
+                    (
+                        *address,
+                        Duration::from_secs_f64(total.as_secs_f64() / count as f64),
+                        *total,
+                        count,
+                    )
+                })
+            })
+            .collect();
+        average.sort_by(|a, b| b.1.cmp(&a.1));
+        average
+    }
+
+    pub fn info_pretty(&self) -> String {
+        let pretty_avg = format_precompile_timings(&self.info());
+        let total_accumulated = self
+            .totals
+            .values()
+            .fold(Duration::from_secs(0), |acc, dur| acc + *dur);
+        format!(
+            "[PERF] precompile timings (total={:?}, sorted desc):\n{}",
+            total_accumulated, pretty_avg
+        )
+    }
+}
+
+pub static PRECOMPILES_TIMINGS: LazyLock<Mutex<PrecompilesTimings>> =
+    LazyLock::new(|| Mutex::new(PrecompilesTimings::default()));
+
 fn format_opcode_timings(sorted: &[(Opcode, Duration, Duration, u64)]) -> String {
     let mut out = String::new();
     for (opcode, avg_dur, total_dur, count) in sorted {
@@ -100,6 +125,22 @@ fn format_opcode_timings(sorted: &[(Opcode, Duration, Duration, u64)]) -> String
             avg_dur,
             total_dur,
             count
+        ));
+    }
+    out
+}
+
+fn format_precompile_timings(sorted: &[(Address, Duration, Duration, u64)]) -> String {
+    let mut out = String::new();
+    for (address, avg_dur, total_dur, count) in sorted {
+        let name = PRECOMPILES
+            .iter()
+            .find(|precompile| &precompile.address == address)
+            .map(|precompile| precompile.name)
+            .unwrap_or("unknown");
+        out.push_str(&format!(
+            "{:<16} {:>18?} {:>18?} ({:>10} calls)\n",
+            name, avg_dur, total_dur, count
         ));
     }
     out

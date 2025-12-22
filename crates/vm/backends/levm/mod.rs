@@ -26,7 +26,7 @@ use ethrex_levm::constants::{
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
 #[cfg(feature = "perf_opcode_timings")]
-use ethrex_levm::timings::OPCODE_TIMINGS;
+use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
 use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::utils::get_base_fee_per_blob_gas;
 use ethrex_levm::vm::VMType;
@@ -158,6 +158,8 @@ impl LEVM {
             timings.inc_tx_count(receipts.len());
             timings.inc_block_count();
             ::tracing::info!("{}", timings.info_pretty());
+            let precompiles_timings = PRECOMPILES_TIMINGS.lock().expect("poison");
+            ::tracing::info!("{}", precompiles_timings.info_pretty());
         }
 
         if queue_length.load(Ordering::Relaxed) == 0 {
