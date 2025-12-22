@@ -112,7 +112,17 @@ pub fn init_tracing(
     (filter_handle, guard)
 }
 
-pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
+pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
+    // Initialize node version metrics
+    ethrex_metrics::node::MetricsNode::init(
+        env!("CARGO_PKG_VERSION"),
+        env!("VERGEN_GIT_SHA"),
+        env!("VERGEN_GIT_BRANCH"),
+        env!("VERGEN_RUSTC_SEMVER"),
+        env!("VERGEN_RUSTC_HOST_TRIPLE"),
+        &network.to_string(),
+    );
+
     tracing::info!(
         "Starting metrics server on {}:{}",
         opts.metrics_addr,
@@ -502,7 +512,7 @@ pub async fn init_l1(
     .await;
 
     if opts.metrics_enabled {
-        init_metrics(&opts, tracker.clone());
+        init_metrics(&opts, &network, tracker.clone());
     }
 
     if opts.dev {

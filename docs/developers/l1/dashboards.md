@@ -12,14 +12,9 @@ Use the `network` variable (discovered via the consensus config metric) to scope
 ## Execution and consensus summary
 
 ### Execution Client
-Confirms the execution client name and build that each monitored instance is running so you can spot mismatched deployments quickly.
+Confirms the execution client name, build and network that each monitored instance is running so you can spot mismatched deployments quickly.
 
 ![Execution Client](img/execution_client.png)
-
-### Consensus Config
-Shows the consensus configuration reported by `ethereum-metrics-exporter`, helping you verify which network the node is running.
-
-![Consensus Config](img/consensus_config.png)
 
 ### Consensus Fork
 Highlights the active fork reported by `ethereum-metrics-exporter`, which is a useful signal during planned upgrades.
