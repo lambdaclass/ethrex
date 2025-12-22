@@ -68,6 +68,7 @@ fn init_rpc_api(
         rollup_store,
         log_filter_handler,
         gas_ceil.unwrap_or(DEFAULT_BUILDER_GAS_CEIL),
+        opts.generate_witness,
     );
 
     tracker.spawn(rpc_api);

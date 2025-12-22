@@ -1738,10 +1738,10 @@ impl Store {
         let old_witnesses =
             tokio::task::spawn_blocking(move || -> Result<Vec<Vec<u8>>, StoreError> {
                 let tx = db.begin_read()?;
-                let mut iter = tx.prefix_iterator(EXECUTION_WITNESSES, &[])?;
+                let iter = tx.prefix_iterator(EXECUTION_WITNESSES, &[])?;
                 let mut old_witnesses = Vec::new();
 
-                while let Some(result) = iter.next() {
+                for result in iter {
                     let (key, _) = result?;
 
                     // Ensure key has at least 8 bytes for block number
