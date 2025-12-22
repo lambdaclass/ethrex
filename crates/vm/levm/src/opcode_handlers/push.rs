@@ -28,6 +28,8 @@ impl<'a> VM<'a> {
                 },
             )
         } else {
+            // NOTE: this isn't exactly correct, since a PUSHN with insufficient bytes should pad with zeros,
+            // but if we're out of bytes, the next instruction will halt, discarding the stack anyway.
             U256::zero()
         };
 
