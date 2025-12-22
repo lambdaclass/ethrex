@@ -1,5 +1,4 @@
 use std::{array::TryFromSliceError, fmt::Display, net::IpAddr};
-
 use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherError};
 use aes_gcm::{Aes128Gcm, KeyInit, aead::AeadMutInPlace};
 use bytes::{BufMut, Bytes};

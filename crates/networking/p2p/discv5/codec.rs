@@ -7,8 +7,8 @@ use tokio_util::codec::{Decoder, Encoder};
 
 #[derive(Debug)]
 pub struct Discv5Codec {
-    /// Local node id, used to decode incoming Packets
     local_node_id: H256,
+    /// Outgoing message count, used for nonce generation as per the spec.
     session: Option<Session>,
 }
 
