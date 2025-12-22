@@ -398,19 +398,11 @@ impl GenServer for PeerConnectionServer {
                     match msg {
                         L2Cast::BatchBroadcast => {
                             let res = l2_connection::send_sealed_batch(established_state).await;
-                            if res.is_ok() {
-                                l2_connection::process_batch_on_queue(established_state).await
-                            } else {
-                                res
-                            }
+                            res.and(l2_connection::process_batch_on_queue(established_state).await)
                         }
                         L2Cast::BlockBroadcast => {
                             let res = l2_connection::send_new_block(established_state).await;
-                            if res.is_ok() {
-                                l2_connection::process_blocks_on_queue(established_state).await
-                            } else {
-                                res
-                            }
+                            res.and(l2_connection::process_blocks_on_queue(established_state).await)
                         }
                     }
                 }
