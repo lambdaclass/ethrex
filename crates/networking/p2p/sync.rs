@@ -755,7 +755,7 @@ impl Syncer {
                     storage_accounts.accounts_with_storage_root.len()
                 );
                 storage_range_request_attempts += 1;
-                if storage_range_request_attempts < 3 {
+                if storage_range_request_attempts < 5 {
                     chunk_index = self
                         .peers
                         .request_storage_ranges(
