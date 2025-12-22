@@ -7,7 +7,6 @@ use crate::system_contracts::{
     PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
-use ::tracing::info;
 use bytes::Bytes;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
@@ -158,7 +157,7 @@ impl LEVM {
             let mut timings = OPCODE_TIMINGS.lock().expect("poison");
             timings.inc_tx_count(receipts.len());
             timings.inc_block_count();
-            info!("{}", timings.info_pretty());
+            ::tracing::info!("{}", timings.info_pretty());
         }
 
         if queue_length.load(Ordering::Relaxed) == 0 {
