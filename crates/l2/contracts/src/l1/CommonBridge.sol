@@ -460,8 +460,8 @@ contract CommonBridge is
         BalanceDiff[] calldata balanceDiffs
     ) public onlyOnChainProposer nonReentrant {
         for (uint i = 0; i < balanceDiffs.length; i++) {
-            for (uint j = 0; j < balanceDiffs[i].valuePerToken.length; j++) {
-                TokenValue memory tv = balanceDiffs[i].valuePerToken[j];
+            for (uint j = 0; j < balanceDiffs[i].assetDiff.length; j++) {
+                TokenValue memory tv = balanceDiffs[i].assetDiff[j];
                 if (tv.tokenL1 == address(0)) {
                     IRouter(SHARED_BRIDGE_ROUTER).sendETHValue{value: tv.value}(
                         balanceDiffs[i].chainId

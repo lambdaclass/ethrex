@@ -47,7 +47,7 @@ interface ICommonBridge {
     }
 
     /// @notice Structure representing token and value information.
-    struct TokenValue {
+    struct AssetDiff {
         address tokenL1;
         address tokenL2;
         address destTokenL2;
@@ -57,7 +57,7 @@ interface ICommonBridge {
     /// @notice Structure representing the changes per chain id and token values.
     struct BalanceDiff {
         uint256 chainId;
-        TokenValue[] valuePerToken;
+        AssetDiff[] assetDiffs;
         bytes32[] message_hashes;
     }
 

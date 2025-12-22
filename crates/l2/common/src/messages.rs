@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256};
-use ethrex_common::types::balance_diff::{BalanceDiff, ValuePerToken};
+use ethrex_common::types::balance_diff::{AssetDiff, BalanceDiff};
 use ethrex_common::utils::keccak;
 use ethrex_common::{H160, U256, types::Receipt};
 
@@ -193,7 +193,7 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
             let Some(value_bytes) = message.data.get(offset..offset + 32) else {
                 continue;
             };
-            ValuePerToken {
+            AssetDiff {
                 token_l1: Address::from_slice(token_l1),
                 token_src_l2: Address::from_slice(token_src_l2),
                 token_dst_l2: Address::from_slice(token_dst_l2),
@@ -205,7 +205,7 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
                 // This is the mint transaction, ignore the value
                 value = U256::zero();
             }
-            ValuePerToken {
+            AssetDiff {
                 token_l1: Address::zero(),
                 token_src_l2: Address::zero(),
                 token_dst_l2: Address::zero(),
@@ -231,7 +231,7 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
             }
         }
         if !found {
-            entry.value_per_token.push(ValuePerToken {
+            entry.value_per_token.push(AssetDiff {
                 token_l1: value_per_token_decoded.token_l1,
                 token_src_l2: value_per_token_decoded.token_src_l2,
                 token_dst_l2: value_per_token_decoded.token_dst_l2,

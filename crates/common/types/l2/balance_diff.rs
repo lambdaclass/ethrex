@@ -4,7 +4,7 @@ use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ValuePerToken {
+pub struct AssetDiff {
     pub token_l1: Address,
     pub token_src_l2: Address,
     pub token_dst_l2: Address,
@@ -15,7 +15,7 @@ pub struct ValuePerToken {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BalanceDiff {
     pub chain_id: U256,
-    pub value_per_token: Vec<ValuePerToken>,
+    pub value_per_token: Vec<AssetDiff>,
     pub message_hashes: Vec<H256>,
 }
 
@@ -30,7 +30,7 @@ impl RLPEncode for BalanceDiff {
 impl RLPDecode for BalanceDiff {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (chain_id, rlp) = U256::decode_unfinished(rlp)?;
-        let (value_per_token, rlp) = Vec::<ValuePerToken>::decode_unfinished(rlp)?;
+        let (value_per_token, rlp) = Vec::<AssetDiff>::decode_unfinished(rlp)?;
         let (message_hashes, rlp) = Vec::<H256>::decode_unfinished(rlp)?;
         Ok((
             BalanceDiff {
@@ -43,7 +43,7 @@ impl RLPDecode for BalanceDiff {
     }
 }
 
-impl RLPEncode for ValuePerToken {
+impl RLPEncode for AssetDiff {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.token_l1.encode(buf);
         self.token_src_l2.encode(buf);
@@ -52,14 +52,14 @@ impl RLPEncode for ValuePerToken {
     }
 }
 
-impl RLPDecode for ValuePerToken {
+impl RLPDecode for AssetDiff {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (token_l1, rlp) = Address::decode_unfinished(rlp)?;
         let (token_src_l2, rlp) = Address::decode_unfinished(rlp)?;
         let (token_dst_l2, rlp) = Address::decode_unfinished(rlp)?;
         let (value, rlp) = U256::decode_unfinished(rlp)?;
         Ok((
-            ValuePerToken {
+            AssetDiff {
                 token_l1,
                 token_src_l2,
                 token_dst_l2,
