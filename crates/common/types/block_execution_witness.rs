@@ -323,8 +323,18 @@ impl GuestProgramState {
             .entry(address)
             .or_insert_with(|| hash_address(&address));
 
-        let Ok(Some(encoded_state)) = self.state_trie.get(hashed_address) else {
-            return Ok(None);
+        let encoded_state = match self.state_trie.get(hashed_address) {
+            Ok(Some(encoded_state)) => encoded_state,
+            Err(_) => {
+                // In the case of ethrex-replay this is normal when asking for the Witness of a non-ethrex node.
+                // This print is mostly for L2 Prover, if ethrex returns incomplete Witness then this will help for debugging a state mismatch.
+                println!(
+                    "Getting node from state trie when getting info for {:#x} failed. Defaulting to empty account.",
+                    address
+                );
+                return Ok(None);
+            }
+            _ => return Ok(None),
         };
         let state = AccountState::decode(&encoded_state).map_err(|_| {
             GuestProgramStateError::Database("Failed to get decode account from trie".to_string())
@@ -356,17 +366,23 @@ impl GuestProgramState {
         let Some(storage_trie) = self.get_valid_storage_trie(address)? else {
             return Ok(None);
         };
-        if let Some(encoded_key) = storage_trie
-            .get(&hashed_key)
-            .map_err(|e| GuestProgramStateError::Database(e.to_string()))?
-        {
-            U256::decode(&encoded_key)
+
+        match storage_trie.get(&hashed_key) {
+            Ok(Some(encoded_key)) => U256::decode(&encoded_key)
                 .map_err(|_| {
                     GuestProgramStateError::Database("failed to read storage from trie".to_string())
                 })
-                .map(Some)
-        } else {
-            Ok(None)
+                .map(Some),
+            Err(_) => {
+                // In the case of ethrex-replay this is normal when asking for the Witness of a non-ethrex node.
+                // This print is mostly for L2 Prover, if input has an incomplete witness then this will help for debugging a state mismatch.
+                println!(
+                    "Getting node from state trie when getting storage key {:#x} for {:#x} failed. Defaulting to empty storage.",
+                    key, address
+                );
+                Ok(None)
+            }
+            _ => Ok(None),
         }
     }
 
