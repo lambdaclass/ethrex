@@ -2778,7 +2778,7 @@ dependencies = [
 [[package]]
 name = "tiny-keccak"
 version = "2.0.2"
-source = "git+https://github.com/0xPolygonHermez/zisk-patch-tiny-keccak/?branch=zisk#a5cb98ca4d9d390b39b10c9e81a061fd830aea35"
+source = "git+https://github.com/0xPolygonHermez/zisk-patch-tiny-keccak/?tag=patch-2.0.2-zisk-0.15.0#a5cb98ca4d9d390b39b10c9e81a061fd830aea35"
 dependencies = [
  "cfg-if",
  "crunchy",
