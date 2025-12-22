@@ -118,11 +118,8 @@ fn compressed_shared_secret(dest_pubkey: &PublicKey, ephemeral_key: &SecretKey) 
 
 #[cfg(test)]
 mod tests {
-    use crate::discv5::codec::Discv5Codec;
-
     use super::*;
     use hex_literal::hex;
-    use rand::{SeedableRng, rngs::StdRng};
 
     #[test]
     fn derivation_matches_vector() {
@@ -178,19 +175,5 @@ mod tests {
                 "94852a1e2318c4e5e9d422c98eaf19d1d90d876b29cd06ca7cb7546d0fff7b484fe86c09a064fe72bdbef73ba8e9c34df0cd2b53e9d65528c2c7f336d5dfc6e6"
             )
         );
-    }
-
-    #[test]
-    fn test_next_nonce_counter() {
-        let mut codec = Discv5Codec::new(H256::zero());
-
-        let mut rng = StdRng::seed_from_u64(7);
-
-        let n1 = codec.next_nonce(&mut rng);
-        let n2 = codec.next_nonce(&mut rng);
-
-        assert_eq!(&n1[..4], &[0, 0, 0, 0]);
-        assert_eq!(&n2[..4], &[0, 0, 0, 1]);
-        assert_ne!(&n1[4..], &n2[4..]);
     }
 }

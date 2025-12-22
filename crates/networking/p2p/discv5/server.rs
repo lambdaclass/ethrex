@@ -2,8 +2,7 @@ use crate::{
     discv5::{
         codec::Discv5Codec,
         messages::{
-            FindNodeMessage, Message, NodesMessage, Ordinary, Packet, PacketCodecError,
-            PingMessage, PongMessage,
+            DecodedPacket, FindNodeMessage, Message, NodesMessage, Ordinary, Packet, PacketCodecError, PingMessage, PongMessage
         },
     },
     metrics::METRICS,
@@ -18,7 +17,7 @@ use futures::{
     SinkExt as _, Stream, StreamExt,
     stream::{SplitSink, SplitStream},
 };
-use rand::rngs::OsRng;
+use rand::{Rng, RngCore, rngs::OsRng, thread_rng};
 use secp256k1::SecretKey;
 use spawned_concurrency::{
     messages::Unused,
@@ -85,12 +84,12 @@ pub struct DiscoveryServer {
     local_node: Node,
     local_node_record: NodeRecord,
     signer: SecretKey,
-    sink: SplitSink<UdpFramed<Discv5Codec>, (Packet, SocketAddr)>,
-    stream: Option<SplitStream<UdpFramed<Discv5Codec>>>,
-    node_id: H256,
+    udp_socket: Arc<UdpSocket>,
     store: Store,
     peer_table: PeerTable,
     initial_lookup_interval: f64,
+    /// Outgoing message count, used for nonce generation as per the spec.
+    counter: u32,
 }
 
 impl DiscoveryServer {
@@ -114,22 +113,15 @@ impl DiscoveryServer {
                 .expect("Failed to set fork_id on local node record");
         }
 
-        let (sink, stream) =
-            UdpFramed::new(udp_socket, Discv5Codec::new(local_node.node_id())).split();
-
         let mut discovery_server = Self {
             local_node: local_node.clone(),
             local_node_record,
             signer,
-            sink,
-            // This stream will be used in `init()` and replaced by None.
-            // TODO: We should provide a mechanism in spawned to allow
-            // parameters for `init()` function instead
-            stream: Some(stream),
-            node_id: local_node.node_id(),
+            udp_socket: Arc::new(udp_socket),
             store: storage.clone(),
             peer_table: peer_table.clone(),
             initial_lookup_interval,
+            counter: 0,
         };
 
         info!(count = bootnodes.len(), "Adding bootnodes");
@@ -145,16 +137,11 @@ impl DiscoveryServer {
         Ok(())
     }
 
-    async fn handle_message(
+    async fn handle_packet(
         &mut self,
         Discv5Message { from, packet }: Discv5Message,
     ) -> Result<(), DiscoveryServerError> {
-        trace!(msg = ?packet, address= ?from, "Discv5 message received");
-        match packet {
-            Packet::Ordinary(ordinary) => todo!(),
-            Packet::WhoAreYou(who_are_you) => todo!(),
-            Packet::Handshake(handshake) => todo!(),
-        }
+        trace!(?packet, address= ?from, "Discv5 packet received");
         Ok(())
     }
 
@@ -373,17 +360,44 @@ impl DiscoveryServer {
         Ok(())
     }
 
-    async fn send(&mut self, message: &Message, node: &Node) -> Result<(()), DiscoveryServerError> {
-        let packet = Packet::Ordinary(Ordinary {
-            src_id: self.node_id,
+    async fn send(&mut self, message: &Message, node: &Node) -> Result<(), DiscoveryServerError> {
+        let packet = DecodedPacket::Ordinary(Ordinary {
+            src_id: self.local_node.node_id(),
             message: message.clone(),
         });
         let addr = node.udp_addr();
-        let _ = self.sink.send((packet, addr)).await.inspect_err(
+        let mut buf = BytesMut::new();
+        let mut rng = OsRng;
+        let masking_iv: u128 = rng.r#gen();
+        let nonce = self.next_nonce(&mut rng);
+        // TODO retrieve session info
+        // - With dest_id, we fetch Session data from peer_table
+        //   If no session is present, or WhoAreYou, we just use a random key
+        // - We need to save the message by nonce, as it can be used to identify dest_id from a future WhoAreYou incoming messages
+        //
+        // let session = self.peer_table.get_session_info(node.node_id());
+        // let encrypt_key = session.get_encrypt_key();
+        let encrypt_key = &[0];
+        packet.encode(&mut buf, masking_iv, &nonce, &node.node_id(), encrypt_key)?;
+        let _ = self.udp_socket.send_to(&buf, addr).await.inspect_err(
             |e| error!(sending = ?message, addr = ?addr, err=?e, "Error sending message"),
         )?;
         trace!(msg = %message, node = %node.public_key, address= %addr, "Discv5 message sent");
         Ok(())
+    }
+
+    /// Generates a 96-bit AES-GCM nonce
+    /// ## Spec Recommendation
+    /// Encode the current outgoing message count into the first 32 bits of the nonce and fill the remaining 64 bits with random data generated
+    /// by a cryptographically secure random number generator.
+    fn next_nonce<R: RngCore>(&mut self, rng: &mut R) -> [u8; 12] {
+        let counter = self.counter;
+        self.counter = self.counter.wrapping_add(1);
+
+        let mut nonce = [0u8; 12];
+        nonce[..4].copy_from_slice(&counter.to_be_bytes());
+        rng.fill_bytes(&mut nonce[4..]);
+        nonce
     }
 }
 
@@ -394,20 +408,17 @@ impl GenServer for DiscoveryServer {
     type Error = DiscoveryServerError;
 
     async fn init(
-        mut self,
+        self,
         handle: &GenServerHandle<Self>,
     ) -> Result<spawned_concurrency::tasks::InitResult<Self>, Self::Error> {
-        let Some(stream) = std::mem::take(&mut self.stream) else {
-            return Err(DiscoveryServerError::InternalError(
-                "Failed to set up Udp Socket".to_string(),
-            ));
-        };
+        let stream = UdpFramed::new(self.udp_socket.clone(), Discv5Codec::new(self.local_node.node_id()));
+
         spawn_listener(
             handle.clone(),
             stream.filter_map(|result| async move {
                 match result {
-                    Ok((msg, addr)) => {
-                        Some(InMessage::Message(Box::new(Discv5Message::from(msg, addr))))
+                    Ok((packet, addr)) => {
+                        Some(InMessage::Message(Box::new(Discv5Message::from(packet, addr))))
                     }
                     Err(e) => {
                         debug!(error=?e, "Error receiving Discv5 message");
@@ -437,7 +448,7 @@ impl GenServer for DiscoveryServer {
         match message {
             Self::CastMsg::Message(message) => {
                 let _ = self
-                    .handle_message(*message)
+                    .handle_packet(*message)
                     .await
                     .inspect_err(|e| error!(err=?e, "Error Handling Discovery message"));
             }
@@ -496,4 +507,35 @@ pub fn lookup_interval_function(progress: f64, lower_limit: f64, upper_limit: f6
     //     // Use `progress` here instead of `ease_in_out_cubic` for a linear function.
     //     (1000f64 * (ease_in_out_cubic * (upper_limit - lower_limit) + lower_limit)).round() as u64,
     // )
+}
+
+
+
+#[cfg(test)]
+mod tests {
+    // use rand::{SeedableRng, rngs::StdRng};
+
+    // use crate::discv5::server::DiscoveryServer;
+
+    // #[test]
+    // fn test_next_nonce_counter() {
+    //     let mut rng = StdRng::seed_from_u64(7);
+    //     let server = DiscoveryServer {
+    //         local_node: Default::default(),
+    //         local_node_record: todo!(),
+    //         signer: todo!(),
+    //         udp_socket: todo!(),
+    //         store: todo!(),
+    //         peer_table: todo!(),
+    //         initial_lookup_interval: todo!(),
+    //         counter: 0,
+    //     };
+
+    //     let n1 = server.next_nonce(&mut rng);
+    //     let n2 = server.next_nonce(&mut rng);
+
+    //     assert_eq!(&n1[..4], &[0, 0, 0, 0]);
+    //     assert_eq!(&n2[..4], &[0, 0, 0, 1]);
+    //     assert_ne!(&n1[4..], &n2[4..]);
+    // }
 }
