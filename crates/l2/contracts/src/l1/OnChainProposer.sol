@@ -697,7 +697,7 @@ contract OnChainProposer is
                     destTokenL2 != balanceDiffs[i].assetDiffs[j].destTokenL2 ||
                     tokenValue != balanceDiffs[i].assetDiffs[j].value
                 ) {
-                    return "00v"; // balance diffs public inputs don't match with committed balance diffs
+                    return "014"; // balance diffs public inputs don't match with committed balance diffs
                 }
             }
 
@@ -752,12 +752,12 @@ contract OnChainProposer is
             .staticcall(callData);
         require(
             callResult,
-            "010" // OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed
+            "00y" // OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed
         );
         bool proofVerified = abi.decode(response, (bool));
         require(
             proofVerified,
-            "011" // OnChainProposer: Aligned proof verification failed
+            "00z" // OnChainProposer: Aligned proof verification failed
         );
     }
 
@@ -767,11 +767,11 @@ contract OnChainProposer is
     ) external override onlySequencer whenPaused {
         require(
             batchNumber >= lastVerifiedBatch,
-            "012" // OnChainProposer: can't revert verified batch
+            "010" // OnChainProposer: can't revert verified batch
         );
         require(
             batchNumber < lastCommittedBatch,
-            "013" // OnChainProposer: no batches are being reverted
+            "011" // OnChainProposer: no batches are being reverted
         );
 
         // Remove old batches
