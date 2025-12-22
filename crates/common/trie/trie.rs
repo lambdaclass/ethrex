@@ -1,7 +1,6 @@
 pub mod db;
 pub mod error;
 pub mod flattrie;
-pub mod flattrie_new;
 pub mod logger;
 mod nibbles;
 pub mod node;

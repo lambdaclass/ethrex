@@ -10,7 +10,7 @@ use ethereum_types::{Address, H160, H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::flattrie_new::FlatTrie;
+use ethrex_trie::flattrie::FlatTrie;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, Trie, TrieError};
 use rkyv::with::{Identity, MapKV};
 use serde::{Deserialize, Serialize};

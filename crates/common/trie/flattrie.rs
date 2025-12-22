@@ -1,8 +1,4 @@
-use std::collections::HashMap;
-
 use bytes::BufMut;
-use ethereum_types::H256;
-use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
     constants::RLP_NULL,
     decode::{RLPDecode, decode_bytes},
@@ -12,10 +8,13 @@ use ethrex_rlp::{
 };
 use rkyv::with::Skip;
 
-use crate::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, NodeRef, rlp::decode_child};
+use crate::{
+    EMPTY_TRIE_HASH, Nibbles, Node as EthrexTrieNode, NodeHash, NodeRef as EthrexTrieNodeRef,
+    rlp::decode_child,
+};
 
-/// A trie implementation that is non recursive, POD and avoids copying and encoding
-/// nodes by providing views into a RLP flat buffer
+/// A trie implementation that is non recursive, POD and avoids deserialization
+/// by providing views into a RLP flat buffer
 #[derive(
     Default,
     serde::Serialize,
@@ -26,231 +25,101 @@ use crate::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, NodeRef, rlp::decode_child
     Clone,
 )]
 pub struct FlatTrie {
-    /// Stores a contiguous byte buffer with each RLP encoded node
-    pub data: Vec<u8>,
     /// Contains the structural information of the MPT
-    pub views: Vec<NodeView>,
+    pub nodes: Vec<Node>,
+    /// Stores a contiguous byte buffer with each initial RLP encoded node
+    pub encoded_data: Vec<u8>,
     /// The index of the view for the root of this trie
     pub root_index: Option<usize>,
-    /// Root hash that gets initialized when calling `Self::authenticate`
+    /// Node hashes get cached when hashing the trie for the first time
+    /// This also allows to store the hashes of pruned nodes
     #[serde(skip)]
     #[rkyv(with = Skip)]
-    root_hash: Option<NodeHash>,
-    /// Stores new data for a view index
-    #[serde(skip)]
-    #[rkyv(with = Skip)]
-    puts: Vec<NodeData>,
+    hashes: Vec<Option<NodeHash>>,
 }
 
 /// A view into a particular node
 #[derive(
-    Clone,
-    Copy,
-    serde::Serialize,
-    serde::Deserialize,
-    rkyv::Serialize,
-    rkyv::Deserialize,
-    rkyv::Archive,
+    Clone, serde::Serialize, serde::Deserialize, rkyv::Serialize, rkyv::Deserialize, rkyv::Archive,
 )]
-pub struct NodeView {
-    pub pointer: NodeViewPointer,
-    /// Handle into this node's childs
-    pub node_type: NodeType,
+pub struct Node {
+    pub handle: NodeHandle,
+    pub encoded_range: Option<(usize, usize)>,
 }
 
+/// Contains information about this node type and who its children are.
+/// Also contains overrides to the node's data.
+///
+/// The idea is that the initial data of the trie will be already encoded in RLP in a
+/// contiguous buffer. Then insertions and removals will yield overrides over the encoded
+/// data.
+///
+/// Finally the RLP buffer will be updated with the newest data based on the initial and overrides.
 #[derive(
-    Clone,
-    Copy,
-    serde::Serialize,
-    serde::Deserialize,
-    rkyv::Serialize,
-    rkyv::Deserialize,
-    rkyv::Archive,
+    Clone, serde::Serialize, serde::Deserialize, rkyv::Serialize, rkyv::Deserialize, rkyv::Archive,
 )]
-pub enum NodeViewPointer {
-    /// Indices to the RLP code of this node over the flat data buffer
-    InBuffer { data_range: (usize, usize) },
-    /// Index to the put vector that contains the newer data of this node
-    InPut { index: usize },
-}
-
-/// Contains indices to the `handles` list for each child of a node
-#[derive(
-    Clone,
-    Copy,
-    serde::Serialize,
-    serde::Deserialize,
-    rkyv::Serialize,
-    rkyv::Deserialize,
-    rkyv::Archive,
-)]
-pub enum NodeType {
-    /// A leaf node doesn't have any childs
-    Leaf,
-    /// An extension node always has a branch as a child
-    Extension { child: Option<usize> },
-    /// A branch node can have any node type as any of its 16 childs
-    /// TODO: This can be optimized to a bitmap if the data vec is ordered (contiguous childs)
-    Branch { children: [Option<usize>; 16] },
-}
-
-#[derive(Clone)]
-pub enum NodeData {
-    Leaf { partial: Nibbles, value: Vec<u8> },
-    Extension { path: Nibbles, child: NodeHash },
-    Branch { children: [Option<NodeHash>; 16] },
-}
-
-impl From<&Node> for FlatTrie {
-    fn from(root: &Node) -> Self {
-        let mut trie = FlatTrie::default();
-
-        fn recursive(value: &Node, trie: &mut FlatTrie) {
-            let childs = match value {
-                Node::Branch(node) => {
-                    let mut childs = [None; 16];
-                    for (i, choice) in node.choices.iter().enumerate() {
-                        if let NodeRef::Node(choice, _) = choice {
-                            recursive(&(*choice), trie);
-                            childs[i] = Some(trie.views.len() - 1);
-                        }
-                    }
-                    NodeType::Branch { children: childs }
-                }
-                Node::Extension(node) => {
-                    let mut child = None;
-                    if let NodeRef::Node(child_node, _) = &node.child {
-                        recursive(child_node, trie);
-                        child = Some(trie.views.len() - 1);
-                    }
-                    NodeType::Extension { child }
-                }
-                Node::Leaf(_) => NodeType::Leaf,
-            };
-
-            let offset = trie.data.len();
-            trie.data.extend(value.encode_to_vec());
-            trie.views.push(NodeView {
-                pointer: NodeViewPointer::InBuffer {
-                    data_range: (offset, trie.data.len()),
-                },
-                node_type: childs,
-            });
-        }
-
-        recursive(root, &mut trie);
-        trie.root_index = Some(trie.views.len() - 1); // last stored node is the root
-        trie
-    }
+pub enum NodeHandle {
+    Leaf {
+        /// Overrides the encoded partial
+        partial: Option<Nibbles>,
+        /// Overrides the encoded value
+        value: Option<Vec<u8>>,
+    },
+    Extension {
+        /// Overrides the encoded prefix
+        prefix: Option<Nibbles>,
+        /// Reference to the child. If None, then the child is pruned.
+        child_index: Option<usize>,
+    },
+    Branch {
+        /// Reference to the children.
+        /// - If None, then there is no child for that choice.
+        /// - If Some(None), then there is a child but its pruned.
+        children_indices: [Option<Option<usize>>; 16],
+    },
 }
 
 impl FlatTrie {
-    // TODO: authentication should be done just once, when creating the trie.
-    pub fn root_hash(&mut self) -> Result<Option<NodeHash>, RLPDecodeError> {
-        if self.root_hash.is_none() && !self.authenticate()? {
-            return Ok(None);
-        }
-        Ok(self.root_hash)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
-    }
-
-    /// Recursively traverses the trie, hashes each node's data and checks that their parents reference
-    /// those same hashes. This way the data gets authenticated.
-    ///
-    /// Initializes `Self::root_hash` if successful, and returns a boolean indicating success.
-    pub fn authenticate(&mut self) -> Result<bool, RLPDecodeError> {
-        self.apply_puts();
-
-        fn recursive<'a>(
-            trie: &'a FlatTrie,
-            view: &NodeView,
-        ) -> Result<Option<NodeHash>, RLPDecodeError> {
-            match view.node_type {
-                NodeType::Leaf => {}
-                NodeType::Extension { child } => {
-                    if let Some(child) = child {
-                        let Some(child_hash) = recursive(trie, &trie.views[child])? else {
-                            return Ok(None);
-                        };
-                        let Some(items) = trie.get_encoded_items(view)? else {
-                            panic!("authenticate child case"); // TODO: err
-                        };
-                        let child_data_hash = decode_child(items[1]);
-                        if child_hash != child_data_hash {
-                            return Ok(None);
-                        }
-                    }
-                }
-                NodeType::Branch { children: childs } => {
-                    // TODO: we can decode just the Some(_) childs
-                    let Some(items) = trie.get_encoded_items(view)? else {
-                        panic!("authenticate branch case"); // TODO: err
-                    };
-                    for (i, child) in childs.iter().enumerate() {
-                        if let Some(child) = child {
-                            let child_view = &trie.views[*child];
-                            let Some(child_hash) = recursive(trie, child_view)? else {
-                                return Ok(None);
-                            };
-                            let child_data_hash = decode_child(items[i]);
-                            if child_hash != child_data_hash {
-                                return Ok(None);
-                            }
-                        }
-                    }
-                }
-            }
-            Ok(Some(trie.get_hash_view(view)))
-        }
-
-        let Some(root_view) = self.get_root_view() else {
-            self.root_hash = Some((*EMPTY_TRIE_HASH).into());
-            return Ok(true);
-        };
-
-        let Some(root_hash) = recursive(&self, root_view)? else {
-            return Ok(false);
-        };
-        self.root_hash = Some(root_hash);
-        Ok(true)
-    }
-
+    /// Get an element from the trie
     pub fn get(&self, path: &[u8]) -> Result<Option<&[u8]>, RLPDecodeError> {
         let mut path = Nibbles::from_bytes(path);
         fn recursive<'a>(
             trie: &'a FlatTrie,
             path: &mut Nibbles,
-            view_index: usize,
+            index: usize,
         ) -> Result<Option<&'a [u8]>, RLPDecodeError> {
-            let view = trie.get_view(view_index).unwrap();
-            match view.node_type {
-                NodeType::Leaf => {
-                    let (partial, value) = trie.get_leaf_data(view_index)?;
+            let node = &trie.nodes[index];
+            match node.handle {
+                NodeHandle::Leaf { .. } => {
+                    let (partial, value) = trie.get_leaf_data(index)?;
                     if partial == *path {
-                        return Ok(Some(value));
-                    } else {
-                        return Ok(None);
-                    }
-                }
-                NodeType::Extension { child } => {
-                    let (prefix, _) = trie.get_extension_data(view_index)?;
-                    if path.skip_prefix(prefix) {
-                        recursive(trie, path, child.unwrap())
+                        Ok(Some(value))
                     } else {
                         Ok(None)
                     }
                 }
-                NodeType::Branch { children: childs } => {
+                NodeHandle::Extension { child_index, .. } => {
+                    let prefix = trie.get_extension_data(index)?;
+                    if path.skip_prefix(prefix) {
+                        recursive(
+                            trie,
+                            path,
+                            child_index.expect("no child for extension in get"),
+                        )
+                    } else {
+                        Ok(None)
+                    }
+                }
+                NodeHandle::Branch {
+                    children_indices, ..
+                } => {
                     let Some(choice) = path.next_choice() else {
                         return Ok(None);
                     };
-                    let Some(child_view_index) = childs[choice] else {
+                    let Some(child_index) = children_indices[choice] else {
                         return Ok(None);
                     };
-                    recursive(trie, path, child_view_index)
+                    recursive(trie, path, child_index.expect("pruned branch child"))
                 }
             }
         }
@@ -258,111 +127,95 @@ impl FlatTrie {
         let Some(root_index) = self.root_index else {
             return Ok(None);
         };
-        recursive(&self, &mut path, root_index)
+        recursive(self, &mut path, root_index)
     }
 
-    pub fn put(&mut self, node_type: NodeType, data: NodeData) -> usize {
-        self.puts.push(data);
-        let view = NodeView {
-            pointer: NodeViewPointer::InPut {
-                index: self.puts.len() - 1,
-            },
-            node_type,
+    /// Assumes this node index corresponds to a leaf, and retrieves its data taking into
+    /// account the overrides.
+    pub fn get_leaf_data(&self, index: usize) -> Result<(Nibbles, &[u8]), RLPDecodeError> {
+        let handle = &self.nodes[index].handle;
+        let NodeHandle::Leaf {
+            partial: override_partial,
+            value: override_value,
+        } = handle
+        else {
+            panic!("not leaf in get_leaf_data");
         };
-        // let start = self.data.len();
-        // Self::encode(&mut self.data, data);
-        // let end = self.data.len();
-        // let view = NodeView {
-        //     pointer: NodeViewPointer::InBuffer {
-        //         data_range: (start, end),
-        //     },
-        //     node_type,
-        // };
-        self.views.push(view);
-        self.views.len() - 1
+
+        let data = match (override_partial, override_value) {
+            (Some(partial), Some(value)) => (partial.clone(), value.as_slice()),
+            (Some(partial), None) => {
+                let encoded_items = self.get_encoded_items(index)?;
+                let (value, _) = decode_bytes(encoded_items[1])?;
+                (partial.clone(), value)
+            }
+            (None, Some(value)) => {
+                let encoded_items = self.get_encoded_items(index)?;
+                let (partial, _) = decode_bytes(encoded_items[0])?;
+                let partial = Nibbles::decode_compact(partial);
+                debug_assert!(partial.is_leaf());
+                (partial, value.as_slice())
+            }
+            (None, None) => {
+                let encoded_items = self.get_encoded_items(index)?;
+                let (partial, _) = decode_bytes(encoded_items[0])?;
+                let partial = Nibbles::decode_compact(partial);
+                debug_assert!(partial.is_leaf());
+                let (value, _) = decode_bytes(encoded_items[1])?;
+                (partial, value)
+            }
+        };
+        Ok(data)
     }
 
-    pub fn apply_puts(&mut self) {
-        fn recursive(trie: &mut FlatTrie, self_index: usize) {
-            let view = &mut trie.views[self_index];
-            if let NodeViewPointer::InPut { index } = view.pointer {
-                let start = trie.data.len();
-                FlatTrie::encode(&mut trie.data, trie.puts[index].clone());
-                let end = trie.data.len();
+    /// Assumes this node index corresponds to an extension, and retrieves its data taking into
+    /// account the overrides.
+    pub fn get_extension_data(&self, index: usize) -> Result<Nibbles, RLPDecodeError> {
+        let handle = &self.nodes[index].handle;
+        let NodeHandle::Extension {
+            prefix: override_prefix,
+            ..
+        } = handle
+        else {
+            panic!("not leaf in get_leaf_data");
+        };
 
-                view.pointer = NodeViewPointer::InBuffer {
-                    data_range: (start, end),
-                };
+        let data = match override_prefix {
+            Some(prefix) => prefix.clone(),
+            None => {
+                let encoded_items = self.get_encoded_items(index)?;
+                let (prefix, _) = decode_bytes(encoded_items[0])?;
+                let prefix = Nibbles::decode_compact(prefix);
+                debug_assert!(!prefix.is_leaf());
+                prefix
             }
-
-            match view.node_type {
-                NodeType::Leaf => {}
-                NodeType::Extension { child } => {
-                    if let Some(child) = child {
-                        recursive(trie, child)
-                    } else {
-                        dbg!("ext child not present");
-                        dbg!(&self_index);
-                    }
-                }
-                NodeType::Branch { children } => {
-                    for child in children {
-                        if let Some(child) = child {
-                            recursive(trie, child)
-                        } else {
-                            dbg!("branch child not present");
-                            dbg!(&self_index);
-                        }
-                    }
-                }
-            }
-        }
-        if let Some(root_index) = self.root_index {
-            recursive(self, root_index);
-        }
+        };
+        Ok(data)
     }
 
-    pub fn encode(buf: &mut impl BufMut, data: NodeData) {
-        match data {
-            NodeData::Leaf { partial, value } => {
-                let mut encoder = Encoder::new(buf);
-                encoder = encoder.encode_bytes(&partial.encode_compact());
-                encoder = encoder.encode_bytes(&value);
-                encoder.finish();
-            }
-            NodeData::Extension { path, child } => {
-                let mut encoder = Encoder::new(buf);
-                encoder = encoder.encode_bytes(&path.encode_compact());
-                encoder = child.encode(encoder);
-                encoder.finish();
-            }
-            NodeData::Branch { children } => {
-                // optimized encoding taken from rlp.rs
-                let payload_len = children.iter().fold(1, |acc, child| {
-                    acc + if let Some(child) = child {
-                        RLPEncode::length(child)
-                    } else {
-                        1
-                    }
-                });
+    pub fn get_extension_encoded_child_hash(
+        &self,
+        index: usize,
+    ) -> Result<NodeHash, RLPDecodeError> {
+        let encoded_items = self.get_encoded_items(index)?;
+        let child_hash = decode_child(encoded_items[1]);
+        Ok(child_hash)
+    }
 
-                encode_length(payload_len, buf);
-                for child in children.iter() {
-                    let Some(child) = child else {
-                        buf.put_u8(RLP_NULL);
-                        continue;
-                    };
-                    match child {
-                        NodeHash::Hashed(hash) => hash.0.encode(buf),
-                        NodeHash::Inline((_, 0)) => buf.put_u8(RLP_NULL),
-                        NodeHash::Inline((encoded, len)) => {
-                            buf.put_slice(&encoded[..*len as usize])
-                        }
-                    }
-                }
-                buf.put_u8(RLP_NULL);
-            }
+    /// Gets the encoded items of a node based on its index.
+    pub fn get_encoded_items(&self, index: usize) -> Result<Vec<&[u8]>, RLPDecodeError> {
+        let node = &self.nodes[index];
+        let encoded_range = node.encoded_range.expect("could not get encoded range");
+        let data = &self.encoded_data[encoded_range.0..encoded_range.1];
+
+        let mut decoder = Decoder::new(data)?;
+        let mut rlp_items = Vec::with_capacity(17);
+        while !decoder.is_done() && rlp_items.len() < 17 {
+            let (item, new_decoder) = decoder.get_encoded_item_ref()?;
+            decoder = new_decoder;
+            rlp_items.push(item);
         }
+        Ok(rlp_items)
     }
 
     pub fn insert(&mut self, path: Vec<u8>, value: Vec<u8>) -> Result<(), RLPDecodeError> {
@@ -372,22 +225,26 @@ impl FlatTrie {
         } else {
             self.root_index = Some(self.put_leaf(path, value));
         }
-        self.root_hash = None;
         Ok(())
     }
 
     fn insert_inner(
         &mut self,
-        self_view_index: usize,
+        self_index: usize,
         mut path: Nibbles,
         value: Vec<u8>,
     ) -> Result<usize, RLPDecodeError> {
-        let self_view = self.views[self_view_index];
-        match self_view.node_type {
-            NodeType::Leaf => {
-                let (partial, self_value) = self.get_leaf_data(self_view_index)?;
+        self.hashes[self_index] = None;
+        let self_view = &self.nodes[self_index];
+        match self_view.handle {
+            NodeHandle::Leaf { .. } => {
+                let (partial, _) = self.get_leaf_data(self_index)?;
                 if partial == path {
-                    Ok(self.put_leaf(partial, value))
+                    let override_node_handle = NodeHandle::Leaf {
+                        partial: None,
+                        value: Some(value),
+                    };
+                    Ok(self.override_node(self_index, override_node_handle))
                 } else {
                     // Current node will be replaced with a branch or extension node
                     let match_index = path.count_prefix(&partial);
@@ -395,8 +252,13 @@ impl FlatTrie {
                     let new_leaf_choice_idx = path.at(match_index);
 
                     // Modify the partial of self
-                    let new_self_view_index =
-                        self.put_leaf(partial.offset(match_index + 1), self_value.to_vec());
+                    let new_self_index = self.override_node(
+                        self_index,
+                        NodeHandle::Leaf {
+                            partial: Some(partial.offset(match_index + 1)),
+                            value: None,
+                        },
+                    );
 
                     debug_assert!(
                         self_choice_idx != 16,
@@ -408,111 +270,115 @@ impl FlatTrie {
                     );
                     // Yields a new leaf with the path and value in it, and a new branch
                     // with the new and old leaf as children.
-                    let new_leaf_view_index = self.put_leaf(path.offset(match_index + 1), value);
-                    let branch_view_index = self.put_branch(vec![
-                        (
-                            new_leaf_choice_idx,
-                            (
-                                Some(new_leaf_view_index),
-                                self.get_hash(new_leaf_view_index),
-                            ),
-                        ),
-                        (
-                            self_choice_idx,
-                            (
-                                Some(new_self_view_index),
-                                self.get_hash(new_self_view_index),
-                            ),
-                        ),
-                    ]);
+                    let new_leaf_index = self.put_leaf(path.offset(match_index + 1), value);
+                    let branch_index = {
+                        let mut children_indices = [None; 16];
+                        children_indices[new_leaf_choice_idx] = Some(Some(new_leaf_index));
+                        children_indices[self_choice_idx] = Some(Some(new_self_index));
+                        self.put_node(NodeHandle::Branch { children_indices })
+                    };
 
                     if match_index == 0 {
-                        Ok(branch_view_index)
+                        Ok(branch_index)
                     } else {
                         // Yields an extension node with the branch as child
-                        Ok(self.put_extension(
-                            path.slice(0, match_index),
-                            self.get_hash(branch_view_index),
-                            Some(branch_view_index),
-                        ))
+                        Ok(self.put_node(NodeHandle::Extension {
+                            prefix: Some(path.slice(0, match_index)),
+                            child_index: Some(branch_index),
+                        }))
                     }
                 }
             }
-            NodeType::Extension { child } => {
-                let (prefix, _) = self.get_extension_data(self_view_index)?;
+            NodeHandle::Extension { child_index, .. } => {
+                let prefix = self.get_extension_data(self_index)?;
                 let match_index = path.count_prefix(&prefix);
                 if match_index == prefix.len() {
                     let path = path.offset(match_index);
-                    let new_child_view_index = self.insert_inner(
-                        child.expect("missing child of extension node at match_index == prefix"),
+                    let new_child_index = self.insert_inner(
+                        child_index
+                            .expect("missing child of extension node at match_index == prefix"),
                         path,
                         value,
                     )?;
-                    Ok(self.put_extension(
-                        prefix,
-                        self.get_hash(new_child_view_index),
-                        Some(new_child_view_index),
+                    Ok(self.override_node(
+                        self_index,
+                        NodeHandle::Extension {
+                            prefix: None,
+                            child_index: Some(new_child_index),
+                        },
                     ))
                 } else if match_index == 0 {
                     debug_assert!(
                         prefix.at(0) != 16,
                         "insertion into extension yielded branch with value"
                     );
-                    let (_, self_child) = self.get_extension_data(self_view_index)?;
-                    let branch_view_index = if prefix.len() == 1 {
-                        self.put_branch(vec![(prefix.at(0), (child, self_child))])
+                    let branch_index = if prefix.len() == 1 {
+                        let mut children_indices = [None; 16];
+                        children_indices[prefix.at(0)] = Some(child_index);
+                        if child_index.is_some() {
+                            self.put_node(NodeHandle::Branch { children_indices })
+                        } else {
+                            // pruned child, we must make its hash available by encoding the branch
+                            // TODO: hacky
+                            let child_hash = self.get_extension_encoded_child_hash(self_index)?;
+                            let mut children_hashes = [None; 16];
+                            children_hashes[prefix.at(0)] = Some(child_hash);
+                            let encoded = encode_branch(children_hashes);
+                            self.put_node_encoded(NodeHandle::Branch { children_indices }, encoded)
+                        }
                     } else {
                         // New extension with self_node as a child
-                        let new_node_view_index =
-                            self.put_extension(prefix.offset(1), self_child, child);
-                        self.put_branch(vec![(
-                            prefix.at(0),
-                            (
-                                Some(new_node_view_index),
-                                self.get_hash(new_node_view_index),
-                            ),
-                        )])
+                        let handle = NodeHandle::Extension {
+                            prefix: Some(prefix.offset(1)),
+                            child_index,
+                        };
+                        let new_node_index = if child_index.is_some() {
+                            self.put_node(handle)
+                        } else {
+                            // pruned child, we must make its hash available by encoding the branch
+                            // TODO: hacky
+                            let child_hash = self.get_extension_encoded_child_hash(self_index)?;
+                            let encoded = encode_extension(prefix.offset(1), child_hash);
+                            self.put_node_encoded(handle, encoded)
+                        };
+                        {
+                            let mut children_indices = [None; 16];
+                            children_indices[prefix.at(0)] = Some(Some(new_node_index));
+                            self.put_node(NodeHandle::Branch { children_indices })
+                        }
                     };
-                    self.insert_inner(branch_view_index, path, value)
+                    self.insert_inner(branch_index, path, value)
                 } else {
-                    let (_, self_child) = self.get_extension_data(self_view_index)?;
-                    let new_extension_view_index =
-                        self.put_extension(prefix.offset(match_index), self_child, child);
-                    let new_node_view_index = self.insert_inner(
-                        new_extension_view_index,
-                        path.offset(match_index),
-                        value,
-                    )?;
-
-                    Ok(self.put_extension(
-                        prefix.slice(0, match_index),
-                        self.get_hash(new_node_view_index),
-                        Some(new_node_view_index),
-                    ))
+                    let new_extension_index = self.override_node(
+                        self_index,
+                        NodeHandle::Extension {
+                            prefix: Some(prefix.offset(match_index)),
+                            child_index,
+                        },
+                    );
+                    let new_node_index =
+                        self.insert_inner(new_extension_index, path.offset(match_index), value)?;
+                    Ok(self.put_node(NodeHandle::Extension {
+                        prefix: Some(prefix.slice(0, match_index)),
+                        child_index: Some(new_node_index),
+                    }))
                 }
             }
-            NodeType::Branch { mut children } => {
-                let mut children_hashes = self.get_branch_data(self_view_index)?;
+            NodeHandle::Branch {
+                mut children_indices,
+            } => {
                 let choice = path
                     .next_choice()
                     .expect("branch insertion yielded value on a branch");
-                let new_child_view_index = match children[choice] {
-                    None if children_hashes[choice].is_some() => {
+                let new_child_index = match children_indices[choice] {
+                    Some(None) => {
                         panic!("Missing children of branch needed for insert")
                     }
                     None => self.put_leaf(path, value),
-                    Some(view_index) => self.insert_inner(view_index, path, value)?,
+                    Some(Some(index)) => self.insert_inner(index, path, value)?,
                 };
-                children[choice] = Some(new_child_view_index);
-                children_hashes[choice] = Some(self.get_hash(new_child_view_index));
-
-                let new_children = children
-                    .into_iter()
-                    .zip(children_hashes.into_iter())
-                    .enumerate()
-                    .filter_map(|(i, (c, h))| Some((i, (c, h?))))
-                    .collect();
-                Ok(self.put_branch(new_children))
+                children_indices[choice] = Some(Some(new_child_index));
+                Ok(self.override_node(self_index, NodeHandle::Branch { children_indices }))
             }
         }
     }
@@ -522,386 +388,573 @@ impl FlatTrie {
         if let Some(root_index) = self.root_index {
             self.root_index = self.remove_inner(root_index, path)?;
         }
-        self.root_hash = None;
         Ok(())
     }
 
-    fn remove_inner(
+    pub fn remove_inner(
         &mut self,
-        self_view_index: usize,
+        index: usize,
         mut path: Nibbles,
     ) -> Result<Option<usize>, RLPDecodeError> {
-        let self_view = self.views[self_view_index];
-        match self_view.node_type {
-            NodeType::Leaf => {
-                let (partial, _) = self.get_leaf_data(self_view_index)?;
+        self.hashes[index] = None;
+        let node = &self.nodes[index];
+        match node.handle {
+            NodeHandle::Leaf { .. } => {
+                let (partial, _) = self.get_leaf_data(index)?;
                 if partial == path {
                     Ok(None)
                 } else {
-                    Ok(Some(self_view_index))
+                    Ok(Some(index))
                 }
             }
-            NodeType::Extension { child } => {
-                let (mut prefix, _) = self.get_extension_data(self_view_index)?;
+            NodeHandle::Extension { child_index, .. } => {
+                let mut prefix = self.get_extension_data(index)?;
 
-                if path.skip_prefix(&prefix) {
-                    let new_child_view_index = self.remove_inner(
-                        child.expect("missing child of extension node at remove"),
-                        path,
-                    )?;
-                    let Some(new_child_view_index) = new_child_view_index else {
-                        return Ok(None);
-                    };
-
-                    let new_child_view = self.get_view(new_child_view_index).unwrap();
-                    let new_view_index = match new_child_view.node_type {
-                        NodeType::Branch { .. } => self.put_extension(
-                            prefix,
-                            self.get_hash(new_child_view_index),
-                            Some(new_child_view_index),
-                        ),
-                        NodeType::Extension {
-                            child: new_extension_child,
-                        } => {
-                            let (new_child_prefix, _) =
-                                self.get_extension_data(new_child_view_index)?;
-                            prefix.extend(&new_child_prefix);
-                            let new_extension_child = new_extension_child
-                                .expect("missing child of new extension at remove");
-                            self.put_extension(
-                                prefix,
-                                self.get_hash(new_extension_child),
-                                Some(new_extension_child),
-                            )
-                        }
-                        NodeType::Leaf => {
-                            let (partial, value) = self.get_leaf_data(new_child_view_index)?;
-                            prefix.extend(&partial);
-                            self.put_leaf(prefix, value.to_vec())
-                        }
-                    };
-                    Ok(Some(new_view_index))
-                } else {
-                    Ok(Some(self_view_index))
+                if !path.skip_prefix(&prefix) {
+                    return Ok(Some(index));
                 }
+                let new_child_index = self.remove_inner(
+                    child_index.expect("missing child of extension node at remove"),
+                    path,
+                )?;
+                let Some(new_child_index) = new_child_index else {
+                    return Ok(None);
+                };
+
+                let new_child = &self.nodes[new_child_index];
+                let new_index = match new_child.handle {
+                    NodeHandle::Branch { .. } => {
+                        let handle = NodeHandle::Extension {
+                            prefix: Some(prefix),
+                            child_index: Some(new_child_index),
+                        };
+                        self.put_node(handle)
+                    }
+                    NodeHandle::Extension { child_index, .. } => {
+                        let new_child_prefix = self.get_extension_data(new_child_index)?;
+                        prefix.extend(&new_child_prefix);
+                        let handle = NodeHandle::Extension {
+                            prefix: Some(prefix),
+                            child_index,
+                        };
+                        self.override_node(index, handle)
+                    }
+                    NodeHandle::Leaf { .. } => {
+                        let (partial, value) = self.get_leaf_data(new_child_index)?;
+                        prefix.extend(&partial);
+                        let handle = NodeHandle::Leaf {
+                            partial: Some(prefix),
+                            value: Some(value.to_vec()),
+                        };
+                        self.put_node(handle)
+                    }
+                };
+                Ok(Some(new_index))
             }
-            NodeType::Branch { mut children } => {
+            NodeHandle::Branch {
+                mut children_indices,
+            } => {
                 let choice = path
                     .next_choice()
                     .expect("branch removal yielded value on a branch");
 
-                let mut children_hashes = self.get_branch_data(self_view_index)?;
-                let Some(child_view_index) = children[choice] else {
-                    return Ok(Some(self_view_index));
+                let Some(child_index) = children_indices[choice] else {
+                    return Ok(Some(index));
                 };
 
-                let new_child_index = self.remove_inner(child_view_index, path)?;
-                children[choice] = new_child_index;
-                children_hashes[choice] = new_child_index.map(|i| self.get_hash(i));
+                let new_child_index = self.remove_inner(
+                    child_index.expect("pruned branch choice needed for remove"),
+                    path,
+                )?;
+                children_indices[choice] = new_child_index.map(Some);
 
-                let new_children: Vec<(_, _)> = children
-                    .into_iter()
-                    .zip(children_hashes.into_iter())
+                let new_valid_children: Vec<_> = children_indices
+                    .iter()
                     .enumerate()
-                    .filter_map(|(i, (c, h))| Some((i, (c, h?))))
+                    .filter_map(|(i, c)| c.map(|c| (i, c)))
                     .collect();
 
-                match new_children.len() {
+                match new_valid_children.len() {
                     0 => Ok(None),
                     1 => {
-                        let (choice_idx, (child_idx, _)) = new_children[0];
+                        let (choice_idx, child_idx) = new_valid_children[0];
                         let child_idx = child_idx.expect("missing child of branch at remove");
-                        let child_view = self
-                            .get_view(child_idx)
-                            .expect("missing child view of branch choice at remove");
+                        let child = &self.nodes[child_idx];
 
-                        match child_view.node_type {
-                            NodeType::Leaf => {
-                                let (mut partial, value) = self.get_leaf_data(child_view_index)?;
+                        match child.handle {
+                            NodeHandle::Leaf { .. } => {
+                                let (mut partial, value) = self.get_leaf_data(child_idx)?;
                                 partial.prepend(choice_idx as u8);
                                 Ok(Some(self.put_leaf(partial, value.to_vec())))
                             }
-                            NodeType::Extension { child } => {
-                                let (mut prefix, _) = self.get_extension_data(child_view_index)?;
+                            NodeHandle::Extension { child_index, .. } => {
+                                let mut prefix = self.get_extension_data(child_idx)?;
                                 prefix.prepend(choice_idx as u8);
-                                let child = child
+                                let child_index = child_index
                                     .expect("missing child of extension at remove for branch case");
-                                Ok(Some(self.put_extension(
-                                    prefix,
-                                    self.get_hash(child),
-                                    Some(child),
-                                )))
+                                let handle = NodeHandle::Extension {
+                                    prefix: Some(prefix),
+                                    child_index: Some(child_index),
+                                };
+                                Ok(Some(self.put_node(handle)))
                             }
-                            NodeType::Branch { .. } => {
+                            NodeHandle::Branch { .. } => {
                                 let prefix = Nibbles::from_hex(vec![choice_idx as u8]);
-                                Ok(Some(self.put_extension(
-                                    prefix,
-                                    self.get_hash(child_idx),
-                                    Some(child_idx),
-                                )))
+                                let handle = NodeHandle::Extension {
+                                    prefix: Some(prefix),
+                                    child_index: Some(child_idx),
+                                };
+                                Ok(Some(self.put_node(handle)))
                             }
                         }
                     }
-                    _ => Ok(Some(self.put_branch(new_children))),
+                    _ => {
+                        let handle = NodeHandle::Branch { children_indices };
+                        Ok(Some(self.override_node(index, handle)))
+                    }
                 }
             }
         }
+    }
+
+    /// Adds a new node to the trie with a specific handle
+    ///
+    /// # Warning
+    /// Handle must have all its fields initialize into Some() because there is no
+    /// underlying encoded node to override.
+    pub fn put_node(&mut self, handle: NodeHandle) -> usize {
+        let node = Node {
+            handle,
+            encoded_range: None,
+        };
+        self.nodes.push(node);
+        self.hashes.push(None);
+        self.nodes.len() - 1
+    }
+
+    /// Adds a new node to the trie with a specific handle, already encoded.
+    pub fn put_node_encoded(&mut self, handle: NodeHandle, encoded: Vec<u8>) -> usize {
+        let start = self.encoded_data.len();
+        self.encoded_data.extend(encoded);
+        let end = self.encoded_data.len();
+        let node = Node {
+            handle,
+            encoded_range: Some((start, end)),
+        };
+        self.nodes.push(node);
+        self.hashes.push(None);
+        self.nodes.len() - 1
     }
 
     /// Puts a new leaf node from a prefix and a value.
     ///
     /// Returns the new node's view index.
     pub fn put_leaf(&mut self, partial: Nibbles, value: Vec<u8>) -> usize {
-        let data = NodeData::Leaf { partial, value };
-        let children = NodeType::Leaf;
-        self.put(children, data)
+        let handle = NodeHandle::Leaf {
+            partial: Some(partial),
+            value: Some(value),
+        };
+        self.put_node(handle)
     }
 
-    /// Puts a new extension node from a path, child hash and child view.
+    /// Overrides a node in the trie. Used whenever mutating the trie.
     ///
-    /// Returns the new node's view index.
-    pub fn put_extension(
-        &mut self,
-        path: Nibbles,
-        child_hash: NodeHash,
-        child_view_index: Option<usize>,
-    ) -> usize {
-        let data = NodeData::Extension {
-            path,
-            child: child_hash,
-        };
-        let children = NodeType::Extension {
-            child: child_view_index,
-        };
-        self.put(children, data)
+    /// An override can be used in the case of:
+    /// 1. The data of some node gets updated
+    /// 2. The children references of some node gets updated
+    /// 3. A node is replaced with another
+    pub fn override_node(&mut self, index: usize, override_node_handle: NodeHandle) -> usize {
+        let original_node = self.nodes.get_mut(index).unwrap();
+
+        let override_is_same_node_kind = matches!(
+            (&original_node.handle, &override_node_handle),
+            (NodeHandle::Leaf { .. }, NodeHandle::Leaf { .. })
+                | (NodeHandle::Extension { .. }, NodeHandle::Extension { .. })
+                | (NodeHandle::Branch { .. }, NodeHandle::Branch { .. })
+        );
+
+        // if node is not the same kind as the override, panic
+        // we should use put_node() in these cases
+        if !override_is_same_node_kind {
+            panic!();
+        }
+
+        // else, mutate the handle
+        match (&mut original_node.handle, override_node_handle) {
+            (
+                NodeHandle::Leaf {
+                    partial: original_partial,
+                    value: original_value,
+                },
+                NodeHandle::Leaf {
+                    partial: override_partial,
+                    value: override_value,
+                },
+            ) => {
+                if let Some(override_partial) = override_partial {
+                    *original_partial = Some(override_partial);
+                }
+                if let Some(override_value) = override_value {
+                    *original_value = Some(override_value);
+                }
+            }
+            (
+                NodeHandle::Extension {
+                    prefix: original_prefix,
+                    child_index: original_child_index,
+                },
+                NodeHandle::Extension {
+                    prefix: override_prefix,
+                    child_index: override_child_index,
+                },
+            ) => {
+                if let Some(override_prefix) = override_prefix {
+                    *original_prefix = Some(override_prefix);
+                }
+                if let Some(override_child_index) = override_child_index {
+                    *original_child_index = Some(override_child_index);
+                }
+            }
+            (
+                NodeHandle::Branch {
+                    children_indices: original_children_indices,
+                },
+                NodeHandle::Branch {
+                    children_indices: override_children_indices,
+                },
+            ) => {
+                *original_children_indices = override_children_indices;
+            }
+            _ => unreachable!(),
+        }
+
+        index
     }
 
-    /// Puts a new branch node from a list of children in the form of (choice, view_index). Childrens
-    /// need to exist in the trie's data.
+    /// Hashes all encoded nodes before any changes to the trie, checking consistency across
+    /// encoded (non-pruned) nodes to make sure they reference valid children hashes.
     ///
-    /// Returns the new node's view index.
-    pub fn put_branch(&mut self, children_views: Vec<(usize, (Option<usize>, NodeHash))>) -> usize {
-        let data = {
-            let mut children: [_; 16] = std::array::from_fn(|_| None);
-            for (choice, child) in &children_views {
-                children[*choice] = Some(child.1);
+    /// Returns a root hash that binds to the trie structure and data, effectively authenticating
+    /// the trie.
+    ///
+    /// # Warning
+    /// This also allocates the `Self::hashes` vector, clearing all cached hashes, so this
+    /// should only be called once per trie.
+    pub fn authenticate(&mut self) -> Result<NodeHash, RLPDecodeError> {
+        self.hashes = vec![None; self.nodes.len()];
+        fn recursive(trie: &mut FlatTrie, index: usize) -> Result<(), RLPDecodeError> {
+            if trie.hashes[index].is_some() {
+                return Ok(());
             }
-            NodeData::Branch { children }
-        };
-        let children = {
-            let mut children = [None; 16];
-            for (choice, child) in children_views {
-                children[choice] = child.0;
+            match &trie.nodes[index].handle.clone() {
+                NodeHandle::Leaf { .. } => {}
+                NodeHandle::Extension { child_index, .. } => {
+                    if let Some(child_index) = child_index {
+                        recursive(trie, *child_index)?;
+                        let child_hash = trie.hashes[*child_index].unwrap();
+                        let encoded_items = trie.get_encoded_items(index)?;
+                        let encoded_child_hash = decode_bytes(encoded_items[1])?.0;
+                        if child_hash.as_ref() != encoded_child_hash {
+                            panic!("invalid encoded child hash for extension node");
+                        }
+                    }
+                }
+                NodeHandle::Branch { children_indices } => {
+                    for (_, child_index) in children_indices
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, c)| c.flatten().map(|c| (i, c)))
+                    {
+                        recursive(trie, child_index)?;
+                    }
+
+                    let encoded_items = trie.get_encoded_items(index)?;
+                    for (i, child_index) in children_indices
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, c)| c.flatten().map(|c| (i, c)))
+                    {
+                        let child_hash = trie.hashes[child_index].unwrap();
+                        let encoded_child_hash = decode_bytes(encoded_items[i])?.0;
+                        if child_hash.as_ref() != encoded_child_hash {
+                            panic!("invalid encoded child hash for branch node");
+                        }
+                    }
+                }
             }
-            NodeType::Branch { children }
+
+            let hash = trie.hash_encoded_data(index);
+            trie.hashes[index] = Some(hash);
+            Ok(())
+        }
+        let Some(root_index) = self.root_index else {
+            return Ok((*EMPTY_TRIE_HASH).into());
         };
-        self.put(children, data)
+        recursive(self, root_index)?;
+        Ok(self.hashes[root_index].unwrap())
     }
 
-    pub fn get_view(&self, index: usize) -> Option<&NodeView> {
-        self.views.get(index)
-    }
+    pub fn hash(&mut self) -> Result<NodeHash, RLPDecodeError> {
+        fn recursive(trie: &mut FlatTrie, index: usize) -> Result<(), RLPDecodeError> {
+            if trie.hashes[index].is_some() {
+                return Ok(());
+            }
+            match &trie.nodes[index].handle.clone() {
+                NodeHandle::Leaf { partial, value } => {
+                    if partial.is_some() || value.is_some() {
+                        // re-encode with new values
+                        let (partial, value) = trie.get_leaf_data(index)?;
+                        let encoded = encode_leaf(partial, value);
+                        trie.hashes[index] = Some(NodeHash::from_encoded(&encoded));
+                    } else {
+                        // use already encoded
+                        trie.hashes[index] = Some(trie.hash_encoded_data(index));
+                    }
+                }
+                NodeHandle::Extension {
+                    prefix,
+                    child_index,
+                } => match (prefix, child_index) {
+                    (None, None) => {
+                        trie.hashes[index] = Some(trie.hash_encoded_data(index));
+                    }
+                    (_, Some(child_index)) => {
+                        // recurse to calculate the child hash and re-encode
+                        recursive(trie, *child_index)?;
+                        let child_hash = trie.hashes[*child_index].unwrap();
+                        let prefix = trie.get_extension_data(index)?;
+                        let encoded = encode_extension(prefix, child_hash);
+                        trie.hashes[index] = Some(NodeHash::from_encoded(&encoded));
+                    }
+                    (Some(prefix), None) => {
+                        // get encoded child hash and re-encode
+                        let child_hash = trie.get_extension_encoded_child_hash(index)?;
+                        let encoded = encode_extension(prefix.clone(), child_hash);
+                        trie.hashes[index] = Some(NodeHash::from_encoded(&encoded));
+                    }
+                },
+                NodeHandle::Branch { children_indices } => {
+                    let mut any_pruned = false;
+                    for child_index in children_indices.iter().flatten() {
+                        if let Some(child_index) = child_index {
+                            recursive(trie, *child_index)?;
+                        } else {
+                            any_pruned = true;
+                        }
+                    }
 
-    pub fn get_root_view(&self) -> Option<&NodeView> {
-        self.root_index
-            .map(|i| self.get_view(i).expect("missing root view"))
-    }
+                    let mut children_hashes: [Option<NodeHash>; 16] = [None; 16];
 
-    /// Calculates the hash of a node from a view index of its data.
-    /// TODO: cache? we should cache a range into the hash, because its already stored in its parent
-    pub fn get_hash(&self, view_index: usize) -> NodeHash {
-        dbg!("get hash");
-        NodeHash::from_encoded(self.get_data(view_index))
-    }
+                    if any_pruned {
+                        let encoded_items = trie.get_encoded_items(index)?;
+                        for (i, child) in children_indices.iter().enumerate() {
+                            let Some(child_index) = child else {
+                                // no child for this index
+                                continue;
+                            };
 
-    /// Calculates the hash of a node from a view of its data.
-    /// TODO: cache? we should cache a range into the hash, because its already stored in its parent
-    /// TODO: consider changing into a NodeHash or similar
-    pub fn get_hash_view(&self, view: &NodeView) -> NodeHash {
-        dbg!("get hash view");
-        NodeHash::from_encoded(self.get_data_view(view))
-    }
+                            if let Some(child_index) = child_index {
+                                children_hashes[i] = Some(trie.hashes[*child_index].unwrap());
+                            } else {
+                                children_hashes[i] = Some(decode_child(encoded_items[i]))
+                            }
+                        }
+                    } else {
+                        for (i, child) in children_indices.iter().enumerate() {
+                            let Some(child_index) = child else {
+                                // no child for this index
+                                continue;
+                            };
 
-    pub fn get_leaf_data(&self, view_index: usize) -> Result<(Nibbles, &[u8]), RLPDecodeError> {
-        if let Some(put) = self.puts.get(view_index) {
-            let NodeData::Leaf { partial, value } = &put else {
-                panic!("called get_leaf_data with a different type of node");
-            };
-            Ok((partial.clone(), value.as_slice()))
-        } else {
-            let Some(items) = self.get_encoded_items_index(view_index)? else {
-                panic!("could not get encoded items for get_leaf_data"); // TODO: err
-            };
+                            if let Some(child_index) = child_index {
+                                children_hashes[i] = Some(trie.hashes[*child_index].unwrap());
+                            }
+                        }
+                    }
 
-            let (partial, _) = decode_bytes(items[0])?;
-            let partial = Nibbles::decode_compact(partial);
-            debug_assert!(partial.is_leaf());
-            let (value, _) = decode_bytes(items[1])?;
-
-            Ok((partial, value))
+                    let encoded = encode_branch(children_hashes);
+                    trie.hashes[index] = Some(NodeHash::from_encoded(&encoded));
+                }
+            }
+            Ok(())
         }
-    }
-
-    pub fn get_extension_data(
-        &self,
-        view_index: usize,
-    ) -> Result<(Nibbles, NodeHash), RLPDecodeError> {
-        if let Some(put) = self.puts.get(view_index) {
-            let NodeData::Extension { path, child } = &put else {
-                panic!("called get_extension_data with a different type of node");
-            };
-            Ok((path.clone(), child.clone()))
-        } else {
-            let Some(items) = self.get_encoded_items_index(view_index)? else {
-                panic!("could not get encoded items for get_extension_data"); // TODO: err
-            };
-
-            let (prefix, _) = decode_bytes(items[0])?;
-            let prefix = Nibbles::decode_compact(prefix);
-            debug_assert!(!prefix.is_leaf());
-            let child = decode_child(items[1]);
-
-            Ok((prefix, child))
-        }
-    }
-
-    pub fn get_branch_data(
-        &self,
-        view_index: usize,
-    ) -> Result<[Option<NodeHash>; 16], RLPDecodeError> {
-        if let Some(put) = self.puts.get(view_index) {
-            let NodeData::Branch { children } = &put else {
-                panic!("called get_branch_data with a different type of node");
-            };
-            Ok(children.clone())
-        } else {
-            let Some(items) = self.get_encoded_items_index(view_index)? else {
-                panic!("could not get encoded items for get_branch_data"); // TODO: err
-            };
-
-            let children_hashes: [_; 16] = std::array::from_fn(|i| {
-                let child = decode_child(items[i]);
-                if !child.is_empty() { Some(child) } else { None }
-            });
-
-            Ok(children_hashes)
-        }
-    }
-
-    // TODO: cache decoded view?
-    pub fn get_encoded_items_index(
-        &self,
-        index: usize,
-    ) -> Result<Option<Vec<&[u8]>>, RLPDecodeError> {
-        dbg!("get encoded items index");
-        let data = self.get_data(index);
-        let mut decoder = Decoder::new(data)?;
-
-        let mut rlp_items = Vec::with_capacity(17);
-        while !decoder.is_done() && rlp_items.len() < 17 {
-            let (item, new_decoder) = decoder.get_encoded_item_ref()?;
-            decoder = new_decoder;
-            rlp_items.push(item);
-        }
-
-        Ok(Some(rlp_items))
-    }
-
-    // TODO: cache decoded view?
-    pub fn get_encoded_items(&self, view: &NodeView) -> Result<Option<Vec<&[u8]>>, RLPDecodeError> {
-        let NodeViewPointer::InBuffer { data_range } = view.pointer else {
-            return Ok(None);
+        let Some(root_index) = self.root_index else {
+            return Ok((*EMPTY_TRIE_HASH).into());
         };
-        let data = &self.data[data_range.0..data_range.1];
-        let mut decoder = Decoder::new(data)?;
-
-        let mut rlp_items = Vec::with_capacity(17);
-        while !decoder.is_done() && rlp_items.len() < 17 {
-            let (item, new_decoder) = decoder.get_encoded_item_ref()?;
-            decoder = new_decoder;
-            rlp_items.push(item);
-        }
-
-        Ok(Some(rlp_items))
+        recursive(self, root_index)?;
+        Ok(self.hashes[root_index].unwrap())
     }
 
-    pub fn get_data(&self, view_index: usize) -> &[u8] {
-        dbg!("get data with index");
-        dbg!(view_index);
-        self.get_data_view(&self.views[view_index])
-    }
-
-    pub fn get_data_view(&self, view: &NodeView) -> &[u8] {
-        let NodeViewPointer::InBuffer { data_range } = view.pointer else {
-            panic!("get_data_view")
-        };
-        &self.data[data_range.0..data_range.1]
+    pub fn hash_encoded_data(&self, index: usize) -> NodeHash {
+        let node = &self.nodes[index];
+        let range = node.encoded_range.unwrap();
+        let encoded = &self.encoded_data[range.0..range.1];
+        NodeHash::from_encoded(encoded)
     }
 }
 
-// fn encode_leaf(partial: &[u8], value: &[u8]) -> Vec<u8> {
-//     // TODO: fix headroom
-//     let mut buf = Vec::with_capacity(partial.len() + value.len() + 3); //  3 byte headroom
-//     Encoder::new(&mut buf)
-//         .encode_bytes(partial)
-//         .encode_bytes(value)
-//         .finish();
-//     buf
-// }
-//
-// fn encode_leaf_raw(raw_partial: &[u8], value: &[u8]) -> Vec<u8> {
-//     // TODO: fix headroom
-//     let mut buf = Vec::with_capacity(raw_partial.len() + value.len() + 3); //  3 byte headroom
-//     Encoder::new(&mut buf)
-//         .encode_raw(raw_partial)
-//         .encode_bytes(value)
-//         .finish();
-//     buf
-// }
-//
-// fn encode_branch(choices: [Option<[u8; 32]>; 16]) -> Vec<u8> {
-//     let value_len = 1;
-//     let choices_len = choices.iter().fold(0, |acc, choice| {
-//         acc + choice.map(|h| RLPEncode::length(&h)).unwrap_or(0)
-//     });
-//     let payload_len = choices_len + value_len;
-//
-//     let mut buf: Vec<u8> = Vec::with_capacity(choices_len + 3); // 3 byte prefix headroom
-//
-//     encode_length(payload_len, &mut buf);
-//     for choice in choices {
-//         if let Some(choice) = choice {
-//             choice.encode(&mut buf);
-//         } else {
-//             buf.push(RLP_NULL);
-//         }
-//     }
-//     buf
-// }
+fn encode_leaf(partial: Nibbles, value: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let mut encoder = Encoder::new(&mut buf);
+    encoder = encoder.encode_bytes(&partial.encode_compact());
+    encoder = encoder.encode_bytes(value);
+    encoder.finish();
+    buf
+}
+
+fn encode_extension(path: Nibbles, child: NodeHash) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let mut encoder = Encoder::new(&mut buf);
+    encoder = encoder.encode_bytes(&path.encode_compact());
+    encoder = child.encode(encoder);
+    encoder.finish();
+    buf
+}
+
+fn encode_branch(children: [Option<NodeHash>; 16]) -> Vec<u8> {
+    // optimized encoding taken from rlp.rs
+    let payload_len = children.iter().fold(1, |acc, child| {
+        acc + if let Some(child) = child {
+            RLPEncode::length(child)
+        } else {
+            1
+        }
+    });
+
+    let mut buf: Vec<u8> = Vec::with_capacity(payload_len + 3); // 3 byte prefix headroom
+
+    encode_length(payload_len, &mut buf);
+    for child in children.iter() {
+        let Some(child) = child else {
+            buf.put_u8(RLP_NULL);
+            continue;
+        };
+        match child {
+            NodeHash::Hashed(hash) => hash.0.encode(&mut buf),
+            NodeHash::Inline((_, 0)) => buf.put_u8(RLP_NULL),
+            NodeHash::Inline((encoded, len)) => buf.put_slice(&encoded[..*len as usize]),
+        }
+    }
+    buf.put_u8(RLP_NULL);
+    buf
+}
+
+impl From<&EthrexTrieNode> for FlatTrie {
+    fn from(root: &EthrexTrieNode) -> Self {
+        let mut trie = FlatTrie::default();
+
+        fn recursive(value: &EthrexTrieNode, trie: &mut FlatTrie) {
+            let handle = match value {
+                EthrexTrieNode::Branch(node) => {
+                    let mut children_indices = [None; 16];
+                    for (i, choice) in node
+                        .choices
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, c)| c.is_valid())
+                    {
+                        match choice {
+                            EthrexTrieNodeRef::Node(choice, _) => {
+                                recursive(choice, trie);
+                                children_indices[i] = Some(Some(trie.nodes.len() - 1));
+                            }
+                            EthrexTrieNodeRef::Hash(inline @ NodeHash::Inline(_)) => {
+                                let choice = EthrexTrieNode::decode(inline.as_ref()).unwrap();
+                                recursive(&choice, trie);
+                                children_indices[i] = Some(Some(trie.nodes.len() - 1));
+                            }
+                            _ => children_indices[i] = Some(None),
+                        }
+                    }
+                    NodeHandle::Branch { children_indices }
+                }
+                EthrexTrieNode::Extension(node) => {
+                    let mut child_index = None;
+                    match &node.child {
+                        EthrexTrieNodeRef::Node(child, _) => {
+                            recursive(child, trie);
+                            child_index = Some(trie.nodes.len() - 1);
+                        }
+                        EthrexTrieNodeRef::Hash(inline @ NodeHash::Inline(_)) => {
+                            let child = EthrexTrieNode::decode(inline.as_ref()).unwrap();
+                            recursive(&child, trie);
+                            child_index = Some(trie.nodes.len() - 1);
+                        }
+                        _ => {}
+                    }
+                    NodeHandle::Extension {
+                        prefix: None,
+                        child_index,
+                    }
+                }
+                EthrexTrieNode::Leaf(_) => NodeHandle::Leaf {
+                    partial: None,
+                    value: None,
+                },
+            };
+
+            let offset = trie.encoded_data.len();
+            trie.encoded_data.extend(value.encode_to_vec());
+            trie.nodes.push(Node {
+                handle,
+                encoded_range: Some((offset, trie.encoded_data.len())),
+            });
+        }
+
+        recursive(root, &mut trie);
+        trie.root_index = Some(trie.nodes.len() - 1); // last stored node is the root
+        trie
+    }
+}
 
 #[cfg(test)]
 mod test {
-    use ethrex_rlp::encode::RLPEncode;
-    use proptest::{
-        collection::{btree_set, vec},
-        prelude::*,
-    };
+    use proptest::{collection::vec, prelude::*};
 
-    use crate::{Nibbles, Trie, flattrie::FlatTrie};
+    use super::*;
+    use crate::Trie;
+
+    const MAX_KEY_SIZE: usize = 32;
+    const MAX_VALUE_SIZE: usize = 256;
+    const MAX_KV_PAIRS: usize = 100;
 
     fn kv_pairs_strategy() -> impl Strategy<Value = (Vec<(Vec<u8>, Vec<u8>)>, Vec<usize>)> {
         // create random key-values, with keys all the same size, and a random permutation of indices
-        (1usize..32).prop_flat_map(|key_len| {
-            prop::collection::vec((vec(any::<u8>(), key_len), vec(any::<u8>(), 0..256)), 1..2)
-                .prop_flat_map(|kvs| {
-                    let len = kvs.len();
-                    let shuffle = vec(..len, ..len).prop_shuffle();
-                    (Just(kvs), shuffle)
-                })
+
+        (1usize..=MAX_KEY_SIZE).prop_flat_map(|key_len| {
+            prop::collection::vec(
+                (
+                    vec(any::<u8>(), key_len),
+                    vec(any::<u8>(), 0..MAX_VALUE_SIZE),
+                ),
+                1..=MAX_KV_PAIRS,
+            )
+            .prop_flat_map(|kvs| {
+                let len = kvs.len();
+                let shuffle = vec(..len, ..len).prop_shuffle();
+                (Just(kvs), shuffle)
+            })
         })
     }
 
     proptest! {
+        #[test]
+        fn proptest_from_compare_hash((kv, _) in kv_pairs_strategy()) {
+            let mut trie = Trie::new_temp();
+
+            for (key, value) in kv.iter(){
+                trie.insert(key.clone(), value.clone()).unwrap();
+            }
+
+            let root_node = trie.get_root_node(Nibbles::default()).unwrap();
+            let mut flat_trie = FlatTrie::from(&(*root_node));
+
+            let hash = trie.hash_no_commit();
+            let flat_trie_hash = flat_trie.hash().unwrap();
+
+            prop_assert_eq!(hash, flat_trie_hash.finalize());
+        }
+
         #[test]
         fn proptest_insert_compare_hash((kv, _) in kv_pairs_strategy()) {
             let mut trie = Trie::new_temp();
@@ -910,12 +963,8 @@ mod test {
             for (key, value) in kv.iter(){
                 trie.insert(key.clone(), value.clone()).unwrap();
                 flat_trie.insert(key.clone(), value.clone()).unwrap();
-
                 let hash = trie.hash_no_commit();
-
-                prop_assert!(flat_trie.authenticate().unwrap());
-                let flat_trie_hash = flat_trie.root_hash().unwrap().unwrap();
-
+                let flat_trie_hash = flat_trie.hash().unwrap();
                 prop_assert_eq!(hash, flat_trie_hash.finalize());
             }
         }
@@ -928,12 +977,8 @@ mod test {
             for (key, value) in kv.iter() {
                 trie.insert(key.clone(), value.clone()).unwrap();
                 flat_trie.insert(key.clone(), value.clone()).unwrap();
-
                 let hash = trie.hash_no_commit();
-
-                prop_assert!(flat_trie.authenticate().unwrap());
-                let flat_trie_hash = flat_trie.root_hash().unwrap().unwrap();
-
+                let flat_trie_hash = flat_trie.hash().unwrap();
                 prop_assert_eq!(hash, flat_trie_hash.finalize());
             }
 
@@ -941,12 +986,8 @@ mod test {
                 let key = &kv[*i].0;
                 trie.remove(key).unwrap();
                 flat_trie.remove(key).unwrap();
-
                 let hash = trie.hash_no_commit();
-
-                prop_assert!(flat_trie.authenticate().unwrap());
-                let flat_trie_hash = flat_trie.root_hash().unwrap().unwrap();
-
+                let flat_trie_hash = flat_trie.hash().unwrap();
                 prop_assert_eq!(hash, flat_trie_hash.finalize());
             }
         }
