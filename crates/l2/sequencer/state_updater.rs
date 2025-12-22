@@ -130,6 +130,14 @@ impl StateUpdater {
         let current_state = self.sequencer_state.status().await;
         let current_block: U256 = self.store.get_latest_block_number().await?.into();
         let mut new_state = current_state;
+
+        // The node if set to stop sequencing at a specific block we will set it to Following once we reach it.
+        // With this we can keep sharing or broadcasting blocks and batches but not produce new ones.
+        // We check that only if the current state is Sequencing.
+        // If it is not Sequencing we check if we can move to Sequencing or need to stay in Following/Syncing.
+        // To move to Sequencing we need to be at or past the start_at block and be up to date
+        // with the chain (i.e. be at the latest block of the chain).
+        // We use the l2_client as the trust source for the latest block number.
         if matches!(current_state, SequencerStatus::Sequencing) {
             if let Some(stop_at) = self.stop_at
                 && current_block >= stop_at.into()
