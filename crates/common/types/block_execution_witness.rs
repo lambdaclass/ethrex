@@ -13,6 +13,7 @@ use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie, TrieError};
 use rkyv::with::{Identity, MapKV};
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 
 /// State produced by the guest program execution inside the zkVM. It is
 /// essentially built from the `ExecutionWitness`.
@@ -328,7 +329,8 @@ impl GuestProgramState {
             Err(_) => {
                 // In the case of ethrex-replay this is normal when asking for the Witness of a non-ethrex node.
                 // This print is mostly for L2 Prover, if ethrex returns incomplete Witness then this will help for debugging a state mismatch.
-                println!(
+                // Note that logs aren't printed inside zkVMs, so for debugging this it's best to use "execute" backend.
+                debug!(
                     "Getting node from state trie when getting info for {:#x} failed. Defaulting to empty account.",
                     address
                 );
@@ -376,7 +378,8 @@ impl GuestProgramState {
             Err(_) => {
                 // In the case of ethrex-replay this is normal when asking for the Witness of a non-ethrex node.
                 // This print is mostly for L2 Prover, if input has an incomplete witness then this will help for debugging a state mismatch.
-                println!(
+                // Note that logs aren't printed inside zkVMs, so for debugging this it's best to use "execute" backend.
+                debug!(
                     "Getting node from state trie when getting storage key {:#x} for {:#x} failed. Defaulting to empty storage.",
                     key, address
                 );
