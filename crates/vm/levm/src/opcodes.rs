@@ -5,7 +5,7 @@ use crate::{
 use ethrex_common::types::Fork;
 use strum::EnumString;
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, EnumString)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, EnumString, Hash)]
 pub enum Opcode {
     // Stop and Arithmetic Operations
     STOP = 0x00,
