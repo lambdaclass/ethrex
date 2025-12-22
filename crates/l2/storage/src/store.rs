@@ -462,4 +462,14 @@ impl Store {
     ) -> Result<Option<FeeConfig>, RollupStoreError> {
         self.engine.get_fee_config_by_block(block_number).await
     }
+
+    /// Shuts down the store gracefully.
+    ///
+    /// This method consumes the Store. After calling shutdown, the Store should not be used.
+    /// For SQL stores, this ensures database connections are properly closed.
+    pub fn shutdown(self) {
+        // Drop self, which will drop the Arc reference to the engine.
+        // When all Arc references are dropped, the engine (and its connections) will be properly cleaned up.
+        drop(self);
+    }
 }
