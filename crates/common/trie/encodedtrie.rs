@@ -96,6 +96,17 @@ pub enum EncodedTrieError {
     NodeHashNotFound(usize),
     #[error("Node of index {0} doesn't have encoded data")]
     NonEncodedNode(usize),
+    #[error("Pruned node is necessary for an operation: {0}")]
+    PrunedNode(&'static str),
+    #[error(
+        "Tried to override a node {original_type} with a different type {override_type}. A new node should be put instead."
+    )]
+    OverridingDifferentNode {
+        original_type: String,
+        override_type: String,
+    },
+    #[error("Trie authentication failed: {0}")]
+    AuthFailed(&'static str),
     #[error("RLPDecodeError")]
     RLPDecodeError(#[from] RLPDecodeError),
 }
@@ -308,7 +319,9 @@ impl EncodedTrie {
                     .expect("branch insertion yielded value on a branch");
                 let new_child_index = match children_indices[choice] {
                     Some(None) => {
-                        panic!("Missing children of branch needed for insert")
+                        return Err(EncodedTrieError::PrunedNode(
+                            "child of branch for insertion",
+                        ));
                     }
                     None => self.put_leaf(path, value),
                     Some(Some(index)) => self.insert_inner(index, path, value)?,
@@ -499,31 +512,39 @@ impl EncodedTrie {
     /// An override can be used in the case of:
     /// 1. The data of some node gets updated
     /// 2. The children references of some node gets updated
-    /// 3. A node is replaced with another
     pub fn override_node(
         &mut self,
         index: usize,
-        override_node_handle: NodeType,
+        override_node_type: NodeType,
     ) -> Result<usize, EncodedTrieError> {
         let Some(original_node) = self.nodes.get_mut(index) else {
             return Err(EncodedTrieError::NodeNotFound(index));
         };
 
         let override_is_same_node_kind = matches!(
-            (&original_node.node_type, &override_node_handle),
+            (&original_node.node_type, &override_node_type),
             (NodeType::Leaf { .. }, NodeType::Leaf { .. })
                 | (NodeType::Extension { .. }, NodeType::Extension { .. })
                 | (NodeType::Branch { .. }, NodeType::Branch { .. })
         );
 
-        // if node is not the same kind as the override, panic
-        // we should use put_node() in these cases
         if !override_is_same_node_kind {
-            panic!();
+            let node_type_name = |node_type| {
+                match node_type {
+                    NodeType::Leaf { .. } => "leaf",
+                    NodeType::Extension { .. } => "extension",
+                    NodeType::Branch { .. } => "branch",
+                }
+                .to_string()
+            };
+            return Err(EncodedTrieError::OverridingDifferentNode {
+                original_type: node_type_name(original_node.node_type.clone()),
+                override_type: node_type_name(override_node_type.clone()),
+            });
         }
 
         // else, mutate the handle
-        match (&mut original_node.node_type, override_node_handle) {
+        match (&mut original_node.node_type, override_node_type) {
             (
                 NodeType::Leaf {
                     partial: original_partial,
@@ -598,7 +619,7 @@ impl EncodedTrie {
                         let encoded_items = trie.get_encoded_items(index)?;
                         let encoded_child_hash = decode_bytes(encoded_items[1])?.0;
                         if child_hash.as_ref() != encoded_child_hash {
-                            panic!("invalid encoded child hash for extension node");
+                            return Err(EncodedTrieError::AuthFailed("invalid encoded child hash for extension node"));
                         }
                     }
                 }
@@ -620,7 +641,7 @@ impl EncodedTrie {
                         let child_hash = trie.get_hash(child_index)?;
                         let encoded_child_hash = decode_bytes(encoded_items[i])?.0;
                         if child_hash.as_ref() != encoded_child_hash {
-                            panic!("invalid encoded child hash for branch node");
+                            return Err(EncodedTrieError::AuthFailed("invalid encoded child hash for branch node"));
                         }
                     }
                 }
