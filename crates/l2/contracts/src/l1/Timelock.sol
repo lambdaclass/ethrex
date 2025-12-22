@@ -12,9 +12,6 @@ import {ITimelock} from "./interfaces/ITimelock.sol";
 /// @notice The Timelock contract is the owner of the OnChainProposer contract, it gates access to it by managing roles
 /// and adding delay to specific operations for some roles (e.g. updating the contract, in order to provide an exit window).
 contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable, ITimelock {
-    error TimelockCallerNotSelf();
-    error TimelockUseCustomInitialize();
-
     /// @notice Role identifier for sequencers.
     /// @dev Accounts with this role can commit and verify batches.
     bytes32 public constant SEQUENCER = keccak256("SEQUENCER");
