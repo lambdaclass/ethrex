@@ -35,7 +35,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
-use ethrex_trie::flattrie::FlatTrie;
+use ethrex_trie::flattrie::EncodedTrie;
 use ethrex_trie::node::{BranchNode, ExtensionNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
@@ -1006,10 +1006,10 @@ impl Blockchain {
                     "execution witness does not contain non-empty storage trie".to_string(),
                 ));
             };
-            storage_tries.insert(address, FlatTrie::from(&(*node)));
+            storage_tries.insert(address, EncodedTrie::from(&(*node)));
         }
 
-        let state_trie = state_trie_root.map(|n| FlatTrie::from(&n));
+        let state_trie = state_trie_root.map(|n| EncodedTrie::from(&n));
 
         Ok(ExecutionWitness {
             codes,

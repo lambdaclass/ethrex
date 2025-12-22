@@ -11,7 +11,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
 use ethrex_storage::hash_address;
-use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeRef, Trie, TrieError, flattrie::FlatTrie};
+use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeRef, Trie, TrieError, flattrie::EncodedTrie};
 use ethrex_vm::system_contracts::SYSTEM_ADDRESS;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -143,11 +143,11 @@ pub fn execution_witness_from_rpc_chain_config(
                 "execution witness does not contain non-empty storage trie".to_string(),
             ));
         };
-        let trie = FlatTrie::from(&(*node));
+        let trie = EncodedTrie::from(&(*node));
         storage_tries.insert(address, trie.clone());
     }
 
-    let state_trie = state_trie_root.map(|n| FlatTrie::from(&n));
+    let state_trie = state_trie_root.map(|n| EncodedTrie::from(&n));
 
     let witness = ExecutionWitness {
         codes: rpc_witness.codes.into_iter().map(|b| b.to_vec()).collect(),

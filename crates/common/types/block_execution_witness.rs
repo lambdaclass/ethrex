@@ -10,7 +10,7 @@ use ethereum_types::{Address, H160, H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::flattrie::FlatTrie;
+use ethrex_trie::flattrie::EncodedTrie;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, Trie, TrieError};
 use rkyv::with::{Identity, MapKV};
 use serde::{Deserialize, Serialize};
@@ -33,7 +33,7 @@ pub struct GuestProgramState {
     pub block_headers: BTreeMap<u64, BlockHeader>,
     /// The accounts state trie containing the necessary state for the guest
     /// program execution.
-    pub state_trie: FlatTrie,
+    pub state_trie: EncodedTrie,
     /// The parent block header of the first block in the batch.
     pub parent_block_header: BlockHeader,
     /// The block number of the first block in the batch.
@@ -41,7 +41,7 @@ pub struct GuestProgramState {
     /// The chain configuration.
     pub chain_config: ChainConfig,
     /// Map of storage root hashes to their corresponding storage tries.
-    pub storage_tries: BTreeMap<Address, FlatTrie>,
+    pub storage_tries: BTreeMap<Address, EncodedTrie>,
     /// Map of account addresses to their corresponding hashed addresses.
     /// This is a convenience map to avoid recomputing the hashed address
     /// multiple times during guest program execution.
@@ -73,10 +73,10 @@ pub struct ExecutionWitness {
     // The chain config.
     pub chain_config: ChainConfig,
     /// Root node embedded with the rest of the trie's nodes
-    pub state_trie: Option<FlatTrie>,
+    pub state_trie: Option<EncodedTrie>,
     /// Root nodes per account storage embedded with the rest of the trie's nodes
     #[rkyv(with = MapKV<H160Wrapper, Identity>)]
-    pub storage_tries: BTreeMap<Address, FlatTrie>,
+    pub storage_tries: BTreeMap<Address, EncodedTrie>,
     /// Flattened map of account addresses and storage keys whose values
     /// are needed for stateless execution.
     #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
@@ -145,7 +145,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
         let state_trie = if let Some(mut state_trie) = state_trie {
             state_trie
         } else {
-            FlatTrie::default()
+            EncodedTrie::default()
         };
 
         let mut storage_tries = BTreeMap::new();
@@ -445,7 +445,7 @@ impl GuestProgramState {
     pub fn get_valid_storage_trie(
         &mut self,
         address: Address,
-    ) -> Result<Option<&FlatTrie>, GuestProgramStateError> {
+    ) -> Result<Option<&EncodedTrie>, GuestProgramStateError> {
         let is_storage_verified = *self.verified_storage_roots.get(&address).unwrap_or(&false);
         if is_storage_verified {
             Ok(self.storage_tries.get(&address))

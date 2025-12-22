@@ -13,8 +13,16 @@ use crate::{
     rlp::decode_child,
 };
 
-/// A trie implementation that is non recursive, POD and avoids deserialization
-/// by providing views into a RLP flat buffer
+/// A trie implementation optimal for zkVM environments.
+///
+/// What makes this optimal is:
+/// 1. All nodes of the initial state of the trie are stored RLP-encoded in a contiguous buffer of bytes,
+///    and are referred to by ranges.
+/// 2. Nodes are indexed by a number.
+/// 3. The structural information (which node is a child of which) is stored in a `NodeHandle` struct, referencing
+///    childs via indices.
+/// 4. New node data (like new nodes or node mutations) are stored directly in memory, overriding the encoded data.
+/// 5. Distinguishes hashing from authentication (the latter is used to check initial state, the former to check for final state).
 #[derive(
     Default,
     serde::Serialize,
@@ -24,15 +32,14 @@ use crate::{
     rkyv::Archive,
     Clone,
 )]
-pub struct FlatTrie {
+pub struct EncodedTrie {
     /// Contains the structural information of the MPT
     pub nodes: Vec<Node>,
     /// Stores a contiguous byte buffer with each initial RLP encoded node
     pub encoded_data: Vec<u8>,
     /// The index of the view for the root of this trie
     pub root_index: Option<usize>,
-    /// Node hashes get cached when hashing the trie for the first time
-    /// This also allows to store the hashes of pruned nodes
+    /// Node hashes get cached when authenticating or hashing the trie for the first time
     #[serde(skip)]
     #[rkyv(with = Skip)]
     hashes: Vec<Option<NodeHash>>,
@@ -79,12 +86,12 @@ pub enum NodeHandle {
     },
 }
 
-impl FlatTrie {
+impl EncodedTrie {
     /// Get an element from the trie
     pub fn get(&self, path: &[u8]) -> Result<Option<&[u8]>, RLPDecodeError> {
         let mut path = Nibbles::from_bytes(path);
         fn recursive<'a>(
-            trie: &'a FlatTrie,
+            trie: &'a EncodedTrie,
             path: &mut Nibbles,
             index: usize,
         ) -> Result<Option<&'a [u8]>, RLPDecodeError> {
@@ -642,7 +649,7 @@ impl FlatTrie {
     /// should only be called once per trie.
     pub fn authenticate(&mut self) -> Result<NodeHash, RLPDecodeError> {
         self.hashes = vec![None; self.nodes.len()];
-        fn recursive(trie: &mut FlatTrie, index: usize) -> Result<(), RLPDecodeError> {
+        fn recursive(trie: &mut EncodedTrie, index: usize) -> Result<(), RLPDecodeError> {
             if trie.hashes[index].is_some() {
                 return Ok(());
             }
@@ -695,7 +702,7 @@ impl FlatTrie {
     }
 
     pub fn hash(&mut self) -> Result<NodeHash, RLPDecodeError> {
-        fn recursive(trie: &mut FlatTrie, index: usize) -> Result<(), RLPDecodeError> {
+        fn recursive(trie: &mut EncodedTrie, index: usize) -> Result<(), RLPDecodeError> {
             if trie.hashes[index].is_some() {
                 return Ok(());
             }
@@ -839,11 +846,11 @@ fn encode_branch(children: [Option<NodeHash>; 16]) -> Vec<u8> {
     buf
 }
 
-impl From<&EthrexTrieNode> for FlatTrie {
+impl From<&EthrexTrieNode> for EncodedTrie {
     fn from(root: &EthrexTrieNode) -> Self {
-        let mut trie = FlatTrie::default();
+        let mut trie = EncodedTrie::default();
 
-        fn recursive(value: &EthrexTrieNode, trie: &mut FlatTrie) {
+        fn recursive(value: &EthrexTrieNode, trie: &mut EncodedTrie) {
             let handle = match value {
                 EthrexTrieNode::Branch(node) => {
                     let mut children_indices = [None; 16];
@@ -947,7 +954,7 @@ mod test {
             }
 
             let root_node = trie.get_root_node(Nibbles::default()).unwrap();
-            let mut flat_trie = FlatTrie::from(&(*root_node));
+            let mut flat_trie = EncodedTrie::from(&(*root_node));
 
             let hash = trie.hash_no_commit();
             let flat_trie_hash = flat_trie.hash().unwrap();
@@ -958,7 +965,7 @@ mod test {
         #[test]
         fn proptest_insert_compare_hash((kv, _) in kv_pairs_strategy()) {
             let mut trie = Trie::new_temp();
-            let mut flat_trie = FlatTrie::default();
+            let mut flat_trie = EncodedTrie::default();
 
             for (key, value) in kv.iter(){
                 trie.insert(key.clone(), value.clone()).unwrap();
@@ -972,7 +979,7 @@ mod test {
         #[test]
         fn proptest_insert_remove_compare_hash((kv, shuffle) in kv_pairs_strategy()) {
             let mut trie = Trie::new_temp();
-            let mut flat_trie = FlatTrie::default();
+            let mut flat_trie = EncodedTrie::default();
 
             for (key, value) in kv.iter() {
                 trie.insert(key.clone(), value.clone()).unwrap();
