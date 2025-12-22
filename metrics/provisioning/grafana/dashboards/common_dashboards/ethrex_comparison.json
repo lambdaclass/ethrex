@@ -17,8 +17,8 @@
   },
   "editable": true,
   "fiscalYearStartMonth": 0,
-  "graphTooltip": 0,
-  "id": 42,
+  "graphTooltip": 1,
+  "id": 58,
   "links": [],
   "panels": [
     {
@@ -28,6 +28,180 @@
         "w": 24,
         "x": 0,
         "y": 0
+      },
+      "id": 17,
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "description": "",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "Duration",
+                "axisPlacement": "auto",
+                "axisSoftMin": 4,
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineStyle": {
+                  "fill": "solid"
+                },
+                "lineWidth": 2,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "always",
+                "showValues": false,
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  }
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 1
+          },
+          "id": 16,
+          "interval": "10s",
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "max"
+              ],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "pluginVersion": "12.2.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.999, rate(rpc_request_duration_seconds_bucket{job=\"ethrex L1\", method=\"engine_newPayloadV4\", instance=~\"$instance(:\\\\d+)?$\"}[24s]))",
+              "hide": true,
+              "instant": false,
+              "legendFormat": "{{instance}} - p99.9",
+              "range": true,
+              "refId": "C"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "editorMode": "code",
+              "exemplar": false,
+              "expr": "sum by (method, instance) (increase(rpc_request_duration_seconds_sum{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\", method=\"engine_newPayloadV4\", namespace=\"engine\"}[18s])) \n/ sum by (method, instance) (increase(rpc_request_duration_seconds_count{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\",method=\"engine_newPayloadV4\", namespace=\"engine\"}[18s]))",
+              "hide": false,
+              "instant": false,
+              "interval": "",
+              "legendFormat": "{{instance}} - calc",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "max without (BuildTimestamp,Commit,Version) (nethermind_last_block_processing_time_in_ms{instance=\"nethermind-mainnet-1:6060\"} / 1000)",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "nethermind",
+              "range": true,
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "reth_engine_rpc_new_payload_v4{instance=\"reth-mainnet-1:6060\", quantile=\"0.999\"}",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "reth mainnet p99.9",
+              "range": true,
+              "refId": "D"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "reth_engine_rpc_new_payload_v4{instance=\"reth-mainnet-1:6060\", quantile=\"0.5\"}",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "reth mainnet p50",
+              "range": true,
+              "refId": "E"
+            }
+          ],
+          "title": "Block time (newPayload) vs other clients (MAINNET)",
+          "type": "timeseries"
+        }
+      ],
+      "title": "Block time (newPayload) MAINNET",
+      "type": "row"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 1
       },
       "id": 14,
       "panels": [
@@ -98,7 +272,7 @@
             "h": 12,
             "w": 24,
             "x": 0,
-            "y": 1
+            "y": 10
           },
           "id": 13,
           "interval": "10s",
@@ -151,24 +325,11 @@
               },
               "editorMode": "code",
               "expr": "nethermind_mgas_per_sec{instance=\"nethermind-mainnet-1:6060\"} * 1000000",
-              "hide": true,
+              "hide": false,
               "instant": false,
               "legendFormat": "nethermind mainnet",
               "range": true,
               "refId": "C"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "code",
-              "expr": "chain_mgasps{instance=\"geth-mainnet-1:6060\", job=\"geth\", quantile=\"0.999\"} * 1000000",
-              "hide": true,
-              "instant": false,
-              "legendFormat": "geth mainnet p99.9",
-              "range": true,
-              "refId": "D"
             },
             {
               "datasource": {
@@ -232,7 +393,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 1
+        "y": 2
       },
       "id": 5,
       "panels": [
@@ -303,7 +464,7 @@
             "h": 14,
             "w": 24,
             "x": 0,
-            "y": 77
+            "y": 11
           },
           "id": 6,
           "options": {
@@ -468,7 +629,7 @@
             "h": 13,
             "w": 24,
             "x": 0,
-            "y": 167
+            "y": 221
           },
           "id": 1,
           "interval": "10s",
@@ -646,7 +807,7 @@
             "h": 13,
             "w": 12,
             "x": 0,
-            "y": 180
+            "y": 234
           },
           "id": 9,
           "options": {
@@ -844,7 +1005,7 @@
             "h": 13,
             "w": 24,
             "x": 0,
-            "y": 168
+            "y": 222
           },
           "id": 11,
           "interval": "10s",
@@ -1022,7 +1183,7 @@
             "h": 13,
             "w": 12,
             "x": 0,
-            "y": 181
+            "y": 235
           },
           "id": 12,
           "options": {
@@ -1219,5 +1380,5 @@
   "timezone": "browser",
   "title": "Ethrex Comparison",
   "uid": "ads9rd7",
-  "version": 4
+  "version": 5
 }
