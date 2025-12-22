@@ -144,6 +144,9 @@ async fn main() -> eyre::Result<()> {
     info!("ethrex version: {}", get_client_version());
     tokio::spawn(periodically_check_version_update());
 
+    #[cfg(feature = "experimental-discv5")]
+    tracing::warn!("Experimental Discovery V5 protocol enabled");
+
     let (datadir, cancel_token, peer_table, local_node_record, store) =
         init_l1(opts, Some(log_filter_handler)).await?;
 
