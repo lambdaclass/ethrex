@@ -8,6 +8,7 @@ use ethrex_common::utils::keccak;
 use ethrex_common::{H160, U256, types::Receipt};
 
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 pub const MESSENGER_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xff, 0xfe,
@@ -173,19 +174,23 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
             && *selector == CROSSCHAIN_MINT_ERC20_SELECTOR
         {
             let Some(token_l1) = message.data.get(offset + 12..offset + 32) else {
+                warn!("Failed to decode token_l1 from crosschainMintERC20 message");
                 continue;
             };
             offset += 32;
             let Some(token_src_l2) = message.data.get(offset + 12..offset + 32) else {
+                warn!("Failed to decode token_src_l2 from crosschainMintERC20 message");
                 continue;
             };
             offset += 32;
             let Some(token_dst_l2) = message.data.get(offset + 12..offset + 32) else {
+                warn!("Failed to decode token_dst_l2 from crosschainMintERC20 message");
                 continue;
             };
             offset += 32;
             offset += 32; // skip "to" param
             let Some(value_bytes) = message.data.get(offset..offset + 32) else {
+                warn!("Failed to decode value from crosschainMintERC20 message");
                 continue;
             };
             AssetDiff {
