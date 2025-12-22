@@ -4,6 +4,7 @@
 
 ### 2025-12-19
 
+- Make HashSet use fxhash in discv4 peer_table [#5688](https://github.com/lambdaclass/ethrex/pull/5688)
 - Validate tx blobs after checking if it's already in the mempool [#5686](https://github.com/lambdaclass/ethrex/pull/5686)
 
 ### 2025-12-02
