@@ -180,7 +180,7 @@ async fn get_blobs_and_proof(
         .map(|b| {
             b.map(|(blob, _, proofs)| BlobAndProofV2 {
                 blob: *blob,
-                proofs: proofs.into_vec(),
+                proofs,
             })
         })
         .collect();

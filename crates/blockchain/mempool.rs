@@ -27,6 +27,8 @@ struct MempoolInner {
     broadcast_pool: HashSet<H256>,
     transaction_pool: HashMap<H256, MempoolTransaction>,
     blobs_bundle_pool: HashMap<H256, BlobsBundle>,
+    /// Maps blob versioned hashes to transaction hashes that include them and a position inside
+    /// blob bundle where blob and its adjacent data is available.
     blobs_bundle_by_versioned_hash: HashMap<H256, HashMap<H256, usize>>,
     txs_by_sender_nonce: BTreeMap<(H160, u64), H256>,
     txs_order: VecDeque<H256>,

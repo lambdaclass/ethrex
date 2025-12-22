@@ -20,7 +20,7 @@ pub type Bytes48 = [u8; 48];
 pub type Blob = [u8; BYTES_PER_BLOB];
 pub type Commitment = Bytes48;
 pub type Proof = Bytes48;
-pub type BlobTuple = (Box<Blob>, Commitment, Box<[Proof]>);
+pub type BlobTuple = (Box<Blob>, Commitment, Vec<Proof>);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -131,10 +131,9 @@ impl BlobsBundle {
         let blob = Box::new(*self.blobs.get(index)?);
         let commitment = *self.commitments.get(index)?;
         let proofs = if self.version == 0 {
-            Box::from([*self.proofs.get(index)?])
+            vec![*self.proofs.get(index)?]
         } else {
-            let proofs = self.proofs.chunks(CELLS_PER_EXT_BLOB).nth(index)?;
-            Box::from(proofs)
+            self.proofs.chunks(CELLS_PER_EXT_BLOB).nth(index)?.to_vec()
         };
         Some((blob, commitment, proofs))
     }
