@@ -78,12 +78,20 @@ pub fn init_tracing(
             std::fs::create_dir_all(log_dir).expect("Failed to create log directory");
         }
 
+        let network = opts
+            .network
+            .as_ref()
+            .map(|n| n.name())
+            .unwrap_or("unknown");
         let branch = env!("VERGEN_GIT_BRANCH").replace('/', "-");
+        let commit = &env!("VERGEN_GIT_SHA")[..8];
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let log_file = log_dir.join(format!("ethrex_{}_{}.log", branch, timestamp));
+        let log_file = log_dir.join(format!(
+            "ethrex_{network}_{branch}_{commit}_{timestamp}.log"
+        ));
 
         let file = std::fs::OpenOptions::new()
             .append(true)
