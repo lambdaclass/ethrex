@@ -175,7 +175,7 @@ impl Clone for Store {
         Self {
             db_path: self.db_path.clone(),
             backend: self.backend.clone(),
-            chain_config: self.chain_config.clone(),
+            chain_config: self.chain_config,
             trie_cache: self.trie_cache.clone(),
             flatkeyvalue_control_tx: self.flatkeyvalue_control_tx.clone(),
             trie_update_worker_tx: self.trie_update_worker_tx.clone(),
