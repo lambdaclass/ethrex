@@ -375,7 +375,7 @@ impl GuestProgramState {
                     GuestProgramStateError::Database("failed to read storage from trie".to_string())
                 })
                 .map(Some),
-            Ok(None) => return Ok(None),
+            Ok(None) => Ok(None),
             Err(_) => {
                 // In the case of ethrex-replay this is normal when asking for the Witness of a non-ethrex node.
                 // This print is mostly for L2 Prover, if input has an incomplete witness then this will help for debugging a state mismatch.
