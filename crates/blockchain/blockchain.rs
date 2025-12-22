@@ -7,7 +7,6 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ethrex_vm::system_contracts::SYSTEM_ADDRESS;
 use ::tracing::{debug, info, instrument, trace};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
@@ -39,6 +38,7 @@ use ethrex_trie::flattrie::EncodedTrie;
 use ethrex_trie::node::{BranchNode, ExtensionNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
+use ethrex_vm::system_contracts::SYSTEM_ADDRESS;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
@@ -1006,10 +1006,12 @@ impl Blockchain {
                     "execution witness does not contain non-empty storage trie".to_string(),
                 ));
             };
-            storage_tries.insert(address, EncodedTrie::from(&(*node)));
+            storage_tries.insert(address, EncodedTrie::try_from(&(*node))?);
         }
 
-        let state_trie = state_trie_root.map(|n| EncodedTrie::from(&n));
+        let state_trie = state_trie_root
+            .map(|n| EncodedTrie::try_from(&n))
+            .transpose()?;
 
         Ok(ExecutionWitness {
             codes,

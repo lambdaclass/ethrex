@@ -94,8 +94,10 @@ pub enum EncodedTrieError {
     NodeNotFound(usize),
     #[error("Node hash of index {0} not found")]
     NodeHashNotFound(usize),
+    #[error("Node of index {0} doesn't have encoded data")]
+    NonEncodedNode(usize),
     #[error("RLPDecodeError")]
-    RLPDecodeError(#[from] RLPDecodeError)
+    RLPDecodeError(#[from] RLPDecodeError),
 }
 
 impl EncodedTrie {
@@ -494,7 +496,11 @@ impl EncodedTrie {
     /// 1. The data of some node gets updated
     /// 2. The children references of some node gets updated
     /// 3. A node is replaced with another
-    pub fn override_node(&mut self, index: usize, override_node_handle: NodeType) -> Result<usize, EncodedTrieError> {
+    pub fn override_node(
+        &mut self,
+        index: usize,
+        override_node_handle: NodeType,
+    ) -> Result<usize, EncodedTrieError> {
         let Some(original_node) = self.nodes.get_mut(index) else {
             return Err(EncodedTrieError::NodeNotFound(index));
         };
@@ -616,7 +622,7 @@ impl EncodedTrie {
                 }
             }
 
-            let hash = trie.hash_encoded_data(index);
+            let hash = trie.hash_encoded_data(index)?;
             trie.hashes[index] = Some(hash);
             Ok(())
         }
@@ -641,7 +647,7 @@ impl EncodedTrie {
                         trie.hashes[index] = Some(NodeHash::from_encoded(&encoded));
                     } else {
                         // use already encoded
-                        trie.hashes[index] = Some(trie.hash_encoded_data(index));
+                        trie.hashes[index] = trie.hash_encoded_data(index).map(Some)?;
                     }
                 }
                 NodeType::Extension {
@@ -649,12 +655,12 @@ impl EncodedTrie {
                     child_index,
                 } => match (prefix, child_index) {
                     (None, None) => {
-                        trie.hashes[index] = Some(trie.hash_encoded_data(index));
+                        trie.hashes[index] = trie.hash_encoded_data(index).map(Some)?;
                     }
                     (_, Some(child_index)) => {
                         // recurse to calculate the child hash and re-encode
                         recursive(trie, *child_index)?;
-                        let child_hash = trie.hashes[*child_index].unwrap();
+                        let child_hash = trie.get_hash(*child_index)?;
                         let prefix = trie.get_extension_data(index)?;
                         let encoded = encode_extension(prefix, child_hash);
                         trie.hashes[index] = Some(NodeHash::from_encoded(&encoded));
@@ -687,7 +693,7 @@ impl EncodedTrie {
                             };
 
                             if let Some(child_index) = child_index {
-                                children_hashes[i] = Some(trie.hashes[*child_index].unwrap());
+                                children_hashes[i] = trie.get_hash(*child_index).map(Some)?;
                             } else {
                                 children_hashes[i] = Some(decode_child(encoded_items[i]))
                             }
@@ -700,7 +706,7 @@ impl EncodedTrie {
                             };
 
                             if let Some(child_index) = child_index {
-                                children_hashes[i] = Some(trie.hashes[*child_index].unwrap());
+                                children_hashes[i] = trie.get_hash(*child_index).map(Some)?;
                             }
                         }
                     }
@@ -718,11 +724,13 @@ impl EncodedTrie {
         self.get_hash(root_index)
     }
 
-    pub fn hash_encoded_data(&self, index: usize) -> NodeHash {
+    pub fn hash_encoded_data(&self, index: usize) -> Result<NodeHash, EncodedTrieError> {
         let node = &self.nodes[index];
-        let range = node.encoded_range.unwrap();
+        let range = node
+            .encoded_range
+            .ok_or(EncodedTrieError::NonEncodedNode(index))?;
         let encoded = &self.encoded_data[range.0..range.1];
-        NodeHash::from_encoded(encoded)
+        Ok(NodeHash::from_encoded(encoded))
     }
 
     pub fn get_hash(&self, index: usize) -> Result<NodeHash, EncodedTrieError> {
@@ -864,11 +872,13 @@ fn encode_branch(children: [Option<NodeHash>; 16]) -> Vec<u8> {
     buf
 }
 
-impl From<&EthrexTrieNode> for EncodedTrie {
-    fn from(root: &EthrexTrieNode) -> Self {
+impl TryFrom<&EthrexTrieNode> for EncodedTrie {
+    type Error = RLPDecodeError;
+
+    fn try_from(root: &EthrexTrieNode) -> Result<Self, Self::Error> {
         let mut trie = EncodedTrie::default();
 
-        fn recursive(value: &EthrexTrieNode, trie: &mut EncodedTrie) {
+        fn recursive(value: &EthrexTrieNode, trie: &mut EncodedTrie) -> Result<(), RLPDecodeError> {
             let handle = match value {
                 EthrexTrieNode::Branch(node) => {
                     let mut children_indices = [None; 16];
@@ -880,12 +890,12 @@ impl From<&EthrexTrieNode> for EncodedTrie {
                     {
                         match choice {
                             EthrexTrieNodeRef::Node(choice, _) => {
-                                recursive(choice, trie);
+                                recursive(choice, trie)?;
                                 children_indices[i] = Some(Some(trie.nodes.len() - 1));
                             }
                             EthrexTrieNodeRef::Hash(inline @ NodeHash::Inline(_)) => {
-                                let choice = EthrexTrieNode::decode(inline.as_ref()).unwrap();
-                                recursive(&choice, trie);
+                                let choice = EthrexTrieNode::decode(inline.as_ref())?;
+                                recursive(&choice, trie)?;
                                 children_indices[i] = Some(Some(trie.nodes.len() - 1));
                             }
                             _ => children_indices[i] = Some(None),
@@ -897,12 +907,12 @@ impl From<&EthrexTrieNode> for EncodedTrie {
                     let mut child_index = None;
                     match &node.child {
                         EthrexTrieNodeRef::Node(child, _) => {
-                            recursive(child, trie);
+                            recursive(child, trie)?;
                             child_index = Some(trie.nodes.len() - 1);
                         }
                         EthrexTrieNodeRef::Hash(inline @ NodeHash::Inline(_)) => {
-                            let child = EthrexTrieNode::decode(inline.as_ref()).unwrap();
-                            recursive(&child, trie);
+                            let child = EthrexTrieNode::decode(inline.as_ref())?;
+                            recursive(&child, trie)?;
                             child_index = Some(trie.nodes.len() - 1);
                         }
                         _ => {}
@@ -924,11 +934,12 @@ impl From<&EthrexTrieNode> for EncodedTrie {
                 node_type: handle,
                 encoded_range: Some((offset, trie.encoded_data.len())),
             });
+            Ok(())
         }
 
-        recursive(root, &mut trie);
+        recursive(root, &mut trie)?;
         trie.root_index = Some(trie.nodes.len() - 1); // last stored node is the root
-        trie
+        Ok(trie)
     }
 }
 
@@ -972,7 +983,7 @@ mod test {
             }
 
             let root_node = trie.get_root_node(Nibbles::default()).unwrap();
-            let mut flat_trie = EncodedTrie::from(&(*root_node));
+            let mut flat_trie = EncodedTrie::try_from(&(*root_node)).unwrap();
 
             let hash = trie.hash_no_commit();
             let flat_trie_hash = flat_trie.hash().unwrap();
