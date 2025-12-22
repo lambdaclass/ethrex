@@ -277,19 +277,14 @@ impl L1Committer {
             return Ok(false);
         };
 
-        let (checkpoint_store, checkpoint_blockchain) = Self::get_checkpoint_from_path(
-            self.genesis.clone(),
-            self.blockchain.options.clone(),
-            &expected_path,
-            &self.rollup_store,
-        )
-        .await?;
+        let (checkpoint_store, checkpoint_blockchain) = self
+            .create_checkpoint(&self.store, &expected_path, &self.rollup_store)
+            .await?;
 
         regenerate_state(
-            &self.store,
+            &checkpoint_store,
             &self.rollup_store,
             &checkpoint_blockchain,
-            Some(&checkpoint_store),
             Some(batch.last_block),
         )
         .await?;
@@ -1180,7 +1175,6 @@ impl L1Committer {
             rollup_store,
             &checkpoint_blockchain,
             None,
-            None,
         )
         .await?;
 
@@ -1611,17 +1605,20 @@ pub async fn regenerate_state(
     store: &Store,
     rollup_store: &StoreRollup,
     blockchain: &Arc<Blockchain>,
-    checkpoint_store: Option<&Store>,
     target_block_number: Option<u64>,
 ) -> Result<(), CommitterError> {
     let (from_block, to_block) = if let Some(target_block_number) = target_block_number {
+        let (last_state_number, _) =
+            find_last_known_state_root(store, target_block_number - 1).await?;
         if target_block_number == 0 {
             return Ok(());
         }
 
-        (1, target_block_number)
+        (last_state_number + 1, target_block_number)
     } else {
-        let (last_state_number, head_block_number) = find_last_known_state_root(store).await?;
+        let head_block_number = store.get_latest_block_number().await?;
+        let (last_state_number, head_block_number) =
+            find_last_known_state_root(store, head_block_number).await?;
 
         if last_state_number == head_block_number {
             debug!("State is already up to date");
@@ -1667,15 +1664,6 @@ pub async fn regenerate_state(
         if let Err(err) = blockchain.add_block_pipeline(block) {
             return Err(CommitterError::FailedToCreateCheckpoint(err.to_string()));
         }
-
-        if let Some(checkpoint_store) = checkpoint_store
-            && let Err(err) =
-                apply_fork_choice(checkpoint_store, block_hash, block_hash, block_hash).await
-        {
-            return Err(CommitterError::FailedToCreateCheckpoint(format!(
-                "Failed to apply fork choice while rebuilding checkpoint: {err}"
-            )));
-        }
     }
 
     info!("Finished regenerating state");
@@ -1683,9 +1671,10 @@ pub async fn regenerate_state(
     Ok(())
 }
 
-pub async fn find_last_known_state_root(store: &Store) -> Result<(u64, u64), CommitterError> {
-    let head_block_number = store.get_latest_block_number().await?;
-
+pub async fn find_last_known_state_root(
+    store: &Store,
+    head_block_number: u64,
+) -> Result<(u64, u64), CommitterError> {
     let Some(last_header) = store.get_block_header(head_block_number)? else {
         unreachable!("Database is empty, genesis block should be present");
     };
@@ -1709,7 +1698,6 @@ pub async fn find_last_known_state_root(store: &Store) -> Result<(u64, u64), Com
                 "parent header for block {parent_number} not found"
             )));
         };
-
         current_last_header = parent_header;
     }
 

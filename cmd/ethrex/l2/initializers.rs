@@ -202,7 +202,7 @@ pub async fn init_l2(
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
 
-    regenerate_state(&store, &rollup_store, &blockchain, None, None).await?;
+    regenerate_state(&store, &rollup_store, &blockchain, None).await?;
 
     let signer = get_signer(&datadir);
 
