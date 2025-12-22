@@ -460,30 +460,27 @@ contract CommonBridge is
         BalanceDiff[] calldata balanceDiffs
     ) public onlyOnChainProposer nonReentrant {
         for (uint i = 0; i < balanceDiffs.length; i++) {
+            // Send ETH value if any
+            IRouter(SHARED_BRIDGE_ROUTER).sendETHValue{
+                value: balanceDiffs[i].value
+            }(balanceDiffs[i].chainId);
+
+            // Send ERC20 values if any
             for (uint j = 0; j < balanceDiffs[i].assetDiffs.length; j++) {
                 AssetDiff memory tv = balanceDiffs[i].assetDiffs[j];
-                if (tv.tokenL1 == address(0)) {
-                    IRouter(SHARED_BRIDGE_ROUTER).sendETHValue{value: tv.value}(
-                        balanceDiffs[i].chainId
-                    );
-                } else {
-                    require(
-                        deposits[tv.tokenL1][tv.tokenL2] >= tv.value,
-                        "CommonBridge: trying to withdraw more tokens than were deposited"
-                    );
-                    deposits[tv.tokenL1][tv.tokenL2] -= tv.value;
-                    IERC20(tv.tokenL1).forceApprove(
-                        SHARED_BRIDGE_ROUTER,
-                        tv.value
-                    );
-                    IRouter(SHARED_BRIDGE_ROUTER).sendERC20Message(
-                        CHAIN_ID,
-                        balanceDiffs[i].chainId,
-                        tv.tokenL1,
-                        tv.destTokenL2,
-                        tv.value
-                    );
-                }
+                require(
+                    deposits[tv.tokenL1][tv.tokenL2] >= tv.value,
+                    "CommonBridge: trying to withdraw more tokens than were deposited"
+                );
+                deposits[tv.tokenL1][tv.tokenL2] -= tv.value;
+                IERC20(tv.tokenL1).forceApprove(SHARED_BRIDGE_ROUTER, tv.value);
+                IRouter(SHARED_BRIDGE_ROUTER).sendERC20Message(
+                    CHAIN_ID,
+                    balanceDiffs[i].chainId,
+                    tv.tokenL1,
+                    tv.destTokenL2,
+                    tv.value
+                );
             }
             IRouter(SHARED_BRIDGE_ROUTER).injectMessageHashes(
                 balanceDiffs[i].chainId,

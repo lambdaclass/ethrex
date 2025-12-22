@@ -170,7 +170,7 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
     let mut balance_diffs: BTreeMap<U256, BalanceDiff> = BTreeMap::new();
     for message in messages {
         let mut offset = 4;
-        let value_per_token_decoded = if let Some(selector) = message.data.get(..4)
+        let (value, value_per_token_decoded) = if let Some(selector) = message.data.get(..4)
             && *selector == CROSSCHAIN_MINT_ERC20_SELECTOR
         {
             let Some(token_l1) = message.data.get(offset + 12..offset + 32) else {
@@ -193,51 +193,43 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
                 warn!("Failed to decode value from crosschainMintERC20 message");
                 continue;
             };
-            AssetDiff {
-                token_l1: Address::from_slice(token_l1),
-                token_src_l2: Address::from_slice(token_src_l2),
-                token_dst_l2: Address::from_slice(token_dst_l2),
-                value: U256::from_big_endian(value_bytes),
-            }
+            (
+                U256::zero(),
+                Some(AssetDiff {
+                    token_l1: Address::from_slice(token_l1),
+                    token_src_l2: Address::from_slice(token_src_l2),
+                    token_dst_l2: Address::from_slice(token_dst_l2),
+                    value: U256::from_big_endian(value_bytes),
+                }),
+            )
         } else {
             let mut value = message.value;
             if message.to == BRIDGE_ADDRESS && message.from == BRIDGE_ADDRESS {
                 // This is the mint transaction, ignore the value
                 value = U256::zero();
             }
-            AssetDiff {
-                token_l1: Address::zero(),
-                token_src_l2: Address::zero(),
-                token_dst_l2: Address::zero(),
-                value,
-            }
+            (value, None)
         };
         let entry = balance_diffs
             .entry(message.dest_chain_id)
             .or_insert(BalanceDiff {
                 chain_id: message.dest_chain_id,
+                value: U256::zero(),
                 value_per_token: Vec::new(),
                 message_hashes: Vec::new(),
             });
-        let mut found = false;
-        for value_per_token in &mut entry.value_per_token {
-            if value_per_token.token_l1 == value_per_token_decoded.token_l1
-                && value_per_token.token_src_l2 == value_per_token_decoded.token_src_l2
-                && value_per_token.token_dst_l2 == value_per_token_decoded.token_dst_l2
-            {
-                value_per_token.value += value_per_token_decoded.value;
-                found = true;
-                break;
+        if let Some(value_per_token_decoded) = value_per_token_decoded {
+            for value_per_token in &mut entry.value_per_token {
+                if value_per_token.token_l1 == value_per_token_decoded.token_l1
+                    && value_per_token.token_src_l2 == value_per_token_decoded.token_src_l2
+                    && value_per_token.token_dst_l2 == value_per_token_decoded.token_dst_l2
+                {
+                    value_per_token.value += value_per_token_decoded.value;
+                    break;
+                }
             }
         }
-        if !found {
-            entry.value_per_token.push(AssetDiff {
-                token_l1: value_per_token_decoded.token_l1,
-                token_src_l2: value_per_token_decoded.token_src_l2,
-                token_dst_l2: value_per_token_decoded.token_dst_l2,
-                value: value_per_token_decoded.value,
-            });
-        }
+        entry.value += value;
         entry.message_hashes.push(get_l2_message_hash(message));
     }
     balance_diffs.into_values().collect()

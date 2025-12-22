@@ -36,7 +36,7 @@ const DB_SCHEMA: [&str; 20] = [
     "CREATE TABLE IF NOT EXISTS blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE IF NOT EXISTS l1_messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE IF NOT EXISTS l2_rolling_hashes (batch INT PRIMARY KEY, value BLOB)",
-    "CREATE TABLE IF NOT EXISTS balance_diffs (batch INT, chain_id BLOB, value BLOB, message_hashes BLOB, PRIMARY KEY (batch, chain_id))",
+    "CREATE TABLE IF NOT EXISTS balance_diffs (batch INT, chain_id BLOB, value BLOB, value BLOB, message_hashes BLOB, PRIMARY KEY (batch, chain_id))",
     "CREATE TABLE IF NOT EXISTS privileged_transactions (batch INT PRIMARY KEY, transactions_hash BLOB)",
     "CREATE TABLE IF NOT EXISTS non_privileged_transactions (batch INT PRIMARY KEY, transactions INT)",
     "CREATE TABLE IF NOT EXISTS state_roots (batch INT PRIMARY KEY, state_root BLOB)",
@@ -188,10 +188,11 @@ impl SQLStore {
         )];
         for balance_diff in balance_diffs {
             queries.push((
-                "INSERT INTO balance_diffs VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO balance_diffs VALUES (?1, ?2, ?3, ?4, ?5)",
                 (
                     batch_number,
                     Vec::from(balance_diff.chain_id.to_big_endian()),
+                    Vec::from(balance_diff.value.to_big_endian()),
                     bincode::serialize(&balance_diff.value_per_token).map_err(|e| {
                         RollupStoreError::Custom(format!(
                             "Failed to serialize balance_diff value_per_token: {e}"
@@ -511,17 +512,19 @@ impl StoreEngineRollup for SQLStore {
             .await?;
         while let Some(row) = rows.next().await? {
             let chain_id = U256::from_big_endian(&read_from_row_blob(&row, 1)?);
+            let value = U256::from_big_endian(&read_from_row_blob(&row, 2)?);
             let value_per_token: Vec<AssetDiff> =
-                bincode::deserialize(&read_from_row_blob(&row, 2)?).map_err(|e| {
+                bincode::deserialize(&read_from_row_blob(&row, 3)?).map_err(|e| {
                     RollupStoreError::Custom(format!(
                         "Failed to deserialize balance diff value_per_token: {e}"
                     ))
                 })?;
-            let blob = read_from_row_blob(&row, 3)?;
+            let blob = read_from_row_blob(&row, 4)?;
             let message_hashes = blob.chunks(32).map(H256::from_slice).collect::<Vec<_>>();
 
             balance_diffs.push(BalanceDiff {
                 chain_id,
+                value,
                 value_per_token,
                 message_hashes,
             });

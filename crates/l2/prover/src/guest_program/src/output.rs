@@ -54,6 +54,7 @@ impl ProgramOutput {
         #[cfg(feature = "l2")]
         for balance_diff in &self.balance_diffs {
             encoded.extend_from_slice(&balance_diff.chain_id.to_big_endian());
+            encoded.extend_from_slice(&balance_diff.value.to_big_endian());
             for value_per_token in &balance_diff.value_per_token {
                 encoded.extend_from_slice(&value_per_token.token_l1.to_fixed_bytes());
                 encoded.extend_from_slice(&value_per_token.token_src_l2.to_fixed_bytes());

@@ -606,6 +606,7 @@ contract OnChainProposer is
         uint256 expected_length = 256;
         for (uint256 i = 0; i < targetedChainsCount; i++) {
             expected_length += 32;
+            expected_length += 32;
             expected_length += balanceDiffs[i].assetDiffs.length * 92;
             expected_length += balanceDiffs[i].message_hashes.length * 32;
         }
@@ -674,6 +675,15 @@ contract OnChainProposer is
 
             if (balanceDiffs[i].chainId != verifiedChainId) {
                 return "00x"; // balance diffs public inputs don't match with committed balance diffs
+            }
+
+            uint256 verifiedValue = uint256(
+                bytes32(publicData[offset:offset + 32])
+            );
+            offset += 32;
+
+            if (balanceDiffs[i].value != verifiedValue) {
+                return "015"; // balance diffs public inputs don't match with committed balance diffs
             }
 
             for (uint256 j = 0; j < balanceDiffs[i].assetDiffs.length; j++) {
