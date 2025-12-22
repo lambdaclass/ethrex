@@ -3,7 +3,6 @@ use crate::rlpx::l2::messages::{BatchSealed, L2Message, NewBlock};
 use crate::rlpx::{connection::server::Established, error::PeerConnectionError, message::Message};
 use ethereum_types::Address;
 use ethereum_types::Signature;
-use ethrex_blockchain::BlockchainType;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::fork_choice::apply_fork_choice;
 use ethrex_common::types::batch::Batch;
@@ -287,30 +286,14 @@ pub(crate) async fn send_new_block(
                 }
             };
 
-            let fee_config = match l2_state
+            let Some(fee_config) = l2_state
                 .store_rollup
                 .get_fee_config_by_block(block_number)
                 .await?
-            {
-                Some(fee_config) => fee_config,
-                None => {
-                    let BlockchainType::L2(l2_config) = &established.blockchain.options.r#type
-                    else {
-                        return Err(PeerConnectionError::InternalError(
-                            "Invalid blockchain type. Expected L2.".to_owned(),
-                        ));
-                    };
-                    let fee_config = *l2_config.fee_config.read().map_err(|_| {
-                        PeerConnectionError::InternalError(
-                            "Fee config lock was poisoned".to_owned(),
-                        )
-                    })?;
-                    warn!(
-                        block_number,
-                        "Fee config not found in rollup store for canonical block; using current fee config for gossip"
-                    );
-                    fee_config
-                }
+            else {
+                return Err(PeerConnectionError::InternalError(
+                    "Fee config not found in rollup store for block".to_owned(),
+                ));
             };
 
             NewBlock {
