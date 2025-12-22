@@ -326,17 +326,17 @@ impl GuestProgramState {
 
         let encoded_state = match self.state_trie.get(hashed_address) {
             Ok(Some(encoded_state)) => encoded_state,
+            Ok(None) => return Ok(None),
             Err(_) => {
                 // In the case of ethrex-replay this is normal when asking for the Witness of a non-ethrex node.
                 // This print is mostly for L2 Prover, if ethrex returns incomplete Witness then this will help for debugging a state mismatch.
                 // Note that logs aren't printed inside zkVMs, so for debugging this it's best to use "execute" backend.
                 debug!(
-                    "Getting node from state trie when getting info for {:#x} failed. Defaulting to empty account.",
+                    "Getting node from state trie when getting info for {:#x} failed unexpectedly. Nodes might be missing. Defaulting to empty account.",
                     address
                 );
                 return Ok(None);
             }
-            _ => return Ok(None),
         };
         let state = AccountState::decode(&encoded_state).map_err(|_| {
             GuestProgramStateError::Database("Failed to get decode account from trie".to_string())
@@ -375,17 +375,17 @@ impl GuestProgramState {
                     GuestProgramStateError::Database("failed to read storage from trie".to_string())
                 })
                 .map(Some),
+            Ok(None) => return Ok(None),
             Err(_) => {
                 // In the case of ethrex-replay this is normal when asking for the Witness of a non-ethrex node.
                 // This print is mostly for L2 Prover, if input has an incomplete witness then this will help for debugging a state mismatch.
                 // Note that logs aren't printed inside zkVMs, so for debugging this it's best to use "execute" backend.
                 debug!(
-                    "Getting node from state trie when getting storage key {:#x} for {:#x} failed. Defaulting to empty storage.",
+                    "Getting node from state trie when getting storage key {:#x} for {:#x} failed unexpectedly. Nodes might be missing. Defaulting to empty storage.",
                     key, address
                 );
                 Ok(None)
             }
-            _ => Ok(None),
         }
     }
 
