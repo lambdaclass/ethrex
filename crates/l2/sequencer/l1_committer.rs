@@ -231,30 +231,6 @@ impl L1Committer {
         })
     }
 
-    async fn rebuild_checkpoint_to_block(
-        store: &Store,
-        rollup_store: &StoreRollup,
-        checkpoint_store: &Store,
-        checkpoint_blockchain: &Arc<Blockchain>,
-        target_block_number: u64,
-    ) -> Result<(), CommitterError> {
-        if target_block_number == 0 {
-            return Ok(());
-        }
-
-        fn_1(
-            store,
-            rollup_store,
-            Some(checkpoint_store),
-            checkpoint_blockchain,
-            1,
-            target_block_number,
-        )
-        .await?;
-
-        Ok(())
-    }
-
     async fn ensure_checkpoint_for_committed_batch(
         &mut self,
         last_committed_batch: u64,
@@ -309,12 +285,12 @@ impl L1Committer {
         )
         .await?;
 
-        Self::rebuild_checkpoint_to_block(
+        regenerate_state(
             &self.store,
             &self.rollup_store,
-            &checkpoint_store,
             &checkpoint_blockchain,
-            batch.last_block,
+            Some(&checkpoint_store),
+            Some(batch.last_block),
         )
         .await?;
 
@@ -1199,7 +1175,14 @@ impl L1Committer {
         let checkpoint_blockchain =
             Arc::new(Blockchain::new(checkpoint_store.clone(), blockchain_opts));
 
-        regenerate_head_state(&checkpoint_store, rollup_store, &checkpoint_blockchain).await?;
+        regenerate_state(
+            &checkpoint_store,
+            rollup_store,
+            &checkpoint_blockchain,
+            None,
+            None,
+        )
+        .await?;
 
         Ok((checkpoint_store, checkpoint_blockchain))
     }
@@ -1611,8 +1594,7 @@ async fn estimate_blob_gas(
     Ok(blob_gas)
 }
 
-/// Regenerates the state up to the head block by re-applying blocks from the
-/// last known state root.
+/// Regenerates state by re-applying blocks from the last known state root.
 ///
 /// Since the path-based feature was added, the database stores the state 128
 /// blocks behind the head block while the state of the blocks in between are
@@ -1625,30 +1607,76 @@ async fn estimate_blob_gas(
 /// re-applying the blocks from the last known state root up to the head block.
 ///
 /// This function performs that regeneration.
-pub async fn regenerate_head_state(
+pub async fn regenerate_state(
     store: &Store,
     rollup_store: &StoreRollup,
     blockchain: &Arc<Blockchain>,
+    checkpoint_store: Option<&Store>,
+    target_block_number: Option<u64>,
 ) -> Result<(), CommitterError> {
-    let (last_state_number, head_block_number) = find_last_known_state_root(store).await?;
+    let (from_block, to_block) = if let Some(target_block_number) = target_block_number {
+        if target_block_number == 0 {
+            return Ok(());
+        }
 
-    if last_state_number == head_block_number {
-        debug!("State is already up to date");
-        return Ok(());
+        (1, target_block_number)
+    } else {
+        let (last_state_number, head_block_number) = find_last_known_state_root(store).await?;
+
+        if last_state_number == head_block_number {
+            debug!("State is already up to date");
+            return Ok(());
+        }
+
+        (last_state_number + 1, head_block_number)
+    };
+
+    info!("Regenerating state from block {from_block} to {to_block}");
+    for block_number in from_block..=to_block {
+        debug!("Re-applying block {block_number} to regenerate state");
+
+        let Some(block) = store.get_block_by_number(block_number).await? else {
+            return Err(CommitterError::FailedToCreateCheckpoint(format!(
+                "Block {block_number} not found"
+            )));
+        };
+
+        let Some(fee_config) = rollup_store.get_fee_config_by_block(block_number).await? else {
+            return Err(CommitterError::FailedToCreateCheckpoint(format!(
+                "Fee config for block {block_number} not found"
+            )));
+        };
+
+        let BlockchainType::L2(l2_config) = &blockchain.options.r#type else {
+            return Err(CommitterError::FailedToCreateCheckpoint(
+                "Invalid blockchain type. Expected L2.".into(),
+            ));
+        };
+
+        {
+            let Ok(mut fee_config_guard) = l2_config.fee_config.write() else {
+                return Err(CommitterError::FailedToCreateCheckpoint(
+                    "Fee config lock was poisoned when updating L1 blob base fee".into(),
+                ));
+            };
+
+            *fee_config_guard = fee_config;
+        }
+
+        let block_hash = block.hash();
+        if let Err(err) = blockchain.add_block_pipeline(block) {
+            return Err(CommitterError::FailedToCreateCheckpoint(err.to_string()));
+        }
+
+        if let Some(checkpoint_store) = checkpoint_store
+            && let Err(err) =
+                apply_fork_choice(checkpoint_store, block_hash, block_hash, block_hash).await
+        {
+            return Err(CommitterError::FailedToCreateCheckpoint(format!(
+                "Failed to apply fork choice while rebuilding checkpoint: {err}"
+            )));
+        }
     }
-
-    info!("Regenerating state from block {last_state_number} to {head_block_number}");
-
-    // Re-apply blocks from the last known state root to the head block
-    fn_1(
-        store,
-        rollup_store,
-        None,
-        blockchain,
-        last_state_number + 1,
-        head_block_number,
-    )
-    .await?;
 
     info!("Finished regenerating state");
 
@@ -1688,62 +1716,4 @@ pub async fn find_last_known_state_root(store: &Store) -> Result<(u64, u64), Com
     let last_state_number = current_last_header.number;
 
     Ok((last_state_number, head_block_number))
-}
-
-async fn fn_1(
-    store: &Store,
-    rollup_store: &StoreRollup,
-    checkpoint_store: Option<&Store>,
-    blockchain: &Arc<Blockchain>,
-    from: u64,
-    to: u64,
-) -> Result<(), CommitterError> {
-    for i in from..=to {
-        debug!("Re-applying block {i} to regenerate state");
-
-        let block = store.get_block_by_number(i).await?.ok_or_else(|| {
-            CommitterError::FailedToCreateCheckpoint(format!("Block {i} not found"))
-        })?;
-
-        let fee_config = rollup_store
-            .get_fee_config_by_block(i)
-            .await?
-            .ok_or_else(|| {
-                CommitterError::FailedToCreateCheckpoint(format!(
-                    "Fee config for block {i} not found"
-                ))
-            })?;
-
-        let BlockchainType::L2(l2_config) = &blockchain.options.r#type else {
-            return Err(CommitterError::FailedToCreateCheckpoint(
-                "Invalid blockchain type. Expected L2.".into(),
-            ));
-        };
-
-        {
-            let Ok(mut fee_config_guard) = l2_config.fee_config.write() else {
-                return Err(CommitterError::FailedToCreateCheckpoint(
-                    "Fee config lock was poisoned when updating L1 blob base fee".into(),
-                ));
-            };
-
-            *fee_config_guard = fee_config;
-        }
-
-        let block_hash = block.hash();
-        blockchain
-            .add_block(block)
-            .map_err(|err| CommitterError::FailedToCreateCheckpoint(err.to_string()))?;
-
-        if let Some(checkpoint_store) = checkpoint_store {
-            apply_fork_choice(checkpoint_store, block_hash, block_hash, block_hash)
-                .await
-                .map_err(|e| {
-                    CommitterError::FailedToCreateCheckpoint(format!(
-                        "Failed to apply fork choice while rebuilding checkpoint: {e}"
-                    ))
-                })?;
-        }
-    }
-    Ok(())
 }

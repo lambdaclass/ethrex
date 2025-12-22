@@ -12,8 +12,7 @@ use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::sequencer::block_producer;
-use ethrex_l2::sequencer::l1_committer;
-use ethrex_l2::sequencer::l1_committer::regenerate_head_state;
+use ethrex_l2::sequencer::l1_committer::{self, regenerate_state};
 use ethrex_p2p::{
     discv4::peer_table::PeerTable,
     network::P2PContext,
@@ -203,7 +202,7 @@ pub async fn init_l2(
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
 
-    regenerate_head_state(&store, &rollup_store, &blockchain).await?;
+    regenerate_state(&store, &rollup_store, &blockchain, None, None).await?;
 
     let signer = get_signer(&datadir);
 
