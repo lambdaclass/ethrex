@@ -26,6 +26,7 @@ serde_with.workspace = true
 # inside a guest program
 rkyv.workspace = true
 k256.workspace = true
+tracing.workspace = true
 
 secp256k1 = { workspace = true, optional = true }
 

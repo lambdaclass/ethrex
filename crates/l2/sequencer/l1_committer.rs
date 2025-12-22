@@ -70,8 +70,7 @@ use spawned_concurrency::tasks::{
 
 const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
     "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,uint256,bytes32,bytes[])";
-const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,uint256,bytes32,(uint256,uint256,bytes32[])[],(uint256,bytes32)[])
-";
+const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,uint256,bytes32,(uint256,uint256,(address,address,address,uint256)[],bytes32[])[],(uint256,bytes32)[])";
 /// Default wake up time for the committer to check if it should send a commit tx
 const COMMITTER_DEFAULT_WAKE_TIME_MS: u64 = 60_000;
 
@@ -1096,33 +1095,6 @@ impl L1Committer {
         let l1_messages_merkle_root = compute_merkle_root(&batch.l1_out_message_hashes);
         let last_block_hash = get_last_block_hash(&self.store, batch.last_block)?;
         let commit_hash_bytes = keccak(self.git_commit_hash.as_bytes());
-        let balance_diff_values: Vec<Value> = batch
-            .balance_diffs
-            .iter()
-            .map(|d| {
-                Value::Tuple(vec![
-                    Value::Uint(d.chain_id),
-                    Value::Uint(d.value),
-                    Value::Array(
-                        d.message_hashes
-                            .iter()
-                            .map(|h| Value::FixedBytes(h.0.to_vec().into()))
-                            .collect(),
-                    ),
-                ])
-            })
-            .collect();
-
-        let l2_in_message_rolling_hashes_values: Vec<Value> = batch
-            .l2_in_message_rolling_hashes
-            .iter()
-            .map(|(chain_id, hash)| {
-                Value::Tuple(vec![
-                    Value::Uint(U256::from(*chain_id)),
-                    Value::FixedBytes(hash.0.to_vec().into()),
-                ])
-            })
-            .collect();
 
         let mut calldata_values = vec![
             Value::Uint(U256::from(batch.number)),
@@ -1154,6 +1126,47 @@ impl L1Committer {
 
             (COMMIT_FUNCTION_SIGNATURE_BASED, calldata_values)
         } else {
+            let balance_diff_values: Vec<Value> = batch
+                .balance_diffs
+                .iter()
+                .map(|d| {
+                    let per_token: Vec<Value> = d
+                        .value_per_token
+                        .iter()
+                        .map(|value_per_token| {
+                            Value::Tuple(vec![
+                                Value::Address(value_per_token.token_l1),
+                                Value::Address(value_per_token.token_src_l2),
+                                Value::Address(value_per_token.token_dst_l2),
+                                Value::Uint(value_per_token.value),
+                            ])
+                        })
+                        .collect();
+                    let message_hashes: Vec<Value> = d
+                        .message_hashes
+                        .iter()
+                        .map(|h| Value::FixedBytes(h.0.to_vec().into()))
+                        .collect();
+                    Value::Tuple(vec![
+                        Value::Uint(d.chain_id),
+                        Value::Uint(d.value),
+                        Value::Array(per_token),
+                        Value::Array(message_hashes),
+                    ])
+                })
+                .collect();
+
+            let l2_in_message_rolling_hashes_values: Vec<Value> = batch
+                .l2_in_message_rolling_hashes
+                .iter()
+                .map(|(chain_id, hash)| {
+                    Value::Tuple(vec![
+                        Value::Uint(U256::from(*chain_id)),
+                        Value::FixedBytes(hash.0.to_vec().into()),
+                    ])
+                })
+                .collect();
+
             calldata_values.push(Value::FixedBytes(commit_hash_bytes.0.to_vec().into()));
             calldata_values.push(Value::Array(balance_diff_values));
             calldata_values.push(Value::Array(l2_in_message_rolling_hashes_values));

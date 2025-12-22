@@ -14,3 +14,15 @@ FROM messages;
 ```
 
 You can then safely delete the `messages` table
+
+## From v8 to v9
+
+The table `balance_diffs` schema was changed. We added a new column `value_per_token`.
+
+In order to perform a migration tou would need to add the new column with type `BLOB`.
+You can do this by executing:
+
+```sql
+ALTER TABLE balance_diffs 
+ADD COLUMN value_per_token BLOB;
+```
