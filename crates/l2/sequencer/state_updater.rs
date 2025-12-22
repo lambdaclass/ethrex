@@ -6,7 +6,6 @@ use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch};
 use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
-use reqwest::Url;
 use spawned_concurrency::{
     error::GenServerError,
     tasks::{CallResponse, CastResponse, GenServer, GenServerHandle, send_after},
@@ -61,7 +60,7 @@ pub struct StateUpdater {
     sequencer_registry_address: Address,
     sequencer_address: Address,
     eth_client: Arc<EthClient>,
-    l2_client: Arc<EthClient>,
+    l2_client: Option<Arc<EthClient>>,
     store: Store,
     rollup_store: StoreRollup,
     check_interval_ms: u64,
@@ -79,7 +78,6 @@ impl StateUpdater {
         blockchain: Arc<Blockchain>,
         store: Store,
         rollup_store: StoreRollup,
-        l2_url: Url,
     ) -> Result<Self, StateUpdaterError> {
         Ok(Self {
             on_chain_proposer_address: sequencer_cfg.l1_committer.on_chain_proposer_address,
@@ -99,12 +97,9 @@ impl StateUpdater {
             l2_client: if let Some(l2_head_check_rpc_url) =
                 sequencer_cfg.admin_server.l2_head_check_rpc_url
             {
-                Arc::new(EthClient::new_with_multiple_urls(vec![
-                    l2_head_check_rpc_url,
-                    l2_url,
-                ])?)
+                Some(Arc::new(EthClient::new(l2_head_check_rpc_url)?))
             } else {
-                Arc::new(EthClient::new(l2_url)?)
+                None
             },
         })
     }
@@ -115,7 +110,6 @@ impl StateUpdater {
         blockchain: Arc<Blockchain>,
         store: Store,
         rollup_store: StoreRollup,
-        l2_url: Url,
     ) -> Result<GenServerHandle<StateUpdater>, StateUpdaterError> {
         let mut state_updater = Self::new(
             sequencer_cfg,
@@ -123,7 +117,6 @@ impl StateUpdater {
             blockchain,
             store,
             rollup_store,
-            l2_url,
         )?
         .start();
         state_updater
@@ -135,33 +128,30 @@ impl StateUpdater {
 
     pub async fn update_state(&mut self) -> Result<(), StateUpdaterError> {
         let current_state = self.sequencer_state.status().await;
-
         let current_block: U256 = self.store.get_latest_block_number().await?.into();
-        let latest_block = self.l2_client.get_block_number().await?;
-        let can_sequence = current_block >= latest_block;
-
         let mut new_state = current_state;
-        if latest_block < self.start_at.into() {
-            self.sequencer_state
-                .new_status(SequencerStatus::Following)
-                .await;
-            new_state = SequencerStatus::Following;
-        } else if can_sequence {
-            self.sequencer_state
-                .new_status(SequencerStatus::Sequencing)
-                .await;
-            new_state = SequencerStatus::Sequencing;
+        if matches!(current_state, SequencerStatus::Sequencing) {
+            if let Some(stop_at) = self.stop_at
+                && current_block >= stop_at.into()
+            {
+                new_state = SequencerStatus::Following;
+            }
+        } else {
+            let Some(l2_client) = &self.l2_client else {
+                return Ok(());
+            };
+            let latest_block = l2_client.get_block_number().await?;
+            let can_sequence = current_block >= latest_block;
+
+            if latest_block < self.start_at.into() {
+                new_state = SequencerStatus::Following;
+            } else if can_sequence {
+                new_state = SequencerStatus::Sequencing;
+            }
         }
 
-        if let Some(stop_at) = self.stop_at
-            && latest_block >= stop_at.into()
-        {
-            self.sequencer_state
-                .new_status(SequencerStatus::Following)
-                .await;
-            new_state = SequencerStatus::Following;
-        }
         if current_state != new_state {
+            self.sequencer_state.new_status(new_state).await;
             info!("The sequencer is now {new_state}");
         }
 
