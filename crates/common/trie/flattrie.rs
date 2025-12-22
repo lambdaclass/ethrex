@@ -50,37 +50,23 @@ pub struct EncodedTrie {
     Clone, serde::Serialize, serde::Deserialize, rkyv::Serialize, rkyv::Deserialize, rkyv::Archive,
 )]
 pub struct Node {
-    pub handle: NodeHandle,
+    pub node_type: NodeType,
     pub encoded_range: Option<(usize, usize)>,
 }
 
-/// Contains information about this node type and who its children are.
-/// Also contains overrides to the node's data.
+/// Contains information about this node type and references to its children.
+/// Also contains data overrides.
 ///
-/// The idea is that the initial data of the trie will be already encoded in RLP in a
-/// contiguous buffer. Then insertions and removals will yield overrides over the encoded
-/// data.
+/// A trie stores all its initial nodes RLP-encoded in a contiguous byte buffer, but on each
+/// insert or remove nodes are mutated. These are represented by overriding the encoded data.
+/// New nodes don't have encoded data, so their data is stored just as overrides.
 ///
-/// Finally the RLP buffer will be updated with the newest data based on the initial and overrides.
+/// This results in that we only have to encode the final state of the trie, when we are interested
+/// in calculating the final root hash.
 #[derive(
     Clone, serde::Serialize, serde::Deserialize, rkyv::Serialize, rkyv::Deserialize, rkyv::Archive,
 )]
-pub enum NodeHandle {
-    Leaf {
-    },
-    Extension {
-        /// Reference to the child. If None, then the child is pruned.
-        child_index: Option<usize>,
-    },
-    Branch {
-        /// Reference to the children.
-        /// - If None, then there is no child for that choice.
-        /// - If Some(None), then there is a child but its pruned.
-        children_indices: [Option<Option<usize>>; 16],
-    },
-}
-
-pub enum NodeOverride {
+pub enum NodeType {
     Leaf {
         /// Overrides the encoded partial
         partial: Option<Nibbles>,
@@ -90,8 +76,14 @@ pub enum NodeOverride {
     Extension {
         /// Overrides the encoded prefix
         prefix: Option<Nibbles>,
+        /// Reference to the child. If None, then the child is pruned.
+        child_index: Option<usize>,
     },
     Branch {
+        /// Reference to the children.
+        /// - If None, then there is no child for that choice.
+        /// - If Some(None), then there is a child but its pruned.
+        children_indices: [Option<Option<usize>>; 16],
     },
 }
 
@@ -105,8 +97,8 @@ impl EncodedTrie {
             index: usize,
         ) -> Result<Option<&'a [u8]>, RLPDecodeError> {
             let node = &trie.nodes[index];
-            match node.handle {
-                NodeHandle::Leaf { .. } => {
+            match node.node_type {
+                NodeType::Leaf { .. } => {
                     let (partial, value) = trie.get_leaf_data(index)?;
                     if partial == *path {
                         Ok(Some(value))
@@ -114,7 +106,7 @@ impl EncodedTrie {
                         Ok(None)
                     }
                 }
-                NodeHandle::Extension { child_index, .. } => {
+                NodeType::Extension { child_index, .. } => {
                     let prefix = trie.get_extension_data(index)?;
                     if path.skip_prefix(prefix) {
                         recursive(
@@ -126,7 +118,7 @@ impl EncodedTrie {
                         Ok(None)
                     }
                 }
-                NodeHandle::Branch {
+                NodeType::Branch {
                     children_indices, ..
                 } => {
                     let Some(choice) = path.next_choice() else {
@@ -149,8 +141,8 @@ impl EncodedTrie {
     /// Assumes this node index corresponds to a leaf, and retrieves its data taking into
     /// account the overrides.
     pub fn get_leaf_data(&self, index: usize) -> Result<(Nibbles, &[u8]), RLPDecodeError> {
-        let handle = &self.nodes[index].handle;
-        let NodeHandle::Leaf {
+        let handle = &self.nodes[index].node_type;
+        let NodeType::Leaf {
             partial: override_partial,
             value: override_value,
         } = handle
@@ -187,8 +179,8 @@ impl EncodedTrie {
     /// Assumes this node index corresponds to an extension, and retrieves its data taking into
     /// account the overrides.
     pub fn get_extension_data(&self, index: usize) -> Result<Nibbles, RLPDecodeError> {
-        let handle = &self.nodes[index].handle;
-        let NodeHandle::Extension {
+        let handle = &self.nodes[index].node_type;
+        let NodeType::Extension {
             prefix: override_prefix,
             ..
         } = handle
@@ -252,11 +244,11 @@ impl EncodedTrie {
     ) -> Result<usize, RLPDecodeError> {
         self.hashes[self_index] = None;
         let self_view = &self.nodes[self_index];
-        match self_view.handle {
-            NodeHandle::Leaf { .. } => {
+        match self_view.node_type {
+            NodeType::Leaf { .. } => {
                 let (partial, _) = self.get_leaf_data(self_index)?;
                 if partial == path {
-                    let override_node_handle = NodeHandle::Leaf {
+                    let override_node_handle = NodeType::Leaf {
                         partial: None,
                         value: Some(value),
                     };
@@ -270,7 +262,7 @@ impl EncodedTrie {
                     // Modify the partial of self
                     let new_self_index = self.override_node(
                         self_index,
-                        NodeHandle::Leaf {
+                        NodeType::Leaf {
                             partial: Some(partial.offset(match_index + 1)),
                             value: None,
                         },
@@ -291,21 +283,21 @@ impl EncodedTrie {
                         let mut children_indices = [None; 16];
                         children_indices[new_leaf_choice_idx] = Some(Some(new_leaf_index));
                         children_indices[self_choice_idx] = Some(Some(new_self_index));
-                        self.put_node(NodeHandle::Branch { children_indices })
+                        self.put_node(NodeType::Branch { children_indices })
                     };
 
                     if match_index == 0 {
                         Ok(branch_index)
                     } else {
                         // Yields an extension node with the branch as child
-                        Ok(self.put_node(NodeHandle::Extension {
+                        Ok(self.put_node(NodeType::Extension {
                             prefix: Some(path.slice(0, match_index)),
                             child_index: Some(branch_index),
                         }))
                     }
                 }
             }
-            NodeHandle::Extension { child_index, .. } => {
+            NodeType::Extension { child_index, .. } => {
                 let prefix = self.get_extension_data(self_index)?;
                 let match_index = path.count_prefix(&prefix);
                 if match_index == prefix.len() {
@@ -318,7 +310,7 @@ impl EncodedTrie {
                     )?;
                     Ok(self.override_node(
                         self_index,
-                        NodeHandle::Extension {
+                        NodeType::Extension {
                             prefix: None,
                             child_index: Some(new_child_index),
                         },
@@ -332,7 +324,7 @@ impl EncodedTrie {
                         let mut children_indices = [None; 16];
                         children_indices[prefix.at(0)] = Some(child_index);
                         if child_index.is_some() {
-                            self.put_node(NodeHandle::Branch { children_indices })
+                            self.put_node(NodeType::Branch { children_indices })
                         } else {
                             // pruned child, we must make its hash available by encoding the branch
                             // TODO: hacky
@@ -340,11 +332,11 @@ impl EncodedTrie {
                             let mut children_hashes = [None; 16];
                             children_hashes[prefix.at(0)] = Some(child_hash);
                             let encoded = encode_branch(children_hashes);
-                            self.put_node_encoded(NodeHandle::Branch { children_indices }, encoded)
+                            self.put_node_encoded(NodeType::Branch { children_indices }, encoded)
                         }
                     } else {
                         // New extension with self_node as a child
-                        let handle = NodeHandle::Extension {
+                        let handle = NodeType::Extension {
                             prefix: Some(prefix.offset(1)),
                             child_index,
                         };
@@ -360,27 +352,27 @@ impl EncodedTrie {
                         {
                             let mut children_indices = [None; 16];
                             children_indices[prefix.at(0)] = Some(Some(new_node_index));
-                            self.put_node(NodeHandle::Branch { children_indices })
+                            self.put_node(NodeType::Branch { children_indices })
                         }
                     };
                     self.insert_inner(branch_index, path, value)
                 } else {
                     let new_extension_index = self.override_node(
                         self_index,
-                        NodeHandle::Extension {
+                        NodeType::Extension {
                             prefix: Some(prefix.offset(match_index)),
                             child_index,
                         },
                     );
                     let new_node_index =
                         self.insert_inner(new_extension_index, path.offset(match_index), value)?;
-                    Ok(self.put_node(NodeHandle::Extension {
+                    Ok(self.put_node(NodeType::Extension {
                         prefix: Some(prefix.slice(0, match_index)),
                         child_index: Some(new_node_index),
                     }))
                 }
             }
-            NodeHandle::Branch {
+            NodeType::Branch {
                 mut children_indices,
             } => {
                 let choice = path
@@ -394,7 +386,7 @@ impl EncodedTrie {
                     Some(Some(index)) => self.insert_inner(index, path, value)?,
                 };
                 children_indices[choice] = Some(Some(new_child_index));
-                Ok(self.override_node(self_index, NodeHandle::Branch { children_indices }))
+                Ok(self.override_node(self_index, NodeType::Branch { children_indices }))
             }
         }
     }
@@ -414,8 +406,8 @@ impl EncodedTrie {
     ) -> Result<Option<usize>, RLPDecodeError> {
         self.hashes[index] = None;
         let node = &self.nodes[index];
-        match node.handle {
-            NodeHandle::Leaf { .. } => {
+        match node.node_type {
+            NodeType::Leaf { .. } => {
                 let (partial, _) = self.get_leaf_data(index)?;
                 if partial == path {
                     Ok(None)
@@ -423,7 +415,7 @@ impl EncodedTrie {
                     Ok(Some(index))
                 }
             }
-            NodeHandle::Extension { child_index, .. } => {
+            NodeType::Extension { child_index, .. } => {
                 let mut prefix = self.get_extension_data(index)?;
 
                 if !path.skip_prefix(&prefix) {
@@ -438,27 +430,27 @@ impl EncodedTrie {
                 };
 
                 let new_child = &self.nodes[new_child_index];
-                let new_index = match new_child.handle {
-                    NodeHandle::Branch { .. } => {
-                        let handle = NodeHandle::Extension {
+                let new_index = match new_child.node_type {
+                    NodeType::Branch { .. } => {
+                        let handle = NodeType::Extension {
                             prefix: Some(prefix),
                             child_index: Some(new_child_index),
                         };
                         self.put_node(handle)
                     }
-                    NodeHandle::Extension { child_index, .. } => {
+                    NodeType::Extension { child_index, .. } => {
                         let new_child_prefix = self.get_extension_data(new_child_index)?;
                         prefix.extend(&new_child_prefix);
-                        let handle = NodeHandle::Extension {
+                        let handle = NodeType::Extension {
                             prefix: Some(prefix),
                             child_index,
                         };
                         self.override_node(index, handle)
                     }
-                    NodeHandle::Leaf { .. } => {
+                    NodeType::Leaf { .. } => {
                         let (partial, value) = self.get_leaf_data(new_child_index)?;
                         prefix.extend(&partial);
-                        let handle = NodeHandle::Leaf {
+                        let handle = NodeType::Leaf {
                             partial: Some(prefix),
                             value: Some(value.to_vec()),
                         };
@@ -467,7 +459,7 @@ impl EncodedTrie {
                 };
                 Ok(Some(new_index))
             }
-            NodeHandle::Branch {
+            NodeType::Branch {
                 mut children_indices,
             } => {
                 let choice = path
@@ -497,26 +489,26 @@ impl EncodedTrie {
                         let child_idx = child_idx.expect("missing child of branch at remove");
                         let child = &self.nodes[child_idx];
 
-                        match child.handle {
-                            NodeHandle::Leaf { .. } => {
+                        match child.node_type {
+                            NodeType::Leaf { .. } => {
                                 let (mut partial, value) = self.get_leaf_data(child_idx)?;
                                 partial.prepend(choice_idx as u8);
                                 Ok(Some(self.put_leaf(partial, value.to_vec())))
                             }
-                            NodeHandle::Extension { child_index, .. } => {
+                            NodeType::Extension { child_index, .. } => {
                                 let mut prefix = self.get_extension_data(child_idx)?;
                                 prefix.prepend(choice_idx as u8);
                                 let child_index = child_index
                                     .expect("missing child of extension at remove for branch case");
-                                let handle = NodeHandle::Extension {
+                                let handle = NodeType::Extension {
                                     prefix: Some(prefix),
                                     child_index: Some(child_index),
                                 };
                                 Ok(Some(self.put_node(handle)))
                             }
-                            NodeHandle::Branch { .. } => {
+                            NodeType::Branch { .. } => {
                                 let prefix = Nibbles::from_hex(vec![choice_idx as u8]);
-                                let handle = NodeHandle::Extension {
+                                let handle = NodeType::Extension {
                                     prefix: Some(prefix),
                                     child_index: Some(child_idx),
                                 };
@@ -525,7 +517,7 @@ impl EncodedTrie {
                         }
                     }
                     _ => {
-                        let handle = NodeHandle::Branch { children_indices };
+                        let handle = NodeType::Branch { children_indices };
                         Ok(Some(self.override_node(index, handle)))
                     }
                 }
@@ -538,9 +530,9 @@ impl EncodedTrie {
     /// # Warning
     /// Handle must have all its fields initialize into Some() because there is no
     /// underlying encoded node to override.
-    pub fn put_node(&mut self, handle: NodeHandle) -> usize {
+    pub fn put_node(&mut self, handle: NodeType) -> usize {
         let node = Node {
-            handle,
+            node_type: handle,
             encoded_range: None,
         };
         self.nodes.push(node);
@@ -549,12 +541,12 @@ impl EncodedTrie {
     }
 
     /// Adds a new node to the trie with a specific handle, already encoded.
-    pub fn put_node_encoded(&mut self, handle: NodeHandle, encoded: Vec<u8>) -> usize {
+    pub fn put_node_encoded(&mut self, handle: NodeType, encoded: Vec<u8>) -> usize {
         let start = self.encoded_data.len();
         self.encoded_data.extend(encoded);
         let end = self.encoded_data.len();
         let node = Node {
-            handle,
+            node_type: handle,
             encoded_range: Some((start, end)),
         };
         self.nodes.push(node);
@@ -566,7 +558,7 @@ impl EncodedTrie {
     ///
     /// Returns the new node's view index.
     pub fn put_leaf(&mut self, partial: Nibbles, value: Vec<u8>) -> usize {
-        let handle = NodeHandle::Leaf {
+        let handle = NodeType::Leaf {
             partial: Some(partial),
             value: Some(value),
         };
@@ -579,14 +571,14 @@ impl EncodedTrie {
     /// 1. The data of some node gets updated
     /// 2. The children references of some node gets updated
     /// 3. A node is replaced with another
-    pub fn override_node(&mut self, index: usize, override_node_handle: NodeHandle) -> usize {
+    pub fn override_node(&mut self, index: usize, override_node_handle: NodeType) -> usize {
         let original_node = self.nodes.get_mut(index).unwrap();
 
         let override_is_same_node_kind = matches!(
-            (&original_node.handle, &override_node_handle),
-            (NodeHandle::Leaf { .. }, NodeHandle::Leaf { .. })
-                | (NodeHandle::Extension { .. }, NodeHandle::Extension { .. })
-                | (NodeHandle::Branch { .. }, NodeHandle::Branch { .. })
+            (&original_node.node_type, &override_node_handle),
+            (NodeType::Leaf { .. }, NodeType::Leaf { .. })
+                | (NodeType::Extension { .. }, NodeType::Extension { .. })
+                | (NodeType::Branch { .. }, NodeType::Branch { .. })
         );
 
         // if node is not the same kind as the override, panic
@@ -596,13 +588,13 @@ impl EncodedTrie {
         }
 
         // else, mutate the handle
-        match (&mut original_node.handle, override_node_handle) {
+        match (&mut original_node.node_type, override_node_handle) {
             (
-                NodeHandle::Leaf {
+                NodeType::Leaf {
                     partial: original_partial,
                     value: original_value,
                 },
-                NodeHandle::Leaf {
+                NodeType::Leaf {
                     partial: override_partial,
                     value: override_value,
                 },
@@ -615,11 +607,11 @@ impl EncodedTrie {
                 }
             }
             (
-                NodeHandle::Extension {
+                NodeType::Extension {
                     prefix: original_prefix,
                     child_index: original_child_index,
                 },
-                NodeHandle::Extension {
+                NodeType::Extension {
                     prefix: override_prefix,
                     child_index: override_child_index,
                 },
@@ -632,10 +624,10 @@ impl EncodedTrie {
                 }
             }
             (
-                NodeHandle::Branch {
+                NodeType::Branch {
                     children_indices: original_children_indices,
                 },
-                NodeHandle::Branch {
+                NodeType::Branch {
                     children_indices: override_children_indices,
                 },
             ) => {
@@ -662,9 +654,9 @@ impl EncodedTrie {
             if trie.hashes[index].is_some() {
                 return Ok(());
             }
-            match &trie.nodes[index].handle.clone() {
-                NodeHandle::Leaf { .. } => {}
-                NodeHandle::Extension { child_index, .. } => {
+            match &trie.nodes[index].node_type.clone() {
+                NodeType::Leaf { .. } => {}
+                NodeType::Extension { child_index, .. } => {
                     if let Some(child_index) = child_index {
                         recursive(trie, *child_index)?;
                         let child_hash = trie.hashes[*child_index].unwrap();
@@ -675,7 +667,7 @@ impl EncodedTrie {
                         }
                     }
                 }
-                NodeHandle::Branch { children_indices } => {
+                NodeType::Branch { children_indices } => {
                     for (_, child_index) in children_indices
                         .iter()
                         .enumerate()
@@ -715,8 +707,8 @@ impl EncodedTrie {
             if trie.hashes[index].is_some() {
                 return Ok(());
             }
-            match &trie.nodes[index].handle.clone() {
-                NodeHandle::Leaf { partial, value } => {
+            match &trie.nodes[index].node_type.clone() {
+                NodeType::Leaf { partial, value } => {
                     if partial.is_some() || value.is_some() {
                         // re-encode with new values
                         let (partial, value) = trie.get_leaf_data(index)?;
@@ -727,7 +719,7 @@ impl EncodedTrie {
                         trie.hashes[index] = Some(trie.hash_encoded_data(index));
                     }
                 }
-                NodeHandle::Extension {
+                NodeType::Extension {
                     prefix,
                     child_index,
                 } => match (prefix, child_index) {
@@ -749,7 +741,7 @@ impl EncodedTrie {
                         trie.hashes[index] = Some(NodeHash::from_encoded(&encoded));
                     }
                 },
-                NodeHandle::Branch { children_indices } => {
+                NodeType::Branch { children_indices } => {
                     let mut any_pruned = false;
                     for child_index in children_indices.iter().flatten() {
                         if let Some(child_index) = child_index {
@@ -882,7 +874,7 @@ impl From<&EthrexTrieNode> for EncodedTrie {
                             _ => children_indices[i] = Some(None),
                         }
                     }
-                    NodeHandle::Branch { children_indices }
+                    NodeType::Branch { children_indices }
                 }
                 EthrexTrieNode::Extension(node) => {
                     let mut child_index = None;
@@ -898,12 +890,12 @@ impl From<&EthrexTrieNode> for EncodedTrie {
                         }
                         _ => {}
                     }
-                    NodeHandle::Extension {
+                    NodeType::Extension {
                         prefix: None,
                         child_index,
                     }
                 }
-                EthrexTrieNode::Leaf(_) => NodeHandle::Leaf {
+                EthrexTrieNode::Leaf(_) => NodeType::Leaf {
                     partial: None,
                     value: None,
                 },
@@ -912,7 +904,7 @@ impl From<&EthrexTrieNode> for EncodedTrie {
             let offset = trie.encoded_data.len();
             trie.encoded_data.extend(value.encode_to_vec());
             trie.nodes.push(Node {
-                handle,
+                node_type: handle,
                 encoded_range: Some((offset, trie.encoded_data.len())),
             });
         }
