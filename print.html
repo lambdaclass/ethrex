@@ -4100,6 +4100,13 @@ SELECT *
 FROM messages;
 </code></pre>
 <p>You can then safely delete the <code>messages</code> table</p>
+<h2 id="from-v8-to-v9"><a class="header" href="#from-v8-to-v9">From v8 to v9</a></h2>
+<p>The table <code>balance_diffs</code> schema was changed. We added a new column <code>value_per_token</code>.</p>
+<p>In order to perform a migration tou would need to add the new column with type <code>BLOB</code>.
+You can do this by executing:</p>
+<pre><code class="language-sql">ALTER TABLE balance_diffs 
+ADD COLUMN value_per_token BLOB;
+</code></pre>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
