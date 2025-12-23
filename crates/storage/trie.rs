@@ -69,7 +69,7 @@ impl BackendTrieDB {
         })
     }
 
-    fn make_key(&self, path: Nibbles) -> Vec<u8> {
+    fn make_key(&self, path: &Nibbles) -> Vec<u8> {
         apply_prefix(self.address_prefix, path).into_vec()
     }
 
@@ -85,12 +85,12 @@ impl BackendTrieDB {
 }
 
 impl TrieDB for BackendTrieDB {
-    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
+    fn flatkeyvalue_computed(&self, key: &Nibbles) -> bool {
         let key = apply_prefix(self.address_prefix, key);
         self.last_computed_flatkeyvalue >= key
     }
 
-    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, key: &Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let prefixed_key = self.make_key(key);
         let table = self.table_for_key(&prefixed_key);
         let tx = self.db.begin_read().map_err(|e| {
@@ -105,7 +105,7 @@ impl TrieDB for BackendTrieDB {
             TrieError::DbError(anyhow::anyhow!("Failed to begin write transaction: {}", e))
         })?;
         for (key, value) in key_values {
-            let prefixed_key = self.make_key(key);
+            let prefixed_key = self.make_key(&key);
             let table = self.table_for_key(&prefixed_key);
             tx.put_batch(table, vec![(prefixed_key, value)])
                 .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
@@ -160,12 +160,12 @@ impl BackendTrieDBLocked {
 }
 
 impl TrieDB for BackendTrieDBLocked {
-    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
-        self.last_computed_flatkeyvalue >= key
+    fn flatkeyvalue_computed(&self, key: &Nibbles) -> bool {
+        self.last_computed_flatkeyvalue >= *key
     }
 
-    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        let tx = self.tx_for_key(&key);
+    fn get(&self, key: &Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+        let tx = self.tx_for_key(key);
         tx.get(key.as_ref())
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
     }
@@ -199,12 +199,12 @@ mod tests {
             .unwrap();
 
         // Test get
-        let retrieved_data = trie_db.get(node_hash).unwrap().unwrap();
+        let retrieved_data = trie_db.get(&node_hash).unwrap().unwrap();
         assert_eq!(retrieved_data, node_data);
 
         // Test get nonexistent
         let nonexistent_hash = Nibbles::from_hex(vec![2]);
-        assert!(trie_db.get(nonexistent_hash).unwrap().is_none());
+        assert!(trie_db.get(&nonexistent_hash).unwrap().is_none());
     }
 
     #[test]
@@ -225,7 +225,7 @@ mod tests {
             .unwrap();
 
         // Test get
-        let retrieved_data = trie_db.get(node_hash).unwrap().unwrap();
+        let retrieved_data = trie_db.get(&node_hash).unwrap().unwrap();
         assert_eq!(retrieved_data, node_data);
     }
 
@@ -249,7 +249,7 @@ mod tests {
 
         // Test batch get
         for (node_hash, expected_data) in batch_data {
-            let retrieved_data = trie_db.get(node_hash).unwrap().unwrap();
+            let retrieved_data = trie_db.get(&node_hash).unwrap().unwrap();
             assert_eq!(retrieved_data, expected_data);
         }
     }

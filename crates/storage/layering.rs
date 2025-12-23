@@ -198,31 +198,31 @@ pub struct TrieWrapper {
     pub prefix: Option<H256>,
 }
 
-pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
+pub fn apply_prefix(prefix: Option<H256>, path: &Nibbles) -> Nibbles {
     // Apply a prefix with an invalid nibble (17) as a separator, to
     // differentiate between a state trie value and a storage trie root.
     match prefix {
         Some(prefix) => Nibbles::from_bytes(prefix.as_bytes())
             .append_new(17)
-            .concat(&path),
-        None => path,
+            .concat(path),
+        None => path.clone(),
     }
 }
 
 impl TrieDB for TrieWrapper {
-    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
+    fn flatkeyvalue_computed(&self, key: &Nibbles) -> bool {
         // NOTE: we apply the prefix here, since the underlying TrieDB should
         // always be for the state trie.
         let key = apply_prefix(self.prefix, key);
-        self.db.flatkeyvalue_computed(key)
+        self.db.flatkeyvalue_computed(&key)
     }
 
-    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, key: &Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);
         if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
             return Ok(Some(value));
         }
-        self.db.get(key)
+        self.db.get(&key)
     }
 
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {

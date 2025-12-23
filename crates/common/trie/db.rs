@@ -11,7 +11,7 @@ use std::{
 pub type NodeMap = Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>;
 
 pub trait TrieDB: Send + Sync {
-    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError>;
+    fn get(&self, key: &Nibbles) -> Result<Option<Vec<u8>>, TrieError>;
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError>;
     // TODO: replace putbatch with this function.
     fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {
@@ -31,7 +31,7 @@ pub trait TrieDB: Send + Sync {
         Ok(())
     }
 
-    fn flatkeyvalue_computed(&self, _key: Nibbles) -> bool {
+    fn flatkeyvalue_computed(&self, _key: &Nibbles) -> bool {
         false
     }
 }
@@ -84,10 +84,10 @@ impl InMemoryTrieDB {
         Ok(Self::new(in_memory_trie))
     }
 
-    fn apply_prefix(&self, path: Nibbles) -> Nibbles {
+    fn apply_prefix(&self, path: &Nibbles) -> Nibbles {
         match &self.prefix {
-            Some(prefix) => prefix.concat(&path),
-            None => path,
+            Some(prefix) => prefix.concat(path),
+            None => path.clone(),
         }
     }
 
@@ -98,7 +98,7 @@ impl InMemoryTrieDB {
 }
 
 impl TrieDB for InMemoryTrieDB {
-    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, key: &Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         Ok(self
             .inner
             .lock()
@@ -111,7 +111,7 @@ impl TrieDB for InMemoryTrieDB {
         let mut db = self.inner.lock().map_err(|_| TrieError::LockError)?;
 
         for (key, value) in key_values {
-            let prefixed_key = self.apply_prefix(key);
+            let prefixed_key = self.apply_prefix(&key);
             db.insert(prefixed_key.into_vec(), value);
         }
 

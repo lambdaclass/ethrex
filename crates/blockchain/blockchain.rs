@@ -346,7 +346,7 @@ impl Blockchain {
             .state_trie(parent_header.hash())?
             .ok_or(StoreError::MissingStore)?
             .db()
-            .get(Nibbles::default())?
+            .get(&Nibbles::default())?
             .map(|v| Node::decode(&v))
             .transpose()?;
 
@@ -1922,7 +1922,7 @@ fn collapse_root_node(
             .state_trie(parent_header.hash())?
             .ok_or(StoreError::MissingStore)?
             .db()
-            .get(path)?
+            .get(&path)?
             .ok_or_else(|| StoreError::Custom("Missing child node during root collapse".into()))?,
     };
     // Same match as in [`BranchNode::remove`]
