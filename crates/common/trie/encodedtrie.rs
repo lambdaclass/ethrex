@@ -107,19 +107,21 @@ pub enum EncodedTrieError {
     },
     #[error("Trie authentication failed: {0}")]
     AuthFailed(&'static str),
+    #[error("Tried to access data of a {0} with an incorrect node type")]
+    IncorrectNodeTypeData(&'static str),
     #[error("RLPDecodeError")]
     RLPDecodeError(#[from] RLPDecodeError),
 }
 
 impl EncodedTrie {
     /// Get an element from the trie
-    pub fn get(&self, path: &[u8]) -> Result<Option<&[u8]>, RLPDecodeError> {
+    pub fn get(&self, path: &[u8]) -> Result<Option<&[u8]>, EncodedTrieError> {
         let mut path = Nibbles::from_bytes(path);
         fn recursive<'a>(
             trie: &'a EncodedTrie,
             path: &mut Nibbles,
             index: usize,
-        ) -> Result<Option<&'a [u8]>, RLPDecodeError> {
+        ) -> Result<Option<&'a [u8]>, EncodedTrieError> {
             let node = &trie.nodes[index];
             match node.node_type {
                 NodeType::Leaf { .. } => {
@@ -619,7 +621,9 @@ impl EncodedTrie {
                         let encoded_items = trie.get_encoded_items(index)?;
                         let encoded_child_hash = decode_bytes(encoded_items[1])?.0;
                         if child_hash.as_ref() != encoded_child_hash {
-                            return Err(EncodedTrieError::AuthFailed("invalid encoded child hash for extension node"));
+                            return Err(EncodedTrieError::AuthFailed(
+                                "invalid encoded child hash for extension node",
+                            ));
                         }
                     }
                 }
@@ -641,7 +645,9 @@ impl EncodedTrie {
                         let child_hash = trie.get_hash(child_index)?;
                         let encoded_child_hash = decode_bytes(encoded_items[i])?.0;
                         if child_hash.as_ref() != encoded_child_hash {
-                            return Err(EncodedTrieError::AuthFailed("invalid encoded child hash for branch node"));
+                            return Err(EncodedTrieError::AuthFailed(
+                                "invalid encoded child hash for branch node",
+                            ));
                         }
                     }
                 }
@@ -773,14 +779,14 @@ impl EncodedTrie {
 
     /// Assumes this node index corresponds to a leaf, and retrieves its data taking into
     /// account the overrides.
-    pub fn get_leaf_data(&self, index: usize) -> Result<(Nibbles, &[u8]), RLPDecodeError> {
+    pub fn get_leaf_data(&self, index: usize) -> Result<(Nibbles, &[u8]), EncodedTrieError> {
         let handle = &self.nodes[index].node_type;
         let NodeType::Leaf {
             partial: override_partial,
             value: override_value,
         } = handle
         else {
-            panic!("not leaf in get_leaf_data");
+            return Err(EncodedTrieError::IncorrectNodeTypeData("leaf"));
         };
 
         let data = match (override_partial, override_value) {
@@ -811,14 +817,14 @@ impl EncodedTrie {
 
     /// Assumes this node index corresponds to an extension, and retrieves its data taking into
     /// account the overrides.
-    pub fn get_extension_data(&self, index: usize) -> Result<Nibbles, RLPDecodeError> {
+    pub fn get_extension_data(&self, index: usize) -> Result<Nibbles, EncodedTrieError> {
         let handle = &self.nodes[index].node_type;
         let NodeType::Extension {
             prefix: override_prefix,
             ..
         } = handle
         else {
-            panic!("not leaf in get_leaf_data");
+            return Err(EncodedTrieError::IncorrectNodeTypeData("extension"));
         };
 
         let data = match override_prefix {

@@ -1,6 +1,6 @@
 pub mod db;
-pub mod error;
 pub mod encodedtrie;
+pub mod error;
 pub mod logger;
 mod nibbles;
 pub mod node;

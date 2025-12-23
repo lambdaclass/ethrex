@@ -147,7 +147,9 @@ pub fn execution_witness_from_rpc_chain_config(
         storage_tries.insert(address, trie.clone());
     }
 
-    let state_trie = state_trie_root.map(|n| EncodedTrie::try_from(&n)).transpose()?;
+    let state_trie = state_trie_root
+        .map(|n| EncodedTrie::try_from(&n))
+        .transpose()?;
 
     let witness = ExecutionWitness {
         codes: rpc_witness.codes.into_iter().map(|b| b.to_vec()).collect(),
