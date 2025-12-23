@@ -101,5 +101,5 @@ jobs:
         run: |
           for webhook in $SLACK_WEBHOOKS; do
             sh .github/scripts/publish_loc.sh "$webhook"
-            sh .github/scripts/publish_performance.sh "$webhook" tooling/performance_report/performance_report_slack.json
+            bash .github/scripts/publish_performance.sh "$webhook" tooling/performance_report/performance_report_slack.json
           done
