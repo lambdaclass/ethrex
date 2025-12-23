@@ -711,9 +711,7 @@ impl EncodedTrie {
                         }
                     }
 
-                    println!("cycle-tracker-report-start: children-hashes");
                     let mut children_hashes: [Option<NodeHash>; 16] = [None; 16];
-                    println!("cycle-tracker-report-end: children-hashes");
 
                     if any_pruned {
                         let encoded_items = trie.get_encoded_items(index)?;
