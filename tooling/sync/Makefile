@@ -235,10 +235,10 @@ multisync-up: ## Start all networks specified in MULTISYNC_NETWORKS via Docker C
 	$(MULTISYNC_COMPOSE) up -d $(MULTISYNC_SERVICES)
 
 multisync-down: ## Stop and remove all snapsync containers.
-	$(MULTISYNC_COMPOSE) down $(MULTISYNC_SERVICES)
+	$(MULTISYNC_COMPOSE) down
 
 multisync-clean: ## Stop, remove containers AND volumes (full reset).
-	$(MULTISYNC_COMPOSE) down -v $(MULTISYNC_SERVICES)
+	$(MULTISYNC_COMPOSE) down -v
 
 multisync-logs: ## Tail logs from all networks.
 	$(MULTISYNC_COMPOSE) logs -f
@@ -253,7 +253,7 @@ multisync-logs-consensus-%: ## Tail only consensus logs for a network (e.g., mul
 	$(MULTISYNC_COMPOSE) logs -f consensus-$*
 
 multisync-restart: ## Restart the cycle (clean volumes + start fresh).
-	$(MULTISYNC_COMPOSE) down -v $(MULTISYNC_SERVICES)
+	$(MULTISYNC_COMPOSE) down -v
 	$(MULTISYNC_COMPOSE) up -d $(MULTISYNC_SERVICES)
 
 multisync-monitor: ## Monitor all networks (one-shot, exits on completion).
