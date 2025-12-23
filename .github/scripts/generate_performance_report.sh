@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -ex
 set -euo pipefail
 
 OUTPUT_DIR="${PERF_REPORT_OUTPUT_DIR:-tooling/performance_report}"
@@ -50,72 +49,47 @@ done < <(jq -r '
     ]
   | @tsv
   ' <<<"$response")
+format_line() {
+  local name="$1" qualifier="$2" inst="$3" value="$4"
+  printf "%s (%s, %s): %.3f Ggas/s" "$name" "$qualifier" "$inst" "$value"
+}
+
 nether_line=""
 ethrex_line=""
 reth_line=""
 extra_lines=()
-slack_nether_line=""
-slack_ethrex_line=""
-slack_reth_line=""
-slack_extra_lines=()
 for row in "${raw_series[@]}"; do
   IFS=$'\t' read -r series_name series_value series_instance <<<"$row"
-  host="${series_instance%%:*}"
   qualifier="mean"
   if [[ "$series_name" == "reth" ]]; then
     qualifier="p50"
   fi
-  line=$(printf "* %s (%s, 24-hour): %.3f Ggas/s\n  %s" "$series_name" "$qualifier" "$series_value" "$host")
-  slack_line=$(printf "• *%s* (%s, 24-hour): %.3f Ggas/s\n    %s" "$series_name" "$qualifier" "$series_value" "$host")
+  line=$(format_line "$series_name" "$qualifier" "$series_instance" "$series_value")
   case "$series_name" in
-  nethermind)
-    nether_line="$line"
-    slack_nether_line="$slack_line"
-    ;;
-  ethrex)
-    ethrex_line="$line"
-    slack_ethrex_line="$slack_line"
-    ;;
-  reth)
-    reth_line="$line"
-    slack_reth_line="$slack_line"
-    ;;
-  *)
-    extra_lines+=("$line")
-    slack_extra_lines+=("$slack_line")
-    ;;
+  nethermind) nether_line="$line" ;;
+  ethrex) ethrex_line="$line" ;;
+  reth) reth_line="$line" ;;
+  *) extra_lines+=("$line") ;;
   esac
 done
 
 ordered_lines=()
+[[ -n "$nether_line" ]] && ordered_lines+=("$nether_line")
 [[ -n "$ethrex_line" ]] && ordered_lines+=("$ethrex_line")
 [[ -n "$reth_line" ]] && ordered_lines+=("$reth_line")
-[[ -n "$nether_line" ]] && ordered_lines+=("$nether_line")
 ordered_lines+=("${extra_lines[@]:-}")
 
-ordered_slack_lines=()
-[[ -n "$slack_ethrex_line" ]] && ordered_slack_lines+=("$slack_ethrex_line")
-[[ -n "$slack_reth_line" ]] && ordered_slack_lines+=("$slack_reth_line")
-[[ -n "$slack_nether_line" ]] && ordered_slack_lines+=("$slack_nether_line")
-ordered_slack_lines+=("${slack_extra_lines[@]:-}")
-
-header_text="Daily performance report"
+header_text="Daily performance report (Ggas/s, 24-hour avg)"
 {
   echo "# ${header_text}"
   echo
   printf '%s\n' "${ordered_lines[@]}"
 } >"${OUTPUT_DIR}/performance_report_github.txt"
 
-series_text=""
-for entry in "${ordered_slack_lines[@]}"; do
-  if [[ -n "$series_text" ]]; then
-    series_text+=$'\n\n'
-  fi
-  series_text+="$entry"
-done
+series_text=$(printf '%s\n' "${ordered_lines[@]}")
 jq -n --arg header "$header_text" --arg series "$series_text" '{
   "blocks": [
     { "type": "header", "text": { "type": "plain_text", "text": $header } },
-    { "type": "section", "text": { "type": "mrkdwn", "text": $series } }
+    { "type": "section", "text": { "type": "mrkdwn", "text": ("```" + $series + "```") } }
   ]
 }' >"${OUTPUT_DIR}/performance_report_slack.json"
