@@ -139,7 +139,7 @@ pub(crate) async fn handle_based_capability_message(
                     .or_insert_with(|| batch_sealed_msg.batch.clone());
                 broadcast_message(established, msg.into())?;
             }
-            process_batch_on_queue(established).await?;
+            process_batches_on_queue(established).await?;
         }
         L2Message::NewBlock(ref new_block_msg) => {
             if should_process_new_block(established, new_block_msg).await? {
@@ -539,7 +539,7 @@ pub(crate) async fn send_sealed_batch(
     Ok(())
 }
 
-pub async fn process_batch_on_queue(
+pub async fn process_batches_on_queue(
     established: &mut Established,
 ) -> Result<(), PeerConnectionError> {
     let l2_state = established.l2_state.connection_state_mut()?;
