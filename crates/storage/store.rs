@@ -1391,7 +1391,9 @@ impl Store {
         });
 
         // Store the thread handles
-        *background_threads.lock().expect("we just created this mutex") = Some(BackgroundThreadHandles {
+        *background_threads
+            .lock()
+            .expect("we just created this mutex") = Some(BackgroundThreadHandles {
             flatkeyvalue_thread: fkv_handle,
             trie_update_thread: trie_update_handle,
         });
@@ -1422,7 +1424,10 @@ impl Store {
     pub fn shutdown(self) {
         // Take the thread handles out of the Mutex before dropping self
         let handles = {
-            let mut threads = self.background_threads.lock().unwrap_or_else(|e| e.into_inner());
+            let mut threads = self
+                .background_threads
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             threads.take()
         };
 
