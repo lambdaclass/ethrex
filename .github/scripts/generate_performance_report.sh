@@ -88,15 +88,15 @@ for row in "${raw_series[@]}"; do
 done
 
 ordered_lines=()
-[[ -n "$nether_line" ]] && ordered_lines+=("$nether_line")
 [[ -n "$ethrex_line" ]] && ordered_lines+=("$ethrex_line")
 [[ -n "$reth_line" ]] && ordered_lines+=("$reth_line")
+[[ -n "$nether_line" ]] && ordered_lines+=("$nether_line")
 ordered_lines+=("${extra_lines[@]:-}")
 
 ordered_slack_lines=()
-[[ -n "$slack_nether_line" ]] && ordered_slack_lines+=("$slack_nether_line")
 [[ -n "$slack_ethrex_line" ]] && ordered_slack_lines+=("$slack_ethrex_line")
 [[ -n "$slack_reth_line" ]] && ordered_slack_lines+=("$slack_reth_line")
+[[ -n "$slack_nether_line" ]] && ordered_slack_lines+=("$slack_nether_line")
 ordered_slack_lines+=("${slack_extra_lines[@]:-}")
 
 header_text="Daily performance report"
