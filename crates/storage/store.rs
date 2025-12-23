@@ -1706,10 +1706,10 @@ impl Store {
 
     // Key format: block_number (8 bytes, big-endian) + block_hash (32 bytes)
     fn make_witness_key(block_number: u64, block_hash: &BlockHash) -> Vec<u8> {
-        let mut key = Vec::with_capacity(8 + 32);
-        key.extend_from_slice(&block_number.to_be_bytes());
-        key.extend_from_slice(block_hash.as_bytes());
-        key
+        let mut composite_key = Vec::with_capacity(8 + 32);
+        composite_key.extend_from_slice(&block_number.to_be_bytes());
+        composite_key.extend_from_slice(block_hash.as_bytes());
+        composite_key
     }
 
     pub async fn store_witness(
