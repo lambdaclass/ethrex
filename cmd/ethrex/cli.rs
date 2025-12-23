@@ -285,6 +285,7 @@ pub struct Options {
         action = ArgAction::SetTrue,
         default_value = "false",
         help = "Generate execution witnesses for received blocks.",
+        help_heading = "Node options"
     )]
     pub generate_witness: bool,
 }
