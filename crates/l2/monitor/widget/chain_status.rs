@@ -24,10 +24,10 @@ pub struct GlobalChainStatusTable {
 impl GlobalChainStatusTable {
     pub fn new(cfg: &SequencerConfig) -> Self {
         let sequencer_registry_address =
-            if cfg.based.state_updater.sequencer_registry == Address::default() {
+            if cfg.state_updater.sequencer_registry == Address::default() {
                 None
             } else {
-                Some(cfg.based.state_updater.sequencer_registry)
+                Some(cfg.state_updater.sequencer_registry)
             };
         Self {
             on_chain_proposer_address: cfg.l1_committer.on_chain_proposer_address,
