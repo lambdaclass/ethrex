@@ -59,7 +59,7 @@ impl NodeRef {
                 Ok(Some(Arc::new(Node::decode(hash.as_ref())?)))
             }
             NodeRef::Hash(_) => db
-                .get(&path)?
+                .get(path)?
                 .filter(|rlp| !rlp.is_empty())
                 .map(|rlp| Ok(Arc::new(Node::decode(&rlp)?)))
                 .transpose(),
@@ -79,7 +79,7 @@ impl NodeRef {
                 Ok(Some(Arc::new(Node::decode(hash.as_ref())?)))
             }
             NodeRef::Hash(hash @ NodeHash::Hashed(_)) => db
-                .get(&path)?
+                .get(path)?
                 .filter(|rlp| !rlp.is_empty())
                 .and_then(|rlp| match Node::decode(&rlp) {
                     Ok(node) => (node.compute_hash() == *hash).then_some(Ok(Arc::new(node))),
@@ -109,7 +109,7 @@ impl NodeRef {
             }
             NodeRef::Hash(hash @ NodeHash::Hashed(_)) => {
                 let Some(node) = db
-                    .get(&path)?
+                    .get(path.clone())?
                     .filter(|rlp| !rlp.is_empty())
                     .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
                     .transpose()?

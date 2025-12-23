@@ -93,7 +93,6 @@ impl Trie {
     ///
     /// Warning: All changes made to the db will bypass the trie and may cause the trie to suddenly
     ///   become inconsistent.
-    #[inline]
     pub fn db(&self) -> &dyn TrieDB {
         self.db.as_ref()
     }
@@ -102,8 +101,8 @@ impl Trie {
     pub fn get(&self, pathrlp: &[u8]) -> Result<Option<ValueRLP>, TrieError> {
         let path = Nibbles::from_bytes(pathrlp);
 
-        if !self.dirty.contains(&path) && self.db().flatkeyvalue_computed(&path) {
-            let Some(value_rlp) = self.db.get(&path)? else {
+        if !self.dirty.contains(&path) && self.db().flatkeyvalue_computed(path.clone()) {
+            let Some(value_rlp) = self.db.get(path)? else {
                 return Ok(None);
             };
             if value_rlp.is_empty() {
@@ -115,7 +114,7 @@ impl Trie {
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), path)?,
             NodeRef::Hash(hash) if hash.is_valid() => {
-                Node::decode(&self.db.get(&Nibbles::default())?.ok_or_else(|| {
+                Node::decode(&self.db.get(Nibbles::default())?.ok_or_else(|| {
                     TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(
                         hash.finalize(),
                     )))
@@ -399,7 +398,7 @@ impl Trie {
         struct NullTrieDB;
 
         impl TrieDB for NullTrieDB {
-            fn get(&self, _key: &Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+            fn get(&self, _key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
                 Ok(None)
             }
 

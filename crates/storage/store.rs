@@ -976,7 +976,7 @@ impl Store {
         tokio::task::spawn_blocking(move || {
             for (address_hash, nodes) in storage_trie_nodes {
                 for (node_path, node_data) in nodes {
-                    let key = apply_prefix(Some(address_hash), &node_path);
+                    let key = apply_prefix(Some(address_hash), node_path);
                     if node_data.is_empty() {
                         txn.delete(STORAGE_TRIE_NODES, key.as_ref())?;
                     } else {
@@ -1672,9 +1672,9 @@ impl Store {
             let (storage_root, storage_nodes) = storage_trie.collect_changes_since_last_hash();
 
             storage_trie_nodes.extend(
-                storage_nodes.into_iter().map(|(path, n)| {
-                    (apply_prefix(Some(h256_hashed_address), &path).into_vec(), n)
-                }),
+                storage_nodes
+                    .into_iter()
+                    .map(|(path, n)| (apply_prefix(Some(h256_hashed_address), path).into_vec(), n)),
             );
 
             // Add account to trie
@@ -1690,7 +1690,7 @@ impl Store {
         let (state_root, account_trie_nodes) = genesis_state_trie.collect_changes_since_last_hash();
         let account_trie_nodes = account_trie_nodes
             .into_iter()
-            .map(|(path, n)| (apply_prefix(None, &path).into_vec(), n))
+            .map(|(path, n)| (apply_prefix(None, path).into_vec(), n))
             .collect::<Vec<_>>();
 
         let mut tx = self.backend.begin_write()?;
@@ -2242,7 +2242,7 @@ impl Store {
         }
         let trie = self.open_state_trie(state_root)?;
         // NOTE: here we hash the root because the trie doesn't check the state root is correct
-        let Some(root) = trie.db().get(&Nibbles::default())? else {
+        let Some(root) = trie.db().get(Nibbles::default())? else {
             return Ok(false);
         };
         let root_hash = ethrex_trie::Node::decode(&root)?.compute_hash().finalize();
@@ -2388,7 +2388,7 @@ fn apply_trie_updates(
         .flat_map(|(account_hash, nodes)| {
             nodes
                 .into_iter()
-                .map(move |(path, node)| (apply_prefix(Some(account_hash), &path), node))
+                .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
         })
         .chain(account_updates)
         .collect();
@@ -2561,7 +2561,7 @@ fn flatkeyvalue_generator(
                 let Node::Leaf(node) = node else {
                     return Ok(());
                 };
-                let key = apply_prefix(Some(account_hash), &path);
+                let key = apply_prefix(Some(account_hash), path);
                 write_txn.put(MISC_VALUES, "last_written".as_bytes(), key.as_ref())?;
                 write_txn.put(STORAGE_FLATKEYVALUE, key.as_ref(), &node.value)?;
                 ctr += 1;

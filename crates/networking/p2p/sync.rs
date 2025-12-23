@@ -1004,7 +1004,7 @@ fn compute_storage_roots(
     use ethrex_trie::{Nibbles, Node};
 
     let storage_trie = store.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
-    let trie_hash = match storage_trie.db().get(&Nibbles::default())? {
+    let trie_hash = match storage_trie.db().get(Nibbles::default())? {
         Some(noderlp) => Node::decode(&noderlp)?.compute_hash().finalize(),
         None => *EMPTY_TRIE_HASH,
     };
