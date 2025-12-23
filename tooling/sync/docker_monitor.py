@@ -287,9 +287,7 @@ def update_instance(inst: Instance, timeout_min: int) -> bool:
 
 def main():
     p = argparse.ArgumentParser(description="Monitor Docker snapsync instances")
-    p.add_argument("--ports", default="8545,8546,8547")
-    p.add_argument("--names", default="hoodi,sepolia,mainnet")
-    p.add_argument("--containers", default="")
+    p.add_argument("--targets", default="hoodi:8545,sepolia:8546,mainnet:8547")
     p.add_argument("--timeout", type=int, default=SYNC_TIMEOUT)
     p.add_argument("--no-slack", action="store_true")
     p.add_argument("--exit-on-success", action="store_true")
@@ -297,14 +295,15 @@ def main():
     p.add_argument("--compose-dir", default=".", help="Directory containing docker compose file")
     args = p.parse_args()
     
-    ports = [int(x) for x in args.ports.split(",")]
-    names = args.names.split(",")
-    containers = args.containers.split(",") if args.containers else [f"ethrex-{n}" for n in names]
+    targets = [t.strip() for t in args.targets.split(",")]
+    names = [t.split(":")[0] for t in targets]
+    ports = [int(t.split(":")[1]) for t in targets]
+    containers = [f"ethrex-{n}" for n in names]
     
     if len(ports) != len(names):
-        sys.exit("Error: ports and names must match")
+        sys.exit("Error: targets must be in format network:port,network:port")
     
-    instances = [Instance(n.strip(), p, c.strip()) for n, p, c in zip(names, ports, containers)]
+    instances = [Instance(n, p, c) for n, p, c in zip(names, ports, containers)]
     
     # Detect state of already-running containers
     for inst in instances:

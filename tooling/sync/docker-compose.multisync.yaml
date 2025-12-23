@@ -163,6 +163,53 @@ services:
       setup-jwt-mainnet:
         condition: service_completed_successfully
 
+  # =============================================================================
+  # HOODI-2
+  # =============================================================================
+  setup-jwt-hoodi-2:
+    image: alpine
+    volumes:
+      - secrets-hoodi-2:/secrets
+    command: sh -c 'apk add openssl && openssl rand -hex 32 | tr -d "\n" | tee /secrets/jwt.hex'
+
+  consensus-hoodi-2:
+    <<: *consensus-common
+    container_name: consensus-hoodi-2
+    volumes:
+      - secrets-hoodi-2:/secrets
+      - consensus-hoodi-2:/root/.lighthouse
+    command: >
+      lighthouse bn
+      --network hoodi
+      --http --http-address 0.0.0.0
+      --execution-endpoint http://ethrex-hoodi-2:8551
+      --execution-jwt /secrets/jwt.hex
+      --checkpoint-sync-url https://hoodi-checkpoint-sync.stakely.io/
+      --checkpoint-sync-url-timeout 600
+      --purge-db
+    depends_on:
+      setup-jwt-hoodi-2:
+        condition: service_completed_successfully
+
+  ethrex-hoodi-2:
+    <<: *ethrex-common
+    container_name: ethrex-hoodi-2
+    ports:
+      - "8548:8545"  # RPC on different host port
+    volumes:
+      - secrets-hoodi-2:/secrets
+      - ethrex-hoodi-2:/data
+    command: >
+      --http.addr 0.0.0.0
+      --network hoodi
+      --authrpc.addr 0.0.0.0
+      --authrpc.jwtsecret /secrets/jwt.hex
+      --syncmode snap
+      --datadir /data
+    depends_on:
+      setup-jwt-hoodi-2:
+        condition: service_completed_successfully
+
 volumes:
   secrets-hoodi:
   secrets-sepolia:
@@ -173,3 +220,6 @@ volumes:
   ethrex-hoodi:
   ethrex-sepolia:
   ethrex-mainnet:
+  secrets-hoodi-2:
+  consensus-hoodi-2:
+  ethrex-hoodi-2:
