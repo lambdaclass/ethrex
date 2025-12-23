@@ -308,7 +308,7 @@ jobs:
             exit 1
           fi
 
-  check-guest-program-cargo-lock:
+  check-cargo-locks:
     name: Check guest program Cargo.lock
     runs-on: ubuntu-latest
     needs: detect-changes
@@ -326,7 +326,7 @@ jobs:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
     runs-on: ubuntu-latest
-    needs: [detect-changes, run-assertoor, run-hive, check-guest-program-cargo-lock]
+    needs: [detect-changes, run-assertoor, run-hive, check-cargo-locks]
     # Make sure this job runs even if the previous jobs failed or were skipped
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.run-assertoor.result != 'skipped' && needs.run-hive.result != 'skipped' }}
     steps:
