@@ -379,15 +379,12 @@ impl GuestProgramState {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Code::default());
         }
-        self.codes_hashed
-            .get(&code_hash)
-            .cloned()
-            .ok_or_else(|| {
-                GuestProgramStateError::Custom(format!(
-                    "Missing bytecode for hash {} in witness",
-                    hex::encode(code_hash)
-                ))
-            })
+        self.codes_hashed.get(&code_hash).cloned().ok_or_else(|| {
+            GuestProgramStateError::Custom(format!(
+                "Missing bytecode for hash {} in witness",
+                hex::encode(code_hash)
+            ))
+        })
     }
 
     /// When executing multiple blocks in the L2 it happens that the headers in block_headers correspond to the same block headers that we have in the blocks array. The main goal is to hash these only once and set them in both places.
