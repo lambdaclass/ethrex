@@ -14,6 +14,15 @@ from typing import Optional
 
 import requests
 
+# Load .env file if it exists
+if os.path.exists('.env'):
+    with open('.env') as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#'):
+                key, _, value = line.partition('=')
+                os.environ[key.strip()] = value.strip()
+
 CHECK_INTERVAL = 10
 SYNC_TIMEOUT = 4 * 60  # 4 hours default sync timeout (in minutes)
 BLOCK_PROCESSING_DURATION = 22 * 60 # Monitor block processing for 20 minutes
@@ -88,16 +97,38 @@ def rpc_call(url: str, method: str) -> Optional[any]:
         return None
 
 
-def slack_notify(header: str, msg: str, success: bool = True):
-    url = os.environ.get("SLACK_WEBHOOK_URL_SUCCESS" if success else "SLACK_WEBHOOK_URL_FAILED")
-    if url:
-        try:
-            requests.post(url, json={"blocks": [
-                {"type": "header", "text": {"type": "plain_text", "text": header}},
-                {"type": "section", "text": {"type": "mrkdwn", "text": msg}}
-            ]}, timeout=10)
-        except Exception:
-            pass
+def slack_notify(run_id: str, run_count: int, instances: list, hostname: str, commit: str):
+    """Send a single summary Slack message for the run."""
+    all_success = all(i.status == "success" for i in instances)
+    url = os.environ.get("SLACK_WEBHOOK_URL_SUCCESS" if all_success else "SLACK_WEBHOOK_URL_FAILED")
+    if not url:
+        return
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    status_icon = "✅" if all_success else "❌"
+    header = f"{status_icon} Run #{run_count} (ID: {run_id})"
+    summary = f"*Time:* `{timestamp}`\n*Host:* `{hostname}`\n*Commit:* `{commit}`\n*Result:* {'SUCCESS' if all_success else 'FAILED'}"
+    blocks = [
+        {"type": "header", "text": {"type": "plain_text", "text": header}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": summary}},
+        {"type": "divider"}
+    ]
+    for i in instances:
+        icon = "✅" if i.status == "success" else "❌"
+        line = f"{icon} *{i.name}*: `{i.status}`"
+        if getattr(i, "sync_time", None):
+            line += f" (sync: {fmt_time(i.sync_time)})"
+        if getattr(i, "last_block", None):
+            line += f" block: {i.last_block}"
+        if getattr(i, "initial_block", None) and i.last_block > i.initial_block:
+            line += f" (+{i.last_block - i.initial_block})"
+        if getattr(i, "error", None):
+            if i.error:
+                line += f"\n       Error: {i.error}"
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": line}})
+    try:
+        requests.post(url, json={"blocks": blocks}, timeout=10)
+    except Exception:
+        pass
 
 
 def ensure_logs_dir():
@@ -347,31 +378,21 @@ def main():
         while True:
             print(f"🔍 Run #{run_count} (ID: {run_id}): Monitoring {len(instances)} instances (timeout: {args.timeout}m)", flush=True)
             last_print = 0
-            
             while True:
                 changed = any(update_instance(i, args.timeout) for i in instances)
-                
-                if not args.no_slack:
-                    for i in instances:
-                        if i.status == "success":
-                            slack_notify(f"✅ {i.name} snapsync complete (run #{run_count})", f"*Server:* `{hostname}`\n*Synced in:* {fmt_time(i.sync_time)}\n*Commit:* `{commit}`")
-                        elif i.status == "failed":
-                            slack_notify(f"❌ {i.name} snapsync failed (run #{run_count})", f"*Server:* `{hostname}`\n*Error:* {i.error}\n*Commit:* `{commit}`", False)
-                
                 if changed or (time.time() - last_print) > STATUS_PRINT_INTERVAL:
                     print_status(instances)
                     last_print = time.time()
-                
                 if all(i.status in ("success", "failed") for i in instances):
                     print_status(instances)
                     break
-                
                 time.sleep(CHECK_INTERVAL)
-            
             # Log the run result and save container logs BEFORE any restart
             save_all_logs(instances, run_id, args.compose_file)
             log_run_result(run_id, run_count, instances, hostname, commit)
-            
+            # Send a single Slack summary notification for the run
+            if not args.no_slack:
+                slack_notify(run_id, run_count, instances, hostname, commit)
             # Check results
             if all(i.status == "success" for i in instances):
                 print(f"🎉 Run #{run_count}: All instances synced successfully!")
