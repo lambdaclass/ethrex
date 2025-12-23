@@ -51,6 +51,8 @@ jobs:
 
       - name: Forward Prometheus over Tailscale SSH
         run: |
+          mkdir -p ~/.ssh/
+          retries=5; until ssh-keyscan ethrex-grafana >> ~/.ssh/known_hosts || [ $retries -eq 0 ]; do ((retries--)); sleep 5; done          ssh -L 9090:localhost:9090 ethrex-grafana &
           ssh -L 9090:localhost:9090 ethrex-grafana &
           echo $! > /tmp/ts-ssh.pid
           sleep 2
