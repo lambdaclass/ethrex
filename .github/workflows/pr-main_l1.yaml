@@ -86,6 +86,24 @@ jobs:
         run: cargo fmt --all -- --check
         working-directory: tooling
 
+  check-cargo-lock:
+    name: Check Cargo.lock
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Update Cargo.lock files
+        run: |
+          make update-cargo-lock
+
+      - name: Check Cargo.lock files are committed
+        run: |
+          make check-cargo-lock
+
   test:
     name: Test - ${{ matrix.runner }}
     needs: detect-changes
