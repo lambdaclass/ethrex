@@ -1750,8 +1750,8 @@ impl Store {
                     })?;
                     let block_number = u64::from_be_bytes(block_num_bytes);
 
-                    if block_number <= threshold {
-                        old_witnesses.push(key.to_vec()); // Convert Box<[u8]> to Vec<u8>
+                    if block_number < threshold {
+                        old_witnesses.push(key.to_vec());
                     }
                 }
                 Ok(old_witnesses)
