@@ -558,18 +558,18 @@ pub async fn process_batches_on_queue(
             debug!("Missing blocks from the next batch to seal");
             return Ok(());
         }
-        if let Some(batch) = l2_state.batches_on_queue.remove(&next_batch_to_seal) {
-            let batch = Arc::unwrap_or_clone(batch);
-            let (batch_number, batch_first_block, batch_last_block) =
-                (batch.number, batch.first_block, batch.last_block);
-            l2_state.store_rollup.seal_batch(batch).await?;
-            info!(
-                "Sealed batch {} with blocks from {} to {}",
-                batch_number, batch_first_block, batch_last_block
-            );
-        } else {
+        let Some(batch) = l2_state.batches_on_queue.remove(&next_batch_to_seal) else {
             return Ok(());
-        }
+        };
+        let batch = Arc::unwrap_or_clone(batch);
+        let (batch_number, batch_first_block, batch_last_block) =
+            (batch.number, batch.first_block, batch.last_block);
+        l2_state.store_rollup.seal_batch(batch).await?;
+        info!(
+            "Sealed batch {} with blocks from {} to {}",
+            batch_number, batch_first_block, batch_last_block
+        );
+
         next_batch_to_seal += 1;
     }
 
