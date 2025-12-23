@@ -587,27 +587,21 @@ contract OnChainProposer is
         uint256 batchNumber,
         bytes calldata publicData
     ) internal view returns (string memory) {
-        uint256 targetedChainsCount = batchCommitments[batchNumber]
-            .balanceDiffs
-            .length;
-        uint256 totalMessagesCount = 0;
+        ICommonBridge.BalanceDiff[] memory balanceDiffs = batchCommitments[
+            batchNumber
+        ].balanceDiffs;
+        uint256 targetedChainsCount = balanceDiffs.length;
+        uint256 expected_length = 256;
         for (uint256 i = 0; i < targetedChainsCount; i++) {
-            totalMessagesCount += batchCommitments[batchNumber]
-                .balanceDiffs[i]
-                .message_hashes
-                .length;
+            expected_length += 32;
+            expected_length += 32;
+            expected_length += balanceDiffs[i].assetDiffs.length * 92;
+            expected_length += balanceDiffs[i].message_hashes.length * 32;
         }
-        uint256 balanceDiffsLength = 64 *
-            targetedChainsCount +
-            totalMessagesCount *
-            32;
-        uint256 L2RollingHasheslength = batchCommitments[batchNumber]
-            .l2InMessageRollingHashes
-            .length * 64;
-        if (
-            publicData.length !=
-            256 + balanceDiffsLength + L2RollingHasheslength
-        ) {
+        expected_length +=
+            batchCommitments[batchNumber].l2InMessageRollingHashes.length *
+            64;
+        if (publicData.length != expected_length) {
             return "00n"; // invalid public data length
         }
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
@@ -665,30 +659,56 @@ contract OnChainProposer is
             uint256 verifiedChainId = uint256(
                 bytes32(publicData[offset:offset + 32])
             );
-            uint256 verifiedValue = uint256(
-                bytes32(publicData[offset + 32:offset + 64])
-            );
-            bytes32[] memory messageHashes = batchCommitments[batchNumber]
-                .balanceDiffs[i]
-                .message_hashes;
-            if (
-                batchCommitments[batchNumber].balanceDiffs[i].chainId !=
-                verifiedChainId ||
-                batchCommitments[batchNumber].balanceDiffs[i].value !=
-                verifiedValue
-            ) {
+            offset += 32;
+
+            if (balanceDiffs[i].chainId != verifiedChainId) {
                 return "00x"; // balance diffs public inputs don't match with committed balance diffs
             }
+
+            uint256 verifiedValue = uint256(
+                bytes32(publicData[offset:offset + 32])
+            );
+            offset += 32;
+
+            if (balanceDiffs[i].value != verifiedValue) {
+                return "015"; // balance diffs public inputs don't match with committed balance diffs
+            }
+
+            for (uint256 j = 0; j < balanceDiffs[i].assetDiffs.length; j++) {
+                (
+                    address tokenL1,
+                    address tokenL2,
+                    address destTokenL2,
+                    uint256 tokenValue
+                ) = (
+                        address(bytes20(publicData[offset:offset + 20])),
+                        address(bytes20(publicData[offset + 20:offset + 40])),
+                        address(bytes20(publicData[offset + 40:offset + 60])),
+                        uint256(bytes32(publicData[offset + 60:offset + 92]))
+                    );
+
+                offset += 92;
+
+                if (
+                    tokenL1 != balanceDiffs[i].assetDiffs[j].tokenL1 ||
+                    tokenL2 != balanceDiffs[i].assetDiffs[j].tokenL2 ||
+                    destTokenL2 != balanceDiffs[i].assetDiffs[j].destTokenL2 ||
+                    tokenValue != balanceDiffs[i].assetDiffs[j].value
+                ) {
+                    return "014"; // balance diffs public inputs don't match with committed balance diffs
+                }
+            }
+
+            bytes32[] memory messageHashes = balanceDiffs[i].message_hashes;
             for (uint256 j = 0; j < messageHashes.length; j++) {
                 bytes32 verifiedMessageHash = bytes32(
-                    publicData[offset + 64 + j * 32:offset + 64 + (j + 1) * 32]
+                    publicData[offset:offset + 32]
                 );
+                offset += 32;
                 if (messageHashes[j] != verifiedMessageHash) {
                     return "00y"; // message hash public inputs don't match with committed message hashes
                 }
             }
-
-            offset += 64 + messageHashes.length * 32;
         }
         uint256 batchL2RollingHashesCount = batchCommitments[batchNumber]
             .l2InMessageRollingHashes

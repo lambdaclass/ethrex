@@ -30,6 +30,7 @@ use tracing::{error, warn};
 
 pub mod calldata;
 pub mod l1_to_l2_tx_data;
+pub mod privileged_data;
 
 pub use l1_to_l2_tx_data::{L1ToL2TransactionData, send_l1_to_l2_tx};
 
@@ -39,10 +40,12 @@ pub use ethrex_sdk_contract_utils::*;
 
 use calldata::from_hex_string_to_h256_array;
 
-// 0x34379405a57dce03d6a25a07b6a6d64f8314f1c9
+use crate::privileged_data::PrivilegedTransactionData;
+
+// 0x797b347d2209f7dcb8f9bb68fe4296a05d5a2c2b
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
-    0x34, 0x37, 0x94, 0x05, 0xa5, 0x7d, 0xce, 0x03, 0xd6, 0xa2, 0x5a, 0x07, 0xb6, 0xa6, 0xd6, 0x4f,
-    0x83, 0x14, 0xf1, 0xc9,
+    0x79, 0x7b, 0x34, 0x7d, 0x22, 0x09, 0xf7, 0xdc, 0xb8, 0xf9, 0xbb, 0x68, 0xfe, 0x42, 0x96, 0xa0,
+    0x5d, 0x5a, 0x2c, 0x2b,
 ]);
 
 // 0x000000000000000000000000000000000000ffff
@@ -93,7 +96,7 @@ pub enum SdkError {
     FailedToParseAddressFromHex,
 }
 
-/// BRIDGE_ADDRESS or 0x34379405a57dce03d6a25a07b6a6d64f8314f1c9
+/// BRIDGE_ADDRESS or 0x797b347d2209f7dcb8f9bb68fe4296a05d5a2c2b
 pub fn bridge_address() -> Result<Address, SdkError> {
     std::env::var("ETHREX_WATCHER_BRIDGE_ADDRESS")
         .unwrap_or(format!("{DEFAULT_BRIDGE_ADDRESS:#x}"))
@@ -1325,4 +1328,37 @@ pub async fn register_fee_token_no_wait(
     .await?;
 
     send_generic_transaction(client, tx_register, signer).await
+}
+
+pub async fn wait_for_l2_deposit_receipt(
+    l1_rpc_receipt: &RpcReceipt,
+    l1_client: &EthClient,
+    l2_client: &EthClient,
+) -> Result<RpcReceipt, EthClientError> {
+    let data = l1_rpc_receipt
+        .logs
+        .iter()
+        .find_map(|log| PrivilegedTransactionData::from_log(log.log.clone()).ok())
+        .ok_or_else(|| {
+            EthClientError::Custom(format!(
+                "RpcReceipt for transaction {:?} contains no valid logs",
+                l1_rpc_receipt.tx_info.transaction_hash
+            ))
+        })?;
+
+    let l2_deposit_tx_hash = data
+        .into_tx(
+            l1_client,
+            l2_client
+                .get_chain_id()
+                .await?
+                .try_into()
+                .map_err(|e| EthClientError::Custom(format!("Invalid chain id: {e}")))?,
+            0,
+        )
+        .await?
+        .get_privileged_hash()
+        .ok_or_else(|| EthClientError::Custom("Empty transaction hash".to_owned()))?;
+
+    wait_for_transaction_receipt(l2_deposit_tx_hash, l2_client, 10000).await
 }

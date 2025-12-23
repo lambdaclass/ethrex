@@ -17,6 +17,9 @@ concurrency:
 
 env:
   DOCKER_ETHREX_WORKDIR: /usr/local/bin
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
 
 jobs:
   detect-changes:
@@ -756,11 +759,15 @@ jobs:
           docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
           docker logs --follow ethrex_l2_b | grep -E "INFO|WARN|ERROR" &
           docker logs --follow ethrex_l1 | grep -E "INFO|WARN|ERROR" &
-          cargo test shared_bridge --release -- --nocapture --test-threads=1
           cp ../../cmd/.env_l2a ../../cmd/.env
+          export $(xargs < ../../cmd/.env_l2a)
+          cargo test shared_bridge --release -- --nocapture --test-threads=1
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH=true cargo test l2 --release -- --nocapture --test-threads=1
           cp ../../cmd/.env_l2b ../../cmd/.env
+          export $(xargs < ../../cmd/.env_l2b)
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH=true INTEGRATION_TEST_L2_RPC=http://localhost:1730 cargo test l2 --release -- --nocapture --test-threads=1
+          cp ../../cmd/.env_l2a ../../cmd/.env
+          export $(xargs < ../../cmd/.env_l2a)
           cargo test shared_bridge --release -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
 
