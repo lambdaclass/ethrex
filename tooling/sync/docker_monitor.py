@@ -20,6 +20,14 @@ BLOCK_PROCESSING_DURATION = 22 * 60 # Monitor block processing for 20 minutes
 BLOCK_STALL_TIMEOUT = 10 * 60  # Fail if no new block for 10 minutes
 STATUS_PRINT_INTERVAL = 30
 
+# Network to port mapping (fixed in docker-compose.multisync.yaml)
+NETWORK_PORTS = {
+    "hoodi": 8545,
+    "sepolia": 8546,
+    "mainnet": 8547,
+    "hoodi-2": 8548,
+}
+
 # Logging configuration
 LOGS_DIR = Path("./multisync_logs")
 RUN_LOG_FILE = LOGS_DIR / "run_history.log"  # Append-only text log
@@ -287,7 +295,7 @@ def update_instance(inst: Instance, timeout_min: int) -> bool:
 
 def main():
     p = argparse.ArgumentParser(description="Monitor Docker snapsync instances")
-    p.add_argument("--targets", default="hoodi:8545,sepolia:8546,mainnet:8547")
+    p.add_argument("--networks", default="hoodi,sepolia,mainnet")
     p.add_argument("--timeout", type=int, default=SYNC_TIMEOUT)
     p.add_argument("--no-slack", action="store_true")
     p.add_argument("--exit-on-success", action="store_true")
@@ -295,13 +303,13 @@ def main():
     p.add_argument("--compose-dir", default=".", help="Directory containing docker compose file")
     args = p.parse_args()
     
-    targets = [t.strip() for t in args.targets.split(",")]
-    names = [t.split(":")[0] for t in targets]
-    ports = [int(t.split(":")[1]) for t in targets]
+    names = [n.strip() for n in args.networks.split(",")]
+    ports = []
+    for n in names:
+        if n not in NETWORK_PORTS:
+            sys.exit(f"Error: unknown network '{n}', known networks: {list(NETWORK_PORTS.keys())}")
+        ports.append(NETWORK_PORTS[n])
     containers = [f"ethrex-{n}" for n in names]
-    
-    if len(ports) != len(names):
-        sys.exit("Error: targets must be in format network:port,network:port")
     
     instances = [Instance(n, p, c) for n, p, c in zip(names, ports, containers)]
     

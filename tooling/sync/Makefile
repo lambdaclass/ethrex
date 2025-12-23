@@ -228,10 +228,10 @@ server-sync:
 # ==============================================================================
 
 MULTISYNC_COMPOSE = docker compose -f docker-compose.multisync.yaml
-MULTISYNC_TARGETS ?= hoodi:8545,sepolia:8546,mainnet:8547
-MULTISYNC_SERVICES = $(shell echo $(MULTISYNC_TARGETS) | awk -F, '{for(i=1;i<=NF;i++) {split($$i,a,":"); printf "setup-jwt-%s ethrex-%s consensus-%s ", a[1], a[1], a[1]}}')
+MULTISYNC_NETWORKS ?= hoodi,sepolia,mainnet
+MULTISYNC_SERVICES = $(shell echo $(MULTISYNC_NETWORKS) | sed 's/,/ /g' | xargs -n1 printf "setup-jwt-%s ethrex-%s consensus-%s ")
 
-multisync-up: ## Start all networks specified in MULTISYNC_TARGETS via Docker Compose.
+multisync-up: ## Start all networks specified in MULTISYNC_NETWORKS via Docker Compose.
 	$(MULTISYNC_COMPOSE) up -d $(MULTISYNC_SERVICES)
 
 multisync-down: ## Stop and remove all snapsync containers.
@@ -257,19 +257,19 @@ multisync-restart: ## Restart the cycle (clean volumes + start fresh).
 	$(MULTISYNC_COMPOSE) up -d $(MULTISYNC_SERVICES)
 
 multisync-monitor: ## Monitor all networks (one-shot, exits on completion).
-	python3 docker_monitor.py --targets $(MULTISYNC_TARGETS) --exit-on-success
+	python3 docker_monitor.py --networks $(MULTISYNC_NETWORKS) --exit-on-success
 
 multisync-run: ## Full run: start + monitor (one-shot, exits on completion).
 	$(MULTISYNC_COMPOSE) up -d $(MULTISYNC_SERVICES)
 	@echo "Waiting 10s for containers to start..."
 	@sleep 10
-	python3 docker_monitor.py --targets $(MULTISYNC_TARGETS) --exit-on-success
+	python3 docker_monitor.py --networks $(MULTISYNC_NETWORKS) --exit-on-success
 
 multisync-loop: ## Continuous loop: sync all networks, restart on success, repeat forever.
 	$(MULTISYNC_COMPOSE) up -d $(MULTISYNC_SERVICES)
 	@echo "Waiting 10s for containers to start..."
 	@sleep 10
-	python3 docker_monitor.py --targets $(MULTISYNC_TARGETS) --compose-file docker-compose.multisync.yaml --compose-dir $(CURDIR)
+	python3 docker_monitor.py --networks $(MULTISYNC_NETWORKS) --compose-file docker-compose.multisync.yaml --compose-dir $(CURDIR)
 
 multisync-history: ## View the run history log.
 	@if [ -f multisync_logs/run_history.log ]; then \
