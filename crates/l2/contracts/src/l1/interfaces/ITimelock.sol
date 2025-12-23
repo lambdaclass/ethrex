@@ -14,10 +14,10 @@ interface ITimelock {
     /// @param data The calldata that was forwarded to `target`.
     event EmergencyExecution(address indexed target, uint256 value, bytes data);
 
-    // Used for functions that can only be called by the Timelock itself.
+    // @notice Used for functions that can only be called by the Timelock itself.
     error TimelockCallerNotSelf();
 
-    // Used for other initialize() from contracts that the Timelock inherits from
+    // @notice Used for other initialize() from contracts that the Timelock inherits from
     error TimelockUseCustomInitialize();
 
     /// @notice The OnChainProposer contract controlled by this timelock.
