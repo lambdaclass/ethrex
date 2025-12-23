@@ -19,6 +19,9 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   PROVER_REPRODUCIBLE_BUILD: true
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
 
 jobs:
   build-ethrex:
@@ -114,15 +117,7 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install solc
-        run: |
-          if [[ "${{ matrix.os }}" == "linux" ]]; then
-            sudo curl -L -o /usr/local/bin/solc https://github.com/argotorg/solidity/releases/download/v0.8.29/solc-static-linux
-            sudo chmod +x /usr/local/bin/solc
-          elif [[ "${{ matrix.os }}" == "macos" ]]; then
-            sudo curl -L -o /usr/local/bin/solc https://github.com/argotorg/solidity/releases/download/v0.8.29/solc-macos
-            sudo chmod +x /usr/local/bin/solc
-          fi
-          solc --version
+        uses: ./.github/actions/install-solc
 
       - name: Build ethrex
         run: |

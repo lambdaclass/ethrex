@@ -54,13 +54,17 @@ Node options:
 
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
-
+          
+          [env: ETHREX_LOG_LEVEL=]
           [default: INFO]
 
       --log.color <LOG_COLOR>
           Possible values: auto, always, never
 
           [default: auto]
+
+      --log.dir <LOG_DIR>
+          Directory to store log files.
 
       --mempool.maxsize <MEMPOOL_MAX_SIZE>
           Maximum size of the mempool in number of transactions
@@ -156,7 +160,7 @@ Block building options:
       --builder.extra-data <EXTRA_DATA>
           Block extra data message.
 
-          [default: "ethrex 7.0.0"]
+          [default: "ethrex 8.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -230,7 +234,8 @@ Node options:
 
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
-
+          
+          [env: ETHREX_LOG_LEVEL=]
           [default: INFO]
 
       --log.color <LOG_COLOR>
@@ -327,7 +332,7 @@ Block building options:
       --builder.extra-data <EXTRA_DATA>
           Block extra data message.
 
-          [default: "ethrex 7.0.0"]
+          [default: "ethrex 8.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.

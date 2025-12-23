@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity =0.8.31;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
@@ -32,15 +32,21 @@ contract OnChainProposer is
     /// pendingTxHashes queue of the CommonBridge contract.
     /// @dev withdrawalsLogsMerkleRoot is the Merkle root of the Merkle tree containing
     /// all the withdrawals that were processed in the batch being committed
+    /// @dev commitHash: keccak of the git commit hash that produced the proof/verification key used for this batch
     struct BatchCommitmentInfo {
         bytes32 newStateRoot;
         bytes32 blobKZGVersionedHash;
         bytes32 processedPrivilegedTransactionsRollingHash;
         bytes32 withdrawalsLogsMerkleRoot;
         bytes32 lastBlockHash;
-        bytes32 l2MessagesMerkleRoot;
+        uint256 nonPrivilegedTransactions;
         ICommonBridge.BalanceDiff[] balanceDiffs;
+        bytes32 commitHash;
+        ICommonBridge.L2MessageRollingHash[] l2InMessageRollingHashes;
     }
+
+    uint8 internal constant SP1_VERIFIER_ID = 1;
+    uint8 internal constant RISC0_VERIFIER_ID = 2;
 
     /// @notice The commitments of the committed batches.
     /// @dev If a batch is committed, the commitment is stored here.
@@ -73,6 +79,7 @@ contract OnChainProposer is
     address public RISC0_VERIFIER_ADDRESS;
     address public SP1_VERIFIER_ADDRESS;
 
+    /// @dev Deprecated variable.
     bytes32 public SP1_VERIFICATION_KEY;
 
     /// @notice Indicates whether the contract operates in validium mode.Add commentMore actions
@@ -85,6 +92,7 @@ contract OnChainProposer is
     /// @dev This address is set during contract initialization and is used to verify aligned proofs.
     address public ALIGNEDPROOFAGGREGATOR;
 
+    /// @dev Deprecated variable.
     bytes32 public RISC0_VERIFICATION_KEY;
 
     /// @notice Chain ID of the network
@@ -99,6 +107,10 @@ contract OnChainProposer is
 
     /// @notice True if verification is done through Aligned Layer instead of smart contract verifiers.
     bool public ALIGNED_MODE;
+
+    /// @notice Verification keys keyed by git commit hash (keccak of the commit SHA string) and verifier type.
+    mapping(bytes32 commitHash => mapping(uint8 verifierId => bytes32 vk))
+        public verificationKeys;
 
     modifier onlySequencer() {
         require(
@@ -128,6 +140,7 @@ contract OnChainProposer is
         address alignedProofAggregator,
         bytes32 sp1Vk,
         bytes32 risc0Vk,
+        bytes32 commitHash,
         bytes32 genesisStateRoot,
         address[] calldata sequencerAddresses,
         uint256 chainId
@@ -137,12 +150,10 @@ contract OnChainProposer is
         // Risc0 constants
         REQUIRE_RISC0_PROOF = requireRisc0Proof;
         RISC0_VERIFIER_ADDRESS = r0verifier;
-        RISC0_VERIFICATION_KEY = risc0Vk;
 
         // SP1 constants
         REQUIRE_SP1_PROOF = requireSp1Proof;
         SP1_VERIFIER_ADDRESS = sp1verifier;
-        SP1_VERIFICATION_KEY = sp1Vk;
 
         // TDX constants
         REQUIRE_TDX_PROOF = requireTdxProof;
@@ -152,14 +163,31 @@ contract OnChainProposer is
         ALIGNED_MODE = aligned;
         ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
 
+        require(
+            commitHash != bytes32(0),
+            "OnChainProposer: commit hash is zero"
+        );
+        require(
+            !REQUIRE_SP1_PROOF || sp1Vk != bytes32(0),
+            "OnChainProposer: missing SP1 verification key"
+        );
+        require(
+            !REQUIRE_RISC0_PROOF || risc0Vk != bytes32(0),
+            "OnChainProposer: missing RISC0 verification key"
+        );
+        verificationKeys[commitHash][SP1_VERIFIER_ID] = sp1Vk;
+        verificationKeys[commitHash][RISC0_VERIFIER_ID] = risc0Vk;
+
         batchCommitments[0] = BatchCommitmentInfo(
             genesisStateRoot,
             bytes32(0),
             bytes32(0),
             bytes32(0),
             bytes32(0),
-            bytes32(0),
-            new ICommonBridge.BalanceDiff[](0)
+            0,
+            new ICommonBridge.BalanceDiff[](0),
+            commitHash,
+            new ICommonBridge.L2MessageRollingHash[](0)
         );
 
         for (uint256 i = 0; i < sequencerAddresses.length; i++) {
@@ -181,15 +209,33 @@ contract OnChainProposer is
     }
 
     /// @inheritdoc IOnChainProposer
-    function upgradeSP1VerificationKey(bytes32 new_vk) public onlyOwner {
-        SP1_VERIFICATION_KEY = new_vk;
-        emit VerificationKeyUpgraded("SP1", new_vk);
+    function upgradeSP1VerificationKey(
+        bytes32 commit_hash,
+        bytes32 new_vk
+    ) public onlyOwner {
+        require(
+            commit_hash != bytes32(0),
+            "OnChainProposer: commit hash is zero"
+        );
+        // we don't want to restrict setting the vk to zero
+        // as we may want to disable the version
+        verificationKeys[commit_hash][SP1_VERIFIER_ID] = new_vk;
+        emit VerificationKeyUpgraded("SP1", commit_hash, new_vk);
     }
 
     /// @inheritdoc IOnChainProposer
-    function upgradeRISC0VerificationKey(bytes32 new_vk) public onlyOwner {
-        RISC0_VERIFICATION_KEY = new_vk;
-        emit VerificationKeyUpgraded("RISC0", new_vk);
+    function upgradeRISC0VerificationKey(
+        bytes32 commit_hash,
+        bytes32 new_vk
+    ) public onlyOwner {
+        require(
+            commit_hash != bytes32(0),
+            "OnChainProposer: commit hash is zero"
+        );
+        // we don't want to restrict setting the vk to zero
+        // as we may want to disable the version
+        verificationKeys[commit_hash][RISC0_VERIFIER_ID] = new_vk;
+        emit VerificationKeyUpgraded("RISC0", commit_hash, new_vk);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -199,8 +245,10 @@ contract OnChainProposer is
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash,
-        bytes32 l2MessagesMerkleRoot,
-        ICommonBridge.BalanceDiff[] calldata balanceDiffs
+        uint256 nonPrivilegedTransactions,
+        bytes32 commitHash,
+        ICommonBridge.BalanceDiff[] calldata balanceDiffs,
+        ICommonBridge.L2MessageRollingHash[] calldata l2MessageRollingHashes
     ) external override onlySequencer whenNotPaused {
         // TODO: Refactor validation
         require(
@@ -227,6 +275,20 @@ contract OnChainProposer is
                 "005" // OnChainProposer: invalid privileged transaction logs
             );
         }
+
+        for (uint256 i = 0; i < l2MessageRollingHashes.length; i++) {
+            bytes32 receivedRollingHash = l2MessageRollingHashes[i].rollingHash;
+            bytes32 expectedRollingHash = ICommonBridge(BRIDGE)
+                .getPendingL2MessagesVersionedHash(
+                    l2MessageRollingHashes[i].chainId,
+                    uint16(bytes2(receivedRollingHash))
+                );
+            require(
+                expectedRollingHash == receivedRollingHash,
+                "012" // OnChainProposer: invalid L2 message rolling hash
+            );
+        }
+
         if (withdrawalsLogsMerkleRoot != bytes32(0)) {
             ICommonBridge(BRIDGE).publishWithdrawals(
                 batchNumber,
@@ -248,14 +310,30 @@ contract OnChainProposer is
             );
         }
 
+        // Validate commit hash and corresponding verification keys are valid
+        require(commitHash != bytes32(0), "012");
+        if (
+            REQUIRE_SP1_PROOF &&
+            verificationKeys[commitHash][SP1_VERIFIER_ID] == bytes32(0)
+        ) {
+            revert("013"); // missing verification key for commit hash
+        } else if (
+            REQUIRE_RISC0_PROOF &&
+            verificationKeys[commitHash][RISC0_VERIFIER_ID] == bytes32(0)
+        ) {
+            revert("013"); // missing verification key for commit hash
+        }
+
         batchCommitments[batchNumber] = BatchCommitmentInfo(
             newStateRoot,
             blobVersionedHash,
             processedPrivilegedTransactionsRollingHash,
             withdrawalsLogsMerkleRoot,
             lastBlockHash,
-            l2MessagesMerkleRoot,
-            balanceDiffs
+            nonPrivilegedTransactions,
+            balanceDiffs,
+            commitHash,
+            l2MessageRollingHashes
         );
         emit BatchCommitted(newStateRoot);
 
@@ -307,21 +385,46 @@ contract OnChainProposer is
             );
         }
 
+        ICommonBridge.L2MessageRollingHash[]
+            memory batchL2InRollingHashes = batchCommitments[batchNumber]
+                .l2InMessageRollingHashes;
+        for (uint256 i = 0; i < batchL2InRollingHashes.length; i++) {
+            uint16 l2_messages_count = uint16(
+                bytes2(batchL2InRollingHashes[i].rollingHash)
+            );
+            ICommonBridge(BRIDGE).removePendingL2Messages(
+                batchL2InRollingHashes[i].chainId,
+                l2_messages_count
+            );
+        }
+
+        if (
+            ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() &&
+            batchCommitments[batchNumber].nonPrivilegedTransactions != 0
+        ) {
+            revert("00v"); // exceeded privileged transaction inclusion deadline, can't include non-privileged transactions
+        }
+
         if (REQUIRE_RISC0_PROOF) {
             // If the verification fails, it will revert.
             string memory reason = _verifyPublicData(batchNumber, risc0Journal);
             if (bytes(reason).length != 0) {
                 revert(
                     string.concat(
-                        "00b", // OnChainProposer: Invalid RISC0 proof: 
+                        "00b", // OnChainProposer: Invalid RISC0 proof:
                         reason
                     )
                 );
             }
+            bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
+            bytes32 risc0Vk = verificationKeys[batchCommitHash][
+                RISC0_VERIFIER_ID
+            ];
             try
                 IRiscZeroVerifier(RISC0_VERIFIER_ADDRESS).verify(
                     risc0BlockProof,
-                    RISC0_VERIFICATION_KEY,
+                    // we use the same vk as the one set for the commit of the batch
+                    risc0Vk,
                     sha256(risc0Journal)
                 )
             {} catch {
@@ -340,14 +443,16 @@ contract OnChainProposer is
             if (bytes(reason).length != 0) {
                 revert(
                     string.concat(
-                        "00d", // OnChainProposer: Invalid SP1 proof: 
+                        "00d", // OnChainProposer: Invalid SP1 proof:
                         reason
                     )
                 );
             }
+            bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
+            bytes32 sp1Vk = verificationKeys[batchCommitHash][SP1_VERIFIER_ID];
             try
                 ISP1Verifier(SP1_VERIFIER_ADDRESS).verifyProof(
-                    SP1_VERIFICATION_KEY,
+                    sp1Vk,
                     sp1PublicValues,
                     sp1ProofBytes
                 )
@@ -367,7 +472,7 @@ contract OnChainProposer is
             if (bytes(reason).length != 0) {
                 revert(
                     string.concat(
-                        "00f", // OnChainProposer: Invalid TDX proof: 
+                        "00f", // OnChainProposer: Invalid TDX proof:
                         reason
                     )
                 );
@@ -384,13 +489,9 @@ contract OnChainProposer is
             }
         }
 
-        if (batchCommitments[batchNumber].l2MessagesMerkleRoot != bytes32(0)) {
-            ICommonBridge(BRIDGE).publishL2Messages(
-                batchNumber,
-                batchCommitments[batchNumber].l2MessagesMerkleRoot,
-                batchCommitments[batchNumber].balanceDiffs
-            );
-        }
+        ICommonBridge(BRIDGE).publishL2Messages(
+            batchCommitments[batchNumber].balanceDiffs
+        );
 
         lastVerifiedBatch = batchNumber;
 
@@ -458,7 +559,7 @@ contract OnChainProposer is
             if (bytes(reason).length != 0) {
                 revert(
                     string.concat(
-                        "00m", // OnChainProposer: Invalid ALIGNED proof: 
+                        "00m", // OnChainProposer: Invalid ALIGNED proof:
                         reason
                     )
                 );
@@ -467,7 +568,9 @@ contract OnChainProposer is
             if (REQUIRE_SP1_PROOF) {
                 _verifyProofInclusionAligned(
                     sp1MerkleProofsList[i],
-                    SP1_VERIFICATION_KEY,
+                    verificationKeys[batchCommitments[batchNumber].commitHash][
+                        SP1_VERIFIER_ID
+                    ],
                     publicInputsList[i]
                 );
             }
@@ -475,7 +578,9 @@ contract OnChainProposer is
             if (REQUIRE_RISC0_PROOF) {
                 _verifyProofInclusionAligned(
                     risc0MerkleProofsList[i],
-                    RISC0_VERIFICATION_KEY,
+                    verificationKeys[batchCommitments[batchNumber].commitHash][
+                        RISC0_VERIFIER_ID
+                    ],
                     publicInputsList[i]
                 );
             }
@@ -494,29 +599,39 @@ contract OnChainProposer is
         uint256 batchNumber,
         bytes calldata publicData
     ) internal view returns (string memory) {
-        uint256 registered_chains = batchCommitments[batchNumber].balanceDiffs.length;
-        if (publicData.length != 288 + 64 * registered_chains) {
+        ICommonBridge.BalanceDiff[] memory balanceDiffs = batchCommitments[
+            batchNumber
+        ].balanceDiffs;
+        uint256 targetedChainsCount = balanceDiffs.length;
+        uint256 expected_length = 256;
+        for (uint256 i = 0; i < targetedChainsCount; i++) {
+            expected_length += 32;
+            expected_length += 32;
+            expected_length += balanceDiffs[i].assetDiffs.length * 92;
+            expected_length += balanceDiffs[i].message_hashes.length * 32;
+        }
+        expected_length +=
+            batchCommitments[batchNumber].l2InMessageRollingHashes.length *
+            64;
+        if (publicData.length != expected_length) {
             return "00n"; // invalid public data length
         }
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
         if (
             batchCommitments[lastVerifiedBatch].newStateRoot != initialStateRoot
         ) {
-            return
-                "00o"; // initial state root public inputs don't match with initial state root
+            return "00o"; // initial state root public inputs don't match with initial state root
         }
         bytes32 finalStateRoot = bytes32(publicData[32:64]);
         if (batchCommitments[batchNumber].newStateRoot != finalStateRoot) {
-            return
-                "00p"; // final state root public inputs don't match with final state root
+            return "00p"; // final state root public inputs don't match with final state root
         }
         bytes32 withdrawalsMerkleRoot = bytes32(publicData[64:96]);
         if (
             batchCommitments[batchNumber].withdrawalsLogsMerkleRoot !=
             withdrawalsMerkleRoot
         ) {
-            return
-                "00q"; // withdrawals public inputs don't match with committed withdrawals
+            return "00q"; // withdrawals public inputs don't match with committed withdrawals
         }
         bytes32 privilegedTransactionsHash = bytes32(publicData[96:128]);
         if (
@@ -524,21 +639,18 @@ contract OnChainProposer is
                 .processedPrivilegedTransactionsRollingHash !=
             privilegedTransactionsHash
         ) {
-            return
-                "00r"; // privileged transactions hash public input does not match with committed transactions
+            return "00r"; // privileged transactions hash public input does not match with committed transactions
         }
         bytes32 blobVersionedHash = bytes32(publicData[128:160]);
         if (
             batchCommitments[batchNumber].blobKZGVersionedHash !=
             blobVersionedHash
         ) {
-            return
-                "00s"; // blob versioned hash public input does not match with committed hash
+            return "00s"; // blob versioned hash public input does not match with committed hash
         }
         bytes32 lastBlockHash = bytes32(publicData[160:192]);
         if (batchCommitments[batchNumber].lastBlockHash != lastBlockHash) {
-            return
-                "00t"; // last block hash public inputs don't match with last block hash
+            return "00t"; // last block hash public inputs don't match with last block hash
         }
         uint256 chainId = uint256(bytes32(publicData[192:224]));
         if (chainId != CHAIN_ID) {
@@ -548,33 +660,90 @@ contract OnChainProposer is
             bytes32(publicData[224:256])
         );
         if (
-            ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() &&
-            nonPrivilegedTransactions != 0
+            batchCommitments[batchNumber].nonPrivilegedTransactions !=
+            nonPrivilegedTransactions
         ) {
-            return
-                "00v"; // exceeded privileged transaction inclusion deadline, can't include non-privileged transactions
-        }
-        bytes32 l2MessagesMerkleRoot = bytes32(publicData[256:288]);
-        if (
-            batchCommitments[batchNumber].l2MessagesMerkleRoot !=
-            l2MessagesMerkleRoot
-        ) {
-            return
-                "00w"; // l2 messages merkle root public inputs don't match with committed l2 messages merkle root
+            return "00w"; // non-privileged transactions public input does not match with committed value
         }
 
-        for (uint256 i = 0; i < registered_chains; i++) {
-            uint256 offset = 288 + i * 64;
-            uint256 chainId = uint256(bytes32(publicData[offset:offset + 32]));
-            uint256 value = uint256(bytes32(publicData[offset + 32:offset + 64]));
-            if (
-                batchCommitments[batchNumber].balanceDiffs[i].chainId != chainId ||
-                batchCommitments[batchNumber].balanceDiffs[i].value != value
-            ) {
-                return
-                    "00x"; // balance diffs public inputs don't match with committed balance diffs
+        uint256 offset = 256;
+        for (uint256 i = 0; i < targetedChainsCount; i++) {
+            uint256 verifiedChainId = uint256(
+                bytes32(publicData[offset:offset + 32])
+            );
+            offset += 32;
+
+            if (balanceDiffs[i].chainId != verifiedChainId) {
+                return "00x"; // balance diffs public inputs don't match with committed balance diffs
+            }
+
+            uint256 verifiedValue = uint256(
+                bytes32(publicData[offset:offset + 32])
+            );
+            offset += 32;
+
+            if (balanceDiffs[i].value != verifiedValue) {
+                return "015"; // balance diffs public inputs don't match with committed balance diffs
+            }
+
+            for (uint256 j = 0; j < balanceDiffs[i].assetDiffs.length; j++) {
+                (
+                    address tokenL1,
+                    address tokenL2,
+                    address destTokenL2,
+                    uint256 tokenValue
+                ) = (
+                        address(bytes20(publicData[offset:offset + 20])),
+                        address(bytes20(publicData[offset + 20:offset + 40])),
+                        address(bytes20(publicData[offset + 40:offset + 60])),
+                        uint256(bytes32(publicData[offset + 60:offset + 92]))
+                    );
+
+                offset += 92;
+
+                if (
+                    tokenL1 != balanceDiffs[i].assetDiffs[j].tokenL1 ||
+                    tokenL2 != balanceDiffs[i].assetDiffs[j].tokenL2 ||
+                    destTokenL2 != balanceDiffs[i].assetDiffs[j].destTokenL2 ||
+                    tokenValue != balanceDiffs[i].assetDiffs[j].value
+                ) {
+                    return "014"; // balance diffs public inputs don't match with committed balance diffs
+                }
+            }
+
+            bytes32[] memory messageHashes = balanceDiffs[i].message_hashes;
+            for (uint256 j = 0; j < messageHashes.length; j++) {
+                bytes32 verifiedMessageHash = bytes32(
+                    publicData[offset:offset + 32]
+                );
+                offset += 32;
+                if (messageHashes[j] != verifiedMessageHash) {
+                    return "00y"; // message hash public inputs don't match with committed message hashes
+                }
             }
         }
+        uint256 batchL2RollingHashesCount = batchCommitments[batchNumber]
+            .l2InMessageRollingHashes
+            .length;
+        for (uint256 k = 0; k < batchL2RollingHashesCount; k++) {
+            uint256 verifiedChainId = uint256(
+                bytes32(publicData[offset:offset + 32])
+            );
+            bytes32 verifiedRollingHash = bytes32(
+                publicData[offset + 32:offset + 64]
+            );
+            ICommonBridge.L2MessageRollingHash
+                memory committedRollingHash = batchCommitments[batchNumber]
+                    .l2InMessageRollingHashes[k];
+            if (
+                committedRollingHash.chainId != verifiedChainId ||
+                committedRollingHash.rollingHash != verifiedRollingHash
+            ) {
+                return "00z"; // L2 in message rolling hash public inputs don't match with committed L2 in message rolling hashes
+            }
+            offset += 64;
+        }
+
         return "";
     }
 

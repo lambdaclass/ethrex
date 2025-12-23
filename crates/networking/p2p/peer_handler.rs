@@ -733,18 +733,14 @@ impl PeerHandler {
                     peer_id
                 );
                 all_account_hashes.extend(accounts.iter().map(|unit| unit.hash));
-                all_accounts_state.extend(
-                    accounts
-                        .iter()
-                        .map(|unit| AccountState::from(unit.account.clone())),
-                );
+                all_accounts_state.extend(accounts.iter().map(|unit| unit.account));
             }
 
             let Some((peer_id, connection)) = self
                 .peer_table
                 .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await
-                .inspect_err(|err| error!(err= ?err, "Error requesting a peer for account range"))
+                .inspect_err(|err| warn!(%err, "Error requesting a peer for account range"))
                 .unwrap_or(None)
             else {
                 // Log ~ once every 10 seconds
@@ -881,7 +877,7 @@ impl PeerHandler {
             let (account_hashes, account_states): (Vec<_>, Vec<_>) = accounts
                 .clone()
                 .into_iter()
-                .map(|unit| (unit.hash, AccountState::from(unit.account)))
+                .map(|unit| (unit.hash, unit.account))
                 .unzip();
             let encoded_accounts = account_states
                 .iter()
@@ -1030,7 +1026,9 @@ impl PeerHandler {
             let Some((peer_id, mut connection)) = self
                 .peer_table
                 .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
-                .await?
+                .await
+                .inspect_err(|err| warn!(%err, "Error requesting a peer for bytecodes"))
+                .unwrap_or(None)
             else {
                 // Log ~ once every 10 seconds
                 if logged_no_free_peers_count == 0 {
@@ -1554,7 +1552,9 @@ impl PeerHandler {
             let Some((peer_id, connection)) = self
                 .peer_table
                 .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
-                .await?
+                .await
+                .inspect_err(|err| warn!(%err, "Error requesting a peer for storage ranges"))
+                .unwrap_or(None)
             else {
                 // Log ~ once every 10 seconds
                 if logged_no_free_peers_count == 0 {

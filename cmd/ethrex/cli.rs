@@ -117,6 +117,7 @@ pub struct Options {
         long = "log.level",
         default_value_t = Level::INFO,
         value_name = "LOG_LEVEL",
+        env = "ETHREX_LOG_LEVEL",
         help = "The verbosity level used for logs.",
         long_help = "Possible values: info, debug, trace, warn, error",
         help_heading = "Node options")]
@@ -129,6 +130,13 @@ pub struct Options {
         help_heading = "Node options"
     )]
     pub log_color: LogColor,
+    #[arg(
+        long = "log.dir",
+        value_name = "LOG_DIR",
+        help = "Directory to store log files.",
+        help_heading = "Node options"
+    )]
+    pub log_dir: Option<PathBuf>,
     #[arg(
         help = "Maximum size of the mempool in number of transactions",
         long = "mempool.maxsize",
@@ -324,6 +332,7 @@ impl Default for Options {
             ws_port: Default::default(),
             log_level: Level::INFO,
             log_color: Default::default(),
+            log_dir: None,
             authrpc_addr: Default::default(),
             authrpc_port: Default::default(),
             authrpc_jwtsecret: Default::default(),
@@ -434,13 +443,15 @@ pub enum Subcommand {
 impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
         // L2 has its own init_tracing because of the ethrex monitor
-        match self {
+        let _guard = match &self {
             #[cfg(feature = "l2")]
-            Self::L2(_) => {}
+            Self::L2(_) => None,
             _ => {
-                init_tracing(opts);
+                let (_, guard) = init_tracing(opts);
+                guard
             }
-        }
+        };
+
         match self {
             Subcommand::RemoveDB { datadir, force } => {
                 remove_db(&datadir, force);
@@ -671,7 +682,7 @@ pub async fn import_blocks(
         if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
             store
                 .forkchoice_update(
-                    Some(numbers_and_hashes),
+                    numbers_and_hashes,
                     head_number,
                     head_hash,
                     Some(head_number),
@@ -786,7 +797,7 @@ pub async fn import_blocks_bench(
         if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
             store
                 .forkchoice_update(
-                    Some(numbers_and_hashes),
+                    numbers_and_hashes,
                     head_number,
                     head_hash,
                     Some(head_number),

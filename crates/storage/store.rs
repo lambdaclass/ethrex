@@ -811,7 +811,7 @@ impl Store {
 
     pub async fn forkchoice_update_inner(
         &self,
-        new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
+        new_canonical_blocks: Vec<(BlockNumber, BlockHash)>,
         head_number: BlockNumber,
         head_hash: BlockHash,
         safe: Option<BlockNumber>,
@@ -822,12 +822,10 @@ impl Store {
         tokio::task::spawn_blocking(move || {
             let mut txn = db.begin_write()?;
 
-            if let Some(canonical_blocks) = new_canonical_blocks {
-                for (block_number, block_hash) in canonical_blocks {
-                    let head_key = block_number.to_le_bytes();
-                    let head_value = block_hash.encode_to_vec();
-                    txn.put(CANONICAL_BLOCK_HASHES, &head_key, &head_value)?;
-                }
+            for (block_number, block_hash) in new_canonical_blocks {
+                let head_key = block_number.to_le_bytes();
+                let head_value = block_hash.encode_to_vec();
+                txn.put(CANONICAL_BLOCK_HASHES, &head_key, &head_value)?;
             }
 
             for number in (head_number + 1)..=(latest) {
@@ -901,113 +899,6 @@ impl Store {
             .begin_read()?
             .get(SNAP_STATE, &key)?
             .map(|bytes| H256::decode(bytes.as_slice()))
-            .transpose()
-            .map_err(StoreError::from)
-    }
-
-    /// Sets the last key fetched from the state trie being fetched during snap sync
-    pub async fn set_state_trie_key_checkpoint(
-        &self,
-        last_keys: [H256; STATE_TRIE_SEGMENTS],
-    ) -> Result<(), StoreError> {
-        let key = snap_state_key(SnapStateIndex::StateTrieKeyCheckpoint);
-        let value = last_keys.to_vec().encode_to_vec();
-        self.write_async(SNAP_STATE, key, value).await
-    }
-
-    /// Gets the last key fetched from the state trie being fetched during snap sync
-    pub async fn get_state_trie_key_checkpoint(
-        &self,
-    ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
-        let key = snap_state_key(SnapStateIndex::StateTrieKeyCheckpoint);
-        let txn = self.backend.begin_read()?;
-        match txn.get(SNAP_STATE, &key)? {
-            Some(keys_bytes) => {
-                let keys_vec: Vec<H256> = Vec::<H256>::decode(keys_bytes.as_slice())?;
-                if keys_vec.len() == STATE_TRIE_SEGMENTS {
-                    let mut keys_array = [H256::zero(); STATE_TRIE_SEGMENTS];
-                    keys_array.copy_from_slice(&keys_vec);
-                    Ok(Some(keys_array))
-                } else {
-                    Err(StoreError::Custom("Invalid array size".to_string()))
-                }
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// Sets the state trie paths in need of healing
-    pub async fn set_state_heal_paths(
-        &self,
-        paths: Vec<(Nibbles, H256)>,
-    ) -> Result<(), StoreError> {
-        let key = snap_state_key(SnapStateIndex::StateHealPaths);
-        let value = paths.encode_to_vec();
-        self.write_async(SNAP_STATE, key, value).await
-    }
-
-    /// Gets the state trie paths in need of healing
-    pub async fn get_state_heal_paths(&self) -> Result<Option<Vec<(Nibbles, H256)>>, StoreError> {
-        let key = snap_state_key(SnapStateIndex::StateHealPaths);
-
-        self.backend
-            .begin_read()?
-            .get(SNAP_STATE, &key)?
-            .map(|bytes| Vec::<(Nibbles, H256)>::decode(bytes.as_slice()))
-            .transpose()
-            .map_err(StoreError::from)
-    }
-
-    /// Set the latest root of the rebuilt state trie and the last downloaded hashes from each segment
-    pub async fn set_state_trie_rebuild_checkpoint(
-        &self,
-        checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
-    ) -> Result<(), StoreError> {
-        let key = snap_state_key(SnapStateIndex::StateTrieRebuildCheckpoint);
-        let value = (checkpoint.0, checkpoint.1.to_vec()).encode_to_vec();
-        self.write_async(SNAP_STATE, key, value).await
-    }
-
-    /// Get the latest root of the rebuilt state trie and the last downloaded hashes from each segment
-    pub async fn get_state_trie_rebuild_checkpoint(
-        &self,
-    ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
-        let key = snap_state_key(SnapStateIndex::StateTrieRebuildCheckpoint);
-        let txn = self.backend.begin_read()?;
-        match txn.get(SNAP_STATE, &key)? {
-            Some(bytes) => {
-                let (root, keys_vec): (H256, Vec<H256>) =
-                    <(H256, Vec<H256>)>::decode(bytes.as_slice())?;
-                if keys_vec.len() == STATE_TRIE_SEGMENTS {
-                    let mut keys_array = [H256::zero(); STATE_TRIE_SEGMENTS];
-                    keys_array.copy_from_slice(&keys_vec);
-                    Ok(Some((root, keys_array)))
-                } else {
-                    Err(StoreError::Custom("Invalid array size".to_string()))
-                }
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// Get the accont hashes and roots of the storage tries awaiting rebuild
-    pub async fn set_storage_trie_rebuild_pending(
-        &self,
-        pending: Vec<(H256, H256)>,
-    ) -> Result<(), StoreError> {
-        let key = snap_state_key(SnapStateIndex::StorageTrieRebuildPending);
-        let value = pending.encode_to_vec();
-        self.write_async(SNAP_STATE, key, value).await
-    }
-
-    /// Get the accont hashes and roots of the storage tries awaiting rebuild
-    pub async fn get_storage_trie_rebuild_pending(
-        &self,
-    ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
-        let key = snap_state_key(SnapStateIndex::StorageTrieRebuildPending);
-        self.read_async(SNAP_STATE, key)
-            .await?
-            .map(|bytes| Vec::<(H256, H256)>::decode(bytes.as_slice()))
             .transpose()
             .map_err(StoreError::from)
     }
@@ -1857,7 +1748,7 @@ impl Store {
         self.add_block(genesis_block).await?;
         self.update_earliest_block_number(genesis_block_number)
             .await?;
-        self.forkchoice_update(None, genesis_block_number, genesis_hash, None, None)
+        self.forkchoice_update(vec![], genesis_block_number, genesis_hash, None, None)
             .await?;
         Ok(())
     }
@@ -1928,7 +1819,7 @@ impl Store {
     /// All operations are performed in a single database transaction.
     pub async fn forkchoice_update(
         &self,
-        new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
+        new_canonical_blocks: Vec<(BlockNumber, BlockHash)>,
         head_number: BlockNumber,
         head_hash: BlockHash,
         safe: Option<BlockNumber>,
@@ -1997,7 +1888,7 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        get_account_state_from_trie(&state_trie, address)
+        self.get_account_state_from_trie(&state_trie, address)
     }
 
     pub fn get_account_state_by_root(
@@ -2755,17 +2646,6 @@ pub struct StorageSlotProof {
     pub value: U256,
 }
 
-fn get_account_state_from_trie(
-    state_trie: &Trie,
-    address: Address,
-) -> Result<Option<AccountState>, StoreError> {
-    let hashed_address = hash_address(&address);
-    let Some(encoded_state) = state_trie.get(&hashed_address)? else {
-        return Ok(None);
-    };
-    Ok(Some(AccountState::decode(&encoded_state)?))
-}
-
 pub struct AncestorIterator {
     store: Store,
     next_hash: BlockHash,
@@ -3060,7 +2940,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .forkchoice_update(None, block_number, hash, None, None)
+            .forkchoice_update(vec![], block_number, hash, None, None)
             .await
             .unwrap();
 
@@ -3164,7 +3044,7 @@ mod tests {
             .unwrap();
 
         store
-            .forkchoice_update(None, block_number, block_header.hash(), None, None)
+            .forkchoice_update(vec![], block_number, block_header.hash(), None, None)
             .await
             .unwrap();
 
@@ -3218,7 +3098,7 @@ mod tests {
             .unwrap();
         store
             .forkchoice_update(
-                None,
+                vec![],
                 latest_block_number,
                 hash,
                 Some(safe_block_number),

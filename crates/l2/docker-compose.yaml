@@ -8,6 +8,8 @@ services:
     build: ../../
     ports:
       - 127.0.0.1:8545:8545
+    environment:
+      - ETHREX_LOG_LEVEL
     volumes:
       - ../../fixtures/genesis/l1.json:/genesis/l1.json
     command: --network /genesis/l1.json --http.addr 0.0.0.0 --http.port 8545 --dev
@@ -60,6 +62,7 @@ services:
       - COMPILE_CONTRACTS=true
       - ETHREX_USE_COMPILED_GENESIS=true
       - ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER
+      - ETHREX_ON_CHAIN_PROPOSER_INCLUSION_MAX_WAIT
     depends_on:
       - ethrex_l1
     entrypoint:
@@ -101,6 +104,7 @@ services:
       - ETHREX_WATCHER_L2_RPCS
       - ETHREX_WATCHER_L2_CHAIN_IDS
       - ETHREX_WATCHER_ROUTER_ADDRESS
+      - ETHREX_LOG_LEVEL
     volumes:
       - ../../fixtures/genesis/l2.json:/genesis/l2.json
       - env:/env/
