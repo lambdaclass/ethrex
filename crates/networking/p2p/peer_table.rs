@@ -1,5 +1,6 @@
 use crate::{
     discv4::server::MAX_NODES_IN_NEIGHBORS_PACKET,
+    discv5::session::Session,
     metrics::METRICS,
     rlpx::{connection::server::PeerConnection, p2p::Capability},
     types::{Node, NodeRecord},
@@ -60,6 +61,8 @@ pub struct Contact {
     pub unwanted: bool,
     /// Whether the last known fork ID is valid, None if unknown.
     pub is_fork_id_valid: Option<bool>,
+    /// Session information for discv5
+    session: Option<Session>,
 }
 
 impl Contact {
@@ -109,6 +112,7 @@ impl From<Node> for Contact {
             knows_us: true,
             unwanted: false,
             is_fork_id_valid: None,
+            session: None,
         }
     }
 }
@@ -188,6 +192,18 @@ impl PeerTable {
                 connection,
                 capabilities,
             })
+            .await?;
+        Ok(())
+    }
+
+    /// Set or update discv5 Session info.
+    pub async fn set_session_info(
+        &mut self,
+        node_id: H256,
+        session: Session,
+    ) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::SetSessionInfo { node_id, session })
             .await?;
         Ok(())
     }
@@ -443,6 +459,22 @@ impl PeerTable {
             .await?
         {
             OutMessage::Contact(contact) => Ok(Some(*contact)),
+            OutMessage::NotFound => Ok(None),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Get discv5 Session info.
+    pub async fn get_session_info(
+        &mut self,
+        node_id: H256,
+    ) -> Result<Option<Session>, PeerTableError> {
+        match self
+            .handle
+            .call(CallMessage::GetContact { node_id })
+            .await?
+        {
+            OutMessage::Contact(contact) => Ok(contact.session),
             OutMessage::NotFound => Ok(None),
             _ => unreachable!(),
         }
@@ -878,6 +910,10 @@ enum CastMessage {
         connection: PeerConnection,
         capabilities: Vec<Capability>,
     },
+    SetSessionInfo {
+        node_id: H256,
+        session: Session,
+    },
     RemovePeer {
         node_id: H256,
     },
@@ -1140,6 +1176,11 @@ impl GenServer for PeerTableServer {
                 let new_peer_id = node.node_id();
                 let new_peer = PeerData::new(node, None, Some(connection), capabilities);
                 self.peers.insert(new_peer_id, new_peer);
+            }
+            CastMessage::SetSessionInfo { node_id, session } => {
+                self.contacts
+                    .entry(node_id)
+                    .and_modify(|contact| contact.session = Some(session));
             }
             CastMessage::RemovePeer { node_id } => {
                 self.peers.swap_remove(&node_id);

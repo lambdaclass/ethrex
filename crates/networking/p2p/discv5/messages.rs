@@ -61,6 +61,7 @@ impl From<StreamCipherError> for PacketCodecError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Packet {
+    pub(crate) masking_iv: [u8; IV_MASKING_SIZE],
     pub(crate) header: PacketHeader,
     pub(crate) encrypted_message: Vec<u8>,
 }
@@ -81,6 +82,7 @@ impl Packet {
         let header = PacketHeader::decode(&mut cipher, encoded_packet)?;
         let encrypted_message = encoded_packet[header.header_end_offset..].to_vec();
         Ok(Packet {
+            masking_iv: masking_iv.try_into()?,
             header,
             encrypted_message,
         })
