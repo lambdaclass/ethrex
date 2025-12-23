@@ -50,6 +50,9 @@ pub struct ExecutionPayload {
         default
     )]
     pub excess_blob_gas: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    // ExecutionPayloadV4 fields. Optional since we support previous versions.
+    pub block_access_list: Option<Vec<()>>,
 }
 
 #[derive(Clone, Debug)]
@@ -96,6 +99,7 @@ impl ExecutionPayload {
         self,
         parent_beacon_block_root: Option<H256>,
         requests_hash: Option<H256>,
+        block_access_list_hash: Option<H256>,
     ) -> Result<Block, RLPDecodeError> {
         let body = BlockBody {
             transactions: self
@@ -162,6 +166,7 @@ impl ExecutionPayload {
             withdrawals: block.body.withdrawals,
             blob_gas_used: block.header.blob_gas_used,
             excess_blob_gas: block.header.excess_blob_gas,
+            block_access_list: todo!(),
         }
     }
 }
