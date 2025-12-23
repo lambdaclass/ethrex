@@ -1231,6 +1231,7 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
         info!("Succesfully validated tree, {state_root} found");
     } else {
         error!("We have failed the validation of the state tree");
+        std::process::exit(1);
     }
     validated.is_ok()
 }
