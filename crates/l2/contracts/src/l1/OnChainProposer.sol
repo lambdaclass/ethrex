@@ -137,16 +137,17 @@ contract OnChainProposer is
         address bridge
     ) public initializer {
         VALIDIUM = _validium;
-        _setVerificationConfig(
-            requireRisc0Proof,
-            requireSp1Proof,
-            requireTdxProof,
-            aligned,
-            r0verifier,
-            sp1verifier,
-            tdxverifier,
-            alignedProofAggregator
-        );
+
+        REQUIRE_RISC0_PROOF = requireRisc0Proof;
+        REQUIRE_SP1_PROOF = requireSp1Proof;
+        REQUIRE_TDX_PROOF = requireTdxProof;
+
+        RISC0_VERIFIER_ADDRESS = r0verifier;
+        SP1_VERIFIER_ADDRESS = sp1verifier;
+        TDX_VERIFIER_ADDRESS = tdxverifier;
+
+        ALIGNED_MODE = aligned;
+        ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
 
         require(
             commitHash != bytes32(0),
@@ -163,7 +164,19 @@ contract OnChainProposer is
         verificationKeys[commitHash][SP1_VERIFIER_ID] = sp1Vk;
         verificationKeys[commitHash][RISC0_VERIFIER_ID] = risc0Vk;
 
-        _initGenesisCommitment(genesisStateRoot, commitHash);
+        BatchCommitmentInfo storage commitment = batchCommitments[0];
+        commitment.newStateRoot = genesisStateRoot;
+        commitment.blobKZGVersionedHash = bytes32(0);
+        commitment.processedPrivilegedTransactionsRollingHash = bytes32(0);
+        commitment.withdrawalsLogsMerkleRoot = bytes32(0);
+        commitment.lastBlockHash = bytes32(0);
+        commitment.nonPrivilegedTransactions = 0;
+        commitment.balanceDiffs = new ICommonBridge.BalanceDiff[](0);
+        commitment.commitHash = commitHash;
+        commitment
+            .l2InMessageRollingHashes = new ICommonBridge.L2MessageRollingHash[](
+            0
+        );
 
         CHAIN_ID = chainId;
 
@@ -178,49 +191,6 @@ contract OnChainProposer is
         BRIDGE = bridge;
 
         OwnableUpgradeable.__Ownable_init(timelock_owner);
-    }
-
-    /// @dev Auxiliary initializer helper to avoid stack-too-deep.
-    function _setVerificationConfig(
-        bool requireRisc0Proof,
-        bool requireSp1Proof,
-        bool requireTdxProof,
-        bool aligned,
-        address r0verifier,
-        address sp1verifier,
-        address tdxverifier,
-        address alignedProofAggregator
-    ) internal {
-        REQUIRE_RISC0_PROOF = requireRisc0Proof;
-        REQUIRE_SP1_PROOF = requireSp1Proof;
-        REQUIRE_TDX_PROOF = requireTdxProof;
-
-        RISC0_VERIFIER_ADDRESS = r0verifier;
-        SP1_VERIFIER_ADDRESS = sp1verifier;
-        TDX_VERIFIER_ADDRESS = tdxverifier;
-
-        ALIGNED_MODE = aligned;
-        ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
-    }
-
-    /// @dev Auxiliary initializer helper to avoid stack-too-deep.
-    function _initGenesisCommitment(
-        bytes32 genesisStateRoot,
-        bytes32 commitHash
-    ) internal {
-        BatchCommitmentInfo storage commitment = batchCommitments[0];
-        commitment.newStateRoot = genesisStateRoot;
-        commitment.blobKZGVersionedHash = bytes32(0);
-        commitment.processedPrivilegedTransactionsRollingHash = bytes32(0);
-        commitment.withdrawalsLogsMerkleRoot = bytes32(0);
-        commitment.lastBlockHash = bytes32(0);
-        commitment.nonPrivilegedTransactions = 0;
-        commitment.balanceDiffs = new ICommonBridge.BalanceDiff[](0);
-        commitment.commitHash = commitHash;
-        commitment
-            .l2InMessageRollingHashes = new ICommonBridge.L2MessageRollingHash[](
-            0
-        );
     }
 
     /// @inheritdoc IOnChainProposer
