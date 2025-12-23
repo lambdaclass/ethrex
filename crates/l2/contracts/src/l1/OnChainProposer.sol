@@ -180,7 +180,7 @@ contract OnChainProposer is
         OwnableUpgradeable.__Ownable_init(timelock_owner);
     }
 
-    // Auxiliary initializer helper to avoid stack-too-deep.
+    /// @dev Auxiliary initializer helper to avoid stack-too-deep.
     function _setVerificationConfig(
         bool requireRisc0Proof,
         bool requireSp1Proof,
@@ -203,7 +203,7 @@ contract OnChainProposer is
         ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
     }
 
-    // Auxiliary initializer helper to avoid stack-too-deep.
+    /// @dev Auxiliary initializer helper to avoid stack-too-deep.
     function _initGenesisCommitment(
         bytes32 genesisStateRoot,
         bytes32 commitHash
