@@ -3,8 +3,8 @@ flamegraph-branch flamegraph-inner flamegraph-mainnet flamegraph-sepolia flamegr
 flamegraph-hoodi start-lighthouse start-ethrex backup-db start-mainnet-metrics-docker \
 start-sepolia-metrics-docker start-holesky-metrics-docker start-hoodi-metrics-docker \
 start-metrics-docker tail-syncing-logs tail-metrics-logs copy_flamegraph import-with-metrics \
-snapsync-docker-up snapsync-docker-down snapsync-docker-clean snapsync-docker-logs snapsync-docker-status \
-snapsync-docker-restart snapsync-docker-monitor snapsync-docker-run snapsync-docker-loop
+multisync-up multisync-down multisync-clean multisync-logs multisync-status \
+multisync-restart multisync-monitor multisync-run multisync-loop
 
 ETHREX_DIR ?= "../.."
 EVM ?= levm
@@ -227,81 +227,61 @@ server-sync:
 # Docker Compose Multi-Network Snapsync
 # ==============================================================================
 
-SNAPSYNC_COMPOSE = docker compose -f docker-compose.snapsync.yaml
+MULTISYNC_COMPOSE = docker compose -f docker-compose.multisync.yaml
 
-snapsync-docker-up: ## Start all 3 networks (hoodi, sepolia, mainnet) via Docker Compose.
-	$(SNAPSYNC_COMPOSE) up -d
+multisync-up: ## Start all 3 networks (hoodi, sepolia, mainnet) via Docker Compose.
+	$(MULTISYNC_COMPOSE) up -d
 
-snapsync-docker-down: ## Stop and remove all snapsync containers.
-	$(SNAPSYNC_COMPOSE) down
+multisync-down: ## Stop and remove all snapsync containers.
+	$(MULTISYNC_COMPOSE) down
 
-snapsync-docker-clean: ## Stop, remove containers AND volumes (full reset).
-	$(SNAPSYNC_COMPOSE) down -v
+multisync-clean: ## Stop, remove containers AND volumes (full reset).
+	$(MULTISYNC_COMPOSE) down -v
 
-snapsync-docker-logs: ## Tail logs from all networks.
-	$(SNAPSYNC_COMPOSE) logs -f
+multisync-logs: ## Tail logs from all networks.
+	$(MULTISYNC_COMPOSE) logs -f
 
-snapsync-docker-logs-%: ## Tail logs for a specific network (e.g., snapsync-docker-logs-hoodi).
-	$(SNAPSYNC_COMPOSE) logs -f ethrex-$* consensus-$*
+multisync-logs-%: ## Tail logs for a specific network (e.g., multisync-logs-hoodi).
+	$(MULTISYNC_COMPOSE) logs -f ethrex-$* consensus-$*
 
-snapsync-docker-logs-ethrex-%: ## Tail only ethrex logs for a network (e.g., snapsync-docker-logs-ethrex-hoodi).
-	$(SNAPSYNC_COMPOSE) logs -f ethrex-$*
+multisync-logs-ethrex-%: ## Tail only ethrex logs for a network (e.g., multisync-logs-ethrex-hoodi).
+	$(MULTISYNC_COMPOSE) logs -f ethrex-$*
 
-snapsync-docker-logs-consensus-%: ## Tail only consensus logs for a network (e.g., snapsync-docker-logs-consensus-hoodi).
-	$(SNAPSYNC_COMPOSE) logs -f consensus-$*
+multisync-logs-consensus-%: ## Tail only consensus logs for a network (e.g., multisync-logs-consensus-hoodi).
+	$(MULTISYNC_COMPOSE) logs -f consensus-$*
 
-snapsync-docker-status: ## Show container status and quick RPC sync check.
-	@echo "=== Container Status ==="
-	@$(SNAPSYNC_COMPOSE) ps
-	@echo ""
-	@echo "=== Sync Status ==="
-	@for port in 8545:hoodi 8546:sepolia 8547:mainnet; do \
-		network=$${port#*:}; \
-		p=$${port%:*}; \
-		result=$$(curl -s -X POST -H "Content-Type: application/json" \
-			--data '{"jsonrpc":"2.0","method":"eth_syncing","params":[],"id":1}' \
-			http://localhost:$$p 2>/dev/null | grep -o '"result":[^,}]*' || echo '"result":null'); \
-		if echo "$$result" | grep -q "false"; then \
-			echo "✅ $$network (port $$p): synced"; \
-		elif echo "$$result" | grep -q "null"; then \
-			echo "⏳ $$network (port $$p): not reachable"; \
-		else \
-			echo "🔄 $$network (port $$p): syncing"; \
-		fi; \
-	done
+multisync-restart: ## Restart the cycle (clean volumes + start fresh).
+	$(MULTISYNC_COMPOSE) down -v
+	$(MULTISYNC_COMPOSE) up -d
 
-snapsync-docker-restart: ## Restart the cycle (clean volumes + start fresh).
-	$(SNAPSYNC_COMPOSE) down -v
-	$(SNAPSYNC_COMPOSE) up -d
-
-snapsync-docker-monitor: ## Monitor all networks (one-shot, exits on completion).
+multisync-monitor: ## Monitor all networks (one-shot, exits on completion).
 	python3 docker_monitor.py --ports 8545,8546,8547 --names hoodi,sepolia,mainnet --containers ethrex-hoodi,ethrex-sepolia,ethrex-mainnet --exit-on-success
 
-snapsync-docker-run: ## Full run: start + monitor (one-shot, exits on completion).
-	$(SNAPSYNC_COMPOSE) up -d
+multisync-run: ## Full run: start + monitor (one-shot, exits on completion).
+	$(MULTISYNC_COMPOSE) up -d
 	@echo "Waiting 10s for containers to start..."
 	@sleep 10
 	python3 docker_monitor.py --ports 8545,8546,8547 --names hoodi,sepolia,mainnet --containers ethrex-hoodi,ethrex-sepolia,ethrex-mainnet --exit-on-success
 
-snapsync-docker-loop: ## Continuous loop: sync all networks, restart on success, repeat forever.
-	$(SNAPSYNC_COMPOSE) up -d
+multisync-loop: ## Continuous loop: sync all networks, restart on success, repeat forever.
+	$(MULTISYNC_COMPOSE) up -d
 	@echo "Waiting 10s for containers to start..."
 	@sleep 10
-	python3 docker_monitor.py --ports 8545,8546,8547 --names hoodi,sepolia,mainnet --containers ethrex-hoodi,ethrex-sepolia,ethrex-mainnet --compose-file docker-compose.snapsync.yaml --compose-dir $(CURDIR)
+	python3 docker_monitor.py --ports 8545,8546,8547 --names hoodi,sepolia,mainnet --containers ethrex-hoodi,ethrex-sepolia,ethrex-mainnet --compose-file docker-compose.multisync.yaml --compose-dir $(CURDIR)
 
-snapsync-docker-history: ## View the run history log.
-	@if [ -f snapsync_logs/run_history.log ]; then \
-		cat snapsync_logs/run_history.log; \
+multisync-history: ## View the run history log.
+	@if [ -f multisync_logs/run_history.log ]; then \
+		cat multisync_logs/run_history.log; \
 	else \
-		echo "No run history found. Run 'make snapsync-docker-loop' first."; \
+		echo "No run history found. Run 'make multisync-loop' first."; \
 	fi
 
-snapsync-docker-list-logs: ## List all saved run logs.
-	@if [ -d snapsync_logs ]; then \
+multisync-list-logs: ## List all saved run logs.
+	@if [ -d multisync_logs ]; then \
 		echo "=== Saved Run Logs ===" && \
-		ls -la snapsync_logs/ && \
+		ls -la multisync_logs/ && \
 		echo "" && \
-		for dir in snapsync_logs/run_*/; do \
+		for dir in multisync_logs/run_*/; do \
 			if [ -d "$$dir" ]; then \
 				echo "$$dir:"; \
 				ls "$$dir"; \

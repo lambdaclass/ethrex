@@ -1,8 +1,8 @@
 # Multi-network parallel snapsync
 # Usage:
-#   docker compose -f docker-compose.snapsync.yaml up -d
-#   docker compose -f docker-compose.snapsync.yaml logs -f
-#   docker compose -f docker-compose.snapsync.yaml down -v
+#   docker compose -f docker-compose.multisync.yaml up -d
+#   docker compose -f docker-compose.multisync.yaml logs -f
+#   docker compose -f docker-compose.multisync.yaml down -v
 #
 # Each network runs in isolation with its own volumes.
 # Host ports are mapped for external RPC access:

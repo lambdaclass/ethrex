@@ -21,7 +21,7 @@ BLOCK_STALL_TIMEOUT = 10 * 60  # Fail if no new block for 10 minutes
 STATUS_PRINT_INTERVAL = 30
 
 # Logging configuration
-LOGS_DIR = Path("./snapsync_logs")
+LOGS_DIR = Path("./multisync_logs")
 RUN_LOG_FILE = LOGS_DIR / "run_history.log"  # Append-only text log
 
 STATUS_EMOJI = {
@@ -293,7 +293,7 @@ def main():
     p.add_argument("--timeout", type=int, default=SYNC_TIMEOUT)
     p.add_argument("--no-slack", action="store_true")
     p.add_argument("--exit-on-success", action="store_true")
-    p.add_argument("--compose-file", default="docker-compose.snapsync.yaml", help="Docker compose file name")
+    p.add_argument("--compose-file", default="docker-compose.multisync.yaml", help="Docker compose file name")
     p.add_argument("--compose-dir", default=".", help="Directory containing docker compose file")
     args = p.parse_args()
     
@@ -389,7 +389,7 @@ def main():
                 print("  - Check logs: docker logs <container-name>")
                 print(f"  - View saved logs: {LOGS_DIR}/run_{run_id}/")
                 print(f"  - View run history: {RUN_LOG_FILE}")
-                print("\nTo restart manually: make snapsync-docker-restart")
+                print("\nTo restart manually: make multisync-restart")
                 sys.exit(1)
     except KeyboardInterrupt:
         print("\n⚠️ Interrupted")
