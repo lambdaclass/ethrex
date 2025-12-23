@@ -52,6 +52,8 @@ loc_report.md
 loc_report_slack.txt
 loc_report_github.txt
 loc_report.json
+performance_report_github.txt
+performance_report_slack.json
 
 # used by Flamegraph and Samply
 tooling/ef_tests/state/levm_perfgraphs

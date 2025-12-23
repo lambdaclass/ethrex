@@ -42,6 +42,24 @@ jobs:
         run: |
           cd tooling/loc && make loc
 
+      - name: Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Generate the performance report
+        env:
+          PERF_PROMETHEUS_URL: http://ethrex-grafana:9090
+          PERF_PROMETHEUS_RANGE: 24h
+          PERF_PROMETHEUS_QUERY: >-
+            label_replace(avg_over_time(gigagas{instance="ethrex-mainnet-1"}[24h]), "client", "ethrex", "", "")
+            or label_replace(avg_over_time(reth_engine_rpc_new_payload_gas_per_second{instance="reth-mainnet-1",quantile="0.5"}[24h]) / 1e9, "client", "reth", "", "")
+            or label_replace(avg_over_time(nethermind_mgas_per_sec{instance="nethermind-mainnet-1"}[24h]) / 1000, "client", "nethermind", "", "")
+        run: |
+          bash .github/scripts/generate_performance_report.sh
+
       - name: Save new loc_report.json to cache
         if: success()
         uses: actions/cache@v4
@@ -53,19 +71,18 @@ jobs:
         run: |
           echo "# 'ethrex' lines of code report" >> $GITHUB_STEP_SUMMARY
           cat tooling/loc/loc_report_github.txt >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          cat tooling/performance_report/performance_report_github.txt >> $GITHUB_STEP_SUMMARY
 
       - name: Post results to Slack
         env:
           SLACK_WEBHOOKS: >
             ${{ github.event_name == 'workflow_dispatch'
               && secrets.TEST_CHANNEL_SLACK
-              || format(
-                  '{0} {1}',
-                  secrets.ETHREX_L1_SLACK_WEBHOOK,
-                  secrets.ETHREX_L2_SLACK_WEBHOOK
-                )
+              || secrets.ETHREX_GENERAL_SLACK_WEBHOOK
             }}
         run: |
           for webhook in $SLACK_WEBHOOKS; do
             sh .github/scripts/publish_loc.sh "$webhook"
+            sh .github/scripts/publish_performance.sh "$webhook" tooling/performance_report/performance_report_slack.json
           done
