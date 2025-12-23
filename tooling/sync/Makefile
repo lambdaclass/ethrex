@@ -229,7 +229,7 @@ server-sync:
 
 MULTISYNC_COMPOSE = docker compose -f docker-compose.multisync.yaml
 MULTISYNC_NETWORKS ?= hoodi,sepolia,mainnet
-MULTISYNC_SERVICES = $(shell echo $(MULTISYNC_NETWORKS) | sed 's/,/ /g' | xargs -n1 printf "setup-jwt-%s ethrex-%s consensus-%s ")
+MULTISYNC_SERVICES = $(shell echo $(MULTISYNC_NETWORKS) | awk -F, '{for(i=1;i<=NF;i++) if($$i) printf "setup-jwt-%s ethrex-%s consensus-%s ", $$i, $$i, $$i}' | sed 's/ $$//')
 
 multisync-up: ## Start all networks specified in MULTISYNC_NETWORKS via Docker Compose.
 	$(MULTISYNC_COMPOSE) up -d $(MULTISYNC_SERVICES)
