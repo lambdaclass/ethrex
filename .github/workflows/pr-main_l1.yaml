@@ -309,7 +309,7 @@ jobs:
           fi
 
   check-cargo-locks:
-    name: Check guest program Cargo.lock
+    name: Check Cargo.lock
     runs-on: ubuntu-latest
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
