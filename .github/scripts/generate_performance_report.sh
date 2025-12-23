@@ -52,7 +52,8 @@ done < <(jq -r '
   ' <<<"$response")
 format_line() {
   local name="$1" qualifier="$2" inst="$3" value="$4"
-  printf "%s (%s, %s): %.3f Ggas/s" "$name" "$qualifier" "$inst" "$value"
+  local host="${inst%%:*}"
+  printf "%s (%s, %s): %.3f Ggas/s" "$name" "$qualifier" "$host" "$value"
 }
 
 nether_line=""
