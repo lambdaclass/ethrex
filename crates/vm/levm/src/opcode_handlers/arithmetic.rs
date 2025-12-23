@@ -189,10 +189,10 @@ impl<'a> VM<'a> {
 
         #[cfg(feature = "zisk")]
         let product_mod = {
-            use ziskos::zisklib::mulmod256_ptr;
+            use ziskos::zisklib::mulmod256_c;
             let mut product_mod = U256::zero();
             unsafe {
-                mulmod256_ptr(
+                mulmod256_c(
                     multiplicand.0.as_ptr(),
                     multiplier.0.as_ptr(),
                     modulus.0.as_ptr(),

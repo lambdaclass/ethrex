@@ -67,10 +67,10 @@ impl RLPEncode for ExtensionNode {
 
 impl RLPEncode for LeafNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_bytes(&self.partial.encode_compact())
-            .encode_bytes(&self.value)
-            .finish()
+        let mut encoder = Encoder::new(buf);
+        encoder = encoder.encode_bytes(&self.partial.encode_compact());
+        encoder = encoder.encode_bytes(&self.value);
+        encoder.finish()
     }
 }
 
@@ -151,7 +151,7 @@ impl RLPDecode for Node {
     }
 }
 
-fn decode_child(rlp: &[u8]) -> NodeHash {
+pub fn decode_child(rlp: &[u8]) -> NodeHash {
     match decode_bytes(rlp) {
         Ok((hash, &[])) if hash.len() == 32 => NodeHash::from_slice(hash),
         Ok((&[], &[])) => NodeHash::default(),

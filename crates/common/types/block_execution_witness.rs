@@ -6,11 +6,12 @@ use crate::{
     constants::EMPTY_KECCACK_HASH,
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
 };
-use ethereum_types::{Address, H256, U256};
+use ethereum_types::{Address, H160, H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie, TrieError};
+use ethrex_trie::encodedtrie::EncodedTrie;
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, Trie, TrieError};
 use rkyv::with::{Identity, MapKV};
 use serde::{Deserialize, Serialize};
 
@@ -32,7 +33,7 @@ pub struct GuestProgramState {
     pub block_headers: BTreeMap<u64, BlockHeader>,
     /// The accounts state trie containing the necessary state for the guest
     /// program execution.
-    pub state_trie: Trie,
+    pub state_trie: EncodedTrie,
     /// The parent block header of the first block in the batch.
     pub parent_block_header: BlockHeader,
     /// The block number of the first block in the batch.
@@ -40,7 +41,7 @@ pub struct GuestProgramState {
     /// The chain configuration.
     pub chain_config: ChainConfig,
     /// Map of storage root hashes to their corresponding storage tries.
-    pub storage_tries: BTreeMap<Address, Trie>,
+    pub storage_tries: BTreeMap<Address, EncodedTrie>,
     /// Map of account addresses to their corresponding hashed addresses.
     /// This is a convenience map to avoid recomputing the hashed address
     /// multiple times during guest program execution.
@@ -72,10 +73,10 @@ pub struct ExecutionWitness {
     // The chain config.
     pub chain_config: ChainConfig,
     /// Root node embedded with the rest of the trie's nodes
-    pub state_trie_root: Option<Node>,
+    pub state_trie: Option<EncodedTrie>,
     /// Root nodes per account storage embedded with the rest of the trie's nodes
     #[rkyv(with = MapKV<H160Wrapper, Identity>)]
-    pub storage_trie_roots: BTreeMap<Address, Node>,
+    pub storage_tries: BTreeMap<Address, EncodedTrie>,
     /// Flattened map of account addresses and storage keys whose values
     /// are needed for stateless execution.
     #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
@@ -110,8 +111,15 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
     type Error = GuestProgramStateError;
 
     fn try_from(value: ExecutionWitness) -> Result<Self, Self::Error> {
-        let block_headers: BTreeMap<u64, BlockHeader> = value
-            .block_headers_bytes
+        let ExecutionWitness {
+            codes,
+            block_headers_bytes,
+            first_block_number,
+            state_trie,
+            storage_tries: original_storage_tries,
+            ..
+        } = value;
+        let block_headers: BTreeMap<u64, BlockHeader> = block_headers_bytes
             .into_iter()
             .map(|bytes| BlockHeader::decode(bytes.as_ref()))
             .collect::<Result<Vec<_>, _>>()
@@ -123,8 +131,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             .collect();
 
         let parent_number =
-            value
-                .first_block_number
+            first_block_number
                 .checked_sub(1)
                 .ok_or(GuestProgramStateError::Custom(
                     "First block number cannot be zero".to_string(),
@@ -135,25 +142,20 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
         )?;
 
         // hash state trie nodes
-        let state_trie = if let Some(state_trie_root) = value.state_trie_root {
-            Trie::new_temp_with_root(state_trie_root.into())
+        let state_trie = if let Some(mut state_trie) = state_trie {
+            state_trie
         } else {
-            Trie::new_temp()
+            EncodedTrie::default()
         };
-        state_trie.hash_no_commit();
 
         let mut storage_tries = BTreeMap::new();
-        for (address, storage_trie_root) in value.storage_trie_roots {
-            // hash storage trie nodes
-            let storage_trie = Trie::new_temp_with_root(storage_trie_root.into());
-            storage_trie.hash_no_commit();
+        for (address, mut storage_trie) in original_storage_tries {
             storage_tries.insert(address, storage_trie);
         }
 
         // hash codes
         // TODO: codes here probably needs to be Vec<Code>, rather than recomputing here. This requires rkyv implementation.
-        let codes_hashed = value
-            .codes
+        let codes_hashed = codes
             .into_iter()
             .map(|code| {
                 let code = Code::from_bytecode(code.into());
@@ -246,7 +248,7 @@ impl GuestProgramState {
                             .expect("failed to remove key");
                     }
 
-                    let storage_root = storage_trie.hash_no_commit();
+                    let storage_root = storage_trie.hash().unwrap().finalize();
                     account_state.storage_root = storage_root;
                 }
 
@@ -260,8 +262,14 @@ impl GuestProgramState {
 
     /// Returns the root hash of the state trie
     /// Returns an error if the state trie is not built yet
-    pub fn state_trie_root(&self) -> Result<H256, GuestProgramStateError> {
-        Ok(self.state_trie.hash_no_commit())
+    pub fn state_trie_root(&mut self) -> Result<H256, GuestProgramStateError> {
+        Ok(self.state_trie.hash().unwrap().finalize()) // TOOD: unwrap
+    }
+
+    /// Returns the root hash of the state trie
+    /// Returns an error if the state trie is not built yet
+    pub fn auth_state(&mut self) -> Result<H256, GuestProgramStateError> {
+        Ok(self.state_trie.authenticate().unwrap().finalize())
     }
 
     /// Returns Some(block_number) if the hash for block_number is not the parent
@@ -318,6 +326,14 @@ impl GuestProgramState {
         &mut self,
         address: Address,
     ) -> Result<Option<AccountState>, GuestProgramStateError> {
+        const SYSTEM_ADDRESS: H160 = H160([
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE,
+        ]);
+        if address == SYSTEM_ADDRESS {
+            return Ok(None);
+        }
+
         let hashed_address = self
             .account_hashes_by_address
             .entry(address)
@@ -429,7 +445,7 @@ impl GuestProgramState {
     pub fn get_valid_storage_trie(
         &mut self,
         address: Address,
-    ) -> Result<Option<&Trie>, GuestProgramStateError> {
+    ) -> Result<Option<&EncodedTrie>, GuestProgramStateError> {
         let is_storage_verified = *self.verified_storage_roots.get(&address).unwrap_or(&false);
         if is_storage_verified {
             Ok(self.storage_tries.get(&address))
@@ -439,9 +455,15 @@ impl GuestProgramState {
                 // empty account
                 return Ok(None);
             };
-            let storage_trie = match self.storage_tries.get(&address) {
+            let storage_trie = match self.storage_tries.get_mut(&address) {
                 None if storage_root == *EMPTY_TRIE_HASH => return Ok(None),
-                Some(trie) if trie.hash_no_commit() == storage_root => trie,
+                Some(trie) => {
+                    if trie.authenticate().unwrap().finalize() == storage_root {
+                        trie
+                    } else {
+                        panic!()
+                    }
+                }
                 _ => {
                     return Err(GuestProgramStateError::Custom(format!(
                         "invalid storage trie for account {address}"
