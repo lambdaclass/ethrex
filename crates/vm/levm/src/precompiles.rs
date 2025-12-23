@@ -743,7 +743,7 @@ pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
     bn254_g1_add(first_point, second_point)
 }
 
-#[cfg(not(any(feature = "sp1", feature = "zisk")))]
+#[cfg(not(any(feature = "zisk")))]
 #[inline]
 pub fn bn254_g1_add(first_point: G1, second_point: G1) -> Result<Bytes, VMError> {
     let first_point_x = ark_bn254::Fq::from_be_bytes_mod_order(&first_point.0.to_big_endian());
@@ -799,9 +799,11 @@ pub fn bn254_g1_add(first_point: G1, second_point: G1) -> Result<Bytes, VMError>
     Ok(Bytes::from(out))
 }
 
-#[cfg(any(feature = "sp1", feature = "zisk"))]
+#[cfg(any(feature = "zisk"))]
 #[inline]
 pub fn bn254_g1_add(first_point: G1, second_point: G1) -> Result<Bytes, VMError> {
+    // SP1 patches the substrate-bn crate too, but some Ethereum Mainnet blocks fail to execute with it with a GasMismatch error
+    // so for now we will only use it for ZisK.
     use substrate_bn::{AffineG1, Fq, G1 as SubstrateG1, Group};
 
     if first_point.is_zero() && second_point.is_zero() {
