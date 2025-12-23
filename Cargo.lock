@@ -3693,7 +3693,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "sha3",
- "snap",
  "thiserror 2.0.17",
  "tinyvec",
  "tracing",
