@@ -69,10 +69,12 @@ jobs:
 
       - name: Post results in summary
         run: |
-          echo "# 'ethrex' lines of code report" >> $GITHUB_STEP_SUMMARY
-          cat tooling/loc/loc_report_github.txt >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          cat tooling/performance_report/performance_report_github.txt >> $GITHUB_STEP_SUMMARY
+          {
+            echo "# 'ethrex' lines of code report"
+            cat tooling/loc/loc_report_github.txt
+            echo ""
+            cat tooling/performance_report/performance_report_github.txt
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Post results to Slack
         env:
