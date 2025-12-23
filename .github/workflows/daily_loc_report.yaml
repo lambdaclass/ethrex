@@ -68,6 +68,61 @@ jobs:
         run: |
           bash .github/scripts/generate_performance_report.sh
 
+      - name: Generate the block time report
+        env:
+          BLOCK_TIME_PROMETHEUS_URL: http://localhost:9090
+          BLOCK_TIME_PROMETHEUS_RANGE: 24h
+          BLOCK_TIME_PROMETHEUS_QUERY: >-
+            label_replace(
+              (
+                sum by (method, instance) (
+                  increase(rpc_request_duration_seconds_sum{
+                    job="ethrex L1",
+                    instance=~"ethrex-mainnet-1:3701",
+                    method="engine_newPayloadV4",
+                    namespace="engine"
+                  }[24h])
+                )
+                /
+                sum by (method, instance) (
+                  increase(rpc_request_duration_seconds_count{
+                    job="ethrex L1",
+                    instance=~"ethrex-mainnet-1:3701",
+                    method="engine_newPayloadV4",
+                    namespace="engine"
+                  }[24h])
+                )
+              ) * 10e2,
+              "client",
+              "ethrex",
+              "",
+              ""
+            )
+            or label_replace(
+              avg_over_time(
+                (
+                  max without (BuildTimestamp,Commit,Version) (
+                    nethermind_last_block_processing_time_in_ms{instance="nethermind-mainnet-1:6060"}
+                  )
+                )[24h:]
+              ),
+              "client",
+              "nethermind",
+              "",
+              ""
+            )
+            or label_replace(
+              avg_over_time(
+                reth_engine_rpc_new_payload_v4{instance="reth-mainnet-1:6060", quantile="0.5"}[24h]
+              ) * 10e2,
+              "client",
+              "reth",
+              "",
+              ""
+            )
+        run: |
+          bash .github/scripts/generate_block_time_report.sh
+
       - name: Stop Tailscale SSH tunnel
         if: always()
         run: |
@@ -89,6 +144,8 @@ jobs:
             cat tooling/loc/loc_report_github.txt
             echo ""
             cat tooling/performance_report/performance_report_github.txt
+            echo ""
+            cat tooling/block_time_report/block_time_report_github.txt
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Post results to Slack
@@ -102,4 +159,5 @@ jobs:
           for webhook in $SLACK_WEBHOOKS; do
             sh .github/scripts/publish_loc.sh "$webhook"
             bash .github/scripts/publish_performance.sh "$webhook" tooling/performance_report/performance_report_slack.json
+            bash .github/scripts/publish_performance.sh "$webhook" tooling/block_time_report/block_time_report_slack.json
           done
