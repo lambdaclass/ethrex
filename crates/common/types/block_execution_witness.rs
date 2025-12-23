@@ -13,7 +13,6 @@ use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie, TrieError};
 use rkyv::with::{Identity, MapKV};
 use serde::{Deserialize, Serialize};
-use tracing::debug;
 
 /// State produced by the guest program execution inside the zkVM. It is
 /// essentially built from the `ExecutionWitness`.
@@ -324,19 +323,9 @@ impl GuestProgramState {
             .entry(address)
             .or_insert_with(|| hash_address(&address));
 
-        let encoded_state = match self.state_trie.get(hashed_address) {
-            Ok(Some(encoded_state)) => encoded_state,
-            Ok(None) => return Ok(None),
-            Err(_) => {
-                // In the case of ethrex-replay this is normal when asking for the Witness of a block to a non-ethrex node.
-                // This log is mostly for L2 Prover, if witness is incomplete then this will help for debugging a state mismatch.
-                // Note that logs aren't printed inside zkVMs, so for debugging this it's best to use "execute" backend.
-                debug!(
-                    "Getting node from state trie when getting info for {:#x} failed unexpectedly. Nodes might be missing. Defaulting to empty account.",
-                    address
-                );
-                return Ok(None);
-            }
+        let encoded_state = match self.state_trie.get(hashed_address)? {
+            Some(encoded_state) => encoded_state,
+            None => return Ok(None),
         };
         let state = AccountState::decode(&encoded_state).map_err(|_| {
             GuestProgramStateError::Database("Failed to get decode account from trie".to_string())
@@ -369,23 +358,13 @@ impl GuestProgramState {
             return Ok(None);
         };
 
-        match storage_trie.get(&hashed_key) {
-            Ok(Some(encoded_key)) => U256::decode(&encoded_key)
+        match storage_trie.get(&hashed_key)? {
+            Some(encoded_key) => U256::decode(&encoded_key)
                 .map_err(|_| {
                     GuestProgramStateError::Database("failed to read storage from trie".to_string())
                 })
                 .map(Some),
-            Ok(None) => Ok(None),
-            Err(_) => {
-                // In the case of ethrex-replay this is normal when asking for the Witness of a block to a non-ethrex node.
-                // This log is mostly for L2 Prover, if witness is incomplete then this will help for debugging a state mismatch.
-                // Note that logs aren't printed inside zkVMs, so for debugging this it's best to use "execute" backend.
-                debug!(
-                    "Getting node from state trie when getting storage key {:#x} for {:#x} failed unexpectedly. Nodes might be missing. Defaulting to empty storage.",
-                    key, address
-                );
-                Ok(None)
-            }
+            None => Ok(None),
         }
     }
 
@@ -400,19 +379,15 @@ impl GuestProgramState {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Code::default());
         }
-        match self.codes_hashed.get(&code_hash) {
-            Some(code) => Ok(code.clone()),
-            None => {
-                // We do this because what usually happens is that the Witness doesn't have the code we asked for but it is because it isn't relevant for that particular case.
-                // In client implementations there are differences and it's natural for some clients to access more/less information in some edge cases.
-                // Sidenote: logger doesn't work inside SP1, that's why we use println!
-                println!(
-                    "Missing bytecode for hash {} in witness. Defaulting to empty code.", // If there's a state root mismatch and this prints we have to see if it's the cause or not.
+        self.codes_hashed
+            .get(&code_hash)
+            .cloned()
+            .ok_or_else(|| {
+                GuestProgramStateError::Custom(format!(
+                    "Missing bytecode for hash {} in witness",
                     hex::encode(code_hash)
-                );
-                Ok(Code::default())
-            }
-        }
+                ))
+            })
     }
 
     /// When executing multiple blocks in the L2 it happens that the headers in block_headers correspond to the same block headers that we have in the blocks array. The main goal is to hash these only once and set them in both places.
