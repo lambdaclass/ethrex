@@ -115,7 +115,7 @@ def slack_notify(run_id: str, run_count: int, instances: list, hostname: str, br
     run_start = datetime.strptime(run_id, "%Y%m%d_%H%M%S")
     elapsed_secs = (datetime.now() - run_start).total_seconds()
     elapsed_str = fmt_time(elapsed_secs)
-    summary = f"*Host:* `{hostname}`\n*Branch:* `{branch}`\n*Commit:* <https://github.com/lambdaclass/ethrex/commit/{commit}|{commit}>\n*Elapsed:* `{elapsed_str}`\n*Result:* {'SUCCESS' if all_success else 'FAILED'}"
+    summary = f"*Host:* `{hostname}`\n*Branch:* `{branch}`\n*Commit:* <https://github.com/lambdaclass/ethrex/commit/{commit}|{commit}>\n*Elapsed:* `{elapsed_str}`\n*Logs:* `tooling/sync/multisync_logs/run_{run_id}`\n*Result:* {'SUCCESS' if all_success else 'FAILED'}"
     blocks = [
         {"type": "header", "text": {"type": "plain_text", "text": header}},
         {"type": "section", "text": {"type": "mrkdwn", "text": summary}},
