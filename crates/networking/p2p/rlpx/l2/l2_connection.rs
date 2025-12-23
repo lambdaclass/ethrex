@@ -322,6 +322,17 @@ async fn should_process_new_block(
         debug!("Not processing new block, blockchain is not synced");
         return Ok(false);
     }
+    if established
+        .storage
+        .get_block_header(msg.block.header.number)?
+        .is_some()
+    {
+        debug!(
+            "Block {} received by peer already stored, ignoring it",
+            msg.block.header.number
+        );
+        return Ok(false);
+    }
     if l2_state.latest_block_added >= msg.block.header.number
         || l2_state
             .blocks_on_queue
