@@ -252,19 +252,37 @@ def verification_loop(
 
 
 def execution_loop(
-    command, logs_file, args, hostname, payload, block_production_payload, debug_assert
+    logs_file, args, hostname, payload, block_production_payload, debug_assert
 ):
     while True:
         start_time = time.time()
+
+        env = os.environ.copy()
+
+        # Clear MAKEFLAGS to prevent pollution in submakes (e.g., cargo -> jemalloc make)
+        env['MAKEFLAGS'] = ''
+
+        variables = get_variables(args)
+
+        for key, value in variables.items():
+            env[key] = value
+
+        env['LOGS_FILE'] = f"{logs_file}_{start_time}.log"
+
+        make_command = ["make", "server-sync"]
+
         subprocess.run(
-            command + [f"LOGS_FILE={logs_file}_{start_time}.log"], check=True
+            make_command, env=env, check=True
         )
+
         if args.no_monitor:
             print("No monitor flag set, exiting.")
             break
+
         success = verification_loop(
             logs_file, args, hostname, payload, block_production_payload, start_time, debug_assert
         )
+
         if not success:
             break
 
@@ -274,12 +292,9 @@ def main():
     variables = get_variables(args)
 
     logs_file = args.logs_file
-    command = ["make", "server-sync"]
-
-    for key, value in variables.items():
-        command.append(f"{key}={value}")
 
     payload = {"jsonrpc": "2.0", "method": "eth_syncing", "params": [], "id": 1}
+
     block_production_payload = {
         "jsonrpc": "2.0",
         "method": "eth_blockNumber",
@@ -288,7 +303,7 @@ def main():
     }
     try:
         execution_loop(
-            command, logs_file, args, hostname, payload, block_production_payload, args.debug_assert
+            logs_file, args, hostname, payload, block_production_payload, args.debug_assert
         )
     except subprocess.CalledProcessError as e:
         print(f"An error occurred while running the make command: {e}", file=sys.stderr)
