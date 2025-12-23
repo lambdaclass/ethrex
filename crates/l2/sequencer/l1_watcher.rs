@@ -1,6 +1,6 @@
 use super::utils::random_duration;
-use crate::based::sequencer_state::{SequencerState, SequencerStatus};
 use crate::sequencer::errors::L1WatcherError;
+use crate::sequencer::sequencer_state::{SequencerState, SequencerStatus};
 use crate::{EthConfig, L1WatcherConfig, SequencerConfig};
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::{Blockchain, BlockchainType};
