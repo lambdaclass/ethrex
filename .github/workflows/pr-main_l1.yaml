@@ -311,6 +311,8 @@ jobs:
   check-guest-program-cargo-lock:
     name: Check guest program Cargo.lock
     runs-on: ubuntu-latest
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
