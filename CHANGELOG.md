@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-12-23
+
+- Remove needless allocs on store api [#5709](https://github.com/lambdaclass/ethrex/pull/5709)
+
 ### 2025-12-19
 
 - Make HashSet use fxhash in discv4 peer_table [#5688](https://github.com/lambdaclass/ethrex/pull/5688)
