@@ -61,8 +61,7 @@ rm -rf ../../dev_ethrex_l*; make deploy-l1
 3. Start the prover and point it at both proof coordinators:
 
 ```bash
-cd crates/l2
-./../target/release/ethrex \
+./target/release/ethrex \
         l2 prover \
         --proof-coordinators tcp://127.0.0.1:3900 tcp://127.0.0.1:3901 \
         --backend exec
