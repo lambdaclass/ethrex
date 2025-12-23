@@ -43,7 +43,7 @@ async fn server_shutdown(
     info!("Storing config at {:?}...", node_config_path);
     cancel_token.cancel();
     let node_config = NodeConfigFile::new(peer_table, local_node_record).await;
-    store_node_config_file(node_config, node_config_path);
+    store_node_config_file(node_config, node_config_path).await;
     tokio::time::sleep(Duration::from_secs(1)).await;
     info!("Server shutting down!");
 }
@@ -135,13 +135,10 @@ async fn main() -> eyre::Result<()> {
         return subcommand.run(&opts).await;
     }
 
-    let (log_filter_handler, _guard) = init_tracing(&opts);
+    let log_filter_handler = init_tracing(&opts);
 
     info!("ethrex version: {}", get_client_version());
     tokio::spawn(periodically_check_version_update());
-
-    #[cfg(feature = "experimental-discv5")]
-    tracing::warn!("Experimental Discovery V5 protocol enabled");
 
     let (datadir, cancel_token, peer_table, local_node_record) =
         init_l1(opts, Some(log_filter_handler)).await?;

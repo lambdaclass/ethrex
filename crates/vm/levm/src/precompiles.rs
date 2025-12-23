@@ -675,22 +675,8 @@ fn mod_exp(base: Natural, exponent: Natural, modulus: Natural) -> Natural {
     } else if exponent == Natural::ZERO {
         Natural::from(1_u8) % modulus
     } else {
-        #[cfg(not(feature = "zisk"))]
-        {
-            let base_mod = base % &modulus; // malachite requires base to be reduced to modulus first
-            base_mod.mod_pow(&exponent, &modulus)
-        }
-
-        #[cfg(feature = "zisk")]
-        {
-            use ziskos::zisklib::modexp_u64;
-            let (mut base, mut exponent, mut modulus) = (base, exponent, modulus);
-            let base_limbs = base.to_limbs_asc();
-            let exponent_limbs = exponent.to_limbs_asc();
-            let modulus_limbs = modulus.to_limbs_asc();
-            let result_limbs = modexp_u64(&base_limbs, &exponent_limbs, &modulus_limbs);
-            Natural::from_owned_limbs_asc(result_limbs)
-        }
+        let base_mod = base % &modulus; // malachite requires base to be reduced to modulus first
+        base_mod.mod_pow(&exponent, &modulus)
     }
 }
 

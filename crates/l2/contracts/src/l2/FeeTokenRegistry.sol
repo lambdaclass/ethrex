@@ -1,6 +1,6 @@
 
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.31;
+pragma solidity =0.8.29;
 import "./interfaces/IFeeTokenRegistry.sol";
 
 contract FeeTokenRegistry is IFeeTokenRegistry {
@@ -36,3 +36,4 @@ contract FeeTokenRegistry is IFeeTokenRegistry {
         emit FeeTokenUnregistered(token);
     }
 }
+

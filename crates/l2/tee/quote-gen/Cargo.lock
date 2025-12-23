@@ -2072,7 +2072,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "ethrex-common",
@@ -2092,7 +2092,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -2122,7 +2122,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-config"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "ethrex-common",
  "ethrex-p2p",
@@ -2133,7 +2133,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "c-kzg",
  "kzg-rs",
@@ -2143,7 +2143,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-dev"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "envy",
@@ -2162,7 +2162,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "aligned-sdk",
  "axum",
@@ -2219,7 +2219,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -2242,7 +2242,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-rpc"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "axum",
  "bytes",
@@ -2271,7 +2271,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -2303,7 +2303,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "axum",
  "ethrex-common",
@@ -2318,7 +2318,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-p2p"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "aes",
  "async-trait",
@@ -2343,7 +2343,6 @@ dependencies = [
  "prometheus 0.14.0",
  "rand 0.8.5",
  "rayon",
- "rustc-hash",
  "secp256k1",
  "serde 1.0.228",
  "serde_json",
@@ -2360,7 +2359,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -2373,7 +2372,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rpc"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "axum",
  "axum-extra",
@@ -2411,7 +2410,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -2436,7 +2435,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk-contract-utils"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "thiserror 2.0.16",
  "tracing",
@@ -2444,7 +2443,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2468,7 +2467,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage-rollup"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2494,7 +2493,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2517,7 +2516,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "bincode",
  "bytes",
@@ -2899,7 +2898,7 @@ dependencies = [
 
 [[package]]
 name = "guest_program"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "bincode",
  "bytes",
@@ -3492,7 +3491,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b0f83760fb341a774ed326568e19f5a863af4a952def8c39f9ab92fd95b88e5"
 dependencies = [
  "equivalent",
- "hashbrown 0.16.0",
+ "hashbrown 0.15.5",
  "serde 1.0.228",
  "serde_core",
 ]
@@ -4875,7 +4874,7 @@ dependencies = [
 
 [[package]]
 name = "quote-gen"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "configfs-tsm",
  "ethrex-blockchain",

@@ -235,7 +235,7 @@ impl BlockFetcher {
         last_l2_batch_number_known: u64,
     ) -> Result<(), BlockFetcherError> {
         let mut missing_batches_logs =
-            filter_logs(&batch_committed_logs, last_l2_batch_number_known)?;
+            filter_logs(&batch_committed_logs, last_l2_batch_number_known).await?;
 
         missing_batches_logs.sort_by_key(|(_log, batch_number)| *batch_number);
 
@@ -368,7 +368,7 @@ impl GenServer for BlockFetcher {
 /// Given the logs from the event `BatchCommitted`,
 /// this function gets the committed batches that are missing in the local store.
 /// It does that by comparing if the batch number is greater than the last known batch number.
-fn filter_logs(
+async fn filter_logs(
     logs: &[RpcLog],
     last_batch_number_known: u64,
 ) -> Result<Vec<(RpcLog, U256)>, BlockFetcherError> {

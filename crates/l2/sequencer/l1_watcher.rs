@@ -144,7 +144,7 @@ impl L1Watcher {
         })
     }
 
-    pub fn spawn(
+    pub async fn spawn(
         store: Store,
         blockchain: Arc<Blockchain>,
         cfg: SequencerConfig,

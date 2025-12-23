@@ -884,7 +884,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "ethrex-common",
@@ -904,7 +904,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -933,7 +933,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "kzg-rs",
  "thiserror",
@@ -942,7 +942,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -964,7 +964,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -997,7 +997,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "ethrex-common",
  "serde",
@@ -1008,7 +1008,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1021,7 +1021,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1052,7 +1052,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1075,7 +1075,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "bincode 1.3.3",
  "bytes",
@@ -1270,7 +1270,7 @@ dependencies = [
 
 [[package]]
 name = "guest_program"
-version = "8.0.0"
+version = "7.0.0"
 dependencies = [
  "bincode 1.3.3",
  "bytes",
@@ -1583,7 +1583,7 @@ dependencies = [
 [[package]]
 name = "k256"
 version = "0.13.4"
-source = "git+https://github.com/0xPolygonHermez/zisk-patch-elliptic-curves.git?tag=patch-k256-0.13.4-zisk-0.15.0#5b84980888f6c840c7d38d575d79ae32df17085d"
+source = "git+https://github.com/0xPolygonHermez/zisk-patch-elliptic-curves.git?tag=patch-k256-0.13.4-zisk-0.14.0#8d8e99470becdb05f8ebb649cdf2b5d99c0a3384"
 dependencies = [
  "cfg-if",
  "ecdsa",
@@ -1591,6 +1591,7 @@ dependencies = [
  "once_cell",
  "sha2",
  "signature",
+ "ziskos",
 ]
 
 [[package]]
@@ -1605,7 +1606,7 @@ dependencies = [
 [[package]]
 name = "kzg-rs"
 version = "0.2.7"
-source = "git+https://github.com/0xPolygonHermez/zisk-patch-kzg/?tag=patch-0.2.7-zisk-0.15.0#7b29934400c0af21a63635544e72a4621f88e603"
+source = "git+https://github.com/0xPolygonHermez/zisk-patch-kzg/?tag=patch-0.2.7-zisk-0.14.0#e1554d6708338a8a0296522ffb5355669c37a4ab"
 dependencies = [
  "cfg-if",
  "ff",
@@ -1614,6 +1615,7 @@ dependencies = [
  "sha2",
  "sp1_bls12_381",
  "spin",
+ "ziskos",
 ]
 
 [[package]]
@@ -1656,8 +1658,8 @@ dependencies = [
 
 [[package]]
 name = "lib-c"
-version = "0.15.0"
-source = "git+https://github.com/0xPolygonHermez/zisk.git?tag=v0.15.0#b3ca745b80423c8123dc24f19039865a5bc8b074"
+version = "0.14.0"
+source = "git+https://github.com/0xPolygonHermez/zisk.git?tag=v0.14.0#2f791ffd070d024ba350f054c349c8d6bd98d629"
 
 [[package]]
 name = "libc"
@@ -2493,17 +2495,18 @@ dependencies = [
 [[package]]
 name = "sha2"
 version = "0.10.9"
-source = "git+https://github.com/0xPolygonHermez/zisk-patch-hashes.git?tag=patch-sha2-0.10.9-zisk-0.15.0#ee286eaa676b783823d8a07d01b43787fe12bf4a"
+source = "git+https://github.com/0xPolygonHermez/zisk-patch-hashes.git?tag=patch-sha2-0.10.9-zisk-0.14.0#2cfb8e0405dfc0beb31cd4f497f6db9a9fa56aae"
 dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
+ "ziskos",
 ]
 
 [[package]]
 name = "sha3"
 version = "0.10.8"
-source = "git+https://github.com/0xPolygonHermez/zisk-patch-hashes.git?tag=patch-sha3-0.10.8-zisk-0.15.0#08098df5827b672d604e2dc440446b86064b99f2"
+source = "git+https://github.com/0xPolygonHermez/zisk-patch-hashes.git?tag=patch-sha3-0.10.8-zisk-0.14.0#c404b04f733ab18bf0d0f5540249e6120519cc3e"
 dependencies = [
  "digest",
  "keccak",
@@ -2592,7 +2595,7 @@ dependencies = [
 [[package]]
 name = "sp1_bls12_381"
 version = "0.8.0-sp1-5.0.0"
-source = "git+https://github.com/0xPolygonHermez/zisk-patch-bls12-381?tag=patch-0.8.0-zisk-0.15.0#83ad5c65caf7af3f8da3ea8cd3754ef2847290ad"
+source = "git+https://github.com/0xPolygonHermez/zisk-patch-bls12-381?tag=patch-0.8.0-zisk-0.14.0#01266152eae5559b483bd773fbeca0f7fa58037b"
 dependencies = [
  "cfg-if",
  "ff",
@@ -2601,6 +2604,7 @@ dependencies = [
  "rand_core",
  "sp1-lib",
  "subtle",
+ "ziskos",
 ]
 
 [[package]]
@@ -2661,13 +2665,14 @@ dependencies = [
 [[package]]
 name = "substrate-bn"
 version = "0.6.0"
-source = "git+https://github.com/0xPolygonHermez/zisk-patch-bn.git?tag=patch-0.6.0-zisk-0.15.0#7d408643bf033c427826124436fc1b3141ef7425"
+source = "git+https://github.com/0xPolygonHermez/zisk-patch-bn.git?tag=patch-0.6.0-zisk-0.14.0#e2cc4d5991eebd337ba6173c512383a7b54d6ba2"
 dependencies = [
  "byteorder",
  "crunchy",
  "lazy_static",
  "rand",
  "rustc-hex",
+ "ziskos",
 ]
 
 [[package]]
@@ -2778,7 +2783,7 @@ dependencies = [
 [[package]]
 name = "tiny-keccak"
 version = "2.0.2"
-source = "git+https://github.com/0xPolygonHermez/zisk-patch-tiny-keccak/?tag=patch-2.0.2-zisk-0.15.0#a5cb98ca4d9d390b39b10c9e81a061fd830aea35"
+source = "git+https://github.com/0xPolygonHermez/zisk-patch-tiny-keccak/?branch=zisk#a5cb98ca4d9d390b39b10c9e81a061fd830aea35"
 dependencies = [
  "cfg-if",
  "crunchy",
@@ -3315,8 +3320,8 @@ dependencies = [
 
 [[package]]
 name = "ziskos"
-version = "0.15.0"
-source = "git+https://github.com/0xPolygonHermez/zisk.git?tag=v0.15.0#b3ca745b80423c8123dc24f19039865a5bc8b074"
+version = "0.14.0"
+source = "git+https://github.com/0xPolygonHermez/zisk.git?tag=v0.14.0#2f791ffd070d024ba350f054c349c8d6bd98d629"
 dependencies = [
  "bincode 2.0.1",
  "cfg-if",
@@ -3334,7 +3339,7 @@ dependencies = [
 
 [[package]]
 name = "zkvm-zisk-program"
-version = "8.0.0"
+version = "0.1.0"
 dependencies = [
  "ethrex-blockchain",
  "ethrex-common",

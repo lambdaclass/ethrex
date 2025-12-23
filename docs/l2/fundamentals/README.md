@@ -27,4 +27,5 @@ For general documentation, see:
 - [Based sequencing](./based.md) contains ethrex's roadmap for becoming based.
 - [State diffs](./state_diffs.md) explains the mechanism needed to provide data availability.
 - How asset [deposits](./deposits.md) and [withdrawals](./withdrawals.md) work.  
-- [Fee token](./fee_token.md)
+- 
+

@@ -30,10 +30,6 @@ pub const FEE_TOKEN_REGISTRY_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xff, 0xfc,
 ]);
-pub const FEE_TOKEN_RATIO_ADDRESS: Address = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0xff, 0xfb,
-]);
 
 // lockFee(address payer, uint256 amount) public onlyBridge
 const LOCK_FEE_SELECTOR: [u8; 4] = [0x89, 0x9c, 0x86, 0xe2];
@@ -41,8 +37,6 @@ const LOCK_FEE_SELECTOR: [u8; 4] = [0x89, 0x9c, 0x86, 0xe2];
 const PAY_FEE_SELECTOR: [u8; 4] = [0x72, 0x74, 0x6e, 0xaf];
 // isFeeToken(address token) external view override returns (bool)
 const IS_FEE_TOKEN_SELECTOR: [u8; 4] = [0x16, 0xad, 0x82, 0xd7];
-// getFeeTokenRatio(address token) external view returns (uint256)
-const FEE_TOKEN_RATIO_SELECTOR: [u8; 4] = [0xc6, 0xab, 0x85, 0xd8];
 const SIMULATION_GAS_LIMIT: u64 = 21000 * 100;
 const SIMULATION_MAX_FEE: u64 = 100;
 
@@ -133,36 +127,19 @@ fn finalize_non_privileged_execution(
 
     default_hook::delete_self_destruct_accounts(vm)?;
 
-    let fee_token_ratio = if let Some(fee_token) = vm.env.fee_token {
-        get_fee_token_ratio(vm, fee_token)?
-            .try_into()
-            .map_err(|_| {
-                VMError::Internal(InternalError::Custom(
-                    "Failed to convert fee token ratio".to_owned(),
-                ))
-            })?
-    } else {
-        1u64
-    };
-
     if let Some(l1_fee_config) = fee_config.l1_fee_config {
-        pay_to_l1_fee_vault(
-            vm,
-            l1_gas.saturating_mul(fee_token_ratio),
-            l1_fee_config,
-            use_fee_token,
-        )?;
+        pay_to_l1_fee_vault(vm, l1_gas, l1_fee_config, use_fee_token)?;
     }
 
     if use_fee_token {
-        refund_sender_fee_token(vm, ctx_result, gas_refunded, total_gas, fee_token_ratio)?;
+        refund_sender_fee_token(vm, ctx_result, gas_refunded, total_gas)?;
     } else {
         default_hook::refund_sender(vm, ctx_result, gas_refunded, total_gas)?;
     }
 
     pay_coinbase_l2(
         vm,
-        actual_gas_used.saturating_mul(fee_token_ratio),
+        actual_gas_used,
         &fee_config.operator_fee_config,
         use_fee_token,
     )?;
@@ -172,28 +149,13 @@ fn finalize_non_privileged_execution(
     // to the zero address because it is an ERC20.
     // If not an ERC20 the fees are burned not by a transaction.
     if let Some(base_fee_vault) = fee_config.base_fee_vault {
-        pay_base_fee_vault(
-            vm,
-            actual_gas_used.saturating_mul(fee_token_ratio),
-            base_fee_vault,
-            use_fee_token,
-        )?;
+        pay_base_fee_vault(vm, actual_gas_used, base_fee_vault, use_fee_token)?;
     } else if use_fee_token {
-        pay_base_fee_vault(
-            vm,
-            actual_gas_used.saturating_mul(fee_token_ratio),
-            Address::zero(),
-            use_fee_token,
-        )?;
+        pay_base_fee_vault(vm, actual_gas_used, Address::zero(), use_fee_token)?;
     }
 
     if let Some(operator_fee_config) = fee_config.operator_fee_config {
-        pay_operator_fee(
-            vm,
-            actual_gas_used.saturating_mul(fee_token_ratio),
-            operator_fee_config,
-            use_fee_token,
-        )?;
+        pay_operator_fee(vm, actual_gas_used, operator_fee_config, use_fee_token)?;
     }
 
     ctx_result.gas_used = total_gas;
@@ -435,7 +397,6 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
             TxValidationError::InsufficientAccountFunds,
         ));
     }
-    let fee_token_ratio = get_fee_token_ratio(vm, fee_token)?;
 
     let sender_address = vm.env.origin;
     let sender_info = vm.db.get_account(sender_address)?.info.clone();
@@ -463,7 +424,7 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
     // NOT CHECKED: the blob price does not matter, fee token transactions do not support blobs
 
     // (3) INSUFFICIENT_ACCOUNT_FUNDS
-    deduct_caller_fee_token(vm, gaslimit_price_product.saturating_mul(fee_token_ratio))?;
+    deduct_caller_fee_token(vm, gaslimit_price_product)?;
 
     // (4) INSUFFICIENT_MAX_FEE_PER_GAS
     default_hook::validate_sufficient_max_fee_per_gas(vm)?;
@@ -556,14 +517,6 @@ fn encode_fee_token_call(selector: [u8; 4], address: Address, amount: U256) -> B
 fn encode_is_fee_token_call(token: Address) -> Bytes {
     let mut data = Vec::with_capacity(4 + 32);
     data.extend_from_slice(&IS_FEE_TOKEN_SELECTOR);
-    data.extend_from_slice(&[0u8; 12]);
-    data.extend_from_slice(&token.0);
-    data.into()
-}
-
-fn encode_fee_token_ratio_call(token: Address) -> Bytes {
-    let mut data = Vec::with_capacity(4 + 32);
-    data.extend_from_slice(&FEE_TOKEN_RATIO_SELECTOR);
     data.extend_from_slice(&[0u8; 12]);
     data.extend_from_slice(&token.0);
     data.into()
@@ -680,7 +633,6 @@ fn refund_sender_fee_token(
     ctx_result: &mut ContextResult,
     refunded_gas: u64,
     actual_gas_used: u64,
-    fee_token_ratio: u64,
 ) -> Result<(), VMError> {
     // c. Update gas used and refunded.
     ctx_result.gas_used = actual_gas_used;
@@ -700,11 +652,7 @@ fn refund_sender_fee_token(
         .ok_or(InternalError::Overflow)?;
     let sender_address = vm.env.origin;
 
-    pay_fee_token(
-        vm,
-        sender_address,
-        erc20_return_amount.saturating_mul(fee_token_ratio.into()),
-    )?;
+    pay_fee_token(vm, sender_address, erc20_return_amount)?;
 
     Ok(())
 }
@@ -778,26 +726,4 @@ fn pay_to_l1_fee_vault(
             .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
     }
     Ok(())
-}
-
-fn get_fee_token_ratio(vm: &mut VM<'_>, fee_token: H160) -> Result<U256, VMError> {
-    let fee_token_ratio = simulate_common_bridge_call(
-        vm,
-        FEE_TOKEN_RATIO_ADDRESS,
-        encode_fee_token_ratio_call(fee_token),
-    )?
-    .0;
-    if !fee_token_ratio.is_success() || fee_token_ratio.output.len() != 32 {
-        return Err(VMError::Internal(InternalError::Custom(
-            "Failed to get fee token ratio".to_owned(),
-        )));
-    }
-    Ok(U256::from_big_endian(
-        fee_token_ratio
-            .output
-            .get(0..32)
-            .ok_or(InternalError::Custom(
-                "Failed to parse fee token ratio".to_owned(),
-            ))?,
-    ))
 }

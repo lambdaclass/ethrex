@@ -1,4 +1,5 @@
-use ethrex_common::H512;
+use ethrex_common::utils::keccak;
+use ethrex_common::{H256, H512};
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use secp256k1::ecdh::shared_secret_point;
 use secp256k1::{PublicKey, SecretKey};
@@ -42,6 +43,11 @@ pub fn kdf(secret: &[u8], output: &mut [u8]) -> Result<(), CryptographyError> {
     // We don't use the `other_info` field
     concat_kdf::derive_key_into::<sha2::Sha256>(secret, &[], output)
         .map_err(|error| CryptographyError::CouldNotGetKeyFromSecret(error.to_string()))
+}
+
+/// Cpmputes the node_id from a public key (aka computes the Keccak256 hash of the given public key)
+pub fn node_id(public_key: &H512) -> H256 {
+    keccak(public_key)
 }
 
 /// Decompresses the received public key

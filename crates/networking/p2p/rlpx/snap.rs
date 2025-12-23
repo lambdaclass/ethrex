@@ -5,7 +5,8 @@ use super::{
 use bytes::{BufMut, Bytes};
 use ethrex_common::{
     H256, U256,
-    types::{AccountState, AccountStateSlimCodec},
+    constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
+    types::AccountState,
 };
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -341,7 +342,15 @@ impl RLPxMessage for TrieNodes {
 #[derive(Debug, Clone)]
 pub struct AccountRangeUnit {
     pub hash: H256,
-    pub account: AccountState,
+    pub account: AccountStateSlim,
+}
+
+#[derive(Debug, Clone)]
+pub struct AccountStateSlim {
+    pub nonce: u64,
+    pub balance: U256,
+    pub storage_root: Bytes,
+    pub code_hash: Bytes,
 }
 
 #[derive(Debug, Clone)]
@@ -354,7 +363,7 @@ impl RLPEncode for AccountRangeUnit {
     fn encode(&self, buf: &mut dyn BufMut) {
         Encoder::new(buf)
             .encode_field(&self.hash)
-            .encode_field(&AccountStateSlimCodec(self.account))
+            .encode_field(&self.account)
             .finish();
     }
 }
@@ -363,9 +372,80 @@ impl RLPDecode for AccountRangeUnit {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
         let (hash, decoder) = decoder.decode_field("hash")?;
-        let (AccountStateSlimCodec(account), decoder) =
-            decoder.decode_field::<AccountStateSlimCodec>("account")?;
+        let (account, decoder) = decoder.decode_field("account")?;
         Ok((Self { hash, account }, decoder.finish()?))
+    }
+}
+
+impl RLPEncode for AccountStateSlim {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.nonce)
+            .encode_field(&self.balance)
+            .encode_field(&self.storage_root)
+            .encode_field(&self.code_hash)
+            .finish();
+    }
+}
+
+impl RLPDecode for AccountStateSlim {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (nonce, decoder) = decoder.decode_field("nonce")?;
+        let (balance, decoder) = decoder.decode_field("balance")?;
+        let (storage_root, decoder) = decoder.decode_field("storage_root")?;
+        let (code_hash, decoder) = decoder.decode_field("code_hash")?;
+        Ok((
+            Self {
+                nonce,
+                balance,
+                storage_root,
+                code_hash,
+            },
+            decoder.finish()?,
+        ))
+    }
+}
+
+impl From<AccountState> for AccountStateSlim {
+    fn from(value: AccountState) -> Self {
+        let storage_root = if value.storage_root == *EMPTY_TRIE_HASH {
+            Bytes::new()
+        } else {
+            Bytes::copy_from_slice(value.storage_root.as_bytes())
+        };
+        let code_hash = if value.code_hash == *EMPTY_KECCACK_HASH {
+            Bytes::new()
+        } else {
+            Bytes::copy_from_slice(value.code_hash.as_bytes())
+        };
+        Self {
+            nonce: value.nonce,
+            balance: value.balance,
+            storage_root,
+            code_hash,
+        }
+    }
+}
+
+impl From<AccountStateSlim> for AccountState {
+    fn from(value: AccountStateSlim) -> Self {
+        let storage_root = if value.storage_root.is_empty() {
+            *EMPTY_TRIE_HASH
+        } else {
+            H256::from_slice(value.storage_root.as_ref())
+        };
+        let code_hash = if value.code_hash.is_empty() {
+            *EMPTY_KECCACK_HASH
+        } else {
+            H256::from_slice(value.code_hash.as_ref())
+        };
+        Self {
+            nonce: value.nonce,
+            balance: value.balance,
+            storage_root,
+            code_hash,
+        }
     }
 }
 

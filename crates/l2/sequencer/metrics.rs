@@ -49,7 +49,7 @@ pub struct MetricsGathererHealth {
 }
 
 impl MetricsGatherer {
-    pub fn new(
+    pub async fn new(
         rollup_store: StoreRollup,
         committer_config: &CommitterConfig,
         eth_config: &EthConfig,
@@ -71,8 +71,9 @@ impl MetricsGatherer {
         rollup_store: StoreRollup,
         l2_url: Url,
     ) -> Result<GenServerHandle<MetricsGatherer>, MetricsGathererError> {
-        let mut metrics =
-            Self::new(rollup_store, &(cfg.l1_committer.clone()), &cfg.eth, l2_url)?.start();
+        let mut metrics = Self::new(rollup_store, &(cfg.l1_committer.clone()), &cfg.eth, l2_url)
+            .await?
+            .start();
         metrics
             .cast(InMessage::Gather)
             .await

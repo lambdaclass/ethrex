@@ -12,11 +12,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
-env:
-  # Work around frequent libgit2/submodule fetch flakiness in CI.
-  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-  CARGO_NET_RETRY: "10"
-
 jobs:
   build_tdx:
     # "Test" is a required check, don't change the name

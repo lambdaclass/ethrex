@@ -236,7 +236,7 @@ impl PooledTransactions {
     }
 
     /// validates if the received TXs match the request
-    pub fn validate_requested(
+    pub async fn validate_requested(
         &self,
         requested: &NewPooledTransactionHashes,
         fork: Fork,

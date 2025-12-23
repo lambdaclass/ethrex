@@ -200,10 +200,10 @@ impl Metrics {
 
         self.contacts.fetch_add(1, Ordering::Relaxed);
 
-        self.update_rate(&mut events, &self.new_contacts_rate);
+        self.update_rate(&mut events, &self.new_contacts_rate).await;
     }
 
-    pub fn record_new_discarded_node(&self) {
+    pub async fn record_new_discarded_node(&self) {
         self.discarded_nodes.inc();
 
         self.contacts.fetch_sub(1, Ordering::Relaxed);
@@ -216,7 +216,8 @@ impl Metrics {
 
         self.connection_attempts.inc();
 
-        self.update_rate(&mut events, &self.new_connection_attempts_rate);
+        self.update_rate(&mut events, &self.new_connection_attempts_rate)
+            .await;
     }
 
     pub async fn record_new_rlpx_conn_established(&self, client_version: &str) {
@@ -241,7 +242,8 @@ impl Metrics {
             METRICS_P2P.inc_peer_client(client_type);
         }
 
-        self.update_rate(&mut events, &self.new_connection_establishments_rate);
+        self.update_rate(&mut events, &self.new_connection_establishments_rate)
+            .await;
 
         let mut clients = self.peers_by_client_type.lock().await;
         clients
@@ -267,7 +269,7 @@ impl Metrics {
 
         self.pings_sent.inc();
 
-        self.update_rate(&mut events, &self.pings_sent_rate);
+        self.update_rate(&mut events, &self.pings_sent_rate).await;
     }
 
     pub async fn record_new_rlpx_conn_disconnection(
@@ -304,11 +306,12 @@ impl Metrics {
     pub async fn record_new_rlpx_conn_failure(&self, reason: PeerConnectionError) {
         let mut failures_grouped_by_reason = self.connection_attempt_failures.lock().await;
 
-        self.update_failures_grouped_by_reason(&mut failures_grouped_by_reason, &reason);
+        self.update_failures_grouped_by_reason(&mut failures_grouped_by_reason, &reason)
+            .await;
     }
 
-    pub fn update_rate(&self, events: &mut VecDeque<SystemTime>, rate_gauge: &Gauge) {
-        self.clean_old_events(events);
+    pub async fn update_rate(&self, events: &mut VecDeque<SystemTime>, rate_gauge: &Gauge) {
+        self.clean_old_events(events).await;
 
         let count = events.len() as f64;
 
@@ -332,7 +335,7 @@ impl Metrics {
         rate_gauge.set(rate);
     }
 
-    pub fn clean_old_events(&self, events: &mut VecDeque<SystemTime>) {
+    pub async fn clean_old_events(&self, events: &mut VecDeque<SystemTime>) {
         let now = SystemTime::now();
 
         while let Some(&event_time) = events.front() {
@@ -344,7 +347,7 @@ impl Metrics {
         }
     }
 
-    pub fn update_failures_grouped_by_reason(
+    pub async fn update_failures_grouped_by_reason(
         &self,
         failures_grouped_by_reason: &mut BTreeMap<String, u64>,
         failure_reason: &PeerConnectionError,

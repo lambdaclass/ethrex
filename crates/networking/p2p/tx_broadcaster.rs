@@ -112,7 +112,7 @@ pub enum OutMessage {
 }
 
 impl TxBroadcaster {
-    pub fn spawn(
+    pub async fn spawn(
         kademlia: PeerTable,
         blockchain: Arc<Blockchain>,
         tx_broadcasting_time_interval: u64,

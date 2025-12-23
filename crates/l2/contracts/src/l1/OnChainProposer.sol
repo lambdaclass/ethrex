@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.31;
+pragma solidity =0.8.29;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
@@ -32,7 +32,6 @@ contract OnChainProposer is
     /// pendingTxHashes queue of the CommonBridge contract.
     /// @dev withdrawalsLogsMerkleRoot is the Merkle root of the Merkle tree containing
     /// all the withdrawals that were processed in the batch being committed
-    /// @dev commitHash: keccak of the git commit hash that produced the proof/verification key used for this batch
     struct BatchCommitmentInfo {
         bytes32 newStateRoot;
         bytes32 blobKZGVersionedHash;
@@ -41,12 +40,8 @@ contract OnChainProposer is
         bytes32 lastBlockHash;
         uint256 nonPrivilegedTransactions;
         ICommonBridge.BalanceDiff[] balanceDiffs;
-        bytes32 commitHash;
         ICommonBridge.L2MessageRollingHash[] l2InMessageRollingHashes;
     }
-
-    uint8 internal constant SP1_VERIFIER_ID = 1;
-    uint8 internal constant RISC0_VERIFIER_ID = 2;
 
     /// @notice The commitments of the committed batches.
     /// @dev If a batch is committed, the commitment is stored here.
@@ -79,7 +74,6 @@ contract OnChainProposer is
     address public RISC0_VERIFIER_ADDRESS;
     address public SP1_VERIFIER_ADDRESS;
 
-    /// @dev Deprecated variable.
     bytes32 public SP1_VERIFICATION_KEY;
 
     /// @notice Indicates whether the contract operates in validium mode.Add commentMore actions
@@ -92,7 +86,6 @@ contract OnChainProposer is
     /// @dev This address is set during contract initialization and is used to verify aligned proofs.
     address public ALIGNEDPROOFAGGREGATOR;
 
-    /// @dev Deprecated variable.
     bytes32 public RISC0_VERIFICATION_KEY;
 
     /// @notice Chain ID of the network
@@ -107,10 +100,6 @@ contract OnChainProposer is
 
     /// @notice True if verification is done through Aligned Layer instead of smart contract verifiers.
     bool public ALIGNED_MODE;
-
-    /// @notice Verification keys keyed by git commit hash (keccak of the commit SHA string) and verifier type.
-    mapping(bytes32 commitHash => mapping(uint8 verifierId => bytes32 vk))
-        public verificationKeys;
 
     modifier onlySequencer() {
         require(
@@ -140,7 +129,6 @@ contract OnChainProposer is
         address alignedProofAggregator,
         bytes32 sp1Vk,
         bytes32 risc0Vk,
-        bytes32 commitHash,
         bytes32 genesisStateRoot,
         address[] calldata sequencerAddresses,
         uint256 chainId
@@ -150,10 +138,12 @@ contract OnChainProposer is
         // Risc0 constants
         REQUIRE_RISC0_PROOF = requireRisc0Proof;
         RISC0_VERIFIER_ADDRESS = r0verifier;
+        RISC0_VERIFICATION_KEY = risc0Vk;
 
         // SP1 constants
         REQUIRE_SP1_PROOF = requireSp1Proof;
         SP1_VERIFIER_ADDRESS = sp1verifier;
+        SP1_VERIFICATION_KEY = sp1Vk;
 
         // TDX constants
         REQUIRE_TDX_PROOF = requireTdxProof;
@@ -163,21 +153,6 @@ contract OnChainProposer is
         ALIGNED_MODE = aligned;
         ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
 
-        require(
-            commitHash != bytes32(0),
-            "OnChainProposer: commit hash is zero"
-        );
-        require(
-            !REQUIRE_SP1_PROOF || sp1Vk != bytes32(0),
-            "OnChainProposer: missing SP1 verification key"
-        );
-        require(
-            !REQUIRE_RISC0_PROOF || risc0Vk != bytes32(0),
-            "OnChainProposer: missing RISC0 verification key"
-        );
-        verificationKeys[commitHash][SP1_VERIFIER_ID] = sp1Vk;
-        verificationKeys[commitHash][RISC0_VERIFIER_ID] = risc0Vk;
-
         batchCommitments[0] = BatchCommitmentInfo(
             genesisStateRoot,
             bytes32(0),
@@ -186,7 +161,6 @@ contract OnChainProposer is
             bytes32(0),
             0,
             new ICommonBridge.BalanceDiff[](0),
-            commitHash,
             new ICommonBridge.L2MessageRollingHash[](0)
         );
 
@@ -209,33 +183,15 @@ contract OnChainProposer is
     }
 
     /// @inheritdoc IOnChainProposer
-    function upgradeSP1VerificationKey(
-        bytes32 commit_hash,
-        bytes32 new_vk
-    ) public onlyOwner {
-        require(
-            commit_hash != bytes32(0),
-            "OnChainProposer: commit hash is zero"
-        );
-        // we don't want to restrict setting the vk to zero
-        // as we may want to disable the version
-        verificationKeys[commit_hash][SP1_VERIFIER_ID] = new_vk;
-        emit VerificationKeyUpgraded("SP1", commit_hash, new_vk);
+    function upgradeSP1VerificationKey(bytes32 new_vk) public onlyOwner {
+        SP1_VERIFICATION_KEY = new_vk;
+        emit VerificationKeyUpgraded("SP1", new_vk);
     }
 
     /// @inheritdoc IOnChainProposer
-    function upgradeRISC0VerificationKey(
-        bytes32 commit_hash,
-        bytes32 new_vk
-    ) public onlyOwner {
-        require(
-            commit_hash != bytes32(0),
-            "OnChainProposer: commit hash is zero"
-        );
-        // we don't want to restrict setting the vk to zero
-        // as we may want to disable the version
-        verificationKeys[commit_hash][RISC0_VERIFIER_ID] = new_vk;
-        emit VerificationKeyUpgraded("RISC0", commit_hash, new_vk);
+    function upgradeRISC0VerificationKey(bytes32 new_vk) public onlyOwner {
+        RISC0_VERIFICATION_KEY = new_vk;
+        emit VerificationKeyUpgraded("RISC0", new_vk);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -246,7 +202,6 @@ contract OnChainProposer is
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash,
         uint256 nonPrivilegedTransactions,
-        bytes32 commitHash,
         ICommonBridge.BalanceDiff[] calldata balanceDiffs,
         ICommonBridge.L2MessageRollingHash[] calldata l2MessageRollingHashes
     ) external override onlySequencer whenNotPaused {
@@ -310,20 +265,6 @@ contract OnChainProposer is
             );
         }
 
-        // Validate commit hash and corresponding verification keys are valid
-        require(commitHash != bytes32(0), "012");
-        if (
-            REQUIRE_SP1_PROOF &&
-            verificationKeys[commitHash][SP1_VERIFIER_ID] == bytes32(0)
-        ) {
-            revert("013"); // missing verification key for commit hash
-        } else if (
-            REQUIRE_RISC0_PROOF &&
-            verificationKeys[commitHash][RISC0_VERIFIER_ID] == bytes32(0)
-        ) {
-            revert("013"); // missing verification key for commit hash
-        }
-
         batchCommitments[batchNumber] = BatchCommitmentInfo(
             newStateRoot,
             blobVersionedHash,
@@ -332,7 +273,6 @@ contract OnChainProposer is
             lastBlockHash,
             nonPrivilegedTransactions,
             balanceDiffs,
-            commitHash,
             l2MessageRollingHashes
         );
         emit BatchCommitted(newStateRoot);
@@ -416,15 +356,10 @@ contract OnChainProposer is
                     )
                 );
             }
-            bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
-            bytes32 risc0Vk = verificationKeys[batchCommitHash][
-                RISC0_VERIFIER_ID
-            ];
             try
                 IRiscZeroVerifier(RISC0_VERIFIER_ADDRESS).verify(
                     risc0BlockProof,
-                    // we use the same vk as the one set for the commit of the batch
-                    risc0Vk,
+                    RISC0_VERIFICATION_KEY,
                     sha256(risc0Journal)
                 )
             {} catch {
@@ -448,11 +383,9 @@ contract OnChainProposer is
                     )
                 );
             }
-            bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
-            bytes32 sp1Vk = verificationKeys[batchCommitHash][SP1_VERIFIER_ID];
             try
                 ISP1Verifier(SP1_VERIFIER_ADDRESS).verifyProof(
-                    sp1Vk,
+                    SP1_VERIFICATION_KEY,
                     sp1PublicValues,
                     sp1ProofBytes
                 )
@@ -568,9 +501,7 @@ contract OnChainProposer is
             if (REQUIRE_SP1_PROOF) {
                 _verifyProofInclusionAligned(
                     sp1MerkleProofsList[i],
-                    verificationKeys[batchCommitments[batchNumber].commitHash][
-                        SP1_VERIFIER_ID
-                    ],
+                    SP1_VERIFICATION_KEY,
                     publicInputsList[i]
                 );
             }
@@ -578,9 +509,7 @@ contract OnChainProposer is
             if (REQUIRE_RISC0_PROOF) {
                 _verifyProofInclusionAligned(
                     risc0MerkleProofsList[i],
-                    verificationKeys[batchCommitments[batchNumber].commitHash][
-                        RISC0_VERIFIER_ID
-                    ],
+                    RISC0_VERIFICATION_KEY,
                     publicInputsList[i]
                 );
             }

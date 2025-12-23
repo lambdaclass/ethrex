@@ -17,9 +17,6 @@ concurrency:
 
 env:
   DOCKER_ETHREX_WORKDIR: /usr/local/bin
-  # Work around frequent libgit2/submodule fetch flakiness in CI.
-  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-  CARGO_NET_RETRY: "10"
 
 jobs:
   detect-changes:
@@ -177,7 +174,10 @@ jobs:
         run: npm install -g yarn
 
       - name: Install solc
-        uses: ./.github/actions/install-solc
+        uses: lambdaclass/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       - name: Install rex
         run: |
@@ -299,7 +299,10 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Install solc
-        uses: ./.github/actions/install-solc
+        uses: lambdaclass/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       - name: Build prover
         run: |
@@ -444,7 +447,10 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Install solc
-        uses: ./.github/actions/install-solc
+        uses: lambdaclass/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       - name: Download ethrex image artifact
         uses: actions/download-artifact@v4
@@ -566,7 +572,10 @@ jobs:
           docker load --input /tmp/ethrex_image_l2.tar
 
       - name: Install solc
-        uses: ./.github/actions/install-solc
+        uses: lambdaclass/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       - name: Start L1 & Deploy contracts
         run: |
@@ -613,7 +622,10 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Install solc
-        uses: ./.github/actions/install-solc
+        uses: lambdaclass/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       - name: Build prover
         run: |

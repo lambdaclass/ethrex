@@ -79,7 +79,7 @@ pub struct PeerConnection {
 }
 
 impl PeerConnection {
-    pub fn spawn_as_receiver(
+    pub async fn spawn_as_receiver(
         context: P2PContext,
         peer_addr: SocketAddr,
         stream: TcpStream,
@@ -95,7 +95,7 @@ impl PeerConnection {
         }
     }
 
-    pub fn spawn_as_initiator(context: P2PContext, node: &Node) -> PeerConnection {
+    pub async fn spawn_as_initiator(context: P2PContext, node: &Node) -> PeerConnection {
         let state = ConnectionState::Initiator(Initiator {
             context,
             node: node.clone(),
@@ -1061,7 +1061,7 @@ async fn handle_incoming_message(
             if state.blockchain.is_synced() {
                 if let Some(requested) = state.requested_pooled_txs.get(&msg.id) {
                     let fork = state.blockchain.current_fork().await?;
-                    if let Err(error) = msg.validate_requested(requested, fork) {
+                    if let Err(error) = msg.validate_requested(requested, fork).await {
                         warn!(
                             peer=%state.node,
                             reason=%error,

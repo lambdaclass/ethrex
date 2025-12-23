@@ -733,7 +733,11 @@ impl PeerHandler {
                     peer_id
                 );
                 all_account_hashes.extend(accounts.iter().map(|unit| unit.hash));
-                all_accounts_state.extend(accounts.iter().map(|unit| unit.account));
+                all_accounts_state.extend(
+                    accounts
+                        .iter()
+                        .map(|unit| AccountState::from(unit.account.clone())),
+                );
             }
 
             let Some((peer_id, connection)) = self
@@ -877,7 +881,7 @@ impl PeerHandler {
             let (account_hashes, account_states): (Vec<_>, Vec<_>) = accounts
                 .clone()
                 .into_iter()
-                .map(|unit| (unit.hash, unit.account))
+                .map(|unit| (unit.hash, AccountState::from(unit.account)))
                 .unzip();
             let encoded_accounts = account_states
                 .iter()
