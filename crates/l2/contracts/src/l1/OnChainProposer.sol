@@ -187,6 +187,10 @@ contract OnChainProposer is
             bridge != address(0),
             "001" // OnChainProposer: bridge is the zero address
         );
+        require(
+            bridge != address(this),
+            "000" // OnChainProposer: bridge is the contract address
+        );
         BRIDGE = bridge;
 
         OwnableUpgradeable.__Ownable_init(timelock_owner);
