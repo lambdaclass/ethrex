@@ -86,24 +86,6 @@ jobs:
         run: cargo fmt --all -- --check
         working-directory: tooling
 
-  check-cargo-lock:
-    name: Check Cargo.lock
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
-
-      - name: Update Cargo.lock files
-        run: |
-          make update-cargo-lock
-
-      - name: Check Cargo.lock files are committed
-        run: |
-          make check-cargo-lock
-
   test:
     name: Test - ${{ matrix.runner }}
     needs: detect-changes
@@ -335,18 +317,9 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Update Cargo.lock files
-        run: |
-          make update-cargo-lock
-
       - name: Check Cargo.lock files are committed
         run: |
-          git diff --exit-code -- \
-            crates/l2/prover/src/guest_program/src/sp1/Cargo.lock \
-            crates/l2/prover/src/guest_program/src/risc0/Cargo.lock \
-            crates/l2/prover/src/guest_program/src/zisk/Cargo.lock \
-            crates/l2/prover/src/guest_program/src/openvm/Cargo.lock \
-            crates/l2/tee/quote-gen/Cargo.lock
+          make check-cargo-lock
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
