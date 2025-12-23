@@ -23,7 +23,7 @@ pub struct L2ConnectedState {
     pub latest_block_added: u64,
     pub latest_batch_sent: u64,
     pub blocks_on_queue: BTreeMap<u64, QueuedBlock>,
-    pub batch_on_queue: BTreeMap<u64, Arc<Batch>>,
+    pub batches_on_queue: BTreeMap<u64, Arc<Batch>>,
     pub store_rollup: StoreRollup,
     pub committer_key: Arc<SecretKey>,
     pub next_block_broadcast: Instant,
@@ -103,7 +103,7 @@ impl L2ConnState {
                     latest_block_sent: 0,
                     latest_block_added: 0,
                     blocks_on_queue: BTreeMap::new(),
-                    batch_on_queue: BTreeMap::new(),
+                    batches_on_queue: BTreeMap::new(),
                     latest_batch_sent: 0,
                     store_rollup: ctxt.store_rollup.clone(),
                     committer_key: ctxt.committer_key.clone(),
@@ -134,7 +134,7 @@ pub(crate) async fn handle_based_capability_message(
                 established
                     .l2_state
                     .connection_state_mut()?
-                    .batch_on_queue
+                    .batches_on_queue
                     .entry(batch_sealed_msg.batch.number)
                     .or_insert_with(|| batch_sealed_msg.batch.clone());
                 broadcast_message(established, msg.into())?;
@@ -547,7 +547,7 @@ pub async fn process_batch_on_queue(
         return Ok(());
     };
     let mut next_batch_to_seal = latest_stored_batch + 1;
-    while let Some(batch) = l2_state.batch_on_queue.get(&next_batch_to_seal) {
+    while let Some(batch) = l2_state.batches_on_queue.get(&next_batch_to_seal) {
         let last_block_on_next_batch = batch.last_block;
         if established
             .storage
@@ -558,7 +558,7 @@ pub async fn process_batch_on_queue(
             debug!("Missing blocks from the next batch to seal");
             return Ok(());
         }
-        if let Some(batch) = l2_state.batch_on_queue.remove(&next_batch_to_seal) {
+        if let Some(batch) = l2_state.batches_on_queue.remove(&next_batch_to_seal) {
             let batch = Arc::unwrap_or_clone(batch);
             let (batch_number, batch_first_block, batch_last_block) =
                 (batch.number, batch.first_block, batch.last_block);
