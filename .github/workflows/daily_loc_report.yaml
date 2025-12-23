@@ -113,7 +113,7 @@ jobs:
             )
             or label_replace(
               avg_over_time(
-                reth_engine_rpc_new_payload_v4{instance="reth-mainnet-1:6060", quantile="0.5"}[24h]
+                reth_engine_rpc_new_payload_v4{instance="reth-mainnet-1:6060", quantile="0.999"}[24h]
               ) * 10e2,
               "client",
               "reth",

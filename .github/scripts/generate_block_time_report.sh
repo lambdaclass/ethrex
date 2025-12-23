@@ -63,7 +63,7 @@ for row in "${raw_series[@]}"; do
   host="${series_instance%%:*}"
   qualifier="mean"
   if [[ "$series_name" == "reth" ]]; then
-    qualifier="p50"
+    qualifier="p99.9"
   fi
   line=$(printf "* %s (%s, 24-hour): %.3f ms\n  %s" "$series_name" "$qualifier" "$series_value" "$host")
   slack_line=$(printf "• *%s* (%s, 24-hour): %.3f ms\n    %s" "$series_name" "$qualifier" "$series_value" "$host")
