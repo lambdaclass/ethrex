@@ -1744,12 +1744,6 @@ impl Store {
                 for result in iter {
                     let (key, _) = result?;
 
-                    // Ensure key has at least 8 bytes for block number
-                    if key.len() < 8 {
-                        tracing::warn!("Invalid witness key length: {}", key.len());
-                        continue;
-                    }
-
                     // Parse block number from key (first 8 bytes after prefix)
                     let block_num_bytes: [u8; 8] = key[..8].try_into().map_err(|_| {
                         StoreError::Custom("Failed to parse block number".to_string())
