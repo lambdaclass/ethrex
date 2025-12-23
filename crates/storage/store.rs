@@ -2384,6 +2384,15 @@ fn apply_trie_updates(
         storage_updates,
     } = trie_update;
 
+    if parent_state_root == child_state_root {
+        // if roots match it means the block doesn't change the state, thus we
+        // avoid emitting a diff layer
+        result_sender
+            .send(Ok(()))
+            .map_err(|_| StoreError::LockError)?;
+        return Ok(());
+    }
+
     // Phase 1: update the in-memory diff-layers only, then notify block production.
     let new_layer = storage_updates
         .into_iter()
