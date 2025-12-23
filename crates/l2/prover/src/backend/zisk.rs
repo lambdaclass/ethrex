@@ -105,9 +105,7 @@ pub fn prove(
         .into());
     }
 
-    let proof_bytes = std::fs::read(format!(
-        "{OUTPUT_DIR_PATH}/vadcop_final_proof.bin"
-    ))?;
+    let proof_bytes = std::fs::read(format!("{OUTPUT_DIR_PATH}/vadcop_final_proof.bin"))?;
     let output = ProveOutput(proof_bytes);
     Ok(output)
 }
