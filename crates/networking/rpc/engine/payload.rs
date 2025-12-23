@@ -624,17 +624,29 @@ async fn handle_new_payload_v1_v2(
 
     // Generate and store witness if required
     if context.generate_witness {
-        let witness = context
+        let Ok(witness) = context
             .blockchain
             .generate_witness_for_blocks(&[block])
             .await
-            .map_err(|e| {
-                RpcErr::Internal(format!("Failed to generate witness for new payload: {e}"))
-            })?;
+        else {
+            warn!(
+                %block_hash,
+                %block_number,
+                "Failed to generate witness for block. Skipping witness generation."
+            );
+            return Ok(payload_status);
+        };
         context
             .storage
             .store_witness(block_hash, block_number, witness)
-            .await?;
+            .await
+            .inspect_err(|e| {
+                warn!(
+                    %block_hash,
+                    %block_number,
+                    "Failed to store witness for block: {e}. Skipping witness storage."
+                )
+            })?;
     }
     Ok(payload_status)
 }
