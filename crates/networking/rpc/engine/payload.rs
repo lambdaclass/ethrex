@@ -636,7 +636,7 @@ async fn handle_new_payload_v1_v2(
             );
             return Ok(payload_status);
         };
-        context
+        _ = context
             .storage
             .store_witness(block_hash, block_number, witness)
             .await
@@ -646,7 +646,7 @@ async fn handle_new_payload_v1_v2(
                     %block_number,
                     "Failed to store witness for block: {e}. Skipping witness storage."
                 )
-            })?;
+            });
     }
     Ok(payload_status)
 }
