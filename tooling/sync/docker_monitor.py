@@ -25,7 +25,7 @@ if os.path.exists('.env'):
 
 CHECK_INTERVAL = 10
 SYNC_TIMEOUT = 4 * 60  # 4 hours default sync timeout (in minutes)
-BLOCK_PROCESSING_DURATION = 22 * 60 # Monitor block processing for 20 minutes
+BLOCK_PROCESSING_DURATION = 22 * 60 # Monitor block processing for 22 minutes
 BLOCK_STALL_TIMEOUT = 10 * 60  # Fail if no new block for 10 minutes
 STATUS_PRINT_INTERVAL = 30
 
@@ -79,6 +79,13 @@ def git_commit() -> str:
         return "unknown"
 
 
+def git_branch() -> str:
+    try:
+        return subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], stderr=subprocess.DEVNULL).decode().strip()
+    except Exception:
+        return "unknown"
+
+
 def container_start_time(name: str) -> Optional[float]:
     try:
         out = subprocess.check_output(["docker", "inspect", "-f", "{{.State.StartedAt}}", name], stderr=subprocess.DEVNULL).decode().strip()
@@ -97,16 +104,18 @@ def rpc_call(url: str, method: str) -> Optional[any]:
         return None
 
 
-def slack_notify(run_id: str, run_count: int, instances: list, hostname: str, commit: str):
+def slack_notify(run_id: str, run_count: int, instances: list, hostname: str, branch: str, commit: str):
     """Send a single summary Slack message for the run."""
     all_success = all(i.status == "success" for i in instances)
     url = os.environ.get("SLACK_WEBHOOK_URL_SUCCESS" if all_success else "SLACK_WEBHOOK_URL_FAILED")
     if not url:
         return
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     status_icon = "✅" if all_success else "❌"
     header = f"{status_icon} Run #{run_count} (ID: {run_id})"
-    summary = f"*Time:* `{timestamp}`\n*Host:* `{hostname}`\n*Commit:* `{commit}`\n*Result:* {'SUCCESS' if all_success else 'FAILED'}"
+    run_start = datetime.strptime(run_id, "%Y%m%d_%H%M%S")
+    elapsed_secs = (datetime.now() - run_start).total_seconds()
+    elapsed_str = fmt_time(elapsed_secs)
+    summary = f"*Host:* `{hostname}`\n*Branch:* `{branch}`\n*Commit:* <https://github.com/lambdaclass/ethrex/commit/{commit}|{commit}>\n*Elapsed:* `{elapsed_str}`\n*Result:* {'SUCCESS' if all_success else 'FAILED'}"
     blocks = [
         {"type": "header", "text": {"type": "plain_text", "text": header}},
         {"type": "section", "text": {"type": "mrkdwn", "text": summary}},
@@ -117,10 +126,11 @@ def slack_notify(run_id: str, run_count: int, instances: list, hostname: str, co
         line = f"{icon} *{i.name}*: `{i.status}`"
         if getattr(i, "sync_time", None):
             line += f" (sync: {fmt_time(i.sync_time)})"
-        if getattr(i, "last_block", None):
-            line += f" block: {i.last_block}"
+        if getattr(i, "initial_block", None):
+            line += f" post-sync block: {i.initial_block}"
         if getattr(i, "initial_block", None) and i.last_block > i.initial_block:
-            line += f" (+{i.last_block - i.initial_block})"
+            blocks_processed = i.last_block - i.initial_block
+            line += f" (processed +{blocks_processed} blocks in {BLOCK_PROCESSING_DURATION//60}m)"
         if getattr(i, "error", None):
             if i.error:
                 line += f"\n       Error: {i.error}"
@@ -174,47 +184,44 @@ def save_all_logs(instances: list[Instance], run_id: str, compose_file: str):
     print(f"📁 Logs saved to {LOGS_DIR}/run_{run_id}/\n")
 
 
-def log_run_result(run_id: str, run_count: int, instances: list[Instance], hostname: str, commit: str):
+def log_run_result(run_id: str, run_count: int, instances: list[Instance], hostname: str, branch: str, commit: str):
     """Append run result to the persistent log file."""
     ensure_logs_dir()
-    
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     all_success = all(i.status == "success" for i in instances)
     status_icon = "✅" if all_success else "❌"
-    
+    run_start = datetime.strptime(run_id, "%Y%m%d_%H%M%S")
+    elapsed_secs = (datetime.now() - run_start).total_seconds()
+    elapsed_str = fmt_time(elapsed_secs)
     # Build log entry as plain text
     lines = [
         f"\n{'='*60}",
         f"{status_icon} Run #{run_count} (ID: {run_id})",
         f"{'='*60}",
-        f"Time:   {timestamp}",
         f"Host:   {hostname}",
+        f"Branch: {branch}",
         f"Commit: {commit}",
+        f"Elapsed: {elapsed_str}",
         f"Result: {'SUCCESS' if all_success else 'FAILED'}",
         "",
     ]
-    
     for inst in instances:
         icon = "✅" if inst.status == "success" else "❌"
         line = f"  {icon} {inst.name}: {inst.status}"
         if inst.sync_time:
             line += f" (sync: {fmt_time(inst.sync_time)})"
-        if inst.last_block:
-            line += f" block: {inst.last_block}"
+        if inst.initial_block:
+            line += f" post-sync block: {inst.initial_block}"
         if inst.initial_block and inst.last_block > inst.initial_block:
-            line += f" (+{inst.last_block - inst.initial_block})"
+            blocks_processed = inst.last_block - inst.initial_block
+            line += f" (processed +{blocks_processed} blocks in {BLOCK_PROCESSING_DURATION//60}m)"
         if inst.error:
             line += f"\n       Error: {inst.error}"
         lines.append(line)
-    
     lines.append("")
-    
     # Append to log file
     with open(RUN_LOG_FILE, "a") as f:
         f.write("\n".join(lines) + "\n")
-    
     print(f"📝 Run logged to {RUN_LOG_FILE}")
-    
     # Also write summary to the run folder
     summary_file = LOGS_DIR / f"run_{run_id}" / "summary.txt"
     summary_file.parent.mkdir(parents=True, exist_ok=True)
@@ -365,7 +372,9 @@ def main():
                 inst.status = "syncing"
             # else: node not responding yet, stay in "waiting"
     
-    hostname, commit = socket.gethostname(), git_commit()
+    hostname = socket.gethostname()
+    branch = git_branch()
+    commit = git_commit()
     run_count = 1
     run_id = generate_run_id()
     
@@ -389,10 +398,10 @@ def main():
                 time.sleep(CHECK_INTERVAL)
             # Log the run result and save container logs BEFORE any restart
             save_all_logs(instances, run_id, args.compose_file)
-            log_run_result(run_id, run_count, instances, hostname, commit)
+            log_run_result(run_id, run_count, instances, hostname, branch, commit)
             # Send a single Slack summary notification for the run
             if not args.no_slack:
-                slack_notify(run_id, run_count, instances, hostname, commit)
+                slack_notify(run_id, run_count, instances, hostname, branch, commit)
             # Check results
             if all(i.status == "success" for i in instances):
                 print(f"🎉 Run #{run_count}: All instances synced successfully!")
