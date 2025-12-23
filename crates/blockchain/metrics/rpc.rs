@@ -1,4 +1,4 @@
-use prometheus::{CounterVec, HistogramVec, register_counter_vec, register_histogram_vec};
+use prometheus::{CounterVec, HistogramOpts, HistogramVec, register_counter_vec};
 use std::{future::Future, sync::LazyLock};
 
 pub static METRICS_RPC_REQUEST_OUTCOMES: LazyLock<CounterVec> =
@@ -20,12 +20,23 @@ fn initialize_rpc_outcomes_counter() -> CounterVec {
 }
 
 fn initialize_rpc_duration_histogram() -> HistogramVec {
-    register_histogram_vec!(
+    let opts = HistogramOpts::new(
         "rpc_request_duration_seconds",
         "Histogram of RPC request handling duration partitioned by namespace and method",
-        &["namespace", "method"],
     )
-    .unwrap()
+    .buckets({
+        let mut buckets = vec![0.0];
+        // Fine buckets from 0.01s to 0.7s (step 0.01s, 70 buckets: 0.01, 0.02, ..., 0.7)
+        buckets.extend(prometheus::linear_buckets(0.01, 0.01, 70).unwrap());
+        // Coarser buckets from 0.8s to 3.0s (step 0.1s, 23 buckets: 0.8, 0.9, ..., 3.0)
+        buckets.extend(prometheus::linear_buckets(0.8, 0.1, 23).unwrap());
+        // Higher buckets for rare outliers
+        buckets.extend(vec![5.0, 10.0]);
+        buckets
+    });
+    let histogram = HistogramVec::new(opts, &["namespace", "method"]).unwrap();
+    prometheus::register(Box::new(histogram.clone())).unwrap();
+    histogram
 }
 
 /// Represents the outcome of an RPC request when recording metrics.
