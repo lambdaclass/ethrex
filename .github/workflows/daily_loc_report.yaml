@@ -49,9 +49,15 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
 
+      - name: Forward Prometheus over Tailscale SSH
+        run: |
+          tailscale ssh -L 9090:localhost:9090 ethrex-grafana &
+          echo $! > /tmp/ts-ssh.pid
+          sleep 2
+
       - name: Generate the performance report
         env:
-          PERF_PROMETHEUS_URL: http://ethrex-grafana:9090
+          PERF_PROMETHEUS_URL: http://localhost:9090
           PERF_PROMETHEUS_RANGE: 24h
           PERF_PROMETHEUS_QUERY: >-
             label_replace(avg_over_time(gigagas{instance="ethrex-mainnet-1"}[24h]), "client", "ethrex", "", "")
@@ -59,6 +65,13 @@ jobs:
             or label_replace(avg_over_time(nethermind_mgas_per_sec{instance="nethermind-mainnet-1"}[24h]) / 1000, "client", "nethermind", "", "")
         run: |
           bash .github/scripts/generate_performance_report.sh
+
+      - name: Stop Tailscale SSH tunnel
+        if: always()
+        run: |
+          if [[ -f /tmp/ts-ssh.pid ]]; then
+            kill "$(cat /tmp/ts-ssh.pid)" || true
+          fi
 
       - name: Save new loc_report.json to cache
         if: success()

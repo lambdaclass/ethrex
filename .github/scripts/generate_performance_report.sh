@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -ex
 set -euo pipefail
 
 OUTPUT_DIR="${PERF_REPORT_OUTPUT_DIR:-tooling/performance_report}"
