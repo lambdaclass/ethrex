@@ -33,8 +33,11 @@ use super::{
 
 use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
-    sequencer::{errors::ProofSenderError, utils::batch_checkpoint_name},
-    utils::sequencer_state::{SequencerState, SequencerStatus},
+    sequencer::{
+        errors::ProofSenderError,
+        sequencer_state::{SequencerState, SequencerStatus},
+        utils::batch_checkpoint_name,
+    },
 };
 use aligned_sdk::{
     common::{

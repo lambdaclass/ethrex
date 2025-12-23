@@ -2,12 +2,12 @@ use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, SequencerConfig,
     sequencer::{
         errors::CommitterError,
+        sequencer_state::{SequencerState, SequencerStatus},
         utils::{
             self, batch_checkpoint_name, fetch_blocks_with_respective_fee_configs,
             get_git_commit_hash, system_now_ms,
         },
     },
-    utils::sequencer_state::{SequencerState, SequencerStatus},
 };
 use bytes::Bytes;
 use ethrex_blockchain::{

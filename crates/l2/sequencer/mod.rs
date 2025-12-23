@@ -4,9 +4,8 @@ use std::sync::Arc;
 use crate::monitor::EthrexMonitor;
 use crate::sequencer::admin_server::start_api;
 use crate::sequencer::errors::SequencerError;
+use crate::sequencer::sequencer_state::{SequencerState, SequencerStatus};
 use crate::sequencer::state_updater::StateUpdater;
-use crate::utils::sequencer_state::SequencerState;
-use crate::utils::sequencer_state::SequencerStatus;
 use crate::{BlockFetcher, SequencerConfig};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
@@ -36,6 +35,7 @@ pub mod l1_watcher;
 #[cfg(feature = "metrics")]
 pub mod metrics;
 pub mod proof_coordinator;
+pub mod sequencer_state;
 pub mod state_updater;
 
 pub mod configs;

@@ -14,9 +14,11 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     SequencerConfig,
-    sequencer::utils::node_is_up_to_date,
+    sequencer::{
+        sequencer_state::{SequencerState, SequencerStatus},
+        utils::node_is_up_to_date,
+    },
     utils::parse::hash_to_address,
-    utils::sequencer_state::{SequencerState, SequencerStatus},
 };
 
 #[derive(Debug, thiserror::Error)]
