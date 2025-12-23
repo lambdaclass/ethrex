@@ -254,6 +254,9 @@ impl L1Watcher {
     ) -> Result<Vec<H256>, L1WatcherError> {
         let mut privileged_txs = Vec::new();
 
+        let pending_privileged_transactions =
+            get_pending_l1_messages(&self.eth_client, self.bridge_address).await?;
+
         for log in logs {
             let privileged_transaction_data = PrivilegedTransactionData::from_log(log.log)
                 .map_err(L1WatcherError::FailedToDeserializeLog)?;
@@ -274,7 +277,10 @@ impl L1Watcher {
             let tx = Transaction::PrivilegedL2Transaction(mint_transaction);
 
             if self
-                .privileged_transaction_already_processed(tx.hash())
+                .privileged_transaction_already_processed(
+                    tx.hash(),
+                    &pending_privileged_transactions,
+                )
                 .await?
             {
                 warn!(
@@ -374,6 +380,7 @@ impl L1Watcher {
     async fn privileged_transaction_already_processed(
         &self,
         tx_hash: H256,
+        pending_privileged_transactions: &[H256],
     ) -> Result<bool, L1WatcherError> {
         if self
             .store
@@ -387,8 +394,6 @@ impl L1Watcher {
 
         // If we have a reconstructed state, we don't have the transaction in our store.
         // Check if the transaction is marked as pending in the contract.
-        let pending_privileged_transactions =
-            get_pending_l1_messages(&self.eth_client, self.bridge_address).await?;
         Ok(!pending_privileged_transactions.contains(&tx_hash))
     }
 
@@ -486,6 +491,12 @@ pub async fn filter_verified_messages(
     let mut verified_logs = Vec::new();
     debug!("Filtering L2 messages");
 
+    // Check if the transaction is marked as pending in the contract.
+    let pending_l2_messages =
+        get_pending_l2_messages(l1_client, bridge_address, l2_client.chain_id).await?;
+
+    debug!("Pending l2 messages {:?}", pending_l2_messages);
+
     for rpc_log in logs {
         let log = Log {
             address: rpc_log.log.address,
@@ -500,12 +511,6 @@ pub async fn filter_verified_messages(
         };
 
         debug!("l2 message parsed from log: {:?}", l2_message);
-
-        // Check if the transaction is marked as pending in the contract.
-        let pending_l2_messages =
-            get_pending_l2_messages(l1_client, bridge_address, l2_client.chain_id).await?;
-
-        debug!("Pending l2 messages {:?}", pending_l2_messages);
 
         let message_hash = get_l2_message_hash(&l2_message);
         if !pending_l2_messages.contains(&message_hash) {
