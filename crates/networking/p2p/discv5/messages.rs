@@ -88,20 +88,14 @@ impl Packet {
         })
     }
 
-    pub fn encode(
-        &self,
-        buf: &mut dyn BufMut,
-        masking_iv: u128,
-        nonce: &[u8; 12],
-        dest_id: &H256,
-    ) -> Result<(), PacketCodecError> {
-        let masking_as_bytes = masking_iv.to_be_bytes();
-        buf.put_slice(&masking_as_bytes);
+    pub fn encode(&self, buf: &mut dyn BufMut, dest_id: &H256) -> Result<(), PacketCodecError> {
+        let masking_iv = self.masking_iv;
+        buf.put_slice(&masking_iv);
 
         let mut cipher =
-            <Aes128Ctr64BE as KeyIvInit>::new(dest_id[..16].into(), masking_as_bytes[..].into());
+            <Aes128Ctr64BE as KeyIvInit>::new(dest_id[..16].into(), masking_iv[..].into());
 
-        self.header.encode(buf, &mut cipher, nonce)?;
+        self.header.encode(buf, &mut cipher)?;
         buf.put_slice(&self.encrypted_message);
 
         Ok(())
@@ -170,13 +164,12 @@ impl PacketHeader {
         &self,
         buf: &mut dyn BufMut,
         cipher: &mut T,
-        nonce: &[u8],
     ) -> Result<(), PacketCodecError> {
         let mut static_header = Vec::new();
         static_header.put_slice(PROTOCOL_ID);
         static_header.put_slice(&PROTOCOL_VERSION.to_be_bytes());
         static_header.put_u8(self.flag);
-        static_header.put_slice(nonce);
+        static_header.put_slice(&self.nonce);
         static_header.put_slice(&(self.authdata.len() as u16).to_be_bytes());
         cipher.try_apply_keystream(&mut static_header)?;
         buf.put_slice(&static_header);
@@ -206,26 +199,24 @@ impl DecodedPacket {
 
         let mut cipher = <Aes128Ctr64BE as KeyIvInit>::new(dest_id[..16].into(), masking_iv.into());
 
-        let packet_header = DecodedPacket::decode_header(&mut cipher, encoded_packet)?;
-        let encrypted_message = &encoded_packet[packet_header.header_end_offset..];
+        let header = DecodedPacket::decode_header(&mut cipher, encoded_packet)?;
+        let encrypted_message = encoded_packet[header.header_end_offset..].to_vec();
 
-        match packet_header.flag {
+        let packet = Packet {
+            masking_iv: masking_iv.try_into()?,
+            header,
+            encrypted_message,
+        };
+
+        match packet.header.flag {
             0x00 => Ok(DecodedPacket::Ordinary(Ordinary::decode(
-                masking_iv,
-                &packet_header.static_header,
-                packet_header.authdata,
-                &packet_header.nonce,
+                &packet,
                 decrypt_key,
-                encrypted_message,
             )?)),
-            0x01 => Ok(DecodedPacket::WhoAreYou(WhoAreYou::decode(
-                &packet_header.authdata,
-            )?)),
+            0x01 => Ok(DecodedPacket::WhoAreYou(WhoAreYou::decode(&packet)?)),
             0x02 => Ok(DecodedPacket::Handshake(Handshake::decode(
-                masking_iv,
-                packet_header,
+                &packet,
                 decrypt_key,
-                encrypted_message,
             )?)),
             _ => Err(RLPDecodeError::MalformedData)?,
         }
@@ -327,7 +318,6 @@ impl Ordinary {
     }
 
     /// Encodes the ordinary packet returning the header, authdata and encrypted_message
-    #[allow(clippy::type_complexity)]
     fn encode(
         &self,
         nonce: &[u8; 12],
@@ -366,15 +356,8 @@ impl Ordinary {
         Ok((static_header, authdata, message))
     }
 
-    pub fn decode(
-        masking_iv: &[u8],
-        static_header: &[u8; STATIC_HEADER_SIZE],
-        authdata: Vec<u8>,
-        nonce: &[u8; 12],
-        decrypt_key: &[u8],
-        encrypted_message: &[u8],
-    ) -> Result<Ordinary, PacketCodecError> {
-        if authdata.len() != 32 {
+    pub fn decode(packet: &Packet, decrypt_key: &[u8]) -> Result<Ordinary, PacketCodecError> {
+        if packet.header.authdata.len() != 32 {
             return Err(PacketCodecError::InvalidSize);
         }
         if decrypt_key.len() < 16 {
@@ -384,14 +367,14 @@ impl Ordinary {
         // message    = aesgcm_encrypt(initiator-key, nonce, message-pt, message-ad)
         // message-pt = message-type || message-data
         // message-ad = masking-iv || header
-        let mut message_ad = masking_iv.to_vec();
-        message_ad.extend_from_slice(static_header.as_slice());
-        message_ad.extend_from_slice(&authdata);
+        let mut message_ad = packet.masking_iv.to_vec();
+        message_ad.extend_from_slice(packet.header.static_header.as_slice());
+        message_ad.extend_from_slice(&packet.header.authdata);
 
-        let mut message = encrypted_message.to_vec();
-        Self::decrypt(decrypt_key, nonce, &mut message, message_ad)?;
+        let mut message = packet.encrypted_message.to_vec();
+        Self::decrypt(decrypt_key, &packet.header.nonce, &mut message, message_ad)?;
 
-        let src_id = H256::from_slice(&authdata);
+        let src_id = H256::from_slice(&packet.header.authdata);
 
         let message = Message::decode(&message)?;
         Ok(Ordinary { src_id, message })
@@ -446,7 +429,8 @@ impl WhoAreYou {
         buf.put_slice(&self.enr_seq.to_be_bytes());
     }
 
-    pub fn decode(authdata: &[u8]) -> Result<WhoAreYou, PacketCodecError> {
+    pub fn decode(packet: &Packet) -> Result<WhoAreYou, PacketCodecError> {
+        let authdata = packet.header.authdata.clone();
         let id_nonce = u128::from_be_bytes(authdata[..16].try_into()?);
         let enr_seq = u64::from_be_bytes(authdata[16..].try_into()?);
 
@@ -531,12 +515,7 @@ impl Handshake {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn decode(
-        masking_iv: &[u8],
-        header: PacketHeader,
-        decrypt_key: &[u8],
-        encrypted_message: &[u8],
-    ) -> Result<Handshake, PacketCodecError> {
+    pub fn decode(packet: &Packet, decrypt_key: &[u8]) -> Result<Handshake, PacketCodecError> {
         if decrypt_key.len() < 16 {
             return Err(PacketCodecError::InvalidSize);
         }
@@ -545,7 +524,7 @@ impl Handshake {
             nonce,
             authdata,
             ..
-        } = header;
+        } = &packet.header;
 
         if authdata.len() < HANDSHAKE_AUTHDATA_HEAD {
             return Err(PacketCodecError::InvalidSize);
@@ -576,12 +555,12 @@ impl Handshake {
             None
         };
 
-        let mut message_ad = masking_iv.to_vec();
-        message_ad.extend_from_slice(&static_header);
-        message_ad.extend_from_slice(&authdata);
+        let mut message_ad = packet.masking_iv.to_vec();
+        message_ad.extend_from_slice(static_header);
+        message_ad.extend_from_slice(authdata);
 
-        let mut message = encrypted_message.to_vec();
-        Ordinary::decrypt(decrypt_key, &nonce, &mut message, message_ad)?;
+        let mut message = packet.encrypted_message.to_vec();
+        Ordinary::decrypt(decrypt_key, nonce, &mut message, message_ad)?;
         let message = Message::decode(&message)?;
 
         Ok(Handshake {
@@ -937,6 +916,7 @@ mod tests {
         discv5::{
             codec::Discv5Codec,
             messages::{DecodedPacket, Message, Ordinary, PingMessage, WhoAreYou},
+            session::create_id_signature,
         },
         types::NodeRecordPairs,
         utils::{node_id, public_key_from_signing_key},
@@ -959,6 +939,220 @@ mod tests {
     //     "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
     // ))
     // .unwrap();
+
+    /// Ping message packet (flag 0) from https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire-test-vectors.md
+    #[test]
+    fn decode_ping_packet() {
+        /*
+        # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
+        # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
+        # nonce = 0xffffffffffffffffffffffff
+        # read-key = 0x00000000000000000000000000000000
+        # ping.req-id = 0x00000001
+        # ping.enr-seq = 2
+
+        00000000000000000000000000000000088b3d4342774649325f313964a39e55
+        ea96c005ad52be8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d3
+        4c4f53245d08dab84102ed931f66d1492acb308fa1c6715b9d139b81acbdcc
+        */
+
+        let node_a_key = SecretKey::from_byte_array(&hex!(
+            "eef77acb6c6a6eebc5b363a475ac583ec7eccdb42b6481424c60f59aa326547f"
+        ))
+        .unwrap();
+        let node_b_key = SecretKey::from_byte_array(&hex!(
+            "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
+        ))
+        .unwrap();
+
+        let src_id = node_id(&public_key_from_signing_key(&node_a_key));
+        let dest_id = node_id(&public_key_from_signing_key(&node_b_key));
+
+        let encoded = &hex!(
+            "00000000000000000000000000000000088b3d4342774649325f313964a39e55ea96c005ad52be8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08dab84102ed931f66d1492acb308fa1c6715b9d139b81acbdcc"
+        );
+        let packet = Packet::decode(&dest_id, encoded).unwrap();
+        assert_eq!([0; 16], packet.masking_iv);
+        assert_eq!(0x00, packet.header.flag);
+        assert_eq!(hex!("ffffffffffffffffffffffff"), packet.header.nonce);
+
+        // # read-key = 0x00000000000000000000000000000000
+        let read_key = [0; 16];
+
+        let decoded_message = Ordinary::decode(&packet, &read_key).unwrap();
+
+        let expected_message = Ordinary {
+            src_id,
+            message: Message::Ping(PingMessage {
+                req_id: Bytes::from(hex!("00000001").as_slice()),
+                enr_seq: 2,
+            }),
+        };
+
+        assert_eq!(decoded_message, expected_message);
+    }
+
+    /// Ping message packet (flag 0) from https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire-test-vectors.md
+    #[test]
+    fn encode_ping_packet() {
+        /*
+        # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
+        # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
+        # nonce = 0xffffffffffffffffffffffff
+        # read-key = 0x00000000000000000000000000000000
+        # ping.req-id = 0x00000001
+        # ping.enr-seq = 2
+
+        00000000000000000000000000000000088b3d4342774649325f313964a39e55
+        ea96c005ad52be8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d3
+        4c4f53245d08dab84102ed931f66d1492acb308fa1c6715b9d139b81acbdcc
+        */
+
+        let node_a_key = SecretKey::from_byte_array(&hex!(
+            "eef77acb6c6a6eebc5b363a475ac583ec7eccdb42b6481424c60f59aa326547f"
+        ))
+        .unwrap();
+        let node_b_key = SecretKey::from_byte_array(&hex!(
+            "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
+        ))
+        .unwrap();
+
+        let src_id = node_id(&public_key_from_signing_key(&node_a_key));
+        let dest_id = node_id(&public_key_from_signing_key(&node_b_key));
+
+        let message = Ordinary {
+            src_id,
+            message: Message::Ping(PingMessage {
+                req_id: Bytes::from(hex!("00000001").as_slice()),
+                enr_seq: 2,
+            }),
+        };
+
+        let masking_iv = [0; 16];
+        let nonce = hex!("ffffffffffffffffffffffff");
+
+        // # read-key = 0x00000000000000000000000000000000
+        let encrypt_key = [0; 16];
+
+        let (static_header, authdata, encrypted_message) =
+            message.encode(&nonce, &masking_iv, &encrypt_key).unwrap();
+
+        let header = PacketHeader {
+            static_header: static_header.try_into().unwrap(),
+            flag: 0x00,
+            nonce,
+            authdata,
+            header_end_offset: 23,
+        };
+
+        let packet = Packet {
+            masking_iv,
+            header,
+            encrypted_message,
+        };
+
+        let expected_encoded = &hex!(
+            "00000000000000000000000000000000088b3d4342774649325f313964a39e55ea96c005ad52be8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08dab84102ed931f66d1492acb308fa1c6715b9d139b81acbdcc"
+        );
+
+        let mut buf = BytesMut::new();
+        packet.encode(&mut buf, &dest_id).unwrap();
+
+        assert_eq!(buf.to_vec(), expected_encoded);
+    }
+
+    /// Ping handshake packet (flag 2) from https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire-test-vectors.md
+    #[test]
+    fn encode_ping_handshake_packet() {
+        /*
+        # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
+        # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
+        # nonce = 0xffffffffffffffffffffffff
+        # read-key = 0x4f9fac6de7567d1e3b1241dffe90f662
+        # ping.req-id = 0x00000001
+        # ping.enr-seq = 1
+        #
+        # handshake inputs:
+        #
+        # whoareyou.challenge-data = 0x000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000001
+        # whoareyou.request-nonce = 0x0102030405060708090a0b0c
+        # whoareyou.id-nonce = 0x0102030405060708090a0b0c0d0e0f10
+        # whoareyou.enr-seq = 1
+        # ephemeral-key = 0x0288ef00023598499cb6c940146d050d2b1fb914198c327f76aad590bead68b6
+        # ephemeral-pubkey = 0x039a003ba6517b473fa0cd74aefe99dadfdb34627f90fec6362df85803908f53a5
+
+        00000000000000000000000000000000088b3d4342774649305f313964a39e55
+        ea96c005ad521d8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d3
+        4c4f53245d08da4bb252012b2cba3f4f374a90a75cff91f142fa9be3e0a5f3ef
+        268ccb9065aeecfd67a999e7fdc137e062b2ec4a0eb92947f0d9a74bfbf44dfb
+        a776b21301f8b65efd5796706adff216ab862a9186875f9494150c4ae06fa4d1
+        f0396c93f215fa4ef524f1eadf5f0f4126b79336671cbcf7a885b1f8bd2a5d83
+        9cf8
+         */
+        let node_a_key = SecretKey::from_byte_array(&hex!(
+            "eef77acb6c6a6eebc5b363a475ac583ec7eccdb42b6481424c60f59aa326547f"
+        ))
+        .unwrap();
+        let node_b_key = SecretKey::from_byte_array(&hex!(
+            "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
+        ))
+        .unwrap();
+        let dest_id = node_id(&public_key_from_signing_key(&node_b_key));
+
+        let message = Message::Ping(PingMessage {
+            req_id: Bytes::from(hex!("00000001").as_slice()),
+            enr_seq: 1,
+        });
+
+        let challenge_data = hex!("000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000001").to_vec();
+
+        let ephemeral_pubkey =
+            hex!("039a003ba6517b473fa0cd74aefe99dadfdb34627f90fec6362df85803908f53a5").to_vec();
+
+        let signature =
+            create_id_signature(&node_a_key, &challenge_data, &ephemeral_pubkey, &dest_id);
+
+        let handshake = Handshake {
+            src_id: H256::from_slice(&hex!(
+                "aaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb"
+            )),
+            id_signature: signature.serialize_compact().to_vec(),
+            eph_pubkey: hex!("039a003ba6517b473fa0cd74aefe99dadfdb34627f90fec6362df85803908f53a5")
+                .to_vec(),
+            record: None,
+            message,
+        };
+
+        let masking_iv = [0; 16];
+        let nonce = hex!("ffffffffffffffffffffffff");
+
+        let read_key = hex!("4f9fac6de7567d1e3b1241dffe90f662");
+        let (static_header, authdata, encrypted_message) =
+            handshake.encode(&nonce, &masking_iv, &read_key).unwrap();
+
+        let header = PacketHeader {
+            static_header: static_header.try_into().unwrap(),
+            flag: 0x02,
+            nonce,
+            authdata,
+            header_end_offset: 23,
+        };
+
+        let packet = Packet {
+            masking_iv,
+            header,
+            encrypted_message,
+        };
+
+        let expected_encoded = &hex!(
+            "00000000000000000000000000000000088b3d4342774649305f313964a39e55ea96c005ad521d8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08da4bb252012b2cba3f4f374a90a75cff91f142fa9be3e0a5f3ef268ccb9065aeecfd67a999e7fdc137e062b2ec4a0eb92947f0d9a74bfbf44dfba776b21301f8b65efd5796706adff216ab862a9186875f9494150c4ae06fa4d1f0396c93f215fa4ef524f1eadf5f0f4126b79336671cbcf7a885b1f8bd2a5d839cf8"
+        );
+
+        let mut buf = BytesMut::new();
+        packet.encode(&mut buf, &dest_id).unwrap();
+
+        assert_eq!(buf.to_vec(), expected_encoded);
+    }
 
     #[test]
     fn aes_gcm_vector() {
@@ -1219,48 +1413,6 @@ mod tests {
 
         // TODO, fix this test
         //assert_eq!(packet, expected);
-    }
-
-    #[test]
-    fn decode_ping_packet() {
-        // # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
-        // # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
-        // # nonce = 0xffffffffffffffffffffffff
-        // # read-key = 0x00000000000000000000000000000000
-        // # ping.req-id = 0x00000001
-        // # ping.enr-seq = 2
-        //
-        // 00000000000000000000000000000000088b3d4342774649325f313964a39e55
-        // ea96c005ad52be8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d3
-        // 4c4f53245d08dab84102ed931f66d1492acb308fa1c6715b9d139b81acbdcc
-
-        let node_a_key = SecretKey::from_byte_array(&hex!(
-            "eef77acb6c6a6eebc5b363a475ac583ec7eccdb42b6481424c60f59aa326547f"
-        ))
-        .unwrap();
-        let node_b_key = SecretKey::from_byte_array(&hex!(
-            "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
-        ))
-        .unwrap();
-
-        let src_id = node_id(&public_key_from_signing_key(&node_a_key));
-        let dest_id = node_id(&public_key_from_signing_key(&node_b_key));
-
-        let encoded = &hex!(
-            "00000000000000000000000000000000088b3d4342774649325f313964a39e55ea96c005ad52be8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08dab84102ed931f66d1492acb308fa1c6715b9d139b81acbdcc"
-        );
-        // # read-key = 0x00000000000000000000000000000000
-        let read_key = [0; 16];
-        let packet = DecodedPacket::decode(&dest_id, &read_key, encoded).unwrap();
-        let expected = DecodedPacket::Ordinary(Ordinary {
-            src_id,
-            message: Message::Ping(PingMessage {
-                req_id: Bytes::from(hex!("00000001").as_slice()),
-                enr_seq: 2,
-            }),
-        });
-
-        assert_eq!(packet, expected);
     }
 
     /// Ping message packet (flag 0) from https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire-test-vectors.md

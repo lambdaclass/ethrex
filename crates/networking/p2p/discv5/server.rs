@@ -171,7 +171,7 @@ impl DiscoveryServer {
     }
 
     async fn handle_who_are_you(&mut self, packet: Packet) -> Result<(), DiscoveryServerError> {
-        let whoareyou: WhoAreYou = WhoAreYou::decode(&packet.header.authdata)?;
+        let whoareyou: WhoAreYou = WhoAreYou::decode(&packet)?;
         let nonce = packet.header.nonce;
         tracing::info!(nonce=?nonce, id_nonce=?whoareyou.id_nonce, enr_seq=?whoareyou.enr_seq,  "WhoAreYou packet received");
         let Some((node, message, _)) = self.messages_by_nonce.swap_remove(&nonce) else {
