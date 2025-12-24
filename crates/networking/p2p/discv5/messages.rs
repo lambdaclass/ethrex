@@ -248,7 +248,13 @@ impl DecodedPacket {
                 buf.put_slice(&encrypted_message);
             }
             DecodedPacket::WhoAreYou(who_are_you) => {
-                who_are_you.encode_header(buf, &mut cipher, nonce)?;
+                let (mut static_header, mut authdata, encrypted_message) =
+                    who_are_you.encode(nonce)?;
+                cipher.try_apply_keystream(&mut static_header)?;
+                buf.put_slice(&static_header);
+                cipher.try_apply_keystream(&mut authdata)?;
+                buf.put_slice(&authdata);
+                buf.put_slice(&encrypted_message);
             }
             DecodedPacket::Handshake(handshake) => {
                 let (mut static_header, mut authdata, encrypted_message) =
@@ -401,32 +407,27 @@ pub struct WhoAreYou {
 }
 
 impl WhoAreYou {
-    fn encode_header<T: StreamCipher>(
-        &self,
-        buf: &mut dyn BufMut,
-        cipher: &mut T,
-        nonce: &[u8],
-    ) -> Result<(), PacketCodecError> {
-        let mut static_header = Vec::new();
-        static_header.put_slice(PROTOCOL_ID);
-        static_header.put_slice(&PROTOCOL_VERSION.to_be_bytes());
-        static_header.put_u8(0x01);
-        static_header.put_slice(nonce);
-        static_header.put_slice(&24u16.to_be_bytes());
-        cipher.try_apply_keystream(&mut static_header)?;
-        buf.put_slice(&static_header);
-
-        let mut authdata = Vec::new();
-        self.encode(&mut authdata);
-        cipher.try_apply_keystream(&mut authdata)?;
-        buf.put_slice(&authdata);
-
+    fn encode_authdata(&self, buf: &mut dyn BufMut) -> Result<(), PacketCodecError> {
+        buf.put_slice(&self.id_nonce.to_be_bytes());
+        buf.put_slice(&self.enr_seq.to_be_bytes());
         Ok(())
     }
 
-    fn encode(&self, buf: &mut dyn BufMut) {
-        buf.put_slice(&self.id_nonce.to_be_bytes());
-        buf.put_slice(&self.enr_seq.to_be_bytes());
+    fn encode(&self, nonce: &[u8; 12]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), PacketCodecError> {
+        let mut authdata = Vec::new();
+        self.encode_authdata(&mut authdata)?;
+
+        let authdata_size: u16 =
+            u16::try_from(authdata.len()).map_err(|_| PacketCodecError::InvalidSize)?;
+
+        let mut static_header = Vec::new();
+        static_header.put_slice(PROTOCOL_ID);
+        static_header.put_slice(&PROTOCOL_VERSION.to_be_bytes());
+        static_header.put_u8(0x1);
+        static_header.put_slice(nonce);
+        static_header.put_slice(&authdata_size.to_be_bytes());
+
+        Ok((static_header, authdata, Vec::new()))
     }
 
     pub fn decode(packet: &Packet) -> Result<WhoAreYou, PacketCodecError> {
@@ -475,8 +476,7 @@ impl Handshake {
     }
 
     /// Encodes the handshake returning the header, authdata and encrypted_message
-    #[allow(clippy::type_complexity)]
-    fn encode(
+    pub fn encode(
         &self,
         nonce: &[u8; 12],
         masking_iv: &[u8],
@@ -914,10 +914,10 @@ mod tests {
     use super::*;
     use crate::{
         discv5::{
-            codec::Discv5Codec,
             messages::{DecodedPacket, Message, Ordinary, PingMessage, WhoAreYou},
-            session::create_id_signature,
+            session::{build_challenge_data, create_id_signature, derive_session_keys},
         },
+        rlpx::utils::compress_pubkey,
         types::NodeRecordPairs,
         utils::{node_id, public_key_from_signing_key},
     };
@@ -927,7 +927,6 @@ mod tests {
     use hex_literal::hex;
     use secp256k1::SecretKey;
     use std::net::Ipv4Addr;
-    use tokio_util::codec::Decoder as _;
 
     // node-a-key = 0xeef77acb6c6a6eebc5b363a475ac583ec7eccdb42b6481424c60f59aa326547f
     // node-b-key = 0x66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628
@@ -1061,6 +1060,115 @@ mod tests {
         assert_eq!(buf.to_vec(), expected_encoded);
     }
 
+    #[test]
+    fn decode_whoareyou_packet() {
+        // # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
+        // # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
+        // # whoareyou.challenge-data = 0x000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000
+        // # whoareyou.request-nonce = 0x0102030405060708090a0b0c
+        // # whoareyou.id-nonce = 0x0102030405060708090a0b0c0d0e0f10
+        // # whoareyou.enr-seq = 0
+        //
+        // 00000000000000000000000000000000088b3d434277464933a1ccc59f5967ad
+        // 1d6035f15e528627dde75cd68292f9e6c27d6b66c8100a873fcbaed4e16b8d
+        let node_b_key = SecretKey::from_byte_array(&hex!(
+            "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
+        ))
+        .unwrap();
+
+        let dest_id = node_id(&public_key_from_signing_key(&node_b_key));
+
+        let encoded = &hex!(
+            "00000000000000000000000000000000088b3d434277464933a1ccc59f5967ad1d6035f15e528627dde75cd68292f9e6c27d6b66c8100a873fcbaed4e16b8d"
+        );
+
+        let packet = Packet::decode(&dest_id, encoded).unwrap();
+        assert_eq!([0; 16], packet.masking_iv);
+        assert_eq!(0x01, packet.header.flag);
+        assert_eq!(hex!("0102030405060708090a0b0c"), packet.header.nonce);
+
+        let challenge_data = build_challenge_data(
+            &packet.masking_iv,
+            &packet.header.static_header,
+            &packet.header.authdata,
+        );
+
+        let expected_challenge_data = &hex!(
+            "000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000"
+        );
+        assert_eq!(challenge_data, expected_challenge_data);
+        let decoded_message = WhoAreYou::decode(&packet).unwrap();
+
+        let expected_message = WhoAreYou {
+            id_nonce: u128::from_be_bytes(
+                hex!("0102030405060708090a0b0c0d0e0f10")
+                    .to_vec()
+                    .try_into()
+                    .unwrap(),
+            ),
+            enr_seq: 0,
+        };
+
+        assert_eq!(decoded_message, expected_message);
+    }
+
+    #[test]
+    fn encode_whoareyou_packet() {
+        // # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
+        // # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
+        // # whoareyou.challenge-data = 0x000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000
+        // # whoareyou.request-nonce = 0x0102030405060708090a0b0c
+        // # whoareyou.id-nonce = 0x0102030405060708090a0b0c0d0e0f10
+        // # whoareyou.enr-seq = 0
+        //
+        // 00000000000000000000000000000000088b3d434277464933a1ccc59f5967ad
+        // 1d6035f15e528627dde75cd68292f9e6c27d6b66c8100a873fcbaed4e16b8d
+        let node_b_key = SecretKey::from_byte_array(&hex!(
+            "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
+        ))
+        .unwrap();
+
+        let who_are_you = WhoAreYou {
+            id_nonce: u128::from_be_bytes(
+                hex!("0102030405060708090a0b0c0d0e0f10")
+                    .to_vec()
+                    .try_into()
+                    .unwrap(),
+            ),
+            enr_seq: 0,
+        };
+
+        let dest_id = node_id(&public_key_from_signing_key(&node_b_key));
+
+        let masking_iv = [0; 16];
+        let nonce = hex!("0102030405060708090a0b0c");
+
+        let (static_header, authdata, encrypted_message) = who_are_you.encode(&nonce).unwrap();
+
+        let header = PacketHeader {
+            static_header: static_header.try_into().unwrap(),
+            flag: 0x01,
+            nonce,
+            authdata,
+            header_end_offset: 23,
+        };
+
+        let packet = Packet {
+            masking_iv,
+            header,
+            encrypted_message,
+        };
+
+        let expected_encoded = &hex!(
+            "00000000000000000000000000000000088b3d434277464933a1ccc59f5967ad1d6035f15e528627dde75cd68292f9e6c27d6b66c8100a873fcbaed4e16b8d"
+        );
+
+        let mut buf = BytesMut::new();
+        packet.encode(&mut buf, &dest_id).unwrap();
+
+        assert_eq!(buf.to_vec(), expected_encoded);
+    }
+
     /// Ping handshake packet (flag 2) from https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire-test-vectors.md
     #[test]
     fn encode_ping_handshake_packet() {
@@ -1093,11 +1201,19 @@ mod tests {
             "eef77acb6c6a6eebc5b363a475ac583ec7eccdb42b6481424c60f59aa326547f"
         ))
         .unwrap();
+        let src_id = node_id(&public_key_from_signing_key(&node_a_key));
+        let expected_src_id = H256::from_slice(&hex!(
+            "aaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb"
+        ));
+        assert_eq!(src_id, expected_src_id);
+
         let node_b_key = SecretKey::from_byte_array(&hex!(
             "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
         ))
         .unwrap();
-        let dest_id = node_id(&public_key_from_signing_key(&node_b_key));
+        let dest_pub_key = public_key_from_signing_key(&node_b_key);
+        let dest_pubkey = compress_pubkey(dest_pub_key).unwrap();
+        let dest_id = node_id(&dest_pub_key);
 
         let message = Message::Ping(PingMessage {
             req_id: Bytes::from(hex!("00000001").as_slice()),
@@ -1106,16 +1222,33 @@ mod tests {
 
         let challenge_data = hex!("000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000001").to_vec();
 
-        let ephemeral_pubkey =
-            hex!("039a003ba6517b473fa0cd74aefe99dadfdb34627f90fec6362df85803908f53a5").to_vec();
+        let ephemeral_key = SecretKey::from_byte_array(&hex!(
+            "0288ef00023598499cb6c940146d050d2b1fb914198c327f76aad590bead68b6"
+        ))
+        .unwrap();
+        let expected_ephemeral_pubkey =
+            hex!("039a003ba6517b473fa0cd74aefe99dadfdb34627f90fec6362df85803908f53a5");
+
+        let ephemeral_pubkey = ephemeral_key.public_key(secp256k1::SECP256K1).serialize();
+
+        assert_eq!(ephemeral_pubkey, expected_ephemeral_pubkey);
+
+        let session = derive_session_keys(
+            &ephemeral_key,
+            &dest_pubkey,
+            &src_id,
+            &dest_id,
+            &challenge_data,
+        );
+
+        let expected_read_key = hex!("4f9fac6de7567d1e3b1241dffe90f662");
+        assert_eq!(session.outbound_key, expected_read_key);
 
         let signature =
             create_id_signature(&node_a_key, &challenge_data, &ephemeral_pubkey, &dest_id);
 
         let handshake = Handshake {
-            src_id: H256::from_slice(&hex!(
-                "aaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb"
-            )),
+            src_id,
             id_signature: signature.serialize_compact().to_vec(),
             eph_pubkey: hex!("039a003ba6517b473fa0cd74aefe99dadfdb34627f90fec6362df85803908f53a5")
                 .to_vec(),
@@ -1126,9 +1259,9 @@ mod tests {
         let masking_iv = [0; 16];
         let nonce = hex!("ffffffffffffffffffffffff");
 
-        let read_key = hex!("4f9fac6de7567d1e3b1241dffe90f662");
-        let (static_header, authdata, encrypted_message) =
-            handshake.encode(&nonce, &masking_iv, &read_key).unwrap();
+        let (static_header, authdata, encrypted_message) = handshake
+            .encode(&nonce, &masking_iv, &expected_read_key)
+            .unwrap();
 
         let header = PacketHeader {
             static_header: static_header.try_into().unwrap(),
@@ -1333,86 +1466,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(buf, encoded.to_vec());
-    }
-
-    #[test]
-    fn encode_whoareyou_packet() {
-        // # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
-        // # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
-        // # whoareyou.challenge-data = 0x000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000
-        // # whoareyou.request-nonce = 0x0102030405060708090a0b0c
-        // # whoareyou.id-nonce = 0x0102030405060708090a0b0c0d0e0f10
-        // # whoareyou.enr-seq = 0
-        //
-        // 00000000000000000000000000000000088b3d434277464933a1ccc59f5967ad
-        // 1d6035f15e528627dde75cd68292f9e6c27d6b66c8100a873fcbaed4e16b8d
-        let node_b_key = SecretKey::from_byte_array(&hex!(
-            "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
-        ))
-        .unwrap();
-
-        let packet = DecodedPacket::WhoAreYou(WhoAreYou {
-            id_nonce: u128::from_be_bytes(
-                hex!("0102030405060708090a0b0c0d0e0f10")
-                    .to_vec()
-                    .try_into()
-                    .unwrap(),
-            ),
-            enr_seq: 0,
-        });
-
-        let dest_id = node_id(&public_key_from_signing_key(&node_b_key));
-        let mut buf = Vec::new();
-
-        let _ = packet.encode(
-            &mut buf,
-            0,
-            &hex!("0102030405060708090a0b0c"),
-            &dest_id,
-            &[],
-        );
-        let expected = &hex!(
-            "00000000000000000000000000000000088b3d434277464933a1ccc59f5967ad1d6035f15e528627dde75cd68292f9e6c27d6b66c8100a873fcbaed4e16b8d"
-        );
-
-        assert_eq!(buf, expected);
-    }
-
-    #[test]
-    fn decode_whoareyou_packet() {
-        // # src-node-id = 0xaaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb
-        // # dest-node-id = 0xbbbb9d047f0488c0b5a93c1c3f2d8bafc7c8ff337024a55434a0d0555de64db9
-        // # whoareyou.challenge-data = 0x000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000
-        // # whoareyou.request-nonce = 0x0102030405060708090a0b0c
-        // # whoareyou.id-nonce = 0x0102030405060708090a0b0c0d0e0f10
-        // # whoareyou.enr-seq = 0
-        //
-        // 00000000000000000000000000000000088b3d434277464933a1ccc59f5967ad
-        // 1d6035f15e528627dde75cd68292f9e6c27d6b66c8100a873fcbaed4e16b8d
-        let node_b_key = SecretKey::from_byte_array(&hex!(
-            "66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628"
-        ))
-        .unwrap();
-
-        let dest_id = node_id(&public_key_from_signing_key(&node_b_key));
-        let mut codec = Discv5Codec::new(dest_id);
-
-        let mut encoded = BytesMut::from(hex!(
-            "00000000000000000000000000000000088b3d434277464933a1ccc59f5967ad1d6035f15e528627dde75cd68292f9e6c27d6b66c8100a873fcbaed4e16b8d"
-        ).as_slice());
-        let _packet = codec.decode(&mut encoded).unwrap();
-        let _expected = Some(DecodedPacket::WhoAreYou(WhoAreYou {
-            id_nonce: u128::from_be_bytes(
-                hex!("0102030405060708090a0b0c0d0e0f10")
-                    .to_vec()
-                    .try_into()
-                    .unwrap(),
-            ),
-            enr_seq: 0,
-        }));
-
-        // TODO, fix this test
-        //assert_eq!(packet, expected);
     }
 
     /// Ping message packet (flag 0) from https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire-test-vectors.md
