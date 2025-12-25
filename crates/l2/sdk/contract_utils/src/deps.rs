@@ -1,9 +1,11 @@
 use std::{
     path::Path,
     process::{Command, ExitStatus},
+    thread,
+    time::Duration,
 };
 
-use tracing::{info, trace};
+use tracing::{info, trace, warn};
 
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
@@ -23,6 +25,55 @@ pub fn git_clone(
 ) -> Result<ExitStatus, GitError> {
     info!(repository_url = %repository_url, outdir = %outdir, branch = ?branch, "Cloning or updating git repository");
 
+    const MAX_RETRIES: u32 = 3;
+    const INITIAL_RETRY_DELAY_SECS: u64 = 5;
+
+    let mut last_error = None;
+    for attempt in 0..=MAX_RETRIES {
+        if attempt > 0 {
+            let delay = INITIAL_RETRY_DELAY_SECS * (1 << (attempt - 1)); // Exponential backoff: 5s, 10s, 20s
+            warn!(
+                attempt = attempt,
+                max_retries = MAX_RETRIES,
+                delay_secs = delay,
+                "Retrying git operation after failure"
+            );
+            thread::sleep(Duration::from_secs(delay));
+        }
+
+        match git_clone_internal(repository_url, outdir, branch, submodules) {
+            Ok(status) => return Ok(status),
+            Err(e) => {
+                last_error = Some(e);
+                // Only retry on network-related errors
+                if attempt < MAX_RETRIES {
+                    continue;
+                }
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| {
+        GitError::DependencyError("Failed to clone repository after retries".to_string())
+    }))
+}
+
+fn git_clone_internal(
+    repository_url: &str,
+    outdir: &str,
+    branch: Option<&str>,
+    submodules: bool,
+) -> Result<ExitStatus, GitError> {
+    // Helper to create a git command with timeout configuration
+    // This helps with CI environments that may have slower network connections
+    let git_cmd_with_timeouts = || {
+        let mut cmd = Command::new("git");
+        cmd.env("GIT_HTTP_LOW_SPEED_LIMIT", "1000")
+            .env("GIT_HTTP_LOW_SPEED_TIME", "300")
+            .env("GIT_HTTP_TIMEOUT", "300");
+        cmd
+    };
+
     if Path::new(outdir).join(".git").exists() {
         info!(outdir = %outdir, "Found existing git repository, updating...");
 
@@ -30,7 +81,7 @@ pub fn git_clone(
             b.to_string()
         } else {
             // Look for default branch name (could be main, master or other)
-            let output = Command::new("git")
+            let output = git_cmd_with_timeouts()
                 .current_dir(outdir)
                 .arg("symbolic-ref")
                 .arg("refs/remotes/origin/HEAD")
@@ -62,23 +113,22 @@ pub fn git_clone(
         trace!(branch = %branch_name, "Updating to branch");
 
         // Fetch
-        let fetch_status = Command::new("git")
+        let fetch_output = git_cmd_with_timeouts()
             .current_dir(outdir)
             .args(["fetch", "origin"])
-            .spawn()
-            .map_err(|err| GitError::DependencyError(format!("Failed to spawn git fetch: {err}")))?
-            .wait()
+            .output()
             .map_err(|err| {
-                GitError::DependencyError(format!("Failed to wait for git fetch: {err}"))
+                GitError::DependencyError(format!("Failed to spawn git fetch: {err}"))
             })?;
-        if !fetch_status.success() {
+        if !fetch_output.status.success() {
+            let stderr = String::from_utf8_lossy(&fetch_output.stderr);
             return Err(GitError::DependencyError(format!(
-                "git fetch failed for {outdir}"
+                "git fetch failed for {outdir}: {stderr}"
             )));
         }
 
         // Checkout to branch
-        let checkout_status = Command::new("git")
+        let checkout_status = git_cmd_with_timeouts()
             .current_dir(outdir)
             .arg("checkout")
             .arg(&branch_name)
@@ -97,7 +147,7 @@ pub fn git_clone(
         }
 
         // Reset branch to origin
-        let reset_status = Command::new("git")
+        let reset_status = git_cmd_with_timeouts()
             .current_dir(outdir)
             .arg("reset")
             .arg("--hard")
@@ -117,7 +167,7 @@ pub fn git_clone(
 
         // Update submodules
         if submodules {
-            let submodule_status = Command::new("git")
+            let submodule_status = git_cmd_with_timeouts()
                 .current_dir(outdir)
                 .arg("submodule")
                 .arg("update")
@@ -145,9 +195,8 @@ pub fn git_clone(
         Ok(reset_status)
     } else {
         trace!(repository_url = %repository_url, outdir = %outdir, branch = ?branch, "Cloning git repository");
-        let mut git_cmd = Command::new("git");
-
-        let git_clone_cmd = git_cmd.arg("clone").arg(repository_url);
+        let mut git_clone_cmd = git_cmd_with_timeouts();
+        git_clone_cmd.arg("clone").arg(repository_url);
 
         if let Some(branch) = branch {
             git_clone_cmd.arg("--branch").arg(branch);
@@ -157,11 +206,18 @@ pub fn git_clone(
             git_clone_cmd.arg("--recurse-submodules");
         }
 
-        git_clone_cmd
+        let output = git_clone_cmd
             .arg(outdir)
-            .spawn()
-            .map_err(|err| GitError::DependencyError(format!("Failed to spawn git: {err}")))?
-            .wait()
-            .map_err(|err| GitError::DependencyError(format!("Failed to wait for git: {err}")))
+            .output()
+            .map_err(|err| GitError::DependencyError(format!("Failed to spawn git: {err}")))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(GitError::DependencyError(format!(
+                "git clone failed for {repository_url}: {stderr}"
+            )));
+        }
+
+        Ok(output.status)
     }
 }
