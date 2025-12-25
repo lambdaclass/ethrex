@@ -525,6 +525,8 @@ impl RLPEncode for ENRResponseMessage {
 
 #[cfg(test)]
 mod tests {
+    use crate::types::NodeRecordPairs;
+
     use super::*;
     use bytes::Bytes;
     use ethrex_common::{H256, H264};
@@ -759,11 +761,11 @@ mod tests {
             (String::from("tcp").into(), tcp_rlp.clone().into()),
             (String::from("udp").into(), udp_rlp.clone().into()),
         ];
-        let node_record = NodeRecord {
+        let node_record = NodeRecord::new(
             signature,
             seq,
-            pairs,
-        };
+            NodeRecordPairs::try_from_raw_pairs(&pairs).unwrap(),
+        );
         let msg = Message::ENRResponse(ENRResponseMessage {
             request_hash,
             node_record,
@@ -885,11 +887,11 @@ mod tests {
             (String::from("tcp").into(), tcp_rlp.clone().into()),
             (String::from("udp").into(), udp_rlp.clone().into()),
         ];
-        let node_record = NodeRecord {
+        let node_record = NodeRecord::new(
             signature,
             seq,
-            pairs,
-        };
+            NodeRecordPairs::try_from_raw_pairs(&pairs).unwrap(),
+        );
         let expected = Message::ENRResponse(ENRResponseMessage {
             request_hash,
             node_record,
