@@ -1166,6 +1166,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
+ "hex-literal",
  "k256",
  "kzg-rs",
  "lazy_static",
@@ -1214,6 +1215,7 @@ dependencies = [
  "serde_with",
  "sha3",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]
