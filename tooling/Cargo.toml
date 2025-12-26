@@ -5,12 +5,13 @@ members = [
   "ef_tests/state",
   "ef_tests/state_v2",
   "hive_report",
+  "levm/runner",
   "load_test",
   "loc",
   "migrations",
   "reorgs",
 ]
-exclude = ["ef_tests/state"]
+exclude = ["ef_tests/state", "levm/bench/revm_comparison"]
 resolver = "2"
 
 [workspace.package]
@@ -71,6 +72,7 @@ clap = { version = "4.3", features = ["derive", "env"] }
 clap_complete = "4.5.17"
 eyre = "0.6.12"
 rustc-hex = "2.1.0"
+rustc-hash = "2.1.1"
 url = { version = "2.5.4", features = ["serde"] }
 kzg-rs = "0.2.6"
 libsql = "0.9.10"
@@ -100,6 +102,9 @@ codegen-units = 1
 [profile.release-with-debug]
 inherits = "release"
 debug = 2
+
+[workspace.lints.clippy]
+redundant_clone = "warn"
 
 [patch.crates-io]
 secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.30.0-sp1-5.0.0" }

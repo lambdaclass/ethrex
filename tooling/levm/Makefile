@@ -6,22 +6,22 @@ help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
 test: ## 🧪 Runs all tests except Ethereum tests
-	cargo test -p ethrex-levm
+	cargo test --manifest-path ../../Cargo.toml -p ethrex-levm
 
 lint: ## 🧹 Linter check
-	cargo clippy --all-targets --all-features -- -D warnings
+	cargo clippy --manifest-path ../../Cargo.toml -p ethrex-levm --all-targets --all-features -- -D warnings
+
+clippy: lint ## 🧹 Alias for lint
 
 fmt: ## 📄 Runs rustfmt
-	cargo fmt --all
+	cargo fmt --manifest-path ../../Cargo.toml --all
 
 ###### EF Tests ######
 download-evm-ef-tests: ## 📥 Download EF Tests
-	cd ../../../tooling/ef_tests/state && \
-	make download-evm-ef-tests flags="$(flags)"
+	$(MAKE) -C ../ef_tests/state download-evm-ef-tests flags="$(flags)"
 
 run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
-	cd ../../../tooling/ef_tests/state && \
-	make run-evm-ef-tests flags="$(flags)"
+	$(MAKE) -C ../ef_tests/state run-evm-ef-tests flags="$(flags)"
 
 ###### Benchmarks ######
 REPETITIONS := 10000
@@ -55,26 +55,23 @@ endef
 
 define run_benchmark_ci
 	@printf "%s\n" "main_revm$(1)"
-	@../../../main/benchmark revm $(1) 1 $($(3))
+	@../../main/benchmark revm $(1) 1 $($(3))
 	@printf "%s\n" "main_levm$(1)"
-	@../../../main/benchmark levm $(1) 1 $($(3))
+	@../../main/benchmark levm $(1) 1 $($(3))
 	@printf "%s\n" "pr_revm$(1)"
-	@../../../pr/benchmark revm $(1) 1 $($(3))
+	@../../pr/benchmark revm $(1) 1 $($(3))
 	@printf "%s\n" "pr_levm_$(1)"
-	@../../../pr/benchmark levm $(1) 1 $($(3))
-	hyperfine -w 5 -r 10 -N --export-markdown ../../../benchmark_comparison_results/$(1).md \
-		-n "main_revm_$(1)" "../../../main/benchmark revm $(1) $($(2)) $($(3))" \
-		-n "main_levm_$(1)" "../../../main/benchmark levm $(1) $($(2)) $($(3))" \
-		-n "pr_revm_$(1)" "../../../pr/benchmark revm $(1) $($(2)) $($(3))" \
-		-n "pr_levm_$(1)" "../../../pr/benchmark levm $(1) $($(2)) $($(3))"
+	@../../pr/benchmark levm $(1) 1 $($(3))
+	hyperfine -w 5 -r 10 -N --export-markdown ../../benchmark_comparison_results/$(1).md \
+		-n "main_revm_$(1)" "../../main/benchmark revm $(1) $($(2)) $($(3))" \
+		-n "main_levm_$(1)" "../../main/benchmark levm $(1) $($(2)) $($(3))" \
+		-n "pr_revm_$(1)" "../../pr/benchmark revm $(1) $($(2)) $($(3))" \
+		-n "pr_levm_$(1)" "../../pr/benchmark levm $(1) $($(2)) $($(3))"
 	@echo
 endef
 
 compile-contracts:
-	cd ../../../ && \
-	cargo run --package revm_comparison \
-	--bin compile \
-	--manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml
+	CARGO_TARGET_DIR=target cargo run --manifest-path bench/revm_comparison/Cargo.toml --bin compile
 
 revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and factorial for both REVM and LEVM
 	$(MAKE) build-revm-comparison
@@ -92,7 +89,7 @@ revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and facto
 	$(call run_benchmark,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
 
 revm-comparison-ci: compile-contracts
-	mkdir -p ../../../benchmark_comparison_results
+	mkdir -p ../../benchmark_comparison_results
 	$(call run_benchmark_ci,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
 	$(call run_benchmark_ci,FibonacciRecursive,REPETITIONS_SLOW,BENCH_FIB_REC_ITERATIONS)
 	$(call run_benchmark_ci,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
@@ -123,7 +120,9 @@ flamegraph-levm-benchmark:
 
 flamegraph-levm-bench-generic:
 	mkdir -p flamegraph_levm_benchmark
-	cargo flamegraph --root --package revm_comparison --bin benchmark --output flamegraph_levm_benchmark/flamegraph_levm_$(name).svg -- levm $(name) $(repetitions) $(iterations)
+	cd bench/revm_comparison && \
+		CARGO_TARGET_DIR=../../target cargo flamegraph --root --bin benchmark \
+		--output ../../flamegraph_levm_benchmark/flamegraph_levm_$(name).svg -- levm $(name) $(repetitions) $(iterations)
 
 build-revm-comparison:
 	cd bench/revm_comparison && \
@@ -136,7 +135,7 @@ build-revm-comparison-debuginfo:
 		cargo build --release --bin benchmark
 
 ###### Build Client with LEVM ######
-EFTEST_DIR := ../../../tooling/ef_tests/state
+EFTEST_DIR := ../ef_tests/state
 VECTORS_DIR := $(EFTEST_DIR)/vectors
 
 download-state-tests: ## 📥 Download and setup state tests fixtures

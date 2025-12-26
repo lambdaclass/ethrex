@@ -20,9 +20,9 @@ There is a large amount of docs in comments inside the code. For more informatio
 
 We run `EELS`, `ethereum/tests` and `legacyTests` both in their [state](../../../tooling/ef_tests/state/README.md) and [blockchain](../../../tooling/ef_tests/blockchain/README.md) form. More info on each README.
 
-For running state tests from the current directory use:
+For running state tests from the repo root use:
 ```
-make download-evm-ef-tests run-evm-ef-tests QUIET=true
+make -C tooling/levm download-evm-ef-tests run-evm-ef-tests QUIET=true
 ```
 
 ## Useful Links

@@ -11,12 +11,12 @@ name = "revm_comparison"
 path = "src/lib.rs"
 
 [dependencies]
-ethrex-levm = { path = "../../" }
-ethrex-vm = { path = "../../.." }
-ethrex-common = { path = "../../../../common" }
-ethrex-crypto = { path = "../../../../common/crypto" }
-ethrex-storage = { path = "../../../../storage" }
-ethrex-blockchain = { path = "../../../../blockchain" }
+ethrex-levm = { path = "../../../../crates/vm/levm" }
+ethrex-vm = { path = "../../../../crates/vm" }
+ethrex-common = { path = "../../../../crates/common" }
+ethrex-crypto = { path = "../../../../crates/common/crypto" }
+ethrex-storage = { path = "../../../../crates/storage" }
+ethrex-blockchain = { path = "../../../../crates/blockchain" }
 rustc-hash = "2.1.1"
 hex = "0.4.3"
 bytes = { version = "1.6.0", features = ["serde"] }

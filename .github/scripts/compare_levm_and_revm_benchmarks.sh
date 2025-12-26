@@ -4,8 +4,8 @@
 # only for the cases where the difference on mean time is higher than 10%.
 
 error_margin=0.05
-          for f in ../../../benchmark_comparison_results/*; do
-            file_name="${f##../../../benchmark_comparison_results/}"
+          for f in benchmark_comparison_results/*; do
+            file_name="${f##benchmark_comparison_results/}"
             file="${file_name%.md}"
             awk -F'|' -v file="$file" -v error_margin="$error_margin" '      
             /`main_revm_/ {
@@ -54,20 +54,20 @@ error_margin=0.05
                 print "No results."
               }
             }
-            ' "$f" >> ../../../result.md
-            echo "#### Benchmark Results: $file" >> ../../../detailed_result.md
-            cat $f >> ../../../detailed_result.md
+            ' "$f" >> result.md
+            echo "#### Benchmark Results: $file" >> detailed_result.md
+            cat $f >> detailed_result.md
           done
 
-          if [ ! -s ../../../result.md ]; then
-            echo "# Benchmark Results Comparison" > ../../../result.md
-            echo "No significant difference was registered for any benchmark run." >> ../../../result.md
+          if [ ! -s result.md ]; then
+            echo "# Benchmark Results Comparison" > result.md
+            echo "No significant difference was registered for any benchmark run." >> result.md
           else
-            sed -i '1i\# Benchmark Results Comparison' ../../../result.md
+            sed -i '1i\# Benchmark Results Comparison' result.md
           fi
 
-          echo -e "\n" >> ../../../result.md
-          echo -e "<details>\n" >> ../../../result.md
-          echo -e "<summary>Detailed Results</summary>\n \n" >> ../../../result.md
-          cat ../../../detailed_result.md >> ../../../result.md
-          echo -e "</details>\n" >> ../../../result.md
+          echo -e "\n" >> result.md
+          echo -e "<details>\n" >> result.md
+          echo -e "<summary>Detailed Results</summary>\n \n" >> result.md
+          cat detailed_result.md >> result.md
+          echo -e "</details>\n" >> result.md
