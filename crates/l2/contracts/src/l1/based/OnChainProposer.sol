@@ -135,7 +135,8 @@ contract OnChainProposer is
         bytes32 commitHash,
         bytes32 genesisStateRoot,
         address sequencer_registry,
-        uint256 chainId
+        uint256 chainId,
+        address bridge
     ) public initializer {
         VALIDIUM = _validium;
 
@@ -199,16 +200,6 @@ contract OnChainProposer is
 
         OwnableUpgradeable.__Ownable_init(owner);
 
-        emit VerificationKeyUpgraded("SP1", commitHash, sp1Vk);
-        emit VerificationKeyUpgraded("RISC0", commitHash, risc0Vk);
-    }
-
-    /// @inheritdoc IOnChainProposer
-    function initializeBridgeAddress(address bridge) public onlyOwner {
-        require(
-            BRIDGE == address(0),
-            "OnChainProposer: bridge already initialized"
-        );
         require(
             bridge != address(0),
             "OnChainProposer: bridge is the zero address"
@@ -218,6 +209,9 @@ contract OnChainProposer is
             "OnChainProposer: bridge is the contract address"
         );
         BRIDGE = bridge;
+
+        emit VerificationKeyUpgraded("SP1", commitHash, sp1Vk);
+        emit VerificationKeyUpgraded("RISC0", commitHash, risc0Vk);
     }
 
     /// @inheritdoc IOnChainProposer
