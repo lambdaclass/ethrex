@@ -2,14 +2,13 @@
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
-use ethrex_rlp::encode::RLPEncode;
-use ethrex_rlp::structs;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, structs};
 use serde::{Deserialize, Serialize};
 
 use crate::constants::EMPTY_BLOCK_ACCESS_LIST_HASH;
 use crate::utils::keccak;
 
-#[derive(Default, Debug, Serialize, Deserialize, Clone)]
+#[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct StorageChange {
     block_access_index: usize,
     post_value: U256,
@@ -24,7 +23,23 @@ impl RLPEncode for StorageChange {
     }
 }
 
-#[derive(Default, Debug, Serialize, Deserialize, Clone)]
+impl RLPDecode for StorageChange {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), ethrex_rlp::error::RLPDecodeError> {
+        let decoder = structs::Decoder::new(rlp)?;
+        let (block_access_index, decoder) = decoder.decode_field("block_access_index")?;
+        let (post_value, decoder) = decoder.decode_field("post_value")?;
+        let remaining = decoder.finish()?;
+        Ok((
+            Self {
+                block_access_index,
+                post_value,
+            },
+            remaining,
+        ))
+    }
+}
+
+#[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct SlotChange {
     slot: U256,
     slot_changes: Vec<StorageChange>,
@@ -39,7 +54,17 @@ impl RLPEncode for SlotChange {
     }
 }
 
-#[derive(Default, Debug, Serialize, Deserialize, Clone)]
+impl RLPDecode for SlotChange {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), ethrex_rlp::error::RLPDecodeError> {
+        let decoder = structs::Decoder::new(rlp)?;
+        let (slot, decoder) = decoder.decode_field("slot")?;
+        let (slot_changes, decoder) = decoder.decode_field("slot_changes")?;
+        let remaining = decoder.finish()?;
+        Ok((Self { slot, slot_changes }, remaining))
+    }
+}
+
+#[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct BalanceChange {
     block_access_index: usize,
     post_balance: U256,
@@ -54,7 +79,23 @@ impl RLPEncode for BalanceChange {
     }
 }
 
-#[derive(Default, Debug, Serialize, Deserialize, Clone)]
+impl RLPDecode for BalanceChange {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), ethrex_rlp::error::RLPDecodeError> {
+        let decoder = structs::Decoder::new(rlp)?;
+        let (block_access_index, decoder) = decoder.decode_field("block_access_index")?;
+        let (post_balance, decoder) = decoder.decode_field("post_balance")?;
+        let remaining = decoder.finish()?;
+        Ok((
+            Self {
+                block_access_index,
+                post_balance,
+            },
+            remaining,
+        ))
+    }
+}
+
+#[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct NonceChange {
     block_access_index: usize,
     post_nonce: u64,
@@ -69,7 +110,23 @@ impl RLPEncode for NonceChange {
     }
 }
 
-#[derive(Default, Debug, Serialize, Deserialize, Clone)]
+impl RLPDecode for NonceChange {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), ethrex_rlp::error::RLPDecodeError> {
+        let decoder = structs::Decoder::new(rlp)?;
+        let (block_access_index, decoder) = decoder.decode_field("block_access_index")?;
+        let (post_nonce, decoder) = decoder.decode_field("post_nonce")?;
+        let remaining = decoder.finish()?;
+        Ok((
+            Self {
+                block_access_index,
+                post_nonce,
+            },
+            remaining,
+        ))
+    }
+}
+
+#[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct CodeChange {
     block_access_index: usize,
     new_code: Bytes,
@@ -84,7 +141,23 @@ impl RLPEncode for CodeChange {
     }
 }
 
-#[derive(Default, Debug, Serialize, Deserialize, Clone)]
+impl RLPDecode for CodeChange {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), ethrex_rlp::error::RLPDecodeError> {
+        let decoder = structs::Decoder::new(rlp)?;
+        let (block_access_index, decoder) = decoder.decode_field("block_access_index")?;
+        let (new_code, decoder) = decoder.decode_field("new_code")?;
+        let remaining = decoder.finish()?;
+        Ok((
+            Self {
+                block_access_index,
+                new_code,
+            },
+            remaining,
+        ))
+    }
+}
+
+#[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct AccountChanges {
     address: Address,
     storage_changes: Vec<SlotChange>,
@@ -120,7 +193,31 @@ impl RLPEncode for AccountChanges {
     }
 }
 
-#[derive(Default, Debug, Serialize, Deserialize, Clone)]
+impl RLPDecode for AccountChanges {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), ethrex_rlp::error::RLPDecodeError> {
+        let decoder = structs::Decoder::new(rlp)?;
+        let (address, decoder) = decoder.decode_field("address")?;
+        let (storage_changes, decoder) = decoder.decode_field("storage_changes")?;
+        let (storage_reads, decoder) = decoder.decode_field("storage_reads")?;
+        let (balance_changes, decoder) = decoder.decode_field("balance_changes")?;
+        let (nonce_changes, decoder) = decoder.decode_field("nonce_changes")?;
+        let (code_changes, decoder) = decoder.decode_field("code_changes")?;
+        let remaining = decoder.finish()?;
+        Ok((
+            Self {
+                address,
+                storage_changes,
+                storage_reads,
+                balance_changes,
+                nonce_changes,
+                code_changes,
+            },
+            remaining,
+        ))
+    }
+}
+
+#[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct BlockAccessList {
     inner: Vec<AccountChanges>,
 }
@@ -144,9 +241,17 @@ impl RLPEncode for BlockAccessList {
     }
 }
 
+impl RLPDecode for BlockAccessList {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), ethrex_rlp::error::RLPDecodeError> {
+        let (inner, remaining) = RLPDecode::decode_unfinished(rlp)?;
+        Ok((Self { inner }, remaining))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use ethereum_types::{H160, U256};
+    use ethrex_rlp::decode::RLPDecode;
     use ethrex_rlp::encode::RLPEncode;
 
     use crate::types::block_access_list::{
@@ -161,7 +266,7 @@ mod tests {
     const CONTRACT_ADDR: H160 = H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12]); //0xC
 
     #[test]
-    fn test_empty_list_validation() {
+    fn test_encode_decode_empty_list_validation() {
         let actual_bal = BlockAccessList {
             inner: vec![AccountChanges {
                 address: ALICE_ADDR,
@@ -172,15 +277,18 @@ mod tests {
         let mut buf = Vec::new();
         actual_bal.encode(&mut buf);
 
-        let encoded_rlp = hex::encode(buf);
+        let encoded_rlp = hex::encode(&buf);
         assert_eq!(
             &encoded_rlp,
             "dbda94000000000000000000000000000000000000000ac0c0c0c0c0"
         );
+
+        let decoded_bal = BlockAccessList::decode(&buf).unwrap();
+        assert_eq!(decoded_bal, actual_bal);
     }
 
     #[test]
-    fn test_partial_validation() {
+    fn test_encode_decode_partial_validation() {
         let actual_bal = BlockAccessList {
             inner: vec![AccountChanges {
                 address: ALICE_ADDR,
@@ -200,11 +308,14 @@ mod tests {
         let mut buf = Vec::new();
         actual_bal.encode(&mut buf);
 
-        let encoded_rlp = hex::encode(buf);
+        let encoded_rlp = hex::encode(&buf);
         assert_eq!(
             &encoded_rlp,
             "e3e294000000000000000000000000000000000000000ac0c20102c3c20164c3c20101c0"
         );
+
+        let decoded_bal = BlockAccessList::decode(&buf).unwrap();
+        assert_eq!(decoded_bal, actual_bal);
     }
 
     #[test]
@@ -288,7 +399,7 @@ mod tests {
         let mut buf = Vec::new();
         actual_bal.encode(&mut buf);
 
-        let encoded_rlp = hex::encode(buf);
+        let encoded_rlp = hex::encode(&buf);
         assert_eq!(
             &encoded_rlp,
             "e4e394000000000000000000000000000000000000000ac9c201c0c202c0c203c0c0c0c0c0"
@@ -346,5 +457,37 @@ mod tests {
             &encoded_rlp,
             "e4e394000000000000000000000000000000000000000ac0c0c0c9c20101c20202c20303c0"
         );
+    }
+
+    #[test]
+    fn test_decode_storage_slots_ordering_correct_order_should_pass() {
+        let actual_bal = BlockAccessList {
+            inner: vec![AccountChanges {
+                address: ALICE_ADDR,
+                storage_changes: vec![
+                    SlotChange {
+                        slot: U256::from(0x01),
+                        slot_changes: vec![],
+                    },
+                    SlotChange {
+                        slot: U256::from(0x02),
+                        slot_changes: vec![],
+                    },
+                    SlotChange {
+                        slot: U256::from(0x03),
+                        slot_changes: vec![],
+                    },
+                ],
+                ..Default::default()
+            }],
+        };
+
+        let encoded_rlp: Vec<u8> = hex::decode(
+            "e4e394000000000000000000000000000000000000000ac9c201c0c202c0c203c0c0c0c0c0",
+        )
+        .unwrap();
+
+        let decoded_bal = BlockAccessList::decode(&encoded_rlp).unwrap();
+        assert_eq!(decoded_bal, actual_bal);
     }
 }
