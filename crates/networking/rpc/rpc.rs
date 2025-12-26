@@ -1,7 +1,7 @@
 use crate::authentication::authenticate;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
-use crate::engine::payload::GetPayloadV5Request;
+use crate::engine::payload::{GetPayloadV5Request, NewPayloadV5Request};
 use crate::engine::{
     ExchangeCapabilitiesRequest,
     blobs::BlobsV1Request,
@@ -585,6 +585,7 @@ pub async fn map_engine_requests(
         "engine_forkchoiceUpdatedV1" => ForkChoiceUpdatedV1::call(req, context).await,
         "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context).await,
         "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context).await,
+        "engine_newPayloadV5" => NewPayloadV5Request::call(req, context).await,
         "engine_newPayloadV4" => NewPayloadV4Request::call(req, context).await,
         "engine_newPayloadV3" => NewPayloadV3Request::call(req, context).await,
         "engine_newPayloadV2" => NewPayloadV2Request::call(req, context).await,
@@ -750,6 +751,7 @@ mod tests {
                         "bpo3Time": null,
                         "bpo4Time": null,
                         "bpo5Time": null,
+                    "amsterdamTime": null,
                         "terminalTotalDifficulty": 0,
                         "terminalTotalDifficultyPassed": true,
                         "blobSchedule": blob_schedule,
