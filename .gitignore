@@ -18,6 +18,7 @@ tooling/ef_tests/state/runner_v2/success_report.txt
 tooling/reorgs/data
 
 tooling/sync/logs/
+tooling/sync/multisync_logs/
 
 # Repos checked out by make target
 /hive/
