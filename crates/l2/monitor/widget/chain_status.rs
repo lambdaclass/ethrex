@@ -119,14 +119,9 @@ impl GlobalChainStatusTable {
         let current_block = store
             .get_latest_block_number()
             .await
-            .map_err(|_| MonitorError::GetLatestBlock)?
-            + 1;
+            .map_err(|_| MonitorError::GetLatestBlock)?;
 
-        let current_batch = if sequencer_registry_address.is_some() {
-            "NaN".to_string() // TODO: Implement current batch retrieval (should be last known + 1)
-        } else {
-            (last_committed_batch + 1).to_string()
-        };
+        let current_batch = (last_committed_batch + 1).to_string();
 
         let items = if sequencer_registry_address.is_some() {
             vec![
