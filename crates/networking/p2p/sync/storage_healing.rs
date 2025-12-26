@@ -575,7 +575,7 @@ fn get_initial_downloads(
                 // This is an edge case where an account with value got deleted by
                 // a self destruct contract creation step
                 let rlp = trie
-                    .get(&acc_path.to_fixed_bytes().to_vec())
+                    .get(acc_path.as_bytes())
                     .expect("We should be able to open the store")?;
                 let account = AccountState::decode(&rlp).expect("We should have a valid account");
                 if account.storage_root == *EMPTY_TRIE_HASH {
