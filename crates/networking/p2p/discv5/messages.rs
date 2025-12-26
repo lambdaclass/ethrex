@@ -9,7 +9,6 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use rand::{Rng, distributions::Standard, prelude::Distribution};
-use secp256k1::SECP256K1;
 use std::{array::TryFromSliceError, fmt::Display, net::IpAddr};
 
 use crate::types::NodeRecord;
@@ -104,13 +103,6 @@ impl Packet {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DecodedPacket {
-    Ordinary(Ordinary),
-    WhoAreYou(WhoAreYou),
-    Handshake(Handshake),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PacketHeader {
     pub static_header: [u8; STATIC_HEADER_SIZE],
     pub flag: u8,
@@ -181,6 +173,13 @@ impl PacketHeader {
 
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DecodedPacket {
+    Ordinary(Ordinary),
+    WhoAreYou(WhoAreYou),
+    Handshake(Handshake),
 }
 
 impl DecodedPacket {
@@ -325,7 +324,7 @@ impl Ordinary {
     }
 
     /// Encodes the ordinary packet returning the header, authdata and encrypted_message
-    fn encode(
+    pub fn encode(
         &self,
         nonce: &[u8; 12],
         masking_iv: &[u8],
@@ -929,7 +928,7 @@ mod tests {
             session::{build_challenge_data, create_id_signature, derive_session_keys},
         },
         rlpx::utils::compress_pubkey,
-        types::{Node, NodeRecordPairs},
+        types::NodeRecordPairs,
         utils::{node_id, public_key_from_signing_key},
     };
     use aes_gcm::{Aes128Gcm, KeyInit, aead::AeadMutInPlace};
@@ -1347,9 +1346,6 @@ mod tests {
 
         let handshake = Handshake::decode(&packet, &read_key).unwrap();
 
-        // WHOAREYOU challenge which it sent and stored earlier.
-        let challenge_data = hex!("000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000").to_vec();
-
         assert_eq!(
             handshake.src_id,
             H256::from_slice(&hex!(
@@ -1369,9 +1365,7 @@ mod tests {
         );
 
         let record = handshake.record.clone().expect("expected ENR record");
-        println!("NodeRecord: {:?}", record);
         let pairs = record.decode_pairs();
-        println!("NodeRecordPairs: {:?}", pairs);
         assert_eq!(pairs.id.as_deref(), Some("v4"));
         assert!(pairs.secp256k1.is_some());
     }

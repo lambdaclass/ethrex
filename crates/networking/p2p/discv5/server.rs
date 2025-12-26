@@ -2,27 +2,23 @@ use crate::{
     discv5::{
         codec::Discv5Codec,
         messages::{
-            DecodedPacket, FindNodeMessage, Handshake, Message, NodesMessage, Ordinary, Packet,
-            PacketCodecError, PacketHeader, PingMessage, PongMessage, WhoAreYou,
+            Handshake, Message, NodesMessage, Ordinary, Packet, PacketCodecError, PacketHeader,
+            PingMessage, PongMessage, WhoAreYou,
         },
-        session::{Session, build_challenge_data, create_id_signature, derive_session_keys},
+        session::{build_challenge_data, create_id_signature, derive_session_keys},
     },
     metrics::METRICS,
     peer_table::{Contact, OutMessage as PeerTableOutMessage, PeerTable, PeerTableError},
-    rlpx::utils::{compress_pubkey, ecdh_xchng},
-    types::{Endpoint, Node, NodeRecord},
-    utils::{get_msg_expiration_from_seconds, public_key_from_signing_key},
+    rlpx::utils::compress_pubkey,
+    types::{Node, NodeRecord},
 };
-use bytes::{BufMut, BytesMut};
+use bytes::BytesMut;
 use ethrex_common::{H256, H512, types::ForkId};
 use ethrex_storage::{Store, error::StoreError};
-use futures::{
-    SinkExt as _, Stream, StreamExt,
-    stream::{SplitSink, SplitStream},
-};
+use futures::StreamExt;
 use indexmap::IndexMap;
-use rand::{Rng, RngCore, rngs::OsRng, thread_rng};
-use secp256k1::{PublicKey, SecretKey, ecdsa::Signature};
+use rand::{Rng, RngCore, rngs::OsRng};
+use secp256k1::{SecretKey, ecdsa::Signature};
 use spawned_concurrency::{
     messages::Unused,
     tasks::{
@@ -31,7 +27,6 @@ use spawned_concurrency::{
     },
 };
 use std::{
-    collections::HashMap,
     net::SocketAddr,
     sync::Arc,
     time::{Duration, Instant},
@@ -51,7 +46,6 @@ const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12
 /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
 pub const INITIAL_LOOKUP_INTERVAL_MS: f64 = 100.0; // 10 per second
 pub const LOOKUP_INTERVAL_MS: f64 = 600.0; // 100 per minute
-const CHANGE_FIND_NODE_MESSAGE_INTERVAL: Duration = Duration::from_secs(5);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug, thiserror::Error)]
@@ -443,18 +437,41 @@ impl DiscoveryServer {
         message: &Message,
         node: &Node,
     ) -> Result<(), DiscoveryServerError> {
-        let packet = DecodedPacket::Ordinary(Ordinary {
+        let ordinary = Ordinary {
             src_id: self.local_node.node_id(),
             message: message.clone(),
-        });
-        let addr = node.udp_addr();
-        let mut buf = BytesMut::new();
+        };
         let encrypt_key = self
             .peer_table
             .get_session_info(node.node_id())
             .await?
             .map_or([0; 16], |s| s.outbound_key);
-        let nonce = self.encode_packet(&mut buf, packet, &node.node_id(), &encrypt_key)?;
+
+        let mut rng = OsRng;
+        let masking_iv: u128 = rng.r#gen();
+        let nonce = self.next_nonce(&mut rng);
+
+        let (static_header, authdata, encrypted_message) =
+            ordinary.encode(&nonce, &masking_iv.to_be_bytes(), &encrypt_key)?;
+
+        let header = PacketHeader {
+            static_header: static_header.try_into().unwrap(),
+            flag: 0x00,
+            nonce,
+            authdata,
+            header_end_offset: 23,
+        };
+
+        let packet = Packet {
+            masking_iv: masking_iv.to_be_bytes(),
+            header,
+            encrypted_message,
+        };
+
+        let mut buf = BytesMut::new();
+        packet.encode(&mut buf, &node.node_id())?;
+
+        let addr = node.udp_addr();
         let _ = self.udp_socket.send_to(&buf, addr).await.inspect_err(
             |e| error!(sending = ?message, addr = ?addr, err=?e, "Error sending message"),
         )?;
@@ -516,20 +533,6 @@ impl DiscoveryServer {
         self.messages_by_nonce
             .insert(nonce, (node.clone(), message.clone(), Instant::now()));
         Ok(())
-    }
-
-    fn encode_packet(
-        &mut self,
-        buf: &mut dyn BufMut,
-        packet: DecodedPacket,
-        dest_id: &H256,
-        encrypt_key: &[u8],
-    ) -> Result<[u8; 12], PacketCodecError> {
-        let mut rng = OsRng;
-        let masking_iv: u128 = rng.r#gen();
-        let nonce = self.next_nonce(&mut rng);
-        packet.encode(buf, masking_iv, &nonce, dest_id, encrypt_key)?;
-        Ok(nonce)
     }
 
     /// Generates a 96-bit AES-GCM nonce
