@@ -123,7 +123,7 @@ impl CodeCache {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Store {
     db_path: PathBuf,
     backend: Arc<dyn StorageBackend>,
@@ -145,6 +145,46 @@ pub struct Store {
     /// those changes already affect the code hash stored in the account, and only
     /// may result in this cache having useless data.
     account_code_cache: Arc<CodeCache>,
+
+    /// Handles to background threads for graceful shutdown
+    /// Wrapped in Arc<Mutex<>> to allow sharing across clones
+    background_threads: Arc<Mutex<Option<BackgroundThreadHandles>>>,
+}
+
+/// Handles for background threads that need to be joined on shutdown
+struct BackgroundThreadHandles {
+    flatkeyvalue_thread: std::thread::JoinHandle<()>,
+    trie_update_thread: std::thread::JoinHandle<()>,
+}
+
+impl std::fmt::Debug for BackgroundThreadHandles {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BackgroundThreadHandles")
+            .field("flatkeyvalue_thread", &"<JoinHandle>")
+            .field("trie_update_thread", &"<JoinHandle>")
+            .finish()
+    }
+}
+
+impl Clone for Store {
+    /// Clones the Store, creating a new instance that shares the same backend and background threads.
+    /// This is needed because Store is used in many async contexts where it needs to be shared across
+    /// different tasks and iterators (e.g., `AncestorIterator`). All clones share the same underlying
+    /// storage backend and background threads through `Arc`, so operations are safe and efficient.
+    fn clone(&self) -> Self {
+        Self {
+            db_path: self.db_path.clone(),
+            backend: self.backend.clone(),
+            chain_config: self.chain_config,
+            trie_cache: self.trie_cache.clone(),
+            flatkeyvalue_control_tx: self.flatkeyvalue_control_tx.clone(),
+            trie_update_worker_tx: self.trie_update_worker_tx.clone(),
+            latest_block_header: self.latest_block_header.clone(),
+            last_computed_flatkeyvalue: self.last_computed_flatkeyvalue.clone(),
+            account_code_cache: self.account_code_cache.clone(),
+            background_threads: self.background_threads.clone(),
+        }
+    }
 }
 
 pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
@@ -1273,6 +1313,7 @@ impl Store {
                 last_written
             }
         };
+        let background_threads = Arc::new(Mutex::new(None));
         let store = Self {
             db_path,
             backend,
@@ -1283,10 +1324,11 @@ impl Store {
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
             account_code_cache: Arc::new(CodeCache::default()),
+            background_threads: background_threads.clone(),
         };
         let backend_clone = store.backend.clone();
         let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
-        std::thread::spawn(move || {
+        let fkv_handle = std::thread::spawn(move || {
             let rx = fkv_rx;
             // Wait for the first Continue to start generation
             loop {
@@ -1326,7 +1368,7 @@ impl Store {
 
             - Third, it removes the (no longer needed) bottom-most diff layer from the trie layers in the same way as the first step.
         */
-        std::thread::spawn(move || {
+        let trie_update_handle = std::thread::spawn(move || {
             let rx = trie_upd_rx;
             loop {
                 match rx.recv() {
@@ -1347,6 +1389,15 @@ impl Store {
                 }
             }
         });
+
+        // Store the thread handles
+        *background_threads
+            .lock()
+            .expect("we just created this mutex") = Some(BackgroundThreadHandles {
+            flatkeyvalue_thread: fkv_handle,
+            trie_update_thread: trie_update_handle,
+        });
+
         Ok(store)
     }
 
@@ -1363,6 +1414,44 @@ impl Store {
         let mut store = Self::new(store_path, engine_type)?;
         store.add_initial_state(genesis).await?;
         Ok(store)
+    }
+
+    /// Shutdown the store and wait for background threads to finish.
+    /// This should be called before dropping the Store to ensure all background
+    /// threads have completed their work and the backend can be safely closed.
+    ///
+    /// This method consumes the Store. After calling shutdown, the Store should not be used.
+    pub fn shutdown(self) {
+        // Take the thread handles out of the Mutex before dropping self
+        let handles = {
+            let mut threads = self
+                .background_threads
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            threads.take()
+        };
+
+        // Drop self, which will drop the channel senders.
+        // This signals the background threads to stop (they'll see the channel is closed).
+        // The backend (Arc) won't be dropped yet because the threads still hold references to it.
+        drop(self);
+
+        // Wait for threads to finish - they should see the channels are closed and exit.
+        // When threads exit, they'll drop their Arc references to the backend.
+        if let Some(BackgroundThreadHandles {
+            flatkeyvalue_thread,
+            trie_update_thread,
+        }) = handles
+        {
+            // Wait for both threads to finish
+            // Ignore errors from join - threads may have already finished
+            let _ = flatkeyvalue_thread.join();
+            let _ = trie_update_thread.join();
+        }
+
+        // At this point, all our background threads have finished and dropped their
+        // Arc references to the backend. The backend will be dropped now,
+        // allowing RocksDB's background threads to cleanly shut down.
     }
 
     pub async fn get_account_info(
@@ -2802,7 +2891,7 @@ mod tests {
     async fn run_test<F, Fut>(test_func: F, engine_type: EngineType)
     where
         F: FnOnce(Store) -> Fut,
-        Fut: std::future::Future<Output = ()>,
+        Fut: std::future::Future<Output = Store>,
     {
         let nonce: u64 = H256::random().to_low_u64_be();
         let path = format!("store-test-db-{nonce}");
@@ -2812,8 +2901,12 @@ mod tests {
         };
         // Build a new store
         let store = Store::new(&path, engine_type).expect("Failed to create test db");
-        // Run the test
-        test_func(store).await;
+        // Run the test and get the store back
+        let store = test_func(store).await;
+        // We need to shutdown the store to wait for background threads before dropping it,
+        // otherwise background threads may try to access the database after it's been dropped,
+        // causing "pthread lock: Invalid argument" errors. This applies to all backends.
+        store.shutdown();
         // Remove store (if needed)
         if !matches!(engine_type, EngineType::InMemory) {
             remove_test_dbs(&path);
@@ -2832,7 +2925,7 @@ mod tests {
         run_test(test_iter_storage, engine_type).await;
     }
 
-    async fn test_iter_accounts(store: Store) {
+    async fn test_iter_accounts(store: Store) -> Store {
         let mut accounts: Vec<_> = (0u64..1_000)
             .map(|i| {
                 (
@@ -2859,9 +2952,10 @@ mod tests {
         for (expected, actual) in std::iter::zip(accounts.drain(pos..), account_iter) {
             assert_eq!(expected, actual);
         }
+        store
     }
 
-    async fn test_iter_storage(store: Store) {
+    async fn test_iter_storage(store: Store) -> Store {
         let address = keccak(12345u64.to_be_bytes());
         let mut slots: Vec<_> = (0u64..1_000)
             .map(|i| (keccak(i.to_be_bytes()), U256::from(2 * i)))
@@ -2896,9 +2990,10 @@ mod tests {
         for (expected, actual) in std::iter::zip(slots.drain(pos..), storage_iter) {
             assert_eq!(expected, actual);
         }
+        store
     }
 
-    async fn test_genesis_block(mut store: Store) {
+    async fn test_genesis_block(mut store: Store) -> Store {
         const GENESIS_KURTOSIS: &str = include_str!("../../fixtures/genesis/kurtosis.json");
         const GENESIS_HIVE: &str = include_str!("../../fixtures/genesis/hive.json");
         assert_ne!(GENESIS_KURTOSIS, GENESIS_HIVE);
@@ -2917,6 +3012,7 @@ mod tests {
         let result = store.add_initial_state(genesis_hive).await;
         assert!(result.is_err());
         assert!(matches!(result, Err(StoreError::IncompatibleChainConfig)));
+        store
     }
 
     fn remove_test_dbs(path: &str) {
@@ -2926,7 +3022,7 @@ mod tests {
         }
     }
 
-    async fn test_store_block(store: Store) {
+    async fn test_store_block(store: Store) -> Store {
         let (block_header, block_body) = create_block_for_testing();
         let block_number = 6;
         let hash = block_header.hash();
@@ -2952,6 +3048,7 @@ mod tests {
         let _ = block_header.hash();
         assert_eq!(stored_header, block_header);
         assert_eq!(stored_body, block_body);
+        store
     }
 
     fn create_block_for_testing() -> (BlockHeader, BlockBody) {
@@ -3008,7 +3105,7 @@ mod tests {
         (block_header, block_body)
     }
 
-    async fn test_store_block_number(store: Store) {
+    async fn test_store_block_number(store: Store) -> Store {
         let block_hash = H256::random();
         let block_number = 6;
 
@@ -3020,9 +3117,10 @@ mod tests {
         let stored_number = store.get_block_number(block_hash).await.unwrap().unwrap();
 
         assert_eq!(stored_number, block_number);
+        store
     }
 
-    async fn test_store_block_receipt(store: Store) {
+    async fn test_store_block_receipt(store: Store) -> Store {
         let receipt = Receipt {
             tx_type: TxType::EIP2930,
             succeeded: true,
@@ -3055,9 +3153,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(stored_receipt, receipt);
+        store
     }
 
-    async fn test_store_account_code(store: Store) {
+    async fn test_store_account_code(store: Store) -> Store {
         let code = Code::from_bytecode(Bytes::from("kiwi"));
         let code_hash = code.hash;
 
@@ -3066,9 +3165,10 @@ mod tests {
         let stored_code = store.get_account_code(code_hash).unwrap().unwrap();
 
         assert_eq!(stored_code, code);
+        store
     }
 
-    async fn test_store_block_tags(store: Store) {
+    async fn test_store_block_tags(store: Store) -> Store {
         let earliest_block_number = 0;
         let finalized_block_number = 7;
         let safe_block_number = 6;
@@ -3119,13 +3219,15 @@ mod tests {
         assert_eq!(safe_block_number, stored_safe_block_number);
         assert_eq!(latest_block_number, stored_latest_block_number);
         assert_eq!(pending_block_number, stored_pending_block_number);
+        store
     }
 
-    async fn test_chain_config_storage(mut store: Store) {
+    async fn test_chain_config_storage(mut store: Store) -> Store {
         let chain_config = example_chain_config();
         store.set_chain_config(&chain_config).await.unwrap();
         let retrieved_chain_config = store.get_chain_config();
         assert_eq!(chain_config, retrieved_chain_config);
+        store
     }
 
     fn example_chain_config() -> ChainConfig {
