@@ -528,6 +528,32 @@ impl Trie {
         trie.root = root;
         trie
     }
+
+    pub fn validate(self) -> Result<(), TrieError> {
+        let mut expected_count = if self.root.is_valid() { 1 } else { 0 };
+        for (_, node) in self.into_iter() {
+            expected_count -= 1;
+            match node {
+                Node::Branch(branch_node) => {
+                    expected_count += branch_node
+                        .choices
+                        .iter()
+                        .filter(|child| child.is_valid())
+                        .count();
+                }
+                Node::Extension(_) => {
+                    expected_count += 1;
+                }
+                Node::Leaf(_) => {}
+            }
+        }
+        if expected_count != 0 {
+            return Err(TrieError::Verify(format!(
+                "Node count mismatch, expected {expected_count} more"
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl IntoIterator for Trie {
