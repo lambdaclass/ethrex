@@ -287,6 +287,85 @@ mod blockchain_integration_test {
         assert_eq!(latest_canonical_block_hash(&store).await.unwrap(), hash_b);
     }
 
+    #[tokio::test]
+    async fn test_state_not_reachable_on_reorg_beyond_pruning_range() {
+        // This test simulates a reorg where the common ancestor's state has been pruned.
+        //
+        // Real-world scenario:
+        //   - Canonical chain: genesis → 1 → 2 → ... → 130 (head)
+        //   - Fork branch: genesis → 1 → fork_block (created early, not canonical)
+        //   - Block 1 is the "link" between fork_block and the canonical chain
+        //   - Block 1's state has been pruned (it's 129 blocks behind head, beyond 128-block window)
+        //   - Attempting to reorg to fork_block fails with StateNotReachable
+        //
+        // In this test, we simulate state pruning by clearing the trie cache for block 1's
+        // state root, since the InMemory backend doesn't actually prune state.
+
+        const PRUNING_THRESHOLD: u64 = 128;
+        const CHAIN_LENGTH: u64 = PRUNING_THRESHOLD + 2; // 130 blocks
+
+        let store = test_store().await;
+        let genesis_header = store.get_block_header(0).unwrap().unwrap();
+        let genesis_hash = genesis_header.hash();
+        let blockchain = Blockchain::default_with_store(store.clone());
+
+        // Build block 1 on the canonical chain
+        let block_1 = new_block(&store, &genesis_header).await;
+        let hash_1 = block_1.hash();
+        let block_1_state_root = block_1.header.state_root;
+        blockchain.add_block(block_1.clone()).unwrap();
+        apply_fork_choice(&store, hash_1, genesis_hash, genesis_hash)
+            .await
+            .unwrap();
+
+        // Create a fork block at height 2, child of block 1 (will be non-canonical)
+        let fork_block = new_block(&store, &block_1.header).await;
+        let fork_hash = fork_block.hash();
+        blockchain.add_block(fork_block).unwrap();
+        // Don't make it canonical - it sits as an alternative branch
+
+        // Extend the canonical chain to 130 blocks (beyond pruning threshold)
+        let mut current_header = block_1.header.clone();
+        for _ in 2..=CHAIN_LENGTH {
+            let block = new_block(&store, &current_header).await;
+            let hash = block.hash();
+            blockchain.add_block(block.clone()).unwrap();
+            apply_fork_choice(&store, hash, genesis_hash, genesis_hash)
+                .await
+                .unwrap();
+            current_header = block.header;
+        }
+
+        // Verify chain length
+        assert_eq!(store.get_latest_block_number().await.unwrap(), CHAIN_LENGTH);
+
+        // Verify fork block exists but is not canonical
+        assert!(!is_canonical(&store, 2, fork_hash).await.unwrap());
+        assert!(store.get_block_header_by_hash(fork_hash).unwrap().is_some());
+
+        // Simulate state pruning: clear block 1's state from the trie cache.
+        // In production, this happens automatically when state is beyond the 128-block window.
+        // The link block for the reorg is block 1 (parent of fork_block).
+        store.clear_trie_cache_for_testing();
+
+        // Verify state is no longer reachable (only works after cache is cleared
+        // and state was never committed to disk due to InMemory threshold being 10000)
+        assert!(
+            !store.has_state_root(block_1_state_root).unwrap(),
+            "Block 1's state should not be reachable after clearing cache"
+        );
+
+        // Now attempt to reorg to the fork block.
+        // The link block is block 1, whose state has been "pruned".
+        let result = apply_fork_choice(&store, fork_hash, genesis_hash, genesis_hash).await;
+
+        assert!(
+            matches!(result, Err(InvalidForkChoice::StateNotReachable)),
+            "Expected StateNotReachable when link block's state is pruned, got {:?}",
+            result
+        );
+    }
+
     async fn new_block(store: &Store, parent: &BlockHeader) -> Block {
         let args = BuildPayloadArgs {
             parent: parent.hash(),
