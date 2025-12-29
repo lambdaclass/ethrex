@@ -774,8 +774,8 @@ impl Distribution<FindNodeMessage> for Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> FindNodeMessage {
         let mut distances = Vec::new();
         let req_id: u64 = rng.r#gen();
-        for _ in [..DISTANCES_PER_FIND_NODE_MSG] {
-            distances.push(rng.r#gen());
+        for i in 0..DISTANCES_PER_FIND_NODE_MSG {
+            distances.push(i as u32);
         }
         FindNodeMessage {
             req_id: Bytes::from(req_id.to_be_bytes().to_vec()),

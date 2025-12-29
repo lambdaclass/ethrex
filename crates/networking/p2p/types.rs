@@ -445,10 +445,10 @@ impl From<NodeRecordPairs> for Vec<(Bytes, Bytes)> {
 
 impl RLPDecode for NodeRecord {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        if rlp.len() > MAX_NODE_RECORD_ENCODED_SIZE {
+        let decoder = Decoder::new(rlp)?;
+        if decoder.get_payload_len() > MAX_NODE_RECORD_ENCODED_SIZE {
             return Err(RLPDecodeError::InvalidLength);
         }
-        let decoder = Decoder::new(rlp)?;
         let (signature, decoder) = decoder.decode_field("signature")?;
         let (seq, decoder) = decoder.decode_field("seq")?;
         let (pairs, decoder) = decode_node_record_optional_fields(vec![], decoder)?;

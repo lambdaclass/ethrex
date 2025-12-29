@@ -151,10 +151,7 @@ impl DiscoveryServer {
         trace!(?packet, address= ?from, "Discv5 packet received");
         // TODO retrieve session info
         match packet.header.flag {
-            0x00 => {
-                tracing::info!("NonWhoAreYou!");
-                Ok(())
-            }
+            0x00 => self.handle_ordinary(packet).await,
             0x01 => self.handle_who_are_you(packet).await,
             0x02 => {
                 tracing::info!("NonWhoAreYou!");
@@ -163,9 +160,25 @@ impl DiscoveryServer {
             _ => Err(PacketCodecError::MalformedData)?,
         }
     }
+    async fn handle_ordinary(&mut self, packet: Packet) -> Result<(), DiscoveryServerError> {
+        let src_id = H256::from_slice(&packet.header.authdata);
+        let decrypt_key = self
+            .peer_table
+            .get_session_info(src_id)
+            .await?
+            .map_or([0; 16], |s| s.inbound_key);
+
+        tracing::info!(src_id=?src_id, key=?decrypt_key,  "Decrypt key");
+
+        let ordinary = Ordinary::decode(&packet, &decrypt_key)?;
+
+        tracing::info!(msg=?ordinary,  "Ordinary packet received");
+
+        Ok(())
+    }
 
     async fn handle_who_are_you(&mut self, packet: Packet) -> Result<(), DiscoveryServerError> {
-        let whoareyou: WhoAreYou = WhoAreYou::decode(&packet)?;
+        let whoareyou = WhoAreYou::decode(&packet)?;
         let nonce = packet.header.nonce;
         tracing::info!(nonce=?nonce, id_nonce=?whoareyou.id_nonce, enr_seq=?whoareyou.enr_seq,  "WhoAreYou packet received");
         let Some((node, message, _)) = self.messages_by_nonce.swap_remove(&nonce) else {
