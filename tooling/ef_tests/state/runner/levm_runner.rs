@@ -1,3 +1,5 @@
+use std::{cell::RefCell, rc::Rc};
+
 use crate::{
     report::{EFTestReport, EFTestReportForkResult, TestVector},
     runner::{EFTestRunnerError, InternalError},
@@ -16,6 +18,7 @@ use ethrex_levm::{
     EVMConfig, Environment,
     db::gen_db::GeneralizedDatabase,
     errors::{ExecutionReport, TxValidationError, VMError},
+    tracers::NoOpTracer,
     tracing::LevmCallTracer,
     utils::get_base_fee_per_blob_gas,
     vm::{VM, VMType},
@@ -224,7 +227,7 @@ pub fn prepare_vm_for_tx<'a>(
         },
         db,
         &tx,
-        LevmCallTracer::disabled(),
+        Rc::new(RefCell::new(NoOpTracer)),
         VMType::L1, // TODO: Should we run the EF tests with L2?
     )
     .map_err(|e| EFTestRunnerError::FailedToEnsurePreState(format!("Failed to initialize VM: {e}")))

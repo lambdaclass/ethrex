@@ -2,6 +2,8 @@ use ethrex_common::types::{Block, Transaction};
 use ethrex_common::{tracing::CallTrace, types::BlockHeader};
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{db::gen_db::GeneralizedDatabase, tracing::LevmCallTracer, vm::VM};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use crate::{EvmError, backends::levm::LEVM};
 
@@ -59,17 +61,12 @@ impl LEVM {
             db,
             vm_type,
         )?;
-        let mut vm = VM::new(
-            env,
-            db,
-            tx,
-            LevmCallTracer::new(only_top_call, with_log),
-            vm_type,
-        )?;
+        let tracer = Rc::new(RefCell::new(LevmCallTracer::new(only_top_call, with_log)));
+        let mut vm = VM::new(env, db, tx, tracer.clone(), vm_type)?;
 
         vm.execute()?;
 
-        let callframe = vm.get_trace_result()?;
+        let callframe = tracer.borrow_mut().get_trace_result()?;
 
         // We only return the top call because a transaction only has one call with subcalls
         Ok(vec![callframe])

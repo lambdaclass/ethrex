@@ -104,7 +104,9 @@ impl<'a> VM<'a> {
         let is_static = callframe.is_static;
         let data = self.get_calldata(args_offset, args_size)?;
 
-        self.tracer.enter(CALL, from, to, value, gas_limit, &data);
+        self.tracer
+            .borrow_mut()
+            .enter(CALL, from, to, value, gas_limit, &data);
 
         self.generic_call(
             gas_limit,
@@ -202,6 +204,7 @@ impl<'a> VM<'a> {
         let data = self.get_calldata(args_offset, args_size)?;
 
         self.tracer
+            .borrow_mut()
             .enter(CALLCODE, from, code_address, value, gas_limit, &data);
 
         self.generic_call(
@@ -320,6 +323,7 @@ impl<'a> VM<'a> {
 
         // In this trace the `from` is the current contract, we don't want the `from` to be, for example, the EOA that sent the transaction
         self.tracer
+            .borrow_mut()
             .enter(DELEGATECALL, to, code_address, value, gas_limit, &data);
 
         self.generic_call(
@@ -415,6 +419,7 @@ impl<'a> VM<'a> {
         let data = self.get_calldata(args_offset, args_size)?;
 
         self.tracer
+            .borrow_mut()
             .enter(STATICCALL, from, to, value, gas_limit, &data);
 
         self.generic_call(
@@ -575,9 +580,10 @@ impl<'a> VM<'a> {
         }
 
         self.tracer
+            .borrow_mut()
             .enter(SELFDESTRUCT, to, beneficiary, balance, 0, &Bytes::new());
 
-        self.tracer.exit_early(0, None)?;
+        self.tracer.borrow_mut().exit_early(0, None)?;
 
         Ok(OpcodeResult::Halt)
     }
@@ -637,6 +643,7 @@ impl<'a> VM<'a> {
             None => CallType::CREATE,
         };
         self.tracer
+            .borrow_mut()
             .enter(call_type, deployer, new_address, value, gas_limit, &code);
 
         let new_depth = self
@@ -669,6 +676,7 @@ impl<'a> VM<'a> {
         if new_account.create_would_collide() {
             self.current_call_frame.stack.push(FAIL)?;
             self.tracer
+                .borrow_mut()
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
             return Ok(OpcodeResult::Continue);
         }
@@ -806,7 +814,7 @@ impl<'a> VM<'a> {
                 self.transfer(msg_sender, to, value)?;
             }
 
-            self.tracer.exit_context(&ctx_result, false)?;
+            self.tracer.borrow_mut().exit_context(&ctx_result, false)?;
         } else {
             let mut stack = self.stack_pool.pop().unwrap_or_default();
             stack.clear();
@@ -925,7 +933,7 @@ impl<'a> VM<'a> {
             }
         };
 
-        self.tracer.exit_context(ctx_result, false)?;
+        self.tracer.borrow_mut().exit_context(ctx_result, false)?;
 
         let mut stack = executed_call_frame.stack;
         stack.clear();
@@ -977,7 +985,7 @@ impl<'a> VM<'a> {
             }
         };
 
-        self.tracer.exit_context(ctx_result, false)?;
+        self.tracer.borrow_mut().exit_context(ctx_result, false)?;
 
         let mut stack = executed_call_frame.stack;
         stack.clear();
@@ -1036,7 +1044,7 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Overflow)?;
         callframe.stack.push(FAIL)?; // It's the same as revert for CREATE
 
-        self.tracer.exit_early(0, Some(reason))?;
+        self.tracer.borrow_mut().exit_early(0, Some(reason))?;
         Ok(())
     }
 }

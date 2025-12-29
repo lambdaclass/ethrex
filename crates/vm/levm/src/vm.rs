@@ -14,7 +14,7 @@ use crate::{
     precompiles::{
         self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
     },
-    tracing::LevmCallTracer,
+    tracers::Tracer,
 };
 use bytes::Bytes;
 use ethrex_common::{
@@ -317,7 +317,7 @@ pub struct VM<'a> {
     /// Original storage values before the transaction. Used for gas calculations in SSTORE.
     pub storage_original_values: BTreeMap<(Address, H256), U256>,
     /// When enabled, it "logs" relevant information during execution
-    pub tracer: LevmCallTracer,
+    pub tracer: Rc<RefCell<dyn Tracer>>,
     /// Mode for printing some useful stuff, only used in development!
     pub debug_mode: DebugMode,
     /// A pool of stacks to avoid reallocating too much when creating new call frames.
@@ -334,7 +334,7 @@ impl<'a> VM<'a> {
         env: Environment,
         db: &'a mut GeneralizedDatabase,
         tx: &Transaction,
-        tracer: LevmCallTracer,
+        tracer: Rc<RefCell<dyn Tracer>>,
         vm_type: VMType,
     ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
@@ -383,7 +383,7 @@ impl<'a> VM<'a> {
         } else {
             CallType::CALL
         };
-        vm.tracer.enter(
+        vm.tracer.borrow_mut().enter(
             call_type,
             vm.env.origin,
             callee,
@@ -392,6 +392,9 @@ impl<'a> VM<'a> {
             vm.tx.data(),
         );
 
+        // clippy lint will error if this line is removed since clippy doesn't know debug feature
+        // needs mutates vm
+        vm.debug_mode.enabled = false;
         #[cfg(feature = "debug")]
         {
             // Enable debug mode for printing in Solidity contracts.
@@ -544,7 +547,7 @@ impl<'a> VM<'a> {
                 .finalize_execution(self, &mut ctx_result)?;
         }
 
-        self.tracer.exit_context(&ctx_result, true)?;
+        self.tracer.borrow_mut().exit_context(&ctx_result, true)?;
 
         let report = ExecutionReport {
             result: ctx_result.result.clone(),

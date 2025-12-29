@@ -1,6 +1,6 @@
 use crate::{
     errors::{ContextResult, InternalError, TxResult, VMError},
-    vm::VM,
+    tracers::Tracer,
 };
 use bytes::Bytes;
 use ethrex_common::{
@@ -167,6 +167,51 @@ impl LevmCallTracer {
     fn current_callframe_mut(&mut self) -> Result<&mut CallTraceFrame, InternalError> {
         self.callframes.last_mut().ok_or(InternalError::CallFrame)
     }
+
+    /// This method is intended to be accessed after transaction execution
+    pub fn get_trace_result(&mut self) -> Result<CallTraceFrame, VMError> {
+        self.callframes.pop().ok_or(InternalError::CallFrame.into())
+    }
+}
+
+impl Tracer for LevmCallTracer {
+    fn enter(
+        &mut self,
+        call_type: CallType,
+        from: Address,
+        to: Address,
+        value: U256,
+        gas: u64,
+        input: &Bytes,
+    ) {
+        self.enter(call_type, from, to, value, gas, input);
+    }
+
+    fn exit(
+        &mut self,
+        gas_used: u64,
+        output: Bytes,
+        error: Option<String>,
+        revert_reason: Option<String>,
+    ) -> Result<(), InternalError> {
+        self.exit(gas_used, output, error, revert_reason)
+    }
+
+    fn exit_context(
+        &mut self,
+        ctx_result: &ContextResult,
+        is_top_call: bool,
+    ) -> Result<(), InternalError> {
+        self.exit_context(ctx_result, is_top_call)
+    }
+
+    fn exit_early(&mut self, gas_used: u64, error: Option<String>) -> Result<(), InternalError> {
+        self.exit_early(gas_used, error)
+    }
+
+    fn log(&mut self, log: &Log) -> Result<(), InternalError> {
+        self.log(log)
+    }
 }
 
 fn process_output(
@@ -189,15 +234,5 @@ fn clear_reverted_logs(callframe: &mut CallTraceFrame) {
     }
     for subcall in &mut callframe.calls {
         clear_reverted_logs(subcall);
-    }
-}
-
-impl<'a> VM<'a> {
-    /// This method is intended to be accessed after transaction execution
-    pub fn get_trace_result(&mut self) -> Result<CallTraceFrame, VMError> {
-        self.tracer
-            .callframes
-            .pop()
-            .ok_or(InternalError::CallFrame.into())
     }
 }
