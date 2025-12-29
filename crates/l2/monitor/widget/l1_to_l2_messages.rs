@@ -41,19 +41,14 @@ pub enum L1ToL2MessageStatus {
 }
 
 impl L1ToL2MessageStatus {
-    pub async fn for_tx(
+    pub async fn for_tx_with_pending(
         l2_tx_hash: H256,
-        common_bridge_address: Address,
-        eth_client: &EthClient,
+        pending_l1_messages: &[H256],
         store: &Store,
     ) -> Result<Self, MonitorError> {
         if let Ok(Some(_tx)) = store.get_transaction_by_hash(l2_tx_hash).await {
             Ok(Self::ProcessedOnL2)
-        } else if get_pending_l1_messages(eth_client, common_bridge_address)
-            .await
-            .map_err(|_| MonitorError::GetPendingPrivilegedTx)?
-            .contains(&l2_tx_hash)
-        {
+        } else if pending_l1_messages.contains(&l2_tx_hash) {
             Ok(Self::Pending)
         } else {
             Ok(Self::Unknown)
@@ -111,18 +106,23 @@ impl L1ToL2MessagesTable {
         eth_client: &EthClient,
         store: &Store,
     ) -> Result<(), MonitorError> {
+        let pending_l1_messages = get_pending_l1_messages(eth_client, self.common_bridge_address)
+            .await
+            .map_err(|_| MonitorError::GetPendingPrivilegedTx)?;
+
         let mut new_l1_to_l2_messages = Self::fetch_new_items(
             &mut self.last_l1_block_fetched,
             self.common_bridge_address,
             eth_client,
             store,
+            &pending_l1_messages,
         )
         .await?;
         new_l1_to_l2_messages.truncate(50);
 
         let n_new_latest_batches = new_l1_to_l2_messages.len();
         self.items.truncate(50 - n_new_latest_batches);
-        self.refresh_items(eth_client, store).await?;
+        self.refresh_items(store, &pending_l1_messages).await?;
         self.items.extend_from_slice(&new_l1_to_l2_messages);
         self.items.rotate_right(n_new_latest_batches);
         Ok(())
@@ -130,17 +130,13 @@ impl L1ToL2MessagesTable {
 
     async fn refresh_items(
         &mut self,
-        eth_client: &EthClient,
         store: &Store,
+        pending_l1_messages: &[H256],
     ) -> Result<(), MonitorError> {
         for (_kind, status, _l1_tx_hash, l2_tx_hash, ..) in self.items.iter_mut() {
-            *status = L1ToL2MessageStatus::for_tx(
-                *l2_tx_hash,
-                self.common_bridge_address,
-                eth_client,
-                store,
-            )
-            .await?;
+            *status =
+                L1ToL2MessageStatus::for_tx_with_pending(*l2_tx_hash, pending_l1_messages, store)
+                    .await?;
         }
         Ok(())
     }
@@ -150,6 +146,7 @@ impl L1ToL2MessagesTable {
         common_bridge_address: Address,
         eth_client: &EthClient,
         store: &Store,
+        pending_l1_messages: &[H256],
     ) -> Result<Vec<L1ToL2MessagesRow>, MonitorError> {
         let logs = monitor::utils::get_logs(
             last_l1_block_fetched,
@@ -158,14 +155,13 @@ impl L1ToL2MessagesTable {
             eth_client,
         )
         .await?;
-        Self::process_logs(&logs, common_bridge_address, eth_client, store).await
+        Self::process_logs(&logs, store, pending_l1_messages).await
     }
 
     async fn process_logs(
         logs: &[RpcLog],
-        common_bridge_address: Address,
-        eth_client: &EthClient,
         store: &Store,
+        pending_l1_messages: &[H256],
     ) -> Result<Vec<L1ToL2MessagesRow>, MonitorError> {
         let mut processed_logs = Vec::new();
 
@@ -187,10 +183,9 @@ impl L1ToL2MessagesTable {
 
             processed_logs.push((
                 L1ToL2MessageKind::from(&l1_to_l2_message),
-                L1ToL2MessageStatus::for_tx(
+                L1ToL2MessageStatus::for_tx_with_pending(
                     l1_to_l2_message_hash,
-                    common_bridge_address,
-                    eth_client,
+                    pending_l1_messages,
                     store,
                 )
                 .await?,
