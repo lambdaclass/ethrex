@@ -1072,7 +1072,7 @@ pub async fn update_pivot(
 
         // Reward peer
         peers.peer_table.record_success(&peer_id).await?;
-        info!("Succesfully updated pivot");
+        info!("Successfully updated pivot");
         let block_headers = peers
             .request_block_headers(block_number + 1, pivot.hash())
             .await?
@@ -1229,7 +1229,7 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
 
     let tree_validated = state_root == computed_state_root;
     if tree_validated {
-        info!("Succesfully validated tree, {state_root} found");
+        info!("Successfully validated tree, {state_root} found");
     } else {
         error!(
             "We have failed the validation of the state tree {state_root} expected but {computed_state_root} found"
