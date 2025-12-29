@@ -6,7 +6,7 @@ use crate::{
     errors::{ContextResult, ExecutionReport, InternalError, TxValidationError, VMError},
     hooks::{DefaultHook, default_hook, hook::Hook},
     opcodes::Opcode,
-    tracers::NoOpTracer,
+    tracing::NoOpTracer,
     vm::{VM, VMType},
 };
 

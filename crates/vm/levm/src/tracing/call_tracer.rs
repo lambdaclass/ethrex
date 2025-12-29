@@ -1,6 +1,6 @@
 use crate::{
     errors::{ContextResult, InternalError, TxResult, VMError},
-    tracers::Tracer,
+    tracing::Tracer,
 };
 use bytes::Bytes;
 use ethrex_common::{
@@ -19,8 +19,6 @@ pub struct LevmCallTracer {
     pub only_top_call: bool,
     /// If true, trace logs
     pub with_log: bool,
-    /// If active is set to false it won't trace.
-    pub active: bool,
 }
 
 impl LevmCallTracer {
@@ -29,17 +27,6 @@ impl LevmCallTracer {
             callframes: vec![],
             only_top_call,
             with_log,
-            active: true,
-        }
-    }
-
-    /// This is to keep LEVM's code clean, like `self.tracer.enter(...)`,
-    /// instead of something more complex or uglier when we don't want to trace.
-    /// (For now that we only implement one tracer it may be the most convenient solution)
-    pub fn disabled() -> Self {
-        LevmCallTracer {
-            active: false,
-            ..Default::default()
         }
     }
 
@@ -53,9 +40,6 @@ impl LevmCallTracer {
         gas: u64,
         input: &Bytes, // For avoiding cloning when calling (cleaner code)
     ) {
-        if !self.active {
-            return;
-        }
         if self.only_top_call && !self.callframes.is_empty() {
             // Only create callframe if it's the first one to be created.
             return;
@@ -102,9 +86,6 @@ impl LevmCallTracer {
         ctx_result: &ContextResult,
         is_top_call: bool,
     ) -> Result<(), InternalError> {
-        if !self.active {
-            return Ok(());
-        }
         if self.only_top_call && !is_top_call {
             // We just want to register top call
             return Ok(());
@@ -132,7 +113,7 @@ impl LevmCallTracer {
         gas_used: u64,
         error: Option<String>,
     ) -> Result<(), InternalError> {
-        if !self.active || self.only_top_call {
+        if self.only_top_call {
             return Ok(());
         }
         self.exit(gas_used, Bytes::new(), error, None)
@@ -141,7 +122,7 @@ impl LevmCallTracer {
     /// Registers log when opcode log is executed.
     /// Note: Logs of callframes that reverted will be removed at end of execution.
     pub fn log(&mut self, log: &Log) -> Result<(), InternalError> {
-        if !self.active || !self.with_log {
+        if !self.with_log {
             return Ok(());
         }
         if self.only_top_call && self.callframes.len() > 1 {

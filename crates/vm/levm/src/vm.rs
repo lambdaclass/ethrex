@@ -14,7 +14,7 @@ use crate::{
     precompiles::{
         self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
     },
-    tracers::Tracer,
+    tracing::Tracer,
 };
 use bytes::Bytes;
 use ethrex_common::{

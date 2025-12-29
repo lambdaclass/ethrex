@@ -11,7 +11,6 @@ pub mod memory;
 pub mod opcode_handlers;
 pub mod opcodes;
 pub mod precompiles;
-pub mod tracers;
 pub mod tracing;
 pub mod utils;
 pub mod vm;

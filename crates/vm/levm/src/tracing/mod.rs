@@ -1,5 +1,9 @@
 #![allow(unused_variables)]
 
+mod call_tracer;
+
+pub use call_tracer::*;
+
 use bytes::Bytes;
 use ethrex_common::tracing::CallType;
 use ethrex_common::types::Log;

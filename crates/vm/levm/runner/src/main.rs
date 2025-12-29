@@ -12,7 +12,7 @@ use ethrex_levm::{
     account::LevmAccount,
     db::gen_db::GeneralizedDatabase,
     opcodes::Opcode,
-    tracers::NoOpTracer,
+    tracing::NoOpTracer,
     vm::{VM, VMType},
 };
 use ethrex_storage::Store;
