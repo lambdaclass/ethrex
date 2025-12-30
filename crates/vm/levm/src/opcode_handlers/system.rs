@@ -583,7 +583,13 @@ impl<'a> VM<'a> {
             .borrow_mut()
             .enter(SELFDESTRUCT, to, beneficiary, balance, 0, &Bytes::new());
 
-        self.tracer.borrow_mut().exit_early(0, None)?;
+        self.tracer.borrow_mut().exit(
+            self.current_call_frame.depth,
+            0,
+            Bytes::new(),
+            None,
+            None,
+        )?;
 
         Ok(OpcodeResult::Halt)
     }
@@ -675,9 +681,13 @@ impl<'a> VM<'a> {
         let new_account = self.get_account_mut(new_address)?;
         if new_account.create_would_collide() {
             self.current_call_frame.stack.push(FAIL)?;
-            self.tracer
-                .borrow_mut()
-                .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
+            self.tracer.borrow_mut().exit(
+                self.current_call_frame.depth,
+                0,
+                Bytes::new(),
+                Some("CreateAccExists".to_string()),
+                None,
+            )?;
             return Ok(OpcodeResult::Continue);
         }
 
@@ -814,7 +824,15 @@ impl<'a> VM<'a> {
                 self.transfer(msg_sender, to, value)?;
             }
 
-            self.tracer.borrow_mut().exit_context(&ctx_result, false)?;
+            let (gas_used, output, error, revert_reason) =
+                convert_context_result_to_exit_args(&ctx_result);
+            self.tracer.borrow_mut().exit(
+                self.current_call_frame.depth,
+                gas_used,
+                output,
+                error,
+                revert_reason,
+            )?;
         } else {
             let mut stack = self.stack_pool.pop().unwrap_or_default();
             stack.clear();
@@ -933,7 +951,15 @@ impl<'a> VM<'a> {
             }
         };
 
-        self.tracer.borrow_mut().exit_context(ctx_result, false)?;
+        let (gas_used, output, error, revert_reason) =
+            convert_context_result_to_exit_args(ctx_result);
+        self.tracer.borrow_mut().exit(
+            self.current_call_frame.depth,
+            gas_used,
+            output,
+            error,
+            revert_reason,
+        )?;
 
         let mut stack = executed_call_frame.stack;
         stack.clear();
@@ -985,7 +1011,15 @@ impl<'a> VM<'a> {
             }
         };
 
-        self.tracer.borrow_mut().exit_context(ctx_result, false)?;
+        let (gas_used, output, error, revert_reason) =
+            convert_context_result_to_exit_args(ctx_result);
+        self.tracer.borrow_mut().exit(
+            self.current_call_frame.depth,
+            gas_used,
+            output,
+            error,
+            revert_reason,
+        )?;
 
         let mut stack = executed_call_frame.stack;
         stack.clear();
@@ -1044,7 +1078,9 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Overflow)?;
         callframe.stack.push(FAIL)?; // It's the same as revert for CREATE
 
-        self.tracer.borrow_mut().exit_early(0, Some(reason))?;
+        self.tracer
+            .borrow_mut()
+            .exit(callframe.depth, 0, Bytes::new(), Some(reason), None)?;
         Ok(())
     }
 }

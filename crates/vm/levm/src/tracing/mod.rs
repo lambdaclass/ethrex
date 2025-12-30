@@ -9,7 +9,7 @@ use ethrex_common::tracing::CallType;
 use ethrex_common::types::Log;
 use ethrex_common::{Address, U256};
 
-use crate::errors::{ContextResult, InternalError};
+use crate::errors::InternalError;
 
 pub trait Tracer {
     fn enter(
@@ -25,25 +25,12 @@ pub trait Tracer {
 
     fn exit(
         &mut self,
+        _depth: usize,
         _gas_used: u64,
         _output: Bytes,
         _error: Option<String>,
         _revert_reason: Option<String>,
     ) -> Result<(), InternalError> {
-        Ok(())
-    }
-
-    /// Exits trace call using the ContextResult.
-    fn exit_context(
-        &mut self,
-        _ctx_result: &ContextResult,
-        _is_top_call: bool,
-    ) -> Result<(), InternalError> {
-        Ok(())
-    }
-
-    /// Exits trace call when CALL or CREATE opcodes return early or in case SELFDESTRUCT is called.
-    fn exit_early(&mut self, _gas_used: u64, _error: Option<String>) -> Result<(), InternalError> {
         Ok(())
     }
 

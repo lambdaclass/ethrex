@@ -1,5 +1,5 @@
 use crate::{
-    errors::{ContextResult, InternalError, TxResult, VMError},
+    errors::{InternalError, VMError},
     tracing::Tracer,
 };
 use bytes::Bytes;
@@ -62,11 +62,19 @@ impl LevmCallTracer {
     /// Has no validations because it's a private method.
     fn exit(
         &mut self,
+        depth: usize,
         gas_used: u64,
         output: Bytes,
         error: Option<String>,
         revert_reason: Option<String>,
     ) -> Result<(), InternalError> {
+        if self.only_top_call && depth != 0 {
+            return Ok(());
+        }
+        if depth == 0 {
+            // After finishing transaction execution clear all logs of callframes that reverted.
+            clear_reverted_logs(self.current_callframe_mut()?);
+        }
         let mut callframe = self.callframes.pop().ok_or(InternalError::CallFrame)?;
 
         process_output(&mut callframe, gas_used, output, error, revert_reason);
@@ -80,43 +88,14 @@ impl LevmCallTracer {
         Ok(())
     }
 
-    /// Exits trace call using the ContextResult.
-    pub fn exit_context(
-        &mut self,
-        ctx_result: &ContextResult,
-        is_top_call: bool,
-    ) -> Result<(), InternalError> {
-        if self.only_top_call && !is_top_call {
-            // We just want to register top call
-            return Ok(());
-        }
-        if is_top_call {
-            // After finishing transaction execution clear all logs of callframes that reverted.
-            clear_reverted_logs(self.current_callframe_mut()?);
-        }
-        let (gas_used, output) = (ctx_result.gas_used, ctx_result.output.clone());
-
-        let (error, revert_reason) = match ctx_result.result {
-            TxResult::Revert(ref err) => {
-                let reason = String::from_utf8(ctx_result.output.to_vec()).ok();
-                (Some(err.to_string()), reason)
-            }
-            _ => (None, None),
-        };
-
-        self.exit(gas_used, output, error, revert_reason)
-    }
-
     /// Exits trace call when CALL or CREATE opcodes return early or in case SELFDESTRUCT is called.
     pub fn exit_early(
         &mut self,
+        depth: usize,
         gas_used: u64,
         error: Option<String>,
     ) -> Result<(), InternalError> {
-        if self.only_top_call {
-            return Ok(());
-        }
-        self.exit(gas_used, Bytes::new(), error, None)
+        self.exit(depth, gas_used, Bytes::new(), error, None)
     }
 
     /// Registers log when opcode log is executed.
@@ -170,24 +149,13 @@ impl Tracer for LevmCallTracer {
 
     fn exit(
         &mut self,
+        depth: usize,
         gas_used: u64,
         output: Bytes,
         error: Option<String>,
         revert_reason: Option<String>,
     ) -> Result<(), InternalError> {
-        self.exit(gas_used, output, error, revert_reason)
-    }
-
-    fn exit_context(
-        &mut self,
-        ctx_result: &ContextResult,
-        is_top_call: bool,
-    ) -> Result<(), InternalError> {
-        self.exit_context(ctx_result, is_top_call)
-    }
-
-    fn exit_early(&mut self, gas_used: u64, error: Option<String>) -> Result<(), InternalError> {
-        self.exit_early(gas_used, error)
+        self.exit(depth, gas_used, output, error, revert_reason)
     }
 
     fn log(&mut self, log: &Log) -> Result<(), InternalError> {

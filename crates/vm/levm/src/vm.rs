@@ -15,6 +15,7 @@ use crate::{
         self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
     },
     tracing::Tracer,
+    utils::convert_context_result_to_exit_args,
 };
 use bytes::Bytes;
 use ethrex_common::{
@@ -547,7 +548,15 @@ impl<'a> VM<'a> {
                 .finalize_execution(self, &mut ctx_result)?;
         }
 
-        self.tracer.borrow_mut().exit_context(&ctx_result, true)?;
+        let (gas_used, output, error, revert_reason) =
+            convert_context_result_to_exit_args(&ctx_result);
+        self.tracer.borrow_mut().exit(
+            self.current_call_frame.depth,
+            gas_used,
+            output,
+            error,
+            revert_reason,
+        )?;
 
         let report = ExecutionReport {
             result: ctx_result.result.clone(),
