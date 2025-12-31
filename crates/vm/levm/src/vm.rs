@@ -379,20 +379,6 @@ impl<'a> VM<'a> {
             opcode_table: VM::build_opcode_table(fork),
         };
 
-        let call_type = if is_create {
-            CallType::CREATE
-        } else {
-            CallType::CALL
-        };
-        vm.tracer.borrow_mut().enter(
-            call_type,
-            vm.env.origin,
-            callee,
-            vm.tx.value(),
-            vm.env.gas_limit,
-            vm.tx.data(),
-        );
-
         // clippy lint will error if this line is removed since clippy doesn't know debug feature
         // needs mutates vm
         vm.debug_mode.enabled = false;
@@ -532,9 +518,25 @@ impl<'a> VM<'a> {
     }
 
     fn prepare_execution(&mut self) -> Result<(), VMError> {
+        let from = self.current_call_frame.msg_sender;
+        self.tracer.borrow_mut().txn_start(&self.tx, from, self.db);
+
         for hook in self.hooks.clone() {
             hook.borrow_mut().prepare_execution(self)?;
         }
+
+        let call_type = if self.current_call_frame.is_create {
+            CallType::CREATE
+        } else {
+            CallType::CALL
+        };
+        let to = self.current_call_frame.to;
+        let gas_limit = self.current_call_frame.gas_limit;
+        let value = self.tx.value();
+        let data = self.tx.data();
+        self.tracer
+            .borrow_mut()
+            .enter(call_type, from, to, value, gas_limit, data);
 
         Ok(())
     }
@@ -557,6 +559,10 @@ impl<'a> VM<'a> {
             error,
             revert_reason,
         )?;
+
+        self.tracer
+            .borrow_mut()
+            .txn_end(ctx_result.gas_used, self.db);
 
         let report = ExecutionReport {
             result: ctx_result.result.clone(),
