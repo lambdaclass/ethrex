@@ -519,7 +519,9 @@ impl<'a> VM<'a> {
 
     fn prepare_execution(&mut self) -> Result<(), VMError> {
         let from = self.current_call_frame.msg_sender;
-        self.tracer.borrow_mut().txn_start(&self.tx, from, self.db);
+        self.tracer
+            .borrow_mut()
+            .txn_start(&self.env, &self.tx, from, self.db);
 
         for hook in self.hooks.clone() {
             hook.borrow_mut().prepare_execution(self)?;

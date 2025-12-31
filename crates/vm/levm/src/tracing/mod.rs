@@ -9,6 +9,7 @@ use ethrex_common::tracing::CallType;
 use ethrex_common::types::{Log, Transaction};
 use ethrex_common::{Address, U256};
 
+use crate::Environment;
 use crate::db::gen_db::GeneralizedDatabase;
 use crate::errors::InternalError;
 
@@ -41,7 +42,14 @@ pub trait Tracer {
     }
 
     /// Called before txn execution starts
-    fn txn_start(&mut self, tx: &Transaction, from: Address, db: &mut GeneralizedDatabase) {}
+    fn txn_start(
+        &mut self,
+        env: &Environment,
+        tx: &Transaction,
+        from: Address,
+        db: &mut GeneralizedDatabase,
+    ) {
+    }
 
     /// Called after txn execution starts
     fn txn_end(&mut self, gas_used: u64, db: &mut GeneralizedDatabase) {}
