@@ -53,6 +53,11 @@ rustc-hash.workspace = true
 hex.workspace = true
 colored = "2.1.0"
 spinoff = "0.8.0"
+criterion = "0.5"
+
+[[bench]]
+name = "optimizations_bench"
+harness = false
 
 [features]
 default = ["secp256k1"]

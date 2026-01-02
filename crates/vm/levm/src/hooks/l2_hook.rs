@@ -393,7 +393,7 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
         vm.current_call_frame.set_code(Code {
             hash: H256::zero(),
             bytecode: vec![Opcode::INVALID.into()].into(),
-            jump_targets: Vec::new(),
+            jump_targets: Default::default(),
         })?;
         return Ok(());
     }

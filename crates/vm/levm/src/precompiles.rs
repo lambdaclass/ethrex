@@ -292,9 +292,54 @@ pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
         .filter(move |precompile| precompile.active_since_fork <= fork)
 }
 
+/// Check if address is a precompile. O(1) lookup using const table.
+/// Previously used iterator scan O(n), now uses direct array indexing.
+#[inline(always)]
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
-    (matches!(vm_type, VMType::L2(_)) && *address == P256VERIFY.address)
-        || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
+    // Fast path: all standard precompiles have first 18 bytes as zero
+    if address[0..18] != [0u8; 18] {
+        return false;
+    }
+
+    // Const lookup table: maps precompile index to minimum fork required
+    // Uses Option<Fork> where None means not a precompile at that index
+    const PRECOMPILE_FORKS: [Option<Fork>; 512] = {
+        let mut table: [Option<Fork>; 512] = [None; 512];
+        table[ECRECOVER.address.0[19] as usize] = Some(Paris);
+        table[SHA2_256.address.0[19] as usize] = Some(Paris);
+        table[RIPEMD_160.address.0[19] as usize] = Some(Paris);
+        table[IDENTITY.address.0[19] as usize] = Some(Paris);
+        table[MODEXP.address.0[19] as usize] = Some(Paris);
+        table[ECADD.address.0[19] as usize] = Some(Paris);
+        table[ECMUL.address.0[19] as usize] = Some(Paris);
+        table[ECPAIRING.address.0[19] as usize] = Some(Paris);
+        table[BLAKE2F.address.0[19] as usize] = Some(Paris);
+        table[POINT_EVALUATION.address.0[19] as usize] = Some(Cancun);
+        table[BLS12_G1ADD.address.0[19] as usize] = Some(Prague);
+        table[BLS12_G1MSM.address.0[19] as usize] = Some(Prague);
+        table[BLS12_G2ADD.address.0[19] as usize] = Some(Prague);
+        table[BLS12_G2MSM.address.0[19] as usize] = Some(Prague);
+        table[BLS12_PAIRING_CHECK.address.0[19] as usize] = Some(Prague);
+        table[BLS12_MAP_FP_TO_G1.address.0[19] as usize] = Some(Prague);
+        table[BLS12_MAP_FP2_TO_G2.address.0[19] as usize] = Some(Prague);
+        // P256VERIFY is at index 256 (0x0100)
+        table[u16::from_be_bytes([P256VERIFY.address.0[18], P256VERIFY.address.0[19]]) as usize] =
+            Some(Osaka);
+        table
+    };
+
+    #[expect(clippy::as_conversions)]
+    let index = u16::from_be_bytes([address[18], address[19]]) as usize;
+
+    // Check standard precompiles using const table
+    if let Some(Some(min_fork)) = PRECOMPILE_FORKS.get(index) {
+        if fork >= *min_fork {
+            return true;
+        }
+    }
+
+    // L2 special case: P256VERIFY available before Osaka on L2
+    matches!(vm_type, VMType::L2(_)) && *address == P256VERIFY.address
 }
 
 #[expect(clippy::as_conversions, clippy::indexing_slicing)]

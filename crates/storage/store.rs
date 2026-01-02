@@ -626,10 +626,12 @@ impl Store {
         let (bytecode_slice, targets) = decode_bytes(&bytes)?;
         let bytecode = bytes.slice_ref(bytecode_slice);
 
+        // Decode as Vec and convert to FxHashSet for O(1) lookup performance
+        let jump_targets_vec: Vec<u32> = <Vec<_>>::decode(targets)?;
         let code = Code {
             hash: code_hash,
             bytecode,
-            jump_targets: <Vec<_>>::decode(targets)?,
+            jump_targets: jump_targets_vec.into_iter().collect(),
         };
 
         // insert into cache and evict if needed
@@ -2707,11 +2709,11 @@ fn snap_state_key(index: SnapStateIndex) -> Vec<u8> {
 }
 
 fn encode_code(code: &Code) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(
-        6 + code.bytecode.len() + std::mem::size_of_val(code.jump_targets.as_slice()),
-    );
+    // Convert FxHashSet to Vec for RLP encoding (storage format compatibility)
+    let jump_targets_vec: Vec<u32> = code.jump_targets.iter().copied().collect();
+    let mut buf = Vec::with_capacity(6 + code.bytecode.len() + jump_targets_vec.len() * 4);
     code.bytecode.encode(&mut buf);
-    code.jump_targets.encode(&mut buf);
+    jump_targets_vec.encode(&mut buf);
     buf
 }
 
