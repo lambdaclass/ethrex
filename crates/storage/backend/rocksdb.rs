@@ -106,6 +106,9 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB blocks
+                    // 128MB block cache for headers/bodies (frequently accessed)
+                    let cache = rocksdb::Cache::new_lru_cache(128 * 1024 * 1024);
+                    block_opts.set_block_cache(&cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CANONICAL_BLOCK_HASHES | BLOCK_NUMBERS => {
@@ -115,7 +118,8 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
-                    block_opts.set_bloom_filter(10.0, false);
+                    // 15 bits per key reduces false positive rate from ~1% to ~0.1%
+                    block_opts.set_bloom_filter(15.0, false);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_TRIE_NODES | STORAGE_TRIE_NODES => {
@@ -127,7 +131,11 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
-                    block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    // 15 bits per key reduces false positive rate from ~1% to ~0.1%
+                    block_opts.set_bloom_filter(15.0, false);
+                    // 256MB block cache for trie nodes (hot path)
+                    let cache = rocksdb::Cache::new_lru_cache(256 * 1024 * 1024);
+                    block_opts.set_block_cache(&cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_FLATKEYVALUE | STORAGE_FLATKEYVALUE => {
@@ -139,7 +147,11 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
-                    block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    // 15 bits per key reduces false positive rate from ~1% to ~0.1%
+                    block_opts.set_bloom_filter(15.0, false);
+                    // 128MB block cache for flat key-value lookups
+                    let cache = rocksdb::Cache::new_lru_cache(128 * 1024 * 1024);
+                    block_opts.set_block_cache(&cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_CODES => {

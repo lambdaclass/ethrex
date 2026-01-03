@@ -545,10 +545,8 @@ impl Blockchain {
         // Apply the account updates over the last block's state and compute the new state root
         for (hashed_address_h256, update) in updates {
             let hashed_address = hashed_address_h256.0.to_vec();
-            trace!(
-                "Execute block pipeline: Update cycle for {}",
-                hex::encode(&hashed_address)
-            );
+            // Use H256 directly (implements Debug) to avoid hex::encode allocation
+            trace!(account = ?hashed_address_h256, "Execute block pipeline: Update cycle");
             if update.removed {
                 // Remove account from trie
                 state_trie.remove(&hashed_address)?;
@@ -559,26 +557,17 @@ impl Blockchain {
             // Fetch current state or create a new state to be inserted
             let account_state = match account_states.entry(hashed_address_h256) {
                 Entry::Occupied(occupied_entry) => {
-                    trace!(
-                        "Found account state in cache for {}",
-                        hex::encode(&hashed_address)
-                    );
+                    trace!(account = ?hashed_address_h256, "Found account state in cache");
                     occupied_entry.into_mut()
                 }
                 Entry::Vacant(vacant_entry) => {
                     let account_state = match state_trie.get(&hashed_address)? {
                         Some(encoded_state) => {
-                            trace!(
-                                "Found account state in trie for {}",
-                                hex::encode(&hashed_address)
-                            );
+                            trace!(account = ?hashed_address_h256, "Found account state in trie");
                             AccountState::decode(&encoded_state)?
                         }
                         None => {
-                            trace!(
-                                "Created account state in trie for {}",
-                                hex::encode(&hashed_address)
-                            );
+                            trace!(account = ?hashed_address_h256, "Created account state in trie");
                             AccountState::default()
                         }
                     };
@@ -590,10 +579,11 @@ impl Blockchain {
                 storage_updates_map.remove(&hashed_address_h256);
             }
             if let Some(info) = &update.info {
+                // Use Debug formatting (?info) to avoid allocating hex strings
                 trace!(
                     nonce = info.nonce,
-                    balance = hex::encode(info.balance.to_big_endian()),
-                    code_hash = hex::encode(info.code_hash),
+                    balance = ?info.balance,
+                    code_hash = ?info.code_hash,
                     "With info"
                 );
                 account_state.nonce = info.nonce;
@@ -621,32 +611,23 @@ impl Blockchain {
                         )
                     });
                 let Ok(storage_trie) = storage_trie else {
-                    debug!(
-                        "Failed to open storage trie for account {}",
-                        hex::encode(&hashed_address)
-                    );
+                    debug!(account = ?hashed_address_h256, "Failed to open storage trie");
                     return Err(StoreError::Custom("Error opening storage trie".to_string()));
                 };
                 for (storage_key, storage_value) in &update.added_storage {
                     let hashed_key = hash_key(storage_key);
                     if storage_value.is_zero() {
-                        trace!(slot = hex::encode(&hashed_key), "Removing");
+                        trace!(slot = ?H256::from_slice(&hashed_key), "Removing");
                         storage_trie.remove(&hashed_key)?;
                     } else {
-                        trace!(slot = hex::encode(&hashed_key), "Inserting");
+                        trace!(slot = ?H256::from_slice(&hashed_key), "Inserting");
                         storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                     }
                 }
-                trace!(
-                    "Collecting storage changes for account {}",
-                    hex::encode(&hashed_address)
-                );
+                trace!(account = ?hashed_address_h256, "Collecting storage changes");
                 let (storage_hash, storage_updates) =
                     storage_trie.collect_changes_since_last_hash();
-                trace!(
-                    "Storage changes collected for account {}",
-                    hex::encode(&hashed_address)
-                );
+                trace!(account = ?hashed_address_h256, "Storage changes collected");
                 storage_updates_map.extend(storage_updates);
                 account_state.storage_root = storage_hash;
             }

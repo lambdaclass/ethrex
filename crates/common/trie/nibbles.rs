@@ -71,17 +71,20 @@ impl Nibbles {
 
     /// Splits incoming bytes into nibbles and appends the leaf flag (a 16 nibble at the end) if is_leaf is true
     pub fn from_raw(bytes: &[u8], is_leaf: bool) -> Self {
-        let mut data: Vec<u8> = bytes
-            .iter()
-            .flat_map(|byte| [(byte >> 4 & 0x0F), byte & 0x0F])
-            .collect();
+        // Pre-allocate exact size: 2 nibbles per byte + optional leaf flag
+        let capacity = bytes.len() * 2 + if is_leaf { 1 } else { 0 };
+        let mut data = Vec::with_capacity(capacity);
+        for byte in bytes {
+            data.push((byte >> 4) & 0x0F);
+            data.push(byte & 0x0F);
+        }
         if is_leaf {
             data.push(16);
         }
 
         Self {
             data,
-            already_consumed: vec![],
+            already_consumed: Vec::new(),
         }
     }
 
@@ -103,8 +106,8 @@ impl Nibbles {
     /// the prefix and return true, otherwise return false.
     pub fn skip_prefix(&mut self, prefix: &Nibbles) -> bool {
         if self.len() >= prefix.len() && &self.data[..prefix.len()] == prefix.as_ref() {
-            self.data = self.data[prefix.len()..].to_vec();
-            self.already_consumed.extend(&prefix.data);
+            // Use drain to avoid allocation - removes prefix in-place
+            self.already_consumed.extend(self.data.drain(..prefix.len()));
             true
         } else {
             false
@@ -132,10 +135,14 @@ impl Nibbles {
     /// Removes and returns the first nibble
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<u8> {
-        (!self.is_empty()).then(|| {
-            self.already_consumed.push(self.data[0]);
-            self.data.remove(0)
-        })
+        if self.is_empty() {
+            return None;
+        }
+        // Use drain(..1) which is more efficient than remove(0) for single element
+        let nibble = self.data[0];
+        self.already_consumed.push(nibble);
+        self.data.drain(..1);
+        Some(nibble)
     }
 
     /// Removes and returns the first nibble if it is a suitable choice index (aka < 16)
@@ -146,7 +153,10 @@ impl Nibbles {
     /// Returns the nibbles after the given offset
     pub fn offset(&self, offset: usize) -> Nibbles {
         let mut ret = self.slice(offset, self.len());
-        ret.already_consumed = [&self.already_consumed, &self.data[0..offset]].concat();
+        // Pre-allocate and extend instead of using concat()
+        ret.already_consumed.reserve(self.already_consumed.len() + offset);
+        ret.already_consumed.extend_from_slice(&self.already_consumed);
+        ret.already_consumed.extend_from_slice(&self.data[0..offset]);
         ret
     }
 
@@ -178,7 +188,6 @@ impl Nibbles {
     /// Taken from https://github.com/citahub/cita_trie/blob/master/src/nibbles.rs#L56
     /// Encodes the nibbles in compact form
     pub fn encode_compact(&self) -> Vec<u8> {
-        let mut compact = vec![];
         let is_leaf = self.is_leaf();
         let mut hex = if is_leaf {
             &self.data[0..self.data.len() - 1]
@@ -199,6 +208,8 @@ impl Nibbles {
             0x00
         };
 
+        // Pre-allocate exact size: 1 byte for prefix + hex.len()/2 for pairs
+        let mut compact = Vec::with_capacity(1 + hex.len() / 2);
         compact.push(v + if is_leaf { 0x20 } else { 0x00 });
         for i in 0..(hex.len() / 2) {
             compact.push((hex[i * 2] * 16) + (hex[i * 2 + 1]));
@@ -240,16 +251,24 @@ impl Nibbles {
 
     /// Concatenates self and another Nibbles returning a new Nibbles
     pub fn concat(&self, other: &Nibbles) -> Nibbles {
+        // Pre-allocate exact size needed
+        let mut data = Vec::with_capacity(self.data.len() + other.data.len());
+        data.extend_from_slice(&self.data);
+        data.extend_from_slice(&other.data);
         Nibbles {
-            data: [&self.data[..], &other.data[..]].concat(),
+            data,
             already_consumed: self.already_consumed.clone(),
         }
     }
 
-    /// Returns a copy of self with the nibble added at the and
+    /// Returns a copy of self with the nibble added at the end
     pub fn append_new(&self, nibble: u8) -> Nibbles {
+        // Pre-allocate exact size needed
+        let mut data = Vec::with_capacity(self.data.len() + 1);
+        data.extend_from_slice(&self.data);
+        data.push(nibble);
         Nibbles {
-            data: [self.data.clone(), vec![nibble]].concat(),
+            data,
             already_consumed: self.already_consumed.clone(),
         }
     }
@@ -304,12 +323,15 @@ fn compact_to_hex(compact: &[u8]) -> Vec<u8> {
     }
     let mut base = keybytes_to_hex(compact);
     // delete terminator flag
-    if base[0] < 2 {
-        base = base[..base.len() - 1].to_vec();
-    }
+    let has_terminator = base[0] >= 2;
     // apply odd flag
     let chop = 2 - (base[0] & 1) as usize;
-    base[chop..].to_vec()
+    // Use drain to avoid extra allocation instead of .to_vec()
+    base.drain(..chop);
+    if !has_terminator {
+        base.pop(); // Remove terminator
+    }
+    base
 }
 
 // Code taken from https://github.com/ethereum/go-ethereum/blob/a1093d98eb3260f2abf340903c2d968b2b891c11/trie/encoding.go#L96

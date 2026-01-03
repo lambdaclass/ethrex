@@ -47,7 +47,6 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::AtomicU64,
         mpsc::{SyncSender, TryRecvError, sync_channel},
     },
     thread::JoinHandle,
@@ -71,50 +70,62 @@ enum FKVGeneratorControlMessage {
 // 64mb
 const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
 
-// TODO: don't use atomic here, instead wrap in Mutex the whole cache
+/// Inner cache structure with size tracking (avoids atomic operations)
 #[derive(Debug)]
-struct CodeCache {
-    inner_cache: Mutex<LruCache<H256, Code, FxBuildHasher>>,
-    cache_size: AtomicU64,
+struct CodeCacheInner {
+    cache: LruCache<H256, Code, FxBuildHasher>,
+    current_size: u64,
 }
 
-impl Default for CodeCache {
+impl Default for CodeCacheInner {
     fn default() -> Self {
         Self {
-            inner_cache: Mutex::new(LruCache::unbounded_with_hasher(FxBuildHasher)),
-            cache_size: AtomicU64::new(0),
+            cache: LruCache::unbounded_with_hasher(FxBuildHasher),
+            current_size: 0,
         }
     }
 }
 
+/// Thread-safe code cache with size-based eviction.
+/// Size tracking is done inside the mutex to avoid atomic contention.
+#[derive(Debug, Default)]
+struct CodeCache {
+    inner: Mutex<CodeCacheInner>,
+}
+
 impl CodeCache {
     fn get(&self, code_hash: &H256) -> Result<Option<Code>, StoreError> {
-        let mut cache = self.inner_cache.lock().map_err(|_| StoreError::LockError)?;
-        Ok(cache.get(code_hash).cloned())
+        let mut inner = self.inner.lock().map_err(|_| StoreError::LockError)?;
+        Ok(inner.cache.get(code_hash).cloned())
     }
 
     fn insert(&self, code: &Code) -> Result<(), StoreError> {
-        let mut cache = self.inner_cache.lock().map_err(|_| StoreError::LockError)?;
-        let code_size = code.size();
-        self.cache_size
-            .fetch_add(code_size as u64, std::sync::atomic::Ordering::SeqCst);
-        let cache_len = cache.len() + 1;
-        let mut current_size = self.cache_size.load(std::sync::atomic::Ordering::SeqCst);
+        let mut inner = self.inner.lock().map_err(|_| StoreError::LockError)?;
+
+        // Check if already present to avoid duplicate size tracking
+        if inner.cache.contains(&code.hash) {
+            return Ok(());
+        }
+
+        let code_size = code.size() as u64;
+        inner.current_size += code_size;
+
         debug!(
-            "[ACCOUNT CODE CACHE] cache elements (): {cache_len}, total size: {current_size} bytes"
+            "[ACCOUNT CODE CACHE] cache elements: {}, total size: {} bytes",
+            inner.cache.len() + 1,
+            inner.current_size
         );
 
-        while current_size > CODE_CACHE_MAX_SIZE {
-            if let Some((_, code)) = cache.pop_lru() {
-                self.cache_size
-                    .fetch_sub(code.size() as u64, std::sync::atomic::Ordering::SeqCst);
-                current_size = self.cache_size.load(std::sync::atomic::Ordering::SeqCst);
+        // Evict LRU entries until we're under the size limit
+        while inner.current_size > CODE_CACHE_MAX_SIZE {
+            if let Some((_, evicted_code)) = inner.cache.pop_lru() {
+                inner.current_size = inner.current_size.saturating_sub(evicted_code.size() as u64);
             } else {
                 break;
             }
         }
 
-        cache.get_or_insert(code.hash, || code.clone());
+        inner.cache.put(code.hash, code.clone());
         Ok(())
     }
 }
