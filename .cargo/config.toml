@@ -4,3 +4,8 @@ rustflags = [
     "-Ctarget-feature=+avx2,+sse2,+ssse3,+sse4.1,+sse4.2,+bmi1,+lzcnt,+pclmulqdq",
 ]
 
+[target.aarch64-apple-darwin]
+rustflags = ["-Ctarget-cpu=native"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-Ctarget-cpu=native"]
