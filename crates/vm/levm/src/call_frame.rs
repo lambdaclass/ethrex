@@ -9,7 +9,8 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{Address, U256};
 use ethrex_common::{H256, types::Code};
-use std::{collections::HashMap, fmt, hint::assert_unchecked};
+use rustc_hash::FxHashMap;
+use std::{fmt, hint::assert_unchecked};
 
 /// [`u64`]s that make up a [`U256`]
 const U64_PER_U256: usize = U256::MAX.0.len();
@@ -272,8 +273,9 @@ pub struct CallFrame {
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct CallFrameBackup {
-    pub original_accounts_info: HashMap<Address, LevmAccount>,
-    pub original_account_storage_slots: HashMap<Address, HashMap<H256, U256>>,
+    /// Uses FxHashMap for faster O(1) lookups with non-cryptographic hash
+    pub original_accounts_info: FxHashMap<Address, LevmAccount>,
+    pub original_account_storage_slots: FxHashMap<Address, FxHashMap<H256, U256>>,
 }
 
 impl CallFrameBackup {
