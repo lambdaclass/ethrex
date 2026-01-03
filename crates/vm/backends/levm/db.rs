@@ -7,9 +7,10 @@ use ethrex_levm::db::Database as LevmDatabase;
 use crate::VmDatabase;
 use crate::db::DynVmDatabase;
 use ethrex_levm::errors::DatabaseError;
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::result::Result;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct DatabaseLogger {
@@ -33,16 +34,9 @@ impl DatabaseLogger {
 
 impl LevmDatabase for DatabaseLogger {
     fn get_account_state(&self, address: CoreAddress) -> Result<AccountState, DatabaseError> {
-        self.state_accessed
-            .lock()
-            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
-            .entry(address)
-            .or_default();
-        let state = self
-            .store
-            .lock()
-            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
-            .get_account_state(address)?;
+        // parking_lot::Mutex::lock() returns guard directly (no Result)
+        self.state_accessed.lock().entry(address).or_default();
+        let state = self.store.lock().get_account_state(address)?;
         Ok(state)
     }
 
@@ -53,50 +47,29 @@ impl LevmDatabase for DatabaseLogger {
     ) -> Result<CoreU256, DatabaseError> {
         self.state_accessed
             .lock()
-            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
             .entry(address)
             .and_modify(|keys| keys.push(key))
             .or_insert(vec![key]);
-        self.store
-            .lock()
-            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
-            .get_storage_value(address, key)
+        self.store.lock().get_storage_value(address, key)
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<CoreH256, DatabaseError> {
-        let block_hash = self
-            .store
-            .lock()
-            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
-            .get_block_hash(block_number)?;
+        let block_hash = self.store.lock().get_block_hash(block_number)?;
         self.block_hashes_accessed
             .lock()
-            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
             .insert(block_number, block_hash);
         Ok(block_hash)
     }
 
     fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, DatabaseError> {
-        self.store
-            .lock()
-            .map_err(|_| {
-                DatabaseError::Custom("Could not lock mutex and get chain config".to_string())
-            })?
-            .get_chain_config()
+        self.store.lock().get_chain_config()
     }
 
     fn get_account_code(&self, code_hash: CoreH256) -> Result<Code, DatabaseError> {
         if code_hash != *EMPTY_KECCACK_HASH {
-            let mut code_accessed = self
-                .code_accessed
-                .lock()
-                .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?;
-            code_accessed.push(code_hash);
+            self.code_accessed.lock().push(code_hash);
         }
-        self.store
-            .lock()
-            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
-            .get_account_code(code_hash)
+        self.store.lock().get_account_code(code_hash)
     }
 }
 

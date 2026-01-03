@@ -22,6 +22,7 @@ rkyv.workspace = true
 
 bincode = "1"
 dyn-clone = "1.0"
+parking_lot.workspace = true
 
 ethereum-types.workspace = true
 

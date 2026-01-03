@@ -44,11 +44,12 @@ use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{
-    Arc, Mutex, RwLock,
+    Arc, RwLock,
     atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc::{Receiver, channel},
 };
 use std::time::Instant;
+use parking_lot::Mutex as ParkingLotMutex;
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
@@ -725,7 +726,7 @@ impl Blockchain {
             let vm_db: DynVmDatabase =
                 Box::new(StoreVmDatabase::new(self.storage.clone(), parent_header)?);
 
-            let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
+            let logger = Arc::new(DatabaseLogger::new(Arc::new(ParkingLotMutex::new(Box::new(vm_db)))));
 
             let mut vm = match self.options.r#type {
                 BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
@@ -762,13 +763,8 @@ impl Blockchain {
             }
 
             // Get the used block hashes from the logger
-            let logger_block_hashes = logger
-                .block_hashes_accessed
-                .lock()
-                .map_err(|_e| {
-                    ChainError::WitnessGeneration("Failed to get block hashes".to_string())
-                })?
-                .clone();
+            // parking_lot::Mutex::lock() returns guard directly (no Result)
+            let logger_block_hashes = logger.block_hashes_accessed.lock().clone();
 
             blockhash_opcode_references.extend(logger_block_hashes);
 
@@ -785,14 +781,8 @@ impl Blockchain {
 
             // Access all the accounts from the initial trie
             // Record all the storage nodes for the initial state
-            for (account, acc_keys) in logger
-                .state_accessed
-                .lock()
-                .map_err(|_e| {
-                    ChainError::WitnessGeneration("Failed to execute with witness".to_string())
-                })?
-                .iter()
-            {
+            // parking_lot::Mutex::lock() returns guard directly (no Result)
+            for (account, acc_keys) in logger.state_accessed.lock().iter() {
                 // Access the account from the state trie to record the nodes used to access it
                 trie.get(&hash_address(account)).map_err(|_e| {
                     ChainError::WitnessGeneration("Failed to access account from trie".to_string())
@@ -817,14 +807,8 @@ impl Blockchain {
             }
 
             // Store all the accessed evm bytecodes
-            for code_hash in logger
-                .code_accessed
-                .lock()
-                .map_err(|_e| {
-                    ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
-                })?
-                .iter()
-            {
+            // parking_lot::Mutex::lock() returns guard directly (no Result)
+            for code_hash in logger.code_accessed.lock().iter() {
                 let code = self
                     .storage
                     .get_account_code(*code_hash)
