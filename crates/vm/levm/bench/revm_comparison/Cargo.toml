@@ -22,6 +22,13 @@ hex = "0.4.3"
 bytes = { version = "1.6.0", features = ["serde"] }
 
 revm = "9.0.0"
+mimalloc = { version = "0.1", optional = true }
+snmalloc-rs = { version = "0.3", optional = true }
+
+[features]
+default = []
+mimalloc = ["dep:mimalloc"]
+snmalloc = ["dep:snmalloc-rs"]
 
 [[bin]]
 name = "compile"

@@ -1,3 +1,14 @@
+#[cfg(feature = "mimalloc")]
+use mimalloc::MiMalloc;
+
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
+
+#[cfg(feature = "snmalloc")]
+#[global_allocator]
+static GLOBAL: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
+
 use ethrex_crypto::keccak::keccak_hash;
 use revm_comparison::{levm_bench::run_with_levm, revm_bench::run_with_revm};
 use std::{fs::File, io::Read};
