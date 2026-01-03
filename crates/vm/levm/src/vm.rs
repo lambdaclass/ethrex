@@ -558,13 +558,13 @@ impl<'a> VM<'a> {
             self.current_call_frame.depth,
             gas_used,
             output,
-            error,
+            error.clone(),
             revert_reason,
         )?;
 
         self.tracer
             .borrow_mut()
-            .txn_end(ctx_result.gas_used, self.db);
+            .txn_end(ctx_result.gas_used, error, self.db);
 
         let report = ExecutionReport {
             result: ctx_result.result.clone(),

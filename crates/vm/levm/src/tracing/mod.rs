@@ -53,7 +53,7 @@ pub trait Tracer {
     }
 
     /// Called after txn execution ends
-    fn txn_end(&mut self, _gas_used: u64, _db: &mut GeneralizedDatabase) {}
+    fn txn_end(&mut self, _gas_used: u64, err: Option<String>, _db: &mut GeneralizedDatabase) {}
 
     /// Called before each opcode execution. Used by prestate tracer to capture account lookups.
     /// Returns true if tracing should continue, false to interrupt execution.
