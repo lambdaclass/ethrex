@@ -4,7 +4,7 @@ use bytes::{BufMut, Bytes};
 use ethereum_types::{H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_trie::Trie;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 use ethrex_rlp::{
@@ -20,7 +20,7 @@ use crate::{
     utils::keccak,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Code {
     // hash is only used for bytecodes stored in the DB, either for reading it from the DB
     // or with the CODEHASH opcode, which needs an account address as argument and
@@ -32,17 +32,7 @@ pub struct Code {
     // The valid addresses are 32-bit because, despite EIP-3860 restricting initcode size,
     // this does not apply to previous forks. This is tested in the EEST tests, which would
     // panic in debug mode.
-    // Uses FxHashSet for O(1) lookup instead of Vec with binary search O(log n).
-    pub jump_targets: FxHashSet<u32>,
-}
-
-// Manual Hash implementation since FxHashSet doesn't implement Hash.
-// We hash based on the code hash and bytecode, which uniquely identify the code.
-impl std::hash::Hash for Code {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.hash.hash(state);
-        self.bytecode.hash(state);
-    }
+    pub jump_targets: Vec<u32>,
 }
 
 impl Code {
@@ -67,16 +57,16 @@ impl Code {
         }
     }
 
-    fn compute_jump_targets(code: &[u8]) -> FxHashSet<u32> {
+    fn compute_jump_targets(code: &[u8]) -> Vec<u32> {
         debug_assert!(code.len() <= u32::MAX as usize);
-        let mut targets = FxHashSet::default();
+        let mut targets = Vec::new();
         let mut i = 0;
         while i < code.len() {
             // TODO: we don't use the constants from the vm module to avoid a circular dependency
             match code[i] {
                 // OP_JUMPDEST
                 0x5B => {
-                    targets.insert(i as u32);
+                    targets.push(i as u32);
                 }
                 // OP_PUSH1..32
                 c @ 0x60..0x80 => {
@@ -101,10 +91,8 @@ impl Code {
     pub fn size(&self) -> usize {
         let hash_size = size_of::<H256>();
         let bytes_size = size_of::<Bytes>();
-        // FxHashSet: base struct size + capacity * (size of u32 + overhead for hash bucket)
-        let set_size =
-            size_of::<FxHashSet<u32>>() + self.jump_targets.capacity() * (size_of::<u32>() + 8);
-        hash_size + bytes_size + set_size
+        let vec_size = size_of::<Vec<u32>>() + self.jump_targets.len() * size_of::<u32>();
+        hash_size + bytes_size + vec_size
     }
 }
 
@@ -172,7 +160,7 @@ impl Default for Code {
         Self {
             bytecode: Bytes::new(),
             hash: *EMPTY_KECCACK_HASH,
-            jump_targets: FxHashSet::default(),
+            jump_targets: Vec::new(),
         }
     }
 }

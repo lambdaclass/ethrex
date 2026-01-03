@@ -293,7 +293,11 @@ impl<'a> VM<'a> {
     ///     constant associated with a push instruction.
     #[inline(always)]
     fn target_address_is_valid(call_frame: &CallFrame, jump_address: u32) -> bool {
-        call_frame.bytecode.jump_targets.contains(&jump_address)
+        call_frame
+            .bytecode
+            .jump_targets
+            .binary_search(&jump_address)
+            .is_ok()
     }
 
     /// JUMP* family (`JUMP` and `JUMP` ATTOW [DEC 2024]) helper

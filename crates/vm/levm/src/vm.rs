@@ -22,10 +22,9 @@ use ethrex_common::{
     tracing::CallType,
     types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
 };
-use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     mem,
     rc::Rc,
 };
@@ -48,8 +47,7 @@ pub struct Substate {
 
     selfdestruct_set: HashSet<Address>,
     accessed_addresses: HashSet<Address>,
-    // Uses FxHashMap/FxHashSet for O(1) lookup performance instead of BTreeMap/BTreeSet O(log n)
-    accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
+    accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
     created_accounts: HashSet<Address>,
     pub refunded_gas: u64,
     transient_storage: TransientStorage,
@@ -59,7 +57,7 @@ pub struct Substate {
 impl Substate {
     pub fn from_accesses(
         accessed_addresses: HashSet<Address>,
-        accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
+        accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
     ) -> Self {
         Self {
             parent: None,
@@ -167,9 +165,8 @@ impl Substate {
     }
 
     /// Build an access list from all accessed storage slots.
-    /// Uses FxHashMap for O(1) collection, then sorts for deterministic output.
     pub fn make_access_list(&self) -> Vec<AccessListEntry> {
-        let mut entries = FxHashMap::<Address, FxHashSet<H256>>::default();
+        let mut entries = BTreeMap::<Address, BTreeSet<H256>>::new();
 
         let mut current = self;
         loop {
@@ -186,20 +183,13 @@ impl Substate {
             };
         }
 
-        // Convert to Vec and sort for deterministic output
-        let mut result: Vec<AccessListEntry> = entries
+        entries
             .into_iter()
-            .map(|(address, storage_keys)| {
-                let mut keys: Vec<H256> = storage_keys.into_iter().collect();
-                keys.sort();
-                AccessListEntry {
-                    address,
-                    storage_keys: keys,
-                }
+            .map(|(address, storage_keys)| AccessListEntry {
+                address,
+                storage_keys: storage_keys.into_iter().collect(),
             })
-            .collect();
-        result.sort_by_key(|entry| entry.address);
-        result
+            .collect()
     }
 
     /// Mark an address as accessed and return whether is was already marked.
@@ -573,8 +563,8 @@ impl Substate {
     pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
         let mut initial_accessed_addresses = HashSet::new();
-        let mut initial_accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>> =
-            FxHashMap::default();
+        let mut initial_accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>> =
+            BTreeMap::new();
 
         // Add Tx sender to accessed accounts
         initial_accessed_addresses.insert(env.origin);

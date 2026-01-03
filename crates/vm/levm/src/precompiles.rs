@@ -293,7 +293,6 @@ pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
 }
 
 /// Check if address is a precompile. O(1) lookup using const table.
-/// Previously used iterator scan O(n), now uses direct array indexing.
 #[inline(always)]
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
     // Fast path: all standard precompiles have first 18 bytes as zero
@@ -302,7 +301,6 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
     }
 
     // Const lookup table: maps precompile index to minimum fork required
-    // Uses Option<Fork> where None means not a precompile at that index
     const PRECOMPILE_FORKS: [Option<Fork>; 512] = {
         let mut table: [Option<Fork>; 512] = [None; 512];
         table[ECRECOVER.address.0[19] as usize] = Some(Paris);
@@ -322,7 +320,6 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
         table[BLS12_PAIRING_CHECK.address.0[19] as usize] = Some(Prague);
         table[BLS12_MAP_FP_TO_G1.address.0[19] as usize] = Some(Prague);
         table[BLS12_MAP_FP2_TO_G2.address.0[19] as usize] = Some(Prague);
-        // P256VERIFY is at index 256 (0x0100)
         table[u16::from_be_bytes([P256VERIFY.address.0[18], P256VERIFY.address.0[19]]) as usize] =
             Some(Osaka);
         table
