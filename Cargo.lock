@@ -3660,6 +3660,7 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "hex",
+ "parking_lot",
  "rustc-hash 2.1.1",
  "serde_json",
  "thiserror 2.0.17",
