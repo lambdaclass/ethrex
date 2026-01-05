@@ -529,6 +529,12 @@ impl Trie {
         trie
     }
 
+    /// Validates that the Trie isn't missing any nodes expected in the branches
+    ///
+    /// This is used internally with debug assertions to check the status of the trie
+    /// after syncing operations.
+    /// Note: this operation validates the hashes because the iterator uses
+    /// get_node_checked. We shouldn't downgrade that to the unchecked version
     pub fn validate(self) -> Result<(), TrieError> {
         let mut expected_count = if self.root.is_valid() { 1 } else { 0 };
         for (_, node) in self.into_iter() {
