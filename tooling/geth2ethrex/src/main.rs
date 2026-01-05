@@ -202,7 +202,7 @@ fn geth2ethrex(mut store: Store, block_number: BlockNumber, args: &Args) -> eyre
             }
             storage_nodes += 1;
             if storage_nodes % 1_000_000 == 0 {
-                println!("{storage_nodes} storage nodes loaded")
+                info!("{storage_nodes} storage nodes loaded")
             }
         }
         rt.block_on(store.write_storage_trie_nodes_batch(storages_to_write.drain().collect()))?;
