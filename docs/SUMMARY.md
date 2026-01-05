@@ -24,8 +24,10 @@
   - [Databases](./l1/fundamentals/databases.md)
   - [Networking](./l1/fundamentals/networking.md)
   - [Sync modes](./l1/fundamentals/sync_modes.md)
-  - [Snap sync internals](./internal/l1/healing.md)
+  - [Snap sync internals](./l1/fundamentals/snap_sync.md)
     - [Can an account disappear from Ethereum's state trie?](./internal/l1/delete_accounts.md)
+    - [Future Rewrite Concerns](./l1/fundamentals/snap_sync_concerns.md)
+    - [Sorted Trie Insertion](./internal/l1/sorted_trie_insert.md)
   - [Pruning]()
 
 # Ethrex for L2 chains
@@ -39,6 +41,7 @@
   - [Ethrex <> Aligned](./l2/deployment/aligned.md)
   - [Synchronous Composability PoC](./l2/deployment/synchronous_composability_poc.md)
   - [Deploying a shared bridge enabled L2](./l2/deployment/shared_bridge.md)
+  - [Deploying a fee token](./l2/deployment/fee_token.md)
   - [Migrations](./l2/deployment/migrations.md)
 - [Run a prover](./l2/deployment/prover/README.md)
   - [Overview](./l2/deployment/prover/overview.md)
@@ -74,6 +77,7 @@
     - [L1MessageSender]()
   - [Based sequencing](./l2/fundamentals/based.md)
   - [Transaction fees](./l2/fundamentals/transaction_fees.md)
+  - [Fee token](./l2/fundamentals/fee_token.md)
   - [Shared Bridge](./l2/fundamentals/shared_bridge.md)
 
 # Ethrex for developers

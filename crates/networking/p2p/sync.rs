@@ -755,7 +755,7 @@ impl Syncer {
                     storage_accounts.accounts_with_storage_root.len()
                 );
                 storage_range_request_attempts += 1;
-                if storage_range_request_attempts < 3 {
+                if storage_range_request_attempts < 5 {
                     chunk_index = self
                         .peers
                         .request_storage_ranges(
@@ -870,7 +870,10 @@ impl Syncer {
         store.generate_flatkeyvalue()?;
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
-        debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
+        debug_assert!(validate_storage_root(
+            store.clone(),
+            pivot_header.state_root
+        ));
 
         info!("Finished healing");
 
@@ -952,7 +955,7 @@ impl Syncer {
 
         *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
 
-        debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root).await);
+        debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root));
 
         store_block_bodies(
             vec![pivot_header.clone()],
@@ -1230,7 +1233,7 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
     validated.is_ok()
 }
 
-pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
+pub fn validate_storage_root(store: Store, state_root: H256) -> bool {
     info!("Starting validate_storage_root");
     let is_valid = tokio::task::spawn_blocking(move || {
         store
@@ -1258,7 +1261,7 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     is_valid.is_ok()
 }
 
-pub async fn validate_bytecodes(store: Store, state_root: H256) -> bool {
+pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
     info!("Starting validate_bytecodes");
     let mut is_valid = true;
     for (account_hash, account_state) in store

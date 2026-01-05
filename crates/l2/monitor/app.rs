@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
-use crate::monitor::utils::SelectableScroller;
+use crate::monitor::widget::rich_accounts::RichAccountsTable;
 use crate::monitor::widget::{ETHREX_LOGO, LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS};
 use crate::sequencer::configs::MonitorConfig;
 use crate::{
@@ -41,9 +41,7 @@ use crate::{
     },
     sequencer::errors::MonitorError,
 };
-use crate::{
-    based::sequencer_state::SequencerState, monitor::widget::rich_accounts::RichAccountsTable,
-};
+use crate::{monitor::utils::SelectableScroller, sequencer::sequencer_state::SequencerState};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 

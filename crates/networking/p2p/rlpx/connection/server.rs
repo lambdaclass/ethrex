@@ -79,7 +79,7 @@ pub struct PeerConnection {
 }
 
 impl PeerConnection {
-    pub async fn spawn_as_receiver(
+    pub fn spawn_as_receiver(
         context: P2PContext,
         peer_addr: SocketAddr,
         stream: TcpStream,
@@ -95,7 +95,7 @@ impl PeerConnection {
         }
     }
 
-    pub async fn spawn_as_initiator(context: P2PContext, node: &Node) -> PeerConnection {
+    pub fn spawn_as_initiator(context: P2PContext, node: &Node) -> PeerConnection {
         let state = ConnectionState::Initiator(Initiator {
             context,
             node: node.clone(),
@@ -397,10 +397,14 @@ impl GenServer for PeerConnectionServer {
                     );
                     match msg {
                         L2Cast::BatchBroadcast => {
-                            l2_connection::send_sealed_batch(established_state).await
+                            let res = l2_connection::send_sealed_batch(established_state).await;
+                            res.and(
+                                l2_connection::process_batches_on_queue(established_state).await,
+                            )
                         }
                         L2Cast::BlockBroadcast => {
-                            l2_connection::send_new_block(established_state).await
+                            let res = l2_connection::send_new_block(established_state).await;
+                            res.and(l2_connection::process_blocks_on_queue(established_state).await)
                         }
                     }
                 }
@@ -1061,7 +1065,7 @@ async fn handle_incoming_message(
             if state.blockchain.is_synced() {
                 if let Some(requested) = state.requested_pooled_txs.get(&msg.id) {
                     let fork = state.blockchain.current_fork().await?;
-                    if let Err(error) = msg.validate_requested(requested, fork).await {
+                    if let Err(error) = msg.validate_requested(requested, fork) {
                         warn!(
                             peer=%state.node,
                             reason=%error,

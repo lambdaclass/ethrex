@@ -16,6 +16,7 @@ pub struct SequencerConfig {
     pub aligned: AlignedConfig,
     pub monitor: MonitorConfig,
     pub admin_server: AdminConfig,
+    pub state_updater: StateUpdaterConfig,
 }
 
 // TODO: Move to blockchain/dev
@@ -78,7 +79,6 @@ pub struct ProofCoordinatorConfig {
 #[derive(Clone, Debug)]
 pub struct BasedConfig {
     pub enabled: bool,
-    pub state_updater: StateUpdaterConfig,
     pub block_fetcher: BlockFetcherConfig,
 }
 
@@ -86,6 +86,8 @@ pub struct BasedConfig {
 pub struct StateUpdaterConfig {
     pub sequencer_registry: Address,
     pub check_interval_ms: u64,
+    pub start_at: u64,
+    pub l2_head_check_rpc_url: Option<Url>,
 }
 
 #[derive(Clone, Debug)]

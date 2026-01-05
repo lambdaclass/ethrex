@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Block, Row, StatefulWidget, Table, TableState},
 };
 
-use crate::{based::sequencer_state::SequencerState, sequencer::errors::MonitorError};
+use crate::sequencer::{errors::MonitorError, sequencer_state::SequencerState};
 
 #[derive(Clone)]
 pub struct NodeStatusTable {
