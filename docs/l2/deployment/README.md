@@ -12,4 +12,3 @@ Use this section to choose the deployment method that best fits your needs and f
 - [Deploying a shared bridge enabled L2](./shared_bridge.md)
 - [Deploying a fee token](./fee_token.md)
 - [Upgrades](./upgrades.md)
-- [Migrations](./migrations.md)
