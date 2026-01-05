@@ -213,14 +213,14 @@ update-cargo-lock: ## 📦 Update Cargo.lock files
 	cargo tree --manifest-path tooling/ef_tests/state/Cargo.toml
 
 check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
-	cargo check --locked
-	cargo check --locked --manifest-path crates/l2/prover/src/guest_program/src/sp1/Cargo.toml
-	cargo check --locked --manifest-path crates/l2/prover/src/guest_program/src/risc0/Cargo.toml
+	cargo metadata --locked > /dev/null
+	cargo metadata --locked --manifest-path crates/l2/prover/src/guest_program/src/sp1/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path crates/l2/prover/src/guest_program/src/risc0/Cargo.toml > /dev/null
 	# We use metadata so we don't need to have the ZisK toolchain installed and verify compilation
 	# if changes made to the source code CI will run with the toolchain
 	cargo metadata --locked --manifest-path crates/l2/prover/src/guest_program/src/zisk/Cargo.toml > /dev/null
-	cargo check --locked --manifest-path crates/l2/prover/src/guest_program/src/openvm/Cargo.toml
-	cargo check --locked --manifest-path crates/l2/tee/quote-gen/Cargo.toml
-	cargo check --locked --manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml
-	cargo check --locked --manifest-path tooling/Cargo.toml
-	cargo check --locked --manifest-path tooling/ef_tests/state/Cargo.toml
+	cargo metadata --locked --manifest-path crates/l2/prover/src/guest_program/src/openvm/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path crates/l2/tee/quote-gen/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path tooling/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path tooling/ef_tests/state/Cargo.toml > /dev/null
