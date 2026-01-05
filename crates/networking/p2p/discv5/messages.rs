@@ -176,142 +176,6 @@ impl PacketHeader {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DecodedPacket {
-    Ordinary(Ordinary),
-    WhoAreYou(WhoAreYou),
-    Handshake(Handshake),
-}
-
-impl DecodedPacket {
-    pub fn decode(
-        dest_id: &H256,
-        decrypt_key: &[u8; 16],
-        encoded_packet: &[u8],
-    ) -> Result<DecodedPacket, PacketCodecError> {
-        if encoded_packet.len() < MIN_PACKET_SIZE || encoded_packet.len() > MAX_PACKET_SIZE {
-            return Err(PacketCodecError::InvalidSize);
-        }
-
-        // the packet structure is
-        // masking-iv || masked-header || message
-        // 16 bytes for an u128
-        let masking_iv = &encoded_packet[..IV_MASKING_SIZE];
-
-        let mut cipher = <Aes128Ctr64BE as KeyIvInit>::new(dest_id[..16].into(), masking_iv.into());
-
-        let header = DecodedPacket::decode_header(&mut cipher, encoded_packet)?;
-        let encrypted_message = encoded_packet[header.header_end_offset..].to_vec();
-
-        let packet = Packet {
-            masking_iv: masking_iv.try_into()?,
-            header,
-            encrypted_message,
-        };
-
-        match packet.header.flag {
-            0x00 => Ok(DecodedPacket::Ordinary(Ordinary::decode(
-                &packet,
-                decrypt_key,
-            )?)),
-            0x01 => Ok(DecodedPacket::WhoAreYou(WhoAreYou::decode(&packet)?)),
-            0x02 => Ok(DecodedPacket::Handshake(Handshake::decode(
-                &packet,
-                decrypt_key,
-            )?)),
-            _ => Err(RLPDecodeError::MalformedData)?,
-        }
-    }
-
-    pub fn encode(
-        &self,
-        buf: &mut dyn BufMut,
-        masking_iv: u128,
-        nonce: &[u8; 12],
-        dest_id: &H256,
-        encrypt_key: &[u8],
-    ) -> Result<(), PacketCodecError> {
-        let masking_as_bytes = masking_iv.to_be_bytes();
-        buf.put_slice(&masking_as_bytes);
-
-        let mut cipher =
-            <Aes128Ctr64BE as KeyIvInit>::new(dest_id[..16].into(), masking_as_bytes[..].into());
-
-        match self {
-            DecodedPacket::Ordinary(ordinary) => {
-                let (mut static_header, mut authdata, encrypted_message) =
-                    ordinary.encode(nonce, &masking_as_bytes, encrypt_key)?;
-
-                cipher.try_apply_keystream(&mut static_header)?;
-                buf.put_slice(&static_header);
-                cipher.try_apply_keystream(&mut authdata)?;
-                buf.put_slice(&authdata);
-                buf.put_slice(&encrypted_message);
-            }
-            DecodedPacket::WhoAreYou(who_are_you) => {
-                let (mut static_header, mut authdata, encrypted_message) =
-                    who_are_you.encode(nonce)?;
-                cipher.try_apply_keystream(&mut static_header)?;
-                buf.put_slice(&static_header);
-                cipher.try_apply_keystream(&mut authdata)?;
-                buf.put_slice(&authdata);
-                buf.put_slice(&encrypted_message);
-            }
-            DecodedPacket::Handshake(handshake) => {
-                let (mut static_header, mut authdata, encrypted_message) =
-                    handshake.encode(nonce, &masking_as_bytes, encrypt_key)?;
-
-                cipher.try_apply_keystream(&mut static_header)?;
-                buf.put_slice(&static_header);
-                cipher.try_apply_keystream(&mut authdata)?;
-                buf.put_slice(&authdata);
-                buf.put_slice(&encrypted_message);
-            }
-        }
-        Ok(())
-    }
-
-    fn decode_header<T: StreamCipher>(
-        cipher: &mut T,
-        encoded_packet: &[u8],
-    ) -> Result<PacketHeader, PacketCodecError> {
-        // static header
-        let mut static_header: [u8; STATIC_HEADER_SIZE] =
-            encoded_packet[IV_MASKING_SIZE..STATIC_HEADER_END].try_into()?;
-
-        cipher.try_apply_keystream(&mut static_header)?;
-
-        // static-header = protocol-id || version || flag || nonce || authdata-size
-        //protocol check
-        let protocol_id = &static_header[..6];
-        let version = u16::from_be_bytes(static_header[6..8].try_into()?);
-        if protocol_id != PROTOCOL_ID || version != PROTOCOL_VERSION {
-            return Err(PacketCodecError::InvalidProtocol(
-                match str::from_utf8(protocol_id) {
-                    Ok(result) => format!("{} v{}", result, version),
-                    Err(_) => format!("{:?} v{}", protocol_id, version),
-                },
-            ));
-        }
-
-        let flag = static_header[8];
-        let nonce = static_header[9..21].try_into()?;
-        let authdata_size = u16::from_be_bytes(static_header[21..23].try_into()?) as usize;
-        let authdata_end = STATIC_HEADER_END + authdata_size;
-        let authdata = &mut encoded_packet[STATIC_HEADER_END..authdata_end].to_vec();
-
-        cipher.try_apply_keystream(authdata)?;
-
-        Ok(PacketHeader {
-            static_header,
-            flag,
-            nonce,
-            authdata: authdata.to_vec(),
-            header_end_offset: authdata_end,
-        })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ordinary {
     pub src_id: H256,
     pub message: Message,
@@ -924,7 +788,7 @@ mod tests {
     use super::*;
     use crate::{
         discv5::{
-            messages::{DecodedPacket, Message, Ordinary, PingMessage, WhoAreYou},
+            messages::{Message, Ordinary, PingMessage, WhoAreYou},
             session::{build_challenge_data, create_id_signature, derive_session_keys},
         },
         rlpx::utils::compress_pubkey,
@@ -1556,11 +1420,13 @@ mod tests {
         let key = [0x10; 16];
         let nonce = hex!("000102030405060708090a0b");
         let mut buf = Vec::new();
-        let packet = DecodedPacket::Handshake(handshake.clone());
-        packet.encode(&mut buf, 0, &nonce, &dest_id, &key).unwrap();
 
-        let decoded = DecodedPacket::decode(&dest_id, &key, &buf).unwrap();
-        assert_eq!(decoded, DecodedPacket::Handshake(handshake));
+        let masking_iv = [0; 16];
+        let packet = build_handshake_packet(handshake.clone(), &nonce, &masking_iv, &key);
+        packet.encode(&mut buf, &dest_id).unwrap();
+
+        let decoded = Packet::decode(&dest_id, &buf).unwrap();
+        assert_eq!(decoded, packet);
     }
 
     /// Ping handshake packet (flag 2) from https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire-test-vectors.md
@@ -1602,11 +1468,8 @@ mod tests {
         );
         let read_key = hex!("4f9fac6de7567d1e3b1241dffe90f662");
 
-        let packet = DecodedPacket::decode(&dest_id, &read_key, encoded).unwrap();
-        let handshake = match packet {
-            DecodedPacket::Handshake(hs) => hs,
-            other => panic!("unexpected packet {other:?}"),
-        };
+        let packet = Packet::decode(&dest_id, encoded).unwrap();
+        let handshake = Handshake::decode(&packet, &read_key).unwrap();
 
         assert_eq!(
             handshake.src_id,
@@ -1627,12 +1490,11 @@ mod tests {
             })
         );
 
-        let masking_iv = u128::from_be_bytes(encoded[..16].try_into().unwrap());
+        let masking_iv = encoded[..16].try_into().unwrap();
         let nonce = hex!("ffffffffffffffffffffffff");
         let mut buf = Vec::new();
-        DecodedPacket::Handshake(handshake)
-            .encode(&mut buf, masking_iv, &nonce, &dest_id, &read_key)
-            .unwrap();
+        let packet = build_handshake_packet(handshake, &nonce, &masking_iv, &read_key);
+        packet.encode(&mut buf, &dest_id).unwrap();
 
         assert_eq!(buf, encoded.to_vec());
     }
@@ -1652,11 +1514,8 @@ mod tests {
         let nonce = hex!("ffffffffffffffffffffffff");
         let read_key = hex!("53b1c075f41876423154e157470c2f48");
 
-        let packet = DecodedPacket::decode(&dest_id, &read_key, encoded).unwrap();
-        let handshake = match packet {
-            DecodedPacket::Handshake(hs) => hs,
-            other => panic!("unexpected packet {other:?}"),
-        };
+        let packet = Packet::decode(&dest_id, encoded).unwrap();
+        let handshake = Handshake::decode(&packet, &read_key).unwrap();
 
         assert_eq!(
             handshake.src_id,
@@ -1681,11 +1540,11 @@ mod tests {
         assert_eq!(pairs.id.as_deref(), Some("v4"));
         assert!(pairs.secp256k1.is_some());
 
-        let masking_iv = u128::from_be_bytes(encoded[..16].try_into().unwrap());
+        let masking_iv = encoded[..16].try_into().unwrap();
         let mut buf = Vec::new();
-        DecodedPacket::Handshake(handshake)
-            .encode(&mut buf, masking_iv, &nonce, &dest_id, &read_key)
-            .unwrap();
+
+        let packet = build_handshake_packet(handshake, &nonce, &masking_iv, &read_key);
+        packet.encode(&mut buf, &dest_id).unwrap();
 
         assert_eq!(buf, encoded.to_vec());
     }
@@ -1705,8 +1564,8 @@ mod tests {
         let nonce = hex!("ffffffffffffffffffffffff");
         let read_key = [0; 16];
 
-        let packet = DecodedPacket::decode(&dest_id, &read_key, encoded).unwrap();
-        let expected = DecodedPacket::Ordinary(Ordinary {
+        let packet = Packet::decode(&dest_id, encoded).unwrap();
+        let message = Ordinary {
             src_id: H256::from_slice(&hex!(
                 "aaaa8419e9f49d0083561b48287df592939a8d19947d8c0ef88f2a4856a69fbb"
             )),
@@ -1714,14 +1573,15 @@ mod tests {
                 req_id: Bytes::from(hex!("00000001").as_slice()),
                 enr_seq: 2,
             }),
-        });
+        };
+        let masking_iv = [0; 16];
+        let expected = build_ordinary_packet(message, &nonce, &masking_iv, &read_key);
+
         assert_eq!(packet, expected);
 
         let masking_iv = u128::from_be_bytes(encoded[..16].try_into().unwrap());
         let mut buf = Vec::new();
-        packet
-            .encode(&mut buf, masking_iv, &nonce, &dest_id, &read_key)
-            .unwrap();
+        packet.encode(&mut buf, &dest_id).unwrap();
         assert_eq!(buf, encoded.to_vec());
     }
 
@@ -1816,5 +1676,57 @@ mod tests {
 
         let buf = pkt.encode_to_vec();
         assert_eq!(TicketMessage::decode(&buf).unwrap(), pkt);
+    }
+
+    /// Helper function to build Handshake packets
+    fn build_handshake_packet(
+        handshake: Handshake,
+        nonce: &[u8; 12],
+        masking_iv: &[u8; 16],
+        key: &[u8; 16],
+    ) -> Packet {
+        let (static_header, authdata, encrypted_message) =
+            handshake.encode(nonce, masking_iv, key).unwrap();
+
+        let header_end_offset = 16 + authdata.len() + static_header.len();
+        let header = PacketHeader {
+            static_header: static_header.try_into().unwrap(),
+            flag: 0x02,
+            nonce: *nonce,
+            authdata,
+            header_end_offset,
+        };
+
+        Packet {
+            masking_iv: *masking_iv,
+            header,
+            encrypted_message,
+        }
+    }
+
+    /// Helper function to build ordinary packets
+    fn build_ordinary_packet(
+        message: Ordinary,
+        nonce: &[u8; 12],
+        masking_iv: &[u8; 16],
+        key: &[u8; 16],
+    ) -> Packet {
+        let (static_header, authdata, encrypted_message) =
+            message.encode(nonce, masking_iv, key).unwrap();
+
+        let header_end_offset = 16 + authdata.len() + static_header.len();
+        let header = PacketHeader {
+            static_header: static_header.try_into().unwrap(),
+            flag: 0x00,
+            nonce: *nonce,
+            authdata,
+            header_end_offset,
+        };
+
+        Packet {
+            masking_iv: *masking_iv,
+            header,
+            encrypted_message,
+        }
     }
 }
