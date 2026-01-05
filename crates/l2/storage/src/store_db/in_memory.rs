@@ -197,10 +197,10 @@ impl StoreEngineRollup for Store {
         privileged_tx_inc: u64,
         messages_inc: u64,
     ) -> Result<(), RollupStoreError> {
-        let mut values = self.inner()?.operations_counts;
-        values[0] += transaction_inc;
-        values[1] += privileged_tx_inc;
-        values[2] += messages_inc;
+        let mut inner = self.inner()?;
+        inner.operations_counts[0] += transaction_inc;
+        inner.operations_counts[1] += privileged_tx_inc;
+        inner.operations_counts[2] += messages_inc;
         Ok(())
     }
 
@@ -479,5 +479,34 @@ impl StoreEngineRollup for Store {
 impl Debug for Store {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("In Memory L2 Store").finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn update_operations_count_accumulates_values() {
+        let store = Store::new();
+
+        store
+            .update_operations_count(1, 2, 3)
+            .await
+            .expect("first update should succeed");
+
+        store
+            .update_operations_count(4, 5, 6)
+            .await
+            .expect("second update should succeed");
+
+        let counts = store
+            .get_operations_count()
+            .await
+            .expect("get_operations_count should succeed");
+
+        assert_eq!(counts[0], 5);
+        assert_eq!(counts[1], 7);
+        assert_eq!(counts[2], 9);
     }
 }
