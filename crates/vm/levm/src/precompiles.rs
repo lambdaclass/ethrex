@@ -396,19 +396,34 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
 
     increase_precompile_consumed_gas(ECRECOVER_COST, gas_remaining)?;
 
-    const INPUT_LEN: usize = 128;
     const WORD: usize = 32;
+    const SIG_LEN: usize = 64;
 
-    let input = fill_with_zeros(calldata, INPUT_LEN);
+    // Total input size = 128
+    let mut raw_hash = [0u8; WORD];
+    let mut raw_v = [0u8; WORD];
+    let mut raw_sig = [0u8; SIG_LEN];
 
-    // len(raw_hash) == 32, len(raw_v) == 32, len(raw_sig) == 64
-    let (raw_hash, tail) = input.split_at(WORD);
-    let (raw_v, raw_sig) = tail.split_at(WORD);
+    let copy_segment = |dst: &mut [u8], start: usize| {
+        if start >= calldata.len() {
+            return;
+        }
+        let end = (start + dst.len()).min(calldata.len());
+        let src = &calldata[start..end];
+        dst[..src.len()].copy_from_slice(src);
+    };
+
+    copy_segment(&mut raw_hash, 0);
+    copy_segment(&mut raw_v, WORD);
+    copy_segment(&mut raw_sig, WORD * 2);
 
     // EVM expects v ∈ {27, 28}. Anything else is invalid → empty return.
-    let recovery_id_byte = match u8::try_from(u256_from_big_endian(raw_v)) {
-        Ok(27) => 0_i32,
-        Ok(28) => 1_i32,
+    if raw_v[..(WORD - 1)].iter().any(|&b| b != 0) {
+        return Ok(Bytes::new());
+    }
+    let recovery_id_byte = match raw_v[WORD - 1] {
+        27 => 0_i32,
+        28 => 1_i32,
         _ => return Ok(Bytes::new()),
     };
 
@@ -418,16 +433,12 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     };
 
     let Ok(recoverable_signature) =
-        secp256k1::ecdsa::RecoverableSignature::from_compact(raw_sig, recovery_id)
+        secp256k1::ecdsa::RecoverableSignature::from_compact(&raw_sig, recovery_id)
     else {
         return Ok(Bytes::new());
     };
 
-    let message = secp256k1::Message::from_digest(
-        raw_hash
-            .try_into()
-            .map_err(|_err| InternalError::msg("Invalid message length for ecrecover"))?,
-    );
+    let message = secp256k1::Message::from_digest(raw_hash);
 
     let Ok(public_key) = recoverable_signature.recover(&message) else {
         return Ok(Bytes::new());
