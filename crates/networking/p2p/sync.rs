@@ -19,6 +19,9 @@ use crate::{
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 #[cfg(not(feature = "rocksdb"))]
 use ethrex_common::U256;
+#[cfg(not(feature = "rocksdb"))]
+use ethrex_rlp::encode::RLPEncode;
+
 use ethrex_common::types::Code;
 use ethrex_common::{
     H256,
@@ -28,7 +31,7 @@ use ethrex_common::{
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::trie_sorted::TrieGenerationError;
-use ethrex_trie::{Trie, TrieError};
+use ethrex_trie::TrieError;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -1235,25 +1238,17 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
 
 pub fn validate_storage_root(store: Store, state_root: H256) -> bool {
     info!("Starting validate_storage_root");
-    let is_valid = tokio::task::spawn_blocking(move || {
-        store
-            .iter_accounts(state_root)
-            .expect("couldn't iterate accounts")
-            .par_bridge()
-            .try_for_each(|(hashed_address, account_state)| {
-                let store_clone = store.clone();
-                store_clone
-                    .open_locked_storage_trie(
-                        hashed_address,
-                        state_root,
-                        account_state.storage_root,
-                    )
-                    .expect("couldn't open storage trie")
-                    .validate()
-            })
-    })
-    .await
-    .expect("We should be able to create threads");
+    let is_valid = store
+        .iter_accounts(state_root)
+        .expect("couldn't iterate accounts")
+        .par_bridge()
+        .try_for_each(|(hashed_address, account_state)| {
+            let store_clone = store.clone();
+            store_clone
+                .open_locked_storage_trie(hashed_address, state_root, account_state.storage_root)
+                .expect("couldn't open storage trie")
+                .validate()
+        });
     info!("Finished validate_storage_root");
     if is_valid.is_err() {
         std::process::exit(1);
