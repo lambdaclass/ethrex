@@ -183,6 +183,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloca"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5a7d05ea6aea7e9e64d25b9156ba2fee3fdd659e34e41063cd2fc7cd020d7f4"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1734,9 +1743,9 @@ dependencies = [
 
 [[package]]
 name = "cita_trie"
-version = "4.1.0"
+version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8c3d2abadaa28e0d277f9f6d07a2052544f045d929cd4d6f7bcfb43567c9767"
+checksum = "0f0bc31eabef0259183d03c3846ad6818eaa8e542c31dae751c9d22ea030fb7d"
 dependencies = [
  "hasher",
  "parking_lot",
@@ -2118,7 +2127,7 @@ dependencies = [
  "cast",
  "ciborium",
  "clap",
- "criterion-plot",
+ "criterion-plot 0.5.0",
  "futures",
  "is-terminal",
  "itertools 0.10.5",
@@ -2137,6 +2146,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "criterion"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0dfe5e9e71bdcf4e4954f7d14da74d1cdb92a3a07686452d1509652684b1aab"
+dependencies = [
+ "alloca",
+ "anes",
+ "cast",
+ "ciborium",
+ "clap",
+ "criterion-plot 0.8.0",
+ "itertools 0.13.0",
+ "num-traits",
+ "oorandom",
+ "page_size",
+ "plotters",
+ "rayon",
+ "regex",
+ "serde",
+ "serde_json",
+ "tinytemplate",
+ "walkdir",
+]
+
+[[package]]
 name = "criterion-plot"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2144,6 +2178,16 @@ checksum = "6b50826342786a51a89e2da3a28f1c32b06e387201bc2d19791f622c673706b1"
 dependencies = [
  "cast",
  "itertools 0.10.5",
+]
+
+[[package]]
+name = "criterion-plot"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5de36c2bee19fba779808f92bf5d9b0fa5a40095c277aba10c458a12b35d21d6"
+dependencies = [
+ "cast",
+ "itertools 0.13.0",
 ]
 
 [[package]]
@@ -3634,7 +3678,7 @@ name = "ethrex-benches"
 version = "8.0.0"
 dependencies = [
  "bytes",
- "criterion",
+ "criterion 0.5.1",
  "ethrex",
  "ethrex-blockchain",
  "ethrex-common",
@@ -4140,7 +4184,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "cita_trie",
- "criterion",
+ "criterion 0.8.0",
  "crossbeam 0.8.4",
  "digest 0.10.7",
  "ethereum-types 0.15.1",
@@ -9146,6 +9190,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6c2c2010678b9332b563eaa38364915b585c1a94b5ca61e2c7541c087ddda5c"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "page_size"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30d5b2194ed13191c1999ae0704b7839fb18384fa22e49b57eeaa97d79ce40da"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]
