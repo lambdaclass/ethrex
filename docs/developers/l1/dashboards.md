@@ -1,4 +1,4 @@
-# Ethrex L1 Performance Dashboard (Nov 2025)
+# Ethrex L1 Performance Dashboard (Dec 2025)
 
 Our Grafana dashboard provides a comprehensive overview of key metrics to help developers and operators ensure optimal performance and reliability of their Ethrex nodes. The only configured datasource today is `prometheus`, and the `job` variable defaults to `ethrex L1`, which is the job configured by default in our provisioning.
 
@@ -12,19 +12,20 @@ Use the `network` variable (discovered via the consensus config metric) to scope
 ## Execution and consensus summary
 
 ### Execution Client
-Confirms the execution client name and build that each monitored instance is running so you can spot mismatched deployments quickly.
+Confirms the execution client name, build and network that each monitored instance is running so you can spot mismatched deployments quickly.
 
 ![Execution Client](img/execution_client.png)
-
-### Consensus Config
-Shows the consensus configuration reported by `ethereum-metrics-exporter`, helping you verify which network the node is running.
-
-![Consensus Config](img/consensus_config.png)
 
 ### Consensus Fork
 Highlights the active fork reported by `ethereum-metrics-exporter`, which is a useful signal during planned upgrades.
 
 ![Consensus Fork](img/consensus_fork.png)
+
+## Logs
+
+Collapsed row that allows you to view the logs of the selected instances directly within the dashboard. This is useful for correlating metrics with log events without leaving Grafana.
+
+![Logs row](img/logs_row.png)
 
 ## Block processing
 
@@ -165,6 +166,37 @@ Shows the rate of successful vs. failed RPC API requests per second.
 Deaggregated view of error percentages split by method and error kind for both Engine and RPC APIs. The % are calculated against total requests for a particular method, so all different error percentage for a method should sum up to the percentage of errors for that method.
 
 ![Engine and RPC Errors % by Method and Kind](img/engine_and_rpc_errors_by_method_and_kind.png)
+
+## Peer Info
+
+Collapsed row providing visibility into the P2P networking layer. Surfaces peer counts, client distribution, and disconnection events to help diagnose connectivity issues and monitor network health. Each panel repeats per instance to compare behaviour across nodes.
+
+![Peer Info row](img/peer_info_row.png)
+
+### Peer Count
+Timeseries showing the number of connected peers over time. Useful for detecting connectivity issues or confirming that the node is maintaining a healthy peer set.
+
+![Peer Count](img/peer_count.png)
+
+### Peer Clients Distribution
+Pie chart breaking down connected peers by client type (e.g., Geth, Nethermind, Besu). Helps understand the diversity of the peer set and spot any client-specific connectivity patterns.
+
+![Peer Clients Distribution](img/peer_clients_distribution.png)
+
+### Peer Clients
+Timeseries view of peer counts by client type over time. Useful for tracking how the peer composition evolves and detecting sudden drops in connections to specific client types.
+
+![Peer Clients](img/peer_clients.png)
+
+### Peer Disconnection Events
+Bar chart showing disconnection events grouped by reason. Helps identify patterns in peer churn and diagnose whether disconnections are due to protocol errors, timeouts, or other causes.
+
+![Peer Disconnection Events](img/peer_disconnection_events.png)
+
+### Disconnections Details
+Table providing a detailed breakdown of disconnections by client type and reason over the selected time range. Useful for investigating which clients are disconnecting most frequently and why.
+
+![Disconnections Details](img/disconnections_details.png)
 
 ## Process and server info
 

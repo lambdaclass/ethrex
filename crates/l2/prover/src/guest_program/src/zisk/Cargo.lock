@@ -884,7 +884,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "bytes",
  "ethrex-common",
@@ -904,7 +904,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -933,7 +933,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "kzg-rs",
  "thiserror",
@@ -942,7 +942,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -964,7 +964,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -992,11 +992,12 @@ dependencies = [
  "substrate-bn",
  "thiserror",
  "walkdir",
+ "ziskos",
 ]
 
 [[package]]
 name = "ethrex-metrics"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "ethrex-common",
  "serde",
@@ -1007,7 +1008,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1020,11 +1021,10 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "bincode 1.3.3",
  "bytes",
  "ethereum-types",
  "ethrex-common",
@@ -1039,6 +1039,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
  "tracing",
 ]
 
@@ -1051,7 +1052,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1074,7 +1075,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "bincode 1.3.3",
  "bytes",
@@ -1269,7 +1270,7 @@ dependencies = [
 
 [[package]]
 name = "guest_program"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "bincode 1.3.3",
  "bytes",
@@ -1582,7 +1583,7 @@ dependencies = [
 [[package]]
 name = "k256"
 version = "0.13.4"
-source = "git+https://github.com/0xPolygonHermez/zisk-patch-elliptic-curves.git?tag=patch-k256-0.13.4-zisk-0.14.0#8d8e99470becdb05f8ebb649cdf2b5d99c0a3384"
+source = "git+https://github.com/0xPolygonHermez/zisk-patch-elliptic-curves.git?tag=patch-k256-0.13.4-zisk-0.15.0#5b84980888f6c840c7d38d575d79ae32df17085d"
 dependencies = [
  "cfg-if",
  "ecdsa",
@@ -1590,7 +1591,6 @@ dependencies = [
  "once_cell",
  "sha2",
  "signature",
- "ziskos",
 ]
 
 [[package]]
@@ -1605,9 +1605,9 @@ dependencies = [
 [[package]]
 name = "kzg-rs"
 version = "0.2.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9201effeea3fcc93b587904ae2df9ce97e433184b9d6d299e9ebc9830a546636"
+source = "git+https://github.com/0xPolygonHermez/zisk-patch-kzg/?tag=patch-0.2.7-zisk-0.15.0#7b29934400c0af21a63635544e72a4621f88e603"
 dependencies = [
+ "cfg-if",
  "ff",
  "hex",
  "serde_arrays",
@@ -1656,8 +1656,8 @@ dependencies = [
 
 [[package]]
 name = "lib-c"
-version = "0.14.0"
-source = "git+https://github.com/0xPolygonHermez/zisk.git?tag=v0.14.0#2f791ffd070d024ba350f054c349c8d6bd98d629"
+version = "0.15.0"
+source = "git+https://github.com/0xPolygonHermez/zisk.git?tag=v0.15.0#b3ca745b80423c8123dc24f19039865a5bc8b074"
 
 [[package]]
 name = "libc"
@@ -1865,9 +1865,9 @@ dependencies = [
 
 [[package]]
 name = "p3-baby-bear"
-version = "0.2.3-succinct"
+version = "0.2.2-succinct"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7521838ecab2ddf4f7bc4ceebad06ec02414729598485c1ada516c39900820e8"
+checksum = "49ecc3edc6fb8186268e05031c26a8b2b1e567957d63adcae1026d55d6bb189b"
 dependencies = [
  "num-bigint 0.4.6",
  "p3-field",
@@ -1880,9 +1880,9 @@ dependencies = [
 
 [[package]]
 name = "p3-dft"
-version = "0.2.3-succinct"
+version = "0.2.2-succinct"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46414daedd796f1eefcdc1811c0484e4bced5729486b6eaba9521c572c76761a"
+checksum = "eece7b035978976138622b116fefe6c4cc372b1ce70739c40e7a351a9bb68f1f"
 dependencies = [
  "p3-field",
  "p3-matrix",
@@ -1893,9 +1893,9 @@ dependencies = [
 
 [[package]]
 name = "p3-field"
-version = "0.2.3-succinct"
+version = "0.2.2-succinct"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48948a0516b349e9d1cdb95e7236a6ee010c44e68c5cc78b4b92bf1c4022a0d9"
+checksum = "b6f0edf3fde4fd0d1455e901fc871c558010ae18db6e68f1b0fa111391855316"
 dependencies = [
  "itertools 0.12.1",
  "num-bigint 0.4.6",
@@ -1907,9 +1907,9 @@ dependencies = [
 
 [[package]]
 name = "p3-matrix"
-version = "0.2.3-succinct"
+version = "0.2.2-succinct"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e4de3f373589477cb735ea58e125898ed20935e03664b4614c7fac258b3c42f"
+checksum = "60961b4d7ffd2e8412ce4e66e213de610356df71cc4e396519c856a664138a27"
 dependencies = [
  "itertools 0.12.1",
  "p3-field",
@@ -1922,15 +1922,15 @@ dependencies = [
 
 [[package]]
 name = "p3-maybe-rayon"
-version = "0.2.3-succinct"
+version = "0.2.2-succinct"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3968ad1160310296eb04f91a5f4edfa38fe1d6b2b8cd6b5c64e6f9b7370979e"
+checksum = "7bbe762738c382c9483410f52348ab9de41bb42c391e8171643a71486cf1ef8f"
 
 [[package]]
 name = "p3-mds"
-version = "0.2.3-succinct"
+version = "0.2.2-succinct"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2356b1ed0add6d5dfbf7a338ce534a6fde827374394a52cec16a0840af6e97c9"
+checksum = "4127956cc6c783b7d021c5c42d5d89456d5f3bda4a7b165fcc2a3fd4e78fbede"
 dependencies = [
  "itertools 0.12.1",
  "p3-dft",
@@ -1943,9 +1943,9 @@ dependencies = [
 
 [[package]]
 name = "p3-poseidon2"
-version = "0.2.3-succinct"
+version = "0.2.2-succinct"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7da1eec7e1b6900581bedd95e76e1ef4975608dd55be9872c9d257a8a9651c3a"
+checksum = "be09497da406a98e89dc05c1ce539eeef29541bad61a5b2108a44ffe94dd0b4c"
 dependencies = [
  "gcd",
  "p3-field",
@@ -1957,9 +1957,9 @@ dependencies = [
 
 [[package]]
 name = "p3-symmetric"
-version = "0.2.3-succinct"
+version = "0.2.2-succinct"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edb439bea1d822623b41ff4b51e3309e80d13cadf8b86d16ffd5e6efb9fdc360"
+checksum = "6e7d954033f657d48490344ca4b3dbcc054962a0e92831b736666bb2f5e5820b"
 dependencies = [
  "itertools 0.12.1",
  "p3-field",
@@ -1968,9 +1968,9 @@ dependencies = [
 
 [[package]]
 name = "p3-util"
-version = "0.2.3-succinct"
+version = "0.2.2-succinct"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6c2c2010678b9332b563eaa38364915b585c1a94b5ca61e2c7541c087ddda5c"
+checksum = "4a6ce0b6bee23fd54e05306f6752ae80b0b71a91166553ab39d7899801497237"
 dependencies = [
  "serde",
 ]
@@ -2493,18 +2493,17 @@ dependencies = [
 [[package]]
 name = "sha2"
 version = "0.10.9"
-source = "git+https://github.com/0xPolygonHermez/zisk-patch-hashes.git?tag=patch-sha2-0.10.9-zisk-0.14.0#2cfb8e0405dfc0beb31cd4f497f6db9a9fa56aae"
+source = "git+https://github.com/0xPolygonHermez/zisk-patch-hashes.git?tag=patch-sha2-0.10.9-zisk-0.15.0#ee286eaa676b783823d8a07d01b43787fe12bf4a"
 dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
- "ziskos",
 ]
 
 [[package]]
 name = "sha3"
 version = "0.10.8"
-source = "git+https://github.com/0xPolygonHermez/zisk-patch-hashes.git?tag=patch-sha3-0.10.8-zisk-0.14.0#c404b04f733ab18bf0d0f5540249e6120519cc3e"
+source = "git+https://github.com/0xPolygonHermez/zisk-patch-hashes.git?tag=patch-sha3-0.10.8-zisk-0.15.0#08098df5827b672d604e2dc440446b86064b99f2"
 dependencies = [
  "digest",
  "keccak",
@@ -2561,9 +2560,9 @@ checksum = "1b6b67fb9a61334225b5b790716f609cd58395f895b3fe8b328786812a40bc3b"
 
 [[package]]
 name = "sp1-lib"
-version = "5.2.3"
+version = "4.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb1a9935d58cb1dcd757a1b10d727090f5b718f1f03b512d48f0c1952e6ead00"
+checksum = "e166e94b13146c65de433cf29acc1030f021414fbebfc24cd4eeaeb787ba3443"
 dependencies = [
  "bincode 1.3.3",
  "serde",
@@ -2572,9 +2571,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-primitives"
-version = "5.2.3"
+version = "4.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7d2a6187e394c30097ea7a975a4832f172918690dc89a979f0fad67422d3a8b"
+checksum = "3a85ffe9606bd2cc93575ce608f063ca08521cee9bdebf611914c5b2d90d7412"
 dependencies = [
  "bincode 1.3.3",
  "blake3",
@@ -2593,7 +2592,7 @@ dependencies = [
 [[package]]
 name = "sp1_bls12_381"
 version = "0.8.0-sp1-5.0.0"
-source = "git+https://github.com/han0110/bls12_381.git?branch=zisk-patch%2Fv0.8.0-upgrade-sp1-lib#22ea7cde224b60114a0408c3b7bab2902f53922e"
+source = "git+https://github.com/0xPolygonHermez/zisk-patch-bls12-381?tag=patch-0.8.0-zisk-0.15.0#83ad5c65caf7af3f8da3ea8cd3754ef2847290ad"
 dependencies = [
  "cfg-if",
  "ff",
@@ -2662,14 +2661,13 @@ dependencies = [
 [[package]]
 name = "substrate-bn"
 version = "0.6.0"
-source = "git+https://github.com/0xPolygonHermez/zisk-patch-bn.git?tag=patch-0.6.0-zisk-0.14.0#e2cc4d5991eebd337ba6173c512383a7b54d6ba2"
+source = "git+https://github.com/0xPolygonHermez/zisk-patch-bn.git?tag=patch-0.6.0-zisk-0.15.0#7d408643bf033c427826124436fc1b3141ef7425"
 dependencies = [
  "byteorder",
  "crunchy",
  "lazy_static",
  "rand",
  "rustc-hex",
- "ziskos",
 ]
 
 [[package]]
@@ -2780,7 +2778,7 @@ dependencies = [
 [[package]]
 name = "tiny-keccak"
 version = "2.0.2"
-source = "git+https://github.com/0xPolygonHermez/zisk-patch-tiny-keccak/?branch=zisk#a5cb98ca4d9d390b39b10c9e81a061fd830aea35"
+source = "git+https://github.com/0xPolygonHermez/zisk-patch-tiny-keccak/?tag=patch-2.0.2-zisk-0.15.0#a5cb98ca4d9d390b39b10c9e81a061fd830aea35"
 dependencies = [
  "cfg-if",
  "crunchy",
@@ -3317,8 +3315,8 @@ dependencies = [
 
 [[package]]
 name = "ziskos"
-version = "0.14.0"
-source = "git+https://github.com/0xPolygonHermez/zisk.git?tag=v0.14.0#2f791ffd070d024ba350f054c349c8d6bd98d629"
+version = "0.15.0"
+source = "git+https://github.com/0xPolygonHermez/zisk.git?tag=v0.15.0#b3ca745b80423c8123dc24f19039865a5bc8b074"
 dependencies = [
  "bincode 2.0.1",
  "cfg-if",
@@ -3336,7 +3334,7 @@ dependencies = [
 
 [[package]]
 name = "zkvm-zisk-program"
-version = "0.1.0"
+version = "8.0.0"
 dependencies = [
  "ethrex-blockchain",
  "ethrex-common",

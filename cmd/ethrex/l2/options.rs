@@ -80,6 +80,8 @@ pub struct SequencerOptions {
     pub monitor_opts: MonitorOptions,
     #[command(flatten)]
     pub admin_opts: AdminOptions,
+    #[clap(flatten)]
+    pub state_updater_opts: StateUpdaterOptions,
     #[arg(
         long = "validium",
         default_value = "false",
@@ -200,6 +202,9 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 max_block_step: opts.watcher_opts.max_block_step.into(),
                 watcher_block_delay: opts.watcher_opts.watcher_block_delay,
                 l1_blob_base_fee_update_interval: opts.watcher_opts.l1_fee_update_interval_ms,
+                l2_rpc_urls: opts.watcher_opts.l2_rpc_urls.unwrap_or_default(),
+                l2_chain_ids: opts.watcher_opts.l2_chain_ids.unwrap_or_default(),
+                router_address: opts.watcher_opts.router_address.unwrap_or_default(),
             },
             proof_coordinator: ProofCoordinatorConfig {
                 listen_ip: opts.proof_coordinator_opts.listen_ip,
@@ -214,14 +219,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
             },
             based: BasedConfig {
                 enabled: opts.based,
-                state_updater: StateUpdaterConfig {
-                    sequencer_registry: opts
-                        .based_opts
-                        .state_updater_opts
-                        .sequencer_registry
-                        .unwrap_or_default(),
-                    check_interval_ms: opts.based_opts.state_updater_opts.check_interval_ms,
-                },
                 block_fetcher: BlockFetcherConfig {
                     fetch_interval_ms: opts.based_opts.block_fetcher.fetch_interval_ms,
                     fetch_block_step: opts.based_opts.block_fetcher.fetch_block_step,
@@ -244,6 +241,15 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
             admin_server: AdminConfig {
                 listen_ip: opts.admin_opts.admin_listen_ip,
                 listen_port: opts.admin_opts.admin_listen_port,
+            },
+            state_updater: StateUpdaterConfig {
+                sequencer_registry: opts
+                    .state_updater_opts
+                    .sequencer_registry
+                    .unwrap_or_default(),
+                check_interval_ms: opts.state_updater_opts.check_interval_ms,
+                start_at: opts.state_updater_opts.start_at,
+                l2_head_check_rpc_url: opts.state_updater_opts.l2_head_check_rpc_url,
             },
         })
     }
@@ -277,6 +283,8 @@ impl SequencerOptions {
             .populate_with_defaults(&defaults.aligned_opts);
         self.monitor_opts
             .populate_with_defaults(&defaults.monitor_opts);
+        self.state_updater_opts
+            .populate_with_defaults(&defaults.state_updater_opts);
         // admin_opts contains only non-optional fields.
     }
 }
@@ -418,6 +426,27 @@ pub struct WatcherOptions {
         help_heading = "Block producer options"
     )]
     pub l1_fee_update_interval_ms: u64,
+    #[arg(
+        long = "l1.router-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_WATCHER_ROUTER_ADDRESS",
+        help_heading = "L1 Watcher options"
+    )]
+    pub router_address: Option<Address>,
+    #[arg(
+        long = "watcher.l2-rpcs",
+        num_args = 1..,
+        env = "ETHREX_WATCHER_L2_RPCS",
+        help_heading = "L1 Watcher options"
+    )]
+    pub l2_rpc_urls: Option<Vec<Url>>,
+    #[arg(
+        long = "watcher.l2-chain-ids",
+        num_args = 1..,
+        env = "ETHREX_WATCHER_L2_CHAIN_IDS",
+        help_heading = "L1 Watcher options"
+    )]
+    pub l2_chain_ids: Option<Vec<u64>>,
 }
 
 impl Default for WatcherOptions {
@@ -428,6 +457,9 @@ impl Default for WatcherOptions {
             max_block_step: 5000,
             watcher_block_delay: 0,
             l1_fee_update_interval_ms: 60000,
+            router_address: None,
+            l2_rpc_urls: None,
+            l2_chain_ids: None,
         }
     }
 }
@@ -435,6 +467,9 @@ impl Default for WatcherOptions {
 impl WatcherOptions {
     fn populate_with_defaults(&mut self, defaults: &Self) {
         self.bridge_address = self.bridge_address.or(defaults.bridge_address);
+        self.router_address = self.router_address.or(defaults.router_address);
+        self.l2_rpc_urls = self.l2_rpc_urls.clone().or(defaults.l2_rpc_urls.clone());
+        self.l2_chain_ids = self.l2_chain_ids.clone().or(defaults.l2_chain_ids.clone());
     }
 }
 
@@ -854,17 +889,11 @@ impl AlignedOptions {
 #[derive(Parser, Default, Debug)]
 pub struct BasedOptions {
     #[clap(flatten)]
-    pub state_updater_opts: StateUpdaterOptions,
-    #[clap(flatten)]
     pub block_fetcher: BlockFetcherOptions,
 }
 
 impl BasedOptions {
-    fn populate_with_defaults(&mut self, defaults: &Self) {
-        self.state_updater_opts
-            .populate_with_defaults(&defaults.state_updater_opts);
-        // block fetcher contains only non-optional fields.
-    }
+    fn populate_with_defaults(&mut self, _defaults: &Self) {}
 }
 
 #[derive(Parser, Debug)]
@@ -885,6 +914,26 @@ pub struct StateUpdaterOptions {
         help_heading = "Based options"
     )]
     pub check_interval_ms: u64,
+
+    #[arg(
+        long = "admin.start-at",
+        default_value = "0",
+        value_name = "UINT64",
+        env = "ETHREX_ADMIN_START_AT",
+        requires = "l2_head_check_rpc_url",
+        help = "Starting L2 block to start producing blocks",
+        help_heading = "Admin server options"
+    )]
+    pub start_at: u64,
+    #[arg(
+        long = "admin.l2-head-check-rpc-url",
+        value_name = "URL",
+        env = "ETHREX_ADMIN_L2_HEAD_CHECK_RPC_URL",
+        requires = "start_at",
+        help = "L2 JSON-RPC endpoint used only to query the L2 head when `--admin.start-at` is set",
+        help_heading = "Admin server options"
+    )]
+    pub l2_head_check_rpc_url: Option<Url>,
 }
 
 impl Default for StateUpdaterOptions {
@@ -892,6 +941,8 @@ impl Default for StateUpdaterOptions {
         Self {
             sequencer_registry: None,
             check_interval_ms: 1000,
+            start_at: 0,
+            l2_head_check_rpc_url: None,
         }
     }
 }

@@ -23,7 +23,7 @@ use ethrex_common::types::Code;
 use ethrex_common::{
     H256,
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
-    types::{AccountState, Block, BlockHash, BlockHeader},
+    types::{AccountState, Block, BlockHeader},
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
@@ -493,7 +493,7 @@ impl Syncer {
 
         store
             .forkchoice_update(
-                Some(numbers_and_hashes),
+                numbers_and_hashes,
                 last_block_number,
                 last_block_hash,
                 None,
@@ -578,31 +578,6 @@ async fn store_block_bodies(
 
             // Check if we need to ask for another batch
             if block_headers.is_empty() {
-                break;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Fetches all receipts for the given block hashes via p2p and stores them
-// TODO: remove allow when used again
-#[allow(unused)]
-async fn store_receipts(
-    mut block_hashes: Vec<BlockHash>,
-    mut peers: PeerHandler,
-    store: Store,
-) -> Result<(), SyncError> {
-    loop {
-        debug!("Requesting Receipts ");
-        if let Some(receipts) = peers.request_receipts(block_hashes.clone()).await? {
-            debug!(" Received {} Receipts", receipts.len());
-            // Track which blocks we have already fetched receipts for
-            for (block_hash, receipts) in block_hashes.drain(0..receipts.len()).zip(receipts) {
-                store.add_receipts(block_hash, receipts).await?;
-            }
-            // Check if we need to ask for another batch
-            if block_hashes.is_empty() {
                 break;
             }
         }
@@ -780,7 +755,7 @@ impl Syncer {
                     storage_accounts.accounts_with_storage_root.len()
                 );
                 storage_range_request_attempts += 1;
-                if storage_range_request_attempts < 3 {
+                if storage_range_request_attempts < 5 {
                     chunk_index = self
                         .peers
                         .request_storage_ranges(
@@ -809,6 +784,9 @@ impl Syncer {
                             old_intervals.len()
                         );
                     }
+
+                    warn!("Storage could not be downloaded after multiple attempts. Marking for healing.
+                        This could impact snap sync time (healing may take a while).");
 
                     storage_accounts.accounts_with_storage_root.clear();
                 }
@@ -892,7 +870,10 @@ impl Syncer {
         store.generate_flatkeyvalue()?;
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
-        debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
+        debug_assert!(validate_storage_root(
+            store.clone(),
+            pivot_header.state_root
+        ));
 
         info!("Finished healing");
 
@@ -936,7 +917,11 @@ impl Syncer {
                             .write_account_code_batch(
                                 code_hashes_to_download
                                     .drain(..)
-                                    .zip(bytecodes.into_iter().map(Code::from_bytecode))
+                                    .zip(bytecodes)
+                                    // SAFETY: hash already checked by the download worker
+                                    .map(|(hash, code)| {
+                                        (hash, Code::from_bytecode_unchecked(code, hash))
+                                    })
                                     .collect(),
                             )
                             .await?;
@@ -957,7 +942,9 @@ impl Syncer {
                 .write_account_code_batch(
                     code_hashes_to_download
                         .drain(..)
-                        .zip(bytecodes.into_iter().map(Code::from_bytecode))
+                        .zip(bytecodes)
+                        // SAFETY: hash already checked by the download worker
+                        .map(|(hash, code)| (hash, Code::from_bytecode_unchecked(code, hash)))
                         .collect(),
                 )
                 .await?;
@@ -968,7 +955,7 @@ impl Syncer {
 
         *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
 
-        debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root).await);
+        debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root));
 
         store_block_bodies(
             vec![pivot_header.clone()],
@@ -994,7 +981,7 @@ impl Syncer {
 
         store
             .forkchoice_update(
-                Some(numbers_and_hashes),
+                numbers_and_hashes,
                 pivot_header.number,
                 pivot_header.hash(),
                 None,
@@ -1251,7 +1238,7 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
     tree_validated
 }
 
-pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
+pub fn validate_storage_root(store: Store, state_root: H256) -> bool {
     info!("Starting validate_storage_root");
     let is_valid = store
         .clone()
@@ -1287,7 +1274,7 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     is_valid
 }
 
-pub async fn validate_bytecodes(store: Store, state_root: H256) -> bool {
+pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
     info!("Starting validate_bytecodes");
     let mut is_valid = true;
     for (account_hash, account_state) in store

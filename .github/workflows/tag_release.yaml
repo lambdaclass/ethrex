@@ -19,6 +19,9 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   PROVER_REPRODUCIBLE_BUILD: true
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
 
 jobs:
   build-ethrex:
@@ -114,15 +117,7 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install solc
-        run: |
-          if [[ "${{ matrix.os }}" == "linux" ]]; then
-            sudo curl -L -o /usr/local/bin/solc https://github.com/argotorg/solidity/releases/download/v0.8.29/solc-static-linux
-            sudo chmod +x /usr/local/bin/solc
-          elif [[ "${{ matrix.os }}" == "macos" ]]; then
-            sudo curl -L -o /usr/local/bin/solc https://github.com/argotorg/solidity/releases/download/v0.8.29/solc-macos
-            sudo chmod +x /usr/local/bin/solc
-          fi
-          solc --version
+        uses: ./.github/actions/install-solc
 
       - name: Build ethrex
         run: |
@@ -160,7 +155,6 @@ jobs:
           - sp1
           - risc0
           - zisk
-          - openvm
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -198,15 +192,6 @@ jobs:
           curl https://raw.githubusercontent.com/0xPolygonHermez/zisk/main/ziskup/install.sh | bash
           echo "$HOME/.zisk/bin" >> $GITHUB_PATH
 
-      - name: Install OpenVM
-        if: ${{ matrix.zkvm == 'openvm' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          rustup install nightly-2025-02-14
-          rustup component add rust-src --toolchain nightly-2025-02-14
-          cargo +1.86 install --locked --git https://github.com/openvm-org/openvm.git --tag v1.4.1 cargo-openvm
-
       - name: Build ethrex elf - ${{ matrix.zkvm }}
         run: |
           cargo build --release --package guest_program --features "${{ matrix.zkvm }},ci"
@@ -223,9 +208,6 @@ jobs:
           elif [ "${{ matrix.zkvm }}" = "zisk" ]; then
             mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv64ima-zisk-elf ethrex-riscv64ima-${{ matrix.zkvm }}-elf-${{ github.ref_name}}
             echo "ELF_ARTIFACT=ethrex-riscv64ima-${{ matrix.zkvm }}-elf-${{ github.ref_name }}" >> $GITHUB_ENV
-          elif [ "${{ matrix.zkvm }}" = "openvm" ]; then
-            mv crates/l2/prover/src/guest_program/src/${{ matrix.zkvm }}/out/riscv32im-openvm-elf ethrex-riscv32im-${{ matrix.zkvm }}-elf-${{ github.ref_name}}
-            echo "ELF_ARTIFACT=ethrex-riscv32im-${{ matrix.zkvm }}-elf-${{ github.ref_name }}" >> $GITHUB_ENV
           fi
 
       - name: Upload ethrex guest elf artifact - ${{ matrix.zkvm }}
@@ -277,12 +259,6 @@ jobs:
           name: ethrex-riscv64ima-zisk-elf-${{ github.ref_name }}
           path: ethrex_guests/zisk/
 
-      - name: Download OpenVM elf artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ethrex-riscv32im-openvm-elf-${{ github.ref_name }}
-          path: ethrex_guests/openvm/
-
       - name: Archive ethrex guests
         run: |
           cd ethrex_guests/
@@ -320,16 +296,25 @@ jobs:
           path: ethrex-contracts.tar.gz
 
   build-docker:
-    name: "Build and publish ethrex docker image"
-    runs-on: ubuntu-latest
+    name: "Build ethrex docker images"
+    strategy:
+      matrix:
+        platform:
+          - ubuntu-latest
+          - ubuntu-22.04-arm
+        include:
+          - platform: ubuntu-latest
+            arch: amd64
+          - platform: ubuntu-22.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.platform }}
+    outputs:
+      tag: ${{ steps.tag_version.outputs.tag }}
 
     # Sets the permissions granted to the `GITHUB_TOKEN` for the actions in this job.
     permissions:
       contents: read
       packages: write
-      attestations: write
-      id-token: write
-      actions: write
 
     steps:
       - name: Checkout code
@@ -338,38 +323,71 @@ jobs:
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
 
-      - name: Format name
+      - name: Determine tag version
+        id: tag_version
         run: |
           # For branch builds (main) we want docker images tagged as 'main'. For tag pushes
           # use the tag name (stripped of a leading 'v').
           if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
             echo "TAG_VERSION=main" >> $GITHUB_ENV
+            echo "tag=main" >> $GITHUB_OUTPUT
           else
             echo "TAG_VERSION=$(echo ${{ github.ref_name }} | tr -d v)" >> $GITHUB_ENV
+            echo "tag=$(echo ${{ github.ref_name }} | tr -d v)" >> $GITHUB_OUTPUT
           fi
 
-      # Pushes to ghcr.io/lambdaclass/ethrex
-      - name: Build and push L1 Docker image
-        id: push_l1
+      - name: Build L1 Docker image
+        id: build_l1
         uses: ./.github/actions/build-docker
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
           push: ${{ github.event_name != 'workflow_dispatch'}}
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-${{ matrix.arch }}
+          platforms: linux/${{ matrix.arch }}
 
-      # Pushes to ghcr.io/lambdaclass/ethrex
-      - name: Build and push L2 Docker image
-        id: push_l2
+      - name: Build L2 Docker image
+        id: build_l2
         uses: ./.github/actions/build-docker
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
           push: ${{ github.event_name != 'workflow_dispatch'}}
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-l2
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-l2-${{ matrix.arch }}
           build_args: BUILD_FLAGS=--features l2,l2-sql
+          platforms: linux/${{ matrix.arch }}
+
+  publish-docker:
+    name: "Create and push multi-arch Docker manifests"
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_dispatch'}}
+    needs: build-docker
+
+    permissions:
+      packages: write
+      contents: read
+
+    steps:
+      - name: Login to Docker registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-arch image
+        run: |
+          docker buildx imagetools create \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-docker.outputs.tag }} \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-docker.outputs.tag }}-amd64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-docker.outputs.tag }}-arm64
+
+          docker buildx imagetools create \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-docker.outputs.tag }}-l2 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-docker.outputs.tag }}-l2-amd64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-docker.outputs.tag }}-l2-arm64
 
   # Creates a release on GitHub with the binaries
   finalize-release:
@@ -378,6 +396,7 @@ jobs:
       - build-ethrex
       - build-ethrex-guest
       - build-docker
+      - publish-docker
       - package-contracts
       - package-ethrex-guest
     runs-on: ubuntu-latest

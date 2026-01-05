@@ -1,6 +1,6 @@
 use crate::based::block_fetcher::BlockFetcherError;
-use crate::based::state_updater::StateUpdaterError;
 use crate::sequencer::admin_server::AdminError;
+use crate::sequencer::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
 use aligned_sdk::common::errors::SubmitError;
 use ethereum_types::FromStrRadixErr;
@@ -226,6 +226,8 @@ pub enum BlockProducerError {
     InternalError(#[from] GenServerError),
     #[error("EthClientError error: {0}")]
     EthClientError(#[from] EthClientError),
+    #[error("Failed to encode calldata: {0}")]
+    CalldataEncodeError(#[from] CalldataEncodeError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -290,6 +292,8 @@ pub enum CommitterError {
     ChainError(#[from] ChainError),
     #[error("Failed due to invalid fork choice: {0}")]
     InvalidForkChoice(#[from] InvalidForkChoice),
+    #[error("Privileged transaction hash could not be computed")]
+    InvalidPrivilegedTransaction,
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -46,11 +46,12 @@ pub struct P2PContext {
     #[cfg(feature = "l2")]
     pub based_context: Option<P2PBasedContext>,
     pub tx_broadcaster: GenServerHandle<TxBroadcaster>,
+    pub initial_lookup_interval: f64,
 }
 
 impl P2PContext {
     #[allow(clippy::too_many_arguments)]
-    pub async fn new(
+    pub fn new(
         local_node: Node,
         tracker: TaskTracker,
         signer: SecretKey,
@@ -60,6 +61,7 @@ impl P2PContext {
         client_version: String,
         based_context: Option<P2PBasedContext>,
         tx_broadcasting_time_interval: u64,
+        lookup_interval: f64,
     ) -> Result<Self, NetworkError> {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
             tokio::task::Id,
@@ -71,7 +73,6 @@ impl P2PContext {
             blockchain.clone(),
             tx_broadcasting_time_interval,
         )
-        .await
         .inspect_err(|e| {
             error!("Failed to start Tx Broadcaster: {e}");
         })?;
@@ -91,6 +92,7 @@ impl P2PContext {
             #[cfg(feature = "l2")]
             based_context,
             tx_broadcaster,
+            initial_lookup_interval: lookup_interval,
         })
     }
 }
@@ -111,11 +113,13 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
     );
 
     DiscoveryServer::spawn(
+        context.storage.clone(),
         context.local_node.clone(),
         context.signer,
         udp_socket.clone(),
         context.table.clone(),
         bootnodes,
+        context.initial_lookup_interval,
     )
     .await
     .inspect_err(|e| {
@@ -150,7 +154,7 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext) {
             continue;
         }
 
-        let _ = PeerConnection::spawn_as_receiver(context.clone(), peer_addr, stream).await;
+        let _ = PeerConnection::spawn_as_receiver(context.clone(), peer_addr, stream);
     }
 }
 

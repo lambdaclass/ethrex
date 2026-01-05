@@ -14,6 +14,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+env:
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
+
 jobs:
   detect-changes:
     runs-on: ubuntu-latest
@@ -82,11 +87,13 @@ jobs:
         working-directory: tooling
 
   test:
-    # "Test" is a required check, don't change the name
-    name: Test
+    name: Test - ${{ matrix.runner }}
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-22.04-arm, macos-15]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -99,7 +106,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          cargo test --workspace --exclude ethrex-l2
+          cargo test --workspace --exclude 'ethrex-l2*' --exclude ethrex-prover --exclude guest_program
 
       - name: Run Blockchain EF tests
         if: ${{ github.event_name != 'merge_group' }}
@@ -176,6 +183,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [detect-changes, docker_build]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
+    env:
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
@@ -251,6 +260,13 @@ jobs:
           fi
           echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
 
+      - name: Log in to the Container registry
+        if: ${{ env.DOCKERHUB_TOKEN != '' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+
       - name: Run Hive Simulation
         id: run-hive-action
         uses: ethpandaops/hive-github-action@v0.5.0
@@ -275,6 +291,22 @@ jobs:
           name: hive_failed_logs_${{ matrix.artifact_prefix }}
           path: src/results/failed_logs
           if-no-files-found: warn
+
+  # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
+  unit-tests:
+    # "Test" is a required check, don't change the name
+    name: Test
+    runs-on: ubuntu-latest
+    needs: [detect-changes, test]
+    # Make sure this job runs even if the previous jobs failed or were skipped
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    steps:
+      - name: Check if any job failed
+        run: |
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "Job Assertoor Tx Check failed"
+            exit 1
+          fi
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:

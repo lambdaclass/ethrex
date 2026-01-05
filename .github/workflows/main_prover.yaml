@@ -17,6 +17,9 @@ concurrency:
 env:
   DOCKER_ETHREX_WORKDIR: /usr/local/bin
   PROVER: sp1
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
 
 jobs:
   test:

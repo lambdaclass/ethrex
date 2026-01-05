@@ -36,7 +36,13 @@ FROM chef AS builder
 COPY --from=planner /ethrex/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
-RUN curl -L -o /usr/bin/solc https://github.com/ethereum/solidity/releases/download/v0.8.29/solc-static-linux \
+RUN  if [ "$(uname -m)" = aarch64 ]; \
+    then \
+    SOLC_URL=https://github.com/ethereum/solidity/releases/download/v0.8.31/solc-static-linux-arm;\
+    else \
+    SOLC_URL=https://github.com/ethereum/solidity/releases/download/v0.8.31/solc-static-linux; \
+    fi \
+    && curl -L -o /usr/bin/solc $SOLC_URL \
     && chmod +x /usr/bin/solc
 
 COPY benches ./benches
