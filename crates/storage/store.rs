@@ -7,8 +7,8 @@ use crate::{
         tables::{
             ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
             CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS,
-            INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS, SNAP_STATE,
-            STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            INVALID_CHAINS, MISC_VALUES, OLDEST_WITNESS_BLOCK, PENDING_BLOCKS, RECEIPTS,
+            SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -151,6 +151,7 @@ pub struct Store {
 }
 
 pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
+type StorageTries = HashMap<Address, (TrieWitness, Trie)>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
@@ -1553,12 +1554,12 @@ impl Store {
 
     /// Performs the same actions as apply_account_updates_from_trie
     ///  but also returns the used storage tries with witness recorded
-    pub async fn apply_account_updates_from_trie_with_witness(
+    pub fn apply_account_updates_from_trie_with_witness(
         &self,
         mut state_trie: Trie,
         account_updates: &[AccountUpdate],
-        mut storage_tries: HashMap<Address, (TrieWitness, Trie)>,
-    ) -> Result<(HashMap<Address, (TrieWitness, Trie)>, AccountUpdatesList), StoreError> {
+        mut storage_tries: StorageTries,
+    ) -> Result<(StorageTries, AccountUpdatesList), StoreError> {
         let mut ret_storage_updates = Vec::new();
 
         let mut code_updates = Vec::new();
@@ -1712,7 +1713,7 @@ impl Store {
         composite_key
     }
 
-    pub async fn store_witness(
+    pub fn store_witness(
         &self,
         block_hash: BlockHash,
         block_number: u64,
@@ -1722,10 +1723,10 @@ impl Store {
         let value = serde_json::to_vec(&witness)?;
         self.write(EXECUTION_WITNESSES, key, value)?;
         // Clean up old witnesses (keep only last 128)
-        self.cleanup_old_witnesses(block_number).await
+        self.cleanup_old_witnesses(block_number)
     }
 
-    async fn cleanup_old_witnesses(&self, latest_block_number: u64) -> Result<(), StoreError> {
+    fn cleanup_old_witnesses(&self, latest_block_number: u64) -> Result<(), StoreError> {
         // If we have less than 128 blocks, no cleanup needed
         if latest_block_number <= MAX_WITNESSES {
             return Ok(());
@@ -1733,40 +1734,53 @@ impl Store {
 
         let threshold = latest_block_number - MAX_WITNESSES;
 
-        // Get iterator for all witness keys
-        let db = self.backend.clone();
-        let old_witnesses =
-            tokio::task::spawn_blocking(move || -> Result<Vec<Vec<u8>>, StoreError> {
-                let tx = db.begin_read()?;
-                let iter = tx.prefix_iterator(EXECUTION_WITNESSES, &[])?;
-                let mut old_witnesses = Vec::new();
+        self.get_oldest_witness_number()?
+            .map(|oldest_block_number| -> Result<(), StoreError> {
+                for block_number in oldest_block_number..=threshold {
+                    let prefix = block_number.to_be_bytes();
+                    let mut to_delete = Vec::new();
 
-                for result in iter {
-                    let (key, _) = result?;
+                    {
+                        let read_txn = self.backend.begin_read()?;
+                        let iter = read_txn.prefix_iterator(EXECUTION_WITNESSES, &prefix)?;
 
-                    // Parse block number from key (first 8 bytes after prefix)
-                    let block_num_bytes: [u8; 8] = key[..8].try_into().map_err(|_| {
-                        StoreError::Custom("Failed to parse block number".to_string())
-                    })?;
-                    let block_number = u64::from_be_bytes(block_num_bytes);
+                        for item in iter {
+                            let (key, _value) = item?;
+                            to_delete.push(key.to_vec());
+                        }
+                    }
 
-                    if block_number < threshold {
-                        old_witnesses.push(key.to_vec());
+                    for key in to_delete {
+                        self.delete(EXECUTION_WITNESSES, key)?;
                     }
                 }
-                Ok(old_witnesses)
+                Ok(())
             })
-            .await
-            .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))??;
+            .transpose()?;
 
-        // Delete old witnesses in batch
-        if !old_witnesses.is_empty() {
-            for key in old_witnesses {
-                self.delete(EXECUTION_WITNESSES, key)?;
-            }
-        }
+        self.update_oldest_witness_number(threshold + 1)?;
 
         Ok(())
+    }
+
+    fn update_oldest_witness_number(&self, oldest_block_number: u64) -> Result<(), StoreError> {
+        self.write(
+            OLDEST_WITNESS_BLOCK,
+            b"oldest_witness_block".to_vec(),
+            oldest_block_number.to_le_bytes().to_vec(),
+        )?;
+        Ok(())
+    }
+
+    fn get_oldest_witness_number(&self) -> Result<Option<u64>, StoreError> {
+        let Some(value) = self.read(OLDEST_WITNESS_BLOCK, b"oldest_witness_block".to_vec())? else {
+            return Ok(None);
+        };
+
+        let array: [u8; 8] = value.as_slice().try_into().map_err(|_| {
+            StoreError::Custom("Invalid oldest witness block number bytes".to_string())
+        })?;
+        Ok(Some(u64::from_le_bytes(array)))
     }
 
     pub fn get_witness_by_number_and_hash(

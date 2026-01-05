@@ -617,37 +617,7 @@ async fn handle_new_payload_v1_v2(
     }
 
     // All checks passed, execute payload
-    let payload_status = try_execute_payload(block.clone(), &context, latest_valid_hash).await?;
-
-    // Generate and store witness if required
-    if context.generate_witness {
-        let block_hash = block.hash();
-        let block_number = block.header.number;
-
-        let Ok(witness) = context
-            .blockchain
-            .generate_witness_for_blocks(&[block])
-            .await
-        else {
-            warn!(
-                %block_hash,
-                %block_number,
-                "Failed to generate witness for block. Skipping witness generation."
-            );
-            return Ok(payload_status);
-        };
-        let _ = context
-            .storage
-            .store_witness(block_hash, block_number, witness)
-            .await
-            .inspect_err(|e| {
-                warn!(
-                    %block_hash,
-                    %block_number,
-                    "Failed to store witness for block: {e}. Skipping witness storage."
-                )
-            });
-    }
+    let payload_status = try_execute_payload(block, &context, latest_valid_hash).await?;
     Ok(payload_status)
 }
 

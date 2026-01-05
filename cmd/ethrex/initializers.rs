@@ -223,7 +223,6 @@ pub async fn init_rpc_api(
         log_filter_handler,
         opts.gas_limit,
         opts.extra_data.clone(),
-        opts.generate_witness,
     );
 
     tracker.spawn(rpc_api);
@@ -463,6 +462,7 @@ pub async fn init_l1(
             max_mempool_size: opts.mempool_max_size,
             perf_logs_enabled: true,
             r#type: BlockchainType::L1,
+            generate_witness: opts.generate_witness,
         },
     );
 

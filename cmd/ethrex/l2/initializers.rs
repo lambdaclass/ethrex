@@ -68,7 +68,6 @@ fn init_rpc_api(
         rollup_store,
         log_filter_handler,
         gas_ceil.unwrap_or(DEFAULT_BUILDER_GAS_CEIL),
-        opts.generate_witness,
     );
 
     tracker.spawn(rpc_api);
@@ -216,6 +215,7 @@ pub async fn init_l2(
         max_mempool_size: opts.node_opts.mempool_max_size,
         r#type: BlockchainType::L2(l2_config),
         perf_logs_enabled: true,
+        generate_witness: opts.node_opts.generate_witness,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
