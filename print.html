@@ -2705,7 +2705,7 @@ buffer and sends it back through the channels.</p>
 <li><a href="l2/deployment/./aligned.html">Ethrex &lt;&gt; Aligned</a></li>
 <li><a href="l2/deployment/./shared_bridge.html">Deploying a shared bridge enabled L2</a></li>
 <li><a href="l2/deployment/./fee_token.html">Deploying a fee token</a></li>
-<li><a href="l2/deployment/./migrations.html">Migrations</a></li>
+<li><a href="l2/deployment/./upgrades.html">Upgrades</a></li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
@@ -4090,21 +4090,62 @@ And <code>ROUTER_ADDRESS</code> with the outputs of the first deploy</p>
 }
 
 </style>
-<h1 id="migrations"><a class="header" href="#migrations">Migrations</a></h1>
+<h1 id="upgrades"><a class="header" href="#upgrades">Upgrades</a></h1>
 <h2 id="from-v7-to-v8"><a class="header" href="#from-v7-to-v8">From v7 to v8</a></h2>
-<p>The following table name change was made:
-<code>messages</code> -&gt; <code>l1_messages</code></p>
-<p>In order to perform a migration you would need to copy the contents of your <code>messages</code> table into <code>l1_messeges</code></p>
+<h3 id="database-migration-local-node"><a class="header" href="#database-migration-local-node">Database migration (local node)</a></h3>
+<p>This migration applies to the L2 node database only (SQL-backed store). It does not change any on-chain contracts.</p>
+<p>The <code>messages</code> table was renamed to <code>l1_messages</code>. Copy the data and then remove the old table:</p>
 <pre><code class="language-sql">INSERT INTO l1_messages
 SELECT *
 FROM messages;
 </code></pre>
-<p>You can then safely delete the <code>messages</code> table</p>
+<p>Then delete the <code>messages</code> table.</p>
 <h2 id="from-v8-to-v9"><a class="header" href="#from-v8-to-v9">From v8 to v9</a></h2>
-<p>The table <code>balance_diffs</code> schema was changed. We added a new column <code>value_per_token</code>.</p>
-<p>In order to perform a migration tou would need to add the new column with type <code>BLOB</code>.
-You can do this by executing:</p>
-<pre><code class="language-sql">ALTER TABLE balance_diffs 
+<h3 id="timelock-upgrade-l1-contracts"><a class="header" href="#timelock-upgrade-l1-contracts">Timelock upgrade (L1 contracts)</a></h3>
+<p>From ethrex v9 onwards, the Timelock contract manages access to the OnChainProposer (OCP). The OCP owner becomes the Timelock, and the deprecated <code>authorizedSequencerAddresses</code> mapping is replaced by Timelock roles.</p>
+<h4 id="what-changes"><a class="header" href="#what-changes">What changes</a></h4>
+<ul>
+<li>Sequencer permissions move to Timelock roles (<code>SEQUENCER</code>).</li>
+<li>Commit and verify transactions must target the Timelock, not the OCP.</li>
+<li>Governance and Security Council accounts control upgrades and emergency actions via the Timelock.</li>
+</ul>
+<h4 id="1-deploy-timelock-proxy--implementation"><a class="header" href="#1-deploy-timelock-proxy--implementation">1) Deploy Timelock (proxy + implementation)</a></h4>
+<p>Deploy a Timelock proxy and implementation using your standard UUPS deployment flow. Record the proxy address; that is the address you will initialize and use later.</p>
+<h4 id="2-initialize-timelock"><a class="header" href="#2-initialize-timelock">2) Initialize Timelock</a></h4>
+<p>Call the Timelock initializer on the proxy:</p>
+<pre><code>initialize(uint256 minDelay,address[] sequencers,address governance,address securityCouncil,address onChainProposer)
+</code></pre>
+<ul>
+<li><code>sequencers</code> should include the L1 committer and proof sender addresses (and any other accounts that should commit or verify).</li>
+<li><code>securityCouncil</code> is typically the current OCP owner (ideally a multisig).</li>
+<li><code>governance</code> is the account that will schedule and execute timelocked upgrades.</li>
+</ul>
+<h4 id="3-transfer-ocp-ownership-to-timelock"><a class="header" href="#3-transfer-ocp-ownership-to-timelock">3) Transfer OCP ownership to Timelock</a></h4>
+<p>From the current OCP owner, transfer ownership with <code>transferOwnership(address)</code>.</p>
+<p>Then accept ownership from the Timelock:</p>
+<ul>
+<li>Normal path: schedule and execute <code>acceptOwnership()</code> through the Timelock (respects <code>minDelay</code>).</li>
+<li>Emergency path: the Security Council can call <code>emergencyExecute</code> on the Timelock with calldata for <code>acceptOwnership()</code> to accept immediately.</li>
+</ul>
+<p>Note: <code>acceptOwnership()</code> must be executed by the Timelock (the pending owner), so it cannot be called directly from an EOA.</p>
+<h4 id="4-configure-the-l2-node-to-use-timelock"><a class="header" href="#4-configure-the-l2-node-to-use-timelock">4) Configure the L2 node to use Timelock</a></h4>
+<p>This is required because the sequencer can no longer call the OCP directly once the Timelock is the owner. Set the Timelock address so commit and verify calls target the Timelock:</p>
+<ul>
+<li>CLI flag: <code>--l1.timelock-address &lt;TIMELOCK_PROXY_ADDRESS&gt;</code></li>
+<li>Env var: <code>ETHREX_TIMELOCK_ADDRESS=&lt;TIMELOCK_PROXY_ADDRESS&gt;</code></li>
+</ul>
+<p>The committer requires this address for non-based deployments, and the proof sender/verifier will use it when present.</p>
+<p>Do this before restarting the sequencer after the ownership transfer. If the node keeps targeting the OCP after the transfer, commit/verify calls will revert (<code>onlyOwner</code>). If you point to the Timelock before the transfer, the Timelock will forward but the OCP will still reject it because the Timelock is not the owner yet.</p>
+<h4 id="5-verify-the-migration"><a class="header" href="#5-verify-the-migration">5) Verify the migration</a></h4>
+<ul>
+<li>OCP <code>owner()</code> returns the Timelock address.</li>
+<li>Sequencer addresses return <code>true</code> for <code>hasRole(SEQUENCER, &lt;addr&gt;)</code> on the Timelock.</li>
+<li>The L2 node logs show commit/verify txs sent to the Timelock.</li>
+</ul>
+<h3 id="database-migration-local-node-1"><a class="header" href="#database-migration-local-node-1">Database migration (local node)</a></h3>
+<p>This migration applies to the L2 node database only (SQL-backed store). It does not change any on-chain contracts.</p>
+<p>The <code>balance_diffs</code> table added a new <code>value_per_token</code> column of type <code>BLOB</code>:</p>
+<pre><code class="language-sql">ALTER TABLE balance_diffs
 ADD COLUMN value_per_token BLOB;
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
