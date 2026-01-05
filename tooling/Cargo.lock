@@ -3506,6 +3506,7 @@ dependencies = [
  "ethrex-blockchain",
  "ethrex-common 8.0.0",
  "ethrex-crypto",
+ "ethrex-l2-common",
  "ethrex-metrics",
  "ethrex-rlp 8.0.0",
  "ethrex-storage 8.0.0",
