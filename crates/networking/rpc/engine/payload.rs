@@ -619,11 +619,11 @@ async fn handle_new_payload_v1_v2(
     // All checks passed, execute payload
     let payload_status = try_execute_payload(block.clone(), &context, latest_valid_hash).await?;
 
-    let block_hash = block.hash();
-    let block_number = block.header.number;
-
     // Generate and store witness if required
     if context.generate_witness {
+        let block_hash = block.hash();
+        let block_number = block.header.number;
+
         let Ok(witness) = context
             .blockchain
             .generate_witness_for_blocks(&[block])
@@ -636,7 +636,7 @@ async fn handle_new_payload_v1_v2(
             );
             return Ok(payload_status);
         };
-        _ = context
+        let _ = context
             .storage
             .store_witness(block_hash, block_number, witness)
             .await
