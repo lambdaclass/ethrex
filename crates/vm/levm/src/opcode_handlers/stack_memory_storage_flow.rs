@@ -291,6 +291,7 @@ impl<'a> VM<'a> {
     ///   - Checking that the byte at the requested target PC is a JUMPDEST (0x5B).
     ///   - Ensuring the byte is not blacklisted. In other words, the 0x5B value is not part of a
     ///     constant associated with a push instruction.
+    #[expect(clippy::as_conversions)]
     fn target_address_is_valid(call_frame: &CallFrame, jump_address: u32) -> bool {
         let index = jump_address as usize;
         let word = index / 64;
@@ -299,7 +300,7 @@ impl<'a> VM<'a> {
             .bytecode
             .jump_targets
             .get(word)
-            .map_or(false, |entry| (entry >> bit) & 1 == 1)
+            .is_some_and(|entry| (entry >> bit) & 1 == 1)
     }
 
     /// JUMP* family (`JUMP` and `JUMP` ATTOW [DEC 2024]) helper
