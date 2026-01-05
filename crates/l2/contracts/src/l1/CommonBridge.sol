@@ -110,7 +110,7 @@ contract CommonBridge is
     uint256 private pendingPrivilegedTxIndex;
 
     /// @notice Address of the SharedBridgeRouter contract
-    address public SHARED_BRIDGE_ROUTER = address(0);
+    address public SHARED_BRIDGE_ROUTER;
 
     /// @notice Chain ID of the network
     uint256 public CHAIN_ID;
