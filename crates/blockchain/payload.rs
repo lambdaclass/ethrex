@@ -54,6 +54,8 @@ pub struct PayloadBuildTask {
 pub enum PayloadOrTask {
     Payload(Box<PayloadBuildResult>),
     Task(PayloadBuildTask),
+    // Temporary marker while a task is being finalized outside the main mutex
+    Pending,
 }
 
 impl PayloadBuildTask {
@@ -73,6 +75,11 @@ impl PayloadOrTask {
         Ok(match self {
             PayloadOrTask::Payload(_) => self,
             PayloadOrTask::Task(task) => PayloadOrTask::Payload(Box::new(task.finish().await?)),
+            PayloadOrTask::Pending => {
+                return Err(ChainError::Custom(
+                    "Payload entry is pending; not convertible".to_string(),
+                ));
+            }
         })
     }
 }
@@ -319,18 +326,44 @@ impl Blockchain {
     /// Attempts to fetch a payload given it's id. If the payload is still being built, it will be finished.
     /// Fails if there is no payload or active payload build task for the given id.
     pub async fn get_payload(&self, payload_id: u64) -> Result<PayloadBuildResult, ChainError> {
-        let mut payloads = self.payloads.lock().await;
-        // Find the given payload and finish the active build process if needed
-        let idx = payloads
-            .iter()
-            .position(|(id, _)| id == &payload_id)
-            .ok_or(ChainError::UnknownPayload)?;
-        let finished_payload = (payload_id, payloads.remove(idx).1.to_payload().await?);
-        payloads.insert(idx, finished_payload);
-        // Return the held payload
-        match &payloads[idx].1 {
-            PayloadOrTask::Payload(payload) => Ok(*payload.clone()),
-            _ => unreachable!("we already converted the payload into a finished version"),
+        use tokio::time::{Duration as TokioDuration, sleep};
+
+        loop {
+            // Get an Arc<Mutex<PayloadOrTask>> for this id
+            let entry_arc = {
+                let payloads = self.payloads.lock().await;
+                let (_id, entry) = payloads
+                    .iter()
+                    .find(|(id, _)| id == &payload_id)
+                    .ok_or(ChainError::UnknownPayload)?;
+                entry.clone()
+            };
+
+            // Work on the entry without removing it from the vec
+            let mut entry = entry_arc.lock().await;
+            match std::mem::replace(&mut *entry, PayloadOrTask::Pending) {
+                PayloadOrTask::Payload(p) => {
+                    // Already finished; restore and return
+                    let result = *p.clone();
+                    *entry = PayloadOrTask::Payload(Box::new(result.clone()));
+                    return Ok(result);
+                }
+                PayloadOrTask::Task(task) => {
+                    // Drop lock and finish task
+                    drop(entry);
+                    let res = task.finish().await?;
+                    let mut entry = entry_arc.lock().await;
+                    *entry = PayloadOrTask::Payload(Box::new(res.clone()));
+                    return Ok(res);
+                }
+                PayloadOrTask::Pending => {
+                    // Someone else is finalizing; wait and retry
+                    *entry = PayloadOrTask::Pending;
+                    drop(entry);
+                    sleep(TokioDuration::from_millis(2)).await;
+                    continue;
+                }
+            }
         }
     }
 
@@ -352,10 +385,12 @@ impl Blockchain {
         }
         payloads.push((
             payload_id,
-            PayloadOrTask::Task(PayloadBuildTask {
-                task: payload_build_task,
-                cancel: cancel_token,
-            }),
+            Arc::new(tokio::sync::Mutex::new(PayloadOrTask::Task(
+                PayloadBuildTask {
+                    task: payload_build_task,
+                    cancel: cancel_token,
+                },
+            ))),
         ));
     }
 

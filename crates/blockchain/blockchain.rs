@@ -52,6 +52,9 @@ use std::time::Instant;
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
+type PayloadEntry = Arc<TokioMutex<PayloadOrTask>>;
+type PayloadTable = Vec<(u64, PayloadEntry)>;
+
 use vm::StoreVmDatabase;
 
 #[cfg(feature = "metrics")]
@@ -89,9 +92,9 @@ pub struct Blockchain {
     /// This does not reflect whether there is an ongoing sync process
     is_synced: AtomicBool,
     pub options: BlockchainOptions,
-    /// Mapping from a payload id to either a complete payload or a payload build task
-    /// We need to keep completed payloads around in case consensus requests them twice
-    pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
+    /// Mapping from a payload id to a shareable payload entry (either a complete payload or a build task)
+    /// We keep completed payloads around in case consensus requests them twice
+    pub payloads: Arc<TokioMutex<PayloadTable>>,
 }
 
 #[derive(Debug, Clone)]
