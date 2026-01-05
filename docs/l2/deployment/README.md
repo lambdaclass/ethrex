@@ -11,4 +11,4 @@ Use this section to choose the deployment method that best fits your needs and f
 - [Ethrex <> Aligned](./aligned.md)
 - [Deploying a shared bridge enabled L2](./shared_bridge.md)
 - [Deploying a fee token](./fee_token.md)
-- [Migrations](./migrations.md)
+- [Upgrades](./upgrades.md)

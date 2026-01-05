@@ -40,13 +40,6 @@ interface IOnChainProposer {
         bytes32 newVerificationKey
     );
 
-    /// @notice Set the bridge address for the first time.
-    /// @dev This method is separated from initialize because both the CommonBridge
-    /// and the OnChainProposer need to know the address of the other. This solves
-    /// the circular dependency while allowing to initialize the proxy with the deploy.
-    /// @param bridge the address of the bridge contract.
-    function initializeBridgeAddress(address bridge) external;
-
     /// @notice Upgrades the SP1 verification key that represents the sequencer's code.
     /// @param new_vk new verification key for SP1 verifier
     /// @param commit_hash git commit hash that produced the new verification key
