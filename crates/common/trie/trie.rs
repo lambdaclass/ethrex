@@ -98,7 +98,7 @@ impl Trie {
     }
 
     /// Retrieve an RLP-encoded value from the trie given its RLP-encoded path.
-    pub fn get(&self, pathrlp: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn get(&self, pathrlp: &[u8]) -> Result<Option<ValueRLP>, TrieError> {
         let path = Nibbles::from_bytes(pathrlp);
 
         if !self.dirty.contains(&path) && self.db().flatkeyvalue_computed(path.clone()) {
@@ -151,7 +151,7 @@ impl Trie {
 
     /// Remove a value from the trie given its RLP-encoded path.
     /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
-    pub fn remove(&mut self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn remove(&mut self, path: &[u8]) -> Result<Option<ValueRLP>, TrieError> {
         self.dirty.insert(Nibbles::from_bytes(path));
         if !self.root.is_valid() {
             return Ok(None);
@@ -252,7 +252,7 @@ impl Trie {
     /// Note: This method has a different behavior in regard to non-existent trie root nodes. Normal
     ///   behavior is to return `Err(InconsistentTrie)`, but this method will return
     ///   `Ok(Vec::new())` instead.
-    pub fn get_proof(&self, path: &PathRLP) -> Result<Vec<NodeRLP>, TrieError> {
+    pub fn get_proof(&self, path: &[u8]) -> Result<Vec<NodeRLP>, TrieError> {
         if self.root.is_valid() {
             let hash = self.root.compute_hash();
 
@@ -578,6 +578,7 @@ impl From<Trie> for ProofTrie {
 
 #[cfg(test)]
 mod test {
+    #![expect(clippy::unnecessary_to_owned, clippy::useless_vec)]
     use cita_trie::{MemoryDB as CitaMemoryDB, PatriciaTrie as CitaTrie, Trie as CitaTrieTrait};
     use std::sync::Arc;
 
