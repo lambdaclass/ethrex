@@ -216,7 +216,7 @@ check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
 	cargo check --locked
 	cargo check --locked --manifest-path crates/l2/prover/src/guest_program/src/sp1/Cargo.toml
 	cargo check --locked --manifest-path crates/l2/prover/src/guest_program/src/risc0/Cargo.toml
-	cargo +zisk check --locked --manifest-path crates/l2/prover/src/guest_program/src/zisk/Cargo.toml --target riscv64ima-zisk-zkvm-elf
+	cargo +zisk check --release --locked --manifest-path crates/l2/prover/src/guest_program/src/zisk/Cargo.toml --target riscv64ima-zisk-zkvm-elf
 	cargo check --locked --manifest-path crates/l2/prover/src/guest_program/src/openvm/Cargo.toml
 	cargo check --locked --manifest-path crates/l2/tee/quote-gen/Cargo.toml
 	cargo check --locked --manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml
