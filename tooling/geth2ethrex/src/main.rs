@@ -117,6 +117,7 @@ fn geth2ethrex(mut store: Store, block_number: BlockNumber, args: &Args) -> eyre
             let Ok([header_rlp, body_rlp]) =
                 gethdb.read_block_from_gethdb(*number, hash.to_fixed_bytes())
             else {
+                warn!("Couldn't obtain block {number}");
                 continue;
             };
             let header: BlockHeader = RLPDecode::decode(&header_rlp)?;
