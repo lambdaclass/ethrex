@@ -404,6 +404,7 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     let mut raw_v = [0u8; WORD];
     let mut raw_sig = [0u8; SIG_LEN];
 
+    #[expect(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
     let copy_segment = |dst: &mut [u8], start: usize| {
         if start >= calldata.len() {
             return;
