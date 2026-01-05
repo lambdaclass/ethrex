@@ -1,22 +1,23 @@
 use std::{sync::Arc, time::Duration};
 
 use ethrex_blockchain::Blockchain;
-use ethrex_common::{Address, types::Block};
+use ethrex_common::{Address, U256, types::Block};
 use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch};
 use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use spawned_concurrency::{
     error::GenServerError,
-    messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
+    tasks::{CallResponse, CastResponse, GenServer, GenServerHandle, send_after},
 };
 use tracing::{debug, error, info, warn};
 
 use crate::{
     SequencerConfig,
-    based::sequencer_state::{SequencerState, SequencerStatus},
-    sequencer::utils::node_is_up_to_date,
+    sequencer::{
+        sequencer_state::{SequencerState, SequencerStatus},
+        utils::node_is_up_to_date,
+    },
     utils::parse::hash_to_address,
 };
 
@@ -48,6 +49,12 @@ pub enum InMessage {
 #[derive(Clone, PartialEq)]
 pub enum OutMessage {
     Done,
+    Set,
+}
+
+#[derive(Clone)]
+pub enum CallMessage {
+    StopAt(u64),
 }
 
 pub struct StateUpdater {
@@ -55,11 +62,15 @@ pub struct StateUpdater {
     sequencer_registry_address: Address,
     sequencer_address: Address,
     eth_client: Arc<EthClient>,
+    l2_client: Option<Arc<EthClient>>,
     store: Store,
     rollup_store: StoreRollup,
     check_interval_ms: u64,
     sequencer_state: SequencerState,
     blockchain: Arc<Blockchain>,
+    stop_at: Option<u64>,
+    start_at: u64,
+    based: bool,
 }
 
 impl StateUpdater {
@@ -72,16 +83,26 @@ impl StateUpdater {
     ) -> Result<Self, StateUpdaterError> {
         Ok(Self {
             on_chain_proposer_address: sequencer_cfg.l1_committer.on_chain_proposer_address,
-            sequencer_registry_address: sequencer_cfg.based.state_updater.sequencer_registry,
+            sequencer_registry_address: sequencer_cfg.state_updater.sequencer_registry,
             sequencer_address: sequencer_cfg.l1_committer.signer.address(),
             eth_client: Arc::new(EthClient::new_with_multiple_urls(
                 sequencer_cfg.eth.rpc_url.clone(),
             )?),
             store,
             rollup_store,
-            check_interval_ms: sequencer_cfg.based.state_updater.check_interval_ms,
+            check_interval_ms: sequencer_cfg.state_updater.check_interval_ms,
             sequencer_state,
             blockchain,
+            stop_at: None,
+            start_at: sequencer_cfg.state_updater.start_at,
+            based: sequencer_cfg.based.enabled,
+            l2_client: if let Some(l2_head_check_rpc_url) =
+                sequencer_cfg.state_updater.l2_head_check_rpc_url
+            {
+                Some(Arc::new(EthClient::new(l2_head_check_rpc_url)?))
+            } else {
+                None
+            },
         })
     }
 
@@ -91,7 +112,7 @@ impl StateUpdater {
         blockchain: Arc<Blockchain>,
         store: Store,
         rollup_store: StoreRollup,
-    ) -> Result<(), StateUpdaterError> {
+    ) -> Result<GenServerHandle<StateUpdater>, StateUpdaterError> {
         let mut state_updater = Self::new(
             sequencer_cfg,
             sequencer_state,
@@ -103,10 +124,51 @@ impl StateUpdater {
         state_updater
             .cast(InMessage::UpdateState)
             .await
-            .map_err(StateUpdaterError::InternalError)
+            .map_err(StateUpdaterError::InternalError)?;
+        Ok(state_updater)
     }
 
     pub async fn update_state(&mut self) -> Result<(), StateUpdaterError> {
+        let current_state = self.sequencer_state.status().await;
+        if !self.based {
+            let current_block: U256 = self.store.get_latest_block_number().await?.into();
+            let mut new_state = current_state;
+
+            // The node if set to stop sequencing at a specific block we will set it to Following once we reach it.
+            // With this we can keep sharing or broadcasting blocks and batches but not produce new ones.
+            // We check that only if the current state is Sequencing.
+            // If it is not Sequencing we check if we can move to Sequencing or need to stay in Following/Syncing.
+            // To move to Sequencing we need to be at or past the start_at block and be up to date
+            // with the chain (i.e. be at the latest block of the chain).
+            // We use the l2_client as the trust source for the latest block number.
+            if matches!(current_state, SequencerStatus::Sequencing) {
+                if let Some(stop_at) = self.stop_at
+                    && current_block >= stop_at.into()
+                {
+                    new_state = SequencerStatus::Following;
+                }
+            } else {
+                let Some(l2_client) = &self.l2_client else {
+                    return Ok(());
+                };
+                let latest_block = l2_client.get_block_number().await?;
+                let can_sequence = current_block >= latest_block;
+
+                if latest_block < self.start_at.into() {
+                    new_state = SequencerStatus::Following;
+                } else if can_sequence {
+                    new_state = SequencerStatus::Sequencing;
+                }
+            }
+
+            if current_state != new_state {
+                self.sequencer_state.new_status(new_state).await;
+                info!("The sequencer is now {new_state}");
+            }
+
+            return Ok(());
+        }
+
         let lead_sequencer = hash_to_address(
             self.eth_client
                 .call(
@@ -129,8 +191,6 @@ impl StateUpdater {
             &self.rollup_store,
         )
         .await?;
-
-        let current_state = self.sequencer_state.status().await;
 
         let new_status = determine_new_status(
             current_state,
@@ -238,10 +298,15 @@ impl StateUpdater {
 
         Ok(())
     }
+
+    fn set_stop_at(&mut self, block_number: u64) -> CallResponse<Self> {
+        self.stop_at = Some(block_number);
+        CallResponse::Reply(OutMessage::Set)
+    }
 }
 
 impl GenServer for StateUpdater {
-    type CallMsg = Unused;
+    type CallMsg = CallMessage;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type Error = StateUpdaterError;
@@ -261,6 +326,16 @@ impl GenServer for StateUpdater {
             Self::CastMsg::UpdateState,
         );
         CastResponse::NoReply
+    }
+
+    async fn handle_call(
+        &mut self,
+        message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+    ) -> spawned_concurrency::tasks::CallResponse<Self> {
+        match message {
+            CallMessage::StopAt(block_number) => self.set_stop_at(block_number),
+        }
     }
 }
 

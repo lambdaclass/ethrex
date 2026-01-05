@@ -110,7 +110,7 @@ contract CommonBridge is
     uint256 private pendingPrivilegedTxIndex;
 
     /// @notice Address of the SharedBridgeRouter contract
-    address public SHARED_BRIDGE_ROUTER = address(0);
+    address public SHARED_BRIDGE_ROUTER;
 
     /// @notice Chain ID of the network
     uint256 public CHAIN_ID;
@@ -460,31 +460,66 @@ contract CommonBridge is
         BalanceDiff[] calldata balanceDiffs
     ) public onlyOnChainProposer nonReentrant {
         for (uint i = 0; i < balanceDiffs.length; i++) {
-            IRouter(SHARED_BRIDGE_ROUTER).sendMessages{
+            // Send ETH value if any
+            IRouter(SHARED_BRIDGE_ROUTER).sendETHValue{
                 value: balanceDiffs[i].value
-            }(balanceDiffs[i].chainId, balanceDiffs[i].message_hashes);
+            }(balanceDiffs[i].chainId);
+
+            // Send ERC20 values if any
+            for (uint j = 0; j < balanceDiffs[i].assetDiffs.length; j++) {
+                AssetDiff memory tv = balanceDiffs[i].assetDiffs[j];
+                require(
+                    deposits[tv.tokenL1][tv.tokenL2] >= tv.value,
+                    "CommonBridge: trying to withdraw more tokens than were deposited"
+                );
+                deposits[tv.tokenL1][tv.tokenL2] -= tv.value;
+                IERC20(tv.tokenL1).forceApprove(SHARED_BRIDGE_ROUTER, tv.value);
+                IRouter(SHARED_BRIDGE_ROUTER).sendERC20Message(
+                    CHAIN_ID,
+                    balanceDiffs[i].chainId,
+                    tv.tokenL1,
+                    tv.destTokenL2,
+                    tv.value
+                );
+            }
+            IRouter(SHARED_BRIDGE_ROUTER).injectMessageHashes(
+                balanceDiffs[i].chainId,
+                balanceDiffs[i].message_hashes
+            );
         }
     }
 
-    /// @inheritdoc ICommonBridge
-    function receiveFromSharedBridge(
-        uint256 senderChainId,
+    function pushMessageHashes(
+        uint256 chainId,
         bytes32[] calldata message_hashes
-    ) public payable override {
+    ) external override {
         require(
             msg.sender == SHARED_BRIDGE_ROUTER,
             "CommonBridge: caller is not the shared bridge router"
         );
-        // Append new hashes instead of overwriting
         for (uint i = 0; i < message_hashes.length; i++) {
-            pendingMessagesHashesPerChain[senderChainId].push(
-                message_hashes[i]
-            );
+            pendingMessagesHashesPerChain[chainId].push(message_hashes[i]);
 
             privilegedTxDeadline[message_hashes[i]] =
                 block.timestamp +
                 PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION;
         }
+    }
+
+    /// @inheritdoc ICommonBridge
+    function receiveETHFromSharedBridge() public payable override {}
+
+    /// @inheritdoc ICommonBridge
+    function receiveERC20FromSharedBridge(
+        address tokenL1,
+        address tokenL2,
+        uint256 amount
+    ) public payable override {
+        require(
+            msg.sender == SHARED_BRIDGE_ROUTER,
+            "CommonBridge: caller is not the shared bridge router"
+        );
+        deposits[tokenL1][tokenL2] += amount;
     }
 
     /// @inheritdoc ICommonBridge
