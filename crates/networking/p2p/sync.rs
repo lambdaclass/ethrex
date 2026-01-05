@@ -21,6 +21,8 @@ use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainErr
 use ethrex_common::U256;
 #[cfg(not(feature = "rocksdb"))]
 use ethrex_rlp::encode::RLPEncode;
+#[cfg(feature = "rocksdb")]
+use ethrex_trie::Trie;
 
 use ethrex_common::types::Code;
 use ethrex_common::{

@@ -32,7 +32,6 @@ use ethrex_config::networks::Network;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::decode::decode_bytes;
 use ethrex_rlp::decode::decode_rlp_item;
-use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::EngineType;
 use ethrex_storage::Store;
 use ethrex_trie::Nibbles;
@@ -49,7 +48,6 @@ use std::io;
 use std::io::Read;
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::sync::LazyLock;
 use std::time::Instant;
 use tracing::info;
@@ -70,8 +68,6 @@ static GETH_JOURNAL_PATH: LazyLock<&str> = LazyLock::new(|| {
         .into_owned()
         .leak()
 });
-static ETHREX_DB_PATH: LazyLock<&str> = LazyLock::new(|| Args::parse().output_dir.leak());
-static VALIDATE_ONLY: LazyLock<bool> = LazyLock::new(|| Args::parse().validate_only);
 
 pub fn main() -> eyre::Result<()> {
     let args = Args::parse();
@@ -114,7 +110,7 @@ fn geth2ethrex(mut store: Store, block_number: BlockNumber, args: &Args) -> eyre
         .map(|(i, hash)| (block_number - i as u64, H256::from_slice(hash)))
         .collect();
 
-    if !*VALIDATE_ONLY {
+    if !args.validate_only {
         info!("Inserting blocks");
 
         for (number, hash) in numbers_and_hashes.iter() {
@@ -141,15 +137,6 @@ fn geth2ethrex(mut store: Store, block_number: BlockNumber, args: &Args) -> eyre
         }
         info!("Inserting account state");
         let db_root_hash = keccak(gethdb.state_db.get(b"A").unwrap().unwrap());
-        let db_layer_id = u64::from_be_bytes(
-            gethdb
-                .state_db
-                .get([&b"L"[..], &db_root_hash.0[..]].concat())
-                .unwrap()
-                .unwrap()
-                .try_into()
-                .unwrap(),
-        );
         let state_trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
         let mut account_nodes = 0;
         let mut nodes_to_push = vec![];
@@ -236,11 +223,8 @@ fn geth2ethrex(mut store: Store, block_number: BlockNumber, args: &Args) -> eyre
         assert_eq!(disk_root, db_root_hash);
         // Decode disk layer
         // Seems redundant, but disk layer stores its root again
-        let disk_layer_root;
-        (disk_layer_root, rest) = H256::decode_unfinished(rest)?;
-        // assert_eq!(disk_layer_root, disk_root); ???
-        let disk_layer_id;
-        (disk_layer_id, rest) = u64::decode_unfinished(rest)?;
+        (_, rest) = H256::decode_unfinished(rest)?;
+        (_, rest) = u64::decode_unfinished(rest)?;
         // FIXME: geth only enforces disk_layer_id <= db_layer_id
         // Not sure if inequality might be actually valid
         // assert_eq!(disk_layer_id, db_layer_id);
@@ -248,7 +232,7 @@ fn geth2ethrex(mut store: Store, block_number: BlockNumber, args: &Args) -> eyre
         // Decode the disk layer nodes
         let disk_nodes_pl;
         (is_list, disk_nodes_pl, rest) = decode_rlp_item(rest)?;
-        decode_nodes(&disk_nodes_pl, &mut diffs)?;
+        decode_nodes(disk_nodes_pl, &mut diffs)?;
         assert!(is_list);
         // Ignore kv field until we use snapshots
         // Raw storage key flag
@@ -283,7 +267,7 @@ fn geth2ethrex(mut store: Store, block_number: BlockNumber, args: &Args) -> eyre
             (is_list, difflayer_nodes_pl, rest) = decode_rlp_item(rest)?;
             assert!(is_list);
             // Now we can decode the actual nodes
-            decode_nodes(&difflayer_nodes_pl, &mut diffs)?;
+            decode_nodes(difflayer_nodes_pl, &mut diffs)?;
             // Check if it has origin nodes, we ignore them
             let (has_origin, _, next) = decode_rlp_item(rest)?;
             if has_origin {
