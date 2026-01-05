@@ -612,13 +612,12 @@ impl Store {
             return Ok(None);
         };
         let bytes = Bytes::from_owner(bytes);
-        let (bytecode_slice, targets) = decode_bytes(&bytes)?;
+        let (bytecode_slice, bitmap_bytes) = decode_bytes(&bytes)?;
         let bytecode = bytes.slice_ref(bytecode_slice);
-
         let code = Code {
             hash: code_hash,
             bytecode,
-            jump_targets: <Vec<_>>::decode(targets)?,
+            jump_targets: <Vec<_>>::decode(bitmap_bytes)?,
         };
 
         // insert into cache and evict if needed

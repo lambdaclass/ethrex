@@ -29,11 +29,12 @@ pub struct Code {
     // endpoints to access that hash, saving one expensive Keccak hash.
     pub hash: H256,
     pub bytecode: Bytes,
-    // TODO: Consider using Arc<[u32]> (needs to enable serde rc feature)
+    // TODO: Consider using Arc<[u64]> (needs to enable serde rc feature)
     // The valid addresses are 32-bit because, despite EIP-3860 restricting initcode size,
     // this does not apply to previous forks. This is tested in the EEST tests, which would
     // panic in debug mode.
-    pub jump_targets: Vec<u32>,
+    // Bitmap of valid JUMPDEST destinations.
+    pub jump_targets: Vec<u64>,
 }
 
 impl Code {
@@ -58,16 +59,18 @@ impl Code {
         }
     }
 
-    fn compute_jump_targets(code: &[u8]) -> Vec<u32> {
+    fn compute_jump_targets(code: &[u8]) -> Vec<u64> {
         debug_assert!(code.len() <= u32::MAX as usize);
-        let mut targets = Vec::new();
+        let mut bitmap = vec![0u64; code.len().div_ceil(64)];
         let mut i = 0;
         while i < code.len() {
             // TODO: we don't use the constants from the vm module to avoid a circular dependency
             match code[i] {
                 // OP_JUMPDEST
                 0x5B => {
-                    targets.push(i as u32);
+                    let word = i / 64;
+                    let bit = i % 64;
+                    bitmap[word] |= 1u64 << bit;
                 }
                 // OP_PUSH1..32
                 c @ 0x60..0x80 => {
@@ -78,7 +81,7 @@ impl Code {
             }
             i += 1;
         }
-        targets
+        bitmap
     }
 
     /// Estimates the size of the Code struct in bytes
@@ -92,8 +95,8 @@ impl Code {
     pub fn size(&self) -> usize {
         let hash_size = size_of::<H256>();
         let bytes_size = size_of::<Bytes>();
-        let vec_size = size_of::<Vec<u32>>() + self.jump_targets.len() * size_of::<u32>();
-        hash_size + bytes_size + vec_size
+        let bitmap_size = size_of::<Vec<u64>>() + self.jump_targets.len() * size_of::<u64>();
+        hash_size + bytes_size + bitmap_size
     }
 }
 
