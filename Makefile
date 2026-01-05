@@ -216,7 +216,9 @@ check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
 	cargo check --locked
 	cargo check --locked --manifest-path crates/l2/prover/src/guest_program/src/sp1/Cargo.toml
 	cargo check --locked --manifest-path crates/l2/prover/src/guest_program/src/risc0/Cargo.toml
-	cargo +zisk check --release --locked --manifest-path crates/l2/prover/src/guest_program/src/zisk/Cargo.toml --target riscv64ima-zisk-zkvm-elf
+	# We use metadata so we don't need to have the ZisK toolchain installed and verify compilation
+	# if changes made to the source code CI will run with the toolchain
+	cargo metadata --locked --manifest-path crates/l2/prover/src/guest_program/src/zisk/Cargo.toml > /dev/null
 	cargo check --locked --manifest-path crates/l2/prover/src/guest_program/src/openvm/Cargo.toml
 	cargo check --locked --manifest-path crates/l2/tee/quote-gen/Cargo.toml
 	cargo check --locked --manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml
