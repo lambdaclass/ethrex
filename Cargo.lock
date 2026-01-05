@@ -103,6 +103,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "aead"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d122413f284cf2d62fb1b7db97e02edb8cda96d769b16e443a4f6195e35662b0"
+dependencies = [
+ "crypto-common",
+ "generic-array 0.14.7",
+]
+
+[[package]]
 name = "aes"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -111,6 +121,20 @@ dependencies = [
  "cfg-if 1.0.4",
  "cipher",
  "cpufeatures",
+]
+
+[[package]]
+name = "aes-gcm"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "831010a0f742e1209b3bcea8fab6a8e149051ba6099432c8cb2cc117dec3ead1"
+dependencies = [
+ "aead",
+ "aes",
+ "cipher",
+ "ctr",
+ "ghash",
+ "subtle",
 ]
 
 [[package]]
@@ -2325,6 +2349,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array 0.14.7",
+ "rand_core 0.6.4",
  "typenum",
 ]
 
@@ -3794,6 +3819,7 @@ dependencies = [
  "serde_with",
  "sha3",
  "thiserror 2.0.17",
+ "tracing",
 ]
 
 [[package]]
@@ -3882,6 +3908,7 @@ name = "ethrex-p2p"
 version = "8.0.0"
 dependencies = [
  "aes",
+ "aes-gcm",
  "async-trait",
  "bytes",
  "concat-kdf",
@@ -3891,6 +3918,7 @@ dependencies = [
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-crypto",
+ "ethrex-l2-common",
  "ethrex-metrics",
  "ethrex-rlp",
  "ethrex-storage",
@@ -3900,6 +3928,7 @@ dependencies = [
  "futures",
  "hex",
  "hex-literal 0.4.1",
+ "hkdf",
  "hmac",
  "indexmap 2.12.1",
  "lazy_static",
@@ -3907,6 +3936,7 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "rocksdb",
+ "rustc-hash 2.1.1",
  "secp256k1",
  "serde",
  "serde_json",
@@ -4646,6 +4676,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ghash"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0d8a4362ccb29cb0b265253fb0a2728f592895ee6854fd9bc13f2ffda266ff1"
+dependencies = [
+ "opaque-debug",
+ "polyval",
+]
+
+[[package]]
 name = "gimli"
 version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5175,6 +5215,15 @@ name = "hex-literal"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e712f64ec3850b98572bffac52e2c6f282b29fe6c5fa6d42334b30be438d95c1"
+
+[[package]]
+name = "hkdf"
+version = "0.12.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b5f8eb2ad728638ea2c7d47a21db23b7b58a72ed6a38256b8a1849f15fbbdf7"
+dependencies = [
+ "hmac",
+]
 
 [[package]]
 name = "hmac"
@@ -6107,8 +6156,8 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "lib-c"
-version = "0.14.0"
-source = "git+https://github.com/0xPolygonHermez/zisk.git?tag=v0.14.0#2f791ffd070d024ba350f054c349c8d6bd98d629"
+version = "0.15.0"
+source = "git+https://github.com/0xPolygonHermez/zisk.git?tag=v0.15.0#b3ca745b80423c8123dc24f19039865a5bc8b074"
 
 [[package]]
 name = "libc"
@@ -7265,6 +7314,12 @@ name = "oorandom"
 version = "11.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
+
+[[package]]
+name = "opaque-debug"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
 name = "open-fastrlp"
@@ -9500,6 +9555,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51bae2ac328883f7acdfea3d66a7c35751187f870bc81f94563733a154d7a670"
 dependencies = [
  "plotters-backend",
+]
+
+[[package]]
+name = "polyval"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d1fe60d06143b2430aa532c94cfe9e29783047f06c0d7fd359a9a51b729fa25"
+dependencies = [
+ "cfg-if 1.0.4",
+ "cpufeatures",
+ "opaque-debug",
+ "universal-hash",
 ]
 
 [[package]]
@@ -13768,6 +13835,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
+name = "universal-hash"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc1de2c688dc15305988b563c3854064043356019f97a4b46276fe734c4f07ea"
+dependencies = [
+ "crypto-common",
+ "subtle",
+]
+
+[[package]]
 name = "unroll"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14739,8 +14816,8 @@ dependencies = [
 
 [[package]]
 name = "ziskos"
-version = "0.14.0"
-source = "git+https://github.com/0xPolygonHermez/zisk.git?tag=v0.14.0#2f791ffd070d024ba350f054c349c8d6bd98d629"
+version = "0.15.0"
+source = "git+https://github.com/0xPolygonHermez/zisk.git?tag=v0.15.0#b3ca745b80423c8123dc24f19039865a5bc8b074"
 dependencies = [
  "bincode 2.0.1",
  "cfg-if 1.0.4",

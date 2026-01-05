@@ -12,8 +12,7 @@ use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::sequencer::block_producer;
-use ethrex_l2::sequencer::l1_committer;
-use ethrex_l2::sequencer::l1_committer::regenerate_head_state;
+use ethrex_l2::sequencer::l1_committer::{self, regenerate_state};
 use ethrex_p2p::{
     discv4::peer_table::PeerTable,
     network::P2PContext,
@@ -105,7 +104,17 @@ pub async fn init_rollup_store(datadir: &Path) -> StoreRollup {
     rollup_store
 }
 
-fn init_metrics(opts: &L1Options, tracker: TaskTracker) {
+fn init_metrics(opts: &L1Options, network: &str, tracker: TaskTracker) {
+    // Initialize node version metrics
+    ethrex_metrics::node::MetricsNode::init(
+        env!("CARGO_PKG_VERSION"),
+        env!("VERGEN_GIT_SHA"),
+        env!("VERGEN_GIT_BRANCH"),
+        env!("VERGEN_RUSTC_SEMVER"),
+        env!("VERGEN_RUSTC_HOST_TRIPLE"),
+        network,
+    );
+
     tracing::info!(
         "Starting metrics server on {}:{}",
         opts.metrics_addr,
@@ -209,7 +218,7 @@ pub async fn init_l2(
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
 
-    regenerate_head_state(&store, &rollup_store, &blockchain).await?;
+    regenerate_state(&store, &rollup_store, &blockchain, None).await?;
 
     let signer = get_signer(&datadir);
 
@@ -223,9 +232,10 @@ pub async fn init_l2(
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
-    let based = opts.sequencer_opts.based;
-
-    let (peer_handler, syncer) = if based {
+    let (peer_handler, syncer) = if !opts.node_opts.p2p_disabled {
+        if !opts.sequencer_opts.based {
+            blockchain.set_synced();
+        }
         let peer_table = PeerTable::spawn(opts.node_opts.target_peers);
         let p2p_context = P2PContext::new(
             local_p2p_node.clone(),
@@ -306,7 +316,7 @@ pub async fn init_l2(
 
     // Initialize metrics if enabled
     if opts.node_opts.metrics_enabled {
-        init_metrics(&opts.node_opts, tracker);
+        init_metrics(&opts.node_opts, &network.to_string(), tracker);
     }
 
     let sequencer_cancellation_token = CancellationToken::new();
@@ -344,7 +354,7 @@ pub async fn init_l2(
     let node_config_path = datadir.join("node_config.json");
     info!(path = %node_config_path.display(), "Storing node config");
     cancel_token.cancel();
-    if based {
+    if !opts.node_opts.p2p_disabled {
         let peer_handler = peer_handler.ok_or_eyre("Peer handler not initialized")?;
         let node_config = NodeConfigFile::new(peer_handler.peer_table, local_node_record).await;
         store_node_config_file(node_config, node_config_path);

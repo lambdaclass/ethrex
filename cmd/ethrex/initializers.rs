@@ -37,7 +37,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{Level, debug, error, info, warn};
+#[cfg(not(feature = "l2"))]
+use tracing::error;
+use tracing::{Level, debug, info, warn};
 use tracing_subscriber::{
     EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt, reload,
 };
@@ -112,7 +114,17 @@ pub fn init_tracing(
     (filter_handle, guard)
 }
 
-pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
+pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
+    // Initialize node version metrics
+    ethrex_metrics::node::MetricsNode::init(
+        env!("CARGO_PKG_VERSION"),
+        env!("VERGEN_GIT_SHA"),
+        env!("VERGEN_GIT_BRANCH"),
+        env!("VERGEN_RUSTC_SEMVER"),
+        env!("VERGEN_RUSTC_HOST_TRIPLE"),
+        &network.to_string(),
+    );
+
     tracing::info!(
         "Starting metrics server on {}:{}",
         opts.metrics_addr,
@@ -228,6 +240,7 @@ pub async fn init_network(
     blockchain: Arc<Blockchain>,
     context: P2PContext,
 ) {
+    #[cfg(not(feature = "l2"))]
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
         panic!(
@@ -502,7 +515,7 @@ pub async fn init_l1(
     .await;
 
     if opts.metrics_enabled {
-        init_metrics(&opts, tracker.clone());
+        init_metrics(&opts, &network, tracker.clone());
     }
 
     if opts.dev {
