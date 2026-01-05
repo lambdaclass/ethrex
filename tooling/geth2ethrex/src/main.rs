@@ -45,12 +45,12 @@ use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io;
-use std::io::Read;
+use std::io::{ErrorKind, Read};
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::Instant;
-use tracing::info;
+use tracing::{error, info};
 use tracing_subscriber::FmtSubscriber;
 
 const BLOCK_HASH_LOOKUP_DEPTH: u64 = 1024;
@@ -206,77 +206,42 @@ fn geth2ethrex(mut store: Store, block_number: BlockNumber, args: &Args) -> eyre
             }
         }
         rt.block_on(store.write_storage_trie_nodes_batch(storages_to_write.drain().collect()))?;
-
-        info!("Applying Diff Layers");
-        let mut diffs = BTreeMap::new();
-        // TODO: the difflayers may also be stores in the DB with key "TrieJournal".
-        // We should check there as well, possibly first.
-        // TODO: check why disklayer is also journaled and whether or not we need
-        // to do something about it.
-        // TODO: refactor all of this decoding.
         let mut journal = Vec::new();
-        File::open(*GETH_JOURNAL_PATH)?.read_to_end(&mut journal)?;
-        let (version, mut rest) = u64::decode_unfinished(&journal)?;
-        assert_eq!(version, 3);
-        let disk_root;
-        (disk_root, rest) = H256::decode_unfinished(rest)?;
-        assert_eq!(disk_root, db_root_hash);
-        // Decode disk layer
-        // Seems redundant, but disk layer stores its root again
-        (_, rest) = H256::decode_unfinished(rest)?;
-        (_, rest) = u64::decode_unfinished(rest)?;
-        // FIXME: geth only enforces disk_layer_id <= db_layer_id
-        // Not sure if inequality might be actually valid
-        // assert_eq!(disk_layer_id, db_layer_id);
-        let mut is_list;
-        // Decode the disk layer nodes
-        let disk_nodes_pl;
-        (is_list, disk_nodes_pl, rest) = decode_rlp_item(rest)?;
-        decode_nodes(disk_nodes_pl, &mut diffs)?;
-        assert!(is_list);
-        // Ignore kv field until we use snapshots
-        // Raw storage key flag
-        (_, rest) = bool::decode_unfinished(rest)?;
-        // Accounts
-        (is_list, _, rest) = decode_rlp_item(rest)?;
-        assert!(is_list);
-        // Storages
-        (is_list, _, rest) = decode_rlp_item(rest)?;
-        assert!(is_list);
-        // Decode diff layers
-        loop {
-            let (difflayer_root, difflayer_block, difflayer_nodes_pl);
-            info!(rest = rest.len(), "Starting loop");
-            (difflayer_root, rest) = H256::decode_unfinished(rest)?;
-            (difflayer_block, rest) = u64::decode_unfinished(rest)?;
-            info!(
-                difflayer_block,
-                difflayer_root = format!(
-                    "{:032x}{:032x}",
-                    u128::from_be_bytes(difflayer_root.0[..16].try_into().unwrap(),),
-                    u128::from_be_bytes(difflayer_root.0[16..].try_into().unwrap())
-                ),
-                "Decoded difflayer header"
-            );
-            // difflayer_nodes encoding:
-            // 1. nodeSet ([]journalNodes)
-            // 2. origin ([]journalNodes)
-            // journalNodes = (owner_hash (H256::zero() means account trie), []journalNode)
-            // journalNode = (path, node)
-
-            (is_list, difflayer_nodes_pl, rest) = decode_rlp_item(rest)?;
-            assert!(is_list);
-            // Now we can decode the actual nodes
-            decode_nodes(difflayer_nodes_pl, &mut diffs)?;
-            // Check if it has origin nodes, we ignore them
-            let (has_origin, _, next) = decode_rlp_item(rest)?;
-            if has_origin {
-                rest = next;
+        match File::open(*GETH_JOURNAL_PATH) {
+            Ok(mut file) => {
+                file.read_to_end(&mut journal)?;
             }
-            // assert!(is_list);
-            // difflayer_kvs encoding:
-            // 1. stateSet ([]Storage)
-            // 2. origin ([]Storage)
+            Err(error) => match error.kind() {
+                ErrorKind::NotFound => info!("Journal not found, skipping diff layers."),
+                _ => error!("Error {error} while opening journal"),
+            },
+        };
+        if !journal.is_empty() {
+            info!("Applying Diff Layers");
+            let mut diffs = BTreeMap::new();
+            // TODO: the difflayers may also be stores in the DB with key "TrieJournal".
+            // We should check there as well, possibly first.
+            // TODO: check why disklayer is also journaled and whether or not we need
+            // to do something about it.
+            // TODO: refactor all of this decoding.
+            let (version, mut rest) = u64::decode_unfinished(&journal)?;
+            assert_eq!(version, 3);
+            let disk_root;
+            (disk_root, rest) = H256::decode_unfinished(rest)?;
+            assert_eq!(disk_root, db_root_hash);
+            // Decode disk layer
+            // Seems redundant, but disk layer stores its root again
+            (_, rest) = H256::decode_unfinished(rest)?;
+            (_, rest) = u64::decode_unfinished(rest)?;
+            // FIXME: geth only enforces disk_layer_id <= db_layer_id
+            // Not sure if inequality might be actually valid
+            // assert_eq!(disk_layer_id, db_layer_id);
+            let mut is_list;
+            // Decode the disk layer nodes
+            let disk_nodes_pl;
+            (is_list, disk_nodes_pl, rest) = decode_rlp_item(rest)?;
+            decode_nodes(disk_nodes_pl, &mut diffs)?;
+            assert!(is_list);
             // Ignore kv field until we use snapshots
             // Raw storage key flag
             (_, rest) = bool::decode_unfinished(rest)?;
@@ -286,45 +251,89 @@ fn geth2ethrex(mut store: Store, block_number: BlockNumber, args: &Args) -> eyre
             // Storages
             (is_list, _, rest) = decode_rlp_item(rest)?;
             assert!(is_list);
-            // Check it has origin kvs, we ignore them
-            let (has_origin, _, next) = decode_rlp_item(rest)?;
-            if has_origin {
+            // Decode diff layers
+            loop {
+                let (difflayer_root, difflayer_block, difflayer_nodes_pl);
+                info!(rest = rest.len(), "Starting loop");
+                (difflayer_root, rest) = H256::decode_unfinished(rest)?;
+                (difflayer_block, rest) = u64::decode_unfinished(rest)?;
+                info!(
+                    difflayer_block,
+                    difflayer_root = format!(
+                        "{:032x}{:032x}",
+                        u128::from_be_bytes(difflayer_root.0[..16].try_into().unwrap(),),
+                        u128::from_be_bytes(difflayer_root.0[16..].try_into().unwrap())
+                    ),
+                    "Decoded difflayer header"
+                );
+                // difflayer_nodes encoding:
+                // 1. nodeSet ([]journalNodes)
+                // 2. origin ([]journalNodes)
+                // journalNodes = (owner_hash (H256::zero() means account trie), []journalNode)
+                // journalNode = (path, node)
+
+                (is_list, difflayer_nodes_pl, rest) = decode_rlp_item(rest)?;
+                assert!(is_list);
+                // Now we can decode the actual nodes
+                decode_nodes(difflayer_nodes_pl, &mut diffs)?;
+                // Check if it has origin nodes, we ignore them
+                let (has_origin, _, next) = decode_rlp_item(rest)?;
+                if has_origin {
+                    rest = next;
+                }
+                // assert!(is_list);
+                // difflayer_kvs encoding:
+                // 1. stateSet ([]Storage)
+                // 2. origin ([]Storage)
+                // Ignore kv field until we use snapshots
+                // Raw storage key flag
+                (_, rest) = bool::decode_unfinished(rest)?;
                 // Accounts
-                rest = next;
+                (is_list, _, rest) = decode_rlp_item(rest)?;
+                assert!(is_list);
                 // Storages
                 (is_list, _, rest) = decode_rlp_item(rest)?;
                 assert!(is_list);
-            }
-
-            if difflayer_root == header.state_root {
-                info!("found root");
-                assert!(
-                    difflayer_block <= block_number,
-                    "state root can never go back in time"
-                );
-                break;
-            }
-        }
-        const ZERO: [u8; 32] = [0u8; 32];
-        for ((owner, path), node) in diffs {
-            match owner {
-                ZERO => {
-                    if let Ok(Node::Leaf(leaf)) = Node::decode(&node) {
-                        let state = AccountState::decode(&leaf.value)?;
-                        debug_assert_ne!(state.code_hash, H256::zero());
-                        debug_assert_ne!(state.storage_root, H256::zero());
-                        if state.code_hash != *EMPTY_KECCACK_HASH {
-                            codes.insert(state.code_hash);
-                        }
-                    }
-                    state_trie
-                        .db()
-                        .put_batch(vec![(Nibbles::from_hex(path), node)])?
+                // Check it has origin kvs, we ignore them
+                let (has_origin, _, next) = decode_rlp_item(rest)?;
+                if has_origin {
+                    // Accounts
+                    rest = next;
+                    // Storages
+                    (is_list, _, rest) = decode_rlp_item(rest)?;
+                    assert!(is_list);
                 }
-                hashed_address => rt.block_on(store.write_storage_trie_nodes_batch(vec![(
-                    H256::from_slice(&hashed_address),
-                    vec![(Nibbles::from_hex(path), node)],
-                )]))?,
+
+                if difflayer_root == header.state_root {
+                    info!("found root");
+                    assert!(
+                        difflayer_block <= block_number,
+                        "state root can never go back in time"
+                    );
+                    break;
+                }
+            }
+            const ZERO: [u8; 32] = [0u8; 32];
+            for ((owner, path), node) in diffs {
+                match owner {
+                    ZERO => {
+                        if let Ok(Node::Leaf(leaf)) = Node::decode(&node) {
+                            let state = AccountState::decode(&leaf.value)?;
+                            debug_assert_ne!(state.code_hash, H256::zero());
+                            debug_assert_ne!(state.storage_root, H256::zero());
+                            if state.code_hash != *EMPTY_KECCACK_HASH {
+                                codes.insert(state.code_hash);
+                            }
+                        }
+                        state_trie
+                            .db()
+                            .put_batch(vec![(Nibbles::from_hex(path), node)])?
+                    }
+                    hashed_address => rt.block_on(store.write_storage_trie_nodes_batch(vec![(
+                        H256::from_slice(&hashed_address),
+                        vec![(Nibbles::from_hex(path), node)],
+                    )]))?,
+                }
             }
         }
         info!(account_nodes, storage_nodes, "All nodes inserted");
