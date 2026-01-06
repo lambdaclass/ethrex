@@ -2,9 +2,13 @@ name: L2 (without proving)
 on:
   push:
     branches: ["main"]
+    paths-ignore:
+      - "docs/**"
   merge_group:
   pull_request:
     branches: ["**"]
+    paths-ignore:
+      - "docs/**"
   workflow_dispatch:
 
 permissions:
