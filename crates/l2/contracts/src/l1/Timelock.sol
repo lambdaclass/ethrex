@@ -113,6 +113,8 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable, ITimelock {
         bytes calldata risc0Journal,
         bytes calldata sp1PublicValues,
         bytes memory sp1ProofBytes,
+        bytes calldata ziskPublicValues,
+        bytes memory ziskProofBytes,
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature
     ) external onlyRole(SEQUENCER) {
@@ -122,6 +124,8 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable, ITimelock {
             risc0Journal,
             sp1PublicValues,
             sp1ProofBytes,
+            ziskPublicValues,
+            ziskProofBytes,
             tdxPublicValues,
             tdxSignature
         );

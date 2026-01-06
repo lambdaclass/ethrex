@@ -11,6 +11,7 @@ import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 import {IRiscZeroVerifier} from "./interfaces/IRiscZeroVerifier.sol";
 import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
 import {ITDXVerifier} from "./interfaces/ITDXVerifier.sol";
+import {IZiskVerifier} from "./interfaces/IZiskVerifier.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
 
 /// @title OnChainProposer contract.
@@ -45,6 +46,7 @@ contract OnChainProposer is
 
     uint8 internal constant SP1_VERIFIER_ID = 1;
     uint8 internal constant RISC0_VERIFIER_ID = 2;
+    uint8 internal constant ZISK_VERIFIER_ID = 3;
 
     /// @notice The commitments of the committed batches.
     /// @dev If a batch is committed, the commitment is stored here.
@@ -76,6 +78,7 @@ contract OnChainProposer is
     address public PICO_VERIFIER_ADDRESS;
     address public RISC0_VERIFIER_ADDRESS;
     address public SP1_VERIFIER_ADDRESS;
+    address public ZISK_VERIFIER_ADDRESS;
 
     /// @dev Deprecated variable.
     bytes32 public SP1_VERIFICATION_KEY;
@@ -102,6 +105,8 @@ contract OnChainProposer is
     bool public REQUIRE_SP1_PROOF;
     /// @notice True if a TDX proof is required for batch verification.
     bool public REQUIRE_TDX_PROOF;
+    /// @notice True if a ZisK proof is required for batch verification.
+    bool public REQUIRE_ZISK_PROOF;
 
     /// @notice True if verification is done through Aligned Layer instead of smart contract verifiers.
     bool public ALIGNED_MODE;
@@ -124,13 +129,16 @@ contract OnChainProposer is
         bool requireRisc0Proof,
         bool requireSp1Proof,
         bool requireTdxProof,
+        bool requireZisKProof,
         bool aligned,
         address r0verifier,
         address sp1verifier,
         address tdxverifier,
+        address ziskVerifier,
         address alignedProofAggregator,
         bytes32 sp1Vk,
         bytes32 risc0Vk,
+        bytes32 ziskVk,
         bytes32 commitHash,
         bytes32 genesisStateRoot,
         uint256 chainId,
@@ -141,10 +149,12 @@ contract OnChainProposer is
         REQUIRE_RISC0_PROOF = requireRisc0Proof;
         REQUIRE_SP1_PROOF = requireSp1Proof;
         REQUIRE_TDX_PROOF = requireTdxProof;
+        REQUIRE_ZISK_PROOF = requireZisKProof;
 
         RISC0_VERIFIER_ADDRESS = r0verifier;
         SP1_VERIFIER_ADDRESS = sp1verifier;
         TDX_VERIFIER_ADDRESS = tdxverifier;
+        ZISK_VERIFIER_ADDRESS = ziskVerifier;
 
         ALIGNED_MODE = aligned;
         ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
@@ -161,8 +171,13 @@ contract OnChainProposer is
             !REQUIRE_RISC0_PROOF || risc0Vk != bytes32(0),
             "OnChainProposer: missing RISC0 verification key"
         );
+        require(
+            !REQUIRE_ZISK_PROOF || ziskVk != bytes32(0),
+            "OnChainProposer: missing ZISK verification key"
+        );
         verificationKeys[commitHash][SP1_VERIFIER_ID] = sp1Vk;
         verificationKeys[commitHash][RISC0_VERIFIER_ID] = risc0Vk;
+        verificationKeys[commitHash][ZISK_VERIFIER_ID] = ziskVk;
 
         BatchCommitmentInfo storage commitment = batchCommitments[0];
         commitment.newStateRoot = genesisStateRoot;
@@ -221,6 +236,21 @@ contract OnChainProposer is
         // as we may want to disable the version
         verificationKeys[commit_hash][RISC0_VERIFIER_ID] = new_vk;
         emit VerificationKeyUpgraded("RISC0", commit_hash, new_vk);
+    }
+
+    /// @inheritdoc IOnChainProposer
+    function upgradeZISKVerificationKey(
+        bytes32 commit_hash,
+        bytes32 new_vk
+    ) public onlyOwner {
+        require(
+            commit_hash != bytes32(0),
+            "OnChainProposer: commit hash is zero"
+        );
+        // we don't want to restrict setting the vk to zero
+        // as we may want to disable the version
+        verificationKeys[commit_hash][ZISK_VERIFIER_ID] = new_vk;
+        emit VerificationKeyUpgraded("ZISK", commit_hash, new_vk);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -307,6 +337,11 @@ contract OnChainProposer is
             verificationKeys[commitHash][RISC0_VERIFIER_ID] == bytes32(0)
         ) {
             revert("013"); // missing verification key for commit hash
+        } else if (
+            REQUIRE_ZISK_PROOF &&
+            verificationKeys[commitHash][ZISK_VERIFIER_ID] == bytes32(0)
+        ) {
+            revert("013"); // missing verification key for commit hash
         }
 
         batchCommitments[batchNumber] = BatchCommitmentInfo(
@@ -339,6 +374,9 @@ contract OnChainProposer is
         //sp1
         bytes calldata sp1PublicValues,
         bytes memory sp1ProofBytes,
+        //zisk
+        bytes calldata ziskPublicValues,
+        bytes memory ziskProofBytes,
         //tdx
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature
@@ -444,6 +482,37 @@ contract OnChainProposer is
             {} catch {
                 revert(
                     "00e" // OnChainProposer: Invalid SP1 proof failed proof verification
+                );
+            }
+        }
+
+        if (REQUIRE_ZISK_PROOF) {
+            // If the verification fails, it will revert.
+            string memory reason = _verifyPublicData(
+                batchNumber,
+                ziskPublicValues
+            );
+            if (bytes(reason).length != 0) {
+                revert(
+                    string.concat(
+                        "016", // OnChainProposer: Invalid ZisK proof:
+                        reason
+                    )
+                );
+            }
+            bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
+            bytes32 ziskVk = verificationKeys[batchCommitHash][
+                ZISK_VERIFIER_ID
+            ];
+            try
+                IZiskVerifier(ZISK_VERIFIER_ADDRESS).verifySnarkProof(
+                    programVk,
+                    ziskPublicValues,
+                    ziskProofBytes
+                )
+            {} catch {
+                revert(
+                    "017" // OnChainProposer: Invalid ZisK proof failed proof verification
                 );
             }
         }

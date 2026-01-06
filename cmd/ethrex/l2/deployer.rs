@@ -576,7 +576,7 @@ const SP1_VERIFIER_BYTECODE: &[u8] = include_bytes!(concat!(
 ));
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,bool,bool,bool,bool,address,address,address,address,bytes32,bytes32,bytes32,bytes32,address,uint256,address)";
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,bool,bool,bool,bool,address,address,address,address,bytes32,bytes32,bytes32,bytes32,uint256,address)";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,bool,bool,bool,bool,bool,address,address,address,address,address,bytes32,bytes32,bytes32,bytes32,bytes32,uint256,address)";
 const INITIALIZE_TIMELOCK_SIGNATURE: &str = "initialize(uint256,address[],address,address,address)";
 
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
@@ -1127,6 +1127,8 @@ async fn initialize_contracts(
     let risc0_vk = get_vk(ProverType::RISC0, opts)?;
 
     info!("Risc0 vk read");
+    let zisk_vk = get_vk(ProverType::ZisK, opts)?;
+    info!("ZisK vk read");
     let commit_hash = keccak(get_git_commit_hash());
 
     let deployer_address = get_address_from_secret_key(&opts.private_key.secret_bytes())
@@ -1297,13 +1299,16 @@ async fn initialize_contracts(
             Value::Bool(opts.risc0),
             Value::Bool(opts.sp1),
             Value::Bool(opts.tdx),
+            Value::Bool(opts.zisk),
             Value::Bool(opts.aligned),
             Value::Address(contract_addresses.risc0_verifier_address),
             Value::Address(contract_addresses.sp1_verifier_address),
             Value::Address(contract_addresses.tdx_verifier_address),
+            Value::Address(contract_addresses.zisk_verifier_address),
             Value::Address(contract_addresses.aligned_aggregator_address),
             Value::FixedBytes(sp1_vk),
             Value::FixedBytes(risc0_vk),
+            Value::FixedBytes(zisk_vk),
             Value::FixedBytes(commit_hash.0.to_vec().into()),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Uint(genesis.config.chain_id.into()),

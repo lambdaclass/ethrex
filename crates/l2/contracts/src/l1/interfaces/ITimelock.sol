@@ -61,6 +61,8 @@ interface ITimelock {
         bytes calldata risc0Journal,
         bytes calldata sp1PublicValues,
         bytes memory sp1ProofBytes,
+        bytes calldata ziskPublicValues,
+        bytes memory ziskProofBytes,
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature
     ) external;
