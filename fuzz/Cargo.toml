@@ -1,0 +1,62 @@
+[package]
+name = "ethrex-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+ethrex-common = { path = "../crates/common" }
+ethrex-rlp = { path = "../crates/common/rlp" }
+ethrex-trie = { path = "../crates/common/trie" }
+bytes = "1.6.0"
+ethereum-types = "0.15.1"
+
+[[bin]]
+name = "fuzz_rlp_decode"
+path = "fuzz_targets/fuzz_rlp_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rlp_roundtrip"
+path = "fuzz_targets/fuzz_rlp_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_trie_operations"
+path = "fuzz_targets/fuzz_trie_operations.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_transaction_decode"
+path = "fuzz_targets/fuzz_transaction_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_block_decode"
+path = "fuzz_targets/fuzz_block_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_block_header_decode"
+path = "fuzz_targets/fuzz_block_header_decode.rs"
+test = false
+doc = false
+bench = false
+
+[lints]
+workspace = true

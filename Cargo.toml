@@ -126,5 +126,10 @@ rocksdb = { version = "0.24.0", default-features = false, features = [
   "lz4",
 ] }
 
+# Testing dependencies
+proptest = "1.5"
+arbitrary = { version = "1", features = ["derive"] }
+test-strategy = "0.4"
+
 [workspace.lints.clippy]
 redundant_clone = "warn"

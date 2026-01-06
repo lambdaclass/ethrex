@@ -816,4 +816,151 @@ mod tests {
         // It should fail because a list is not a string
         assert!(decoded.is_err());
     }
+
+    // Property-based tests for decode robustness
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// Decoding arbitrary bytes should never panic - only return Ok or Err
+            #[test]
+            fn decode_never_panics_u8(data in prop::collection::vec(any::<u8>(), 0..100)) {
+                let _ = u8::decode(&data);
+            }
+
+            #[test]
+            fn decode_never_panics_u16(data in prop::collection::vec(any::<u8>(), 0..100)) {
+                let _ = u16::decode(&data);
+            }
+
+            #[test]
+            fn decode_never_panics_u32(data in prop::collection::vec(any::<u8>(), 0..100)) {
+                let _ = u32::decode(&data);
+            }
+
+            #[test]
+            fn decode_never_panics_u64(data in prop::collection::vec(any::<u8>(), 0..100)) {
+                let _ = u64::decode(&data);
+            }
+
+            #[test]
+            fn decode_never_panics_u128(data in prop::collection::vec(any::<u8>(), 0..100)) {
+                let _ = u128::decode(&data);
+            }
+
+            #[test]
+            fn decode_never_panics_bool(data in prop::collection::vec(any::<u8>(), 0..100)) {
+                let _ = bool::decode(&data);
+            }
+
+            #[test]
+            fn decode_never_panics_string(data in prop::collection::vec(any::<u8>(), 0..100)) {
+                let _ = String::decode(&data);
+            }
+
+            #[test]
+            fn decode_never_panics_bytes(data in prop::collection::vec(any::<u8>(), 0..100)) {
+                let _ = Bytes::decode(&data);
+            }
+
+            #[test]
+            fn decode_never_panics_h256(data in prop::collection::vec(any::<u8>(), 0..100)) {
+                let _ = H256::decode(&data);
+            }
+
+            #[test]
+            fn decode_never_panics_u256(data in prop::collection::vec(any::<u8>(), 0..100)) {
+                let _ = U256::decode(&data);
+            }
+
+            #[test]
+            fn decode_never_panics_address(data in prop::collection::vec(any::<u8>(), 0..100)) {
+                let _ = Address::decode(&data);
+            }
+
+            #[test]
+            fn decode_never_panics_vec_u8(data in prop::collection::vec(any::<u8>(), 0..100)) {
+                let _ = Vec::<u8>::decode(&data);
+            }
+
+            #[test]
+            fn decode_never_panics_vec_u64(data in prop::collection::vec(any::<u8>(), 0..100)) {
+                let _ = Vec::<u64>::decode(&data);
+            }
+
+            #[test]
+            fn decode_never_panics_nested_vec(data in prop::collection::vec(any::<u8>(), 0..100)) {
+                let _ = Vec::<Vec<u8>>::decode(&data);
+            }
+
+            #[test]
+            fn decode_never_panics_tuple_2(data in prop::collection::vec(any::<u8>(), 0..100)) {
+                let _ = <(u8, u8)>::decode(&data);
+            }
+
+            #[test]
+            fn decode_never_panics_tuple_3(data in prop::collection::vec(any::<u8>(), 0..100)) {
+                let _ = <(u8, u8, u8)>::decode(&data);
+            }
+
+            #[test]
+            fn decode_never_panics_tuple_4(data in prop::collection::vec(any::<u8>(), 0..100)) {
+                let _ = <(u8, u8, u8, u8)>::decode(&data);
+            }
+
+            #[test]
+            fn decode_never_panics_ipv4(data in prop::collection::vec(any::<u8>(), 0..100)) {
+                let _ = Ipv4Addr::decode(&data);
+            }
+
+            #[test]
+            fn decode_never_panics_ipv6(data in prop::collection::vec(any::<u8>(), 0..100)) {
+                let _ = Ipv6Addr::decode(&data);
+            }
+
+            #[test]
+            fn decode_never_panics_ipaddr(data in prop::collection::vec(any::<u8>(), 0..100)) {
+                let _ = IpAddr::decode(&data);
+            }
+
+            /// Test decode_rlp_item never panics on arbitrary input
+            #[test]
+            fn decode_rlp_item_never_panics(data in prop::collection::vec(any::<u8>(), 0..200)) {
+                let _ = decode_rlp_item(&data);
+            }
+
+            /// Test get_item_with_prefix never panics
+            #[test]
+            fn get_item_with_prefix_never_panics(data in prop::collection::vec(any::<u8>(), 0..200)) {
+                let _ = get_item_with_prefix(&data);
+            }
+
+            /// Test static_left_pad never panics
+            #[test]
+            fn static_left_pad_never_panics(data in prop::collection::vec(any::<u8>(), 0..50)) {
+                let _ = static_left_pad::<32>(&data);
+                let _ = static_left_pad::<20>(&data);
+                let _ = static_left_pad::<8>(&data);
+            }
+
+            /// Test decode_bytes never panics
+            #[test]
+            fn decode_bytes_never_panics(data in prop::collection::vec(any::<u8>(), 0..200)) {
+                let _ = decode_bytes(&data);
+            }
+
+            /// Empty input should return errors, not panic
+            #[test]
+            fn empty_input_returns_error(_dummy in Just(())) {
+                assert!(u8::decode(&[]).is_err());
+                assert!(u16::decode(&[]).is_err());
+                assert!(u32::decode(&[]).is_err());
+                assert!(u64::decode(&[]).is_err());
+                assert!(bool::decode(&[]).is_err());
+                assert!(String::decode(&[]).is_err());
+                assert!(Vec::<u8>::decode(&[]).is_err());
+            }
+        }
+    }
 }
