@@ -58,6 +58,9 @@ impl<'a> VM<'a> {
             )
         };
 
+        // Notify tracer of account access
+        self.tracer.borrow_mut().on_account_access(callee, self.db);
+
         // VALIDATIONS
         if self.current_call_frame.is_static && !value.is_zero() {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
@@ -163,6 +166,9 @@ impl<'a> VM<'a> {
                 return_data_size,
             )
         };
+
+        // Notify tracer of account access
+        self.tracer.borrow_mut().on_account_access(address, self.db);
 
         // CHECK EIP7702
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
@@ -281,6 +287,9 @@ impl<'a> VM<'a> {
             )
         };
 
+        // Notify tracer of account access
+        self.tracer.borrow_mut().on_account_access(address, self.db);
+
         // CHECK EIP7702
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(self.db, &mut self.substate, address)?;
@@ -378,6 +387,9 @@ impl<'a> VM<'a> {
                 return_data_size,
             )
         };
+
+        // Notify tracer of account access
+        self.tracer.borrow_mut().on_account_access(address, self.db);
 
         // CHECK EIP7702
         let (is_delegation_7702, eip7702_gas_consumed, _, bytecode) =
@@ -548,6 +560,12 @@ impl<'a> VM<'a> {
             (target_address, to)
         };
 
+        // Notify tracer of account access and selfdestruct
+        self.tracer
+            .borrow_mut()
+            .on_account_access(beneficiary, self.db);
+        self.tracer.borrow_mut().on_selfdestruct(to, self.db);
+
         let target_account_is_cold = !self.substate.add_accessed_address(beneficiary);
         let target_account_is_empty = self.db.get_account(beneficiary)?.is_empty();
 
@@ -639,6 +657,12 @@ impl<'a> VM<'a> {
             Some(salt) => calculate_create2_address(deployer, &code, salt)?,
             None => calculate_create_address(deployer, deployer_nonce),
         };
+
+        // Notify tracer of account access and creation
+        self.tracer
+            .borrow_mut()
+            .on_account_access(new_address, self.db);
+        self.tracer.borrow_mut().on_create(new_address, self.db);
 
         // Add new contract to accessed addresses
         self.substate.add_accessed_address(new_address);
