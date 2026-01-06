@@ -8,7 +8,6 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
-use rand::{Rng, distributions::Standard, prelude::Distribution};
 use std::{array::TryFromSliceError, fmt::Display, net::IpAddr};
 
 use crate::types::NodeRecord;
@@ -31,7 +30,7 @@ const IV_MASKING_SIZE: usize = 16;
 const STATIC_HEADER_SIZE: usize = 23;
 const STATIC_HEADER_END: usize = IV_MASKING_SIZE + STATIC_HEADER_SIZE;
 // Number of distances to include in a FindNode message
-const DISTANCES_PER_FIND_NODE_MSG: usize = 3;
+pub const DISTANCES_PER_FIND_NODE_MSG: u8 = 3;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PacketCodecError {
@@ -631,20 +630,6 @@ impl RLPDecode for FindNodeMessage {
             },
             decoder.finish()?,
         ))
-    }
-}
-
-impl Distribution<FindNodeMessage> for Standard {
-    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> FindNodeMessage {
-        let mut distances = Vec::new();
-        let req_id: u64 = rng.r#gen();
-        for i in 0..DISTANCES_PER_FIND_NODE_MSG {
-            distances.push(i as u32);
-        }
-        FindNodeMessage {
-            req_id: Bytes::from(req_id.to_be_bytes().to_vec()),
-            distances,
-        }
     }
 }
 

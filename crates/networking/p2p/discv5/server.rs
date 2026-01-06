@@ -2,8 +2,8 @@ use crate::{
     discv5::{
         codec::Discv5Codec,
         messages::{
-            Handshake, Message, NodesMessage, Ordinary, Packet, PacketCodecError, PacketHeader,
-            PingMessage, PongMessage, WhoAreYou,
+            DISTANCES_PER_FIND_NODE_MSG, FindNodeMessage, Handshake, Message, NodesMessage,
+            Ordinary, Packet, PacketCodecError, PacketHeader, PingMessage, PongMessage, WhoAreYou,
         },
         session::{build_challenge_data, create_id_signature, derive_session_keys},
     },
@@ -11,8 +11,9 @@ use crate::{
     peer_table::{Contact, OutMessage as PeerTableOutMessage, PeerTable, PeerTableError},
     rlpx::utils::compress_pubkey,
     types::{Node, NodeRecord},
+    utils::distance,
 };
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use ethrex_common::{H256, H512, types::ForkId};
 use ethrex_storage::{Store, error::StoreError};
 use futures::StreamExt;
@@ -146,9 +147,8 @@ impl DiscoveryServer {
 
     async fn handle_packet(
         &mut self,
-        Discv5Message { from, packet }: Discv5Message,
+        Discv5Message { packet, from: _ }: Discv5Message,
     ) -> Result<(), DiscoveryServerError> {
-        trace!(?packet, address= ?from, "Discv5 packet received");
         // TODO retrieve session info
         match packet.header.flag {
             0x00 => self.handle_ordinary(packet).await,
@@ -168,13 +168,11 @@ impl DiscoveryServer {
             .await?
             .map_or([0; 16], |s| s.inbound_key);
 
-        tracing::info!(src_id=?src_id, key=?decrypt_key,  "Decrypt key");
-
         let ordinary = Ordinary::decode(&packet, &decrypt_key)?;
 
-        tracing::info!(msg=?ordinary,  "Ordinary packet received");
+        tracing::trace!(received = %ordinary.message, msg = ?ordinary.message, from = %format!("{src_id:#x}"));
 
-        Ok(())
+        self.handle_message(ordinary).await
     }
 
     async fn handle_who_are_you(&mut self, packet: Packet) -> Result<(), DiscoveryServerError> {
@@ -244,7 +242,10 @@ impl DiscoveryServer {
     async fn lookup(&mut self) -> Result<(), DiscoveryServerError> {
         if let Some(contact) = self.peer_table.get_contact_for_lookup().await? {
             if let Err(e) = self
-                .send_ordinary(&Message::FindNode(rand::random()), &contact.node)
+                .send_ordinary(
+                    &self.get_random_find_node_message(&contact.node),
+                    &contact.node,
+                )
                 .await
             {
                 error!(sending = "FindNode", addr = ?&contact.node.udp_addr(), err=?e, "Error sending message");
@@ -259,6 +260,26 @@ impl DiscoveryServer {
                 .await?;
         }
         Ok(())
+    }
+
+    fn get_random_find_node_message(&self, node: &Node) -> Message {
+        let mut rng = OsRng;
+        let target = rng.r#gen();
+        let distance = distance(&target, &node.node_id()) as u8;
+        let mut distances = Vec::new();
+        distances.push(distance as u32);
+        for i in 0..DISTANCES_PER_FIND_NODE_MSG / 2 {
+            distance
+                .checked_add(i + 1)
+                .map(|r| distances.push(r as u32));
+            distance
+                .checked_sub(i + 1)
+                .map(|r| distances.push(r as u32));
+        }
+        Message::FindNode(FindNodeMessage {
+            req_id: Bytes::from(rng.r#gen::<u64>().to_be_bytes().to_vec()),
+            distances,
+        })
     }
 
     async fn prune(&mut self) -> Result<(), DiscoveryServerError> {
@@ -333,11 +354,14 @@ impl DiscoveryServer {
         Ok(())
     }
 
-    async fn handle_nodes(
+    async fn handle_nodes_message(
         &mut self,
         nodes_message: NodesMessage,
     ) -> Result<(), DiscoveryServerError> {
-        // TODO
+        // TODO(#3746): check that we requested neighbors from the node
+        self.peer_table
+            .new_contact_records(nodes_message.nodes, self.local_node.node_id())
+            .await?;
         Ok(())
     }
 
@@ -561,6 +585,43 @@ impl DiscoveryServer {
         rng.fill_bytes(&mut nonce[4..]);
         nonce
     }
+
+    async fn handle_message(&mut self, ordinary: Ordinary) -> Result<(), DiscoveryServerError> {
+        // Ignore packets sent by ourselves
+        if ordinary.src_id == self.local_node.node_id() {
+            return Ok(());
+        }
+        match ordinary.message {
+            Message::Ping(ping_message) => {
+                // let node = Node::new(
+                //     from.ip().to_canonical(),
+                //     from.port(),
+                //     ping_message.from.tcp_port,
+                //     sender_public_key,
+                // );
+
+                // let _ = self.handle_ping(ping_message, hash, sender_public_key, node).await.inspect_err(|e| {
+                //     error!(sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e, "Error handling message");
+                // });
+            }
+            Message::Pong(pong_message) => {
+                // let node_id = node_id(&sender_public_key);
+
+                // self.handle_pong(pong_message, node_id).await?;
+            }
+            Message::FindNode(find_node_message) => {
+                // self.handle_find_node(sender_public_key, find_node_message.target, from)
+                //     .await?;
+            }
+            Message::Nodes(nodes_message) => {
+                self.handle_nodes_message(nodes_message).await?;
+            }
+            Message::TalkReq(talk_req_message) => todo!(),
+            Message::TalkRes(talk_res_message) => todo!(),
+            Message::Ticket(ticket_message) => todo!(),
+        }
+        Ok(())
+    }
 }
 
 impl GenServer for DiscoveryServer {
@@ -660,18 +721,17 @@ impl Discv5Message {
 }
 
 pub fn lookup_interval_function(progress: f64, lower_limit: f64, upper_limit: f64) -> Duration {
-    Duration::from_secs(5)
-    // // Smooth progression curve
-    // // See https://easings.net/#easeInOutCubic
-    // let ease_in_out_cubic = if progress < 0.5 {
-    //     4.0 * progress.powf(3.0)
-    // } else {
-    //     1.0 - ((-2.0 * progress + 2.0).powf(3.0)) / 2.0
-    // };
-    // Duration::from_micros(
-    //     // Use `progress` here instead of `ease_in_out_cubic` for a linear function.
-    //     (1000f64 * (ease_in_out_cubic * (upper_limit - lower_limit) + lower_limit)).round() as u64,
-    // )
+    // Smooth progression curve
+    // See https://easings.net/#easeInOutCubic
+    let ease_in_out_cubic = if progress < 0.5 {
+        4.0 * progress.powf(3.0)
+    } else {
+        1.0 - ((-2.0 * progress + 2.0).powf(3.0)) / 2.0
+    };
+    Duration::from_micros(
+        // Use `progress` here instead of `ease_in_out_cubic` for a linear function.
+        (1000f64 * (ease_in_out_cubic * (upper_limit - lower_limit) + lower_limit)).round() as u64,
+    )
 }
 
 #[cfg(test)]

@@ -184,6 +184,10 @@ impl Node {
     pub fn from_enr_url(enr: &str) -> Result<Self, NodeError> {
         let base64_decoded = ethrex_common::base64::decode(&enr.as_bytes()[4..]);
         let record = NodeRecord::decode(&base64_decoded).map_err(NodeError::from)?;
+        Node::from_enr(&record)
+    }
+
+    pub fn from_enr(record: &NodeRecord) -> Result<Self, NodeError> {
         let pairs = record.decode_pairs();
         let public_key = pairs.secp256k1.ok_or(NodeError::MissingField(
             "public key not found in record".into(),

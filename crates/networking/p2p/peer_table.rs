@@ -4,8 +4,9 @@ use crate::{
     metrics::METRICS,
     rlpx::{connection::server::PeerConnection, p2p::Capability},
     types::{Node, NodeRecord},
+    utils::distance,
 };
-use ethrex_common::{H256, U256};
+use ethrex_common::H256;
 use indexmap::{IndexMap, map::Entry};
 use rand::seq::SliceRandom;
 use rustc_hash::FxHashSet;
@@ -173,6 +174,21 @@ impl PeerTable {
         self.handle
             .cast(CastMessage::NewContacts {
                 nodes,
+                local_node_id,
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// We received a list of NodeRecords to contact. No conection has been established yet.
+    pub async fn new_contact_records(
+        &mut self,
+        node_records: Vec<NodeRecord>,
+        local_node_id: H256,
+    ) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::NewContactRecords {
+                node_records,
                 local_node_id,
             })
             .await?;
@@ -709,6 +725,8 @@ impl PeerTableServer {
             self.contacts.swap_remove(&contact_to_discard_id);
             self.discarded_contacts.insert(contact_to_discard_id);
         }
+
+        tracing::info!("Current contacts ({})", self.contacts.len());
     }
 
     fn get_contact_to_initiate(&mut self) -> Option<Contact> {
@@ -789,7 +807,7 @@ impl PeerTableServer {
         let mut nodes: Vec<(Node, usize)> = vec![];
 
         for (contact_id, contact) in &self.contacts {
-            let distance = Self::distance(&node_id, contact_id);
+            let distance = distance(&node_id, contact_id);
             if nodes.len() < MAX_NODES_IN_NEIGHBORS_PACKET {
                 nodes.push((contact.node.clone(), distance));
             } else {
@@ -813,6 +831,24 @@ impl PeerTableServer {
             {
                 vacant_entry.insert(Contact::from(node));
                 METRICS.record_new_discovery().await;
+            }
+        }
+    }
+
+    async fn new_contact_records(&mut self, node_records: Vec<NodeRecord>, local_node_id: H256) {
+        for node_record in node_records {
+            if let Ok(node) = Node::from_enr(&node_record) {
+                let node_id = node.node_id();
+                if let Entry::Vacant(vacant_entry) = self.contacts.entry(node_id)
+                    && !self.discarded_contacts.contains(&node_id)
+                    && node_id != local_node_id
+                {
+                    let mut contact = Contact::from(node);
+                    contact.record = Some(node_record);
+                    vacant_entry.insert(contact);
+                    METRICS.record_new_discovery().await;
+                }
+                // TODO Handle the case the contact is already present
             }
         }
     }
@@ -875,12 +911,6 @@ impl PeerTableServer {
         peers.choose(&mut rand::rngs::OsRng).cloned()
     }
 
-    fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
-        let xor = node_id_1 ^ node_id_2;
-        let distance = U256::from_big_endian(xor.as_bytes());
-        distance.bits().saturating_sub(1)
-    }
-
     fn is_validation_needed(contact: &Contact, revalidation_interval: Duration) -> bool {
         let sent_ping_ttl = Duration::from_secs(30);
 
@@ -903,6 +933,10 @@ impl PeerTableServer {
 enum CastMessage {
     NewContacts {
         nodes: Vec<Node>,
+        local_node_id: H256,
+    },
+    NewContactRecords {
+        node_records: Vec<NodeRecord>,
         local_node_id: H256,
     },
     NewConnectedPeer {
@@ -1167,6 +1201,12 @@ impl GenServer for PeerTableServer {
                 local_node_id,
             } => {
                 self.new_contacts(nodes, local_node_id).await;
+            }
+            CastMessage::NewContactRecords {
+                node_records,
+                local_node_id,
+            } => {
+                self.new_contact_records(node_records, local_node_id).await;
             }
             CastMessage::NewConnectedPeer {
                 node,
