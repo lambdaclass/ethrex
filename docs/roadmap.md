@@ -110,5 +110,5 @@ This is a WIP document and it requires better descriptions, it's supposed to be 
 |-----|----------|--------|-------------|
 | BALs | — | Pending | |
 | Disc V5 | — | Pending | |
-| Blocbs | — | Pending | |
+| Blobs | — | Pending | |
 
