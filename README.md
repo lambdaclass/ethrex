@@ -45,7 +45,7 @@ _(Data from main branch of each project at 2025/10/08)_
 
 You can find our current and planned features in our roadmap page.
 
-[View the roadmap →](https://docs.ethrex.xyz/l2/roadmap.html)
+[View the roadmap →](https://docs.ethrex.xyz/roadmap.html)
 
 ## 📖 Documentation
 
