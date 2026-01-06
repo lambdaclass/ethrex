@@ -1336,7 +1336,7 @@ impl Blockchain {
             return Err(ChainError::ParentNotFound);
         };
 
-        let (mut vm, logger) = if self.options.generate_witness {
+        let (mut vm, logger) = if self.options.generate_witness && self.is_synced() {
             let vm_db: DynVmDatabase = Box::new(StoreVmDatabase::new(
                 self.storage.clone(),
                 parent_header.clone(),
@@ -1370,7 +1370,7 @@ impl Blockchain {
             block.body.transactions.len(),
         );
 
-        if self.options.generate_witness {
+        if self.options.generate_witness && self.is_synced() {
             let block_hash = block.hash();
             let Some(logger) = logger else {
                 return Err(ChainError::Custom(
