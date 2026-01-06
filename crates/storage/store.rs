@@ -40,7 +40,6 @@ use ethrex_trie::{Node, NodeRLP};
 use lru::LruCache;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
-use tokio::task::JoinSet;
 use std::{
     collections::{BTreeMap, HashMap, hash_map::Entry},
     fmt::Debug,
@@ -51,6 +50,7 @@ use std::{
         atomic::AtomicU64,
         mpsc::{SyncSender, TryRecvError, sync_channel},
     },
+    thread::JoinHandle,
 };
 use tracing::{debug, error, info};
 /// Number of state trie segments to fetch concurrently during state sync
@@ -147,7 +147,20 @@ pub struct Store {
     /// may result in this cache having useless data.
     account_code_cache: Arc<CodeCache>,
 
-    background_threads: Arc<JoinSet<()>>
+    background_threads: Arc<ThreadList>,
+}
+
+#[derive(Debug, Default)]
+struct ThreadList {
+    list: Vec<JoinHandle<()>>,
+}
+
+impl Drop for ThreadList {
+    fn drop(&mut self) {
+        for handle in self.list.drain(..) {
+            handle.join();
+        }
+    }
 }
 
 pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
@@ -179,17 +192,6 @@ pub struct AccountUpdatesList {
     pub state_updates: Vec<(Nibbles, Vec<u8>)>,
     pub storage_updates: StorageUpdates,
     pub code_updates: Vec<(H256, Code)>,
-}
-
-impl Drop for Store {
-    fn drop(&mut self) {
-        // If we are the last db holder, close the background threads
-        // For rocksdb, it's important these are closed before the db is dropped
-        // See https://github.com/facebook/rocksdb/issues/11349
-        if let Some(joinset) = Arc::get_mut(&mut self.background_threads) {
-            joinset.abort_all();
-        }
-    }
 }
 
 impl Store {
@@ -1287,7 +1289,7 @@ impl Store {
                 last_written
             }
         };
-        let mut background_threads_joinset = JoinSet::new();
+        let mut background_threads = Vec::new();
         let mut store = Self {
             db_path,
             backend,
@@ -1298,11 +1300,11 @@ impl Store {
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
             account_code_cache: Arc::new(CodeCache::default()),
-            background_threads: Arc::new(JoinSet::new())
+            background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
         let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
-        background_threads_joinset.spawn_blocking(move || {
+        background_threads.push(std::thread::spawn(move || {
             let rx = fkv_rx;
             // Wait for the first Continue to start generation
             loop {
@@ -1318,7 +1320,7 @@ impl Store {
 
             let _ = flatkeyvalue_generator(&backend_clone, &last_computed_fkv, &rx)
                 .inspect_err(|err| error!("Error while generating FlatKeyValue: {err}"));
-        });
+        }));
         let backend = store.backend.clone();
         let flatkeyvalue_control_tx = store.flatkeyvalue_control_tx.clone();
         let trie_cache = store.trie_cache.clone();
@@ -1342,7 +1344,7 @@ impl Store {
 
             - Third, it removes the (no longer needed) bottom-most diff layer from the trie layers in the same way as the first step.
         */
-        background_threads_joinset.spawn_blocking(move || {
+        background_threads.push(std::thread::spawn(move || {
             let rx = trie_upd_rx;
             loop {
                 match rx.recv() {
@@ -1362,8 +1364,10 @@ impl Store {
                     }
                 }
             }
+        }));
+        store.background_threads = Arc::new(ThreadList {
+            list: background_threads,
         });
-        store.background_threads = background_threads_joinset.into();
         Ok(store)
     }
 
