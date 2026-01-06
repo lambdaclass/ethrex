@@ -77,6 +77,7 @@
     - [L1MessageSender]()
   - [Based sequencing](./l2/fundamentals/based.md)
   - [Transaction fees](./l2/fundamentals/transaction_fees.md)
+  - [Exit Window](./l2/fundamentals/exit_window.md)
   - [Fee token](./l2/fundamentals/fee_token.md)
   - [Shared Bridge](./l2/fundamentals/shared_bridge.md)
 
