@@ -6,13 +6,13 @@ The Timelock contract gates access to the OnChainProposer (OCP) contract. One ca
 
 - Sequencers: Can commit and verify batches.
 - Governance: Can schedule and execute operations, respecting a delay. In practice this could be the role of a DAO, though it depends on the implementation.
-- Security Council: Can bypass the minimum delay for executing any operation that the Timelock can execute.
+- Security Council: Can bypass the minimum delay for executing any operation that the Timelock can execute. It can also manage other roles in the Timelock.
 
 **Sequencers** will send `commitBatch`, `verifyBatch`, and `verifyBatchesAligned` to the Timelock, and the Timelock will execute the operations in the `OnChainProposer`. Eventually there will be Timelock logic, and there will be a time window between commitment and proof verification for security reasons.
 
 The **Governance** is able to schedule important operations like contract upgrades respecting the minimum time window for the L2 participants to exit in case of undesired updates. Not only can they make changes in the logic of the OnChainProposer, but they can also update the Timelock itself.
 
-The **Security Council** is designed as a powerful entity that can execute anything within the Timelock or OnChainProposer without delay. We call it security council because its actions are limitless, as they can upgrade any of the contracts whenever they want, so ideally it should be a multisig composed of many diverse members, and they should be able to take action only if 75% of them agree. Ideally, in a more mature rollup the Security Council would have less permissions and would only need to act upon bugs detected on-chain if such a mechanism exists.
+The **Security Council** is designed as a powerful entity that can execute anything within the Timelock or OnChainProposer without delay. We call it security council because its actions are limitless, as it can upgrade any of the contracts whenever it wants, so ideally it should be a multisig composed of many diverse members, and it should be able to take action only if 75% of members agree. Ideally, in a more mature rollup the Security Council would have fewer permissions and would only need to act upon bugs detected on-chain if such a mechanism exists.
 We call this mechanism of executing without delay the `emergencyExecute`.
 
 
@@ -24,7 +24,7 @@ These are the things that we can do with the Timelock:
 - Cancel: `cancel(bytes32 id)`
 - Update Delay: `updateDelay(uint256 newDelay)`
 
-When an operation is **scheduled** it can be **canceled** or, after the established delay, it can be **executed** by the Governor.
+When an operation is **scheduled**, the Governance role may **cancel** it or, after the established delay, **execute** it.
 The delay can be updated, always respecting the current delay to do so.
 
 It also has a few utility functions:
@@ -32,7 +32,7 @@ It also has a few utility functions:
 - `hashOperation(...)`, `hashOperationBatch(...)`: pure helpers to compute ids.
 - `getTimestamp(id)`, `getOperationState(id)`, `isOperation*`: query operation status.
 
-Remember that `Timelock` is `AccessControl` and `UUPSUpgradeable`, so it will inherit their behavior as well.
+Remember that `Timelock` inherits from `TimelockControllerUpgradeable` (which itself extends `AccessControlUpgradeable`) and `UUPSUpgradeable`, so it will inherit their behavior as well.
 
 ## Important Remarks
 
@@ -50,6 +50,6 @@ Example: If for some reason we want to schedule the pause of the OnChainProposer
 2. Computing it yourself (off-chain), or
 3. Calling `hashOperation(...)` / `hashOperationBatch(...)` on-chain to compute it.
 
-Note that: 
+Note that:
 - `hashOperation(...) = keccak256(abi.encode(target, value, data, predecessor, salt))`
 - `hashOperationBatch(...) = keccak256(abi.encode(targets, values, payloads, predecessor, salt))`
