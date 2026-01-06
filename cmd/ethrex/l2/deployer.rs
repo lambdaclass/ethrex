@@ -572,7 +572,7 @@ pub struct ContractAddresses {
     pub sequencer_registry_address: Address,
     pub aligned_aggregator_address: Address,
     pub router: Option<Address>,
-    pub timelock_address: Address,
+    pub timelock_address: Option<Address>,
 }
 
 pub async fn deploy_l1_contracts(
@@ -724,32 +724,40 @@ async fn deploy_contracts(
         Default::default()
     };
 
-    info!("Deploying Timelock");
+    let (timelock_deployment, timelock_address) = if !opts.deploy_based_contracts {
+        info!("Deploying Timelock");
 
-    let timelock_deployment = deploy_with_proxy_from_bytecode_no_wait(
-        deployer,
-        eth_client,
-        TIMELOCK_BYTECODE,
-        &salt,
-        Overrides {
-            nonce: Some(nonce),
-            gas_limit: Some(TRANSACTION_GAS_LIMIT),
-            max_fee_per_gas: Some(gas_price),
-            max_priority_fee_per_gas: Some(gas_price),
-            ..Default::default()
-        },
-    )
-    .await?;
+        let timelock_deployment = deploy_with_proxy_from_bytecode_no_wait(
+            deployer,
+            eth_client,
+            TIMELOCK_BYTECODE,
+            &salt,
+            Overrides {
+                nonce: Some(nonce),
+                gas_limit: Some(TRANSACTION_GAS_LIMIT),
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
+                ..Default::default()
+            },
+        )
+        .await?;
 
-    nonce += 2;
+        nonce += 2;
 
-    info!(
-        "Timelock deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
-        timelock_deployment.proxy_address,
-        timelock_deployment.proxy_tx_hash,
-        timelock_deployment.implementation_address,
-        timelock_deployment.implementation_tx_hash,
-    );
+        info!(
+            "Timelock deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
+            timelock_deployment.proxy_address,
+            timelock_deployment.proxy_tx_hash,
+            timelock_deployment.implementation_address,
+            timelock_deployment.implementation_tx_hash,
+        );
+        (
+            Some(timelock_deployment.clone()),
+            Some(timelock_deployment.proxy_address),
+        )
+    } else {
+        (None, None)
+    };
 
     info!("Deploying OnChainProposer");
 
@@ -889,13 +897,15 @@ async fn deploy_contracts(
         _ => Address::zero(),
     };
 
+    let tdx_controller_address =
+        timelock_address.unwrap_or(on_chain_proposer_deployment.proxy_address);
+
     // if it's a required proof type, but no address has been specified, deploy it.
     let tdx_verifier_address = match opts.tdx_verifier_address {
         Some(addr) if opts.tdx => addr,
         None if opts.tdx => {
             info!("Deploying TDXVerifier (if tdx_deploy_verifier is true)");
-            let tdx_verifier_address =
-                deploy_tdx_contracts(opts, on_chain_proposer_deployment.proxy_address)?;
+            let tdx_verifier_address = deploy_tdx_contracts(opts, tdx_controller_address)?;
 
             info!(address = %format!("{tdx_verifier_address:#x}"), "TDXVerifier deployed");
             tdx_verifier_address
@@ -923,9 +933,7 @@ async fn deploy_contracts(
         tdx_verifier_address = ?tdx_verifier_address,
         "Contracts deployed"
     );
-    let receipts = vec![
-        timelock_deployment.implementation_tx_hash,
-        timelock_deployment.proxy_tx_hash,
+    let mut receipts = vec![
         on_chain_proposer_deployment.implementation_tx_hash,
         on_chain_proposer_deployment.proxy_tx_hash,
         bridge_deployment.implementation_tx_hash,
@@ -937,6 +945,11 @@ async fn deploy_contracts(
         router_deployment.proxy_tx_hash,
     ];
 
+    if let Some(timelock_deployment) = timelock_deployment {
+        receipts.push(timelock_deployment.implementation_tx_hash);
+        receipts.push(timelock_deployment.proxy_tx_hash);
+    }
+
     Ok((
         ContractAddresses {
             on_chain_proposer_address: on_chain_proposer_deployment.proxy_address,
@@ -947,7 +960,7 @@ async fn deploy_contracts(
             sequencer_registry_address: sequencer_registry_deployment.proxy_address,
             aligned_aggregator_address,
             router: opts.router.or(Some(router_deployment.proxy_address)),
-            timelock_address: timelock_deployment.proxy_address,
+            timelock_address,
         },
         receipts,
     ))
@@ -1071,7 +1084,7 @@ async fn initialize_contracts(
     let deployer_address = get_address_from_secret_key(&opts.private_key.secret_bytes())
         .map_err(DeployerError::InternalError)?;
 
-    if !opts.deploy_based_contracts {
+    if let Some(timelock_address) = contract_addresses.timelock_address {
         info!("Initializing Timelock");
         let initialize_tx_hash = {
             let deployer = Signer::Local(LocalSigner::new(opts.private_key));
@@ -1093,7 +1106,7 @@ async fn initialize_contracts(
                 encode_calldata(INITIALIZE_TIMELOCK_SIGNATURE, &calldata_values)?;
 
             initialize_contract_no_wait(
-                contract_addresses.timelock_address,
+                timelock_address,
                 timelock_initialization_calldata,
                 &deployer,
                 eth_client,
@@ -1230,7 +1243,9 @@ async fn initialize_contracts(
         // Initialize only OnChainProposer without Based config
         let calldata_values = vec![
             Value::Bool(opts.validium),
-            Value::Address(contract_addresses.timelock_address),
+            Value::Address(contract_addresses.timelock_address.ok_or(
+                DeployerError::InternalError("Timelock address missing".to_string()),
+            )?),
             Value::Bool(opts.risc0),
             Value::Bool(opts.sp1),
             Value::Bool(opts.tdx),
@@ -1557,11 +1572,9 @@ fn write_contract_addresses_to_env(
         "ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS={:#x}",
         contract_addresses.on_chain_proposer_address
     )?;
-    writeln!(
-        writer,
-        "ETHREX_TIMELOCK_ADDRESS={:#x}",
-        contract_addresses.timelock_address
-    )?;
+    if let Some(timelock_address) = contract_addresses.timelock_address {
+        writeln!(writer, "ETHREX_TIMELOCK_ADDRESS={:#x}", timelock_address)?;
+    }
     writeln!(
         writer,
         "ETHREX_WATCHER_BRIDGE_ADDRESS={:#x}",

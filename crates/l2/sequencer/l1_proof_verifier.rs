@@ -240,6 +240,7 @@ impl L1ProofVerifier {
 
         let calldata = encode_calldata(ALIGNED_VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
+        // Based won't have timelock address until we implement it on it. For the meantime if it's None (only happens in based) we use the OCP
         let target_address = self
             .timelock_address
             .unwrap_or(self.on_chain_proposer_address);

@@ -5,16 +5,13 @@ import "@openzeppelin/contracts-upgradeable/governance/TimelockControllerUpgrade
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IOnChainProposer} from "./interfaces/IOnChainProposer.sol";
 import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
+import {ITimelock} from "./interfaces/ITimelock.sol";
 
 /// @title Timelock contract.
 /// @author LambdaClass
 /// @notice The Timelock contract is the owner of the OnChainProposer contract, it gates access to it by managing roles
 /// and adding delay to specific operations for some roles (e.g. updating the contract, in order to provide an exit window).
-contract Timelock is
-    TimelockControllerUpgradeable,
-    UUPSUpgradeable,
-    IOnChainProposer
-{
+contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable, ITimelock {
     /// @notice Role identifier for sequencers.
     /// @dev Accounts with this role can commit and verify batches.
     bytes32 public constant SEQUENCER = keccak256("SEQUENCER");
@@ -23,21 +20,14 @@ contract Timelock is
     /// @dev Accounts with this role can manage roles and bypass the timelock delay.
     bytes32 public constant SECURITY_COUNCIL = keccak256("SECURITY_COUNCIL");
 
-    /// @notice Emitted when the Security Council executes a call bypassing the delay.
-    /// @param target The address that was called.
-    /// @param value The ETH value that was sent.
-    /// @param data The calldata that was forwarded to `target`.
-    event EmergencyExecution(address indexed target, uint256 value, bytes data);
-
     /// @notice The OnChainProposer contract controlled by this timelock.
     IOnChainProposer public onChainProposer;
 
     /// @dev Restricts calls to the timelock itself.
     modifier onlySelf() {
-        require(
-            msg.sender == address(this),
-            "Timelock: caller is not the timelock itself"
-        );
+        if (msg.sender != address(this)) {
+            revert TimelockCallerNotSelf();
+        }
         _;
     }
 
@@ -47,8 +37,8 @@ contract Timelock is
         address[] memory,
         address[] memory,
         address
-    ) public pure override {
-        revert("Timelock: use the custom initialize function");
+    ) public pure override(TimelockControllerUpgradeable) {
+        revert TimelockUseCustomInitialize();
     }
 
     /// @notice Initializes the timelock contract.
@@ -64,7 +54,7 @@ contract Timelock is
         address governance,
         address securityCouncil,
         address _onChainProposer
-    ) public initializer {
+    ) public override(ITimelock) initializer {
         for (uint256 i = 0; i < sequencers.length; ++i) {
             _grantRole(SEQUENCER, sequencers[i]);
         }
@@ -84,18 +74,13 @@ contract Timelock is
         onChainProposer = IOnChainProposer(_onChainProposer);
     }
 
-    /// @inheritdoc IOnChainProposer
-    function lastCommittedBatch() external view returns (uint256) {
-        return onChainProposer.lastCommittedBatch();
-    }
-
-    /// @inheritdoc IOnChainProposer
-    function lastVerifiedBatch() external view returns (uint256) {
-        return onChainProposer.lastVerifiedBatch();
+    /// @notice Returns whether an address has the sequencer role.
+    /// @dev This matches the legacy OnChainProposer mapping used by TDXVerifier.
+    function isSequencer(address addr) external view returns (bool) {
+        return hasRole(SEQUENCER, addr);
     }
 
     // NOTE: In the future commit and verify will have timelock logic incorporated in case there are any zkVM bugs and we want to avoid applying the changes in the L1. Probably the Security Council would act upon those changes.
-    /// @inheritdoc IOnChainProposer
     /// @custom:access Restricted to accounts with the `SEQUENCER` role.
     function commitBatch(
         uint256 batchNumber,
@@ -121,7 +106,6 @@ contract Timelock is
         );
     }
 
-    /// @inheritdoc IOnChainProposer
     /// @custom:access Restricted to accounts with the `SEQUENCER` role.
     function verifyBatch(
         uint256 batchNumber,
@@ -143,7 +127,6 @@ contract Timelock is
         );
     }
 
-    /// @inheritdoc IOnChainProposer
     /// @custom:access Restricted to accounts with the `SEQUENCER` role.
     function verifyBatchesAligned(
         uint256 firstBatchNumber,
@@ -157,44 +140,6 @@ contract Timelock is
             sp1MerkleProofsList,
             risc0MerkleProofsList
         );
-    }
-
-    /// @inheritdoc IOnChainProposer
-    /// @custom:access Restricted to accounts with the `SECURITY_COUNCIL` role.
-    function revertBatch(
-        uint256 batchNumber
-    ) external onlyRole(SECURITY_COUNCIL) {
-        onChainProposer.revertBatch(batchNumber);
-    }
-
-    /// @inheritdoc IOnChainProposer
-    /// @custom:access Restricted to accounts with the `SECURITY_COUNCIL` role.
-    function pause() external onlyRole(SECURITY_COUNCIL) {
-        onChainProposer.pause();
-    }
-
-    /// @inheritdoc IOnChainProposer
-    /// @custom:access Restricted to accounts with the `SECURITY_COUNCIL` role.
-    function unpause() external onlyRole(SECURITY_COUNCIL) {
-        onChainProposer.unpause();
-    }
-
-    /// @inheritdoc IOnChainProposer
-    /// @custom:access Restricted to accounts with the `SECURITY_COUNCIL` role.
-    function upgradeSP1VerificationKey(
-        bytes32 commit_hash,
-        bytes32 new_vk
-    ) external onlyRole(SECURITY_COUNCIL) {
-        onChainProposer.upgradeSP1VerificationKey(commit_hash, new_vk);
-    }
-
-    /// @inheritdoc IOnChainProposer
-    /// @custom:access Restricted to accounts with the `SECURITY_COUNCIL` role.
-    function upgradeRISC0VerificationKey(
-        bytes32 commit_hash,
-        bytes32 new_vk
-    ) external onlyRole(SECURITY_COUNCIL) {
-        onChainProposer.upgradeRISC0VerificationKey(commit_hash, new_vk);
     }
 
     /// @notice Executes an operation immediately, bypassing the timelock delay.

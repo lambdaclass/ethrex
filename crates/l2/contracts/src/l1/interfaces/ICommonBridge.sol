@@ -46,10 +46,19 @@ interface ICommonBridge {
         bytes data;
     }
 
-    /// @notice Structure representing balance to send to each chain.
+    /// @notice Structure representing token and value information.
+    struct AssetDiff {
+        address tokenL1;
+        address tokenL2;
+        address destTokenL2;
+        uint256 value;
+    }
+
+    /// @notice Structure representing the changes per chain id and token values.
     struct BalanceDiff {
         uint256 chainId;
         uint256 value;
+        AssetDiff[] assetDiffs;
         bytes32[] message_hashes;
     }
 
@@ -146,14 +155,21 @@ interface ICommonBridge {
     /// @param balanceDiffs Array of balance differences and associated message hashes to be sent to different chains.
     function publishL2Messages(BalanceDiff[] calldata balanceDiffs) external;
 
-    /// @notice Receives messages from another chain via shared bridge router.
-    /// @dev This method should only be called by the shared bridge router, as this
-    /// method will not burn the L2 gas.
-    /// @param chainID The ID of the source chain.
-    /// @param message_hashes The hashes of the messages being received.
-    function receiveFromSharedBridge(
-        uint256 chainID,
+    function pushMessageHashes(
+        uint256 chainId,
         bytes32[] calldata message_hashes
+    ) external;
+
+    /// @notice Receives messages from another chain via shared bridge router.
+    function receiveETHFromSharedBridge() external payable;
+
+    /// @notice Receives an ERC20 message from another chain via shared bridge router.
+    /// @dev This method should only be called by the shared bridge router, as this
+    /// method will modify the token balances accordingly.
+    function receiveERC20FromSharedBridge(
+        address tokenL1,
+        address tokenL2,
+        uint256 amount
     ) external payable;
 
     /// @notice Method that claims an L2 withdrawal.
@@ -215,4 +231,13 @@ interface ICommonBridge {
     /// @notice Unregister a fee token on the L2.
     /// @param existingFeeToken Address of the token to be removed.
     function unregisterFeeToken(address existingFeeToken) external;
+
+    /// @notice Set a new ratio for fee token on the L2.
+    /// @param feeToken Address of the token to set the ratio
+    /// @param ratio The ratio of the fee token to Eth in wei.
+    function setFeeTokenRatio(address feeToken, uint256 ratio) external;
+
+    /// @notice Unset a ratio for fee token on the L2.
+    /// @param feeToken Address of the token to unset the ratio.
+    function unsetFeeTokenRatio(address feeToken) external;
 }

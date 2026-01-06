@@ -204,6 +204,10 @@ contract OnChainProposer is
             bridge != address(0),
             "OnChainProposer: bridge is the zero address"
         );
+        require(
+            bridge != address(this),
+            "OnChainProposer: bridge is the contract address"
+        );
         BRIDGE = bridge;
 
         emit VerificationKeyUpgraded("SP1", commitHash, sp1Vk);
