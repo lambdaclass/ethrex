@@ -113,8 +113,13 @@ fn build_zisk_program() {
 
     #[cfg(not(feature = "ci"))]
     fn zisk_command() -> std::process::Command {
+        std::process::Command::new("cargo-zisk")
+    }
+
+    #[cfg(feature = "ci")]
+    fn zisk_command() -> std::process::Command {
         let mut cmd = std::process::Command::new("cargo");
-        cmd.args(["+zisk", "zisk"]);
+        cmd.args(["+zisk"]);
         cmd
     }
 
