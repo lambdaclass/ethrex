@@ -9,7 +9,7 @@
 use arbitrary::Arbitrary;
 use bytes::Bytes;
 use ethrex_common::types::Fork;
-use ethrex_common::Address;
+use ethrex_common::H160;
 use ethrex_levm::precompiles::execute_precompile;
 use libfuzzer_sys::fuzz_target;
 
@@ -45,17 +45,17 @@ struct PrecompileInput {
     use_prague: bool,
 }
 
-fn make_precompile_address(last_byte: u8) -> Address {
+fn make_precompile_address(last_byte: u8) -> H160 {
     let mut addr = [0u8; 20];
     addr[19] = last_byte;
-    Address::from(addr)
+    H160(addr)
 }
 
-fn make_p256_address() -> Address {
+fn make_p256_address() -> H160 {
     let mut addr = [0u8; 20];
     addr[18] = 0x01;
     addr[19] = 0x00;
-    Address::from(addr)
+    H160(addr)
 }
 
 fuzz_target!(|input: PrecompileInput| {

@@ -16,12 +16,12 @@
 use arbitrary::Arbitrary;
 use bytes::Bytes;
 use ethrex_common::types::Fork;
-use ethrex_common::Address;
+use ethrex_common::H160;
 use ethrex_levm::precompiles::execute_precompile;
 use libfuzzer_sys::fuzz_target;
 
-/// Modexp precompile address
-const MODEXP_ADDRESS: Address = Address([
+/// Modexp precompile address (0x05)
+const MODEXP_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05,
 ]);
