@@ -31,7 +31,7 @@ use tokio::{
 };
 use tracing::{debug, trace};
 
-const MAX_IN_FLIGHT_REQUESTS: u32 = 77;
+const MAX_IN_FLIGHT_REQUESTS: u32 = 500;
 
 /// This struct stores the metadata we need when we request a node
 #[derive(Debug, Clone)]

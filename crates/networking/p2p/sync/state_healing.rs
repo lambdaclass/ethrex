@@ -32,7 +32,7 @@ use crate::{
 /// Max size of a bach to start a storage fetch request in queues
 pub const STORAGE_BATCH_SIZE: usize = 300;
 /// Max size of a bach to start a node fetch request in queues
-pub const NODE_BATCH_SIZE: usize = 500;
+pub const NODE_BATCH_SIZE: usize = 1000;
 /// Pace at which progress is shown via info tracing
 pub const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(2);
 

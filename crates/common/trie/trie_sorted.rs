@@ -53,7 +53,7 @@ pub enum TrieGenerationError {
 }
 
 /// How many nodes we group before sending to write
-pub const SIZE_TO_WRITE_DB: u64 = 20_000;
+pub const SIZE_TO_WRITE_DB: u64 = 500_000;
 /// How many write buffers we can use at the same time.
 /// This number and SIZE_TO_WRITE_DB limits how much memory we use
 pub const BUFFER_COUNT: u64 = 32;
