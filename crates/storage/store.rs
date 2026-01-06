@@ -1744,6 +1744,7 @@ impl Store {
                         let read_txn = self.backend.begin_read()?;
                         let iter = read_txn.prefix_iterator(EXECUTION_WITNESSES, &prefix)?;
 
+                        // We may have multiple witnesses for the same block number (forks)
                         for item in iter {
                             let (key, _value) = item?;
                             to_delete.push(key.to_vec());

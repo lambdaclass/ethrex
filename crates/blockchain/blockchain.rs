@@ -1047,8 +1047,6 @@ impl Blockchain {
 
         let mut codes = Vec::new();
 
-        // Begins loop
-
         for account_update in &account_updates {
             touched_account_storage_slots.insert(
                 account_update.address,
@@ -1150,8 +1148,6 @@ impl Blockchain {
             used_trie_nodes.extend_from_slice(&witness);
             touched_account_storage_slots.entry(address).or_default();
         }
-
-        // ends loop
 
         used_trie_nodes.extend_from_slice(&Vec::from_iter(
             trie_witness
