@@ -72,7 +72,7 @@ impl L2Command {
 
         let matches = app.try_get_matches_from(args_with_program)?;
         let init_options = Options::from_arg_matches(&matches)?;
-        let log_filter_handler = l2::init_tracing(&init_options);
+        let (log_filter_handler, _guard) = l2::init_tracing(&init_options);
         let mut l2_options = init_options;
 
         if l2_options.node_opts.dev {
@@ -96,7 +96,7 @@ impl L2Command {
                 .committer_opts
                 .on_chain_proposer_address = Some(contract_addresses.on_chain_proposer_address);
             l2_options.sequencer_opts.committer_opts.timelock_address =
-                Some(contract_addresses.timelock_address);
+                contract_addresses.timelock_address;
             l2_options.sequencer_opts.watcher_opts.bridge_address =
                 Some(contract_addresses.bridge_address);
             println!("Initializing L2");
@@ -477,7 +477,7 @@ impl Command {
                         }
 
                         // Execute block
-                        blockchain.add_block(block.clone())?;
+                        blockchain.add_block_pipeline(block.clone())?;
 
                         // Add fee config to rollup store
                         rollup_store

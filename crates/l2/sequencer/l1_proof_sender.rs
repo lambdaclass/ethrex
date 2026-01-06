@@ -33,8 +33,11 @@ use super::{
 
 use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
-    based::sequencer_state::{SequencerState, SequencerStatus},
-    sequencer::{errors::ProofSenderError, utils::batch_checkpoint_name},
+    sequencer::{
+        errors::ProofSenderError,
+        sequencer_state::{SequencerState, SequencerStatus},
+        utils::batch_checkpoint_name,
+    },
 };
 use aligned_sdk::{
     common::{
@@ -399,6 +402,7 @@ impl L1ProofSender {
 
         let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
+        // Based won't have timelock address until we implement it on it. For the meantime if it's None (only happens in based) we use the OCP
         let target_address = self
             .timelock_address
             .unwrap_or(self.on_chain_proposer_address);

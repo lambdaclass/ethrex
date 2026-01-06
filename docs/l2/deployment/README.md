@@ -8,5 +8,7 @@ Use this section to choose the deployment method that best fits your needs and f
 - [Deploying a vanilla ethrex L2](./vanilla.md)
 - [Deploying a validium ethrex L2](./validium.md)
 - [Deploying a based ethrex L2](./based.md)
+- [Ethrex <> Aligned](./aligned.md)
 - [Deploying a shared bridge enabled L2](./shared_bridge.md)
-- [Migrations](./migrations.md)
+- [Deploying a fee token](./fee_token.md)
+- [Upgrades](./upgrades.md)

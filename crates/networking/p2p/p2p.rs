@@ -1,4 +1,6 @@
 pub mod discv4;
+#[cfg(feature = "experimental-discv5")]
+pub mod discv5;
 pub(crate) mod metrics;
 pub mod network;
 pub mod peer_handler;
