@@ -504,6 +504,7 @@ contract OnChainProposer is
             bytes32 ziskVk = verificationKeys[batchCommitHash][
                 ZISK_VERIFIER_ID
             ];
+            uint64[4] memory programVk = _toZiskProgramVk(ziskVk);
             try
                 IZiskVerifier(ZISK_VERIFIER_ADDRESS).verifySnarkProof(
                     programVk,
@@ -553,6 +554,16 @@ contract OnChainProposer is
         delete batchCommitments[batchNumber - 1];
 
         emit BatchVerified(lastVerifiedBatch);
+    }
+
+    function _toZiskProgramVk(
+        bytes32 vk
+    ) internal pure returns (uint64[4] memory out) {
+        uint256 word = uint256(vk);
+        out[0] = uint64(word >> 192);
+        out[1] = uint64(word >> 128);
+        out[2] = uint64(word >> 64);
+        out[3] = uint64(word);
     }
 
     /// @inheritdoc IOnChainProposer
