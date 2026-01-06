@@ -1,18 +1,18 @@
 # Timelock Contract
 
-The Timelock contract is the one that gates access to the OnChainProposer (OCP) contract, one can only make changes in the OCP by interacting first with the Timelock, which manages permissions based on roles assigned to different users.
+The Timelock contract gates access to the OnChainProposer (OCP) contract. One can only make changes in the OCP by interacting first with the Timelock, which manages permissions based on roles assigned to different users.
 
 ## Timelock Roles
 
 - Sequencers: Can commit and verify batches.
-- Governance: Can schedule and execute operations, respecting a delay. In practice this could be the role of a DAO, though it depends on implementation.
+- Governance: Can schedule and execute operations, respecting a delay. In practice this could be the role of a DAO, though it depends on the implementation.
 - Security Council: Can bypass the minimum delay for executing any operation that the Timelock can execute.
 
-**Sequencers** will send `commitBatch`, `verifyBatch` and `verifyBatchesAligned` to the Timelock and this will execute the operations in the `OnChainProposer`. Eventually they will have Timelock logic and there will be a time window between commitment and verifying the proof for security reasons.
+**Sequencers** will send `commitBatch`, `verifyBatch`, and `verifyBatchesAligned` to the Timelock, and the Timelock will execute the operations in the `OnChainProposer`. Eventually there will be Timelock logic, and there will be a time window between commitment and proof verification for security reasons.
 
-The **Governance** is able to schedule important operations like contract upgrades respecting the minimum time window for the L2 participants to exit in case of undesired updates. Not only they can make changes in the logic of the OnChainProposer but they can also update the Timelock itself.
+The **Governance** is able to schedule important operations like contract upgrades respecting the minimum time window for the L2 participants to exit in case of undesired updates. Not only can they make changes in the logic of the OnChainProposer, but they can also update the Timelock itself.
 
-The **Security Council** is designed as a powerful entity that can execute anything within the Timelock or OnChainProposer without delay. We call it security council because its actions are limitless, as they can upgrade any of the contracts whenever they want, so ideally it should be a multisig composed by many diverse members, and they should be able to take action only if 75% of them agree. Ideally in a more mature rollup the Security Council would have less permissions and would only need to act upon bugs detected on-chain if such mechanism exists.
+The **Security Council** is designed as a powerful entity that can execute anything within the Timelock or OnChainProposer without delay. We call it security council because its actions are limitless, as they can upgrade any of the contracts whenever they want, so ideally it should be a multisig composed of many diverse members, and they should be able to take action only if 75% of them agree. Ideally, in a more mature rollup the Security Council would have less permissions and would only need to act upon bugs detected on-chain if such a mechanism exists.
 We call this mechanism of executing without delay the `emergencyExecute`.
 
 
@@ -38,9 +38,9 @@ Remember that `Timelock` is `AccessControl` and `UUPSUpgradeable`, so it will in
 
 ### Operation ID collision
 
-Every scheduled operation is identified by a 32 byte **operation id**, this ID is determined by hashing things like the target address, value transferred, data, predecessor and salt.
-Two operations with same fields will result in the same ID, that's why if we want to schedule the same operation more than once we should probably use a salt.
-Example: If for some reason we want to schedule the pause of the OnChainProposer and we use salt zero, next time we schedule that same operation we'll have to change the salt (assuming no predecessor was specified) in order for the id to be different.
+Every scheduled operation is identified by a 32-byte **operation id**. This ID is determined by hashing fields like the target address, value transferred, data, predecessor, and salt.
+Two operations with the same fields will result in the same ID. That's why, if we want to schedule the same operation more than once, we should probably use a salt.
+Example: If for some reason we want to schedule the pause of the OnChainProposer and we use salt zero, the next time we schedule that same operation we'll have to change the salt (assuming no predecessor was specified) in order for the id to be different.
 
 ### Cancelling a scheduled operation
 
