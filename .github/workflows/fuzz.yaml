@@ -14,17 +14,17 @@ on:
         type: choice
         options:
           - all
-          - fuzz_rlp_decode
-          - fuzz_rlp_roundtrip
-          - fuzz_trie_operations
-          - fuzz_transaction_decode
-          - fuzz_block_decode
-          - fuzz_block_header_decode
-          - fuzz_precompiles
-          - fuzz_ecrecover
-          - fuzz_modexp
-          - fuzz_bn254
-          - fuzz_bls12
+          - rlp_decode
+          - rlp_roundtrip
+          - trie_operations
+          - transaction_decode
+          - block_decode
+          - block_header_decode
+          - precompile_all
+          - precompile_ecrecover
+          - precompile_modexp
+          - precompile_bn254
+          - precompile_bls12_381
       duration:
         description: 'Fuzzing duration per target (in seconds)'
         required: true
@@ -50,17 +50,17 @@ jobs:
       fail-fast: false
       matrix:
         target:
-          - fuzz_rlp_decode
-          - fuzz_rlp_roundtrip
-          - fuzz_trie_operations
-          - fuzz_transaction_decode
-          - fuzz_block_decode
-          - fuzz_block_header_decode
-          - fuzz_precompiles
-          - fuzz_ecrecover
-          - fuzz_modexp
-          - fuzz_bn254
-          - fuzz_bls12
+          - rlp_decode
+          - rlp_roundtrip
+          - trie_operations
+          - transaction_decode
+          - block_decode
+          - block_header_decode
+          - precompile_all
+          - precompile_ecrecover
+          - precompile_modexp
+          - precompile_bn254
+          - precompile_bls12_381
     steps:
       - name: Check if target should run
         id: check

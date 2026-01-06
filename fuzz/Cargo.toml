@@ -20,80 +20,83 @@ ethereum-types = "0.15.1"
 [lints]
 workspace = true
 
+# RLP fuzzing
 [[bin]]
-name = "fuzz_rlp_decode"
-path = "fuzz_targets/fuzz_rlp_decode.rs"
+name = "rlp_decode"
+path = "fuzzers/rlp_decode.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
-name = "fuzz_rlp_roundtrip"
-path = "fuzz_targets/fuzz_rlp_roundtrip.rs"
+name = "rlp_roundtrip"
+path = "fuzzers/rlp_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+# Trie fuzzing
+[[bin]]
+name = "trie_operations"
+path = "fuzzers/trie_operations.rs"
+test = false
+doc = false
+bench = false
+
+# Transaction/Block fuzzing
+[[bin]]
+name = "transaction_decode"
+path = "fuzzers/transaction_decode.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
-name = "fuzz_trie_operations"
-path = "fuzz_targets/fuzz_trie_operations.rs"
+name = "block_decode"
+path = "fuzzers/block_decode.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
-name = "fuzz_transaction_decode"
-path = "fuzz_targets/fuzz_transaction_decode.rs"
+name = "block_header_decode"
+path = "fuzzers/block_header_decode.rs"
+test = false
+doc = false
+bench = false
+
+# Precompile fuzzing
+[[bin]]
+name = "precompile_all"
+path = "fuzzers/precompile_all.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
-name = "fuzz_block_decode"
-path = "fuzz_targets/fuzz_block_decode.rs"
+name = "precompile_ecrecover"
+path = "fuzzers/precompile_ecrecover.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
-name = "fuzz_block_header_decode"
-path = "fuzz_targets/fuzz_block_header_decode.rs"
+name = "precompile_modexp"
+path = "fuzzers/precompile_modexp.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
-name = "fuzz_precompiles"
-path = "fuzz_targets/fuzz_precompiles.rs"
+name = "precompile_bn254"
+path = "fuzzers/precompile_bn254.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
-name = "fuzz_ecrecover"
-path = "fuzz_targets/fuzz_ecrecover.rs"
+name = "precompile_bls12_381"
+path = "fuzzers/precompile_bls12_381.rs"
 test = false
 doc = false
 bench = false
-
-[[bin]]
-name = "fuzz_modexp"
-path = "fuzz_targets/fuzz_modexp.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "fuzz_bn254"
-path = "fuzz_targets/fuzz_bn254.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "fuzz_bls12"
-path = "fuzz_targets/fuzz_bls12.rs"
-test = false
-doc = false
-bench = false
->>>>>>> 069bbaf54 (Initial Ralph project setup)
