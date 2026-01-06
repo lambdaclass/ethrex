@@ -337,6 +337,7 @@ fn visit_child_node(
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::unnecessary_to_owned, clippy::useless_vec)]
     use super::*;
     use proptest::collection::{btree_set, vec};
     use proptest::prelude::any;
