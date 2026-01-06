@@ -20,18 +20,18 @@
 // Trie Nodes: only in statedb, with only the hash as key.
 // Bytecodes: in statedb, ['c' || code_hash ].
 use clap::Parser;
-use ethrex_common::H256;
 use ethrex_common::types::Code;
 use ethrex_common::types::{Block, BlockBody, BlockHeader, BlockNumber};
 use ethrex_common::utils::keccak;
+use ethrex_common::H256;
 use ethrex_common::{
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     types::AccountState,
 };
 use ethrex_config::networks::Network;
-use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::decode::decode_bytes;
 use ethrex_rlp::decode::decode_rlp_item;
+use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::EngineType;
 use ethrex_storage::Store;
 use ethrex_trie::Nibbles;
@@ -117,7 +117,7 @@ fn geth2ethrex(mut store: Store, block_number: BlockNumber, args: &Args) -> eyre
             let Ok([header_rlp, body_rlp]) =
                 gethdb.read_block_from_gethdb(*number, hash.to_fixed_bytes())
             else {
-                warn!("Couldn't obtain block {number}");
+                info!("Couldn't obtain block {number}");
                 continue;
             };
             let header: BlockHeader = RLPDecode::decode(&header_rlp)?;
@@ -213,7 +213,10 @@ fn geth2ethrex(mut store: Store, block_number: BlockNumber, args: &Args) -> eyre
                 file.read_to_end(&mut journal)?;
             }
             Err(error) => match error.kind() {
-                ErrorKind::NotFound => info!("Journal not found, skipping diff layers."),
+                ErrorKind::NotFound => {
+                    debug!("Journal file not found, using db.");
+                    journal = gethdb.state_db.get(b"TrieJournal").unwrap().unwrap();
+                }
                 _ => error!("Error {error} while opening journal"),
             },
         };
