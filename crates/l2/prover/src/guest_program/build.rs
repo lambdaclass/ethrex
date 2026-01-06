@@ -172,7 +172,7 @@ fn build_zisk_program() {
                 "-k",
                 proving_key.as_str(),
                 "-o",
-                "../zisk/out/zisk_vk",
+                "../zisk/out/riscv64ima-zisk-vk",
             ])
             .stdout(std::process::Stdio::inherit())
             .stderr(std::process::Stdio::inherit())

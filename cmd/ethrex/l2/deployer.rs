@@ -209,6 +209,23 @@ pub struct DeployerOptions {
         long,
         default_value = "false",
         value_name = "BOOLEAN",
+        env = "ETHREX_L2_ZISK",
+        action = ArgAction::Set,
+        help_heading = "Deployer options",
+        help = "If true, L2 will require ZisK proofs to validate batch proofs and settle state."
+    )]
+    pub zisk: bool,
+    #[arg(
+        long = "zisk.verifier-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_DEPLOYER_ZISK_VERIFIER_ADDRESS",
+        help_heading = "Deployer options"
+    )]
+    pub zisk_verifier_address: Option<Address>,
+    #[arg(
+        long,
+        default_value = "false",
+        value_name = "BOOLEAN",
         env = "ETHREX_L2_TDX",
         action = ArgAction::Set,
         help_heading = "Deployer options",
@@ -313,6 +330,14 @@ pub struct DeployerOptions {
     pub risc0_vk_path: Option<String>,
     #[arg(
         long,
+        value_name = "PATH",
+        env = "ETHREX_ZISK_VERIFICATION_KEY_PATH",
+        help_heading = "Deployer options",
+        help = "Path to the ZisK verification key. This is used for proof verification."
+    )]
+    pub zisk_vk_path: Option<String>,
+    #[arg(
+        long,
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS",
@@ -414,6 +439,8 @@ impl Default for DeployerOptions {
             risc0_verifier_address: None,
             sp1: false,
             sp1_verifier_address: None,
+            zisk: false,
+            zisk_verifier_address: None,
             tdx: false,
             tdx_verifier_address: None,
             aligned: false,
@@ -446,6 +473,7 @@ impl Default for DeployerOptions {
             on_chain_proposer_owner_pk: None,
             sp1_vk_path: None,
             risc0_vk_path: None,
+            zisk_vk_path: None,
             deploy_based_contracts: false,
             sequencer_registry_owner: None,
             inclusion_max_wait: 3000,
@@ -568,6 +596,7 @@ pub struct ContractAddresses {
     pub bridge_address: Address,
     pub sp1_verifier_address: Address,
     pub risc0_verifier_address: Address,
+    pub zisk_verifier_address: Address,
     pub tdx_verifier_address: Address,
     pub sequencer_registry_address: Address,
     pub aligned_aggregator_address: Address,
@@ -897,6 +926,18 @@ async fn deploy_contracts(
         _ => Address::zero(),
     };
 
+    // ZisK verifier is expected to be deployed externally for now
+    let zisk_verifier_address = match opts.zisk_verifier_address {
+        _ if opts.aligned => Address::zero(),
+        Some(addr) if opts.zisk => addr,
+        None if opts.zisk => {
+            return Err(DeployerError::InternalError(
+                "ZisK verifier address is not set and zisk is a required prover".to_string(),
+            ));
+        }
+        _ => Address::zero(),
+    };
+
     let tdx_controller_address =
         timelock_address.unwrap_or(on_chain_proposer_deployment.proxy_address);
 
@@ -930,6 +971,7 @@ async fn deploy_contracts(
         bridge_implementation_address = ?bridge_deployment.implementation_address,
         sp1_verifier_address = ?sp1_verifier_address,
         risc0_verifier_address = ?risc0_verifier_address,
+        zisk_verifier_address = ?zisk_verifier_address,
         tdx_verifier_address = ?tdx_verifier_address,
         "Contracts deployed"
     );
@@ -956,6 +998,7 @@ async fn deploy_contracts(
             bridge_address: bridge_deployment.proxy_address,
             sp1_verifier_address,
             risc0_verifier_address,
+            zisk_verifier_address,
             tdx_verifier_address,
             sequencer_registry_address: sequencer_registry_deployment.proxy_address,
             aligned_aggregator_address,
@@ -1002,6 +1045,7 @@ fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, Depl
     let (required_type, vk_path) = match prover_type {
         ProverType::SP1 => (opts.sp1, &opts.sp1_vk_path),
         ProverType::RISC0 => (opts.risc0, &opts.risc0_vk_path),
+        ProverType::ZisK => (opts.zisk, &opts.zisk_vk_path),
         _ => unimplemented!("{prover_type}"),
     };
 
@@ -1026,6 +1070,10 @@ fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, Depl
                 ),
                 ProverType::SP1 if !opts.aligned => format!(
                     "{}/../../crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254",
+                    env!("CARGO_MANIFEST_DIR")
+                ),
+                ProverType::ZisK => format!(
+                    "{}/../../crates/l2/prover/src/guest_program/src/zisk/out/riscv64ima-zisk-vk",
                     env!("CARGO_MANIFEST_DIR")
                 ),
                 // other types don't have a verification key
@@ -1590,6 +1638,11 @@ fn write_contract_addresses_to_env(
         writer,
         "ETHREX_DEPLOYER_RISC0_VERIFIER_ADDRESS={:#x}",
         contract_addresses.risc0_verifier_address
+    )?;
+    writeln!(
+        writer,
+        "ETHREX_DEPLOYER_ZISK_VERIFIER_ADDRESS={:#x}",
+        contract_addresses.zisk_verifier_address
     )?;
     writeln!(
         writer,
