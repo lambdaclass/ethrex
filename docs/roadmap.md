@@ -6,7 +6,7 @@ Long-term research directions and second-order ideas are intentionally out of sc
 
 **Priority reflects relative urgency, not effort.**
 
-This is WIP document and it requires better descriptions, it's supposed to be used internally 
+This is a WIP document and it requires better descriptions, it's supposed to be used internally 
 
 
 ---
