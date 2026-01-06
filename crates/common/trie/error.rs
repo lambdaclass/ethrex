@@ -33,6 +33,8 @@ pub enum InconsistentTreeError {
     RootNotFound(H256),
     #[error("Root node not found")]
     RootNotFoundNoHash,
+    #[error("Node count mismatch during validation: {0}")]
+    NodeCountMismatch(NodeCountMismatchData),
 }
 
 #[derive(Debug)]
@@ -49,6 +51,53 @@ impl std::fmt::Display for ExtensionNodeErrorData {
             f,
             "Node with hash {:#x}, child of the Extension Node (hash {:#x}, prefix {:?}) on path {:?}",
             self.node_hash, self.extension_node_hash, self.extension_node_hash, self.node_path
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum NodeType {
+    Branch,
+    Extension,
+    Leaf,
+}
+
+impl std::fmt::Display for NodeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NodeType::Branch => write!(f, "Branch"),
+            NodeType::Extension => write!(f, "Extension"),
+            NodeType::Leaf => write!(f, "Leaf"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct NodeCountMismatchData {
+    /// The count mismatch: positive = missing nodes, negative = extra nodes
+    pub expected_count: isize,
+    /// Path to the last successfully validated node
+    pub last_valid_path: Option<Nibbles>,
+    pub last_node_type: Option<NodeType>,
+    pub nodes_traversed: usize,
+    /// Hash of the last validated node (for cross-referencing)
+    pub last_node_hash: Option<H256>,
+}
+
+impl std::fmt::Display for NodeCountMismatchData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}. Traversed {} nodes. Last valid node: {} at path {:?} (hash: {})",
+            if self.expected_count > 0 {
+                format!("Expected {} more node(s)", self.expected_count)
+            } else {
+                format!("Found {} unexpected node(s)", self.expected_count.abs())
+            },
+            self.nodes_traversed,
+            self.last_node_type.map(|t| t.to_string()).unwrap_or_else(|| "unknown".to_string()),
+            self.last_valid_path,
+            self.last_node_hash.as_ref().map(|h| format!("{:#x}", h)).unwrap_or_else(|| "unknown".to_string())
         )
     }
 }

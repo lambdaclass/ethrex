@@ -28,7 +28,9 @@ pub use self::{
     node_hash::NodeHash,
 };
 
-pub use self::error::{ExtensionNodeErrorData, InconsistentTreeError, TrieError};
+pub use self::error::{
+    ExtensionNodeErrorData, InconsistentTreeError, NodeCountMismatchData, NodeType, TrieError,
+};
 use self::{node::LeafNode, trie_iter::TrieIterator};
 
 use ethrex_rlp::decode::RLPDecode;
@@ -533,11 +535,39 @@ impl Trie {
     ///
     /// This is used internally with debug assertions to check the status of the trie
     /// after syncing operations.
-    /// Note: this operation validates the hashes because the iterator uses
-    /// get_node_checked. We shouldn't downgrade that to the unchecked version
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the trie structure is consistent.
+    ///
+    /// Returns `Err(TrieError::InconsistentTree(NodeCountMismatch))` if there is a
+    /// mismatch between expected and actual node counts. The error includes diagnostic
+    /// information: path to the last validated node, node type, hash, and traversal count.
+    ///
+    /// # Note
+    ///
+    /// This operation validates the hashes because the iterator uses
+    /// `get_node_checked`. We shouldn't downgrade that to the unchecked version.
     pub fn validate(self) -> Result<(), TrieError> {
-        let mut expected_count = if self.root.is_valid() { 1 } else { 0 };
-        for (_, node) in self.into_iter() {
+        let mut expected_count: isize = if self.root.is_valid() { 1 } else { 0 };
+
+        // Track context for error reporting
+        let mut last_valid_path: Option<Nibbles> = None;
+        let mut last_node_type: Option<NodeType> = None;
+        let mut last_node_hash: Option<H256> = None;
+        let mut nodes_traversed = 0;
+
+        for (path, node) in self.into_iter() {
+            // Capture context before processing this node
+            last_valid_path = Some(path.clone());
+            last_node_type = Some(match &node {
+                Node::Branch(_) => NodeType::Branch,
+                Node::Extension(_) => NodeType::Extension,
+                Node::Leaf(_) => NodeType::Leaf,
+            });
+            last_node_hash = Some(node.compute_hash().finalize());
+            nodes_traversed += 1;
+
             expected_count -= 1;
             match node {
                 Node::Branch(branch_node) => {
@@ -545,7 +575,7 @@ impl Trie {
                         .choices
                         .iter()
                         .filter(|child| child.is_valid())
-                        .count();
+                        .count() as isize;
                 }
                 Node::Extension(_) => {
                     expected_count += 1;
@@ -553,9 +583,16 @@ impl Trie {
                 Node::Leaf(_) => {}
             }
         }
+
         if expected_count != 0 {
-            return Err(TrieError::Verify(format!(
-                "Node count mismatch, expected {expected_count} more"
+            return Err(TrieError::InconsistentTree(Box::new(
+                InconsistentTreeError::NodeCountMismatch(NodeCountMismatchData {
+                    expected_count,
+                    last_valid_path,
+                    last_node_type,
+                    nodes_traversed,
+                    last_node_hash,
+                })
             )));
         }
         Ok(())
