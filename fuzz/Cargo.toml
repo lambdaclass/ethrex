@@ -13,8 +13,12 @@ arbitrary = { version = "1", features = ["derive"] }
 ethrex-common = { path = "../crates/common" }
 ethrex-rlp = { path = "../crates/common/rlp" }
 ethrex-trie = { path = "../crates/common/trie" }
+ethrex-levm = { path = "../crates/vm/levm", default-features = false, features = ["secp256k1"] }
 bytes = "1.6.0"
 ethereum-types = "0.15.1"
+
+[lints]
+workspace = true
 
 [[bin]]
 name = "fuzz_rlp_decode"
@@ -58,5 +62,38 @@ test = false
 doc = false
 bench = false
 
-[lints]
-workspace = true
+[[bin]]
+name = "fuzz_precompiles"
+path = "fuzz_targets/fuzz_precompiles.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_ecrecover"
+path = "fuzz_targets/fuzz_ecrecover.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_modexp"
+path = "fuzz_targets/fuzz_modexp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_bn254"
+path = "fuzz_targets/fuzz_bn254.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_bls12"
+path = "fuzz_targets/fuzz_bls12.rs"
+test = false
+doc = false
+bench = false
+>>>>>>> 069bbaf54 (Initial Ralph project setup)

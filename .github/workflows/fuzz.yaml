@@ -20,6 +20,11 @@ on:
           - fuzz_transaction_decode
           - fuzz_block_decode
           - fuzz_block_header_decode
+          - fuzz_precompiles
+          - fuzz_ecrecover
+          - fuzz_modexp
+          - fuzz_bn254
+          - fuzz_bls12
       duration:
         description: 'Fuzzing duration per target (in seconds)'
         required: true
@@ -51,6 +56,11 @@ jobs:
           - fuzz_transaction_decode
           - fuzz_block_decode
           - fuzz_block_header_decode
+          - fuzz_precompiles
+          - fuzz_ecrecover
+          - fuzz_modexp
+          - fuzz_bn254
+          - fuzz_bls12
     steps:
       - name: Check if target should run
         id: check
