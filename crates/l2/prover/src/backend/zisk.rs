@@ -1,16 +1,20 @@
+use ethrex_l2_common::calldata::Value;
+use ethrex_l2_common::prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType};
+use guest_program::{ZKVM_ZISK_PROGRAM_ELF, input::ProgramInput, output::ProgramOutput};
 use std::{
     io::ErrorKind,
     process::{Command, Stdio},
 };
 
-use ethrex_l2_common::prover::{BatchProof, ProofFormat};
-use guest_program::{ZKVM_ZISK_PROGRAM_ELF, input::ProgramInput, output::ProgramOutput};
-
 const INPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_input.bin");
 const OUTPUT_DIR_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output");
 const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zkvm-zisk-program");
 
-pub struct ProveOutput(pub Vec<u8>);
+pub struct ProveOutput {
+    pub proof: Vec<u8>,
+    pub publics: Vec<u8>,
+    pub vk: Vec<u8>,
+}
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     write_elf_file()?;
@@ -105,9 +109,47 @@ pub fn prove(
         .into());
     }
 
-    let proof_bytes = std::fs::read(format!("{OUTPUT_DIR_PATH}/vadcop_final_proof.bin"))?;
-    let output = ProveOutput(proof_bytes);
-    Ok(output)
+    let path_to_proof = format!("{OUTPUT_DIR_PATH}/vadcop_final_proof.bin");
+    if let ProofFormat::Groth16 = format {
+        // get the final snark wrapping
+        let args = vec![
+            "prove-snark",
+            "-k",
+            "PKEY of snark",
+            "-p",
+            &path_to_proof,
+            "-o",
+            OUTPUT_DIR_PATH,
+        ];
+        let snark = Command::new("cargo-zisk")
+            .args(args)
+            .stdin(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .output()?;
+
+        if !snark.status.success() {
+            return Err(format!(
+                "ZisK snark generation failed: {}",
+                String::from_utf8_lossy(&snark.stderr)
+            )
+            .into());
+        }
+        let proof_bytes = std::fs::read(format!("{OUTPUT_DIR_PATH}/final_snark_proof.bin"))?;
+        let publics_bytes = std::fs::read(format!("{OUTPUT_DIR_PATH}/final_snark_publics.bin"))?;
+        Ok(ProveOutput {
+            proof: proof_bytes,
+            publics: publics_bytes,
+            vk: vec![],
+        })
+    } else {
+        let proof_bytes = std::fs::read(path_to_proof)?;
+        let output = ProveOutput {
+            proof: proof_bytes,
+            publics: vec![],
+            vk: vec![],
+        };
+        Ok(output)
+    }
 }
 
 pub fn prove_timed(
@@ -142,7 +184,18 @@ pub fn to_batch_proof(
     proof: ProveOutput,
     format: ProofFormat,
 ) -> Result<BatchProof, Box<dyn std::error::Error>> {
-    unimplemented!("to_batch_proof is not implemented for ZisK backend")
+    let batch_proof = match format {
+        ProofFormat::Compressed => BatchProof::ProofBytes(ProofBytes {
+            prover_type: ProverType::ZisK,
+            proof: bincode::serialize(&proof.proof)?,
+            public_values: proof.publics,
+        }),
+        ProofFormat::Groth16 => BatchProof::ProofCalldata(ProofCalldata {
+            prover_type: ProverType::ZisK,
+            calldata: vec![Value::Bytes(proof.proof.into())],
+        }),
+    };
+    Ok(batch_proof)
 }
 
 fn write_elf_file() -> Result<(), Box<dyn std::error::Error>> {
