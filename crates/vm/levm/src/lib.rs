@@ -1,3 +1,66 @@
+//! # LEVM - Lambda EVM
+//!
+//! A pure Rust implementation of the Ethereum Virtual Machine.
+//!
+//! ## Overview
+//!
+//! LEVM (Lambda EVM) is ethrex's native EVM implementation, designed for:
+//! - **Correctness**: Full compatibility with Ethereum consensus tests
+//! - **Performance**: Optimized opcode execution and memory management
+//! - **Readability**: Clean, well-documented Rust code
+//! - **Extensibility**: Modular design for easy feature additions
+//!
+//! ## Architecture
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────┐
+//! │                           VM                                 │
+//! │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
+//! │  │  CallFrame  │  │   Memory    │  │       Stack         │ │
+//! │  └─────────────┘  └─────────────┘  └─────────────────────┘ │
+//! │                                                             │
+//! │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
+//! │  │  Substate   │  │ Precompiles │  │   Environment       │ │
+//! │  └─────────────┘  └─────────────┘  └─────────────────────┘ │
+//! └─────────────────────────────────────────────────────────────┘
+//!                              │
+//!                              ▼
+//! ┌─────────────────────────────────────────────────────────────┐
+//! │                    GeneralizedDatabase                       │
+//! │              (Account state, storage, code)                  │
+//! └─────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! ## Key Components
+//!
+//! - [`vm::VM`]: Main EVM execution engine
+//! - [`call_frame::CallFrame`]: Execution context for each call
+//! - [`memory::Memory`]: EVM memory with expansion tracking
+//! - [`environment::Environment`]: Block and transaction context
+//! - [`precompiles`]: Native implementations of precompiled contracts
+//!
+//! ## Supported Forks
+//!
+//! LEVM supports all Ethereum forks from Frontier through Prague:
+//! - Frontier, Homestead, Byzantium, Constantinople, Petersburg
+//! - Istanbul, Berlin, London, Paris (The Merge)
+//! - Shanghai, Cancun, Prague
+//!
+//! ## Usage
+//!
+//! ```ignore
+//! use levm::{VM, Environment};
+//!
+//! // Create VM with database and environment
+//! let mut vm = VM::new(db, environment, tx_report);
+//!
+//! // Execute a call
+//! let result = vm.transact()?;
+//!
+//! // Get execution report
+//! let report = result.report;
+//! ```
+
 pub mod call_frame;
 pub mod constants;
 pub mod db;
