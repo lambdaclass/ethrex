@@ -33,7 +33,7 @@ This is a WIP document and it requires better descriptions, it's supposed to be 
 |-----|----------|--------|-------------|
 | Replace BTreeMap with FxHashMap | 0 | Pending | Replace BTreeMap/BTreeSet with FxHashMap/FxHashSet|
 | Remove RefCell from Memory | 0 | Pending | Consider using UnsafeCell with manual safety guarantees, or restructure to avoid shared ownership. |
- Object pooling | 2 | Pending | Reuse EVM stack frames,  |
+| Object pooling | 2 | Pending | Reuse EVM stack frames to reduce allocations and improve performance |
 | Try out PEVM | 0 | Pending | Benchmark again against pevm |
 | Inline Hot Opcodes | 0 | Pending | |
 | Avoid clones in hot path | 2 | Pending | Avoid Clone on Account Load |
