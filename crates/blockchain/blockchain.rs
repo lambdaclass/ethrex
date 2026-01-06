@@ -57,7 +57,6 @@ use vm::StoreVmDatabase;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::blocks::METRICS_BLOCKS;
 
-#[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
 
 const MAX_PAYLOADS: usize = 10;
@@ -1394,7 +1393,6 @@ impl Blockchain {
     }
 
     /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid
-    #[cfg(feature = "c-kzg")]
     pub async fn add_blob_transaction_to_pool(
         &self,
         transaction: EIP4844Transaction,

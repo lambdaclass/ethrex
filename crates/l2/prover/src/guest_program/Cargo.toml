@@ -50,7 +50,7 @@ zisk = [
 ]
 openvm = ["dep:openvm-sdk"]
 l2 = []
-c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg"]
+# c-kzg feature removed for pevm compatibility
 secp256k1 = [
     "ethrex-common/secp256k1",
     "ethrex-blockchain/secp256k1",

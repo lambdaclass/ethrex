@@ -41,10 +41,10 @@ hex-literal.workspace = true
 
 [features]
 default = ["secp256k1"]
-c-kzg = ["ethrex-crypto/c-kzg"]
+# c-kzg feature removed for pevm compatibility
 secp256k1 = ["dep:secp256k1"]
 
-risc0 = ["ethrex-crypto/risc0"]
+risc0 = []
 sp1 = []
 zisk = []
 openvm = ["ethrex-crypto/openvm"]

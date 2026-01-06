@@ -121,6 +121,12 @@ tower-http = { version = "0.6.2", features = ["cors"] }
 indexmap = { version = "2.11.4" }
 k256 = "0.13.4"
 
+# PEVM backend dependencies
+pevm = { git = "https://github.com/risechain/pevm" }
+alloy-primitives = { version = "0.8" }
+alloy-consensus = { version = "0.8", default-features = false }
+alloy-eips = { version = "0.8" }
+
 rocksdb = { version = "0.24.0", default-features = false, features = [
   "bindgen-runtime",
   "lz4",

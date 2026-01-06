@@ -25,6 +25,14 @@ dyn-clone = "1.0"
 
 ethereum-types.workspace = true
 
+# PEVM backend dependencies
+pevm.workspace = true
+alloy-primitives.workspace = true
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+revm = { version = "19.4.0", default-features = false }
+hashbrown = "0.15"
+
 [lib]
 path = "./lib.rs"
 
@@ -32,15 +40,16 @@ path = "./lib.rs"
 default = ["secp256k1"]
 
 secp256k1 = ["ethrex-levm/secp256k1", "ethrex-common/secp256k1"]
-c-kzg = ["ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
+# c-kzg feature removed for pevm compatibility
 
 sp1 = ["ethrex-levm/sp1", "ethrex-common/sp1"]
-risc0 = ["ethrex-levm/risc0", "ethrex-common/risc0", "c-kzg"]
+risc0 = ["ethrex-levm/risc0", "ethrex-common/risc0"]
 zisk = ["ethrex-levm/zisk", "ethrex-common/zisk"]
 openvm = ["ethrex-levm/openvm", "ethrex-common/openvm"]
 perf_opcode_timings = ["ethrex-levm/perf_opcode_timings"]
 
 debug = ["ethrex-levm/debug"]
+
 
 [lints.clippy]
 unwrap_used = "deny"

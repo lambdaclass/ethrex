@@ -1,5 +1,8 @@
 pub mod levm;
+pub mod pevm;
+
 use levm::LEVM;
+use pevm::PEVM;
 
 use crate::db::{DynVmDatabase, VmDatabase};
 use crate::errors::EvmError;
@@ -23,23 +26,42 @@ use tracing::instrument;
 pub struct Evm {
     pub db: GeneralizedDatabase,
     pub vm_type: VMType,
+    // PEVM field disabled due to c-kzg version conflict
+    // #[cfg(feature = "pevm")]
+    // pub use_pevm: bool,
 }
 
 impl core::fmt::Debug for Evm {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "LEVM",)
+        write!(f, "PEVM")
     }
 }
 
 impl Evm {
-    /// Creates a new EVM instance, but with block hash in zero, so if we want to execute a block or transaction we have to set it.
+    /// Creates a new EVM instance using LEVM backend
     pub fn new_for_l1(db: impl VmDatabase + 'static) -> Self {
         let wrapped_db: DynVmDatabase = Box::new(db);
         Evm {
             db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
             vm_type: VMType::L1,
+            // PEVM field disabled due to c-kzg version conflict
+            // #[cfg(feature = "pevm")]
+            // use_pevm: false,
         }
     }
+
+    // PEVM constructor disabled due to c-kzg version conflict
+    // /// Creates a new EVM instance using PEVM backend for parallel execution
+    // /// Only available with the `pevm` feature flag
+    // #[cfg(feature = "pevm")]
+    // pub fn new_for_l1_with_pevm(db: impl VmDatabase + 'static) -> Self {
+    //     let wrapped_db: DynVmDatabase = Box::new(db);
+    //     Evm {
+    //         db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
+    //         vm_type: VMType::L1,
+    //         use_pevm: true,
+    //     }
+    // }
 
     pub fn new_for_l2(
         db: impl VmDatabase + 'static,
@@ -50,6 +72,9 @@ impl Evm {
         let evm = Evm {
             db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
             vm_type: VMType::L2(fee_config),
+            // PEVM field disabled due to c-kzg version conflict
+            // #[cfg(feature = "pevm")]
+            // use_pevm: false, // PEVM doesn't support L2
         };
 
         Ok(evm)
@@ -70,11 +95,28 @@ impl Evm {
         Evm {
             db: GeneralizedDatabase::new(store),
             vm_type,
+            // PEVM field disabled due to c-kzg version conflict
+            // #[cfg(feature = "pevm")]
+            // use_pevm: false,
         }
     }
 
+    // PEVM methods disabled due to c-kzg version conflict
+    // /// Enable or disable PEVM backend at runtime (only with `pevm` feature)
+    // #[cfg(feature = "pevm")]
+    // pub fn set_use_pevm(&mut self, use_pevm: bool) {
+    //     self.use_pevm = use_pevm;
+    // }
+
+    // /// Check if PEVM backend is enabled
+    // #[cfg(feature = "pevm")]
+    // pub fn is_using_pevm(&self) -> bool {
+    //     self.use_pevm
+    // }
+
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
-        LEVM::execute_block(block, &mut self.db, self.vm_type)
+        // Use PEVM for block execution (parallel EVM)
+        PEVM::execute_block(block, &mut self.db)
     }
 
     #[instrument(

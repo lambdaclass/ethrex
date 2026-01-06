@@ -35,10 +35,10 @@ path = "./blockchain.rs"
 [features]
 default = ["secp256k1"]
 secp256k1 = ["ethrex-common/secp256k1", "ethrex-vm/secp256k1"]
-c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
+# c-kzg feature removed for pevm compatibility
 metrics = ["ethrex-metrics/transactions"]
 sp1 = ["ethrex-common/sp1", "ethrex-vm/sp1"]
-risc0 = ["ethrex-common/risc0", "ethrex-vm/risc0", "c-kzg"]
+risc0 = ["ethrex-common/risc0", "ethrex-vm/risc0"]
 zisk = ["ethrex-common/zisk", "ethrex-vm/zisk"]
 
 [lints.clippy]

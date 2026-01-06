@@ -84,8 +84,9 @@ impl BlobsBundle {
         self.blobs.is_empty() && self.commitments.is_empty() && self.proofs.is_empty()
     }
 
-    // In the future we might want to provide a new method that calculates the commitments and proofs using the following.
-    #[cfg(feature = "c-kzg")]
+    // Creates a BlobsBundle from raw blobs, computing commitments and proofs.
+    // Note: This requires c-kzg which has been removed for pevm compatibility.
+    // Returns an error when KZG computation is not available.
     pub fn create_from_blobs(
         blobs: &Vec<Blob>,
         wrapper_version: Option<u8>,
@@ -124,7 +125,8 @@ impl BlobsBundle {
             .collect()
     }
 
-    #[cfg(feature = "c-kzg")]
+    // Validates the blobs bundle against a transaction.
+    // Note: Proof verification requires c-kzg which has been removed for pevm compatibility.
     pub fn validate(
         &self,
         tx: &super::EIP4844Transaction,
@@ -144,7 +146,7 @@ impl BlobsBundle {
             return Err(BlobsBundleError::BlobBundleEmptyError);
         }
 
-        if self.version == 0 && fork >= Fork::Osaka || self.version != 0 && fork < Fork::Osaka {
+        if self.version == 0 && fork >= super::Fork::Osaka || self.version != 0 && fork < super::Fork::Osaka {
             return Err(BlobsBundleError::InvalidBlobVersionForFork);
         }
 
@@ -241,12 +243,9 @@ impl AddAssign for BlobsBundle {
     }
 }
 
-#[cfg(feature = "c-kzg")]
 const MAX_BLOB_COUNT: usize = 6;
-#[cfg(feature = "c-kzg")]
 const MAX_BLOB_COUNT_ELECTRA: usize = 9;
 
-#[cfg(feature = "c-kzg")]
 fn max_blobs_per_block(fork: crate::types::Fork) -> usize {
     if fork >= crate::types::Fork::Prague {
         MAX_BLOB_COUNT_ELECTRA
@@ -271,7 +270,6 @@ pub enum BlobsBundleError {
     MaxBlobsExceeded,
     #[error("Invalid blob version for the current fork")]
     InvalidBlobVersionForFork,
-    #[cfg(feature = "c-kzg")]
     #[error("KZG related error: {0}")]
     Kzg(#[from] ethrex_crypto::kzg::KzgError),
 }

@@ -10,7 +10,8 @@ path = "./lib.rs"
 
 [dependencies]
 # TODO(#1102): Move to Lambdaworks in the future
-c-kzg = { version = "2.1.1", default-features = false, optional = true }
+# NOTE: c-kzg removed - using kzg-rs (pure Rust) instead for pevm compatibility
+# c-kzg 2.x conflicts with pevm which uses alloy 0.12.x -> c-kzg 1.x
 kzg-rs.workspace = true
 openvm-kzg = { git = "https://github.com/axiom-crypto/openvm-kzg.git", rev = "530a6ed413def5296b7e4967650ba4fc8fd92ea1", optional = true } # v1.4.1
 thiserror.workspace = true
@@ -20,10 +21,10 @@ tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 
 [features]
 default = []
-c-kzg = ["c-kzg/std", "c-kzg/ethereum_kzg_settings"]
+# c-kzg feature removed for pevm compatibility - using kzg-rs instead
 openvm-kzg = ["dep:openvm-kzg"]
 
-risc0 = ["c-kzg/std", "c-kzg/ethereum_kzg_settings", "c-kzg/portable"]
+# risc0 feature disabled - needs c-kzg which conflicts with pevm
 openvm = ["openvm-kzg"]
 
 [lints]

@@ -33,6 +33,6 @@ prettytable-rs = "0.10"
 hex = "0.4.3"
 
 [features]
-default = ["c-kzg"]
-c-kzg = ["ethrex-vm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
+default = []
+# c-kzg feature removed for pevm compatibility
 block = []
