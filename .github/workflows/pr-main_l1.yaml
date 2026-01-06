@@ -2,9 +2,13 @@ name: L1
 on:
   push:
     branches: ["main"]
+    paths-ignore:
+      - "docs/**"
   merge_group:
   pull_request:
     branches: ["**"]
+    paths-ignore:
+      - "docs/**"
 
 permissions:
   contents: read
