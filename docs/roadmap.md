@@ -96,7 +96,7 @@ This is a WIP document and it requires better descriptions, it's supposed to be 
 | No STD | 5 | Pending | |
 | Migrations | 4 | Pending | |
 | geth db migration tooling | 0 | Pending | |
-| Custom Deterministic Benchmark  | ? | Pending | we built a tool, its time to use it |
+| Custom Deterministic Benchmark  | — | Pending | we built a tool, its time to use it |
 | Benchmark contract call & simple transfers | 1 | Pending | |
 | RLP Duplication | 1 | Pending | |
 | Add MIT License | 0 | Pending | |
