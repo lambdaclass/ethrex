@@ -84,6 +84,7 @@ default = ["l2"]
 
 sp1 = ["guest_program/sp1"]
 risc0 = ["guest_program/risc0"]
+zisk = ["guest_program/zisk"]
 
 rocksdb = []
 
