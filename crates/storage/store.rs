@@ -158,7 +158,7 @@ struct ThreadList {
 impl Drop for ThreadList {
     fn drop(&mut self) {
         for handle in self.list.drain(..) {
-            handle.join();
+            let _ = handle.join();
         }
     }
 }
