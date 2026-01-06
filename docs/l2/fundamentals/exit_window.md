@@ -10,7 +10,7 @@ The ethrex L2 stack provides this security functionality through a `Timelock` co
 
 Before understanding how exit windows work, it is necessary to keep in mind which specific functionality of the L1 contracts we need to protect. For this, we recommend reading in advance about the `OnChainProposer` and `CommonBridge` contracts in the [contracts fundamentals section](./contracts.md). To make it simpler, we will initially focus only on the upgrade logic, as the same logic applies to the rest of the modifications.
 
-All our contracts are [`UUPSUpgradeable`](https://docs.openzeppelin.com/contracts/5.x/api/proxy#UUPSUpgradeable) (an upgradeability pattern recommended by OpenZeppelin). In particular, to upgrade this type of contract, the operator must call the `upgradeAndCall` function, which invokes an internal function called `_authorizeUpgrade`. It is recommended to override this function by implementing authorization logic. This is the function we must protect in the case of both contracts, and we do so by “delaying” its execution.
+All our contracts are [`UUPSUpgradeable`](https://docs.openzeppelin.com/contracts/5.x/api/proxy#UUPSUpgradeable) (an upgradeability pattern recommended by OpenZeppelin). In particular, to upgrade this type of contract, the operator must call the `upgradeToAndCall` function, which invokes an internal function called `_authorizeUpgrade`. It is recommended to override this function by implementing authorization logic. This is the function we must protect in the case of both contracts, and we do so by “delaying” its execution.
 
 Currently, the function used to upgrade the contracts is protected by an `onlyOwner` modifier, which verifies that the caller corresponds to the owner of the contract (all L1 contracts but the `Timelock` are [`Ownable2StepUpgradeable`](https://docs.openzeppelin.com/stellar-contracts/access/ownable)), configured during its initialization. In other words, only the owner can call it. Keeping this in mind is important for understanding how we implement the functionality.
 
@@ -37,15 +37,13 @@ As said before, the settlement window must be taken into account to calculate th
 
 ## Who owns the `Timelock`
 
-There's no such thing as a unique owner of the `Timelock` necessarily. `Timelock` is a `TimelockController`, which is also an `AccessControl`, so we can define different roles and assign them to different entities. By "owner" of the `Timelock`, we refer to the account that has the role to update the contract (i.e. the one that can modify the delay).
+There's no such thing as an unique owner of the `Timelock` necessarily. `Timelock` is a `TimelockController`, which is also an `AccessControl`, so we can define different roles and assign them to different entities. By "owner" of the `Timelock`, we refer to the account that has the role to update the contract (i.e. the one that can modify the delay).
 
-This said, whoever owns the `Timelock` decides its functioning. In our stack, the owner of the contract is established during its initialization, and then that owner can transfer the ownership to another account if desired.
-
-Whoever owns the `Timelock` decides its functioning. In our stack, the owner of the contract is established during its initialization, and then that owner can transfer the ownership to another account if desired.
+That said, whoever owns the `Timelock` decides its functioning. In our stack, the owner of the contract is established during its initialization, and then that owner can transfer the ownership to another account if desired.
 
 It's worth noting that the designated security council can execute operations instantly in case of emergencies, so it's crucial that the members are trustworthy and committed to the network's security. The [Stages Framework](https://forum.l2beat.com/t/the-stages-framework/291) recommends that the security council be in the form of a multisig composed of at least 8 people with a consensus threshold of 75%, and the participants in the set need to be decentralized and diverse enough, possibly coming from different companies and jurisdictions.
 
-In the case of our `Timelock`, the owner is not the only one who can act on it. In fact, it is recommended that the security council only act in specific emergencies. The `Timelock` is also AccessControl, which means it has special functionality for managing accesses, in this case, in the form of roles.
+In the case of our `Timelock`, the owner is not the only one who can act on it. In fact, it is recommended that the security council only act in specific emergencies. The `Timelock` is also `AccessControl`, which means it has special functionality for managing accesses, in this case, in the form of roles.
 
 `TimelockController` defines two roles in its business logic: the “proposer” and the “executor.” The first is enabled to schedule operations and cancel them, while the second is enabled to execute them. These roles are assigned to a given set of addresses during the contract’s initialization.
 
