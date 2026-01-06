@@ -203,6 +203,13 @@ impl RocksDBBackend {
     }
 }
 
+impl Drop for RocksDBBackend {
+    fn drop(&mut self) {
+        // See https://github.com/facebook/rocksdb/issues/11349
+        self.db.cancel_all_background_work(true);
+    }
+}
+
 impl StorageBackend for RocksDBBackend {
     fn clear_table(&self, table: &'static str) -> Result<(), StoreError> {
         let cf = self
