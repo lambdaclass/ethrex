@@ -1,6 +1,6 @@
 # Timelock Contract
 
-The Timelock contract gates access to the OnChainProposer (OCP) contract. One can only make changes in the OCP by interacting first with the Timelock, which manages permissions based on roles assigned to different users.
+The Timelock contract gates access to the OnChainProposer (OCP) contract. Changes to the OCP can only be made by first interacting with the Timelock, which manages permissions based on roles assigned to different users.
 
 ## Timelock Roles
 
