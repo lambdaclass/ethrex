@@ -599,7 +599,7 @@ impl Blockchain {
                         }
                     };
                     if value.is_zero() {
-                        trie.remove(&key.as_bytes().to_vec())?;
+                        trie.remove(key.as_bytes())?;
                     } else {
                         trie.insert(key.as_bytes().to_vec(), value.encode_to_vec())?;
                     }
