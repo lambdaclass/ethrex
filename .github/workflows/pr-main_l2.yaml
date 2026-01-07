@@ -2,13 +2,9 @@ name: L2 (without proving)
 on:
   push:
     branches: ["main"]
-    paths-ignore:
-      - "docs/**"
   merge_group:
   pull_request:
     branches: ["**"]
-    paths-ignore:
-      - "docs/**"
   workflow_dispatch:
 
 permissions:
@@ -49,10 +45,14 @@ jobs:
               - "crates/vm/levm/**"
               - ".github/workflows/pr-main_l2.yaml"
               - "cmd/ethrex/l2/**"
+            non_docs:
+              - "!docs/**"
       - name: finish
         id: finish
         run: |
-          if [[ "${GITHUB_EVENT_NAME}" == "merge_group" ]]; then
+          if [[ "${{ steps.filter.outputs.non_docs_count }}" == 0 ]]; then
+              echo "run_tests=false" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_EVENT_NAME}" == "merge_group" ]]; then
               echo "run_tests=false" >> "$GITHUB_OUTPUT"
           elif [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
               echo "run_tests=true" >> "$GITHUB_OUTPUT"
