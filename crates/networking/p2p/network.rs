@@ -4,7 +4,7 @@ use crate::rlpx::l2::l2_connection::P2PBasedContext;
 #[derive(Clone, Debug)]
 pub struct P2PBasedContext;
 use crate::{
-    discv5::server::{DiscoveryServer, DiscoveryServerError},
+    discovery_server::{DiscoveryServer, DiscoveryServerError},
     metrics::METRICS,
     peer_table::{PeerData, PeerTable},
     rlpx::{
