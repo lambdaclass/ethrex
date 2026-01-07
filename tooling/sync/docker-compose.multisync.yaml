@@ -1,14 +1,29 @@
 # Multi-network parallel snapsync
-# Usage:
+#
+# For full documentation, see: tooling/sync/README.md (section "Multi-Network Parallel Snapsync")
+#
+# This file defines 4 networks: hoodi, sepolia, mainnet, and hoodi-2.
+# By default, the Makefile starts only hoodi, sepolia, and mainnet.
+#
+# Usage via Makefile (recommended):
+#   make multisync-loop                    # Start default networks and monitor continuously
+#   make multisync-run                     # Single sync cycle
+#   make multisync-loop MULTISYNC_NETWORKS=hoodi,sepolia  # Custom network subset
+#
+# Direct docker compose usage (starts ALL 4 networks):
 #   docker compose -f docker-compose.multisync.yaml up -d
 #   docker compose -f docker-compose.multisync.yaml logs -f
 #   docker compose -f docker-compose.multisync.yaml down -v
+#
+# To start a subset directly with docker compose:
+#   docker compose -f docker-compose.multisync.yaml up -d ethrex-hoodi consensus-hoodi setup-jwt-hoodi
 #
 # Each network runs in isolation with its own volumes.
 # Host ports are mapped for external RPC access:
 #   hoodi:   localhost:8545
 #   sepolia: localhost:8546
 #   mainnet: localhost:8547
+#   hoodi-2: localhost:8548
 
 x-ethrex-common: &ethrex-common
   image: "ghcr.io/lambdaclass/ethrex:main"
