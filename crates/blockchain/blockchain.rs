@@ -7,7 +7,7 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::{debug, error, info, instrument, trace};
+use ::tracing::{debug, info, instrument, trace};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -1172,11 +1172,11 @@ impl Blockchain {
         let first_blockhash_opcode_number = blockhash_opcode_references.keys().min();
         let first_needed_block_hash = first_blockhash_opcode_number
             .and_then(|n| {
-                (*n < parent_header.number.saturating_sub(1))
+                (*n < block.header.number.saturating_sub(1))
                     .then(|| blockhash_opcode_references.get(n))?
                     .copied()
             })
-            .unwrap_or(parent_header.parent_hash);
+            .unwrap_or(block.header.parent_hash);
 
         let mut current_header = block.header.clone();
 
@@ -1370,7 +1370,7 @@ impl Blockchain {
             block.body.transactions.len(),
         );
 
-        if self.options.generate_witness && self.is_synced() {
+        let result = if self.options.generate_witness && self.is_synced() {
             let block_hash = block.hash();
             let Some(logger) = logger else {
                 return Err(ChainError::Custom(
@@ -1383,21 +1383,15 @@ impl Blockchain {
                 &block,
                 parent_header,
                 &logger,
-                res.clone(),
+                res,
             )?;
-            let _ = self
-                .storage
+            self.storage
                 .store_witness(block_hash, block_number, witness)
-                .inspect_err(|e| {
-                    error!(
-                        %block_hash,
-                        %block_number,
-                        "Failed to store witness for block: {e}. Skipping witness storage."
-                    )
-                });
-        }
-
-        let result = self.store_block(block, account_updates_list, res);
+                .map_err(|e| e.into())
+        } else {
+            // generate_witness_from_account_updates already stores the block
+            self.store_block(block, account_updates_list, res)
+        };
         let stored = Instant::now();
 
         let instants = std::array::from_fn(move |i| {
@@ -1418,6 +1412,7 @@ impl Blockchain {
                 instants,
             );
         }
+
         result
     }
 
