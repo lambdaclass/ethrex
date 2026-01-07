@@ -488,19 +488,25 @@ impl Blockchain {
         ))
     }
 
+    /// EIP-7872: Computes effective max blobs per block.
+    /// Returns min(protocol_max, user_configured_max), with a floor of 1.
+    fn effective_max_blobs(&self, context: &PayloadBuildContext) -> usize {
+        let protocol_max = context
+            .chain_config()
+            .get_fork_blob_schedule(context.payload.header.timestamp)
+            .map(|schedule| schedule.max)
+            .unwrap_or_default();
+        match self.options.max_blobs_per_block {
+            Some(user_max) => protocol_max.min(user_max).max(1) as usize,
+            None => protocol_max as usize,
+        }
+    }
+
     /// Fills the payload with transactions taken from the mempool
     /// Returns the block value
     pub fn fill_transactions(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
         let chain_config = context.chain_config();
-        // EIP-7872: effective max = min(protocol_max, user_configured_max), floor of 1
-        let protocol_max = chain_config
-            .get_fork_blob_schedule(context.payload.header.timestamp)
-            .map(|schedule| schedule.max)
-            .unwrap_or_default();
-        let max_blob_number_per_block = match self.options.max_blobs_per_block {
-            Some(user_max) => protocol_max.min(user_max).max(1),
-            None => protocol_max,
-        } as usize;
+        let max_blob_number_per_block = self.effective_max_blobs(context);
 
         debug!("Fetching transactions from mempool");
         // Fetch mempool transactions
@@ -612,11 +618,7 @@ impl Blockchain {
     ) -> Result<Receipt, ChainError> {
         // Fetch blobs bundle
         let tx_hash = head.tx.hash();
-        let chain_config = context.chain_config();
-        let max_blob_number_per_block = chain_config
-            .get_fork_blob_schedule(context.payload.header.timestamp)
-            .map(|schedule| schedule.max)
-            .unwrap_or_default() as usize;
+        let max_blob_number_per_block = self.effective_max_blobs(context);
         let Some(blobs_bundle) = self.mempool.get_blobs_bundle(tx_hash)? else {
             // No blob tx should enter the mempool without its blobs bundle so this is an internal error
             return Err(
