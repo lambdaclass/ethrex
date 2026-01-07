@@ -137,6 +137,8 @@ def slack_notify(run_id: str, run_count: int, instances: list, hostname: str, br
     try:
         requests.post(url, json={"blocks": blocks}, timeout=10)
     except Exception:
+        # Slack notification failures are non-critical; ignore them so they
+        # do not interfere with the main monitoring workflow.
         pass
 
 
@@ -414,7 +416,8 @@ def main():
                     run_id = generate_run_id()  # New run ID for the new cycle
                     time.sleep(30)  # Wait for containers to start
                 else:
-                    sys.exit("❌ Failed to restart containers")
+                    print("❌ Failed to restart containers", file=sys.stderr)
+                    sys.exit(1)
             else:
                 # On failure: containers are NOT stopped, you can inspect the DB
                 print("\n" + "="*60)
