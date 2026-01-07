@@ -2,8 +2,12 @@ name: L2 Prover
 on:
   push:
     branches: ["main"]
+    paths-ignore:
+      - "docs/**"
   pull_request:
     branches: ["**"]
+    paths-ignore:
+      - "docs/**"
   workflow_dispatch:
 
 permissions:
