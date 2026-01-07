@@ -19,11 +19,6 @@ use crate::{
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 #[cfg(not(feature = "rocksdb"))]
 use ethrex_common::U256;
-#[cfg(not(feature = "rocksdb"))]
-use ethrex_rlp::encode::RLPEncode;
-#[cfg(feature = "rocksdb")]
-use ethrex_trie::Trie;
-
 use ethrex_common::types::Code;
 use ethrex_common::{
     H256,
@@ -32,6 +27,8 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
+#[cfg(feature = "rocksdb")]
+use ethrex_trie::Trie;
 use ethrex_trie::TrieError;
 use ethrex_trie::trie_sorted::TrieGenerationError;
 use rayon::iter::{ParallelBridge, ParallelIterator};
@@ -875,10 +872,7 @@ impl Syncer {
         store.generate_flatkeyvalue()?;
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
-        debug_assert!(validate_storage_root(
-            store.clone(),
-            pivot_header.state_root
-        ));
+        debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
 
         info!("Finished healing");
 
@@ -996,6 +990,9 @@ impl Syncer {
         Ok(())
     }
 }
+
+#[cfg(not(feature = "rocksdb"))]
+use ethrex_rlp::encode::RLPEncode;
 
 #[cfg(not(feature = "rocksdb"))]
 type StorageRoots = (H256, Vec<(ethrex_trie::Nibbles, Vec<u8>)>);
@@ -1234,23 +1231,32 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
         info!("Succesfully validated tree, {state_root} found");
     } else {
         error!("We have failed the validation of the state tree");
+        std::process::exit(1);
     }
     validated.is_ok()
 }
 
-pub fn validate_storage_root(store: Store, state_root: H256) -> bool {
+pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     info!("Starting validate_storage_root");
-    let is_valid = store
-        .iter_accounts(state_root)
-        .expect("couldn't iterate accounts")
-        .par_bridge()
-        .try_for_each(|(hashed_address, account_state)| {
-            let store_clone = store.clone();
-            store_clone
-                .open_locked_storage_trie(hashed_address, state_root, account_state.storage_root)
-                .expect("couldn't open storage trie")
-                .validate()
-        });
+    let is_valid = tokio::task::spawn_blocking(move || {
+        store
+            .iter_accounts(state_root)
+            .expect("couldn't iterate accounts")
+            .par_bridge()
+            .try_for_each(|(hashed_address, account_state)| {
+                let store_clone = store.clone();
+                store_clone
+                    .open_locked_storage_trie(
+                        hashed_address,
+                        state_root,
+                        account_state.storage_root,
+                    )
+                    .expect("couldn't open storage trie")
+                    .validate()
+            })
+    })
+    .await
+    .expect("We should be able to create threads");
     info!("Finished validate_storage_root");
     if is_valid.is_err() {
         std::process::exit(1);
