@@ -1053,7 +1053,10 @@ fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, Depl
     if !required_type {
         Ok(Bytes::new())
     } else if let Some(vk_path) = vk_path {
-        read_vk(vk_path)
+        match prover_type {
+            ProverType::ZisK => read_vk_raw(vk_path),
+            _ => read_vk_hex(vk_path),
+        }
     } else {
         info!(?prover_type, "Using vk from local repo");
         let vk_path = {
@@ -1085,20 +1088,31 @@ fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, Depl
             };
             std::fs::canonicalize(path)?
         };
-        read_vk(
-            vk_path
-                .to_str()
-                .ok_or(DeployerError::FailedToGetStringFromPath)?,
-        )
+        let vk_path = vk_path
+            .to_str()
+            .ok_or(DeployerError::FailedToGetStringFromPath)?;
+        match prover_type {
+            ProverType::ZisK => read_vk_raw(vk_path),
+            _ => read_vk_hex(vk_path),
+        }
     }
 }
 
-fn read_vk(path: &str) -> Result<Bytes, DeployerError> {
-    let string = std::fs::read_to_string(path)?;
-    let trimmed = string.trim_start_matches("0x").trim();
-    let decoded = hex::decode(trimmed)
-        .map_err(|_| DeployerError::InternalError("failed to decode vk".to_string()))?;
-    Ok(Bytes::from(decoded))
+fn read_vk_hex(path: &str) -> Result<Bytes, DeployerError> {
+    match std::fs::read_to_string(path) {
+        Ok(string) => {
+            let trimmed = string.trim_start_matches("0x").trim();
+            let decoded = hex::decode(trimmed)
+                .map_err(|_| DeployerError::InternalError("failed to decode vk".to_string()))?;
+            Ok(Bytes::from(decoded))
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn read_vk_raw(path: &str) -> Result<Bytes, DeployerError> {
+    let bytes = std::fs::read(path)?;
+    Ok(Bytes::from(bytes))
 }
 
 async fn initialize_contracts(
