@@ -86,18 +86,25 @@ pub struct NodeCountMismatchData {
 
 impl std::fmt::Display for NodeCountMismatchData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mismatch = if self.expected_count > 0 {
+            format!("Expected {} more node(s)", self.expected_count)
+        } else {
+            format!("Found {} unexpected node(s)", self.expected_count.abs())
+        };
+        let node_type = self
+            .last_node_type
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let hash = self
+            .last_node_hash
+            .as_ref()
+            .map(|h| format!("{:#x}", h))
+            .unwrap_or_else(|| "unknown".to_string());
+
         write!(
             f,
             "{}. Traversed {} nodes. Last valid node: {} at path {:?} (hash: {})",
-            if self.expected_count > 0 {
-                format!("Expected {} more node(s)", self.expected_count)
-            } else {
-                format!("Found {} unexpected node(s)", self.expected_count.abs())
-            },
-            self.nodes_traversed,
-            self.last_node_type.map(|t| t.to_string()).unwrap_or_else(|| "unknown".to_string()),
-            self.last_valid_path,
-            self.last_node_hash.as_ref().map(|h| format!("{:#x}", h)).unwrap_or_else(|| "unknown".to_string())
+            mismatch, self.nodes_traversed, node_type, self.last_valid_path, hash
         )
     }
 }

@@ -592,7 +592,7 @@ impl Trie {
                     last_node_type,
                     nodes_traversed,
                     last_node_hash,
-                })
+                }),
             )));
         }
         Ok(())
