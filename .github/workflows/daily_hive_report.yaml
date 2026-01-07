@@ -125,10 +125,6 @@ jobs:
             FLAGS+=" --sim.buildarg branch=d08382ae5c808680e976fce4b73f4ba91647199b"
           fi
 
-          if [[ "$SIMULATION" == "ethereum/engine" ]]; then
-            FLAGS+=" --sim.buildarg branch=73fb4440b1fe4b362bf66e6278ec7d46b254f362"
-          fi
-
           if [[ -n "$SIM_LIMIT" ]]; then
             FLAGS+=" --sim.limit \"$SIM_LIMIT\""
           fi
