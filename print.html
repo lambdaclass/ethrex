@@ -13595,36 +13595,114 @@ docker push ghcr.io/lambdaclass/ethrex:l2
 }
 
 </style>
-<h1 id="roadmap-1"><a class="header" href="#roadmap-1">Roadmap</a></h1>
-<p>This project is under active development. Over the next <strong>two months</strong>, our <strong>primary objective is to finalize and audit the first version of the stack</strong>.
-This means every component — from L1 syncing to L2 bridging and prover integration — must meet stability, performance, and security standards.</p>
-<p>The roadmap below outlines the remaining work required to achieve this milestone, organized into three major areas: <strong>L2</strong>, <strong>DevOps &amp; Performance</strong>, and <strong>L1</strong>.</p>
+<h1 id="short-to-mid-term-roadmap"><a class="header" href="#short-to-mid-term-roadmap">Short– to Mid-Term Roadmap</a></h1>
+<p>This document represents the <strong>short- to mid-term roadmap</strong>.
+Items listed here are actionable, concrete, and intended to be worked on in the coming weeks.
+Long-term research directions and second-order ideas are intentionally out of scope.</p>
+<p><strong>Priority reflects relative urgency, not effort.</strong></p>
+<p>This is a WIP document and it requires better descriptions; it's supposed to be used internally.</p>
 <hr />
-<h2 id="l2-roadmap"><a class="header" href="#l2-roadmap">L2 Roadmap</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Feature</th><th>Description</th><th>Status</th></tr></thead><tbody>
-<tr><td>Based Sequencing</td><td>Launch the rollup as a based permissionless rollup. Leverages Ethereum for sequencing and DA. For more information check <a href="https://hackmd.io/TCa-bQisToW46enF58_3Vw?view">ethrex roadmap for becoming based</a></td><td>In Progress</td></tr>
-<tr><td>Battle-Test the Prover</td><td>Ensure the prover (e.g., SP1, Risc0) is robust, correct, and performant under production-level  conditions.</td><td>In Progress</td></tr>
-<tr><td>One-Click L2 Deployment</td><td>Deploy a fully operational rollup with a single command. Includes TDX, Prover, integrated Grafana metrics, alerting system, block explorer, bridge hub, backups and default configuration for rapid developer spin-up.</td><td>In Progress</td></tr>
-<tr><td>Validiums &amp; DACs</td><td>Enhance Validium mode with Data Availability Committees.</td><td>Planned</td></tr>
-<tr><td>Synchronous Composability</td><td>Enable real-time, direct calls between L1 and L2 smart contracts in a single transaction, as if on the same layer.</td><td>In Progress</td></tr>
+<h2 id="priority-legend"><a class="header" href="#priority-legend">Priority Legend</a></h2>
+<div class="table-wrapper"><table><thead><tr><th style="text-align: right">Priority</th><th>Meaning</th></tr></thead><tbody>
+<tr><td style="text-align: right">0</td><td>Highest priority, low effort with potential win</td></tr>
+<tr><td style="text-align: right">1</td><td>High. Should be addressed soon</td></tr>
+<tr><td style="text-align: right">2</td><td>Medium. Important but not blocking</td></tr>
+<tr><td style="text-align: right">3</td><td>Low. Useful improvement</td></tr>
+<tr><td style="text-align: right">4</td><td>Very low. Nice to have</td></tr>
+<tr><td style="text-align: right">5</td><td>Deprioritized for now</td></tr>
+<tr><td style="text-align: right">6</td><td>Long tail / hygiene</td></tr>
+<tr><td style="text-align: right">—</td><td>Not yet prioritized</td></tr>
 </tbody></table>
 </div>
 <hr />
-<h2 id="devops--performance"><a class="header" href="#devops--performance">DevOps &amp; Performance</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Initiative</th><th>Description</th><th>Status</th></tr></thead><tbody>
-<tr><td>Performance Benchmarking</td><td>Continuous <code>ggas/s</code> measurement, client comparison, and reproducible load tests.</td><td>In Progress</td></tr>
-<tr><td>DB Optimizations</td><td>Snapshots, background trie commits, parallel Merkle root calculation, and exploratory DB design.</td><td>In Progress</td></tr>
-<tr><td>EVM Profiling</td><td>Identify and optimize execution bottlenecks in the VM.</td><td>In Progress</td></tr>
-<tr><td>Deployment &amp; Dev Experience</td><td>One-command L2 launch, localnet spam testing, and L1 syncing on any network.</td><td>In Progress</td></tr>
+<h2 id="execution"><a class="header" href="#execution">Execution</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Item</th><th>Priority</th><th>Status</th><th>Description</th></tr></thead><tbody>
+<tr><td>Replace BTreeMap with FxHashMap</td><td>0</td><td>In Progress</td><td>Replace BTreeMap/BTreeSet with FxHashMap/FxHashSet</td></tr>
+<tr><td>Skip Zero-Initialization in Memory Resize</td><td>0</td><td>Pending</td><td>Use unsafe set_len (EVM spec says expanded memory is zero)</td></tr>
+<tr><td>Remove RefCell from Memory</td><td>0</td><td>Pending</td><td>Consider using UnsafeCell with manual safety guarantees, or restructure to avoid shared ownership.</td></tr>
+<tr><td>Try out PEVM</td><td>0</td><td>In Progress</td><td>Benchmark again against pevm</td></tr>
+<tr><td>Inline Hot Opcodes</td><td>0</td><td>In Progress</td><td>Opcodes call a function in a jump table when some of the most used ones could perform better being inlined instead</td></tr>
+<tr><td>Test ECPairing libraries</td><td>0</td><td>Pending</td><td>Benchmark arkworks pairing in levm</td></tr>
+<tr><td>PGO/BOLT</td><td>0</td><td>Pending</td><td>Try out both <a href="https://doc.rust-lang.org/beta/rustc/profile-guided-optimization.html">PGO</a> and <a href="https://github.com/llvm/llvm-project/tree/main/bolt">BOLT</a> to see if we can improve perf</td></tr>
+<tr><td>Use an arena allocator for substate tracking</td><td>0</td><td>Pending</td><td>Substates are currently a linked list allocated through boxing. Consider using an arena allocator (e.g. bumpalo) for them</td></tr>
+<tr><td>ruint</td><td>0</td><td>Pending</td><td>Try out <a href="https://github.com/recmo/uint">ruint</a> as the <code>U256</code> library to see if it improves performance. Part of SIMD initiative</td></tr>
+<tr><td>Nibbles</td><td>1</td><td>Pending</td><td>Nibbles are currently stored as a byte (<code>u8</code>), when they could be stored compactly as actual nibbles in memory and reduce by half their representation size</td></tr>
+<tr><td>RLP Duplication</td><td>1</td><td>Pending</td><td>Check whether we are encoding/decoding something twice (clearly unnecessary)</td></tr>
+<tr><td>Object pooling</td><td>2</td><td>Pending</td><td>Reuse EVM stack frames to reduce allocations and improve performance</td></tr>
+<tr><td>Avoid clones in hot path</td><td>2</td><td>Pending</td><td>Avoid Clone on Account Load and check rest of the hot path</td></tr>
+<tr><td>SIMD Everywhere</td><td>2</td><td>Pending</td><td>There are some libraries that can be replaced by others that use SIMD instructions for better performance</td></tr>
 </tbody></table>
 </div>
 <hr />
-<h2 id="l1-roadmap"><a class="header" href="#l1-roadmap">L1 Roadmap</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Feature</th><th>Description</th><th>Status</th></tr></thead><tbody>
-<tr><td>P2P Improvements</td><td>Use <a href="https://github.com/lambdaclass/spawned">spawned</a> to improve peer discovery, sync reliability, and connection handling.</td><td>In Progress</td></tr>
-<tr><td>Chain Syncing</td><td>Verify the execution of all blocks across all chains. For Proof-of-Stake (PoS) chains (Holesky, Hoodi), verify all blocks since genesis. For chains with a pre-Merge genesis (Sepolia, Mainnet), verify all blocks after the Merge.</td><td>In Progress</td></tr>
-<tr><td>Snap Sync</td><td>Improve Snap Sync implementation to make it more reliable and efficient.</td><td>Planned</td></tr>
-<tr><td>Client Stability</td><td>Increase client resilience to adverse scenarios and network disruptions. Improve observability and logging.</td><td>Planned</td></tr>
+<h2 id="io"><a class="header" href="#io">IO</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Item</th><th>Priority</th><th>Status</th><th>Description</th></tr></thead><tbody>
+<tr><td>Add Block Cache (RocksDB)</td><td>0</td><td>Pending</td><td>Currently there is no explicit block cache, relying on OS page cache. Also try row cache</td></tr>
+<tr><td>Use Two-Level Index (RocksDB)</td><td>0</td><td>Pending</td><td>Use Two-Level Index with Partitioned Filters</td></tr>
+<tr><td>Enable unordered writes for State (RocksDB)</td><td>0</td><td>Pending</td><td>For <code>ACCOUNT_TRIE_NODES, STORAGE_TRIE_NODES cf_opts.set_unordered_write(true);</code> Faster writes when we don't need strict ordering</td></tr>
+<tr><td>Increase Bloom Filter (RocksDB)</td><td>0</td><td>Pending</td><td>Change and benchmark higher bits per key for state tables</td></tr>
+<tr><td>Consider LZ4 for State Tables (RocksDB)</td><td>0</td><td>Pending</td><td>Trades CPU for smaller DB and potentially better cache utilization</td></tr>
+<tr><td>Add Read-Ahead for Sequential Scans (RocksDB)</td><td>0</td><td>Pending</td><td>Use for trie iteration, sync operations</td></tr>
+<tr><td>Optimize for Point Lookups (RocksDB)</td><td>0</td><td>Pending</td><td>Adds hash index inside FlatKeyValue for faster point lookups</td></tr>
+<tr><td>Modify block size (RocksDB)</td><td>0</td><td>Pending</td><td>Benchmark different block size configurations</td></tr>
+<tr><td>Memory-Mapped Reads (RocksDB)</td><td>0</td><td>Pending</td><td>Can be an improvement on high-RAM systems</td></tr>
+<tr><td>Increase layers commit threshold</td><td>0</td><td>Pending</td><td>For read-heavy workloads with plenty of RAM</td></tr>
+<tr><td>Remove locks</td><td>1</td><td>Pending</td><td>Check if there are still some unnecessary locks, e.g. in the VM we have one</td></tr>
+<tr><td>Benchmark bloom filter</td><td>1</td><td>Pending</td><td>Review trie layer's bloom filter, remove it or test other libraries/configurations</td></tr>
+<tr><td>Use multiget on trie traversal</td><td>1</td><td>Pending</td><td>Using multiget on trie traversal might reduce read time</td></tr>
+<tr><td>Spawned</td><td>3</td><td>Pending</td><td><a href="https://github.com/lambdaclass/spawned"><em>Spawnify</em></a> io intensive components/flows. Mempool and Snapsync are top priorities</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="zk--l2"><a class="header" href="#zk--l2">ZK + L2</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Item</th><th>Priority</th><th>Status</th><th>Description</th></tr></thead><tbody>
+<tr><td>ZK API</td><td>1</td><td>Pending</td><td>Improve prover API to unify multiple backends</td></tr>
+<tr><td>Native Rollups</td><td>2</td><td>Pending</td><td>Add EXEC Precompile POC</td></tr>
+<tr><td>Based Rollups</td><td>2</td><td>Pending</td><td><a href="https://docs.ethrex.xyz/l2/roadmap.html">Based Rollups Roadmap</a></td></tr>
+<tr><td>Zisk</td><td>2</td><td>In Progress</td><td>Integrate full Zisk Proving on the L2</td></tr>
+<tr><td>zkVMs</td><td>2</td><td>In Progress</td><td>Make GuestProgramState more strict when information is missing</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="snapsync"><a class="header" href="#snapsync">SnapSync</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Item</th><th>Priority</th><th>Status</th><th>Description</th></tr></thead><tbody>
+<tr><td>Download receipts and blocks</td><td>1</td><td>Pending</td><td>After snap sync is finished and the node is executing blocks, it should download all historical blocks and receipts in the background</td></tr>
+<tr><td>Download headers in background (no rewrite)</td><td>1</td><td>Pending</td><td>Download headers in background</td></tr>
+<tr><td>Avoid copying trie leaves when inserting (no rewrite)</td><td>1</td><td>Pending</td><td>Avoid copying trie leaves when inserting</td></tr>
+<tr><td>Rewrite snapsync</td><td>4</td><td>Pending</td><td>Use Spawned for snapsync</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="ux--dx"><a class="header" href="#ux--dx">UX / DX</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Item</th><th>Priority</th><th>Status</th><th>Description</th></tr></thead><tbody>
+<tr><td>Improve internal documentation</td><td>0</td><td>In Progress</td><td>Improve internal docs for developers, add architecture</td></tr>
+<tr><td>geth db migration tooling</td><td>0</td><td>In Progress</td><td>As we don't support pre-merge blocks we need a tool to migrate other client's DB to ours at a specific block</td></tr>
+<tr><td>Add MIT License</td><td>0</td><td>Pending</td><td>Add dual license</td></tr>
+<tr><td>Add Tests</td><td>1</td><td>In Progress</td><td>Improve coverage</td></tr>
+<tr><td>Add Fuzzing</td><td>1</td><td>In Progress</td><td>Add basic fuzzing scenarios</td></tr>
+<tr><td>Add Prop test</td><td>1</td><td>In Progress</td><td>Add basic property testing scenarios</td></tr>
+<tr><td>Add security runs to CI</td><td>1</td><td>In Progress</td><td>Add fuzzing and every security tool we have to the CI</td></tr>
+<tr><td>CLI Documentation</td><td>1</td><td>Pending</td><td>Review CLI docs and flags</td></tr>
+<tr><td>API Documentation</td><td>1</td><td>Pending</td><td>Add API documentation to docs. Add compliance matrix</td></tr>
+<tr><td>IPv6 support</td><td>1</td><td>Pending</td><td>IPv6 is not fully supported</td></tr>
+<tr><td>P2P leechers</td><td>1</td><td>Pending</td><td>Improve scoring heuristic and kick leechers</td></tr>
+<tr><td>Custom Deterministic Benchmark</td><td>1</td><td>In Progress</td><td>We have a tool to run certain mainnet blocks, integrate that tool into our pipeline for benchmarking (not easy with DB changes)</td></tr>
+<tr><td>Benchmark contract call &amp; simple transfers</td><td>1</td><td>Pending</td><td>Create a new benchmark with contract call &amp; simple transfers</td></tr>
+<tr><td>Improve Error handling</td><td>1</td><td>In Progress</td><td>Avoid panic, unwrap and expect</td></tr>
+<tr><td>Websocket subscriptions</td><td>2</td><td>Pending</td><td>Add subscription support for websocket</td></tr>
+<tr><td>Not allow empty blocks in dev mode</td><td>2</td><td>Pending</td><td>For L2 development it's useful not to have empty blocks</td></tr>
+<tr><td>P2P rate limiting</td><td>3</td><td>Pending</td><td>Improve scoring heuristic and DDoS protection</td></tr>
+<tr><td>Migrations</td><td>4</td><td>Pending</td><td>Add DB Migration mechanism for ethrex upgrades</td></tr>
+<tr><td>No STD</td><td>5</td><td>Pending</td><td>Support WASM target for some crates related to proving and execution. Useful for dApp builders and light clients</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="new-features"><a class="header" href="#new-features">New Features</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Item</th><th>Priority</th><th>Status</th><th>Description</th></tr></thead><tbody>
+<tr><td>Block-Level Access Lists</td><td>2</td><td>In Progress</td><td>Implement <a href="https://eips.ethereum.org/EIPS/eip-7928">EIP-7928</a></td></tr>
+<tr><td>Disc V5</td><td>2</td><td>In Progress</td><td>Add discV5 Support</td></tr>
+<tr><td>Sparse Blobpool</td><td>—</td><td>Pending</td><td>Implement <a href="https://eips.ethereum.org/EIPS/eip-8070">EIP-8070</a></td></tr>
+<tr><td>Pre merge blocks</td><td>—</td><td>Pending</td><td>Be able to process pre merge blocks</td></tr>
+<tr><td>Archive node</td><td>—</td><td>Pending</td><td>Allow archive node mode</td></tr>
 </tbody></table>
 </div><div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
