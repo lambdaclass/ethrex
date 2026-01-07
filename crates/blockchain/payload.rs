@@ -492,10 +492,15 @@ impl Blockchain {
     /// Returns the block value
     pub fn fill_transactions(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
         let chain_config = context.chain_config();
-        let max_blob_number_per_block = chain_config
+        // EIP-7872: effective max = min(protocol_max, user_configured_max), floor of 1
+        let protocol_max = chain_config
             .get_fork_blob_schedule(context.payload.header.timestamp)
             .map(|schedule| schedule.max)
-            .unwrap_or_default() as usize;
+            .unwrap_or_default();
+        let max_blob_number_per_block = match self.options.max_blobs_per_block {
+            Some(user_max) => protocol_max.min(user_max).max(1),
+            None => protocol_max,
+        } as usize;
 
         debug!("Fetching transactions from mempool");
         // Fetch mempool transactions

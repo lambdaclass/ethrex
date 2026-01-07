@@ -280,6 +280,13 @@ pub struct Options {
         help_heading = "Block building options"
     )]
     pub gas_limit: u64,
+    #[arg(
+        long = "builder.max-blobs",
+        value_name = "MAX_BLOBS",
+        help = "EIP-7872: Maximum blobs per block for local building. Defaults to protocol max.",
+        help_heading = "Block building options"
+    )]
+    pub max_blobs_per_block: Option<u32>,
 }
 
 impl Options {
@@ -355,6 +362,7 @@ impl Default for Options {
             lookup_interval: Default::default(),
             extra_data: get_minimal_client_version(),
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
+            max_blobs_per_block: None,
         }
     }
 }
