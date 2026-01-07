@@ -39,8 +39,8 @@ This is a WIP document and it requires better descriptions, it's supposed to be 
 | Avoid clones in hot path | 2 | Pending | Avoid Clone on Account Load |
 | Pairing | 0 | Pending | benchmark arkworks pairing|
 |  SIMD Everywhere | 2 | Pending | |
-| PGO/BOLT | 0 | Pending | |
-| Arena substrate | 1 | Pending | |
+| PGO/BOLT | 0 | Pending | Try out both [PGO](https://doc.rust-lang.org/beta/rustc/profile-guided-optimization.html) and [BOLT](https://github.com/llvm/llvm-project/tree/main/bolt) to see if we can improve perf |
+| Remove levm's substrate backups | 0 | Pending | Substrate backups are no longer used, they can be removed  |
 | Nibbles | 1 | Pending | |
 | ruint | 0 | Pending | |
 
