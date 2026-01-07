@@ -1405,9 +1405,9 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        let hashed_address = hash_address(&address);
+        let hashed_address = hash_address_fixed(&address);
 
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+        let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
 
@@ -1427,7 +1427,7 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        let Some(encoded_state) = state_trie.get(&account_hash.to_fixed_bytes().to_vec())? else {
+        let Some(encoded_state) = state_trie.get(account_hash.as_bytes())? else {
             return Ok(None);
         };
         let account_state = AccountState::decode(&encoded_state)?;
@@ -1460,8 +1460,8 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+        let hashed_address = hash_address_fixed(&address);
+        let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
         let account_state = AccountState::decode(&encoded_state)?;
@@ -1479,8 +1479,8 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+        let hashed_address = hash_address_fixed(&address);
+        let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
         let account_state = AccountState::decode(&encoded_state)?;
@@ -1513,15 +1513,15 @@ impl Store {
         let mut code_updates = Vec::new();
         let state_root = state_trie.hash_no_commit();
         for update in account_updates {
-            let hashed_address = hash_address(&update.address);
+            let hashed_address = hash_address_fixed(&update.address);
             if update.removed {
                 // Remove account from trie
-                state_trie.remove(&hashed_address)?;
+                state_trie.remove(hashed_address.as_bytes())?;
                 continue;
             }
             // Add or update AccountState in the trie
             // Fetch current state or create a new state to be inserted
-            let mut account_state = match state_trie.get(&hashed_address)? {
+            let mut account_state = match state_trie.get(hashed_address.as_bytes())? {
                 Some(encoded_state) => AccountState::decode(&encoded_state)?,
                 None => AccountState::default(),
             };
@@ -1539,11 +1539,8 @@ impl Store {
             }
             // Store the added storage in the account's storage trie and compute its new root
             if !update.added_storage.is_empty() {
-                let mut storage_trie = self.open_storage_trie(
-                    H256::from_slice(&hashed_address),
-                    state_root,
-                    account_state.storage_root,
-                )?;
+                let mut storage_trie =
+                    self.open_storage_trie(hashed_address, state_root, account_state.storage_root)?;
                 for (storage_key, storage_value) in &update.added_storage {
                     let hashed_key = hash_key(storage_key);
                     if storage_value.is_zero() {
@@ -1555,9 +1552,12 @@ impl Store {
                 let (storage_hash, storage_updates) =
                     storage_trie.collect_changes_since_last_hash();
                 account_state.storage_root = storage_hash;
-                ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
+                ret_storage_updates.push((hashed_address, storage_updates));
             }
-            state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+            state_trie.insert(
+                hashed_address.as_bytes().to_vec(),
+                account_state.encode_to_vec(),
+            )?;
         }
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
 
@@ -1804,14 +1804,13 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        let hashed_address = hash_address(&address);
-        let account_hash = H256::from_slice(&hashed_address);
+        let account_hash = hash_address_fixed(&address);
         let storage_root = if self.flatkeyvalue_computed(account_hash)? {
             // We will use FKVs, we don't need the root
             *EMPTY_TRIE_HASH
         } else {
             let state_trie = self.open_state_trie(state_root)?;
-            let Some(encoded_account) = state_trie.get(&hashed_address)? else {
+            let Some(encoded_account) = state_trie.get(account_hash.as_bytes())? else {
                 return Ok(None);
             };
             let account = AccountState::decode(&encoded_account)?;
@@ -1819,7 +1818,7 @@ impl Store {
         };
         let storage_trie = self.open_storage_trie(account_hash, state_root, storage_root)?;
 
-        let hashed_key = hash_key(&storage_key);
+        let hashed_key = hash_key_fixed(&storage_key);
         storage_trie
             .get(&hashed_key)?
             .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
@@ -1884,15 +1883,15 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        let hashed_address = hash_address(&address);
-        let Some(encoded_account) = state_trie.get(&hashed_address)? else {
+        let hashed_address = hash_address_fixed(&address);
+        let Some(encoded_account) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
         let account = AccountState::decode(&encoded_account)?;
         // Open storage_trie
         let storage_root = account.storage_root;
         Ok(Some(self.open_storage_trie(
-            H256::from_slice(&hashed_address),
+            hashed_address,
             header.state_root,
             storage_root,
         )?))
@@ -1926,8 +1925,8 @@ impl Store {
         state_trie: &Trie,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
-        let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+        let hashed_address = hash_address_fixed(&address);
+        let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
         Ok(Some(AccountState::decode(&encoded_state)?))
@@ -1948,11 +1947,10 @@ impl Store {
         //     return Ok(None);
         // };
         let state_trie = self.open_state_trie(state_root)?;
-        let hashed_address = hash_address_fixed(&address);
-        let address_path = hashed_address.0.to_vec();
-        let proof = state_trie.get_proof(&address_path)?;
+        let address_path = hash_address_fixed(&address);
+        let proof = state_trie.get_proof(address_path.as_bytes())?;
         let account_opt = state_trie
-            .get(&address_path)?
+            .get(address_path.as_bytes())?
             .map(|encoded_state| AccountState::decode(&encoded_state))
             .transpose()?;
 
@@ -1960,7 +1958,7 @@ impl Store {
 
         if let Some(account) = &account_opt {
             let storage_trie =
-                self.open_storage_trie(hashed_address, state_root, account.storage_root)?;
+                self.open_storage_trie(address_path, state_root, account.storage_root)?;
 
             for key in storage_keys {
                 let hashed_key = hash_key(key);
@@ -2026,7 +2024,7 @@ impl Store {
         starting_slot: H256,
     ) -> Result<Option<impl Iterator<Item = (H256, U256)>>, StoreError> {
         let state_trie = self.open_locked_state_trie(state_root)?;
-        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
+        let Some(account_rlp) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
         let storage_root = AccountState::decode(&account_rlp)?.storage_root;
@@ -2056,9 +2054,9 @@ impl Store {
         last_hash: Option<H256>,
     ) -> Result<Vec<Vec<u8>>, StoreError> {
         let state_trie = self.open_state_trie(state_root)?;
-        let mut proof = state_trie.get_proof(&starting_hash.as_bytes().to_vec())?;
+        let mut proof = state_trie.get_proof(starting_hash.as_bytes())?;
         if let Some(last_hash) = last_hash {
-            proof.extend_from_slice(&state_trie.get_proof(&last_hash.as_bytes().to_vec())?);
+            proof.extend_from_slice(&state_trie.get_proof(last_hash.as_bytes())?);
         }
         Ok(proof)
     }
@@ -2071,14 +2069,14 @@ impl Store {
         last_hash: Option<H256>,
     ) -> Result<Option<Vec<Vec<u8>>>, StoreError> {
         let state_trie = self.open_state_trie(state_root)?;
-        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
+        let Some(account_rlp) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
         let storage_root = AccountState::decode(&account_rlp)?.storage_root;
         let storage_trie = self.open_storage_trie(hashed_address, state_root, storage_root)?;
-        let mut proof = storage_trie.get_proof(&starting_hash.as_bytes().to_vec())?;
+        let mut proof = storage_trie.get_proof(starting_hash.as_bytes())?;
         if let Some(last_hash) = last_hash {
-            proof.extend_from_slice(&storage_trie.get_proof(&last_hash.as_bytes().to_vec())?);
+            proof.extend_from_slice(&storage_trie.get_proof(last_hash.as_bytes())?);
         }
         Ok(Some(proof))
     }
@@ -2699,6 +2697,10 @@ fn hash_address_fixed(address: &Address) -> H256 {
 
 pub fn hash_key(key: &H256) -> Vec<u8> {
     keccak_hash(key.to_fixed_bytes()).to_vec()
+}
+
+pub fn hash_key_fixed(key: &H256) -> [u8; 32] {
+    keccak_hash(key.to_fixed_bytes())
 }
 
 fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {
