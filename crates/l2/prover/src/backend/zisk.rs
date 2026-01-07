@@ -9,6 +9,10 @@ use std::{
 const INPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_input.bin");
 const OUTPUT_DIR_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output");
 const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zkvm-zisk-program");
+const ZISK_VK_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/src/guest_program/src/zisk/out/riscv64ima-zisk-vk"
+);
 
 pub struct ProveOutput {
     pub proof: Vec<u8>,
@@ -136,10 +140,11 @@ pub fn prove(
         }
         let proof_bytes = std::fs::read(format!("{OUTPUT_DIR_PATH}/final_snark_proof.bin"))?;
         let publics_bytes = std::fs::read(format!("{OUTPUT_DIR_PATH}/final_snark_publics.bin"))?;
+        let vk = std::fs::read(ZISK_VK_PATH)?;
         Ok(ProveOutput {
             proof: proof_bytes,
             publics: publics_bytes,
-            vk: vec![],
+            vk,
         })
     } else {
         let proof_bytes = std::fs::read(path_to_proof)?;
