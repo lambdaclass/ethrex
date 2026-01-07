@@ -98,7 +98,7 @@ impl Trie {
     }
 
     /// Retrieve an RLP-encoded value from the trie given its RLP-encoded path.
-    pub fn get(&self, pathrlp: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn get(&self, pathrlp: &[u8]) -> Result<Option<ValueRLP>, TrieError> {
         let path = Nibbles::from_bytes(pathrlp);
 
         if !self.dirty.contains(&path) && self.db().flatkeyvalue_computed(path.clone()) {
@@ -151,7 +151,7 @@ impl Trie {
 
     /// Remove a value from the trie given its RLP-encoded path.
     /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
-    pub fn remove(&mut self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn remove(&mut self, path: &[u8]) -> Result<Option<ValueRLP>, TrieError> {
         self.dirty.insert(Nibbles::from_bytes(path));
         if !self.root.is_valid() {
             return Ok(None);
@@ -252,7 +252,7 @@ impl Trie {
     /// Note: This method has a different behavior in regard to non-existent trie root nodes. Normal
     ///   behavior is to return `Err(InconsistentTrie)`, but this method will return
     ///   `Ok(Vec::new())` instead.
-    pub fn get_proof(&self, path: &PathRLP) -> Result<Vec<NodeRLP>, TrieError> {
+    pub fn get_proof(&self, path: &[u8]) -> Result<Vec<NodeRLP>, TrieError> {
         if self.root.is_valid() {
             let hash = self.root.compute_hash();
 
@@ -528,6 +528,38 @@ impl Trie {
         trie.root = root;
         trie
     }
+
+    /// Validates that the Trie isn't missing any nodes expected in the branches
+    ///
+    /// This is used internally with debug assertions to check the status of the trie
+    /// after syncing operations.
+    /// Note: this operation validates the hashes because the iterator uses
+    /// get_node_checked. We shouldn't downgrade that to the unchecked version
+    pub fn validate(self) -> Result<(), TrieError> {
+        let mut expected_count = if self.root.is_valid() { 1 } else { 0 };
+        for (_, node) in self.into_iter() {
+            expected_count -= 1;
+            match node {
+                Node::Branch(branch_node) => {
+                    expected_count += branch_node
+                        .choices
+                        .iter()
+                        .filter(|child| child.is_valid())
+                        .count();
+                }
+                Node::Extension(_) => {
+                    expected_count += 1;
+                }
+                Node::Leaf(_) => {}
+            }
+        }
+        if expected_count != 0 {
+            return Err(TrieError::Verify(format!(
+                "Node count mismatch, expected {expected_count} more"
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl IntoIterator for Trie {
@@ -578,6 +610,7 @@ impl From<Trie> for ProofTrie {
 
 #[cfg(test)]
 mod test {
+    #![expect(clippy::unnecessary_to_owned, clippy::useless_vec)]
     use cita_trie::{MemoryDB as CitaMemoryDB, PatriciaTrie as CitaTrie, Trie as CitaTrieTrait};
     use std::sync::Arc;
 
