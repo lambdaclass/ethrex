@@ -41,7 +41,7 @@ jobs:
 
   integration-test-l1-l2-dev:
     needs: detect-changes
-    if: ${{ github.event_name != 'merge_group' }} && ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    if: ${{ github.event_name != 'merge_group' && needs.detect-changes.outputs.run_tests == 'true' }}
     name: Integration Test
     runs-on: ubuntu-latest
     steps:
