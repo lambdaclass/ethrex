@@ -313,7 +313,6 @@ pub struct VM<'a> {
     pub db: &'a mut GeneralizedDatabase,
     pub tx: Transaction,
     pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
-    pub substate_backups: Vec<Substate>,
     /// Original storage values before the transaction. Used for gas calculations in SSTORE.
     pub storage_original_values: BTreeMap<(Address, H256), U256>,
     /// When enabled, it "logs" relevant information during execution
@@ -351,7 +350,6 @@ impl<'a> VM<'a> {
             db,
             tx: tx.clone(),
             hooks: get_hooks(&vm_type),
-            substate_backups: Vec::new(),
             storage_original_values: BTreeMap::new(),
             tracer,
             debug_mode: DebugMode::disabled(),
