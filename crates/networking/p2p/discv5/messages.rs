@@ -192,7 +192,7 @@ impl Ordinary {
         nonce: &[u8; 12],
         masking_iv: &[u8],
         encrypt_key: &[u8],
-    ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), PacketCodecError> {
+    ) -> Result<([u8; 23], Vec<u8>, Vec<u8>), PacketCodecError> {
         if encrypt_key.len() < 16 {
             return Err(PacketCodecError::InvalidSize);
         }
@@ -203,12 +203,12 @@ impl Ordinary {
         let authdata_size: u16 =
             u16::try_from(authdata.len()).map_err(|_| PacketCodecError::InvalidSize)?;
 
-        let mut static_header = Vec::new();
-        static_header.put_slice(PROTOCOL_ID);
-        static_header.put_slice(&PROTOCOL_VERSION.to_be_bytes());
-        static_header.put_u8(0x0);
-        static_header.put_slice(nonce);
-        static_header.put_slice(&authdata_size.to_be_bytes());
+        let mut static_header: [u8; 23] = [0; 23];
+        static_header[0..6].copy_from_slice(PROTOCOL_ID);
+        static_header[6..8].copy_from_slice(&PROTOCOL_VERSION.to_be_bytes());
+        static_header[8] = 0x0;
+        static_header[9..21].copy_from_slice(nonce);
+        static_header[21..].copy_from_slice(&authdata_size.to_be_bytes());
 
         let mut message = Vec::new();
         self.message.encode(&mut message);
@@ -276,19 +276,19 @@ impl WhoAreYou {
         Ok(())
     }
 
-    fn encode(&self, nonce: &[u8; 12]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), PacketCodecError> {
+    fn encode(&self, nonce: &[u8; 12]) -> Result<([u8; 23], Vec<u8>, Vec<u8>), PacketCodecError> {
         let mut authdata = Vec::new();
         self.encode_authdata(&mut authdata)?;
 
         let authdata_size: u16 =
             u16::try_from(authdata.len()).map_err(|_| PacketCodecError::InvalidSize)?;
 
-        let mut static_header = Vec::new();
-        static_header.put_slice(PROTOCOL_ID);
-        static_header.put_slice(&PROTOCOL_VERSION.to_be_bytes());
-        static_header.put_u8(0x1);
-        static_header.put_slice(nonce);
-        static_header.put_slice(&authdata_size.to_be_bytes());
+        let mut static_header: [u8; 23] = [0; 23];
+        static_header[0..6].copy_from_slice(PROTOCOL_ID);
+        static_header[6..8].copy_from_slice(&PROTOCOL_VERSION.to_be_bytes());
+        static_header[8] = 0x1;
+        static_header[9..21].copy_from_slice(nonce);
+        static_header[21..].copy_from_slice(&authdata_size.to_be_bytes());
 
         Ok((static_header, authdata, Vec::new()))
     }
@@ -344,19 +344,19 @@ impl Handshake {
         nonce: &[u8; 12],
         masking_iv: &[u8],
         encrypt_key: &[u8],
-    ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), PacketCodecError> {
+    ) -> Result<([u8; 23], Vec<u8>, Vec<u8>), PacketCodecError> {
         let mut authdata = Vec::new();
         self.encode_authdata(&mut authdata)?;
 
         let authdata_size =
             u16::try_from(authdata.len()).map_err(|_| PacketCodecError::InvalidSize)?;
 
-        let mut static_header = Vec::new();
-        static_header.put_slice(PROTOCOL_ID);
-        static_header.put_slice(&PROTOCOL_VERSION.to_be_bytes());
-        static_header.put_u8(0x02);
-        static_header.put_slice(nonce);
-        static_header.put_slice(&authdata_size.to_be_bytes());
+        let mut static_header: [u8; 23] = [0; 23];
+        static_header[0..6].copy_from_slice(PROTOCOL_ID);
+        static_header[6..8].copy_from_slice(&PROTOCOL_VERSION.to_be_bytes());
+        static_header[8] = 0x2;
+        static_header[9..21].copy_from_slice(nonce);
+        static_header[21..].copy_from_slice(&authdata_size.to_be_bytes());
 
         let mut message = Vec::new();
         self.message.encode(&mut message);
@@ -802,7 +802,7 @@ mod tests {
             nonce: &[u8; 12],
             masking_iv: &[u8],
             encrypt_key: &[u8],
-        ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), PacketCodecError> {
+        ) -> Result<([u8; 23], Vec<u8>, Vec<u8>), PacketCodecError> {
             match self {
                 PacketTypeWrapper::Ordinary(ordinary) => {
                     ordinary.encode(nonce, masking_iv, encrypt_key)
@@ -1023,7 +1023,7 @@ mod tests {
         ))
         .unwrap();
 
-        let who_are_you = WhoAreYou {
+        let who_are_you = PacketTypeWrapper::WhoAreYou(WhoAreYou {
             id_nonce: u128::from_be_bytes(
                 hex!("0102030405060708090a0b0c0d0e0f10")
                     .to_vec()
@@ -1031,14 +1031,15 @@ mod tests {
                     .unwrap(),
             ),
             enr_seq: 0,
-        };
+        });
 
         let dest_id = node_id(&public_key_from_signing_key(&node_b_key));
 
         let masking_iv = [0; 16];
         let nonce = hex!("0102030405060708090a0b0c");
 
-        let (static_header, authdata, encrypted_message) = who_are_you.encode(&nonce).unwrap();
+        let (static_header, authdata, encrypted_message) =
+            who_are_you.encode(&nonce, &masking_iv, &[0; 16]).unwrap();
 
         let header = PacketHeader {
             static_header: static_header.try_into().unwrap(),

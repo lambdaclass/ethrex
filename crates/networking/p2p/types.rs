@@ -309,7 +309,7 @@ impl NodeRecord {
                     let Ok(bytes) = Bytes::decode(&value) else {
                         continue;
                     };
-                    if bytes.len() < 33 {
+                    if bytes.len() != 33 {
                         continue;
                     }
                     decoded_pairs.secp256k1 = Some(H264::from_slice(&bytes))

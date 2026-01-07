@@ -725,8 +725,6 @@ impl PeerTableServer {
             self.contacts.swap_remove(&contact_to_discard_id);
             self.discarded_contacts.insert(contact_to_discard_id);
         }
-
-        tracing::info!("Current contacts ({})", self.contacts.len());
     }
 
     fn get_contact_to_initiate(&mut self) -> Option<Contact> {
@@ -844,6 +842,8 @@ impl PeerTableServer {
                     && node_id != local_node_id
                 {
                     let mut contact = Contact::from(node);
+                    // TODO validate fork_id from enr
+                    //contact.is_fork_id_valid = backend.is_fork_id_valid(&node_record).await.ok().or(Some(false));
                     contact.record = Some(node_record);
                     vacant_entry.insert(contact);
                     METRICS.record_new_discovery().await;

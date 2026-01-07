@@ -3,18 +3,18 @@ use crate::{
         codec::Discv5Codec,
         messages::{
             DISTANCES_PER_FIND_NODE_MSG, FindNodeMessage, Handshake, Message, NodesMessage,
-            Ordinary, Packet, PacketCodecError, PacketHeader, PingMessage, PongMessage, WhoAreYou,
+            Ordinary, Packet, PacketCodecError, PacketHeader, PingMessage, PongMessage,
         },
         session::{build_challenge_data, create_id_signature, derive_session_keys},
     },
     metrics::METRICS,
-    peer_table::{Contact, OutMessage as PeerTableOutMessage, PeerTable, PeerTableError},
+    peer_table::{PeerTable, PeerTableError},
     rlpx::utils::compress_pubkey,
     types::{Node, NodeRecord},
     utils::distance,
 };
 use bytes::{Bytes, BytesMut};
-use ethrex_common::{H256, H512, types::ForkId};
+use ethrex_common::H256;
 use ethrex_storage::{Store, error::StoreError};
 use futures::StreamExt;
 use indexmap::IndexMap;
@@ -36,8 +36,6 @@ use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
 use tracing::{debug, error, info, trace};
 
-pub(crate) const MAX_NODES_IN_NEIGHBORS_PACKET: usize = 16;
-const EXPIRATION_SECONDS: u64 = 20;
 /// Interval between revalidation checks.
 const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours,
 /// Interval between revalidations.
@@ -91,7 +89,6 @@ pub struct DiscoveryServer {
     local_node_record: NodeRecord,
     signer: SecretKey,
     udp_socket: Arc<UdpSocket>,
-    store: Store,
     peer_table: PeerTable,
     initial_lookup_interval: f64,
     /// Outgoing message count, used for nonce generation as per the spec.
@@ -120,12 +117,11 @@ impl DiscoveryServer {
                 .expect("Failed to set fork_id on local node record");
         }
 
-        let mut discovery_server = Self {
+        let discovery_server = Self {
             local_node: local_node.clone(),
             local_node_record,
             signer,
             udp_socket: Arc::new(udp_socket),
-            store: storage.clone(),
             peer_table: peer_table.clone(),
             initial_lookup_interval,
             counter: 0,
@@ -133,10 +129,6 @@ impl DiscoveryServer {
         };
 
         info!(count = bootnodes.len(), "Adding bootnodes");
-
-        for bootnode in &bootnodes {
-            discovery_server.send_ping(bootnode).await?;
-        }
         peer_table
             .new_contacts(bootnodes, local_node.node_id())
             .await?;
@@ -147,12 +139,12 @@ impl DiscoveryServer {
 
     async fn handle_packet(
         &mut self,
-        Discv5Message { packet, from: _ }: Discv5Message,
+        Discv5Message { packet, from }: Discv5Message,
     ) -> Result<(), DiscoveryServerError> {
         // TODO retrieve session info
         match packet.header.flag {
-            0x00 => self.handle_ordinary(packet).await,
-            0x01 => self.handle_who_are_you(packet).await,
+            0x00 => self.handle_ordinary(packet, from).await,
+            0x01 => self.handle_who_are_you(packet, from).await,
             0x02 => {
                 tracing::info!("NonWhoAreYou!");
                 Ok(())
@@ -160,7 +152,11 @@ impl DiscoveryServer {
             _ => Err(PacketCodecError::MalformedData)?,
         }
     }
-    async fn handle_ordinary(&mut self, packet: Packet) -> Result<(), DiscoveryServerError> {
+    async fn handle_ordinary(
+        &mut self,
+        packet: Packet,
+        addr: SocketAddr,
+    ) -> Result<(), DiscoveryServerError> {
         let src_id = H256::from_slice(&packet.header.authdata);
         let decrypt_key = self
             .peer_table
@@ -170,19 +166,24 @@ impl DiscoveryServer {
 
         let ordinary = Ordinary::decode(&packet, &decrypt_key)?;
 
-        tracing::trace!(received = %ordinary.message, msg = ?ordinary.message, from = %format!("{src_id:#x}"));
+        tracing::trace!(received = %ordinary.message, from = %src_id, %addr);
 
         self.handle_message(ordinary).await
     }
 
-    async fn handle_who_are_you(&mut self, packet: Packet) -> Result<(), DiscoveryServerError> {
-        let whoareyou = WhoAreYou::decode(&packet)?;
+    async fn handle_who_are_you(
+        &mut self,
+        packet: Packet,
+        addr: SocketAddr,
+    ) -> Result<(), DiscoveryServerError> {
+        // TODO check enr-seq to decide if we have to send the ENR in the handshake.
+        // let whoareyou = WhoAreYou::decode(&packet)?;
         let nonce = packet.header.nonce;
-        tracing::info!(nonce=?nonce, id_nonce=?whoareyou.id_nonce, enr_seq=?whoareyou.enr_seq,  "WhoAreYou packet received");
         let Some((node, message, _)) = self.messages_by_nonce.swap_remove(&nonce) else {
             tracing::trace!("Received unexpected WhoAreYou packet. Ignoring it");
             return Ok(());
         };
+        tracing::trace!(received = "WhoAreYou", from = %node.node_id(), %addr);
 
         // challenge-data     = masking-iv || static-header || authdata
         let challenge_data = build_challenge_data(
@@ -198,9 +199,9 @@ impl DiscoveryServer {
 
         // dest-pubkey        = public key corresponding to node B's static private key
         let Some(dest_pubkey) = compress_pubkey(node.public_key) else {
-            return Err(DiscoveryServerError::CryptographyError(format!(
-                "Invalid public key"
-            )));
+            return Err(DiscoveryServerError::CryptographyError(
+                "Invalid public key".to_string(),
+            ));
         };
 
         let session = derive_session_keys(
@@ -229,12 +230,13 @@ impl DiscoveryServer {
     }
 
     async fn revalidate(&mut self) -> Result<(), DiscoveryServerError> {
-        for contact in self
+        for _contact in self
             .peer_table
             .get_contacts_to_revalidate(REVALIDATION_INTERVAL)
             .await?
         {
-            self.send_ping(&contact.node).await?;
+            // TODO
+            // self.send_ping(&contact.node).await?;
         }
         Ok(())
     }
@@ -269,12 +271,12 @@ impl DiscoveryServer {
         let mut distances = Vec::new();
         distances.push(distance as u32);
         for i in 0..DISTANCES_PER_FIND_NODE_MSG / 2 {
-            distance
-                .checked_add(i + 1)
-                .map(|r| distances.push(r as u32));
-            distance
-                .checked_sub(i + 1)
-                .map(|r| distances.push(r as u32));
+            if let Some(d) = distance.checked_add(i + 1) {
+                distances.push(d as u32)
+            }
+            if let Some(d) = distance.checked_sub(i + 1) {
+                distances.push(d as u32)
+            }
         }
         Message::FindNode(FindNodeMessage {
             req_id: Bytes::from(rng.r#gen::<u64>().to_be_bytes().to_vec()),
@@ -300,36 +302,9 @@ impl DiscoveryServer {
         )
     }
 
-    async fn send_find_node(&mut self, node: &Node) -> Result<(), DiscoveryServerError> {
-        // TODO
-        Ok(())
-    }
-
-    async fn send_ping(&mut self, node: &Node) -> Result<(), DiscoveryServerError> {
-        // TODO
-        Ok(())
-    }
-
-    async fn send_pong(&self, ping_hash: H256, node: &Node) -> Result<(), DiscoveryServerError> {
-        // TODO
-        Ok(())
-    }
-
-    async fn send_nodes(
-        &self,
-        neighbors: Vec<Node>,
-        node: &Node,
-    ) -> Result<(), DiscoveryServerError> {
-        // TODO
-        Ok(())
-    }
-
     async fn handle_ping(
         &mut self,
-        ping_message: PingMessage,
-        hash: H256,
-        sender_public_key: H512,
-        node: Node,
+        _ping_message: PingMessage,
     ) -> Result<(), DiscoveryServerError> {
         // TODO
         Ok(())
@@ -337,8 +312,7 @@ impl DiscoveryServer {
 
     async fn handle_pong(
         &mut self,
-        message: PongMessage,
-        node_id: H256,
+        _pong_message: PongMessage,
     ) -> Result<(), DiscoveryServerError> {
         // TODO
         Ok(())
@@ -346,9 +320,7 @@ impl DiscoveryServer {
 
     async fn handle_find_node(
         &mut self,
-        sender_public_key: H512,
-        target: H512,
-        from: SocketAddr,
+        _find_node_message: FindNodeMessage,
     ) -> Result<(), DiscoveryServerError> {
         // TODO
         Ok(())
@@ -362,110 +334,6 @@ impl DiscoveryServer {
         self.peer_table
             .new_contact_records(nodes_message.nodes, self.local_node.node_id())
             .await?;
-        Ok(())
-    }
-
-    /// Validates the fork id of the given ENR is valid, saving it to the peer_table.
-    async fn validate_enr_fork_id(
-        &mut self,
-        node_id: H256,
-        sender_public_key: H512,
-        node_record: NodeRecord,
-    ) -> Result<(), DiscoveryServerError> {
-        let pairs = node_record.decode_pairs();
-
-        let Some(remote_fork_id) = pairs.eth else {
-            self.peer_table
-                .set_is_fork_id_valid(&node_id, false)
-                .await?;
-            debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"), "missing fork id in ENR response, skipping");
-            return Ok(());
-        };
-
-        let chain_config = self.store.get_chain_config();
-        let genesis_header = self
-            .store
-            .get_block_header(0)?
-            .ok_or(DiscoveryServerError::InvalidContact)?;
-        let latest_block_number = self.store.get_latest_block_number().await?;
-        let latest_block_header = self
-            .store
-            .get_block_header(latest_block_number)?
-            .ok_or(DiscoveryServerError::InvalidContact)?;
-
-        let local_fork_id = ForkId::new(
-            chain_config,
-            genesis_header.clone(),
-            latest_block_header.timestamp,
-            latest_block_number,
-        );
-
-        if !local_fork_id.is_valid(
-            remote_fork_id.clone(),
-            latest_block_number,
-            latest_block_header.timestamp,
-            chain_config,
-            genesis_header,
-        ) {
-            self.peer_table
-                .set_is_fork_id_valid(&node_id, false)
-                .await?;
-            debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"), local_fork_id=%local_fork_id, remote_fork_id=%remote_fork_id, "fork id mismatch in ENR response, skipping");
-            return Ok(());
-        }
-
-        debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"), local_fork_id=%local_fork_id, remote_fork_id=%remote_fork_id, "valid fork id in ENR found");
-        self.peer_table.set_is_fork_id_valid(&node_id, true).await?;
-
-        Ok(())
-    }
-
-    async fn validate_contact(
-        &mut self,
-        sender_public_key: H512,
-        node_id: H256,
-        from: SocketAddr,
-        message_type: &str,
-    ) -> Result<Contact, DiscoveryServerError> {
-        match self
-            .peer_table
-            .validate_contact(&node_id, from.ip())
-            .await?
-        {
-            PeerTableOutMessage::UnknownContact => {
-                debug!(received = message_type, to = %format!("{sender_public_key:#x}"), "Unknown contact, skipping");
-                Err(DiscoveryServerError::InvalidContact)
-            }
-            PeerTableOutMessage::InvalidContact => {
-                debug!(received = message_type, to = %format!("{sender_public_key:#x}"), "Contact not validated, skipping");
-                Err(DiscoveryServerError::InvalidContact)
-            }
-            // Check that the IP address from which we receive the request matches the one we have stored to prevent amplification attacks
-            // This prevents an attack vector where the discovery protocol could be used to amplify traffic in a DDOS attack.
-            // A malicious actor would send a findnode request with the IP address and UDP port of the target as the source address.
-            // The recipient of the findnode packet would then send a neighbors packet (which is a much bigger packet than findnode) to the victim.
-            PeerTableOutMessage::IpMismatch => {
-                debug!(received = message_type, to = %format!("{sender_public_key:#x}"), "IP address mismatch, skipping");
-                Err(DiscoveryServerError::InvalidContact)
-            }
-            PeerTableOutMessage::Contact(contact) => Ok(*contact),
-            _ => unreachable!(),
-        }
-    }
-
-    async fn validate_enr_response(
-        &mut self,
-        sender_public_key: H512,
-        node_id: H256,
-        from: SocketAddr,
-    ) -> Result<(), DiscoveryServerError> {
-        let contact = self
-            .validate_contact(sender_public_key, node_id, from, "ENRResponse")
-            .await?;
-        if !contact.has_pending_enr_request() {
-            debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"), "unsolicited message received, skipping");
-            return Err(DiscoveryServerError::InvalidContact);
-        }
         Ok(())
     }
 
@@ -492,7 +360,7 @@ impl DiscoveryServer {
             ordinary.encode(&nonce, &masking_iv.to_be_bytes(), &encrypt_key)?;
 
         let header = PacketHeader {
-            static_header: static_header.try_into().unwrap(),
+            static_header,
             flag: 0x00,
             nonce,
             authdata,
@@ -512,7 +380,7 @@ impl DiscoveryServer {
         let _ = self.udp_socket.send_to(&buf, addr).await.inspect_err(
             |e| error!(sending = ?message, addr = ?addr, err=?e, "Error sending message"),
         )?;
-        trace!(msg = %message, node = %node.public_key, address= %addr, nonce=?nonce, "Discv5 ordinary message sent");
+        trace!(msg = %message, node = %node.public_key, address= %addr, "Discv5 ordinary message sent");
         self.messages_by_nonce
             .insert(nonce, (node.clone(), message.clone(), Instant::now()));
         Ok(())
@@ -546,7 +414,7 @@ impl DiscoveryServer {
             handshake.encode(&nonce, &masking_iv.to_be_bytes(), &encrypt_key)?;
 
         let header = PacketHeader {
-            static_header: static_header.try_into().unwrap(),
+            static_header,
             flag: 0x02,
             nonce,
             authdata,
@@ -592,33 +460,19 @@ impl DiscoveryServer {
             return Ok(());
         }
         match ordinary.message {
-            Message::Ping(ping_message) => {
-                // let node = Node::new(
-                //     from.ip().to_canonical(),
-                //     from.port(),
-                //     ping_message.from.tcp_port,
-                //     sender_public_key,
-                // );
-
-                // let _ = self.handle_ping(ping_message, hash, sender_public_key, node).await.inspect_err(|e| {
-                //     error!(sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e, "Error handling message");
-                // });
-            }
+            Message::Ping(ping_message) => self.handle_ping(ping_message).await?,
             Message::Pong(pong_message) => {
-                // let node_id = node_id(&sender_public_key);
-
-                // self.handle_pong(pong_message, node_id).await?;
+                self.handle_pong(pong_message).await?;
             }
             Message::FindNode(find_node_message) => {
-                // self.handle_find_node(sender_public_key, find_node_message.target, from)
-                //     .await?;
+                self.handle_find_node(find_node_message).await?;
             }
             Message::Nodes(nodes_message) => {
                 self.handle_nodes_message(nodes_message).await?;
             }
-            Message::TalkReq(talk_req_message) => todo!(),
-            Message::TalkRes(talk_res_message) => todo!(),
-            Message::Ticket(ticket_message) => todo!(),
+            Message::TalkReq(_talk_req_message) => todo!(),
+            Message::TalkRes(_talk_res_message) => todo!(),
+            Message::Ticket(_ticket_message) => todo!(),
         }
         Ok(())
     }
