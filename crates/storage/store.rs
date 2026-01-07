@@ -50,6 +50,7 @@ use std::{
         atomic::AtomicU64,
         mpsc::{SyncSender, TryRecvError, sync_channel},
     },
+    thread::JoinHandle,
 };
 use tracing::{debug, error, info};
 /// Number of state trie segments to fetch concurrently during state sync
@@ -145,6 +146,21 @@ pub struct Store {
     /// those changes already affect the code hash stored in the account, and only
     /// may result in this cache having useless data.
     account_code_cache: Arc<CodeCache>,
+
+    background_threads: Arc<ThreadList>,
+}
+
+#[derive(Debug, Default)]
+struct ThreadList {
+    list: Vec<JoinHandle<()>>,
+}
+
+impl Drop for ThreadList {
+    fn drop(&mut self) {
+        for handle in self.list.drain(..) {
+            let _ = handle.join();
+        }
+    }
 }
 
 pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
@@ -1273,7 +1289,8 @@ impl Store {
                 last_written
             }
         };
-        let store = Self {
+        let mut background_threads = Vec::new();
+        let mut store = Self {
             db_path,
             backend,
             chain_config: Default::default(),
@@ -1283,10 +1300,11 @@ impl Store {
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
             account_code_cache: Arc::new(CodeCache::default()),
+            background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
         let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
-        std::thread::spawn(move || {
+        background_threads.push(std::thread::spawn(move || {
             let rx = fkv_rx;
             // Wait for the first Continue to start generation
             loop {
@@ -1302,7 +1320,7 @@ impl Store {
 
             let _ = flatkeyvalue_generator(&backend_clone, &last_computed_fkv, &rx)
                 .inspect_err(|err| error!("Error while generating FlatKeyValue: {err}"));
-        });
+        }));
         let backend = store.backend.clone();
         let flatkeyvalue_control_tx = store.flatkeyvalue_control_tx.clone();
         let trie_cache = store.trie_cache.clone();
@@ -1326,7 +1344,7 @@ impl Store {
 
             - Third, it removes the (no longer needed) bottom-most diff layer from the trie layers in the same way as the first step.
         */
-        std::thread::spawn(move || {
+        background_threads.push(std::thread::spawn(move || {
             let rx = trie_upd_rx;
             loop {
                 match rx.recv() {
@@ -1346,6 +1364,9 @@ impl Store {
                     }
                 }
             }
+        }));
+        store.background_threads = Arc::new(ThreadList {
+            list: background_threads,
         });
         Ok(store)
     }

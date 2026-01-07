@@ -203,6 +203,16 @@ impl RocksDBBackend {
     }
 }
 
+impl Drop for RocksDBBackend {
+    fn drop(&mut self) {
+        // When the last reference to the db is dropped, stop background threads
+        // See https://github.com/facebook/rocksdb/issues/11349
+        if let Some(db) = Arc::get_mut(&mut self.db) {
+            db.cancel_all_background_work(true);
+        }
+    }
+}
+
 impl StorageBackend for RocksDBBackend {
     fn clear_table(&self, table: &'static str) -> Result<(), StoreError> {
         let cf = self
