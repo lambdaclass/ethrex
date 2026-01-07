@@ -20,7 +20,9 @@ thiserror.workspace = true
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 
 [features]
-default = []
+# no-asm-keccak is enabled by default because pevm brings in sha3-asm which
+# defines the same KeccakF1600 symbol as our assembly implementation
+default = ["no-asm-keccak"]
 # c-kzg feature removed for pevm compatibility - using kzg-rs instead
 openvm-kzg = ["dep:openvm-kzg"]
 
