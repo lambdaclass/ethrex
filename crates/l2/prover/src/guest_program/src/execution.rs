@@ -15,13 +15,11 @@ use ethrex_common::types::{
 };
 use ethrex_common::{Address, U256};
 use ethrex_common::{H256, types::Block};
-use ethrex_l2_common::privileged_transactions::get_block_l1_in_messages;
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_l2_common::privileged_transactions::get_block_l1_in_messages;
 use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
 use std::collections::{BTreeMap, HashMap};
 
-#[cfg(not(feature = "l2"))]
-use ethrex_common::types::ELASTICITY_MULTIPLIER;
 #[cfg(feature = "l2")]
 use ethrex_common::types::{
     BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, blob_from_bytes,
