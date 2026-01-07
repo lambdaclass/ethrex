@@ -342,6 +342,9 @@ Block building options:
 
           [default: 60000000]
 
+      --builder.max-blobs <MAX_BLOBS>
+          EIP-7872: Maximum blobs per block for local building. Defaults to protocol max.
+
 Eth options:
       --eth.rpc-url <RPC_URL>...
           List of rpc urls to use.

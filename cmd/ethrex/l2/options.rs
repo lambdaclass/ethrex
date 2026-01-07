@@ -83,6 +83,13 @@ pub struct SequencerOptions {
     #[clap(flatten)]
     pub state_updater_opts: StateUpdaterOptions,
     #[arg(
+        long = "builder.max-blobs",
+        value_name = "MAX_BLOBS",
+        help = "EIP-7872: Maximum blobs per block for local building. Defaults to protocol max.",
+        help_heading = "Block building options"
+    )]
+    pub max_blobs_per_block: Option<u32>,
+    #[arg(
         long = "validium",
         default_value = "false",
         value_name = "BOOLEAN",
