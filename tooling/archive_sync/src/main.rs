@@ -81,11 +81,11 @@ impl<'de> Deserialize<'de> for MaybeAddress {
         let str = String::deserialize(deserializer)?;
         if let Some(str) = str.strip_prefix("pre(") {
             Ok(MaybeAddress::HashesAddress(
-                H256::from_str(str.trim_end_matches(")")).map_err(|err| D::Error::custom(err))?,
+                H256::from_str(str.trim_end_matches(")")).map_err(D::Error::custom)?,
             ))
         } else {
             Ok(MaybeAddress::Address(
-                Address::from_str(&str).map_err(|err| D::Error::custom(err))?,
+                Address::from_str(&str).map_err(D::Error::custom)?,
             ))
         }
     }
@@ -106,7 +106,7 @@ impl Serialize for MaybeAddress {
 }
 
 impl MaybeAddress {
-    fn to_hashed(self) -> H256 {
+    fn into_hashed(self) -> H256 {
         match self {
             MaybeAddress::Address(address) => keccak(address),
             MaybeAddress::HashesAddress(hashed) => hashed,
@@ -187,7 +187,7 @@ async fn process_dump(dump: Dump, store: Store, current_root: H256) -> eyre::Res
     for (address, dump_account) in dump.accounts.into_iter() {
         let hashed_address = dump_account
             .hashed_address
-            .unwrap_or_else(|| address.to_hashed());
+            .unwrap_or_else(|| address.into_hashed());
         // Add account to state trie
         // Maybe we can validate the dump account here? or while deserializing
         state_trie.insert(
@@ -609,7 +609,7 @@ impl DumpIpcReader {
             .iter()
             .map(|(addr, acc)| {
                 acc.hashed_address
-                    .unwrap_or_else(|| addr.clone().to_hashed())
+                    .unwrap_or_else(|| addr.clone().into_hashed())
             })
             .max()
             .unwrap_or_default();

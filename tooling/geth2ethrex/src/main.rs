@@ -50,7 +50,7 @@ use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::Instant;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use tracing_subscriber::FmtSubscriber;
 
 const BLOCK_HASH_LOOKUP_DEPTH: u64 = 1024;
