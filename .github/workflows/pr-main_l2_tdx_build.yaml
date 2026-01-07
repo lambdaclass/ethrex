@@ -40,7 +40,7 @@ jobs:
     # "Test" is a required check, don't change the name
     name: Test
     needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
