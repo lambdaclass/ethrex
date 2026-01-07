@@ -1092,7 +1092,7 @@ impl Blockchain {
         };
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
-        let vm = self.new_evm(vm_db)?;
+        let vm = self.new_evm(vm_db)?.with_generate_bal(true);
 
         let (res, account_updates_list, merkle_queue_length, instants) =
             self.execute_block_pipeline(&block, &parent_header, vm)?;
@@ -1273,7 +1273,10 @@ impl Blockchain {
             block_hash_cache,
         )
         .map_err(|e| (ChainError::EvmError(e), None))?;
-        let mut vm = self.new_evm(vm_db).map_err(|e| (e.into(), None))?;
+        let mut vm = self
+            .new_evm(vm_db)
+            .map_err(|e| (e.into(), None))?
+            .with_generate_bal(true);
 
         let blocks_len = blocks.len();
         let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = Vec::with_capacity(blocks_len);

@@ -1,8 +1,10 @@
 #![allow(unused_variables)]
 
 mod call_tracer;
-
 pub use call_tracer::*;
+
+mod block_access_list_tracer;
+pub use block_access_list_tracer::*;
 
 use bytes::Bytes;
 use ethrex_common::tracing::CallType;

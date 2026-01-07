@@ -1,5 +1,6 @@
 use ethrex_common::types::{Block, Transaction};
 use ethrex_common::{tracing::CallTrace, types::BlockHeader};
+use ethrex_levm::tracing::NoOpTracer;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{db::gen_db::GeneralizedDatabase, tracing::LevmCallTracer, vm::VM};
 use std::cell::RefCell;
@@ -30,7 +31,14 @@ impl LEVM {
                 break;
             }
 
-            Self::execute_tx(tx, sender, &block.header, db, vm_type)?;
+            Self::execute_tx(
+                tx,
+                sender,
+                &block.header,
+                db,
+                vm_type,
+                Rc::new(RefCell::new(NoOpTracer)),
+            )?;
         }
 
         // Process withdrawals only if the whole block has been executed.

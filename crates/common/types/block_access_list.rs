@@ -10,8 +10,10 @@ use crate::utils::keccak;
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct StorageChange {
-    block_access_index: usize,
-    post_value: U256,
+    #[serde(rename = "txIndex")]
+    pub block_access_index: usize,
+    #[serde(rename = "valueAfter")]
+    pub post_value: U256,
 }
 
 impl RLPEncode for StorageChange {
@@ -41,8 +43,9 @@ impl RLPDecode for StorageChange {
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct SlotChange {
-    slot: U256,
-    slot_changes: Vec<StorageChange>,
+    pub slot: U256,
+    #[serde(rename = "accesses")]
+    pub slot_changes: Vec<StorageChange>,
 }
 
 impl RLPEncode for SlotChange {
@@ -66,8 +69,10 @@ impl RLPDecode for SlotChange {
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct BalanceChange {
-    block_access_index: usize,
-    post_balance: U256,
+    #[serde(rename = "txIndex")]
+    pub block_access_index: usize,
+    #[serde(rename = "balance")]
+    pub post_balance: U256,
 }
 
 impl RLPEncode for BalanceChange {
@@ -97,8 +102,10 @@ impl RLPDecode for BalanceChange {
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct NonceChange {
-    block_access_index: usize,
-    post_nonce: u64,
+    #[serde(rename = "txIndex")]
+    pub block_access_index: usize,
+    #[serde(rename = "nonce")]
+    pub post_nonce: u64,
 }
 
 impl RLPEncode for NonceChange {
@@ -128,8 +135,10 @@ impl RLPDecode for NonceChange {
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct CodeChange {
-    block_access_index: usize,
-    new_code: Bytes,
+    #[serde(rename = "txIndex")]
+    pub block_access_index: usize,
+    #[serde(rename = "code")]
+    pub new_code: Bytes,
 }
 
 impl RLPEncode for CodeChange {
@@ -158,13 +167,19 @@ impl RLPDecode for CodeChange {
 }
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct AccountChanges {
-    address: Address,
-    storage_changes: Vec<SlotChange>,
-    storage_reads: Vec<U256>,
-    balance_changes: Vec<BalanceChange>,
-    nonce_changes: Vec<NonceChange>,
-    code_changes: Vec<CodeChange>,
+    pub address: Address,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub storage_changes: Vec<SlotChange>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub storage_reads: Vec<U256>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub balance_changes: Vec<BalanceChange>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub nonce_changes: Vec<NonceChange>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub code_changes: Vec<CodeChange>,
 }
 
 impl RLPEncode for AccountChanges {
@@ -218,11 +233,16 @@ impl RLPDecode for AccountChanges {
 }
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(transparent)]
 pub struct BlockAccessList {
-    inner: Vec<AccountChanges>,
+    pub inner: Vec<AccountChanges>,
 }
 
 impl BlockAccessList {
+    pub fn new(inner: Vec<AccountChanges>) -> Self {
+        BlockAccessList { inner }
+    }
+
     pub fn compute_hash(&self) -> H256 {
         if self.inner.is_empty() {
             return *EMPTY_BLOCK_ACCESS_LIST_HASH;

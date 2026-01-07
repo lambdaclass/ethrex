@@ -27,7 +27,7 @@ use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
-use ethrex_levm::tracing::NoOpTracer;
+use ethrex_levm::tracing::{BlockAccessListTracer, NoOpTracer, Tracer};
 use ethrex_levm::utils::get_base_fee_per_blob_gas;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
@@ -54,8 +54,11 @@ impl LEVM {
         block: &Block,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        generate_bal: bool,
     ) -> Result<BlockExecutionResult, EvmError> {
         Self::prepare_block(block, db, vm_type)?;
+
+        let tracer = Rc::new(RefCell::new(BlockAccessListTracer::new()));
 
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
@@ -71,7 +74,18 @@ impl LEVM {
                 )));
             }
 
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
+            let report = Self::execute_tx(
+                tx,
+                tx_sender,
+                &block.header,
+                db,
+                vm_type,
+                if generate_bal {
+                    tracer.clone()
+                } else {
+                    Rc::new(RefCell::new(NoOpTracer))
+                },
+            )?;
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
@@ -96,7 +110,15 @@ impl LEVM {
             VMType::L2(_) => Default::default(),
         };
 
-        Ok(BlockExecutionResult { receipts, requests })
+        Ok(BlockExecutionResult {
+            receipts,
+            requests,
+            block_access_list: if generate_bal {
+                Some(tracer.borrow().get_result())
+            } else {
+                None
+            },
+        })
     }
 
     pub fn execute_block_pipeline(
@@ -135,6 +157,7 @@ impl LEVM {
                 db,
                 vm_type,
                 &mut shared_stack_pool,
+                None,
             )?;
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
@@ -192,7 +215,11 @@ impl LEVM {
         };
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
-        Ok(BlockExecutionResult { receipts, requests })
+        Ok(BlockExecutionResult {
+            receipts,
+            requests,
+            block_access_list: None,
+        })
     }
 
     fn send_state_transitions_tx(
@@ -261,9 +288,10 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        tracer: Rc<RefCell<dyn Tracer>>,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
-        let mut vm = VM::new(env, db, tx, Rc::new(RefCell::new(NoOpTracer)), vm_type)?;
+        let mut vm = VM::new(env, db, tx, tracer, vm_type)?;
 
         vm.execute().map_err(VMError::into)
     }
@@ -279,9 +307,11 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         stack_pool: &mut Vec<Stack>,
+        tracer: Option<Rc<RefCell<dyn Tracer>>>,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
-        let mut vm = VM::new(env, db, tx, Rc::new(RefCell::new(NoOpTracer)), vm_type)?;
+        let tracer = tracer.unwrap_or(Rc::new(RefCell::new(NoOpTracer)));
+        let mut vm = VM::new(env, db, tx, tracer, vm_type)?;
 
         std::mem::swap(&mut vm.stack_pool, stack_pool);
         let result = vm.execute().map_err(VMError::into);

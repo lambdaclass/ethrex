@@ -1,4 +1,5 @@
 use crate::authentication::authenticate;
+use crate::debug::block_access_list::GetBlockAccessListRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::payload::{GetPayloadV5Request, NewPayloadV5Request};
@@ -572,6 +573,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_executionWitness" => ExecutionWitnessRequest::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
+        "debug_getBlockAccessList" => GetBlockAccessListRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
     }
 }
