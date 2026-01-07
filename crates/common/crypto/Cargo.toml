@@ -16,7 +16,7 @@ kzg-rs.workspace = true
 openvm-kzg = { git = "https://github.com/axiom-crypto/openvm-kzg.git", rev = "530a6ed413def5296b7e4967650ba4fc8fd92ea1", optional = true } # v1.4.1
 thiserror.workspace = true
 
-#[target.'cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))'.dependencies]
+# tiny-keccak is always available (used as fallback or when no-asm-keccak is enabled)
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 
 [features]
@@ -26,6 +26,10 @@ openvm-kzg = ["dep:openvm-kzg"]
 
 # risc0 feature disabled - needs c-kzg which conflicts with pevm
 openvm = ["openvm-kzg"]
+
+# Enable this feature to use pure Rust keccak instead of assembly
+# Required when using pevm to avoid symbol conflicts with sha3-asm
+no-asm-keccak = []
 
 [lints]
 workspace = true

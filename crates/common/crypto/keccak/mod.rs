@@ -1,13 +1,26 @@
-#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+// When no-asm-keccak feature is enabled, we skip the assembly implementation
+// to avoid symbol conflicts with sha3-asm from pevm dependencies
+#[cfg(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(feature = "no-asm-keccak")
+))]
 std::arch::global_asm!(include_str!("keccak1600-armv8-elf.s"), options(raw));
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+#[cfg(all(
+    target_arch = "aarch64",
+    target_os = "macos",
+    not(feature = "no-asm-keccak")
+))]
 std::arch::global_asm!(include_str!("keccak1600-armv8-macho.s"), options(raw));
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(feature = "no-asm-keccak")))]
 std::arch::global_asm!(include_str!("keccak1600-x86_64.s"), options(att_syntax));
 
 pub use imp::*;
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(all(
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(feature = "no-asm-keccak")
+))]
 mod imp {
     const BLOCK_SIZE: usize = 136;
 
@@ -131,7 +144,13 @@ mod imp {
     }
 }
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+// Use tiny-keccak (pure Rust) when:
+// - Not on x86_64/aarch64, OR
+// - no-asm-keccak feature is enabled (to avoid conflicts with sha3-asm from pevm)
+#[cfg(any(
+    not(any(target_arch = "x86_64", target_arch = "aarch64")),
+    feature = "no-asm-keccak"
+))]
 mod imp {
     use tiny_keccak::{Hasher, Keccak};
 

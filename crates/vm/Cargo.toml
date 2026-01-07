@@ -37,10 +37,14 @@ hashbrown = "0.15"
 path = "./lib.rs"
 
 [features]
-default = ["secp256k1"]
+# no-asm-keccak is required because pevm brings in sha3-asm which conflicts with
+# ethrex-crypto's keccak assembly (both define KeccakF1600 symbol)
+default = ["secp256k1", "no-asm-keccak"]
 
 secp256k1 = ["ethrex-levm/secp256k1", "ethrex-common/secp256k1"]
 # c-kzg feature removed for pevm compatibility
+# no-asm-keccak required for pevm compatibility (avoids duplicate KeccakF1600 symbol)
+no-asm-keccak = ["ethrex-common/no-asm-keccak", "ethrex-crypto/no-asm-keccak"]
 
 sp1 = ["ethrex-levm/sp1", "ethrex-common/sp1"]
 risc0 = ["ethrex-levm/risc0", "ethrex-common/risc0"]

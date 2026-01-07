@@ -48,6 +48,8 @@ risc0 = []
 sp1 = []
 zisk = []
 openvm = ["ethrex-crypto/openvm"]
+# Forward no-asm-keccak to ethrex-crypto (needed for pevm compatibility)
+no-asm-keccak = ["ethrex-crypto/no-asm-keccak"]
 
 [lib]
 path = "./common.rs"
