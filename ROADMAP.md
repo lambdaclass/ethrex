@@ -15,7 +15,7 @@ This is a WIP document and it requires better descriptions; it's supposed to be 
 
 | Priority | Meaning |
 |---------:|---------|
-| 0 | Critical. Blocking correctness, stability, or operations |
+| 0 | Highest priority, low effort with potential win |
 | 1 | High. Should be addressed soon |
 | 2 | Medium. Important but not blocking |
 | 3 | Low. Useful improvement |
@@ -61,8 +61,8 @@ This is a WIP document and it requires better descriptions; it's supposed to be 
 | Add Read-Ahead for Sequential Scans (RocksDB)| 0 | Pending | Use for trie iteration, sync operations |
 | Optimize for Point Lookups (RocksDB) | 0 | Pending | Adds hash index inside FlatKeyValue for faster point lookups |
 | Modify block size (RocksDB) | 0 | Pending | Benchmark different block size configurations |
+| Memory-Mapped Reads (RocksDB) | 0 | Pending | Can be an improvement on high-RAM systems |
 | Increase layers commit threshold | 0 | Pending | For read-heavy workloads with plenty of RAM |
-| RocksDB configs | 1 | Pending |  |
 | Remove locks | 1 | Pending | Check if there are still some unnecessary locks, e.g. in the VM we have one |
 | Benchmark bloom filter | 1 | Pending | Review trie layer's bloom filter, remove it or test other libraries/configurations |
 | Use multiget on trie traversal | 1 | Pending | Using multiget on trie traversal might reduce read time |
@@ -112,7 +112,7 @@ This is a WIP document and it requires better descriptions; it's supposed to be 
 | P2P leechers | 1 | Pending |  Improve scoring heuristic and kick leechers |
 | Custom Deterministic Benchmark | 1 | In Progress | We have a tool to run certain mainnet blocks, integrate that tool into our pipeline for benchmarking (not easy with DB changes) |
 | Benchmark contract call & simple transfers | 1 | Pending | Create a new benchmark with contract call & simple transfers |
-| Improve Error handling | 1 | In Progress | Avoid panic and unwraps |
+| Improve Error handling | 1 | In Progress | Avoid panic, unwrap and expect |
 | Websocket subscriptions | 2 | Pending | Add subscription support for websocket |
 | Not allow empty blocks in dev mode | 2 | Pending | For L2 development it's useful not to have empty blocks |
 | P2P rate limiting | 3 | Pending | Improve scoring heuristic and DDoS protection |
