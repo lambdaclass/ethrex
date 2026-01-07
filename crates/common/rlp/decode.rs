@@ -8,6 +8,9 @@ use ethereum_types::{
 };
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+/// Max payload size accepted when decoding.
+const MAX_RLP_BYTES: usize = 1024 * 1024 * 1024;
+
 /// Trait for decoding RLP encoded slices of data.
 /// See <https://ethereum.org/en/developers/docs/data-structures-and-encoding/rlp/#rlp-decoding> for more information.
 /// The [`decode_unfinished`](RLPDecode::decode_unfinished) method is used to decode an RLP encoded slice of data and return the decoded value along with the remaining bytes.
@@ -377,7 +380,7 @@ pub fn decode_rlp_item(data: &[u8]) -> Result<(bool, &[u8], &[u8]), RLPDecodeErr
         0..=0x7F => Ok((false, &data[..1], &data[1..])),
         0x80..=0xB7 => {
             let length = (first_byte - 0x80) as usize;
-            if data.len() < length + 1 {
+            if length > MAX_RLP_BYTES || data.len() < length + 1 {
                 return Err(RLPDecodeError::InvalidLength);
             }
             Ok((false, &data[1..length + 1], &data[length + 1..]))
@@ -389,7 +392,7 @@ pub fn decode_rlp_item(data: &[u8]) -> Result<(bool, &[u8], &[u8]), RLPDecodeErr
             }
             let length_bytes = &data[1..length_of_length + 1];
             let length = usize::from_be_bytes(static_left_pad(length_bytes)?);
-            if data.len() < length_of_length + length + 1 {
+            if length > MAX_RLP_BYTES || data.len() < length_of_length + length + 1 {
                 return Err(RLPDecodeError::InvalidLength);
             }
             Ok((
@@ -400,7 +403,7 @@ pub fn decode_rlp_item(data: &[u8]) -> Result<(bool, &[u8], &[u8]), RLPDecodeErr
         }
         RLP_EMPTY_LIST..=0xF7 => {
             let length = (first_byte - RLP_EMPTY_LIST) as usize;
-            if data.len() < length + 1 {
+            if length > MAX_RLP_BYTES || data.len() < length + 1 {
                 return Err(RLPDecodeError::InvalidLength);
             }
             Ok((true, &data[1..length + 1], &data[length + 1..]))
@@ -412,7 +415,7 @@ pub fn decode_rlp_item(data: &[u8]) -> Result<(bool, &[u8], &[u8]), RLPDecodeErr
             }
             let length_bytes = &data[1..list_length + 1];
             let payload_length = usize::from_be_bytes(static_left_pad(length_bytes)?);
-            if data.len() < list_length + payload_length + 1 {
+            if payload_length > MAX_RLP_BYTES || data.len() < list_length + payload_length + 1 {
                 return Err(RLPDecodeError::InvalidLength);
             }
             Ok((
@@ -442,7 +445,7 @@ pub fn get_item_with_prefix(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeErro
         0..=0x7F => Ok((&data[..1], &data[1..])),
         0x80..=0xB7 => {
             let length = (first_byte - 0x80) as usize;
-            if data.len() < length + 1 {
+            if length > MAX_RLP_BYTES || data.len() < length + 1 {
                 return Err(RLPDecodeError::InvalidLength);
             }
             Ok((&data[..length + 1], &data[length + 1..]))
@@ -454,7 +457,7 @@ pub fn get_item_with_prefix(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeErro
             }
             let length_bytes = &data[1..length_of_length + 1];
             let length = usize::from_be_bytes(static_left_pad(length_bytes)?);
-            if data.len() < length_of_length + length + 1 {
+            if length > MAX_RLP_BYTES || data.len() < length_of_length + length + 1 {
                 return Err(RLPDecodeError::InvalidLength);
             }
             Ok((
@@ -464,7 +467,7 @@ pub fn get_item_with_prefix(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeErro
         }
         RLP_EMPTY_LIST..=0xF7 => {
             let length = (first_byte - RLP_EMPTY_LIST) as usize;
-            if data.len() < length + 1 {
+            if length > MAX_RLP_BYTES || data.len() < length + 1 {
                 return Err(RLPDecodeError::InvalidLength);
             }
             Ok((&data[..length + 1], &data[length + 1..]))
@@ -476,7 +479,7 @@ pub fn get_item_with_prefix(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeErro
             }
             let length_bytes = &data[1..list_length + 1];
             let payload_length = usize::from_be_bytes(static_left_pad(length_bytes)?);
-            if data.len() < list_length + payload_length + 1 {
+            if payload_length > MAX_RLP_BYTES || data.len() < list_length + payload_length + 1 {
                 return Err(RLPDecodeError::InvalidLength);
             }
             Ok((
