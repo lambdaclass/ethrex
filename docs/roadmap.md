@@ -73,7 +73,7 @@ This is a WIP document and it requires better descriptions, it's supposed to be 
 
 | Item | Priority | Status | Description |
 |-----|----------|--------|-------------|
-| Download receipts | 1 | Pending | |
+| Download receipts and blocks | 1 | Pending | After snap sync is finished and the node is executing blocks, it should download all historical blocks and receipts in the background |
 | Improve performance | 1 | Pending | |
 
 ---
