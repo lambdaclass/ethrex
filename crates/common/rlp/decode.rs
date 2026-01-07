@@ -9,6 +9,8 @@ use ethereum_types::{
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 /// Max payload size accepted when decoding.
+/// While technically any size is RLP spec-compliant, there are no well-formed messages
+/// in our protocols that could carry such big payloads, so they are either bugs or malicious.
 const MAX_RLP_BYTES: usize = 1024 * 1024 * 1024;
 
 /// Trait for decoding RLP encoded slices of data.
