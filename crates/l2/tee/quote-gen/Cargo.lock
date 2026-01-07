@@ -2101,6 +2101,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
+ "hex-literal",
  "k256",
  "kzg-rs",
  "lazy_static",
@@ -2238,6 +2239,7 @@ dependencies = [
  "serde_with",
  "sha3",
  "thiserror 2.0.16",
+ "tracing",
 ]
 
 [[package]]
@@ -2330,6 +2332,7 @@ dependencies = [
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-crypto",
+ "ethrex-l2-common",
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-storage-rollup",
