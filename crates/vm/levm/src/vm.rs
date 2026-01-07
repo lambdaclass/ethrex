@@ -22,6 +22,7 @@ use ethrex_common::{
     tracing::CallType,
     types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
 };
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
@@ -47,7 +48,7 @@ pub struct Substate {
 
     selfdestruct_set: HashSet<Address>,
     accessed_addresses: HashSet<Address>,
-    accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
+    accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
     created_accounts: HashSet<Address>,
     pub refunded_gas: u64,
     transient_storage: TransientStorage,
@@ -57,7 +58,7 @@ pub struct Substate {
 impl Substate {
     pub fn from_accesses(
         accessed_addresses: HashSet<Address>,
-        accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
+        accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
     ) -> Self {
         Self {
             parent: None,
@@ -563,7 +564,7 @@ impl Substate {
     pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
         let mut initial_accessed_addresses = HashSet::new();
-        let mut initial_accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>> = BTreeMap::new();
+        let mut initial_accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>> = FxHashMap::default();
 
         // Add Tx sender to accessed accounts
         initial_accessed_addresses.insert(env.origin);
