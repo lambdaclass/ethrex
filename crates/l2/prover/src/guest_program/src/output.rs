@@ -50,12 +50,25 @@ impl ProgramOutput {
             self.non_privileged_count.to_big_endian(),
         ]
         .concat();
+
         #[cfg(feature = "l2")]
-        for diff in &self.balance_diffs {
-            encoded.extend_from_slice(&diff.chain_id.to_big_endian());
-            encoded.extend_from_slice(&diff.value.to_big_endian());
-            encoded.extend(diff.message_hashes.iter().flat_map(|h| h.to_fixed_bytes()));
+        for balance_diff in &self.balance_diffs {
+            encoded.extend_from_slice(&balance_diff.chain_id.to_big_endian());
+            encoded.extend_from_slice(&balance_diff.value.to_big_endian());
+            for value_per_token in &balance_diff.value_per_token {
+                encoded.extend_from_slice(&value_per_token.token_l1.to_fixed_bytes());
+                encoded.extend_from_slice(&value_per_token.token_src_l2.to_fixed_bytes());
+                encoded.extend_from_slice(&value_per_token.token_dst_l2.to_fixed_bytes());
+                encoded.extend_from_slice(&value_per_token.value.to_big_endian());
+            }
+            encoded.extend(
+                balance_diff
+                    .message_hashes
+                    .iter()
+                    .flat_map(|h| h.to_fixed_bytes()),
+            );
         }
+
         #[cfg(feature = "l2")]
         for (chain_id, hash) in &self.l2_in_message_rolling_hashes {
             encoded.extend_from_slice(&chain_id.to_be_bytes());

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity =0.8.31;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
@@ -11,8 +11,6 @@ import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 import {IRiscZeroVerifier} from "./interfaces/IRiscZeroVerifier.sol";
 import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
 import {ITDXVerifier} from "./interfaces/ITDXVerifier.sol";
-import "./interfaces/ICommonBridge.sol";
-import "./interfaces/IOnChainProposer.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
 
 /// @title OnChainProposer contract.
@@ -32,6 +30,7 @@ contract OnChainProposer is
     /// pendingTxHashes queue of the CommonBridge contract.
     /// @dev withdrawalsLogsMerkleRoot is the Merkle root of the Merkle tree containing
     /// all the withdrawals that were processed in the batch being committed
+    /// @dev commitHash: keccak of the git commit hash that produced the proof/verification key used for this batch
     struct BatchCommitmentInfo {
         bytes32 newStateRoot;
         bytes32 blobKZGVersionedHash;
@@ -40,8 +39,12 @@ contract OnChainProposer is
         bytes32 lastBlockHash;
         uint256 nonPrivilegedTransactions;
         ICommonBridge.BalanceDiff[] balanceDiffs;
+        bytes32 commitHash;
         ICommonBridge.L2MessageRollingHash[] l2InMessageRollingHashes;
     }
+
+    uint8 internal constant SP1_VERIFIER_ID = 1;
+    uint8 internal constant RISC0_VERIFIER_ID = 2;
 
     /// @notice The commitments of the committed batches.
     /// @dev If a batch is committed, the commitment is stored here.
@@ -64,7 +67,7 @@ contract OnChainProposer is
     /// @dev This is crucial for ensuring that only subsequents batches are committed in the contract.
     uint256 public lastCommittedBatch;
 
-    /// @dev The sequencer addresses that are authorized to commit and verify batches.
+    /// @dev Deprecated variable. This is managed inside the Timelock.
     mapping(address _authorizedAddress => bool)
         public authorizedSequencerAddresses;
 
@@ -74,9 +77,10 @@ contract OnChainProposer is
     address public RISC0_VERIFIER_ADDRESS;
     address public SP1_VERIFIER_ADDRESS;
 
+    /// @dev Deprecated variable.
     bytes32 public SP1_VERIFICATION_KEY;
 
-    /// @notice Indicates whether the contract operates in validium mode.Add commentMore actions
+    /// @notice Indicates whether the contract operates in validium mode.
     /// @dev This value is immutable and can only be set during contract deployment.
     bool public VALIDIUM;
 
@@ -86,6 +90,7 @@ contract OnChainProposer is
     /// @dev This address is set during contract initialization and is used to verify aligned proofs.
     address public ALIGNEDPROOFAGGREGATOR;
 
+    /// @dev Deprecated variable.
     bytes32 public RISC0_VERIFICATION_KEY;
 
     /// @notice Chain ID of the network
@@ -101,24 +106,21 @@ contract OnChainProposer is
     /// @notice True if verification is done through Aligned Layer instead of smart contract verifiers.
     bool public ALIGNED_MODE;
 
-    modifier onlySequencer() {
-        require(
-            authorizedSequencerAddresses[msg.sender],
-            "000" // OnChainProposer: caller is not the sequencer
-        );
-        _;
-    }
+    /// @notice Verification keys keyed by git commit hash (keccak of the commit SHA string) and verifier type.
+    mapping(bytes32 commitHash => mapping(uint8 verifierId => bytes32 vk))
+        public verificationKeys;
 
     /// @notice Initializes the contract.
     /// @dev This method is called only once after the contract is deployed.
+    /// @dev The owner is expected to be the Timelock contract.
     /// @dev It sets the bridge address.
-    /// @param owner the address of the owner who can perform upgrades.
+    /// @param timelock_owner the Timelock address that can perform upgrades.
     /// @param alignedProofAggregator the address of the alignedProofAggregatorService contract.
     /// @param r0verifier the address of the risc0 groth16 verifier.
     /// @param sp1verifier the address of the sp1 groth16 verifier.
     function initialize(
         bool _validium,
-        address owner,
+        address timelock_owner,
         bool requireRisc0Proof,
         bool requireSp1Proof,
         bool requireTdxProof,
@@ -129,69 +131,96 @@ contract OnChainProposer is
         address alignedProofAggregator,
         bytes32 sp1Vk,
         bytes32 risc0Vk,
+        bytes32 commitHash,
         bytes32 genesisStateRoot,
-        address[] calldata sequencerAddresses,
-        uint256 chainId
+        uint256 chainId,
+        address bridge
     ) public initializer {
         VALIDIUM = _validium;
 
-        // Risc0 constants
         REQUIRE_RISC0_PROOF = requireRisc0Proof;
-        RISC0_VERIFIER_ADDRESS = r0verifier;
-        RISC0_VERIFICATION_KEY = risc0Vk;
-
-        // SP1 constants
         REQUIRE_SP1_PROOF = requireSp1Proof;
-        SP1_VERIFIER_ADDRESS = sp1verifier;
-        SP1_VERIFICATION_KEY = sp1Vk;
-
-        // TDX constants
         REQUIRE_TDX_PROOF = requireTdxProof;
+
+        RISC0_VERIFIER_ADDRESS = r0verifier;
+        SP1_VERIFIER_ADDRESS = sp1verifier;
         TDX_VERIFIER_ADDRESS = tdxverifier;
 
-        // Aligned Layer constants
         ALIGNED_MODE = aligned;
         ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
 
-        batchCommitments[0] = BatchCommitmentInfo(
-            genesisStateRoot,
-            bytes32(0),
-            bytes32(0),
-            bytes32(0),
-            bytes32(0),
-            0,
-            new ICommonBridge.BalanceDiff[](0),
-            new ICommonBridge.L2MessageRollingHash[](0)
+        require(
+            commitHash != bytes32(0),
+            "OnChainProposer: commit hash is zero"
         );
+        require(
+            !REQUIRE_SP1_PROOF || sp1Vk != bytes32(0),
+            "OnChainProposer: missing SP1 verification key"
+        );
+        require(
+            !REQUIRE_RISC0_PROOF || risc0Vk != bytes32(0),
+            "OnChainProposer: missing RISC0 verification key"
+        );
+        verificationKeys[commitHash][SP1_VERIFIER_ID] = sp1Vk;
+        verificationKeys[commitHash][RISC0_VERIFIER_ID] = risc0Vk;
 
-        for (uint256 i = 0; i < sequencerAddresses.length; i++) {
-            authorizedSequencerAddresses[sequencerAddresses[i]] = true;
-        }
+        BatchCommitmentInfo storage commitment = batchCommitments[0];
+        commitment.newStateRoot = genesisStateRoot;
+        commitment.blobKZGVersionedHash = bytes32(0);
+        commitment.processedPrivilegedTransactionsRollingHash = bytes32(0);
+        commitment.withdrawalsLogsMerkleRoot = bytes32(0);
+        commitment.lastBlockHash = bytes32(0);
+        commitment.nonPrivilegedTransactions = 0;
+        commitment.balanceDiffs = new ICommonBridge.BalanceDiff[](0);
+        commitment.commitHash = commitHash;
+        commitment
+            .l2InMessageRollingHashes = new ICommonBridge.L2MessageRollingHash[](
+            0
+        );
 
         CHAIN_ID = chainId;
 
-        OwnableUpgradeable.__Ownable_init(owner);
-    }
-
-    /// @inheritdoc IOnChainProposer
-    function initializeBridgeAddress(address bridge) public onlyOwner {
         require(
             bridge != address(0),
             "001" // OnChainProposer: bridge is the zero address
         );
+        require(
+            bridge != address(this),
+            "000" // OnChainProposer: bridge is the contract address
+        );
         BRIDGE = bridge;
+
+        OwnableUpgradeable.__Ownable_init(timelock_owner);
     }
 
     /// @inheritdoc IOnChainProposer
-    function upgradeSP1VerificationKey(bytes32 new_vk) public onlyOwner {
-        SP1_VERIFICATION_KEY = new_vk;
-        emit VerificationKeyUpgraded("SP1", new_vk);
+    function upgradeSP1VerificationKey(
+        bytes32 commit_hash,
+        bytes32 new_vk
+    ) public onlyOwner {
+        require(
+            commit_hash != bytes32(0),
+            "OnChainProposer: commit hash is zero"
+        );
+        // we don't want to restrict setting the vk to zero
+        // as we may want to disable the version
+        verificationKeys[commit_hash][SP1_VERIFIER_ID] = new_vk;
+        emit VerificationKeyUpgraded("SP1", commit_hash, new_vk);
     }
 
     /// @inheritdoc IOnChainProposer
-    function upgradeRISC0VerificationKey(bytes32 new_vk) public onlyOwner {
-        RISC0_VERIFICATION_KEY = new_vk;
-        emit VerificationKeyUpgraded("RISC0", new_vk);
+    function upgradeRISC0VerificationKey(
+        bytes32 commit_hash,
+        bytes32 new_vk
+    ) public onlyOwner {
+        require(
+            commit_hash != bytes32(0),
+            "OnChainProposer: commit hash is zero"
+        );
+        // we don't want to restrict setting the vk to zero
+        // as we may want to disable the version
+        verificationKeys[commit_hash][RISC0_VERIFIER_ID] = new_vk;
+        emit VerificationKeyUpgraded("RISC0", commit_hash, new_vk);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -202,9 +231,10 @@ contract OnChainProposer is
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash,
         uint256 nonPrivilegedTransactions,
+        bytes32 commitHash,
         ICommonBridge.BalanceDiff[] calldata balanceDiffs,
         ICommonBridge.L2MessageRollingHash[] calldata l2MessageRollingHashes
-    ) external override onlySequencer whenNotPaused {
+    ) external override onlyOwner whenNotPaused {
         // TODO: Refactor validation
         require(
             batchNumber == lastCommittedBatch + 1,
@@ -265,6 +295,20 @@ contract OnChainProposer is
             );
         }
 
+        // Validate commit hash and corresponding verification keys are valid
+        require(commitHash != bytes32(0), "012");
+        if (
+            REQUIRE_SP1_PROOF &&
+            verificationKeys[commitHash][SP1_VERIFIER_ID] == bytes32(0)
+        ) {
+            revert("013"); // missing verification key for commit hash
+        } else if (
+            REQUIRE_RISC0_PROOF &&
+            verificationKeys[commitHash][RISC0_VERIFIER_ID] == bytes32(0)
+        ) {
+            revert("013"); // missing verification key for commit hash
+        }
+
         batchCommitments[batchNumber] = BatchCommitmentInfo(
             newStateRoot,
             blobVersionedHash,
@@ -273,6 +317,7 @@ contract OnChainProposer is
             lastBlockHash,
             nonPrivilegedTransactions,
             balanceDiffs,
+            commitHash,
             l2MessageRollingHashes
         );
         emit BatchCommitted(newStateRoot);
@@ -297,7 +342,7 @@ contract OnChainProposer is
         //tdx
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature
-    ) external override onlySequencer whenNotPaused {
+    ) external override onlyOwner whenNotPaused {
         require(
             !ALIGNED_MODE,
             "008" // Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead.
@@ -356,10 +401,15 @@ contract OnChainProposer is
                     )
                 );
             }
+            bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
+            bytes32 risc0Vk = verificationKeys[batchCommitHash][
+                RISC0_VERIFIER_ID
+            ];
             try
                 IRiscZeroVerifier(RISC0_VERIFIER_ADDRESS).verify(
                     risc0BlockProof,
-                    RISC0_VERIFICATION_KEY,
+                    // we use the same vk as the one set for the commit of the batch
+                    risc0Vk,
                     sha256(risc0Journal)
                 )
             {} catch {
@@ -383,9 +433,11 @@ contract OnChainProposer is
                     )
                 );
             }
+            bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
+            bytes32 sp1Vk = verificationKeys[batchCommitHash][SP1_VERIFIER_ID];
             try
                 ISP1Verifier(SP1_VERIFIER_ADDRESS).verifyProof(
-                    SP1_VERIFICATION_KEY,
+                    sp1Vk,
                     sp1PublicValues,
                     sp1ProofBytes
                 )
@@ -440,7 +492,7 @@ contract OnChainProposer is
         bytes[] calldata publicInputsList,
         bytes32[][] calldata sp1MerkleProofsList,
         bytes32[][] calldata risc0MerkleProofsList
-    ) external override onlySequencer whenNotPaused {
+    ) external override onlyOwner whenNotPaused {
         require(
             ALIGNED_MODE,
             "00h" // Batch verification should be done via smart contract verifiers. Call verifyBatch() instead.
@@ -501,7 +553,9 @@ contract OnChainProposer is
             if (REQUIRE_SP1_PROOF) {
                 _verifyProofInclusionAligned(
                     sp1MerkleProofsList[i],
-                    SP1_VERIFICATION_KEY,
+                    verificationKeys[batchCommitments[batchNumber].commitHash][
+                        SP1_VERIFIER_ID
+                    ],
                     publicInputsList[i]
                 );
             }
@@ -509,7 +563,9 @@ contract OnChainProposer is
             if (REQUIRE_RISC0_PROOF) {
                 _verifyProofInclusionAligned(
                     risc0MerkleProofsList[i],
-                    RISC0_VERIFICATION_KEY,
+                    verificationKeys[batchCommitments[batchNumber].commitHash][
+                        RISC0_VERIFIER_ID
+                    ],
                     publicInputsList[i]
                 );
             }
@@ -528,27 +584,21 @@ contract OnChainProposer is
         uint256 batchNumber,
         bytes calldata publicData
     ) internal view returns (string memory) {
-        uint256 targetedChainsCount = batchCommitments[batchNumber]
-            .balanceDiffs
-            .length;
-        uint256 totalMessagesCount = 0;
+        ICommonBridge.BalanceDiff[] memory balanceDiffs = batchCommitments[
+            batchNumber
+        ].balanceDiffs;
+        uint256 targetedChainsCount = balanceDiffs.length;
+        uint256 expected_length = 256;
         for (uint256 i = 0; i < targetedChainsCount; i++) {
-            totalMessagesCount += batchCommitments[batchNumber]
-                .balanceDiffs[i]
-                .message_hashes
-                .length;
+            expected_length += 32;
+            expected_length += 32;
+            expected_length += balanceDiffs[i].assetDiffs.length * 92;
+            expected_length += balanceDiffs[i].message_hashes.length * 32;
         }
-        uint256 balanceDiffsLength = 64 *
-            targetedChainsCount +
-            totalMessagesCount *
-            32;
-        uint256 L2RollingHasheslength = batchCommitments[batchNumber]
-            .l2InMessageRollingHashes
-            .length * 64;
-        if (
-            publicData.length !=
-            256 + balanceDiffsLength + L2RollingHasheslength
-        ) {
+        expected_length +=
+            batchCommitments[batchNumber].l2InMessageRollingHashes.length *
+            64;
+        if (publicData.length != expected_length) {
             return "00n"; // invalid public data length
         }
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
@@ -606,30 +656,56 @@ contract OnChainProposer is
             uint256 verifiedChainId = uint256(
                 bytes32(publicData[offset:offset + 32])
             );
-            uint256 verifiedValue = uint256(
-                bytes32(publicData[offset + 32:offset + 64])
-            );
-            bytes32[] memory messageHashes = batchCommitments[batchNumber]
-                .balanceDiffs[i]
-                .message_hashes;
-            if (
-                batchCommitments[batchNumber].balanceDiffs[i].chainId !=
-                verifiedChainId ||
-                batchCommitments[batchNumber].balanceDiffs[i].value !=
-                verifiedValue
-            ) {
+            offset += 32;
+
+            if (balanceDiffs[i].chainId != verifiedChainId) {
                 return "00x"; // balance diffs public inputs don't match with committed balance diffs
             }
+
+            uint256 verifiedValue = uint256(
+                bytes32(publicData[offset:offset + 32])
+            );
+            offset += 32;
+
+            if (balanceDiffs[i].value != verifiedValue) {
+                return "015"; // balance diffs public inputs don't match with committed balance diffs
+            }
+
+            for (uint256 j = 0; j < balanceDiffs[i].assetDiffs.length; j++) {
+                (
+                    address tokenL1,
+                    address tokenL2,
+                    address destTokenL2,
+                    uint256 tokenValue
+                ) = (
+                        address(bytes20(publicData[offset:offset + 20])),
+                        address(bytes20(publicData[offset + 20:offset + 40])),
+                        address(bytes20(publicData[offset + 40:offset + 60])),
+                        uint256(bytes32(publicData[offset + 60:offset + 92]))
+                    );
+
+                offset += 92;
+
+                if (
+                    tokenL1 != balanceDiffs[i].assetDiffs[j].tokenL1 ||
+                    tokenL2 != balanceDiffs[i].assetDiffs[j].tokenL2 ||
+                    destTokenL2 != balanceDiffs[i].assetDiffs[j].destTokenL2 ||
+                    tokenValue != balanceDiffs[i].assetDiffs[j].value
+                ) {
+                    return "014"; // balance diffs public inputs don't match with committed balance diffs
+                }
+            }
+
+            bytes32[] memory messageHashes = balanceDiffs[i].message_hashes;
             for (uint256 j = 0; j < messageHashes.length; j++) {
                 bytes32 verifiedMessageHash = bytes32(
-                    publicData[offset + 64 + j * 32:offset + 64 + (j + 1) * 32]
+                    publicData[offset:offset + 32]
                 );
+                offset += 32;
                 if (messageHashes[j] != verifiedMessageHash) {
                     return "00y"; // message hash public inputs don't match with committed message hashes
                 }
             }
-
-            offset += 64 + messageHashes.length * 32;
         }
         uint256 batchL2RollingHashesCount = batchCommitments[batchNumber]
             .l2InMessageRollingHashes
@@ -683,7 +759,7 @@ contract OnChainProposer is
     /// @inheritdoc IOnChainProposer
     function revertBatch(
         uint256 batchNumber
-    ) external override onlySequencer whenPaused {
+    ) external override onlyOwner whenPaused {
         require(
             batchNumber >= lastVerifiedBatch,
             "010" // OnChainProposer: can't revert verified batch

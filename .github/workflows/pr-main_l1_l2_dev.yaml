@@ -2,9 +2,13 @@ name: L2 Dev
 on:
   push:
     branches: ["main"]
+    paths-ignore:
+      - "docs/**"
   merge_group:
   pull_request:
     branches: ["**"]
+    paths-ignore:
+      - "docs/**"
 
 permissions:
   contents: read
@@ -16,6 +20,9 @@ concurrency:
 
 env:
   DOCKER_ETHREX_WORKDIR: /usr/local/bin
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
 
 jobs:
   integration-test-l1-l2-dev:
@@ -33,10 +40,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
+        uses: ./.github/actions/install-solc
 
       - name: Start ethrex
         run: |

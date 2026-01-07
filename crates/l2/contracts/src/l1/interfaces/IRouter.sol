@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.29;
+pragma solidity =0.8.31;
 
 import {ICommonBridge} from "./ICommonBridge.sol";
 
@@ -13,13 +13,32 @@ interface IRouter {
     /// @param chainId The ID of the chain to deregister.
     function deregister(uint256 chainId) external;
 
-    /// @notice Sends messages to a specified chain via its CommonBridge.
+    /// @notice Sends ETH to a specified chain via its CommonBridge.
     /// @param chainId The ID of the destination chain.
-    /// @param message_hashes The hashes of the messages to be sent.
-    function sendMessages(
+    function sendETHValue(uint256 chainId) external payable;
+
+    /// @notice Sends a ERC20 token message to a specified chain via its CommonBridge.
+    /// @dev The caller (source chain CommonBridge) must approve the Router to spend at least `amount` of `tokenL1`.
+    /// @param senderChainId The ID of the source chain.
+    /// @param chainId The ID of the destination chain.
+    /// @param tokenL1 The address of the ERC20 L1 token to send.
+    /// @param destTokenL2 The address of the ERC20 token on the other chain.
+    /// @param amount The amount of the ERC20 L1 token to send.
+    function sendERC20Message(
+        uint256 senderChainId,
+        uint256 chainId,
+        address tokenL1,
+        address destTokenL2,
+        uint256 amount
+    ) external payable;
+
+    /// @notice Injects message hashes for a specified chain in the CommonBridge for force inclusion.
+    /// @param chainId The ID of the destination chain.
+    /// @param message_hashes The array of message hashes to inject.
+    function injectMessageHashes(
         uint256 chainId,
         bytes32[] calldata message_hashes
-    ) external payable;
+    ) external;
 
     /// @notice Retrieves the list of registered chain IDs.
     function getRegisteredChainIds() external view returns (uint256[] memory);
@@ -48,6 +67,11 @@ interface IRouter {
     /// @notice Error indicating the caller is not a registered bridge.
     /// @param caller The address of the caller.
     error CallerNotBridge(address caller);
+
+    /// @notice Error indicating the caller is not the authorized bridge for `senderChainId`.
+    /// @param senderChainId The claimed source chain ID.
+    /// @param caller The address of the caller.
+    error InvalidSender(uint256 senderChainId, address caller);
 
     /// @notice Error indicating a chain is not registered.
     /// @param chainId The ID of the chain that is not registered.

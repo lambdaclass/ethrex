@@ -2,9 +2,13 @@ name: L2 (without proving)
 on:
   push:
     branches: ["main"]
+    paths-ignore:
+      - "docs/**"
   merge_group:
   pull_request:
     branches: ["**"]
+    paths-ignore:
+      - "docs/**"
   workflow_dispatch:
 
 permissions:
@@ -17,6 +21,9 @@ concurrency:
 
 env:
   DOCKER_ETHREX_WORKDIR: /usr/local/bin
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
 
 jobs:
   detect-changes:
@@ -174,10 +181,7 @@ jobs:
         run: npm install -g yarn
 
       - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
+        uses: ./.github/actions/install-solc
 
       - name: Install rex
         run: |
@@ -299,10 +303,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
+        uses: ./.github/actions/install-solc
 
       - name: Build prover
         run: |
@@ -447,10 +448,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
+        uses: ./.github/actions/install-solc
 
       - name: Download ethrex image artifact
         uses: actions/download-artifact@v4
@@ -572,10 +570,7 @@ jobs:
           docker load --input /tmp/ethrex_image_l2.tar
 
       - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
+        uses: ./.github/actions/install-solc
 
       - name: Start L1 & Deploy contracts
         run: |
@@ -622,10 +617,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
+        uses: ./.github/actions/install-solc
 
       - name: Build prover
         run: |
@@ -771,11 +763,15 @@ jobs:
           docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
           docker logs --follow ethrex_l2_b | grep -E "INFO|WARN|ERROR" &
           docker logs --follow ethrex_l1 | grep -E "INFO|WARN|ERROR" &
-          cargo test shared_bridge --release -- --nocapture --test-threads=1
           cp ../../cmd/.env_l2a ../../cmd/.env
+          export $(xargs < ../../cmd/.env_l2a)
+          cargo test shared_bridge --release -- --nocapture --test-threads=1
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH=true cargo test l2 --release -- --nocapture --test-threads=1
           cp ../../cmd/.env_l2b ../../cmd/.env
+          export $(xargs < ../../cmd/.env_l2b)
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH=true INTEGRATION_TEST_L2_RPC=http://localhost:1730 cargo test l2 --release -- --nocapture --test-threads=1
+          cp ../../cmd/.env_l2a ../../cmd/.env
+          export $(xargs < ../../cmd/.env_l2a)
           cargo test shared_bridge --release -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
 
