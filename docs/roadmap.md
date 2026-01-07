@@ -41,8 +41,8 @@ This is a WIP document and it requires better descriptions, it's supposed to be 
 |  SIMD Everywhere | 2 | Pending | |
 | PGO/BOLT | 0 | Pending | Try out both [PGO](https://doc.rust-lang.org/beta/rustc/profile-guided-optimization.html) and [BOLT](https://github.com/llvm/llvm-project/tree/main/bolt) to see if we can improve perf |
 | Remove levm's substrate backups | 0 | Pending | Substrate backups are no longer used, they can be removed  |
-| Nibbles | 1 | Pending | |
-| ruint | 0 | Pending | |
+| Nibbles | 1 | Pending | Nibbles are currently stored as a byte (`u8`), when they could be stored compactly as actual nibbles in memory and reduce by half their representation size |
+| ruint | 0 | Pending | Try out [ruint](https://github.com/recmo/uint) as the `U256` library to see if it improves performance |
 
 ---
 
