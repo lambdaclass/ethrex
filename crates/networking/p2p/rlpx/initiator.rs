@@ -1,5 +1,4 @@
-use crate::discv4::server::lookup_interval_function;
-use crate::discv5::server::LOOKUP_INTERVAL_MS;
+use crate::discv4::server::{lookup_interval_function, LOOKUP_INTERVAL_MS};
 use crate::peer_table::PeerTableError;
 use crate::types::Node;
 use crate::{metrics::METRICS, network::P2PContext, rlpx::connection::server::PeerConnection};
