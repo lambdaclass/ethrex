@@ -7,10 +7,10 @@ import socket
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import requests
 
@@ -97,7 +97,7 @@ def container_start_time(name: str) -> Optional[float]:
         return None
 
 
-def rpc_call(url: str, method: str) -> Optional[any]:
+def rpc_call(url: str, method: str) -> Optional[Any]:
     try:
         return requests.post(url, json={"jsonrpc": "2.0", "method": method, "params": [], "id": 1}, timeout=5).json().get("result")
     except Exception:
@@ -124,16 +124,15 @@ def slack_notify(run_id: str, run_count: int, instances: list, hostname: str, br
     for i in instances:
         icon = "✅" if i.status == "success" else "❌"
         line = f"{icon} *{i.name}*: `{i.status}`"
-        if getattr(i, "sync_time", None):
+        if i.sync_time:
             line += f" (sync: {fmt_time(i.sync_time)})"
-        if getattr(i, "initial_block", None):
+        if i.initial_block:
             line += f" post-sync block: {i.initial_block}"
-        if getattr(i, "initial_block", None) and i.last_block > i.initial_block:
+        if i.initial_block and i.last_block > i.initial_block:
             blocks_processed = i.last_block - i.initial_block
             line += f" (processed +{blocks_processed} blocks in {BLOCK_PROCESSING_DURATION//60}m)"
-        if getattr(i, "error", None):
-            if i.error:
-                line += f"\n       Error: {i.error}"
+        if i.error:
+            line += f"\n       Error: {i.error}"
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": line}})
     try:
         requests.post(url, json={"blocks": blocks}, timeout=10)
@@ -298,7 +297,7 @@ def update_instance(inst: Instance, timeout_min: int) -> bool:
     
     if inst.status == "syncing":
         if (now - inst.start_time) > timeout_min * 60:
-            inst.status, inst.error = "failed", f"Sync timeout ({timeout_min}m)"
+            inst.status, inst.error = "failed", f"Sync timeout after {fmt_time(timeout_min * 60)}"
             return True
         if rpc_call(inst.rpc_url, "eth_syncing") is False:
             inst.status, inst.sync_time = "synced", now - inst.start_time
