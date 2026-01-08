@@ -528,7 +528,7 @@ contract CommonBridge is
         uint256 withdrawalBatchNumber,
         uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
-    ) public override whenNotPaused {
+    ) public override whenNotPaused nonReentrant {
         _claimWithdrawal(
             ETH_TOKEN,
             ETH_TOKEN,
