@@ -6,7 +6,7 @@ RAW_DIR="${PGO_DIR}/raw"
 DATA_DIR="${PGO_DIR}/datadir"
 PROFDATA="${PGO_DIR}/merged.profdata"
 PROFDATA_ABS="$(cd "$(dirname "$PROFDATA")" && pwd)/$(basename "$PROFDATA")"
-SYNC_DURATION="${SYNC_DURATION:-15m}"
+SYNC_DURATION="${SYNC_DURATION:-5m}"
 LIGHTHOUSE_DATADIR="${LIGHTHOUSE_DATADIR:-${PGO_DIR}/lighthouse}"
 LIGHTHOUSE_JWT="${LIGHTHOUSE_JWT:-./jwt.hex}"
 
