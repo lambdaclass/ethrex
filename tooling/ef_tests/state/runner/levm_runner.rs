@@ -15,7 +15,12 @@ use ethrex_common::{
     },
 };
 use ethrex_levm::{
-    EVMConfig, Environment, db::gen_db::GeneralizedDatabase, errors::{ExecutionReport, TxValidationError, VMError}, tracing::NoOpTracer, utils::get_base_fee_per_blob_gas, vm::{VM, VMType}
+    EVMConfig, Environment,
+    db::gen_db::GeneralizedDatabase,
+    errors::{ExecutionReport, TxValidationError, VMError},
+    tracing::NoOpTracer,
+    utils::get_base_fee_per_blob_gas,
+    vm::{VM, VMType},
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::backends;
