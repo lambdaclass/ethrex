@@ -1,6 +1,6 @@
 use crate::authentication::authenticate;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
-use crate::engine::blobs::BlobsV2Request;
+use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::payload::GetPayloadV5Request;
 use crate::engine::{
     ExchangeCapabilitiesRequest,
@@ -76,8 +76,9 @@ use tokio::sync::{
     mpsc::{UnboundedSender, unbounded_channel},
     oneshot,
 };
+use tokio::time::timeout;
 use tower_http::cors::CorsLayer;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, Registry, reload};
 
 #[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
@@ -339,7 +340,22 @@ pub async fn start_api(
         .into_future();
     info!("Starting HTTP server at {http_addr}");
 
-    let authrpc_handler = |ctx, auth, body| async { handle_authrpc_request(ctx, auth, body).await };
+    let (timer_sender, mut timer_receiver) = tokio::sync::watch::channel(());
+
+    tokio::spawn(async move {
+        loop {
+            let result = timeout(Duration::from_secs(30), timer_receiver.changed()).await;
+            if result.is_err() {
+                warn!("No messages from the consensus layer. Is the consensus client running?");
+            }
+        }
+    });
+
+    let authrpc_handler = move |ctx, auth, body| async move {
+        let _ = timer_sender.send(());
+        handle_authrpc_request(ctx, auth, body).await
+    };
+
     let authrpc_router = Router::new()
         .route("/", post(authrpc_handler))
         .with_state(service_context.clone())
@@ -475,7 +491,7 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         Ok(RpcNamespace::Debug) => map_debug_requests(req, context).await,
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context).await,
-        Ok(RpcNamespace::Mempool) => map_mempool_requests(req, context).await,
+        Ok(RpcNamespace::Mempool) => map_mempool_requests(req, context),
         Ok(RpcNamespace::Engine) => Err(RpcErr::Internal(
             "Engine namespace not allowed in map_http_requests".to_owned(),
         )),
@@ -589,6 +605,7 @@ pub async fn map_engine_requests(
         }
         "engine_getBlobsV1" => BlobsV1Request::call(req, context).await,
         "engine_getBlobsV2" => BlobsV2Request::call(req, context).await,
+        "engine_getBlobsV3" => BlobsV3Request::call(req, context).await,
         unknown_engine_method => Err(RpcErr::MethodNotFound(unknown_engine_method.to_owned())),
     }
 }
@@ -600,7 +617,7 @@ pub async fn map_admin_requests(
     match req.method.as_str() {
         "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
         "admin_peers" => admin::peers(&mut context).await,
-        "admin_setLogLevel" => admin::set_log_level(req, &context.log_filter_handler).await,
+        "admin_setLogLevel" => admin::set_log_level(req, &context.log_filter_handler),
         "admin_addPeer" => admin::add_peer(&mut context, req).await,
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
@@ -621,14 +638,11 @@ pub async fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result
     }
 }
 
-pub async fn map_mempool_requests(
-    req: &RpcRequest,
-    contex: RpcApiContext,
-) -> Result<Value, RpcErr> {
+pub fn map_mempool_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         // TODO: The endpoint name matches geth's endpoint for compatibility, consider changing it in the future
-        "txpool_content" => mempool::content(contex).await,
-        "txpool_status" => mempool::status(contex).await,
+        "txpool_content" => mempool::content(contex),
+        "txpool_status" => mempool::status(contex),
         unknown_mempool_method => Err(RpcErr::MethodNotFound(unknown_mempool_method.to_owned())),
     }
 }
@@ -932,7 +946,7 @@ mod tests {
                         "ID": "0x0000000000000000000000000000000000000004",
                         "KZG_POINT_EVALUATION": "0x000000000000000000000000000000000000000a",
                         "MODEXP": "0x0000000000000000000000000000000000000005",
-                        "P256_VERIFICATION":"0x0000000000000000000000000000000000000100",
+                        "P256VERIFY":"0x0000000000000000000000000000000000000100",
                         "RIPEMD160": "0x0000000000000000000000000000000000000003",
                         "SHA256": "0x0000000000000000000000000000000000000002"
                     },

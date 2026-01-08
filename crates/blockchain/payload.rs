@@ -238,10 +238,10 @@ impl PayloadBuildContext {
             .get_block_header_by_hash(payload.header.parent_hash)
             .map_err(|e| EvmError::DB(e.to_string()))?
             .ok_or_else(|| EvmError::DB("parent header not found".to_string()))?;
-        let vm_db = StoreVmDatabase::new(storage.clone(), parent_header);
+        let vm_db = StoreVmDatabase::new(storage.clone(), parent_header)?;
         let vm = new_evm(blockchain_type, vm_db)?;
 
-        let payload_size = payload.encode_to_vec().len() as u64;
+        let payload_size = payload.length() as u64;
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
             receipts: vec![],

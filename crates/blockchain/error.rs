@@ -139,7 +139,7 @@ pub enum MempoolError {
     #[error("Requested pooled transaction was not received")]
     RequestedPooledTxNotFound,
     #[error("Transaction sender is invalid {0}")]
-    InvalidTxSender(#[from] secp256k1::Error),
+    InvalidTxSender(#[from] ethrex_common::EcdsaError),
     #[error("Attempted to replace a pooled transaction with an underpriced transaction")]
     UnderpricedReplacement,
 }
@@ -175,4 +175,8 @@ pub enum InvalidForkChoice {
     InvalidAncestor(BlockHash),
     #[error("Cannot find link between Head and the canonical chain")]
     UnlinkedHead,
+
+    // TODO(#5564): handle arbitrary reorgs
+    #[error("State root of the new head is not reachable from the database")]
+    StateNotReachable,
 }

@@ -106,6 +106,10 @@ setup-hive: ## 🐝 Set up Hive testing framework
 TEST_PATTERN ?= /
 SIM_LOG_LEVEL ?= 3
 SIM_PARALLELISM ?= 16
+# https://github.com/ethereum/execution-apis/pull/627 changed the simulation to use a pre-merge genesis block, so we need to pin to a commit before that
+ifeq ( $(SIMULATION) , ethereum/rpc-compat )
+SIM_BUILDARG_FLAG = --sim.buildarg "branch=d08382ae5c808680e976fce4b73f4ba91647199b"
+endif
 
 # Runs a Hive testing suite. A web interface showing the results is available at http://127.0.0.1:8080 via the `view-hive` target.
 # The endpoints tested can be filtered by supplying a test pattern in the form "/endpoint_1|endpoint_2|..|endpoint_n".
@@ -116,7 +120,7 @@ SIM_PARALLELISM ?= 16
 HIVE_CLIENT_FILE := ../fixtures/hive/clients.yaml
 
 run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL)
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) $(SIM_BUILDARG_FLAG)
 	$(MAKE) view-hive
 
 run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
@@ -124,7 +128,7 @@ run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
 	$(MAKE) view-hive
 
 run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
-	cd hive && ./hive --sim $(SIMULATION) --client-file $(HIVE_CLIENT_FILE)  --client ethrex --sim.loglevel 4 --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
+	cd hive && ./hive --sim $(SIMULATION) --client-file $(HIVE_CLIENT_FILE)  --client ethrex --sim.loglevel 4 --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output $(SIM_BUILDARG_FLAG)
 
 # EELS Hive
 TEST_PATTERN_EELS ?= .*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*
@@ -201,4 +205,22 @@ update-cargo-lock: ## 📦 Update Cargo.lock files
 	cargo tree
 	cargo tree --manifest-path crates/l2/prover/src/guest_program/src/sp1/Cargo.toml
 	cargo tree --manifest-path crates/l2/prover/src/guest_program/src/risc0/Cargo.toml
+	cargo tree --manifest-path crates/l2/prover/src/guest_program/src/zisk/Cargo.toml
+	cargo tree --manifest-path crates/l2/prover/src/guest_program/src/openvm/Cargo.toml
 	cargo tree --manifest-path crates/l2/tee/quote-gen/Cargo.toml
+	cargo tree --manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml
+	cargo tree --manifest-path tooling/Cargo.toml
+	cargo tree --manifest-path tooling/ef_tests/state/Cargo.toml
+
+check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
+	cargo metadata --locked > /dev/null
+	cargo metadata --locked --manifest-path crates/l2/prover/src/guest_program/src/sp1/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path crates/l2/prover/src/guest_program/src/risc0/Cargo.toml > /dev/null
+	# We use metadata so we don't need to have the ZisK toolchain installed and verify compilation
+	# if changes made to the source code CI will run with the toolchain
+	cargo metadata --locked --manifest-path crates/l2/prover/src/guest_program/src/zisk/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path crates/l2/prover/src/guest_program/src/openvm/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path crates/l2/tee/quote-gen/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path tooling/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path tooling/ef_tests/state/Cargo.toml > /dev/null

@@ -59,6 +59,7 @@ struct L1ProofVerifier {
     beacon_urls: Vec<String>,
     l1_signer: Signer,
     on_chain_proposer_address: Address,
+    timelock_address: Option<Address>,
     proof_verify_interval_ms: u64,
     network: Network,
     rollup_store: StoreRollup,
@@ -96,6 +97,7 @@ impl L1ProofVerifier {
             network: aligned_cfg.network.clone(),
             l1_signer: proof_coordinator_cfg.signer,
             on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
+            timelock_address: committer_cfg.timelock_address,
             proof_verify_interval_ms: aligned_cfg.aligned_verifier_interval_ms,
             rollup_store,
             sp1_vk,
@@ -238,17 +240,18 @@ impl L1ProofVerifier {
 
         let calldata = encode_calldata(ALIGNED_VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
-        let send_verify_tx_result = send_verify_tx(
-            calldata,
-            &self.eth_client,
-            self.on_chain_proposer_address,
-            &self.l1_signer,
-        )
-        .await;
+        // Based won't have timelock address until we implement it on it. For the meantime if it's None (only happens in based) we use the OCP
+        let target_address = self
+            .timelock_address
+            .unwrap_or(self.on_chain_proposer_address);
+
+        let send_verify_tx_result =
+            send_verify_tx(calldata, &self.eth_client, target_address, &self.l1_signer).await;
 
         if let Err(EthClientError::EstimateGasError(EstimateGasError::RPCError(error))) =
             send_verify_tx_result.as_ref()
-            && error.contains("Invalid ALIGNED proof")
+            && error.contains("00m")
+        // Invalid Aligned proof
         {
             warn!("Deleting invalid ALIGNED proof");
             for batch_number in first_batch_number..=last_batch_number {

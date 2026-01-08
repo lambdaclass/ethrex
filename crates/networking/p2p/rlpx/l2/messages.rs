@@ -7,7 +7,7 @@ use bytes::BufMut;
 use ethrex_common::utils::keccak;
 use ethrex_common::{
     H256, Signature,
-    types::{Block, batch::Batch},
+    types::{Block, batch::Batch, fee_config::FeeConfig},
 };
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_rlp::structs::{Decoder, Encoder};
@@ -24,6 +24,7 @@ pub struct NewBlock {
     // when broadcasting this message.
     pub block: Arc<Block>,
     pub signature: Signature,
+    pub fee_config: FeeConfig,
 }
 
 impl RLPxMessage for NewBlock {
@@ -34,6 +35,7 @@ impl RLPxMessage for NewBlock {
         Encoder::new(&mut encoded_data)
             .encode_field(&self.block.deref().clone())
             .encode_field(&self.signature)
+            .encode_field(&self.fee_config.to_vec())
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
         buf.put_slice(&msg_data);
@@ -45,17 +47,21 @@ impl RLPxMessage for NewBlock {
         let decoder = Decoder::new(&decompressed_data)?;
         let (block, decoder) = decoder.decode_field("block")?;
         let (signature, decoder) = decoder.decode_field("signature")?;
+        let (fee_config_bytes, decoder): (Vec<u8>, _) = decoder.decode_field("fee_config")?;
         decoder.finish()?;
+        let (_, fee_config) = FeeConfig::decode(&fee_config_bytes)
+            .map_err(|e| RLPDecodeError::Custom(format!("fee_config decode: {e}")))?;
         Ok(NewBlock {
             block: Arc::new(block),
             signature,
+            fee_config,
         })
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct BatchSealed {
-    pub batch: Box<Batch>,
+    pub batch: Arc<Batch>,
     pub signature: Signature,
 }
 
@@ -78,13 +84,13 @@ impl BatchSealed {
         sig[64] = recovery_id;
         let signature = Signature::from_slice(&sig);
         Ok(Self {
-            batch: Box::new(batch),
+            batch: Arc::new(batch),
             signature,
         })
     }
     pub fn new(batch: Batch, signature: Signature) -> Self {
         Self {
-            batch: Box::new(batch),
+            batch: Arc::new(batch),
             signature,
         }
     }
@@ -109,14 +115,17 @@ impl RLPxMessage for BatchSealed {
             .encode_field(&self.batch.first_block)
             .encode_field(&self.batch.last_block)
             .encode_field(&self.batch.state_root)
-            .encode_field(&self.batch.privileged_transactions_hash)
-            .encode_field(&self.batch.message_hashes)
+            .encode_field(&self.batch.l1_in_messages_rolling_hash)
+            .encode_field(&self.batch.l2_in_message_rolling_hashes)
+            .encode_field(&self.batch.non_privileged_transactions)
+            .encode_field(&self.batch.l1_out_message_hashes)
             .encode_field(&self.batch.blobs_bundle.blobs)
             .encode_field(&self.batch.blobs_bundle.commitments)
             .encode_field(&self.batch.blobs_bundle.proofs)
             .encode_optional_field(&self.batch.commit_tx)
             .encode_optional_field(&self.batch.verify_tx)
             .encode_field(&self.signature)
+            .encode_field(&self.batch.balance_diffs)
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
         buf.put_slice(&msg_data);
@@ -130,15 +139,20 @@ impl RLPxMessage for BatchSealed {
         let (first_block, decoder) = decoder.decode_field("first_block")?;
         let (last_block, decoder) = decoder.decode_field("last_block")?;
         let (state_root, decoder) = decoder.decode_field("state_root")?;
-        let (privileged_transactions_hash, decoder) =
-            decoder.decode_field("privileged_transactions_hash")?;
-        let (message_hashes, decoder) = decoder.decode_field("message_hashes")?;
+        let (l1_in_messages_rolling_hash, decoder) =
+            decoder.decode_field("l1_in_messages_rolling_hash")?;
+        let (l2_in_message_rolling_hashes, decoder) =
+            decoder.decode_field("l2_in_message_rolling_hashes")?;
+        let (non_privileged_transactions, decoder) =
+            decoder.decode_field("non_privileged_transactions")?;
+        let (l1_out_message_hashes, decoder) = decoder.decode_field("l1_out_message_hashes")?;
         let (blobs, decoder) = decoder.decode_field("blobs")?;
         let (commitments, decoder) = decoder.decode_field("commitments")?;
         let (proofs, decoder) = decoder.decode_field("proofs")?;
         let (commit_tx, decoder) = decoder.decode_optional_field();
         let (verify_tx, decoder) = decoder.decode_optional_field();
         let (signature, decoder) = decoder.decode_field("signature")?;
+        let (balance_diffs, decoder) = decoder.decode_field("balance_diffs")?;
         decoder.finish()?;
 
         let batch = Batch {
@@ -146,8 +160,10 @@ impl RLPxMessage for BatchSealed {
             first_block,
             last_block,
             state_root,
-            privileged_transactions_hash,
-            message_hashes,
+            l1_in_messages_rolling_hash,
+            l2_in_message_rolling_hashes,
+            l1_out_message_hashes,
+            non_privileged_transactions,
             blobs_bundle: ethrex_common::types::blobs_bundle::BlobsBundle {
                 blobs,
                 commitments,
@@ -156,6 +172,7 @@ impl RLPxMessage for BatchSealed {
             },
             commit_tx,
             verify_tx,
+            balance_diffs,
         };
         Ok(BatchSealed::new(batch, signature))
     }

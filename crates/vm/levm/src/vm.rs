@@ -312,7 +312,6 @@ pub struct VM<'a> {
     pub db: &'a mut GeneralizedDatabase,
     pub tx: Transaction,
     pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
-    pub substate_backups: Vec<Substate>,
     /// Original storage values before the transaction. Used for gas calculations in SSTORE.
     pub storage_original_values: BTreeMap<(Address, H256), U256>,
     /// When enabled, it "logs" relevant information during execution
@@ -350,7 +349,6 @@ impl<'a> VM<'a> {
             db,
             tx: tx.clone(),
             hooks: get_hooks(&vm_type),
-            substate_backups: Vec::new(),
             storage_original_values: BTreeMap::new(),
             tracer,
             debug_mode: DebugMode::disabled(),
@@ -456,14 +454,26 @@ impl<'a> VM<'a> {
             return result;
         }
 
+        #[cfg(feature = "perf_opcode_timings")]
+        let mut timings = crate::timings::OPCODE_TIMINGS.lock().expect("poison");
+
         loop {
             let opcode = self.current_call_frame.next_opcode();
             self.advance_pc(1)?;
+
+            #[cfg(feature = "perf_opcode_timings")]
+            let opcode_time_start = std::time::Instant::now();
 
             // Call the opcode, using the opcode function lookup table.
             // Indexing will not panic as all the opcode values fit within the table.
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
             let op_result = self.opcode_table[opcode as usize].call(self);
+
+            #[cfg(feature = "perf_opcode_timings")]
+            {
+                let time = opcode_time_start.elapsed();
+                timings.update(opcode, time);
+            }
 
             let result = match op_result {
                 Ok(OpcodeResult::Continue) => continue,
