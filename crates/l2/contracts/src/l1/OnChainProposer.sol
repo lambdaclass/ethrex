@@ -142,8 +142,20 @@ contract OnChainProposer is
         REQUIRE_SP1_PROOF = requireSp1Proof;
         REQUIRE_TDX_PROOF = requireTdxProof;
 
+        require(
+            !REQUIRE_RISC0_PROOF || r0verifier != address(0),
+            "OnChainProposer: missing RISC0 verifier address"
+        );
         RISC0_VERIFIER_ADDRESS = r0verifier;
+        require(
+            !REQUIRE_SP1_PROOF || sp1verifier != address(0),
+            "OnChainProposer: missing SP1 verifier address"
+        );
         SP1_VERIFIER_ADDRESS = sp1verifier;
+        require(
+            !REQUIRE_TDX_PROOF || tdxverifier != address(0),
+            "OnChainProposer: missing TDX verifier address"
+        );
         TDX_VERIFIER_ADDRESS = tdxverifier;
 
         ALIGNED_MODE = aligned;
