@@ -10,7 +10,7 @@ pub mod utils;
 
 pub use layering::apply_prefix;
 pub use store::{
-    AccountUpdatesList, EngineType, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS, Store, UpdateBatch,
+    AccountUpdatesList, EngineType, Store, UpdateBatch,
     hash_address, hash_key,
 };
 
