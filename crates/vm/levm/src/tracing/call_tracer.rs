@@ -10,7 +10,6 @@ use ethrex_common::{
 };
 
 /// Geth's callTracer (https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers)
-/// Use `LevmCallTracer::disabled()` when tracing is not wanted.
 #[derive(Debug, Default)]
 pub struct LevmCallTracer {
     /// Stack for tracer callframes, at the end of execution there will be only one element.

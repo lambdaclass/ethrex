@@ -5,19 +5,18 @@ use ethrex_common::{
     constants::EMPTY_TRIE_HASH,
     types::{Account, BlockHeader, Code, EIP1559Transaction, Transaction, TxKind},
 };
-use ethrex_levm::errors::VMError;
 use ethrex_levm::{
     Environment,
     db::gen_db::GeneralizedDatabase,
     errors::TxResult,
-    tracing::LevmCallTracer,
     vm::{VM, VMType},
 };
+use ethrex_levm::{errors::VMError, tracing::NoOpTracer};
 use ethrex_storage::Store;
 use ethrex_vm::DynVmDatabase;
 use rustc_hash::FxHashMap;
-use std::hint::black_box;
 use std::sync::Arc;
+use std::{cell::RefCell, hint::black_box, rc::Rc};
 
 // Use a constant byte array to define the Address at compile time.
 const SENDER_ADDRESS: u64 = 0x100;
@@ -100,5 +99,5 @@ fn init_vm(
         data: calldata,
         ..Default::default()
     });
-    VM::new(env, db, &tx, LevmCallTracer::disabled(), VMType::L1)
+    VM::new(env, db, &tx, Rc::new(RefCell::new(NoOpTracer)), VMType::L1)
 }
