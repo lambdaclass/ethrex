@@ -842,7 +842,8 @@ impl PeerTableServer {
                     && node_id != local_node_id
                 {
                     let mut contact = Contact::from(node);
-                    // TODO validate fork_id from enr
+                    // TODO: validate fork_id from enr
+                    // (https://github.com/lambdaclass/ethrex/issues/5776)
                     //contact.is_fork_id_valid = backend.is_fork_id_valid(&node_record).await.ok().or(Some(false));
                     contact.record = Some(node_record);
                     vacant_entry.insert(contact);

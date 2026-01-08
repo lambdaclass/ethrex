@@ -176,7 +176,8 @@ impl DiscoveryServer {
         packet: Packet,
         addr: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
-        // TODO check enr-seq to decide if we have to send the ENR in the handshake.
+        // TODO: check enr-seq to decide if we have to send the ENR in the handshake.
+        // (https://github.com/lambdaclass/ethrex/issues/5777)
         // let whoareyou = WhoAreYou::decode(&packet)?;
         let nonce = packet.header.nonce;
         let Some((node, message, _)) = self.messages_by_nonce.swap_remove(&nonce) else {
@@ -235,7 +236,8 @@ impl DiscoveryServer {
             .get_contacts_to_revalidate(REVALIDATION_INTERVAL)
             .await?
         {
-            // TODO
+            // TODO: Implement Ping/Pong workflow
+            // (https://github.com/lambdaclass/ethrex/issues/5778)
             // self.send_ping(&contact.node).await?;
         }
         Ok(())
@@ -306,7 +308,8 @@ impl DiscoveryServer {
         &mut self,
         _ping_message: PingMessage,
     ) -> Result<(), DiscoveryServerError> {
-        // TODO
+        // TODO: Implement Ping/Pong workflow
+        // (https://github.com/lambdaclass/ethrex/issues/5778)
         Ok(())
     }
 
@@ -314,7 +317,8 @@ impl DiscoveryServer {
         &mut self,
         _pong_message: PongMessage,
     ) -> Result<(), DiscoveryServerError> {
-        // TODO
+        // TODO: Implement Ping/Pong workflow
+        // (https://github.com/lambdaclass/ethrex/issues/5778)
         Ok(())
     }
 
@@ -322,7 +326,8 @@ impl DiscoveryServer {
         &mut self,
         _find_node_message: FindNodeMessage,
     ) -> Result<(), DiscoveryServerError> {
-        // TODO
+        // TODO: Handle FindNode requests
+        // (https://github.com/lambdaclass/ethrex/issues/5779)
         Ok(())
     }
 
@@ -470,9 +475,10 @@ impl DiscoveryServer {
             Message::Nodes(nodes_message) => {
                 self.handle_nodes_message(nodes_message).await?;
             }
-            Message::TalkReq(_talk_req_message) => todo!(),
-            Message::TalkRes(_talk_res_message) => todo!(),
-            Message::Ticket(_ticket_message) => todo!(),
+            // We are ignoring these messages currently
+            Message::TalkReq(_talk_req_message) => (),
+            Message::TalkRes(_talk_res_message) => (),
+            Message::Ticket(_ticket_message) => (),
         }
         Ok(())
     }
