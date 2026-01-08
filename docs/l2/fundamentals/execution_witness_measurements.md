@@ -1,11 +1,11 @@
-# Comparative Analysis: `debug_executionWitness` Latency Using Cached vs Non-Cached Execution Witnesses
+# Comparative Analysis: `debug_executionWitness` Latency Using Pre-Generated vs On-Demand Execution Witnesses
 
-This document presents the results of measurements conducted to analyze the latency improvements of the `debug_executionWitness` RPC method when execution witnesses are generated during payload execution and cached in the database for a period of time (128 blocks), compared to generating them on demand.
+This document presents the results of measurements conducted to analyze the latency improvements of the `debug_executionWitness` RPC method when execution witnesses are pre-generated during payload execution and stored in the database for a period of time (128 blocks), compared to generating them on demand.
 
 ## Measurements
 
-| Metric | Cached | Non-Cached |
-|-------|--------|------------|
+| Metric | Pre-Generated | On-Demand |
+|-------|---------------|-----------|
 | **Total Blocks Analyzed** | 176 | 176 |
 | **Min Time** | 3 ms | 56 ms |
 | **Max Time** | 255 ms | 521 ms |
@@ -15,9 +15,11 @@ This document presents the results of measurements conducted to analyze the late
 
 ## Conclusions
 
-The average latency drops from **243 ms (non-cached)** to **131 ms (cached)**, representing an improvement of approximately **46%**. Median latency shows a similar improvement, decreasing from **225 ms** to **130 ms**.
-Cached execution witnesses exhibit a much tighter latency distribution. The maximum observed latency is reduced by more than half (**521 ms → 255 ms**).
-Non-cached requests frequently experience high-latency spikes due to on-demand witness generation. Caching effectively eliminates most of these spikes.
+The average latency drops from **242 ms (on-demand)** to **131 ms (pre-generated)**, representing an improvement of approximately **46%**. Median latency shows a similar improvement, decreasing from **224 ms** to **130 ms**.
+
+Pre-generated execution witnesses exhibit a much tighter latency distribution. The maximum observed latency is reduced by more than half (**521 ms → 255 ms**).
+
+On-demand requests frequently experience high-latency spikes due to witness generation at request time. Pre-generating execution witnesses during payload execution effectively eliminates most of these spikes and results in more predictable response times.
 
 ## How These Measurements Were Done
 
@@ -25,15 +27,15 @@ These metrics were obtained from an `ethrex` node synced to the Ethereum mainnet
 
 Two configurations were compared:
 
-- **Cached**: Execution witnesses are generated during payload execution and stored in the database.
-- **Non-Cached**: Execution witnesses are generated on demand when calling `debug_executionWitness`.
+- **Pre-Generated**: Execution witnesses are generated during payload execution and stored in the database.
+- **On-Demand**: Execution witnesses are generated when calling `debug_executionWitness`.
 
 Each configuration was measured over a contiguous range of blocks, and latency was recorded for each request.
 
 ## How to Get Metrics
 
-1. Ensure the node is synced.
-   Use the `--generate-witness` flag to generate and cache execution witnesses upon receiving a `newPayload` message.
+1. Ensure the node is synced.  
+   Use the `--generate-witness` flag to generate and store execution witnesses upon receiving a `newPayload` message.
 
 2. Enable debug logging for `ethrex-replay` by editing `src/main.rs:21`:
    ```
@@ -56,7 +58,7 @@ Each configuration was measured over a contiguous range of blocks, and latency w
 
 ### Full Measurement Data
 
-#### Cached
+#### Pre-Generated
 
 *Total blocks analyzed: 176*
 
@@ -239,7 +241,7 @@ Each configuration was measured over a contiguous range of blocks, and latency w
 | 24191352 | 138 |
 | 24191353 | 32 |
 
-#### Non-Cached
+#### On-Demand
 
 *Total blocks analyzed: 176*
 
