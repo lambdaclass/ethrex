@@ -753,7 +753,7 @@ mod tests {
                         "bpo3Time": null,
                         "bpo4Time": null,
                         "bpo5Time": null,
-                    "amsterdamTime": null,
+                        "amsterdamTime": null,
                         "terminalTotalDifficulty": 0,
                         "terminalTotalDifficultyPassed": true,
                         "blobSchedule": blob_schedule,
