@@ -331,6 +331,7 @@ pub struct VM<'a> {
 }
 
 impl<'a> VM<'a> {
+    /// Use `Rc<RefCell<NoOpTracer>>` when tracing is not wanted.
     pub fn new(
         env: Environment,
         db: &'a mut GeneralizedDatabase,
