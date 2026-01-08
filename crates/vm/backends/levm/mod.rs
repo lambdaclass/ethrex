@@ -96,7 +96,7 @@ impl LEVM {
         }
 
         if let Some(withdrawals) = &block.body.withdrawals {
-            Self::process_withdrawals(db, withdrawals)?;
+            Self::process_withdrawals_with_tracing(db, withdrawals, tracer.clone())?;
         }
 
         // TODO: I don't like deciding the behavior based on the VMType here.
@@ -196,19 +196,8 @@ impl LEVM {
             LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
         }
 
-        for (address, increment) in block
-            .body
-            .withdrawals
-            .iter()
-            .flatten()
-            .filter(|withdrawal| withdrawal.amount > 0)
-            .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
-        {
-            let account = db
-                .get_account_mut(address)
-                .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
-
-            account.info.balance += increment.into();
+        if let Some(withdrawals) = &block.body.withdrawals {
+            Self::process_withdrawals_with_tracing(db, withdrawals, tracer.clone())?;
         }
 
         // TODO: I don't like deciding the behavior based on the VMType here.
@@ -405,6 +394,23 @@ impl LEVM {
                 .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
 
             account.info.balance += increment.into();
+        }
+        Ok(())
+    }
+
+    pub fn process_withdrawals_with_tracing(
+        db: &mut GeneralizedDatabase,
+        withdrawals: &[Withdrawal],
+        tracer: DynTracer,
+    ) -> Result<(), EvmError> {
+        // For every withdrawal we increment the target account's balance
+        for (address, increment) in withdrawals
+            .iter()
+            .filter(|withdrawal| withdrawal.amount > 0)
+            .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
+        {
+            db.increase_account_balance_with_tracing(address, increment.into(), tracer.clone())
+                .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
         }
         Ok(())
     }

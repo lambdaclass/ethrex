@@ -13,6 +13,7 @@ use crate::account::LevmAccount;
 use crate::call_frame::CallFrameBackup;
 use crate::errors::InternalError;
 use crate::errors::VMError;
+use crate::tracing::DynTracer;
 use crate::utils::account_to_levm_account;
 use crate::utils::restore_cache_state;
 use crate::vm::VM;
@@ -132,6 +133,29 @@ impl GeneralizedDatabase {
             }
         }
         Ok(value)
+    }
+
+    pub fn increase_account_balance_with_tracing(
+        &mut self,
+        address: Address,
+        increase: U256,
+        tracer: DynTracer,
+    ) -> Result<(), InternalError> {
+        tracer.borrow_mut().on_account_access(address, self);
+        let account = self.get_account_mut(address)?;
+        let old = account.info.balance;
+        account.info.balance = account
+            .info
+            .balance
+            .checked_add(increase)
+            .ok_or(InternalError::Overflow)?;
+        let new = account.info.balance;
+        if old != new {
+            tracer
+                .borrow_mut()
+                .on_balance_change(address, old, new, self);
+        }
+        Ok(())
     }
 
     /// Gets the transaction backup, if it exists.
