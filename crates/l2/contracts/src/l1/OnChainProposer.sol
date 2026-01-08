@@ -761,20 +761,20 @@ contract OnChainProposer is
         uint256 batchNumber
     ) external override onlyOwner whenPaused {
         require(
-            batchNumber >= lastVerifiedBatch,
+            batchNumber > lastVerifiedBatch,
             "010" // OnChainProposer: can't revert verified batch
         );
         require(
-            batchNumber < lastCommittedBatch,
+            batchNumber <= lastCommittedBatch,
             "011" // OnChainProposer: no batches are being reverted
         );
 
-        // Remove old batches
-        for (uint256 i = batchNumber; i < lastCommittedBatch; i++) {
-            delete batchCommitments[i + 1];
+        // Remove batch commitments from batchNumber to lastCommittedBatch
+        for (uint256 i = batchNumber; i <= lastCommittedBatch; i++) {
+            delete batchCommitments[i];
         }
 
-        lastCommittedBatch = batchNumber;
+        lastCommittedBatch = batchNumber - 1;
 
         emit BatchReverted(batchCommitments[lastCommittedBatch].newStateRoot);
     }
