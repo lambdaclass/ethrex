@@ -147,7 +147,7 @@ fn geth2ethrex(mut store: Store, block_number: BlockNumber, args: &Args) -> eyre
             .take_while(|item| {
                 item.as_ref()
                     .map(|(k, _)| k.starts_with(b"A"))
-                    .unwrap_or_default()
+                    .unwrap()
             })
         {
             let (k, v) = item?;
@@ -186,7 +186,7 @@ fn geth2ethrex(mut store: Store, block_number: BlockNumber, args: &Args) -> eyre
             .take_while(|item| {
                 item.as_ref()
                     .map(|(k, _)| k.starts_with(b"O"))
-                    .unwrap_or_default()
+                    .unwrap()
             })
         {
             let (k, v) = item?;
