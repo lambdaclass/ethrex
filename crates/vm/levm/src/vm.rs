@@ -534,6 +534,7 @@ impl<'a> VM<'a> {
                 0x9e => self.op_swap::<15>(),
                 0x9f => self.op_swap::<16>(),
                 0x01 => self.op_add(),
+                0x39 => self.op_codecopy(),
                 0x51 => self.op_mload(),
                 _ => {
                     // Call the opcode, using the opcode function lookup table.
