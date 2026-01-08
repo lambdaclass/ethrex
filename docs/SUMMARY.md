@@ -69,6 +69,7 @@
   - [Block vs StateDiff](./l2/fundamentals/block_vs_state_diff_measurements.md)
   - [Data availability](./l2/fundamentals/data_availability.md)
   - [Execution witness](./l2/fundamentals/execution_witness.md)
+  - [Execution witness measurements](./l2/fundamentals/execution_witness_measurements.md)
   - [Deposits](./l2/fundamentals/deposits.md)
   - [Withdrawals](./l2/fundamentals/withdrawals.md)
   - [Smart contracts](./l2/fundamentals/contracts.md)

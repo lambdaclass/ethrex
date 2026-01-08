@@ -1748,10 +1748,10 @@ impl Store {
                     let mut block_number_bytes = [0u8; 8];
                     block_number_bytes.copy_from_slice(&key[0..8]);
                     let block_number = u64::from_be_bytes(block_number_bytes);
-                    to_delete.push(key.to_vec());
-                    if block_number >= threshold {
+                    if block_number > threshold {
                         break;
                     }
+                    to_delete.push(key.to_vec());
                 }
             }
 
