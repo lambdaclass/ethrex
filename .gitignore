@@ -64,6 +64,11 @@ prof_*.json
 prof.json
 profile.json.gz
 
+# PGO artifacts
+pgo-data/
+*.profraw
+*.profdata
+
 # mdbook artifacts
 book/
 # mdbook-mermaid artifacts
