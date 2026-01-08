@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use serde::{Deserialize, Deserializer, Serializer, de::Error, ser::SerializeSeq};
+use serde::{
+    Deserialize, Deserializer, Serializer, de::Error, ser::Error as SerError, ser::SerializeSeq,
+};
 
 pub mod u256 {
     use super::*;
@@ -381,6 +383,27 @@ pub mod bytes {
             S: Serializer,
         {
             serialize_vec_of_hex_encodables(value, serializer)
+        }
+    }
+
+    pub mod base64 {
+        use super::*;
+
+        pub fn serialize<S>(value: &Bytes, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            let b64 = crate::base64::encode(value);
+            let s = String::from_utf8(b64).map_err(SerError::custom)?;
+            serializer.serialize_str(&s)
+        }
+
+        pub fn deserialize<'de, D>(d: D) -> Result<Bytes, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let s = String::deserialize(d)?;
+            Ok(Bytes::from(crate::base64::decode(s.as_bytes())))
         }
     }
 }

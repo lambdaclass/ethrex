@@ -17,7 +17,7 @@ impl LEVM {
         stop_index: Option<usize>,
         vm_type: VMType,
     ) -> Result<(), EvmError> {
-        Self::prepare_block(block, db, vm_type)?;
+        Self::prepare_block(block, db, vm_type, Rc::new(RefCell::new(NoOpTracer)))?;
 
         // Executes transactions and stops when the index matches the stop index.
         for (index, (tx, sender)) in block

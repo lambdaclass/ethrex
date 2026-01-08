@@ -1,6 +1,9 @@
 #![allow(unused_variables)]
 
 mod call_tracer;
+use std::cell::RefCell;
+use std::rc::Rc;
+
 pub use call_tracer::*;
 
 mod block_access_list_tracer;
@@ -8,13 +11,15 @@ pub use block_access_list_tracer::*;
 
 use bytes::Bytes;
 use ethrex_common::tracing::CallType;
-use ethrex_common::types::{Log, Transaction};
+use ethrex_common::types::{Code, Log, Transaction};
 use ethrex_common::{Address, H256, U256};
 
 use crate::Environment;
 use crate::db::gen_db::GeneralizedDatabase;
 use crate::errors::InternalError;
 use crate::opcodes::Opcode;
+
+pub type DynTracer = Rc<RefCell<dyn Tracer>>;
 
 pub trait Tracer {
     fn enter(
@@ -71,6 +76,47 @@ pub trait Tracer {
 
     /// Called when a storage slot is accessed (SLOAD/SSTORE).
     fn on_storage_access(&mut self, _address: Address, _slot: H256, _db: &mut GeneralizedDatabase) {
+    }
+
+    /// Called when a storage slot is updated (SSTORE).
+    fn on_storage_change(
+        &mut self,
+        _address: Address,
+        _slot: H256,
+        prev: U256,
+        new: U256,
+        _db: &mut GeneralizedDatabase,
+    ) {
+    }
+
+    /// Called when an account balance changes
+    fn on_balance_change(
+        &mut self,
+        _address: Address,
+        prev: U256,
+        new: U256,
+        _db: &mut GeneralizedDatabase,
+    ) {
+    }
+
+    /// Called when an account nonce changes
+    fn on_nonce_change(
+        &mut self,
+        _address: Address,
+        prev: u64,
+        new: u64,
+        _db: &mut GeneralizedDatabase,
+    ) {
+    }
+
+    /// Called when an account code changes
+    fn on_code_change(
+        &mut self,
+        _address: Address,
+        prev: Code,
+        new: Code,
+        _db: &mut GeneralizedDatabase,
+    ) {
     }
 
     /// Called when an account is accessed (BALANCE, EXTCODESIZE, EXTCODEHASH, EXTCODECOPY).

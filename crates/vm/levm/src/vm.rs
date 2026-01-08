@@ -7,6 +7,7 @@ use crate::{
     errors::{ContextResult, ExecutionReport, InternalError, OpcodeResult, VMError},
     hooks::{
         backup_hook::BackupHook,
+        default_hook,
         hook::{Hook, get_hooks},
     },
     memory::Memory,
@@ -395,6 +396,74 @@ impl<'a> VM<'a> {
         self.hooks.push(Rc::new(RefCell::new(hook)));
     }
 
+    /// Executes a whole txn without state transitions
+    pub fn call(&mut self) -> Result<ExecutionReport, VMError> {
+        let from = self.current_call_frame.msg_sender;
+        let call_type = if self.current_call_frame.is_create {
+            CallType::CREATE
+        } else {
+            CallType::CALL
+        };
+        let to = self.current_call_frame.to;
+        let gas_limit = self.current_call_frame.gas_limit;
+        let value = self.tx.value();
+        let data = self.tx.data();
+        self.tracer
+            .borrow_mut()
+            .enter(call_type, from, to, value, gas_limit, data);
+
+        default_hook::set_bytecode_and_code_address(self)?;
+
+        if self.is_create()? {
+            // Create contract, reverting the Tx if address is already occupied.
+            if let Some(mut context_result) = self.handle_create_transaction()? {
+                let (gas_used, output, error, revert_reason) =
+                    convert_context_result_to_exit_args(&context_result);
+
+                self.tracer.borrow_mut().exit(
+                    self.current_call_frame.depth,
+                    gas_used,
+                    output,
+                    error,
+                    revert_reason,
+                )?;
+
+                let report = ExecutionReport {
+                    result: context_result.result.clone(),
+                    gas_used: context_result.gas_used,
+                    gas_refunded: self.substate.refunded_gas,
+                    output: std::mem::take(&mut context_result.output),
+                    logs: self.substate.extract_logs(),
+                };
+                return Ok(report);
+            }
+        }
+
+        self.substate.push_backup();
+        let mut context_result = self.run_execution()?;
+
+        let (gas_used, output, error, revert_reason) =
+            convert_context_result_to_exit_args(&context_result);
+
+        self.tracer.borrow_mut().exit(
+            self.current_call_frame.depth,
+            gas_used,
+            output,
+            error,
+            revert_reason,
+        )?;
+
+        let report = ExecutionReport {
+            result: context_result.result.clone(),
+            gas_used: context_result.gas_used,
+            gas_refunded: self.substate.refunded_gas,
+            output: std::mem::take(&mut context_result.output),
+            logs: self.substate.extract_logs(),
+        };
+
+        Ok(report)
+    }
+
     /// Executes a whole external transaction. Performing validations at the beginning.
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
         if let Err(e) = self.prepare_execution() {
@@ -402,7 +471,6 @@ impl<'a> VM<'a> {
             self.restore_cache_state()?;
             return Err(e);
         }
-
         // Clear callframe backup so that changes made in prepare_execution are written in stone.
         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
         self.current_call_frame.call_frame_backup.clear();
@@ -419,7 +487,6 @@ impl<'a> VM<'a> {
         let context_result = self.run_execution()?;
 
         let report = self.finalize_execution(context_result)?;
-
         Ok(report)
     }
 
@@ -519,9 +586,6 @@ impl<'a> VM<'a> {
 
     fn prepare_execution(&mut self) -> Result<(), VMError> {
         let from = self.current_call_frame.msg_sender;
-        self.tracer
-            .borrow_mut()
-            .txn_start(&self.env, &self.tx, from, self.db);
 
         for hook in self.hooks.clone() {
             hook.borrow_mut().prepare_execution(self)?;
@@ -558,13 +622,9 @@ impl<'a> VM<'a> {
             self.current_call_frame.depth,
             gas_used,
             output,
-            error.clone(),
+            error,
             revert_reason,
         )?;
-
-        self.tracer
-            .borrow_mut()
-            .txn_end(ctx_result.gas_used, error, self.db);
 
         let report = ExecutionReport {
             result: ctx_result.result.clone(),

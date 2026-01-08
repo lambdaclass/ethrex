@@ -386,12 +386,20 @@ impl<'a> VM<'a> {
         address: Address,
         increase: U256,
     ) -> Result<(), InternalError> {
+        self.tracer.borrow_mut().on_account_access(address, self.db);
         let account = self.get_account_mut(address)?;
+        let old = account.info.balance;
         account.info.balance = account
             .info
             .balance
             .checked_add(increase)
             .ok_or(InternalError::Overflow)?;
+        let new = account.info.balance;
+        if old != new {
+            self.tracer
+                .borrow_mut()
+                .on_balance_change(address, old, new, self.db);
+        }
         Ok(())
     }
 
@@ -400,12 +408,20 @@ impl<'a> VM<'a> {
         address: Address,
         decrease: U256,
     ) -> Result<(), InternalError> {
+        self.tracer.borrow_mut().on_account_access(address, self.db);
         let account = self.get_account_mut(address)?;
+        let old = account.info.balance;
         account.info.balance = account
             .info
             .balance
             .checked_sub(decrease)
             .ok_or(InternalError::Underflow)?;
+        let new = account.info.balance;
+        if old != new {
+            self.tracer
+                .borrow_mut()
+                .on_balance_change(address, old, new, self.db);
+        }
         Ok(())
     }
 
@@ -430,21 +446,36 @@ impl<'a> VM<'a> {
         new_bytecode: Code,
     ) -> Result<(), InternalError> {
         let acc = self.get_account_mut(address)?;
+        let old_hash = acc.info.code_hash;
         let code_hash = new_bytecode.hash;
         acc.info.code_hash = new_bytecode.hash;
-        self.db.codes.entry(code_hash).or_insert(new_bytecode);
+        self.db
+            .codes
+            .entry(code_hash)
+            .or_insert(new_bytecode.clone());
+        let old = self.db.get_code(old_hash).cloned()?;
+        self.tracer
+            .borrow_mut()
+            .on_code_change(address, old, new_bytecode, self.db);
         Ok(())
     }
 
     // =================== Nonce related functions ======================
     pub fn increment_account_nonce(&mut self, address: Address) -> Result<u64, InternalError> {
         let account = self.get_account_mut(address)?;
+        let old = account.info.nonce;
         account.info.nonce = account
             .info
             .nonce
             .checked_add(1)
             .ok_or(InternalError::Overflow)?;
-        Ok(account.info.nonce)
+        let new = account.info.nonce;
+        if old != new {
+            self.tracer
+                .borrow_mut()
+                .on_nonce_change(address, old, new, self.db);
+        }
+        Ok(new)
     }
 
     /// Gets original storage value of an account, caching it if not already cached.
@@ -476,6 +507,10 @@ impl<'a> VM<'a> {
         let storage_slot_was_cold = !self.substate.add_accessed_slot(address, key);
 
         let storage_slot = self.get_storage_value(address, key)?;
+
+        self.tracer
+            .borrow_mut()
+            .on_storage_access(address, key, self.db);
 
         Ok((storage_slot, storage_slot_was_cold))
     }
@@ -521,6 +556,16 @@ impl<'a> VM<'a> {
 
         let account = self.get_account_mut(address)?;
         account.storage.insert(key, new_value);
+
+        if new_value != current_value {
+            self.tracer.borrow_mut().on_storage_change(
+                address,
+                key,
+                current_value,
+                new_value,
+                self.db,
+            );
+        }
         Ok(())
     }
 

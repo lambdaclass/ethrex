@@ -173,9 +173,6 @@ impl<'a> VM<'a> {
         // Get current and original (pre-tx) values.
         let key = u256_to_h256(storage_slot_key);
 
-        // Notify tracer of storage access
-        self.tracer.borrow_mut().on_storage_access(to, key, self.db);
-
         let (current_value, storage_slot_was_cold) = self.access_storage_slot(to, key)?;
         let original_value = self.get_original_storage(to, key)?;
 
@@ -230,6 +227,13 @@ impl<'a> VM<'a> {
             )?)?;
 
         if new_storage_slot_value != current_value {
+            self.tracer.borrow_mut().on_storage_change(
+                to,
+                key,
+                current_value,
+                new_storage_slot_value,
+                self.db,
+            );
             self.update_account_storage(to, key, new_storage_slot_value, current_value)?;
         }
 

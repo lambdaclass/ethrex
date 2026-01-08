@@ -102,7 +102,14 @@ impl Evm {
         merkleizer: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
     ) -> Result<BlockExecutionResult, EvmError> {
-        LEVM::execute_block_pipeline(block, &mut self.db, self.vm_type, merkleizer, queue_length)
+        LEVM::execute_block_pipeline(
+            block,
+            &mut self.db,
+            self.vm_type,
+            merkleizer,
+            queue_length,
+            self.generate_bal,
+        )
     }
 
     /// Wraps [LEVM::execute_tx].
@@ -150,11 +157,21 @@ impl Evm {
         let fork = chain_config.fork(block_header.timestamp);
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-            LEVM::beacon_root_contract_call(block_header, &mut self.db, self.vm_type)?;
+            LEVM::beacon_root_contract_call(
+                block_header,
+                &mut self.db,
+                self.vm_type,
+                Rc::new(RefCell::new(NoOpTracer)),
+            )?;
         }
 
         if fork >= Fork::Prague {
-            LEVM::process_block_hash_history(block_header, &mut self.db, self.vm_type)?;
+            LEVM::process_block_hash_history(
+                block_header,
+                &mut self.db,
+                self.vm_type,
+                Rc::new(RefCell::new(NoOpTracer)),
+            )?;
         }
 
         Ok(())
@@ -177,7 +194,13 @@ impl Evm {
         receipts: &[Receipt],
         header: &BlockHeader,
     ) -> Result<Vec<Requests>, EvmError> {
-        levm::extract_all_requests_levm(receipts, &mut self.db, header, self.vm_type)
+        levm::extract_all_requests_levm(
+            receipts,
+            &mut self.db,
+            header,
+            self.vm_type,
+            Rc::new(RefCell::new(NoOpTracer)),
+        )
     }
 
     pub fn simulate_tx_from_generic(

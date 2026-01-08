@@ -6,12 +6,13 @@ use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, structs};
 use serde::{Deserialize, Serialize};
 
 use crate::constants::EMPTY_BLOCK_ACCESS_LIST_HASH;
+use crate::serde_utils;
 use crate::utils::keccak;
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct StorageChange {
     #[serde(rename = "txIndex")]
-    pub block_access_index: usize,
+    pub block_access_index: u64,
     #[serde(rename = "valueAfter")]
     pub post_value: U256,
 }
@@ -69,9 +70,9 @@ impl RLPDecode for SlotChange {
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct BalanceChange {
-    #[serde(rename = "txIndex")]
-    pub block_access_index: usize,
-    #[serde(rename = "balance")]
+    #[serde(rename = "txIndex", with = "serde_utils::u64::hex_str")]
+    pub block_access_index: u64,
+    #[serde(rename = "balance", with = "serde_utils::u256::dec_str")]
     pub post_balance: U256,
 }
 
@@ -102,9 +103,9 @@ impl RLPDecode for BalanceChange {
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct NonceChange {
-    #[serde(rename = "txIndex")]
-    pub block_access_index: usize,
-    #[serde(rename = "nonce")]
+    #[serde(rename = "txIndex", with = "serde_utils::u64::hex_str")]
+    pub block_access_index: u64,
+    #[serde(rename = "nonce", with = "serde_utils::u64::hex_str")]
     pub post_nonce: u64,
 }
 
@@ -135,9 +136,9 @@ impl RLPDecode for NonceChange {
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct CodeChange {
-    #[serde(rename = "txIndex")]
-    pub block_access_index: usize,
-    #[serde(rename = "code")]
+    #[serde(rename = "TxIdx")]
+    pub block_access_index: u64,
+    #[serde(rename = "code", with = "serde_utils::bytes::base64")]
     pub new_code: Bytes,
 }
 
@@ -178,7 +179,7 @@ pub struct AccountChanges {
     pub balance_changes: Vec<BalanceChange>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub nonce_changes: Vec<NonceChange>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(rename = "code", skip_serializing_if = "Vec::is_empty")]
     pub code_changes: Vec<CodeChange>,
 }
 

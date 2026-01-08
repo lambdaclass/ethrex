@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use bytes::Bytes;
 use ethrex_common::types::block_access_list::{
@@ -11,17 +11,17 @@ use super::Tracer;
 
 #[derive(Debug, Default)]
 struct AccountChanges {
-    state_reads: BTreeMap<usize, H256>,
-    state_changes: BTreeMap<H256, BTreeMap<usize, U256>>,
-    balance_changes: BTreeMap<usize, U256>,
-    nonce_changes: BTreeMap<usize, u64>,
-    code_changes: BTreeMap<usize, (H256, Bytes)>,
+    state_reads: BTreeSet<H256>,
+    state_changes: BTreeMap<H256, BTreeMap<u64, U256>>,
+    balance_changes: BTreeMap<u64, U256>,
+    nonce_changes: BTreeMap<u64, u64>,
+    code_changes: BTreeMap<u64, Bytes>,
 }
 
 #[derive(Debug, Default)]
 pub struct BlockAccessListTracer {
     account_changes: BTreeMap<Address, AccountChanges>,
-    idx: usize,
+    idx: u64,
 }
 
 impl BlockAccessListTracer {
@@ -62,7 +62,7 @@ impl BlockAccessListTracer {
                             .collect(),
                     })
                     .collect(),
-                storage_reads: state_reads.iter().map(|s| s.1.into_uint()).collect(),
+                storage_reads: state_reads.iter().map(|s| s.into_uint()).collect(),
                 nonce_changes: nonce_changes
                     .iter()
                     .map(|n| NonceChange {
@@ -74,7 +74,7 @@ impl BlockAccessListTracer {
                     .iter()
                     .map(|c| CodeChange {
                         block_access_index: *c.0,
-                        new_code: c.1.1.clone(),
+                        new_code: c.1.clone(),
                     })
                     .collect(),
             });
@@ -84,6 +84,35 @@ impl BlockAccessListTracer {
 }
 
 impl Tracer for BlockAccessListTracer {
+    fn enter(
+        &mut self,
+        _call_type: ethrex_common::tracing::CallType,
+        _from: Address,
+        _to: Address,
+        _value: U256,
+        _gas: u64,
+        _input: &Bytes,
+    ) {
+    }
+
+    fn exit(
+        &mut self,
+        _depth: usize,
+        _gas_used: u64,
+        _output: Bytes,
+        _error: Option<String>,
+        _revert_reason: Option<String>,
+    ) -> Result<(), crate::errors::InternalError> {
+        Ok(())
+    }
+
+    fn log(
+        &mut self,
+        _log: &ethrex_common::types::Log,
+    ) -> Result<(), crate::errors::InternalError> {
+        Ok(())
+    }
+
     fn txn_start(
         &mut self,
         _env: &crate::Environment,
@@ -121,8 +150,59 @@ impl Tracer for BlockAccessListTracer {
         slot: H256,
         db: &mut crate::db::gen_db::GeneralizedDatabase,
     ) {
+        let a = self.account_changes.entry(address).or_default();
+        if !a.state_changes.contains_key(&slot) {
+            a.state_reads.insert(slot);
+        }
+    }
+
+    fn on_storage_change(
+        &mut self,
+        address: Address,
+        slot: H256,
+        prev: U256,
+        new: U256,
+        db: &mut crate::db::gen_db::GeneralizedDatabase,
+    ) {
         let v = self.account_changes.entry(address).or_default();
-        v.state_reads.insert(self.idx, slot);
+        let state_changes = v.state_changes.entry(slot).or_default();
+        state_changes.insert(self.idx, new);
+        // A slot can read first then written but it can only exist in state read or write not
+        // both.
+        v.state_reads.remove(&slot);
+    }
+
+    fn on_balance_change(
+        &mut self,
+        address: Address,
+        prev: U256,
+        new: U256,
+        _db: &mut crate::db::gen_db::GeneralizedDatabase,
+    ) {
+        let v = self.account_changes.entry(address).or_default();
+        v.balance_changes.insert(self.idx, new);
+    }
+
+    fn on_nonce_change(
+        &mut self,
+        address: Address,
+        prev: u64,
+        new: u64,
+        _db: &mut crate::db::gen_db::GeneralizedDatabase,
+    ) {
+        let v = self.account_changes.entry(address).or_default();
+        v.nonce_changes.insert(self.idx, new);
+    }
+
+    fn on_code_change(
+        &mut self,
+        _address: Address,
+        prev: ethrex_common::types::Code,
+        new: ethrex_common::types::Code,
+        _db: &mut crate::db::gen_db::GeneralizedDatabase,
+    ) {
+        let v = self.account_changes.entry(_address).or_default();
+        v.code_changes.insert(self.idx, new.bytecode);
     }
 
     fn on_account_access(

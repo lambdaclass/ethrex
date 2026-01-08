@@ -1092,7 +1092,7 @@ impl Blockchain {
         };
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
-        let vm = self.new_evm(vm_db)?.with_generate_bal(true);
+        let vm = self.new_evm(vm_db)?.with_generate_bal(false);
 
         let (res, account_updates_list, merkle_queue_length, instants) =
             self.execute_block_pipeline(&block, &parent_header, vm)?;
