@@ -10,15 +10,12 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
-ethrex-common = { path = "../crates/common" }
-ethrex-rlp = { path = "../crates/common/rlp" }
-ethrex-trie = { path = "../crates/common/trie" }
-ethrex-levm = { path = "../crates/vm/levm", default-features = false, features = ["secp256k1"] }
+ethrex-common.workspace = true
+ethrex-rlp.workspace = true
+ethrex-trie.workspace = true
+ethrex-levm = { workspace = true, default-features = false, features = ["secp256k1"] }
 bytes = "1.6.0"
 ethereum-types = "0.15.1"
-
-[lints]
-workspace = true
 
 # RLP fuzzing
 [[bin]]

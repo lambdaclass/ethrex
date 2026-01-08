@@ -31,7 +31,8 @@ fuzz_target!(|sequence: TrieOpSequence| {
     let mut trie = Trie::new_temp();
 
     // Track what we've inserted for verification
-    let mut expected: std::collections::HashMap<Vec<u8>, Vec<u8>> = std::collections::HashMap::new();
+    let mut expected: std::collections::HashMap<Vec<u8>, Vec<u8>> =
+        std::collections::HashMap::new();
 
     for op in sequence.operations {
         match op {
@@ -41,7 +42,12 @@ fuzz_target!(|sequence: TrieOpSequence| {
                     continue;
                 }
                 let _ = trie.insert(key.clone(), value.clone());
-                expected.insert(key, value);
+                // In Ethereum trie semantics, empty value means "no value" (same as delete)
+                if value.is_empty() {
+                    expected.remove(&key);
+                } else {
+                    expected.insert(key, value);
+                }
             }
             TrieOp::Get { key } => {
                 if key.is_empty() {

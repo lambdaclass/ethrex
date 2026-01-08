@@ -9,6 +9,7 @@ members = [
   "loc",
   "migrations",
   "reorgs",
+  "fuzz"
 ]
 exclude = ["ef_tests/state"]
 resolver = "2"
@@ -28,7 +29,7 @@ ethrex-p2p = { path = "../crates/networking/p2p" }
 ethrex-rpc = { path = "../crates/networking/rpc" }
 ethrex-storage = { path = "../crates/storage" }
 ethrex-vm = { path = "../crates/vm", default-features = false }
-ethrex-levm = { path = "../crates/vm/levm" }
+ethrex-levm = { path = "../crates/vm/levm", default-features = false }
 ethrex-trie = { path = "../crates/common/trie" }
 ethrex-rlp = { path = "../crates/common/rlp" }
 ethrex-l2 = { path = "../crates/l2" }
