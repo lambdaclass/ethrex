@@ -94,6 +94,7 @@ impl Memory {
         #[allow(clippy::arithmetic_side_effects)]
         let real_new_memory_size = new_memory_size + self.current_base;
 
+          #[expect(clippy::arithmetic_side_effects)]
         if real_new_memory_size > buffer.len() {
             // when resizing, avoid really small resizes.
             let new_size = real_new_memory_size.next_multiple_of(64);
