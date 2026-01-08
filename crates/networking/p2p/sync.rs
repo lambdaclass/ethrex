@@ -62,6 +62,9 @@ const BYTECODE_CHUNK_SIZE: usize = 50_000;
 /// that are unlikely to be re-orged.
 const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
 
+/// Maximum attempts before giving up on header downloads during syncing
+const MAX_HEADER_FETCH_ATTEMPTS: u64 = 100;
+
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
     static ref EXECUTE_BATCH_SIZE: usize = std::env::var("EXECUTE_BATCH_SIZE").map(|var| var.parse().expect("Execute batch size environmental variable is not a number")).unwrap_or(EXECUTE_BATCH_SIZE_DEFAULT);
@@ -190,15 +193,12 @@ impl Syncer {
             Err(e) => return Err(e.into()),
         };
 
+        let mut attempts = 0;
+
         // We validate that we have the folders that are being used empty, as we currently assume
         // they are. If they are not empty we empty the folder
         delete_leaves_folder(&self.datadir);
         loop {
-            debug!("Sync Log 1: In snap sync");
-            debug!(
-                "Sync Log 2: State block hashes len {}",
-                block_sync_state.block_hashes.len()
-            );
             debug!("Requesting Block Headers from {current_head}");
 
             let Some(mut block_headers) = self
@@ -206,9 +206,21 @@ impl Syncer {
                 .request_block_headers(current_head_number, sync_head)
                 .await?
             else {
-                warn!("Sync failed to find target block header, aborting");
-                return Ok(());
+                if attempts > MAX_HEADER_FETCH_ATTEMPTS {
+                    warn!("Sync failed to find target block header, aborting");
+                    return Ok(());
+                }
+                attempts += 1;
+                tokio::time::sleep(Duration::from_millis(1.1_f64.powf(attempts as f64) as u64))
+                    .await;
+                continue;
             };
+
+            debug!("Sync Log 1: In snap sync");
+            debug!(
+                "Sync Log 2: State block hashes len {}",
+                block_sync_state.block_hashes.len()
+            );
 
             let (first_block_hash, first_block_number, first_block_parent_hash) =
                 match block_headers.first() {
@@ -325,6 +337,8 @@ impl Syncer {
         let mut headers = vec![];
         let mut single_batch = true;
 
+        let mut attempts = 0;
+
         // Request and store all block headers from the advertised sync head
         loop {
             let Some(mut block_headers) = self
@@ -332,9 +346,14 @@ impl Syncer {
                 .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
                 .await?
             else {
-                warn!("Sync failed to find target block header, aborting");
-                debug!("Sync Log 8: Sync failed to find target block header, aborting");
-                return Ok(());
+                if attempts > MAX_HEADER_FETCH_ATTEMPTS {
+                    warn!("Sync failed to find target block header, aborting");
+                    return Ok(());
+                }
+                attempts += 1;
+                tokio::time::sleep(Duration::from_millis(1.1_f64.powf(attempts as f64) as u64))
+                    .await;
+                continue;
             };
             debug!("Sync Log 9: Received {} block headers", block_headers.len());
 
