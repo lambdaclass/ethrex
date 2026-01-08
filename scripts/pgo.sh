@@ -5,6 +5,7 @@ PGO_DIR="${PGO_DIR:-./pgo-data}"
 RAW_DIR="${PGO_DIR}/raw"
 DATA_DIR="${PGO_DIR}/datadir"
 PROFDATA="${PGO_DIR}/merged.profdata"
+PROFDATA_ABS="$(cd "$(dirname "$PROFDATA")" && pwd)/$(basename "$PROFDATA")"
 SYNC_DURATION="${SYNC_DURATION:-15m}"
 LIGHTHOUSE_DATADIR="${LIGHTHOUSE_DATADIR:-${PGO_DIR}/lighthouse}"
 LIGHTHOUSE_JWT="${LIGHTHOUSE_JWT:-./jwt.hex}"
@@ -49,5 +50,5 @@ wait "$LIGHTHOUSE_PID" || true
 
 "$LLVM_PROFDATA" merge -o "$PROFDATA" "$RAW_DIR"/*.profraw
 
-RUSTFLAGS="-Cprofile-use=${PROFDATA} -Cllvm-args=-pgo-warn-missing-function" \
+RUSTFLAGS="-Cprofile-use=${PROFDATA_ABS}" \
   cargo build --profile pgo-use -p ethrex
