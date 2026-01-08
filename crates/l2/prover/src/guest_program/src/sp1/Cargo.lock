@@ -955,6 +955,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
+ "hex-literal",
  "k256",
  "kzg-rs",
  "lazy_static",
@@ -1004,6 +1005,7 @@ dependencies = [
  "serde_with",
  "sha3",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]
@@ -1393,6 +1395,12 @@ checksum = "5313b072ce3c597065a808dbf612c4c8e8590bdbf8b579508bf7a762c5eae6cd"
 dependencies = [
  "arrayvec",
 ]
+
+[[package]]
+name = "hex-literal"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6fe2267d4ed49bc07b63801559be28c718ea06c4738b7a03c94df7386d2cde46"
 
 [[package]]
 name = "hkdf"
