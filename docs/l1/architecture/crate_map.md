@@ -78,11 +78,14 @@ pub struct AccountState { nonce: u64, balance: U256, storage_root: H256, code_ha
 |-------|----------|
 | `block_numbers` | Block hash → block number |
 | `canonical_block_hashes` | Block number → canonical hash |
-| `block_headers` | Block hash → BlockHeader |
-| `block_bodies` | Block hash → BlockBody |
-| `receipts` | Block hash → Vec<Receipt> |
-| `account_states` | State root + address → AccountState |
-| `storage` | State root + address + slot → value |
+| `headers` | Block hash → BlockHeader |
+| `bodies` | Block hash → BlockBody |
+| `receipts` | Block hash + index → Receipt |
+| `account_trie_nodes` | Node hash → trie node data |
+| `storage_trie_nodes` | Node hash → trie node data |
+| `account_codes` | Code hash → bytecode |
+| `account_flatkeyvalue` | Account flat key-value store |
+| `storage_flatkeyvalue` | Storage flat key-value store |
 
 ---
 
@@ -282,9 +285,9 @@ Many crates support feature flags:
 | Crate | Feature | Effect |
 |-------|---------|--------|
 | `ethrex-storage` | `rocksdb` | Enable RocksDB backend |
-| `ethrex-vm` | `levm` | Use Lambda EVM |
 | `ethrex-blockchain` | `metrics` | Enable Prometheus metrics |
 | `ethrex-networking/p2p` | `sync-test` | Testing utilities for sync |
+| `ethrex-networking/p2p` | `experimental-discv5` | Enable discv5 node discovery (experimental) |
 
 ## Adding New Functionality
 

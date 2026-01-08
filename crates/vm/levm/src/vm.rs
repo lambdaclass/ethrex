@@ -351,16 +351,18 @@ impl Substate {
 /// # Hooks
 ///
 /// The VM supports hooks for extending functionality (e.g., tracing, debugging).
-/// Hooks are called at various points during execution.
+/// Hooks are called at various points during execution and implement pre/post-execution
+/// logic. L2-specific behavior (such as fee handling) is implemented via hooks.
 ///
 /// # Example
 ///
 /// ```ignore
-/// let mut vm = VM::new(db, environment, transaction);
-/// let result = vm.transact()?;
-/// match result {
-///     ExecutionReport::Success { gas_used, output, logs, .. } => { /* success */ }
-///     ExecutionReport::Revert { gas_used, output } => { /* reverted */ }
+/// let mut vm = VM::new(env, db, &tx, tracer, debug_mode, vm_type);
+/// let report = vm.execute()?;
+/// if report.is_success() {
+///     println!("Gas used: {}, Output: {:?}", report.gas_used, report.output);
+/// } else {
+///     println!("Transaction reverted");
 /// }
 /// ```
 pub struct VM<'a> {

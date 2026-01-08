@@ -38,13 +38,14 @@
 //! - [`memory::Memory`]: EVM memory with expansion tracking
 //! - [`environment::Environment`]: Block and transaction context
 //! - [`precompiles`]: Native implementations of precompiled contracts
+//! - [`hooks`]: Execution hooks for pre/post-execution logic and L2-specific behavior
 //!
 //! ## Supported Forks
 //!
-//! LEVM supports all Ethereum forks from Frontier through Prague:
-//! - Frontier, Homestead, Byzantium, Constantinople, Petersburg
-//! - Istanbul, Berlin, London, Paris (The Merge)
-//! - Shanghai, Cancun, Prague
+//! LEVM supports post-merge Ethereum forks:
+//! - Paris (The Merge), Shanghai, Cancun, Prague, Osaka
+//!
+//! Note: ethrex is a post-merge client and does not support pre-merge forks.
 //!
 //! ## Usage
 //!
@@ -52,13 +53,15 @@
 //! use levm::{VM, Environment};
 //!
 //! // Create VM with database and environment
-//! let mut vm = VM::new(db, environment, tx_report);
+//! let mut vm = VM::new(env, db, &tx, tracer, debug_mode, vm_type);
 //!
-//! // Execute a call
-//! let result = vm.transact()?;
+//! // Execute the transaction
+//! let report = vm.execute()?;
 //!
-//! // Get execution report
-//! let report = result.report;
+//! // Check execution result
+//! if report.is_success() {
+//!     println!("Gas used: {}", report.gas_used);
+//! }
 //! ```
 
 pub mod call_frame;

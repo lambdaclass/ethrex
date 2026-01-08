@@ -177,7 +177,8 @@ Snap sync downloads state directly from peers instead of executing all historica
            ▼
     ┌──────────────┐     ┌─────────────────────────────────────────────────────┐
     │  Download    │────▶│  For each account with storage:                     │
-    │  Storage     │     │  Request storage ranges and build storage tries     │
+    │  Storage     │     │  Request storage ranges and build storage tries.    │
+    │              │     │  Includes a healing loop to fix state trie changes. │
     └──────┬───────┘     └─────────────────────────────────────────────────────┘
            │
            ▼
@@ -416,6 +417,8 @@ METRICS.sync_head_hash             // Current sync target
 
 ## Related Documentation
 
-- [Snap Sync Internals](../fundamentals/snap_sync.md) - Additional snap sync details
+- [Snap Sync Internals](../fundamentals/snap_sync.md) - Detailed snap sync documentation
 - [Block Execution Pipeline](./block_execution.md) - How blocks are executed
 - [Networking](../fundamentals/networking.md) - P2P protocol details
+
+> **Note:** For comprehensive snap sync documentation, see [Snap Sync Internals](../fundamentals/snap_sync.md).

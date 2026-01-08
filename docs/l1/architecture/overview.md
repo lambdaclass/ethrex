@@ -155,7 +155,7 @@ P2P Peer → Block Headers/Bodies → Syncer → Blockchain.add_block() → EVM.
 ```
 
 1. Syncer requests headers from peers
-2. Headers are validated (PoW/PoS rules, parent exists)
+2. Headers are validated (parent exists, timestamps, gas limits, etc.)
 3. Bodies are requested and matched to headers
 4. Blocks are executed in batches
 5. State is committed to storage
@@ -204,8 +204,8 @@ Downloads state directly instead of executing all historical blocks:
 1. Download block headers to find a recent "pivot" block
 2. Download account state trie leaves via snap protocol
 3. Download storage tries for accounts with storage
-4. Download bytecode for contract accounts
-5. Heal any missing trie nodes
+4. Heal any missing trie nodes (state may have changed during download)
+5. Download bytecode for contract accounts
 6. Execute recent blocks (post-pivot) to catch up
 
 See [Sync State Machine](./sync_state_machine.md) for detailed documentation.
