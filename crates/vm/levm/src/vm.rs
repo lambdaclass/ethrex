@@ -468,7 +468,7 @@ impl<'a> VM<'a> {
             // Fast path for common opcodes
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
             let op_result = match opcode {
-                0x5d => self.op_tstore(),
+                0x5d if self.env.config.fork >= Fork::Cancun => self.op_tstore(),
                 0x60 => self.op_push::<1>(),
                 0x61 => self.op_push::<2>(),
                 0x62 => self.op_push::<3>(),
