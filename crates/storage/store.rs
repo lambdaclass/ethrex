@@ -1734,30 +1734,31 @@ impl Store {
 
         let threshold = latest_block_number - MAX_WITNESSES;
 
-        self.get_oldest_witness_number()?
-            .map(|oldest_block_number| -> Result<(), StoreError> {
-                for block_number in oldest_block_number..=threshold {
-                    let prefix = block_number.to_be_bytes();
-                    let mut to_delete = Vec::new();
+        if let Some(oldest_block_number) = self.get_oldest_witness_number()? {
+            let prefix = oldest_block_number.to_be_bytes();
+            let mut to_delete = Vec::new();
 
-                    {
-                        let read_txn = self.backend.begin_read()?;
-                        let iter = read_txn.prefix_iterator(EXECUTION_WITNESSES, &prefix)?;
+            {
+                let read_txn = self.backend.begin_read()?;
+                let iter = read_txn.prefix_iterator(EXECUTION_WITNESSES, &prefix)?;
 
-                        // We may have multiple witnesses for the same block number (forks)
-                        for item in iter {
-                            let (key, _value) = item?;
-                            to_delete.push(key.to_vec());
-                        }
-                    }
-
-                    for key in to_delete {
-                        self.delete(EXECUTION_WITNESSES, key)?;
+                // We may have multiple witnesses for the same block number (forks)
+                for item in iter {
+                    let (key, _value) = item?;
+                    let mut block_number_bytes = [0u8; 8];
+                    block_number_bytes.copy_from_slice(&key[0..8]);
+                    let block_number = u64::from_be_bytes(block_number_bytes);
+                    to_delete.push(key.to_vec());
+                    if block_number >= threshold {
+                        break;
                     }
                 }
-                Ok(())
-            })
-            .transpose()?;
+            }
+
+            for key in to_delete {
+                self.delete(EXECUTION_WITNESSES, key)?;
+            }
+        };
 
         self.update_oldest_witness_number(threshold + 1)?;
 
