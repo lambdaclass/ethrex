@@ -2,6 +2,9 @@
 
 This document presents the results of measurements conducted to analyze the latency improvements of the `debug_executionWitness` RPC method when execution witnesses are pre-generated during payload execution and stored in the database for a period of time (128 blocks), compared to generating them on demand.
 
+> [!NOTE]
+> All measurements were obtained using an RPC node running on the same machine, avoiding network-related latency.
+
 ## Measurements
 
 | Metric | Pre-Generated | On-Demand |
