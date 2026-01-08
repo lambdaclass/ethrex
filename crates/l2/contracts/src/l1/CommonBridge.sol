@@ -507,7 +507,9 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
-    function receiveETHFromSharedBridge() public payable override {}
+    function receiveETHFromSharedBridge() public payable override {
+        deposits[ETH_TOKEN][ETH_TOKEN] += msg.value;
+    }
 
     /// @inheritdoc ICommonBridge
     function receiveERC20FromSharedBridge(
