@@ -536,6 +536,19 @@ contract OnChainProposer is
                 );
             }
 
+            ICommonBridge.L2MessageRollingHash[]
+                memory batchL2InRollingHashes = batchCommitments[batchNumber]
+                    .l2InMessageRollingHashes;
+            for (uint256 j = 0; j < batchL2InRollingHashes.length; j++) {
+                uint16 l2_messages_count = uint16(
+                    bytes2(batchL2InRollingHashes[j].rollingHash)
+                );
+                ICommonBridge(BRIDGE).removePendingL2Messages(
+                    batchL2InRollingHashes[j].chainId,
+                    l2_messages_count
+                );
+            }
+
             // Verify public data for the batch
             string memory reason = _verifyPublicData(
                 batchNumber,
@@ -569,6 +582,10 @@ contract OnChainProposer is
                     publicInputsList[i]
                 );
             }
+
+            ICommonBridge(BRIDGE).publishL2Messages(
+                batchCommitments[batchNumber].balanceDiffs
+            );
 
             // Remove previous batch commitment
             delete batchCommitments[batchNumber - 1];
