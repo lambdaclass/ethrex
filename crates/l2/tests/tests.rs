@@ -8,7 +8,7 @@ use ethrex_common::types::{
     SAFE_BYTES_PER_BLOB, Transaction, TxKind, TxType,
 };
 use ethrex_common::utils::keccak;
-use ethrex_common::{Address, H160, H256, U256};
+use ethrex_common::{Address, H160, H256, U256, utils::u256_from_big_endian};
 use ethrex_l2::monitor::widget::l2_to_l1_messages::{L2ToL1MessageKind, L2ToL1MessageStatus};
 use ethrex_l2::monitor::widget::{L2ToL1MessagesTable, l2_to_l1_messages::L2ToL1MessageRow};
 use ethrex_l2_common::calldata::Value;
@@ -243,27 +243,27 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     assert_eq!(
         coinbase_balance_after_tests,
-        coinbase_balance_before_tests + acc_priority_fees,
+        coinbase_balance_before_tests + U256::from(acc_priority_fees),
         "Coinbase is not correct after tests"
     );
 
     if base_fee_vault.is_some() {
         assert_eq!(
             base_fee_vault_balance_after_tests,
-            base_fee_vault_balance_before_tests + acc_base_fees,
+            base_fee_vault_balance_before_tests + U256::from(acc_base_fees),
             "Base fee vault is not correct after tests"
         );
     }
 
     assert_eq!(
         operator_fee_vault_balance_after_tests,
-        operator_fee_vault_balance_before_tests + acc_operator_fee,
+        operator_fee_vault_balance_before_tests + U256::from(acc_operator_fee),
         "Operator fee vault is not correct after tests"
     );
 
     assert_eq!(
         l1_fee_vault_balance_after_tests,
-        l1_fee_vault_balance_before_tests + acc_l1_fees,
+        l1_fee_vault_balance_before_tests + U256::from(acc_l1_fees),
         "L1 fee vault is not correct after tests"
     );
 
@@ -434,7 +434,7 @@ async fn test_privileged_tx_with_contract_call(
         .is_ok_and(|logs| logs.is_empty())
     {
         println!("ptx_with_contract_call: Waiting for the event to be built");
-        block_number += U256::one();
+        block_number += U256::from(1u64);
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
@@ -449,7 +449,7 @@ async fn test_privileged_tx_with_contract_call(
         )
         .await?;
 
-    let number_emitted = U256::from_big_endian(
+    let number_emitted = u256_from_big_endian(
         &logs
             .first()
             .unwrap()
@@ -780,7 +780,7 @@ async fn test_aliasing(
         &[Value::Tuple(vec![
             Value::Address(H160::zero()),
             Value::Uint(U256::from(100_000)),
-            Value::Uint(U256::zero()),
+            Value::Uint(U256::ZERO),
             Value::Bytes(Bytes::new()),
         ])],
     )?;
@@ -921,7 +921,7 @@ async fn test_forced_withdrawal(
         .get_balance(rich_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
     let transfer_value = U256::from(100);
-    let mut l1_gas_costs = 0;
+    let mut l1_gas_costs = U256::ZERO;
 
     let calldata = encode_calldata("withdraw(address)", &[Value::Address(rich_address)])?;
 
@@ -929,7 +929,7 @@ async fn test_forced_withdrawal(
 
     let l1_to_l2_tx_hash = ethrex_l2_sdk::send_l1_to_l2_tx(
         rich_address,
-        Some(0),
+        Some(U256::ZERO),
         None,
         L1ToL2TransactionData::new(
             COMMON_BRIDGE_L2_ADDRESS,
@@ -950,7 +950,7 @@ async fn test_forced_withdrawal(
     assert!(l1_to_l2_tx_receipt.receipt.status);
 
     l1_gas_costs +=
-        l1_to_l2_tx_receipt.tx_info.gas_used * l1_to_l2_tx_receipt.tx_info.effective_gas_price;
+        U256::from(l1_to_l2_tx_receipt.tx_info.gas_used) * U256::from(l1_to_l2_tx_receipt.tx_info.effective_gas_price);
     println!("forced_withdrawal: Waiting for L1 to L2 transaction receipt on L2");
 
     let res = wait_for_l2_deposit_receipt(&l1_to_l2_tx_receipt, &l1_client, &l2_client).await?;
@@ -995,7 +995,7 @@ async fn test_forced_withdrawal(
     .await
     .expect("forced_withdrawal: error while claiming");
     let res = wait_for_transaction_receipt(withdraw_claim_tx, &l1_client, 5).await?;
-    l1_gas_costs += res.tx_info.gas_used * res.tx_info.effective_gas_price;
+    l1_gas_costs += U256::from(res.tx_info.gas_used) * U256::from(res.tx_info.effective_gas_price);
     assert_eq!(
         find_withdrawal_with_widget(
             bridge_address()?,
@@ -1049,7 +1049,7 @@ async fn test_balance_of_optional(
     if let Some(user) = user {
         test_balance_of(client, token, user).await
     } else {
-        U256::zero()
+        U256::ZERO
     }
 }
 
@@ -1094,7 +1094,7 @@ async fn test_deposit(
         .expect("Failed to get address from l1 rich wallet pk");
 
     let deposit_value = std::env::var("INTEGRATION_TEST_DEPOSIT_VALUE")
-        .map(|value| U256::from_dec_str(&value).expect("Invalid deposit value"))
+        .map(|value| U256::from_str_radix(&value, 10).expect("Invalid deposit value"))
         .unwrap_or(U256::from(1000000000000000000000u128));
 
     let depositor_l1_initial_balance = l1_client
@@ -1156,7 +1156,7 @@ async fn test_deposit(
         depositor_l1_balance_after_deposit,
         depositor_l1_initial_balance
             - deposit_value
-            - deposit_tx_receipt.tx_info.gas_used * deposit_tx_receipt.tx_info.effective_gas_price,
+            - U256::from(deposit_tx_receipt.tx_info.gas_used) * U256::from(deposit_tx_receipt.tx_info.effective_gas_price),
         "Depositor L1 balance didn't decrease as expected after deposit"
     );
 
@@ -1227,7 +1227,7 @@ async fn test_privileged_spammer(
             &rich_wallet_private_key,
             caller_l1,
             "spam(address,uint256)",
-            &[Value::Address(bridge_address()?), Value::Uint(5.into())],
+            &[Value::Address(bridge_address()?), Value::Uint(U256::from(5))],
             "test_privileged_spammer",
         )
         .await?;
@@ -1266,7 +1266,7 @@ async fn test_transfer(
 
     println!("test_transfer: Calculating return amount for return transfer");
     // Only return 99% of the transfer, other amount is for fees
-    let return_amount = (transfer_value() * 99) / 100;
+    let return_amount = (transfer_value() * U256::from(99)) / U256::from(100);
 
     println!(
         "test_transfer: Performing return transfer from {returner_address:#x} to {transferer_address:#x} with amount {return_amount}"
@@ -1312,7 +1312,7 @@ async fn test_transfer_with_privileged_tx(
 
     let l1_to_l2_tx_hash = ethrex_l2_sdk::send_l1_to_l2_tx(
         transferer_address,
-        Some(0),
+        Some(U256::ZERO),
         None,
         L1ToL2TransactionData::new(receiver_address, 21000 * 5, transfer_value(), Bytes::new()),
         &transferer_private_key,
@@ -1362,9 +1362,9 @@ async fn test_gas_burning(
 
     let l1_to_l2_tx_hash = ethrex_l2_sdk::send_l1_to_l2_tx(
         rich_address,
-        Some(0),
+        Some(U256::ZERO),
         Some(l2_gas_limit + l1_extra_gas_limit),
-        L1ToL2TransactionData::new(rich_address, l2_gas_limit, U256::zero(), Bytes::new()),
+        L1ToL2TransactionData::new(rich_address, l2_gas_limit, U256::ZERO, Bytes::new()),
         &rich_wallet_private_key,
         bridge_address()?,
         &l1_client,
@@ -1409,7 +1409,7 @@ async fn test_privileged_tx_not_enough_balance(
         .get_balance(receiver_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    let transfer_value = balance_sender + U256::one();
+    let transfer_value = balance_sender + U256::from(1u64);
 
     println!(
         "ptx_not_enough_balance: Attempting to transfer {transfer_value} from {rich_address:#x} to {receiver_address:#x}"
@@ -1417,7 +1417,7 @@ async fn test_privileged_tx_not_enough_balance(
 
     let l1_to_l2_tx_hash = ethrex_l2_sdk::send_l1_to_l2_tx(
         rich_address,
-        Some(0),
+        Some(U256::ZERO),
         None,
         L1ToL2TransactionData::new(receiver_address, 21000 * 5, transfer_value, Bytes::new()),
         &rich_wallet_private_key,
@@ -1511,7 +1511,7 @@ async fn perform_transfer(
         .await?;
 
     assert_eq!(
-        transferer_initial_l2_balance - transfer_value - total_fees,
+        transferer_initial_l2_balance - transfer_value - U256::from(total_fees),
         transferer_l2_balance_after_transfer,
         "{test}: L2 transferer balance didn't decrease as expected after transfer. Gas costs were {total_fees}",
     );
@@ -1544,7 +1544,7 @@ async fn test_n_withdraws(
     println!("test_n_withdraws: Withdrawing funds from L2 to L1");
     let withdrawer_address = get_address_from_secret_key(&withdrawer_private_key.secret_bytes())?;
     let withdraw_value = std::env::var("INTEGRATION_TEST_WITHDRAW_VALUE")
-        .map(|value| U256::from_dec_str(&value).expect("Invalid withdraw value"))
+        .map(|value| U256::from_str_radix(&value, 10).expect("Invalid withdraw value"))
         .unwrap_or(U256::from(100000000000000000000u128));
 
     println!("test_n_withdraws: Checking balances on L1 and L2 before withdrawal");
@@ -1643,8 +1643,8 @@ async fn test_n_withdraws(
 
     // Now assert exact balance movement on L2: value + gas
     let expected_l2_after = withdrawer_l2_balance_before_withdrawal
-        - (withdraw_value * n)
-        - total_withdraw_fees_l2.total();
+        - (withdraw_value * U256::from(n))
+        - U256::from(total_withdraw_fees_l2.total());
 
     assert_eq!(
         withdrawer_l2_balance_after_withdrawal, expected_l2_after,
@@ -1675,27 +1675,27 @@ async fn test_n_withdraws(
 
     assert_eq!(
         coinbase_balance_after_withdrawal,
-        coinbase_balance_before_withdrawal + total_withdraw_fees_l2.priority_fees,
+        coinbase_balance_before_withdrawal + U256::from(total_withdraw_fees_l2.priority_fees),
         "Coinbase balance didn't increase as expected after withdrawal"
     );
 
     if base_fee_vault.is_some() {
         assert_eq!(
             base_fee_vault_balance_after_withdrawal,
-            base_fee_vault_balance_before_withdrawal + total_withdraw_fees_l2.base_fees,
+            base_fee_vault_balance_before_withdrawal + U256::from(total_withdraw_fees_l2.base_fees),
             "Base fee vault balance didn't increase as expected after withdrawal"
         );
     }
 
     assert_eq!(
         operator_fee_vault_balance_after_withdrawal,
-        operator_fee_vault_balance_before_withdrawal + total_withdraw_fees_l2.operator_fees,
+        operator_fee_vault_balance_before_withdrawal + U256::from(total_withdraw_fees_l2.operator_fees),
         "Operator balance didn't increase as expected after withdrawal"
     );
 
     assert_eq!(
         l1_fee_vault_balance_after_withdrawal,
-        l1_fee_vault_balance_before_withdrawal + total_withdraw_fees_l2.l1_fees,
+        l1_fee_vault_balance_before_withdrawal + U256::from(total_withdraw_fees_l2.l1_fees),
         "L1 fee vault balance didn't increase as expected after withdrawal"
     );
 
@@ -1744,7 +1744,7 @@ async fn test_n_withdraws(
 
     assert_eq!(
         withdrawer_l1_balance_after_claim,
-        withdrawer_l1_balance_after_withdrawal + withdraw_value * n - gas_used_value,
+        withdrawer_l1_balance_after_withdrawal + withdraw_value * U256::from(n) - U256::from(gas_used_value),
         "Withdrawer L1 balance wasn't updated as expected after claim"
     );
 
@@ -1763,7 +1763,7 @@ async fn test_n_withdraws(
 
     assert_eq!(
         bridge_balance_after_withdrawal,
-        bridge_balance_before_withdrawal - withdraw_value * n,
+        bridge_balance_before_withdrawal - withdraw_value * U256::from(n),
         "Bridge balance didn't decrease as expected after withdrawal"
     );
 
@@ -1888,7 +1888,7 @@ async fn test_deploy(
 
     assert_eq!(
         deployer_balance_after_deploy,
-        deployer_balance_before_deploy - total_fees,
+        deployer_balance_before_deploy - U256::from(total_fees),
         "{test_name}: Deployer L2 balance didn't decrease as expected after deploy"
     );
 
@@ -1953,12 +1953,12 @@ async fn test_call_to_contract_with_deposit(
 
     let l1_to_l2_tx_hash = ethrex_l2_sdk::send_l1_to_l2_tx(
         caller_address,
-        Some(0),
+        Some(U256::ZERO),
         None,
         L1ToL2TransactionData::new(
             deployed_contract_address,
             21000 * 5,
-            U256::zero(),
+            U256::ZERO,
             calldata_to_contract.clone(),
         ),
         caller_private_key,
@@ -1986,8 +1986,8 @@ async fn test_call_to_contract_with_deposit(
     assert_eq!(
         caller_l1_balance_after_call,
         caller_l1_balance_before_call
-            - l1_to_l2_tx_receipt.tx_info.gas_used
-                * l1_to_l2_tx_receipt.tx_info.effective_gas_price,
+            - U256::from(l1_to_l2_tx_receipt.tx_info.gas_used)
+                * U256::from(l1_to_l2_tx_receipt.tx_info.effective_gas_price),
         "{test}: Caller L1 balance didn't decrease as expected after call"
     );
 
@@ -2172,7 +2172,7 @@ async fn test_fee_token(
         fee_token_ratio, 2,
         "{test}: fee token ratio not set in contract"
     );
-    let value_to_transfer = 100_000;
+    let value_to_transfer = U256::from(100_000);
     let mut generic_tx = build_generic_tx(
         &l2_client,
         TxType::FeeToken,
@@ -2235,7 +2235,7 @@ async fn test_fee_token(
         .expect("Sender fee token balance increased unexpectedly");
     assert_eq!(
         sender_fee_token_spent,
-        U256::from(transfer_fees.total()) * fee_token_ratio,
+        U256::from(transfer_fees.total()) * U256::from(fee_token_ratio),
         "{test}: Sender fee token spend mismatch"
     );
 
@@ -2246,7 +2246,7 @@ async fn test_fee_token(
         .expect("Coinbase fee token balance decreased");
     assert_eq!(
         coinbase_delta,
-        U256::from(transfer_fees.priority_fees) * fee_token_ratio,
+        U256::from(transfer_fees.priority_fees) * U256::from(fee_token_ratio),
         "{test}: Priority fee mismatch"
     );
 
@@ -2261,7 +2261,7 @@ async fn test_fee_token(
             .expect("Base fee vault balance decreased");
         assert_eq!(
             base_fee_vault_delta,
-            U256::from(transfer_fees.base_fees) * fee_token_ratio,
+            U256::from(transfer_fees.base_fees) * U256::from(fee_token_ratio),
             "{test}: Base fee vault mismatch"
         );
     }
@@ -2281,7 +2281,7 @@ async fn test_fee_token(
         .expect("Operator fee vault balance decreased");
     assert_eq!(
         operator_fee_vault_delta,
-        U256::from(transfer_fees.operator_fees) * fee_token_ratio,
+        U256::from(transfer_fees.operator_fees) * U256::from(fee_token_ratio),
         "{test}: Operator fee vault mismatch"
     );
 
@@ -2290,7 +2290,7 @@ async fn test_fee_token(
         .expect("L1 fee vault balance decreased");
     assert_eq!(
         l1_fee_vault_delta,
-        U256::from(transfer_fees.l1_fees) * fee_token_ratio,
+        U256::from(transfer_fees.l1_fees) * U256::from(fee_token_ratio),
         "{test}: L1 fee vault mismatch"
     );
 
@@ -2466,7 +2466,7 @@ async fn l1_fee_vault(l2_client: &EthClient) -> Option<Address> {
 
 async fn get_fee_vault_balance(l2_client: &EthClient, vault_address: Option<Address>) -> U256 {
     let Some(addr) = vault_address else {
-        return U256::zero();
+        return U256::ZERO;
     };
     l2_client
         .get_balance(addr, BlockIdentifier::Tag(BlockTag::Latest))
@@ -2520,7 +2520,7 @@ fn get_tests_private_keys() -> Vec<SecretKey> {
 async fn get_rich_accounts_balance(
     l2_client: &EthClient,
 ) -> Result<U256, Box<dyn std::error::Error>> {
-    let mut total_balance = U256::zero();
+    let mut total_balance = U256::ZERO;
     let private_keys_file_path = rich_keys_file_path();
 
     let pks = read_to_string(private_keys_file_path)?;
@@ -2615,7 +2615,7 @@ fn clean_contracts_dir() {
 
 fn transfer_value() -> U256 {
     std::env::var("INTEGRATION_TEST_TRANSFER_VALUE")
-        .map(|value| U256::from_dec_str(&value).expect("Invalid transfer value"))
+        .map(|value| U256::from_str_radix(&value, 10).expect("Invalid transfer value"))
         .unwrap_or(U256::from(10_000_000_000u128))
 }
 

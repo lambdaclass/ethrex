@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use bytes::Bytes;
-use ethereum_types::{Address, H256};
+use ethrex_common::{Address, H256};
 use ethrex_common::types::balance_diff::{AssetDiff, BalanceDiff};
 use ethrex_common::utils::keccak;
 use ethrex_common::{H160, U256, types::Receipt};
@@ -54,7 +54,7 @@ impl L1Message {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&self.from.to_fixed_bytes());
         bytes.extend_from_slice(&self.data_hash.0);
-        bytes.extend_from_slice(&self.message_id.to_big_endian());
+        bytes.extend_from_slice(&self.message_id.to_be_bytes::<32>());
         bytes
     }
 }
@@ -82,7 +82,7 @@ pub fn get_block_l1_messages(receipts: &[Receipt]) -> Vec<L1Message> {
                     Some(L1Message {
                         from: Address::from_slice(&log.topics.get(1)?.0[12..32]),
                         data_hash: *log.topics.get(2)?,
-                        message_id: U256::from_big_endian(&log.topics.get(3)?.to_fixed_bytes()),
+                        message_id: U256::from_be_slice(&log.topics.get(3)?.to_fixed_bytes()),
                     })
                 })
         })
@@ -113,28 +113,29 @@ pub struct L2Message {
 impl L2Message {
     pub fn encode(&self) -> Vec<u8> {
         [
-            U256::from(self.source_chain_id).to_big_endian().as_ref(),
+            U256::from(self.source_chain_id).to_be_bytes::<32>().as_ref(),
             self.from.as_bytes(),
             self.to.as_bytes(),
-            &self.tx_id.to_big_endian(),
-            &self.value.to_big_endian(),
-            &self.gas_limit.to_big_endian(),
+            &self.tx_id.to_be_bytes::<32>(),
+            &self.value.to_be_bytes::<32>(),
+            &self.gas_limit.to_be_bytes::<32>(),
             keccak(&self.data).as_bytes(),
         ]
         .concat()
     }
     pub fn from_log(log: &ethrex_common::types::Log, source_chain_id: u64) -> Option<L2Message> {
-        let dest_chain_id = U256::from_big_endian(&log.topics.get(1)?.0);
+        let dest_chain_id = U256::from_be_slice(&log.topics.get(1)?.0);
         let from = H256::from_slice(log.data.get(0..32)?);
         let from = Address::from_slice(&from.as_fixed_bytes()[12..]);
         let to = H256::from_slice(log.data.get(32..64)?);
         let to = Address::from_slice(&to.as_fixed_bytes()[12..]);
-        let value = U256::from_big_endian(log.data.get(64..96)?);
-        let gas_limit = U256::from_big_endian(log.data.get(96..128)?);
-        let tx_id = U256::from_big_endian(log.data.get(128..160)?);
+        let value = U256::from_be_slice(log.data.get(64..96)?);
+        let gas_limit = U256::from_be_slice(log.data.get(96..128)?);
+        let tx_id = U256::from_be_slice(log.data.get(128..160)?);
         // 160 to 192 is the offset for calldata
-        let calldata_len = U256::from_big_endian(log.data.get(192..224)?);
-        let calldata = log.data.get(224..224 + calldata_len.as_usize())?;
+        let calldata_len = U256::from_be_slice(log.data.get(192..224)?);
+        let calldata_len_usize: usize = calldata_len.try_into().ok()?;
+        let calldata = log.data.get(224..224 + calldata_len_usize)?;
 
         Some(L2Message {
             dest_chain_id,
@@ -194,19 +195,19 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
                 continue;
             };
             (
-                U256::zero(),
+                U256::ZERO,
                 Some(AssetDiff {
                     token_l1: Address::from_slice(token_l1),
                     token_src_l2: Address::from_slice(token_src_l2),
                     token_dst_l2: Address::from_slice(token_dst_l2),
-                    value: U256::from_big_endian(value_bytes),
+                    value: U256::from_be_slice(value_bytes),
                 }),
             )
         } else {
             let mut value = message.value;
             if message.to == BRIDGE_ADDRESS && message.from == BRIDGE_ADDRESS {
                 // This is the mint transaction, ignore the value
-                value = U256::zero();
+                value = U256::ZERO;
             }
             (value, None)
         };
@@ -214,7 +215,7 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
             .entry(message.dest_chain_id)
             .or_insert(BalanceDiff {
                 chain_id: message.dest_chain_id,
-                value: U256::zero(),
+                value: U256::ZERO,
                 value_per_token: Vec::new(),
                 message_hashes: Vec::new(),
             });

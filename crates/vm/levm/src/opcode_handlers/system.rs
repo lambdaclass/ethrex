@@ -409,7 +409,7 @@ impl<'a> VM<'a> {
         callframe.memory.resize(new_memory_size)?;
 
         // OPERATION
-        let value = U256::zero();
+        let value = U256::ZERO;
         let from = callframe.to; // The new sender will be the current contract.
         let to = address; // In this case address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
         let data = self.get_calldata(args_offset, args_size)?;
@@ -563,13 +563,13 @@ impl<'a> VM<'a> {
             // Selfdestruct is executed in the same transaction as the contract was created
             if self.substate.is_account_created(&to) {
                 // If target is the same as the contract calling, Ether will be burnt.
-                self.get_account_mut(to)?.info.balance = U256::zero();
+                self.get_account_mut(to)?.info.balance = U256::ZERO;
 
                 self.substate.add_selfdestruct(to);
             }
         } else {
             self.increase_account_balance(beneficiary, balance)?;
-            self.get_account_mut(to)?.info.balance = U256::zero();
+            self.get_account_mut(to)?.info.balance = U256::ZERO;
 
             self.substate.add_selfdestruct(to);
         }

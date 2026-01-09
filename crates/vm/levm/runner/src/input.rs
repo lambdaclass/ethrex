@@ -46,7 +46,7 @@ impl From<InputAccount> for Account {
             storage: account
                 .storage
                 .into_iter()
-                .map(|(k, v)| (H256::from(k.to_big_endian()), v))
+                .map(|(k, v)| (H256::from(k.to_be_bytes::<32>()), v))
                 .collect(),
         }
     }
@@ -85,7 +85,7 @@ impl Default for InputTransaction {
             sender: default_sender(),
             gas_limit: high_u64(),
             gas_price: one_u256(),
-            value: U256::zero(),
+            value: U256::ZERO,
             data: Bytes::new(),
         }
     }
@@ -103,9 +103,9 @@ impl From<InputTransaction> for ethrex_common::types::LegacyTransaction {
             },
             value: tx.value,
             data: tx.data,
-            v: U256::zero(),
-            r: U256::zero(),
-            s: U256::zero(),
+            v: U256::ZERO,
+            r: U256::ZERO,
+            s: U256::ZERO,
             ..Default::default()
         }
     }
@@ -120,7 +120,7 @@ pub fn default_recipient() -> Option<Address> {
 }
 
 pub fn one_u256() -> U256 {
-    U256::one()
+    U256::from(1u64)
 }
 
 pub fn high_u64() -> u64 {

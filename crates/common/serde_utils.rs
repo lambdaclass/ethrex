@@ -4,7 +4,7 @@ use serde::{Deserialize, Deserializer, Serializer, de::Error, ser::SerializeSeq}
 
 pub mod u256 {
     use super::*;
-    use ethereum_types::U256;
+    use ruint::aliases::U256;
 
     pub mod dec_str {
         use super::*;
@@ -13,7 +13,7 @@ pub mod u256 {
             D: Deserializer<'de>,
         {
             let value = String::deserialize(d)?;
-            U256::from_dec_str(&value).map_err(|e| D::Error::custom(e.to_string()))
+            U256::from_str_radix(&value, 10).map_err(|e| D::Error::custom(e.to_string()))
         }
 
         pub fn serialize<S>(value: &U256, serializer: S) -> Result<S::Ok, S::Error>
@@ -55,7 +55,7 @@ pub mod u256 {
             U256::from_str_radix(value.trim_start_matches("0x"), 16)
                 .map_err(|_| D::Error::custom("Failed to deserialize u256 value"))
         } else {
-            U256::from_dec_str(&value).map_err(|e| D::Error::custom(e.to_string()))
+            U256::from_str_radix(&value, 10).map_err(|e| D::Error::custom(e.to_string()))
         }
     }
 

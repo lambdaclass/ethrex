@@ -1,10 +1,10 @@
 /// Utility functions for state reconstruction.
 /// Used by the based block fetcher and reconstruct command.
-use ethereum_types::H256;
+use ethrex_common::H256;
 use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::balance_diff::BalanceDiff;
 use ethrex_common::{
-    U256,
+    U256, U256Ext,
     types::{Block, BlockNumber, PrivilegedL2Transaction, batch::Batch},
 };
 

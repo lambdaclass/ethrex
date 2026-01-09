@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H160, H256, U256,
+    Address, H160, H256, U256, U256Ext,
     types::{PrivilegedL2Transaction, TxType},
 };
 use ethrex_rpc::{
@@ -48,21 +48,21 @@ impl PrivilegedTransactionData {
         )?);
         let to_address = hash_to_address(to);
 
-        let transaction_id = U256::from_big_endian(log.data.get(64..96).ok_or(
+        let transaction_id = U256::from_be_slice(log.data.get(64..96).ok_or(
             "Failed to parse gas_limit from log: log.data[64..96] out of bounds".to_owned(),
         )?);
 
-        let value = U256::from_big_endian(log.data.get(96..128).ok_or(
+        let value = U256::from_be_slice(log.data.get(96..128).ok_or(
             "Failed to parse gas_limit from log: log.data[96..128] out of bounds".to_owned(),
         )?);
 
-        let gas_limit = U256::from_big_endian(log.data.get(128..160).ok_or(
+        let gas_limit = U256::from_be_slice(log.data.get(128..160).ok_or(
             "Failed to parse gas_limit from log: log.data[128..160] out of bounds".to_owned(),
         )?);
 
         // 160..192 is taken by offset_data, which we do not need
 
-        let calldata_len = U256::from_big_endian(log.data.get(192..224).ok_or(
+        let calldata_len = U256::from_be_slice(log.data.get(192..224).ok_or(
             "Failed to parse calldata_len from log: log.data[192..224] out of bounds".to_owned(),
         )?);
 

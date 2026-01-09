@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use ethrex_common::utils::keccak;
-use ethrex_common::{Address, H256, U256};
+use ethrex_common::{Address, H256, U256, utils::u256_from_big_endian};
 use ethrex_l2_common::{calldata::Value, messages::MESSENGER_ADDRESS};
 use ethrex_l2_sdk::{COMMON_BRIDGE_L2_ADDRESS, calldata::encode_calldata};
 use ethrex_rpc::{EthClient, clients::Overrides, types::receipt::RpcLog};
@@ -94,7 +94,7 @@ impl L2ToL1MessageStatus {
                 .parse()
                 .unwrap_or_default();
 
-            U256::from_big_endian(raw_withdrawal_is_claimed.as_fixed_bytes()) == U256::one()
+            U256::from_be_slice(raw_withdrawal_is_claimed.as_fixed_bytes()) == U256::from(1u64)
         };
 
         if withdrawal_is_claimed {
@@ -254,7 +254,7 @@ impl L2ToL1MessagesTable {
                                 .ok_or(MonitorError::LogsTopics(WITHDRAWAL_ETH_RECEIVER_TOPIC_IDX))?
                                 .as_fixed_bytes()[12..],
                         ),
-                        value: U256::from_big_endian(
+                        value: u256_from_big_endian(
                             log.log
                                 .topics
                                 .get(WITHDRAWAL_ETH_AMOUNT_TOPIC_IDX)
@@ -279,7 +279,7 @@ impl L2ToL1MessagesTable {
                                 ))?
                                 .as_fixed_bytes()[12..],
                         ),
-                        value: U256::from_big_endian(
+                        value: u256_from_big_endian(
                             log.log.data.get(0..32).ok_or(MonitorError::LogsData(32))?,
                         ),
                         token_l1: Address::from_slice(

@@ -1,5 +1,5 @@
 use ethrex_common::{
-    Address, Bloom, Bytes, H256, U256,
+    Address, Bloom, Bytes, H256, U256, U256Ext,
     constants::GAS_PER_BLOB,
     evm::calculate_create_address,
     serde_utils,

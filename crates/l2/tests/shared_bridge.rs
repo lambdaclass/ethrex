@@ -166,7 +166,7 @@ async fn test_transfer_erc_20() -> Result<()> {
     test_send(
         &l2a_client,
         &private_key,
-        U256::zero(),
+        U256::ZERO,
         GAS_PRICE,
         COMMON_BRIDGE_L2_ADDRESS,
         signature,
@@ -471,7 +471,7 @@ async fn test_counter() -> Result<()> {
 
     assert_eq!(
         counter_value_u256_after,
-        counter_value_u256 + U256::one(),
+        counter_value_u256 + U256::from(1u64),
         "Counter value did not increase correctly"
     );
 

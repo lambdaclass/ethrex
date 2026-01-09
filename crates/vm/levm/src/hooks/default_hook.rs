@@ -47,7 +47,7 @@ impl Hook for DefaultHook {
         let gaslimit_price_product = vm
             .env
             .gas_price
-            .checked_mul(vm.env.gas_limit.into())
+            .checked_mul(U256::from(vm.env.gas_limit))
             .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
 
         validate_sender_balance(vm, sender_info.balance)?;
@@ -433,7 +433,7 @@ pub fn validate_sender_balance(vm: &mut VM<'_>, sender_balance: U256) -> Result<
         .env
         .tx_max_fee_per_gas
         .unwrap_or(vm.env.gas_price)
-        .checked_mul(vm.env.gas_limit.into())
+        .checked_mul(U256::from(vm.env.gas_limit))
         .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
 
     let balance_for_valid_tx = gas_fee_for_valid_tx

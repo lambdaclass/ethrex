@@ -1,7 +1,7 @@
 use ethrex_common::Bytes;
 use ethrex_common::H256;
 use ethrex_common::utils::keccak;
-use ethrex_common::{Address, H32, U256};
+use ethrex_common::{Address, H32, U256, U256Ext};
 use ethrex_l2_common::calldata::Value;
 use ethrex_rpc::clients::EthClientError;
 use ethrex_rpc::clients::eth::errors::CalldataEncodeError;
@@ -133,7 +133,7 @@ impl<'a> DecodeHelper<'a> {
         Ok(data)
     }
     fn consume_u256(&mut self) -> Result<U256, CalldataDecodeError> {
-        Ok(U256::from_big_endian(self.consume(32)?))
+        Ok(U256::from_be_slice(self.consume(32)?))
     }
     fn start_reading_at(&self, offset: usize) -> Result<Self, CalldataDecodeError> {
         let data = self
@@ -401,7 +401,7 @@ pub fn encode_tuple(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
 }
 
 fn write_u256(values: &mut [u8], number: U256, offset: usize) -> Result<(), CalldataEncodeError> {
-    let to_copy = number.to_big_endian();
+    let to_copy = number.to_be_bytes::<32>();
     copy_into(values, &to_copy, offset, 32)?;
 
     Ok(())
@@ -467,7 +467,7 @@ fn is_dynamic(value: &Value) -> bool {
 
 fn encode_array(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
     let mut ret = vec![];
-    let to_copy = U256::from(values.len()).to_big_endian();
+    let to_copy = U256::from(values.len()).to_be_bytes::<32>();
     ret.extend_from_slice(&to_copy);
 
     let tuple_encoding = encode_tuple(values)?;
@@ -486,7 +486,7 @@ fn encode_bytes(values: &Bytes) -> Vec<u8> {
         padded_bytes.extend_from_slice(&vec![0; padding]);
     }
 
-    let to_copy = U256::from(values.len()).to_big_endian(); // we write the length without padding
+    let to_copy = U256::from(values.len()).to_be_bytes::<32>(); // we write the length without padding
 
     ret.extend_from_slice(&to_copy);
     ret.extend_from_slice(&padded_bytes);
@@ -526,10 +526,10 @@ pub fn from_hex_string_to_h256_array(hex_string: &str) -> Result<Vec<H256>, EthC
     }
 
     // Get the offset (should be 0x20 for simple arrays)
-    let offset = U256::from_big_endian(&bytes[0..32]).as_usize();
+    let offset = U256::from_be_slice(&bytes[0..32]).as_usize();
 
     // Get the length of the array
-    let length = U256::from_big_endian(&bytes[offset..offset + 32]).as_usize();
+    let length = U256::from_be_slice(&bytes[offset..offset + 32]).as_usize();
 
     // Calculate the start of the array data
     let data_start = offset + 32;
@@ -597,8 +597,8 @@ fn calldata_test() {
     let raw_function_signature = "blockWithdrawalsLogs(uint256,bytes)";
     let mut bytes_calldata = vec![];
 
-    bytes_calldata.extend_from_slice(&U256::zero().to_big_endian());
-    bytes_calldata.extend_from_slice(&U256::one().to_big_endian());
+    bytes_calldata.extend_from_slice(&U256::ZERO.to_be_bytes::<32>());
+    bytes_calldata.extend_from_slice(&U256::from(1u64).to_be_bytes::<32>());
 
     let arguments = vec![
         Value::Uint(U256::from(902)),

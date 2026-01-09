@@ -1,6 +1,5 @@
 use bytes::Bytes;
-use ethereum_types::H256;
-use ethereum_types::{Address, U256};
+use crate::{Address, H256, U256};
 use serde::Serialize;
 
 /// Collection of traces of each call frame as defined in geth's `callTracer` output

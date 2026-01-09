@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use ethrex_common::{Address, U256};
+use ethrex_common::{Address, U256, U256Ext};
 use ethrex_config::networks::LOCAL_DEVNET_PRIVATE_KEYS;
 use ethrex_l2_common::utils::get_address_from_secret_key;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};

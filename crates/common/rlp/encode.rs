@@ -1,5 +1,5 @@
 use bytes::{BufMut, Bytes};
-use ethereum_types::U256;
+use ruint::aliases::U256;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use super::constants::RLP_NULL;
@@ -322,13 +322,14 @@ impl RLPEncode for String {
 impl RLPEncode for U256 {
     fn encode(&self, buf: &mut dyn BufMut) {
         let leading_zeros_in_bytes: usize = (self.leading_zeros() / 8) as usize;
-        let bytes = self.to_big_endian();
+        let bytes = self.to_be_bytes::<32>();
         bytes[leading_zeros_in_bytes..].encode(buf)
     }
 
     fn length(&self) -> usize {
-        let ilog = self.bits().saturating_sub(1);
-        impl_length_integers(ilog as u32, (self.low_u32() & 0xff) as u8)
+        let ilog = self.bit_len().saturating_sub(1);
+        let lsb = (self.as_limbs()[0] & 0xff) as u8;
+        impl_length_integers(ilog as u32, lsb)
     }
 }
 
@@ -609,7 +610,8 @@ pub trait PayloadRLPEncode {
 mod tests {
     use std::net::IpAddr;
 
-    use ethereum_types::{Address, U256};
+    use ethereum_types::Address;
+    use ruint::aliases::U256;
     use hex_literal::hex;
 
     use crate::constants::{RLP_EMPTY_LIST, RLP_NULL};
@@ -934,12 +936,12 @@ mod tests {
         assert_eq!(encoded.len(), U256::from(128).length());
 
         let mut encoded = Vec::new();
-        U256::max_value().encode(&mut encoded);
+        U256::MAX.encode(&mut encoded);
         let bytes = [0xff; 32];
         let mut expected: Vec<u8> = bytes.into();
         expected.insert(0, 0x80 + 32);
         assert_eq!(encoded, expected);
-        assert_eq!(encoded.len(), U256::max_value().length());
+        assert_eq!(encoded.len(), U256::MAX.length());
     }
 
     #[test]

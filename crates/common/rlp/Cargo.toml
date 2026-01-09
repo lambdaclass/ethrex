@@ -12,6 +12,7 @@ bytes.workspace = true
 hex.workspace = true
 lazy_static.workspace = true
 ethereum-types.workspace = true
+ruint.workspace = true
 snap.workspace = true
 
 [dev-dependencies]

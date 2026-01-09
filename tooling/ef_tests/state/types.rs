@@ -11,7 +11,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H256, U256,
+    Address, H256, U256, U256Ext,
     types::{Fork, Genesis, GenesisAccount, TxKind},
 };
 use serde::Deserialize;

@@ -1,4 +1,8 @@
-pub use ethereum_types::*;
+// Keep H256, H160, H512, H64, Address, Bloom from ethereum_types
+pub use ethereum_types::{Address, Bloom, H128, H160, H256, H264, H32, H512, H520, H64, Signature};
+pub use ruint::ParseError as FromStrRadixErr;
+// Use ruint for U256/U512
+pub use ruint::aliases::{U256, U512};
 pub mod constants;
 pub mod serde_utils;
 pub mod types;
@@ -12,5 +16,6 @@ pub mod genesis_utils;
 pub mod rkyv_utils;
 pub mod tracing;
 pub mod utils;
+pub use utils::{BigEndianHash, U256Ext};
 
 pub use errors::EcdsaError;

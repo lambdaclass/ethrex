@@ -1,8 +1,11 @@
 use std::{cmp::min, fmt::Display};
 
-use crate::{errors::EcdsaError, utils::keccak};
+use crate::{errors::EcdsaError, utils::{keccak, U256Ext}};
+#[cfg(test)]
+use crate::utils::u256_from_big_endian;
 use bytes::Bytes;
-use ethereum_types::{Address, H256, Signature, U256};
+use crate::{Address, H256, U256};
+use ethereum_types::Signature;
 use hex_literal::hex;
 pub use mempool::MempoolTransaction;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
@@ -407,7 +410,7 @@ impl Transaction {
         };
 
         Some(U256::saturating_add(
-            U256::saturating_mul(price, self.gas_limit().into()),
+            U256::saturating_mul(price, U256::from(self.gas_limit())),
             self.value(),
         ))
     }
@@ -1072,8 +1075,8 @@ impl Transaction {
                         .finish(),
                 }
                 let mut sig = [0u8; 65];
-                sig[..32].copy_from_slice(&tx.r.to_big_endian());
-                sig[32..64].copy_from_slice(&tx.s.to_big_endian());
+                sig[..32].copy_from_slice(&tx.r.to_be_bytes::<32>());
+                sig[32..64].copy_from_slice(&tx.s.to_be_bytes::<32>());
                 sig[64] = signature_y_parity as u8;
                 recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
             }
@@ -1090,8 +1093,8 @@ impl Transaction {
                     .encode_field(&tx.access_list)
                     .finish();
                 let mut sig = [0u8; 65];
-                sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
-                sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
+                sig[..32].copy_from_slice(&tx.signature_r.to_be_bytes::<32>());
+                sig[32..64].copy_from_slice(&tx.signature_s.to_be_bytes::<32>());
                 sig[64] = tx.signature_y_parity as u8;
                 recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
             }
@@ -1109,8 +1112,8 @@ impl Transaction {
                     .encode_field(&tx.access_list)
                     .finish();
                 let mut sig = [0u8; 65];
-                sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
-                sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
+                sig[..32].copy_from_slice(&tx.signature_r.to_be_bytes::<32>());
+                sig[32..64].copy_from_slice(&tx.signature_s.to_be_bytes::<32>());
                 sig[64] = tx.signature_y_parity as u8;
                 recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
             }
@@ -1130,8 +1133,8 @@ impl Transaction {
                     .encode_field(&tx.blob_versioned_hashes)
                     .finish();
                 let mut sig = [0u8; 65];
-                sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
-                sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
+                sig[..32].copy_from_slice(&tx.signature_r.to_be_bytes::<32>());
+                sig[32..64].copy_from_slice(&tx.signature_s.to_be_bytes::<32>());
                 sig[64] = tx.signature_y_parity as u8;
                 recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
             }
@@ -1150,8 +1153,8 @@ impl Transaction {
                     .encode_field(&tx.authorization_list)
                     .finish();
                 let mut sig = [0u8; 65];
-                sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
-                sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
+                sig[..32].copy_from_slice(&tx.signature_r.to_be_bytes::<32>());
+                sig[32..64].copy_from_slice(&tx.signature_s.to_be_bytes::<32>());
                 sig[64] = tx.signature_y_parity as u8;
                 recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
             }
@@ -1171,8 +1174,8 @@ impl Transaction {
                     .encode_field(&tx.fee_token)
                     .finish();
                 let mut sig = [0u8; 65];
-                sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
-                sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
+                sig[..32].copy_from_slice(&tx.signature_r.to_be_bytes::<32>());
+                sig[32..64].copy_from_slice(&tx.signature_s.to_be_bytes::<32>());
                 sig[64] = tx.signature_y_parity as u8;
                 recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
             }
@@ -1394,7 +1397,7 @@ impl Transaction {
     /// For more information check out [EIP-155](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md)
     pub fn protected(&self) -> bool {
         match self {
-            Transaction::LegacyTransaction(tx) if tx.v.bits() <= 8 => {
+            Transaction::LegacyTransaction(tx) if tx.v.bit_len() <= 8 => {
                 let v = tx.v.as_u64();
                 v != 27 && v != 28 && v != 1 && v != 0
             }
@@ -1528,21 +1531,21 @@ impl PrivilegedL2Transaction {
             _ => return None,
         };
 
-        let value = self.value.to_big_endian();
+        let value = self.value.to_be_bytes::<32>();
 
         // The nonce should be a U256,
         // in solidity the transactionId is a U256.
         let u256_nonce = U256::from(self.nonce);
-        let nonce = u256_nonce.to_big_endian();
+        let nonce = u256_nonce.to_be_bytes::<32>();
 
         Some(crate::utils::keccak(
             [
-                U256::from(self.chain_id).to_big_endian().as_ref(),
+                U256::from(self.chain_id).to_be_bytes::<32>().as_ref(),
                 self.from.as_bytes(),
                 to.as_bytes(),
                 &nonce,
                 &value,
-                &U256::from(self.gas_limit).to_big_endian(),
+                &U256::from(self.gas_limit).to_be_bytes::<32>(),
                 keccak(&self.data).as_bytes(),
             ]
             .concat(),
@@ -3062,13 +3065,13 @@ mod tests {
             gas_price: U256::from(0x0a),
             gas: 0x05f5e100,
             to: TxKind::Call(hex!("1000000000000000000000000000000000000000").into()),
-            value: 0.into(),
+            value: U256::ZERO,
             data: Default::default(),
             v: U256::from(0x1b),
-            r: U256::from_big_endian(&hex!(
+            r: u256_from_big_endian(&hex!(
                 "7e09e26678ed4fac08a249ebe8ed680bf9051a5e14ad223e4b2b9d26e0208f37"
             )),
-            s: U256::from_big_endian(&hex!(
+            s: u256_from_big_endian(&hex!(
                 "5f6e3f188e3e6eab7d7d3b6568f5eac7d687b08d307d3154ccd8c87b4630509b"
             )),
             ..Default::default()
@@ -3089,7 +3092,7 @@ mod tests {
             gas_price: U256::from(0x2dbf1f9a_u64),
             gas_limit: 0x186A0,
             to: TxKind::Call(hex!("7dcd17433742f4c0ca53122ab541d0ba67fc27df").into()),
-            value: 2.into(),
+            value: U256::from(2),
             data: Bytes::from(&b"\xdbS\x06$\x8e\x03\x13\xe7emit"[..]),
             access_list: vec![(
                 hex!("7dcd17433742f4c0ca53122ab541d0ba67fc27df").into(),
@@ -3099,12 +3102,14 @@ mod tests {
                 ],
             )],
             signature_y_parity: false,
-            signature_r: U256::from_dec_str(
+            signature_r: U256::from_str_radix(
                 "75813812796588349127366022588733264074091236448495248199152066031778895768879",
+                10,
             )
             .unwrap(),
-            signature_s: U256::from_dec_str(
+            signature_s: U256::from_str_radix(
                 "25476208226281085290728123165613764315157904411823916642262684106502155457829",
+                10,
             )
             .unwrap(),
             ..Default::default()
@@ -3145,7 +3150,7 @@ mod tests {
             to: TxKind::Call(Address::from_slice(
                 &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
             )),
-            value: 3000000000000000_u64.into(),
+            value: U256::from(3000000000000000_u64),
             data: Bytes::new(),
             r: U256::from_str_radix(
                 "151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65d",
@@ -3157,7 +3162,7 @@ mod tests {
                 16,
             )
             .unwrap(),
-            v: 6303851.into(),
+            v: U256::from(6303851_u64),
             ..Default::default()
         };
         assert_eq!(tx, expected_tx);
@@ -3175,7 +3180,7 @@ mod tests {
             to: TxKind::Call(Address::from_slice(
                 &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
             )),
-            value: 3000000000000000_u64.into(),
+            value: U256::from(3000000000000000_u64),
             data: Bytes::new(),
             signature_r: U256::from_str_radix(
                 "151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65d",
@@ -3416,8 +3421,8 @@ mod tests {
                 vec![H256::zero()],
             )],
             signature_y_parity: true,
-            signature_r: U256::one(),
-            signature_s: U256::zero(),
+            signature_r: U256::from(1u64),
+            signature_s: U256::ZERO,
             ..Default::default()
         };
         let tx_to_serialize = Transaction::EIP1559Transaction(eip1559.clone());
@@ -3446,13 +3451,13 @@ mod tests {
             data: Bytes::from_static(b"03"),
             access_list: vec![],
             signature_y_parity: true,
-            signature_r: U256::one(),
-            signature_s: U256::zero(),
+            signature_r: U256::from(1u64),
+            signature_s: U256::ZERO,
             authorization_list: vec![AuthorizationTuple {
                 chain_id: U256::from(65536999),
                 address: H160::from_str("0x000a52D537c4150ec274dcE3962a0d179B7E71B1").unwrap(),
                 nonce: 2,
-                y_parity: U256::one(),
+                y_parity: U256::from(1u64),
                 r_signature: U256::from(22),
                 s_signature: U256::from(37),
             }],
@@ -3609,13 +3614,13 @@ mod tests {
 
         // 5. Create a high-s signature: s' = N - s
         // The curve order N for secp256k1
-        let n = U256::from_big_endian(&hex!(
+        let n = u256_from_big_endian(&hex!(
             "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141"
         ));
-        let s = U256::from_big_endian(&sig_bytes[32..64]);
+        let s = U256::from_be_slice(&sig_bytes[32..64]);
 
         // Ensure the generated signature was indeed low-s (standard requirement)
-        let half_n = n / 2;
+        let half_n = n / U256::from(2);
         assert!(
             s <= half_n,
             "Generated signature was not low-s, cannot test high-s rejection"
@@ -3626,7 +3631,7 @@ mod tests {
 
         let mut sig_high_bytes = sig_bytes;
         // Replace s with s_high
-        sig_high_bytes[32..64].copy_from_slice(&s_high.to_big_endian());
+        sig_high_bytes[32..64].copy_from_slice(&s_high.to_be_bytes::<32>());
         // When flipping s to -s mod N, we must also flip the recovery ID (v) to maintain validity of the point R
         sig_high_bytes[64] ^= 1;
 

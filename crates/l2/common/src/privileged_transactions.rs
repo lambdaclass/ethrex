@@ -1,4 +1,4 @@
-use ethereum_types::{Address, H256, U256};
+use ethrex_common::{Address, H256, U256};
 use ethrex_common::types::{PrivilegedL2Transaction, Transaction};
 use ethrex_common::utils::keccak;
 use serde::{Deserialize, Serialize};
@@ -17,7 +17,7 @@ impl PrivilegedTransactionLog {
     pub fn encode(&self) -> Vec<u8> {
         let mut encoded = Vec::new();
         encoded.extend(self.address.0);
-        encoded.extend_from_slice(&self.amount.to_big_endian());
+        encoded.extend_from_slice(&self.amount.to_be_bytes::<32>());
         encoded
     }
 }

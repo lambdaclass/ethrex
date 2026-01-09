@@ -3,7 +3,7 @@ use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use secp256k1::SecretKey;
 
 use ethrex_common::{
-    U256,
+    U256, U256Ext,
     types::{
         EIP1559Transaction, EIP2930Transaction, EIP4844Transaction, EIP7702Transaction,
         LegacyTransaction, Transaction, TxKind,

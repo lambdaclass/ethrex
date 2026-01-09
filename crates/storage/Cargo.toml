@@ -34,6 +34,7 @@ default = []
 rocksdb = ["dep:rocksdb"]
 
 [dev-dependencies]
+ruint.workspace = true
 hex.workspace = true
 hex-literal.workspace = true
 tempfile.workspace = true

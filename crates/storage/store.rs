@@ -1741,7 +1741,7 @@ impl Store {
                 self.open_direct_storage_trie(h256_hashed_address, *EMPTY_TRIE_HASH)?;
             for (storage_key, storage_value) in account.storage {
                 if !storage_value.is_zero() {
-                    let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
+                    let hashed_key = hash_key(&H256(storage_key.to_be_bytes::<32>()));
                     storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                 }
             }
@@ -2036,7 +2036,7 @@ impl Store {
             storage_proof.extend(storage_keys.iter().map(|key| StorageSlotProof {
                 proof: Vec::new(),
                 key: *key,
-                value: U256::zero(),
+                value: U256::ZERO,
             }));
         }
         let account = account_opt.unwrap_or_default();
@@ -2854,7 +2854,8 @@ fn dir_is_empty(path: &Path) -> Result<bool, StoreError> {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use ethereum_types::{H256, U256};
+    use ethereum_types::H256;
+    use ruint::aliases::U256;
     use ethrex_common::{
         Bloom, H160,
         constants::EMPTY_KECCACK_HASH,
@@ -2958,7 +2959,7 @@ mod tests {
             address.0.to_vec(),
             AccountState {
                 nonce: 1,
-                balance: U256::zero(),
+                balance: U256::ZERO,
                 storage_root,
                 code_hash: *EMPTY_KECCACK_HASH,
             }
@@ -3057,7 +3058,7 @@ mod tests {
             )
             .unwrap(),
             logs_bloom: Bloom::from([0; 256]),
-            difficulty: U256::zero(),
+            difficulty: U256::ZERO,
             number: 1,
             gas_limit: 0x016345785d8a0000,
             gas_used: 0xa8de,

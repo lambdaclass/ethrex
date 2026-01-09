@@ -131,7 +131,7 @@ impl StateUpdater {
     pub async fn update_state(&mut self) -> Result<(), StateUpdaterError> {
         let current_state = self.sequencer_state.status().await;
         if !self.based {
-            let current_block: U256 = self.store.get_latest_block_number().await?.into();
+            let current_block: U256 = U256::from(self.store.get_latest_block_number().await?);
             let mut new_state = current_state;
 
             // The node if set to stop sequencing at a specific block we will set it to Following once we reach it.
@@ -143,7 +143,7 @@ impl StateUpdater {
             // We use the l2_client as the trust source for the latest block number.
             if matches!(current_state, SequencerStatus::Sequencing) {
                 if let Some(stop_at) = self.stop_at
-                    && current_block >= stop_at.into()
+                    && current_block >= U256::from(stop_at)
                 {
                     new_state = SequencerStatus::Following;
                 }
@@ -154,7 +154,7 @@ impl StateUpdater {
                 let latest_block = l2_client.get_block_number().await?;
                 let can_sequence = current_block >= latest_block;
 
-                if latest_block < self.start_at.into() {
+                if latest_block < U256::from(self.start_at) {
                     new_state = SequencerStatus::Following;
                 } else if can_sequence {
                     new_state = SequencerStatus::Sequencing;

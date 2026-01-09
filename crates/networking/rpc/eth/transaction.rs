@@ -11,7 +11,7 @@ use crate::{
 };
 use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
-    H256, U256,
+    H256, U256, U256Ext,
     types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
 };
 

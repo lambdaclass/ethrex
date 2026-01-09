@@ -25,7 +25,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    BigEndianHash, H256, U256,
+    BigEndianHash, H256, U256, U256Ext,
     types::{AccountState, BlockBody, BlockHeader, validate_block_body},
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
@@ -623,18 +623,18 @@ impl PeerHandler {
             .current_step
             .set(CurrentStepValue::RequestingAccountRanges);
         // 1) split the range in chunks of same length
-        let start_u256 = U256::from_big_endian(&start.0);
-        let limit_u256 = U256::from_big_endian(&limit.0);
+        let start_u256 = U256::from_be_slice(&start.0);
+        let limit_u256 = U256::from_be_slice(&limit.0);
 
         let chunk_count = 800;
-        let chunk_size = (limit_u256 - start_u256) / chunk_count;
+        let chunk_size = (limit_u256 - start_u256) / U256::from(chunk_count);
 
         // list of tasks to be executed
         let mut tasks_queue_not_started = VecDeque::<(H256, H256)>::new();
         for i in 0..(chunk_count as u64) {
-            let chunk_start_u256 = chunk_size * i + start_u256;
+            let chunk_start_u256 = chunk_size * U256::from(i) + start_u256;
             // We subtract one because ranges are inclusive
-            let chunk_end_u256 = chunk_start_u256 + chunk_size - 1u64;
+            let chunk_end_u256 = chunk_start_u256 + chunk_size - U256::from(1);
             let chunk_start = H256::from_uint(&(chunk_start_u256));
             let chunk_end = H256::from_uint(&(chunk_end_u256));
             tasks_queue_not_started.push_back((chunk_start, chunk_end));
@@ -909,7 +909,7 @@ impl PeerHandler {
                         return Err(PeerHandlerError::AccountHashes);
                     }
                 };
-                let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
+                let new_start_u256 = U256::from_be_slice(&last_hash.0) + U256::from(1);
                 let new_start = H256::from_uint(&new_start_u256);
                 Some((new_start, chunk_end))
             } else {
@@ -1364,7 +1364,7 @@ impl PeerHandler {
                             task_count += 1;
                         }
                         // Task found a big storage account, so we split the chunk into multiple chunks
-                        let start_hash_u256 = U256::from_big_endian(&hash_start.0);
+                        let start_hash_u256 = U256::from_be_slice(&hash_start.0);
                         let missing_storage_range = U256::MAX - start_hash_u256;
 
                         // Big accounts need to be marked for storage healing unconditionally
@@ -1377,7 +1377,7 @@ impl PeerHandler {
                             .map(|v| v.len())
                             .ok_or(PeerHandlerError::NoAccountStorages)?
                             .max(1);
-                        let storage_density = start_hash_u256 / slot_count;
+                        let storage_density = start_hash_u256 / U256::from(slot_count);
 
                         let slots_per_chunk = U256::from(10000);
                         let chunk_size = storage_density
@@ -1415,7 +1415,7 @@ impl PeerHandler {
                                     .ok_or(PeerHandlerError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
 
                                 for i in 0..chunk_count {
-                                    let start_hash_u256 = start_hash_u256 + chunk_size * i;
+                                    let start_hash_u256 = start_hash_u256 + chunk_size * U256::from(i);
                                     let start_hash = H256::from_uint(&start_hash_u256);
                                     let end_hash = if i == chunk_count - 1 {
                                         H256::repeat_byte(0xff)
@@ -1451,7 +1451,7 @@ impl PeerHandler {
                                 .ok_or(PeerHandlerError::UnrecoverableError("Trie to get the old download intervals for an account but did not find them".to_owned()))?;
 
                             for i in 0..chunk_count {
-                                let start_hash_u256 = start_hash_u256 + chunk_size * i;
+                                let start_hash_u256 = start_hash_u256 + chunk_size * U256::from(i);
                                 let start_hash = H256::from_uint(&start_hash_u256);
                                 let end_hash = if i == chunk_count - 1 {
                                     H256::repeat_byte(0xff)
@@ -1781,7 +1781,7 @@ impl PeerHandler {
                     return Err(PeerHandlerError::NoAccountStorages);
                 }
             };
-            let next_hash_u256 = U256::from_big_endian(&last_hash.0).saturating_add(1.into());
+            let next_hash_u256 = U256::from_be_slice(&last_hash.0).saturating_add(U256::from(1));
             let next_hash = H256::from_uint(&next_hash_u256);
             (start + account_storages.len() - 1, end, next_hash)
         } else {

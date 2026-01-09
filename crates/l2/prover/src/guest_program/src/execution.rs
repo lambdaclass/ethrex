@@ -271,8 +271,8 @@ pub fn stateless_validation_l1(
         #[cfg(feature = "l2")]
         blob_versioned_hash: H256::zero(),
         last_block_hash: last_block.header.hash(),
-        chain_id: chain_id.into(),
-        non_privileged_count: non_privileged_count.into(),
+        chain_id: U256::from(chain_id),
+        non_privileged_count: U256::from(non_privileged_count),
         #[cfg(feature = "l2")]
         balance_diffs: vec![],
     })
@@ -334,7 +334,7 @@ pub fn stateless_validation_l2(
         l2_in_message_rolling_hashes,
         blob_versioned_hash,
         last_block_hash,
-        chain_id: chain_id.into(),
+        chain_id: U256::from(chain_id),
         non_privileged_count,
         balance_diffs,
     })
@@ -483,7 +483,7 @@ fn execute_stateless(
         initial_state_hash,
         final_state_hash,
         last_block_hash,
-        non_privileged_count: non_privileged_count.into(),
+        non_privileged_count: U256::from(non_privileged_count),
     })
 }
 

@@ -59,6 +59,7 @@ rayon = "1.10.0"
 crossbeam.workspace = true
 
 [dev-dependencies]
+ruint.workspace = true
 hex-literal = "0.4.1"
 
 [lib]

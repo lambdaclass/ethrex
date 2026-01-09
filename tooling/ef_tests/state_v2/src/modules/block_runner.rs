@@ -6,7 +6,7 @@ use ethrex_common::types::{
     Block, BlockBody, BlockHeader, Fork, Receipt, Transaction, compute_receipts_root,
     compute_transactions_root,
 };
-use ethrex_common::{H256, U256};
+use ethrex_common::{H256, U256, U256Ext};
 use ethrex_levm::{
     tracing::LevmCallTracer,
     vm::{VM, VMType},

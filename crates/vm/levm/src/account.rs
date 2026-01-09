@@ -43,7 +43,7 @@ impl From<GenesisAccount> for LevmAccount {
         let storage: FxHashMap<H256, U256> = genesis
             .storage
             .into_iter()
-            .map(|(key, value)| (H256::from(key.to_big_endian()), value))
+            .map(|(key, value)| (H256::from(key.to_be_bytes::<32>()), value))
             .collect();
 
         LevmAccount {

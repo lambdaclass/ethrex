@@ -177,9 +177,9 @@ impl L1ToL2MessagesTable {
                 [
                     l1_to_l2_message.from.as_bytes(),
                     l1_to_l2_message.to_address.as_bytes(),
-                    &l1_to_l2_message.transaction_id.to_big_endian(),
-                    &l1_to_l2_message.value.to_big_endian(),
-                    &l1_to_l2_message.gas_limit.to_big_endian(),
+                    &l1_to_l2_message.transaction_id.to_be_bytes::<32>(),
+                    &l1_to_l2_message.value.to_be_bytes::<32>(),
+                    &l1_to_l2_message.gas_limit.to_be_bytes::<32>(),
                     keccak(&l1_to_l2_message.calldata).as_bytes(),
                 ]
                 .concat(),

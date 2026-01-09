@@ -1,5 +1,5 @@
 use super::{BlobsBundle, Block, requests::EncodedRequests};
-use ethereum_types::U256;
+use crate::U256;
 
 #[derive(Debug, Clone)]
 pub struct PayloadBundle {
@@ -13,7 +13,7 @@ impl PayloadBundle {
     pub fn from_block(block: Block) -> Self {
         PayloadBundle {
             block,
-            block_value: U256::zero(),
+            block_value: U256::ZERO,
             blobs_bundle: BlobsBundle::empty(),
             requests: Vec::default(),
         }

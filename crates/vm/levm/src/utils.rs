@@ -54,7 +54,7 @@ pub fn calculate_create2_address(
             [
                 &[0xff],
                 sender_address.as_bytes(),
-                &salt.to_big_endian(),
+                &salt.to_be_bytes::<32>(),
                 init_code_hash.as_bytes(),
             ]
             .concat(),
@@ -127,7 +127,7 @@ pub fn get_max_blob_gas_price(
 
     let max_blob_gas_cost = tx_max_fee_per_blob_gas
         .unwrap_or_default()
-        .checked_mul(blob_gas_used.into())
+        .checked_mul(U256::from(blob_gas_used))
         .ok_or(InternalError::Overflow)?;
 
     Ok(max_blob_gas_cost)
@@ -149,7 +149,7 @@ pub fn calculate_blob_gas_cost(
 
     let base_fee_per_blob_gas = get_base_fee_per_blob_gas(block_excess_blob_gas, evm_config)?;
 
-    let blob_gas_used: U256 = blob_gas_used.into();
+    let blob_gas_used: U256 = U256::from(blob_gas_used);
     let blob_fee: U256 = blob_gas_used
         .checked_mul(base_fee_per_blob_gas)
         .ok_or(InternalError::Overflow)?;
@@ -202,13 +202,13 @@ pub fn eip7702_recover_address(
     use sha2::Digest;
     use sha3::Keccak256;
 
-    if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::zero() >= auth_tuple.s_signature {
+    if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::ZERO >= auth_tuple.s_signature {
         return Ok(None);
     }
-    if auth_tuple.r_signature > *SECP256K1_ORDER || U256::zero() >= auth_tuple.r_signature {
+    if auth_tuple.r_signature > *SECP256K1_ORDER || U256::ZERO >= auth_tuple.r_signature {
         return Ok(None);
     }
-    if auth_tuple.y_parity != U256::one() && auth_tuple.y_parity != U256::zero() {
+    if auth_tuple.y_parity != U256::from(1u64) && auth_tuple.y_parity != U256::ZERO {
         return Ok(None);
     }
 
@@ -219,8 +219,8 @@ pub fn eip7702_recover_address(
     digest.update(rlp_buf);
 
     let bytes = [
-        auth_tuple.r_signature.to_big_endian(),
-        auth_tuple.s_signature.to_big_endian(),
+        auth_tuple.r_signature.to_be_bytes::<32>(),
+        auth_tuple.s_signature.to_be_bytes::<32>(),
     ]
     .concat();
 
@@ -266,13 +266,13 @@ pub fn eip7702_recover_address(
     use ethrex_crypto::keccak::keccak_hash;
     use ethrex_rlp::encode::RLPEncode;
 
-    if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::zero() >= auth_tuple.s_signature {
+    if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::ZERO >= auth_tuple.s_signature {
         return Ok(None);
     }
-    if auth_tuple.r_signature > *SECP256K1_ORDER || U256::zero() >= auth_tuple.r_signature {
+    if auth_tuple.r_signature > *SECP256K1_ORDER || U256::ZERO >= auth_tuple.r_signature {
         return Ok(None);
     }
-    if auth_tuple.y_parity != U256::one() && auth_tuple.y_parity != U256::zero() {
+    if auth_tuple.y_parity != U256::from(1u64) && auth_tuple.y_parity != U256::ZERO {
         return Ok(None);
     }
 
@@ -284,8 +284,8 @@ pub fn eip7702_recover_address(
     let message = secp256k1::Message::from_digest(bytes);
 
     let bytes = [
-        auth_tuple.r_signature.to_big_endian(),
-        auth_tuple.s_signature.to_big_endian(),
+        auth_tuple.r_signature.to_be_bytes::<32>(),
+        auth_tuple.s_signature.to_be_bytes::<32>(),
     ]
     .concat();
 
@@ -596,10 +596,11 @@ pub fn account_to_levm_account(account: Account) -> (LevmAccount, Code) {
 /// This is generally used for memory offsets and sizes, 32 bits is more than enough for this purpose.
 #[expect(clippy::as_conversions)]
 pub fn u256_to_usize(val: U256) -> Result<usize, VMError> {
-    if val.0[0] > u32::MAX as u64 || val.0[1] != 0 || val.0[2] != 0 || val.0[3] != 0 {
+    let limbs = val.as_limbs();
+    if limbs[0] > u32::MAX as u64 || limbs[1] != 0 || limbs[2] != 0 || limbs[3] != 0 {
         return Err(VMError::ExceptionalHalt(ExceptionalHalt::VeryLargeNumber));
     }
-    Ok(val.0[0] as usize)
+    Ok(limbs[0] as usize)
 }
 
 /// Converts U256 size and offset to usize.

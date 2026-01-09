@@ -5,6 +5,14 @@ use crate::{
 };
 use ethrex_common::{U256, U512};
 
+/// Extract lower 256 bits from a U512 value.
+/// This is safe when the U512 value is known to fit in U256 (e.g., after modulo by a U256 value).
+#[inline]
+fn u512_to_u256_unchecked(value: U512) -> U256 {
+    let limbs = value.as_limbs();
+    U256::from_limbs([limbs[0], limbs[1], limbs[2], limbs[3]])
+}
+
 // Arithmetic Operations (11)
 // Opcodes: ADD, SUB, MUL, DIV, SDIV, MOD, SMOD, ADDMOD, MULMOD, EXP, SIGNEXTEND
 
@@ -83,7 +91,7 @@ impl<'a> VM<'a> {
                     quot
                 }
             }
-            None => U256::zero(),
+            None => U256::ZERO,
         };
 
         current_call_frame.stack.push(quotient)?;
@@ -151,8 +159,8 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        let new_augend: U512 = augend.into();
-        let new_addend: U512 = addend.into();
+        let new_augend = U512::from(augend);
+        let new_addend = U512::from(addend);
 
         #[allow(
             clippy::arithmetic_side_effects,
@@ -163,12 +171,10 @@ impl<'a> VM<'a> {
             clippy::arithmetic_side_effects,
             reason = "can't trap because non-zero modulus"
         )]
-        let sum_mod = sum % modulus;
+        let sum_mod = sum % U512::from(modulus);
 
-        #[allow(clippy::expect_used, reason = "can't overflow")]
-        let sum_mod: U256 = sum_mod
-            .try_into()
-            .expect("can't fail because we applied % mod where mod is a U256 value");
+        // Safe because we applied % mod where mod is a U256 value
+        let sum_mod: U256 = u512_to_u256_unchecked(sum_mod);
 
         current_call_frame.stack.push(sum_mod)?;
 
@@ -190,13 +196,13 @@ impl<'a> VM<'a> {
         #[cfg(feature = "zisk")]
         let product_mod = {
             use ziskos::zisklib::mulmod256_c;
-            let mut product_mod = U256::zero();
+            let mut product_mod = U256::ZERO;
             unsafe {
                 mulmod256_c(
-                    multiplicand.0.as_ptr(),
-                    multiplier.0.as_ptr(),
-                    modulus.0.as_ptr(),
-                    product_mod.0.as_mut_ptr(),
+                    multiplicand.as_limbs().as_ptr(),
+                    multiplier.as_limbs().as_ptr(),
+                    modulus.as_limbs().as_ptr(),
+                    product_mod.as_limbs_mut().as_mut_ptr(),
                 );
             }
             product_mod
@@ -204,16 +210,13 @@ impl<'a> VM<'a> {
 
         #[cfg(not(feature = "zisk"))]
         let product_mod = {
-            let product = multiplicand.full_mul(multiplier);
+            let product: U512 = multiplicand.widening_mul(multiplier);
 
             #[allow(clippy::arithmetic_side_effects, reason = "modulus isn't zero")]
-            let product_mod = product % modulus;
+            let product_mod = product % U512::from(modulus);
 
-            #[allow(clippy::expect_used, reason = "modulus is a U256, so result fits")]
-            let product_mod: U256 = product_mod
-                .try_into()
-                .expect("can't fail because we applied % mod where mod is a U256 value");
-            product_mod
+            // Safe because modulus is a U256, so result fits
+            u512_to_u256_unchecked(product_mod)
         };
 
         current_call_frame.stack.push(product_mod)?;
@@ -252,15 +255,15 @@ impl<'a> VM<'a> {
             clippy::arithmetic_side_effects,
             reason = "Since byte_size_minus_one ≤ 31, overflow is impossible"
         )]
-        let sign_bit_index = byte_size_minus_one * 8 + 7;
+        let sign_bit_index = byte_size_minus_one * U256::from(8u64) + U256::from(7u64);
 
         #[expect(
             clippy::arithmetic_side_effects,
             reason = "sign_bit_index max value is 31 * 8 + 7 = 255, which can't overflow."
         )]
         {
-            let sign_bit = (value_to_extend >> sign_bit_index) & U256::one();
-            let mask = (U256::one() << sign_bit_index) - U256::one();
+            let sign_bit = (value_to_extend >> sign_bit_index) & U256::from(1u64);
+            let mask = (U256::from(1u64) << sign_bit_index) - U256::from(1u64);
 
             let result = if sign_bit.is_zero() {
                 value_to_extend & mask
@@ -295,7 +298,7 @@ fn is_negative(value: U256) -> bool {
 
 /// Negates a number in two's complement
 fn negate(value: U256) -> U256 {
-    let (dividend, _overflowed) = (!value).overflowing_add(U256::one());
+    let (dividend, _overflowed) = (!value).overflowing_add(U256::from(1u64));
     dividend
 }
 

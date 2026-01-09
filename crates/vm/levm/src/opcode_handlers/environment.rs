@@ -82,7 +82,7 @@ impl<'a> VM<'a> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::CALLDATALOAD)?;
 
-        let calldata_size: U256 = current_call_frame.calldata.len().into();
+        let calldata_size: U256 = U256::from(current_call_frame.calldata.len());
 
         let offset = current_call_frame.stack.pop1()?;
 
@@ -287,7 +287,7 @@ impl<'a> VM<'a> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
         let address_was_cold = !self.substate.add_accessed_address(address);
         // FIXME: a bit wasteful to fetch the whole code just to get the length.
-        let account_code_length = self.db.get_account_code(address)?.bytecode.len().into();
+        let account_code_length = U256::from(self.db.get_account_code(address)?.bytecode.len());
 
         let current_call_frame = &mut self.current_call_frame;
 

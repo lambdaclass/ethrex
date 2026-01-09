@@ -3,7 +3,7 @@ use std::{cmp::min, sync::Arc, time::Duration};
 use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice};
 use ethrex_common::types::BlobsBundle;
 use ethrex_common::utils::keccak;
-use ethrex_common::{Address, H256, U256, types::Block};
+use ethrex_common::{Address, H256, U256, U256Ext, types::Block, utils::u256_from_big_endian};
 
 use ethrex_l2_sdk::{get_last_committed_batch, get_last_fetched_l1_block};
 use ethrex_rlp::decode::RLPDecode;
@@ -95,9 +95,8 @@ impl BlockFetcher {
     ) -> Result<Self, BlockFetcherError> {
         let eth_client = EthClient::new_with_multiple_urls(cfg.eth.rpc_url.clone())?;
         let last_l1_block_fetched =
-            get_last_fetched_l1_block(&eth_client, cfg.l1_watcher.bridge_address)
-                .await?
-                .into();
+            U256::from(get_last_fetched_l1_block(&eth_client, cfg.l1_watcher.bridge_address)
+                .await?);
         Ok(Self {
             eth_client,
             on_chain_proposer_address: cfg.l1_committer.on_chain_proposer_address,
@@ -107,7 +106,7 @@ impl BlockFetcher {
             sequencer_state,
             fetch_interval_ms: cfg.based.block_fetcher.fetch_interval_ms,
             last_l1_block_fetched,
-            fetch_block_step: cfg.based.block_fetcher.fetch_block_step.into(),
+            fetch_block_step: U256::from(cfg.based.block_fetcher.fetch_block_step),
         })
     }
 
@@ -187,7 +186,7 @@ impl BlockFetcher {
 
             debug!(
                 "Fetching logs from block {} to {}",
-                self.last_l1_block_fetched + 1,
+                self.last_l1_block_fetched + U256::from(1),
                 new_last_l1_fetched_block
             );
 
@@ -195,7 +194,7 @@ impl BlockFetcher {
             let committed_logs = self
                 .eth_client
                 .get_logs(
-                    self.last_l1_block_fetched + 1,
+                    self.last_l1_block_fetched + U256::from(1),
                     new_last_l1_fetched_block,
                     self.on_chain_proposer_address,
                     vec![keccak(b"BatchCommitted(uint256,bytes32)")],
@@ -206,7 +205,7 @@ impl BlockFetcher {
             let verified_logs = self
                 .eth_client
                 .get_logs(
-                    self.last_l1_block_fetched + 1,
+                    self.last_l1_block_fetched + U256::from(1),
                     new_last_l1_fetched_block,
                     self.on_chain_proposer_address,
                     vec![keccak(b"BatchVerified(uint256)")],
@@ -314,7 +313,7 @@ impl BlockFetcher {
         batch_verified_logs: Vec<RpcLog>,
     ) -> Result<(), BlockFetcherError> {
         for batch_verified_log in batch_verified_logs {
-            let batch_number = U256::from_big_endian(
+            let batch_number = u256_from_big_endian(
                 batch_verified_log
                     .log
                     .topics
@@ -373,7 +372,7 @@ fn filter_logs(
 
     // Filter missing batches logs
     for batch_committed_log in logs.iter().cloned() {
-        let committed_batch_number = U256::from_big_endian(
+        let committed_batch_number = u256_from_big_endian(
             batch_committed_log
                 .log
                 .topics
@@ -384,7 +383,7 @@ fn filter_logs(
                 .as_bytes(),
         );
 
-        if committed_batch_number > last_batch_number_known.into() {
+        if committed_batch_number > U256::from(last_batch_number_known) {
             filtered_logs.push((batch_committed_log, committed_batch_number));
         }
     }
@@ -410,7 +409,7 @@ fn decode_batch_from_calldata(calldata: &[u8]) -> Result<Vec<Block>, BlockFetche
     //          || 32 bytes (messages logs merkle root) 100..132
     //          || 32 bytes (processed privileged transactions rolling hash) 132..164
 
-    let batch_length_in_blocks = U256::from_big_endian(calldata.get(196..228).ok_or(
+    let batch_length_in_blocks = U256::from_be_slice(calldata.get(196..228).ok_or(
         BlockFetcherError::WrongBatchCalldata("Couldn't get batch length bytes".to_owned()),
     )?)
     .as_usize();
@@ -422,7 +421,7 @@ fn decode_batch_from_calldata(calldata: &[u8]) -> Result<Vec<Block>, BlockFetche
     for block_i in 0..batch_length_in_blocks {
         let block_length_offset = base + block_i * 32;
 
-        let dynamic_offset = U256::from_big_endian(
+        let dynamic_offset = u256_from_big_endian(
             calldata
                 .get(block_length_offset..block_length_offset + 32)
                 .ok_or(BlockFetcherError::WrongBatchCalldata(
@@ -431,7 +430,7 @@ fn decode_batch_from_calldata(calldata: &[u8]) -> Result<Vec<Block>, BlockFetche
         )
         .as_usize();
 
-        let block_length_in_bytes = U256::from_big_endian(
+        let block_length_in_bytes = u256_from_big_endian(
             calldata
                 .get(base + dynamic_offset..base + dynamic_offset + 32)
                 .ok_or(BlockFetcherError::WrongBatchCalldata(

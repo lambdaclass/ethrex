@@ -234,7 +234,7 @@ pub const BLS12_381_G2_K_DISCOUNT: [u64; 128] = [
 pub const G2_MUL_COST: u64 = 22500;
 
 pub fn exp(exponent: U256) -> Result<u64, VMError> {
-    let exponent_byte_size = (exponent.bits().checked_add(7).ok_or(OutOfGas)?) / 8;
+    let exponent_byte_size = (exponent.bit_len().checked_add(7).ok_or(OutOfGas)?) / 8;
 
     let exponent_byte_size: u64 = exponent_byte_size
         .try_into()
@@ -545,7 +545,7 @@ pub fn selfdestruct(
     };
 
     // If a positive balance is sent to an empty account, the dynamic gas is 25000
-    if account_is_empty && balance_to_transfer > U256::zero() {
+    if account_is_empty && balance_to_transfer > U256::ZERO {
         dynamic_cost = dynamic_cost
             .checked_add(SELFDESTRUCT_DYNAMIC)
             .ok_or(OutOfGas)?;
@@ -920,7 +920,7 @@ fn calculate_cost_and_gas_limit_call(
     let max_gas_for_call = gas_left.checked_sub(gas_left / 64).ok_or(OutOfGas)?;
 
     let gas: u64 = gas_from_stack
-        .min(max_gas_for_call.into())
+        .min(U256::from(max_gas_for_call))
         .try_into()
         .map_err(|_err| ExceptionalHalt::OutOfGas)?;
 

@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use ethereum_types::{Address, Signature};
+use ethrex_common::{Address, Signature};
 use ethrex_common::types::FeeTokenTransaction;
 use ethrex_common::utils::keccak;
 use ethrex_common::{
@@ -203,8 +203,8 @@ pub enum SignerError {
 }
 
 fn parse_signature(signature: Signature) -> (U256, U256, bool) {
-    let r = U256::from_big_endian(&signature[..32]);
-    let s = U256::from_big_endian(&signature[32..64]);
+    let r = U256::from_be_slice(&signature[..32]);
+    let s = U256::from_be_slice(&signature[32..64]);
     let y_parity = signature[64] != 0 && signature[64] != 27;
 
     (r, s, y_parity)
@@ -250,7 +250,7 @@ impl Signable for LegacyTransaction {
         let signature = signer.sign(self.encode_payload_to_vec().into()).await?;
 
         let recovery_id = U256::from(signature[64]);
-        self.v = recovery_id + 27;
+        self.v = recovery_id + U256::from(27);
         (self.r, self.s, _) = parse_signature(signature);
 
         Ok(())

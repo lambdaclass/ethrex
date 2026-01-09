@@ -70,7 +70,7 @@ use ethrex_common::types::{
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
-use ethrex_common::{Address, H160, H256, TrieLogger};
+use ethrex_common::{Address, H160, H256, TrieLogger, U256};
 use ethrex_metrics::metrics;
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
@@ -677,7 +677,7 @@ impl Blockchain {
             if let Some(info) = &update.info {
                 trace!(
                     nonce = info.nonce,
-                    balance = hex::encode(info.balance.to_big_endian()),
+                    balance = hex::encode(info.balance.to_be_bytes::<32>()),
                     code_hash = hex::encode(info.code_hash),
                     "With info"
                 );
@@ -1642,7 +1642,7 @@ impl Blockchain {
         // Check that the specified blob gas fee is above the minimum value
         if let Some(fee) = tx.max_fee_per_blob_gas() {
             // Blob tx fee checks
-            if fee < MIN_BASE_FEE_PER_BLOB_GAS.into() {
+            if fee < U256::from(MIN_BASE_FEE_PER_BLOB_GAS) {
                 return Err(MempoolError::TxBlobBaseFeeTooLowError);
             }
         };

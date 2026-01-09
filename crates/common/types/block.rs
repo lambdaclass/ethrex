@@ -435,7 +435,7 @@ fn check_gas_limit(gas_limit: u64, parent_gas_limit: u64) -> bool {
 /// it's parent excess blob gas and the update fraction, which depends on the fork.
 pub fn calculate_base_fee_per_blob_gas(parent_excess_blob_gas: u64, update_fraction: u64) -> U256 {
     if update_fraction == 0 {
-        return U256::zero();
+        return U256::ZERO;
     }
     fake_exponential(
         U256::from(MIN_BASE_FEE_PER_BLOB_GAS),
@@ -462,8 +462,8 @@ pub fn fake_exponential(
         return Ok(factor);
     }
 
-    let mut output: U256 = U256::zero();
-    let denominator_u256: U256 = denominator.into();
+    let mut output: U256 = U256::ZERO;
+    let denominator_u256: U256 = U256::from(denominator);
 
     // Initial multiplication: factor * denominator
     let mut numerator_accum = factor
@@ -494,7 +494,7 @@ pub fn fake_exponential(
         }
 
         output
-            .checked_div(denominator.into())
+            .checked_div(U256::from(denominator))
             .ok_or(FakeExponentialError::CheckedDiv)
     }
 }
@@ -881,7 +881,7 @@ mod test {
             )
             .unwrap(),
             logs_bloom: Bloom::from([0; 256]),
-            difficulty: U256::zero(),
+            difficulty: U256::ZERO,
             number: 0,
             gas_limit: 0x016345785d8a0000,
             gas_used: 0,
@@ -925,7 +925,7 @@ mod test {
             )
             .unwrap(),
             logs_bloom: Bloom::from([0; 256]),
-            difficulty: U256::zero(),
+            difficulty: U256::ZERO,
             number: 1,
             gas_limit: 0x016345785d8a0000,
             gas_used: 0xa8de,
@@ -1059,8 +1059,8 @@ mod test {
     fn test_fake_exponential_bounds_overflow() {
         // Making sure the limit we state in the documentation of 400_000_000 works
         let thing = fake_exponential(
-            MIN_BASE_FEE_PER_BLOB_GAS.into(),
-            400_000_000.into(),
+            U256::from(MIN_BASE_FEE_PER_BLOB_GAS),
+            U256::from(400_000_000_u64),
             BLOB_BASE_FEE_UPDATE_FRACTION,
         );
         // With u64 this overflows

@@ -10,7 +10,7 @@ use std::str::FromStr;
 
 use ::bytes::Bytes;
 use ethrex_common::{
-    Address, H160, H256, U256,
+    Address, H160, H256, U256, U256Ext,
     constants::GAS_PER_BLOB,
     types::{
         AuthorizationTuple, BASE_FEE_MAX_CHANGE_DENOMINATOR, Fork, Genesis, GenesisAccount, TxKind,

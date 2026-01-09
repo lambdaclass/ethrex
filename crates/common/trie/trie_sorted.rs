@@ -364,7 +364,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use ethereum_types::U256;
+    use ruint::aliases::U256;
     use ethrex_rlp::encode::RLPEncode;
 
     use crate::{InMemoryTrieDB, Trie};
@@ -446,7 +446,7 @@ mod test {
             "0532f23d3bd5277790ece5a6cb6fc684bc473a91ffe3a0334049527c4f6987e9",
             "0552f23d3bd5277790ece5a6cb6fc684bc473a91ffe3a0334049527c4f6987e9",
         ] {
-            slots.insert(H256::from_str(string).unwrap(), U256::zero());
+            slots.insert(H256::from_str(string).unwrap(), U256::ZERO);
         }
         slots
     }

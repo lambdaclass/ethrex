@@ -2,7 +2,7 @@ use super::utils::random_duration;
 use crate::sequencer::errors::L1WatcherError;
 use crate::sequencer::sequencer_state::{SequencerState, SequencerStatus};
 use crate::{EthConfig, L1WatcherConfig, SequencerConfig};
-use ethereum_types::{Address, H256, U256};
+use ethrex_common::{Address, H256, U256, U256Ext};
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::{Log, PrivilegedL2Transaction, Transaction, TxKind};
 use ethrex_common::utils::keccak;
@@ -106,14 +106,14 @@ impl L1Watcher {
             let l2_client = EthClient::new(url.clone())?;
             l2_clients.push(L2Client {
                 eth_client: l2_client,
-                last_block_fetched_l2: U256::zero(),
+                last_block_fetched_l2: U256::ZERO,
                 chain_id,
             });
         }
-        let last_block_fetched = U256::zero();
+        let last_block_fetched = U256::ZERO;
         let chain_id_topic = {
             let u256 = U256::from(store.get_chain_config().chain_id);
-            let bytes = u256.to_big_endian();
+            let bytes = u256.to_be_bytes::<32>();
             H256(bytes)
         };
 
@@ -179,9 +179,8 @@ impl L1Watcher {
             keccak(b"PrivilegedTxSent(address,address,address,uint256,uint256,uint256,bytes)");
         if self.last_block_fetched_l1.is_zero() {
             self.last_block_fetched_l1 =
-                get_last_fetched_l1_block(&self.eth_client, self.bridge_address)
-                    .await?
-                    .into();
+                U256::from(get_last_fetched_l1_block(&self.eth_client, self.bridge_address)
+                    .await?);
         }
         let (last_block_fetched, logs) = Self::get_privileged_transactions(
             self.last_block_fetched_l1,
@@ -208,7 +207,7 @@ impl L1Watcher {
         let Some(latest_block_to_check) = client
             .get_block_number()
             .await?
-            .checked_sub(block_delay.into())
+            .checked_sub(U256::from(block_delay))
         else {
             warn!("Too close to genesis to request privileged transactions");
             return Ok((last_block_fetched, vec![]));
@@ -240,7 +239,7 @@ impl L1Watcher {
         );
 
         let logs = client
-            .get_logs(last_block_fetched + 1, new_last_block, address, topics)
+            .get_logs(last_block_fetched + U256::from(1), new_last_block, address, topics)
             .await?;
 
         // If we have an error adding the tx to the mempool we may assign it to the next
@@ -470,7 +469,7 @@ impl L1Watcher {
 
             // We need to update the last block fetched only if the logs were verified.
             if let Some((_, block_number, _)) = verified_logs.last() {
-                l2_client.last_block_fetched_l2 = (*block_number).into();
+                l2_client.last_block_fetched_l2 = U256::from(*block_number);
             }
 
             acc_logs.extend(verified_logs);

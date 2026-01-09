@@ -28,6 +28,8 @@ use ethrex_common::{
     types::{AuthorizationTupleEntry, BlobsBundle, Block, GenericTransaction, TxKind},
     utils::decode_hex,
 };
+
+// Import for U256::from operations
 use ethrex_rlp::decode::RLPDecode;
 use reqwest::{Client, Url};
 use serde::Deserialize;
@@ -372,7 +374,7 @@ impl EthClient {
     ) -> Result<U256, EthClientError> {
         let gas_price = self.get_gas_price().await?;
 
-        Ok((gas_price * (100 + bump_percent)) / 100)
+        Ok((gas_price * U256::from(100 + bump_percent)) / U256::from(100))
     }
 
     pub async fn get_nonce(

@@ -14,7 +14,7 @@ use ethrex_blockchain::{
     Blockchain, BlockchainOptions, BlockchainType, L2Config, fork_choice::apply_fork_choice,
 };
 use ethrex_common::{
-    Address, U256,
+    Address, U256, U256Ext,
     types::{BYTES_PER_BLOB, Block, blobs_bundle, bytes_from_blob, fee_config::FeeConfig},
 };
 use ethrex_common::{types::BlobsBundle, utils::keccak};

@@ -12,7 +12,7 @@ use bytes::Bytes;
 use ethrex_common::types::{Code, TxType};
 use ethrex_common::utils::keccak;
 use ethrex_common::{
-    Address, H256,
+    Address, H256, U256Ext,
     types::{Account, AccountUpdate, Fork, TxKind},
 };
 use ethrex_levm::constants::{BLOB_BASE_FEE_UPDATE_FRACTION, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE};

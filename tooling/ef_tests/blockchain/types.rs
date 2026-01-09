@@ -5,7 +5,7 @@ use ethrex_common::types::{
     Transaction as ethrexTransaction, TxKind, code_hash,
 };
 use ethrex_common::types::{Genesis, GenesisAccount, Withdrawal};
-use ethrex_common::{Address, Bloom, H64, H256, U256, types::BlockHeader};
+use ethrex_common::{Address, Bloom, H64, H256, U256, U256Ext, types::BlockHeader};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

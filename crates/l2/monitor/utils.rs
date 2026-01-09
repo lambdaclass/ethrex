@@ -19,12 +19,12 @@ pub async fn get_logs(
 
     let mut batch_committed_logs = Vec::new();
     while *last_block_fetched < last_block_number {
-        let new_last_l1_fetched_block = min(*last_block_fetched + 50, last_block_number);
+        let new_last_l1_fetched_block = min(*last_block_fetched + U256::from(50), last_block_number);
 
         // Fetch logs from the L1 chain for the BatchCommitted event.
         let logs = client
             .get_logs(
-                *last_block_fetched + 1,
+                *last_block_fetched + U256::from(1),
                 new_last_l1_fetched_block,
                 emitter,
                 logs_signatures

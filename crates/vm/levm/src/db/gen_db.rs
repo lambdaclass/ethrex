@@ -415,7 +415,7 @@ impl<'a> VM<'a> {
         to: Address,
         value: U256,
     ) -> Result<(), InternalError> {
-        if value != U256::zero() {
+        if value != U256::ZERO {
             self.decrease_account_balance(from, value)?;
             self.increase_account_balance(to, value)?;
         }
@@ -493,7 +493,7 @@ impl<'a> VM<'a> {
             }
             // If the account was destroyed and then created then we cannot rely on the DB to obtain storage values
             if account.status == AccountStatus::DestroyedModified {
-                return Ok(U256::zero());
+                return Ok(U256::ZERO);
             }
         } else {
             // When requesting storage of an account we should've previously requested and cached the account

@@ -216,7 +216,7 @@ impl<'a> VM<'a> {
         } else if is_negative {
             U256::MAX
         } else {
-            U256::zero()
+            U256::ZERO
         };
         current_call_frame.stack.push(res)?;
 
@@ -242,12 +242,12 @@ pub fn checked_shift_left(value: U256, shift: U256) -> Result<U256, VMError> {
                     .checked_sub(only_most_representative_bit_on)
                     .ok_or(InternalError::Underflow)?; //Should not happen bc checked_mul overflows
                 partial_result
-                    .checked_mul(2.into())
+                    .checked_mul(U256::from(2u64))
                     .ok_or(InternalError::Overflow)?
             }
         };
         shifts_left = shifts_left
-            .checked_sub(U256::one())
+            .checked_sub(U256::from(1u64))
             .ok_or(InternalError::Underflow)?; // Should not reach negative values
     }
 
@@ -255,5 +255,5 @@ pub fn checked_shift_left(value: U256, shift: U256) -> Result<U256, VMError> {
 }
 
 const fn u256_from_bool(value: bool) -> U256 {
-    if value { U256::one() } else { U256::zero() }
+    if value { U256::from_limbs([1, 0, 0, 0]) } else { U256::ZERO }
 }

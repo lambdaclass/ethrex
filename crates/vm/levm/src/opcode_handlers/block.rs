@@ -5,7 +5,7 @@ use crate::{
     utils::*,
     vm::VM,
 };
-use ethrex_common::utils::u256_from_big_endian_const;
+use ethrex_common::{U256, utils::u256_from_big_endian_const};
 
 // Block Information (11)
 // Opcodes: BLOCKHASH, COINBASE, TIMESTAMP, NUMBER, PREVRANDAO, GASLIMIT, CHAINID, SELFBALANCE, BASEFEE, BLOBHASH, BLOBBASEFEE
@@ -92,7 +92,7 @@ impl<'a> VM<'a> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::GASLIMIT)?;
 
-        current_call_frame.stack.push(block_gas_limit.into())?;
+        current_call_frame.stack.push(U256::from(block_gas_limit))?;
 
         Ok(OpcodeResult::Continue)
     }

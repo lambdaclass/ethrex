@@ -1,12 +1,11 @@
 use bytes::Bytes;
 use calldata::encode_calldata;
-use ethereum_types::{H160, H256, U256};
 use ethrex_common::types::EIP7702Transaction;
 use ethrex_common::types::FeeTokenTransaction;
 use ethrex_common::types::Fork;
 use ethrex_common::utils::keccak;
 use ethrex_common::{
-    Address,
+    Address, H160, H256, U256,
     types::{
         AccessListEntry, BlobsBundle, EIP1559Transaction, GenericTransaction, TxKind, TxType,
         WrappedEIP4844Transaction,
@@ -226,7 +225,7 @@ pub async fn claim_withdraw(
 
     let calldata_values = vec![
         Value::Uint(amount),
-        Value::Uint(message_proof.batch_number.into()),
+        Value::Uint(U256::from(message_proof.batch_number)),
         Value::Uint(message_proof.message_id),
         Value::Array(
             message_proof
@@ -284,7 +283,7 @@ pub async fn claim_erc20withdraw(
             message_proof
                 .merkle_proof
                 .iter()
-                .map(|v| Value::Uint(U256::from_big_endian(v.as_bytes())))
+                .map(|v| Value::Uint(U256::from_be_slice(v.as_bytes())))
                 .collect(),
         ),
     ];
@@ -781,17 +780,17 @@ pub fn address_to_word(address: Address) -> U256 {
     for (word_byte, address_byte) in word.iter_mut().skip(12).zip(address.as_bytes().iter()) {
         *word_byte = *address_byte;
     }
-    U256::from_big_endian(&word)
+    U256::from_be_slice(&word)
 }
 
 pub fn get_erc1967_slot(name: &str) -> U256 {
-    U256::from_big_endian(&keccak(name).0) - U256::one()
+    U256::from_be_slice(&keccak(name).0) - U256::from(1u64)
 }
 
 pub fn get_address_alias(address: Address) -> Address {
-    let address = U256::from_big_endian(&address.to_fixed_bytes());
-    let alias = address.add(U256::from_big_endian(&ADDRESS_ALIASING.to_fixed_bytes()));
-    H160::from_slice(&alias.to_big_endian()[12..32])
+    let address = U256::from_be_slice(&address.to_fixed_bytes());
+    let alias = address.add(U256::from_be_slice(&ADDRESS_ALIASING.to_fixed_bytes()));
+    H160::from_slice(&alias.to_be_bytes::<32>()[12..32])
 }
 
 const WAIT_TIME_FOR_RECEIPT_SECONDS: u64 = 2;
@@ -958,7 +957,7 @@ fn bump_gas_generic_tx(tx: &mut GenericTransaction, bump_percentage: u64) {
         let factor = 1 + (bump_percentage / 100) * 10;
         *max_fee_per_blob_gas = max_fee_per_blob_gas
             .saturating_mul(U256::from(factor))
-            .div(10);
+            .div(U256::from(10));
     }
 }
 
@@ -1180,7 +1179,7 @@ pub async fn get_pending_l2_messages(
 
     let mut calldata = Vec::new();
     calldata.extend_from_slice(&selector);
-    calldata.extend_from_slice(&U256::from(chain_id).to_big_endian());
+    calldata.extend_from_slice(&U256::from(chain_id).to_be_bytes::<32>());
 
     let response = client
         .call(common_bridge_address, calldata.into(), Overrides::default())

@@ -746,10 +746,10 @@ pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
 #[cfg(not(feature = "zisk"))]
 #[inline]
 pub fn bn254_g1_add(first_point: G1, second_point: G1) -> Result<Bytes, VMError> {
-    let first_point_x = ark_bn254::Fq::from_be_bytes_mod_order(&first_point.0.to_big_endian());
-    let first_point_y = ark_bn254::Fq::from_be_bytes_mod_order(&first_point.1.to_big_endian());
-    let second_point_x = ark_bn254::Fq::from_be_bytes_mod_order(&second_point.0.to_big_endian());
-    let second_point_y = ark_bn254::Fq::from_be_bytes_mod_order(&second_point.1.to_big_endian());
+    let first_point_x = ark_bn254::Fq::from_be_bytes_mod_order(&first_point.0.to_be_bytes::<32>());
+    let first_point_y = ark_bn254::Fq::from_be_bytes_mod_order(&first_point.1.to_be_bytes::<32>());
+    let second_point_x = ark_bn254::Fq::from_be_bytes_mod_order(&second_point.0.to_be_bytes::<32>());
+    let second_point_y = ark_bn254::Fq::from_be_bytes_mod_order(&second_point.1.to_be_bytes::<32>());
 
     let first_point_is_zero = first_point_x.is_zero() && first_point_y.is_zero();
     let second_point_is_zero = second_point_x.is_zero() && second_point_y.is_zero();
@@ -812,9 +812,9 @@ pub fn bn254_g1_add(first_point: G1, second_point: G1) -> Result<Bytes, VMError>
 
     if first_point.is_zero() {
         let (g1_x, g1_y) = (
-            Fq::from_slice(&second_point.0.to_big_endian())
+            Fq::from_slice(&second_point.0.to_be_bytes::<32>())
                 .map_err(|_| PrecompileError::ParsingInputError)?,
-            Fq::from_slice(&second_point.1.to_big_endian())
+            Fq::from_slice(&second_point.1.to_be_bytes::<32>())
                 .map_err(|_| PrecompileError::ParsingInputError)?,
         );
         // Validate that the point is on the curve
@@ -829,9 +829,9 @@ pub fn bn254_g1_add(first_point: G1, second_point: G1) -> Result<Bytes, VMError>
 
     if second_point.is_zero() {
         let (g1_x, g1_y) = (
-            Fq::from_slice(&first_point.0.to_big_endian())
+            Fq::from_slice(&first_point.0.to_be_bytes::<32>())
                 .map_err(|_| PrecompileError::ParsingInputError)?,
-            Fq::from_slice(&first_point.1.to_big_endian())
+            Fq::from_slice(&first_point.1.to_be_bytes::<32>())
                 .map_err(|_| PrecompileError::ParsingInputError)?,
         );
         // Validate that the point is on the curve
@@ -845,16 +845,16 @@ pub fn bn254_g1_add(first_point: G1, second_point: G1) -> Result<Bytes, VMError>
     }
 
     let (first_x, first_y) = (
-        Fq::from_slice(&first_point.0.to_big_endian())
+        Fq::from_slice(&first_point.0.to_be_bytes::<32>())
             .map_err(|_| PrecompileError::ParsingInputError)?,
-        Fq::from_slice(&first_point.1.to_big_endian())
+        Fq::from_slice(&first_point.1.to_be_bytes::<32>())
             .map_err(|_| PrecompileError::ParsingInputError)?,
     );
 
     let (second_x, second_y) = (
-        Fq::from_slice(&second_point.0.to_big_endian())
+        Fq::from_slice(&second_point.0.to_be_bytes::<32>())
             .map_err(|_| PrecompileError::ParsingInputError)?,
-        Fq::from_slice(&second_point.1.to_big_endian())
+        Fq::from_slice(&second_point.1.to_be_bytes::<32>())
             .map_err(|_| PrecompileError::ParsingInputError)?,
     );
 
@@ -900,8 +900,8 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
 #[cfg(not(any(feature = "sp1", feature = "zisk")))]
 #[inline]
 pub fn bn254_g1_mul(point: G1, scalar: U256) -> Result<Bytes, VMError> {
-    let x = ark_bn254::Fq::from_be_bytes_mod_order(&point.0.to_big_endian());
-    let y = ark_bn254::Fq::from_be_bytes_mod_order(&point.1.to_big_endian());
+    let x = ark_bn254::Fq::from_be_bytes_mod_order(&point.0.to_be_bytes::<32>());
+    let y = ark_bn254::Fq::from_be_bytes_mod_order(&point.1.to_be_bytes::<32>());
 
     if x.is_zero() && y.is_zero() {
         return Ok(Bytes::from([0u8; 64].to_vec()));
@@ -912,7 +912,7 @@ pub fn bn254_g1_mul(point: G1, scalar: U256) -> Result<Bytes, VMError> {
         return Err(PrecompileError::InvalidPoint.into());
     }
 
-    let scalar = FrArk::from_be_bytes_mod_order(&scalar.to_big_endian());
+    let scalar = FrArk::from_be_bytes_mod_order(&scalar.to_be_bytes::<32>());
     if scalar.is_zero() {
         return Ok(Bytes::from([0u8; 64].to_vec()));
     }
@@ -938,8 +938,8 @@ pub fn bn254_g1_mul(g1: G1, scalar: U256) -> Result<Bytes, VMError> {
     }
 
     let (g1_x, g1_y) = (
-        Fq::from_slice(&g1.0.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?,
-        Fq::from_slice(&g1.1.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?,
+        Fq::from_slice(&g1.0.to_be_bytes::<32>()).map_err(|_| PrecompileError::ParsingInputError)?,
+        Fq::from_slice(&g1.1.to_be_bytes::<32>()).map_err(|_| PrecompileError::ParsingInputError)?,
     );
 
     let g1 = AffineG1::new(g1_x, g1_y).map_err(|_| PrecompileError::InvalidPoint)?;
@@ -949,7 +949,7 @@ pub fn bn254_g1_mul(g1: G1, scalar: U256) -> Result<Bytes, VMError> {
     let g1: G1 = g1.into();
 
     let scalar =
-        Fr::from_slice(&scalar.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?;
+        Fr::from_slice(&scalar.to_be_bytes::<32>()).map_err(|_| PrecompileError::ParsingInputError)?;
 
     #[allow(
         clippy::arithmetic_side_effects,
@@ -966,7 +966,7 @@ pub fn bn254_g1_mul(g1: G1, scalar: U256) -> Result<Bytes, VMError> {
     Ok(Bytes::from(out))
 }
 
-const ALT_BN128_PRIME: U256 = U256([
+const ALT_BN128_PRIME: U256 = U256::from_limbs([
     0x3c208c16d87cfd47,
     0x97816a916871ca8d,
     0xb85045b68181585d,
@@ -1088,9 +1088,9 @@ pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
             SubstrateG1::zero()
         } else {
             let (g1_x, g1_y) = (
-                Fq::from_slice(&g1.0.to_big_endian())
+                Fq::from_slice(&g1.0.to_be_bytes::<32>())
                     .map_err(|_| PrecompileError::ParsingInputError)?,
-                Fq::from_slice(&g1.1.to_big_endian())
+                Fq::from_slice(&g1.1.to_be_bytes::<32>())
                     .map_err(|_| PrecompileError::ParsingInputError)?,
             );
             AffineG1::new(g1_x, g1_y)
@@ -1102,15 +1102,15 @@ pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
         } else {
             let (g2_x, g2_y) = (
                 Fq2::new(
-                    Fq::from_slice(&g2.0.to_big_endian())
+                    Fq::from_slice(&g2.0.to_be_bytes::<32>())
                         .map_err(|_| PrecompileError::ParsingInputError)?,
-                    Fq::from_slice(&g2.1.to_big_endian())
+                    Fq::from_slice(&g2.1.to_be_bytes::<32>())
                         .map_err(|_| PrecompileError::ParsingInputError)?,
                 ),
                 Fq2::new(
-                    Fq::from_slice(&g2.2.to_big_endian())
+                    Fq::from_slice(&g2.2.to_be_bytes::<32>())
                         .map_err(|_| PrecompileError::ParsingInputError)?,
-                    Fq::from_slice(&g2.3.to_big_endian())
+                    Fq::from_slice(&g2.3.to_be_bytes::<32>())
                         .map_err(|_| PrecompileError::ParsingInputError)?,
                 ),
             );
@@ -1152,9 +1152,9 @@ pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
             ProjectiveG1::neutral_element()
         } else {
             let (g1_x, g1_y) = (
-                Fq::from_bytes_be(&g1.0.to_big_endian())
+                Fq::from_bytes_be(&g1.0.to_be_bytes::<32>())
                     .map_err(|_| InternalError::msg("failed to parse g1 x"))?,
-                Fq::from_bytes_be(&g1.1.to_big_endian())
+                Fq::from_bytes_be(&g1.1.to_be_bytes::<32>())
                     .map_err(|_| InternalError::msg("failed to parse g1 y"))?,
             );
             LambdaworksG1::create_point_from_affine(g1_x, g1_y)
@@ -1164,8 +1164,8 @@ pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
             ProjectiveG2::neutral_element()
         } else {
             let (g2_x, g2_y) = {
-                let x_bytes = [g2.0.to_big_endian(), g2.1.to_big_endian()].concat();
-                let y_bytes = [g2.2.to_big_endian(), g2.3.to_big_endian()].concat();
+                let x_bytes = [g2.0.to_be_bytes::<32>(), g2.1.to_be_bytes::<32>()].concat();
+                let y_bytes = [g2.2.to_be_bytes::<32>(), g2.3.to_be_bytes::<32>()].concat();
                 let (x, y) = (
                     Fq2::from_bytes_be(&x_bytes)
                         .map_err(|_| InternalError::msg("failed to parse g2 x"))?,

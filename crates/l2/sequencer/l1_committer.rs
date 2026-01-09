@@ -1287,15 +1287,12 @@ impl L1Committer {
         // Rollup: EIP4844 Transaction -> For on-chain Data Availability.
         let tx = if !self.validium {
             info!("L2 is in rollup mode, sending EIP-4844 (including blob) tx to commit block");
-            let le_bytes = estimate_blob_gas(
+            let gas_price_per_blob = estimate_blob_gas(
                 &self.eth_client,
                 self.arbitrary_base_blob_gas_price,
                 20, // 20% of headroom
             )
-            .await?
-            .to_little_endian();
-
-            let gas_price_per_blob = U256::from_little_endian(&le_bytes);
+            .await?;
 
             build_generic_tx(
                 &self.eth_client,
@@ -1601,7 +1598,7 @@ async fn estimate_blob_gas(
     )
     .map_err(BlobEstimationError::FakeExponentialError)?;
 
-    let gas_with_headroom = (blob_gas * (100 + headroom)) / 100;
+    let gas_with_headroom = (blob_gas * U256::from(100 + headroom)) / U256::from(100);
 
     // Check if we have an overflow when we take the headroom into account.
     let blob_gas = U256::from(arbitrary_base_blob_gas_price)

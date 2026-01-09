@@ -381,7 +381,7 @@ mod test {
             mem.store_word(0, U256::from(4)).unwrap();
             mem.copy_within(32, 0, 32).unwrap();
 
-            assert_eq!(mem.load_word(0).unwrap(), U256::zero());
+            assert_eq!(mem.load_word(0).unwrap(), U256::ZERO);
             assert_eq!(mem.len(), 64);
         }
     }

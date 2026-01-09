@@ -30,6 +30,7 @@ default = []
 
 
 [dev-dependencies]
+ruint.workspace = true
 hex.workspace = true
 hex-literal.workspace = true
 proptest = "1.0.0"

@@ -3,7 +3,7 @@ use crate::sequencer::admin_server::AdminError;
 use crate::sequencer::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
 use aligned_sdk::common::errors::SubmitError;
-use ethereum_types::FromStrRadixErr;
+use ethrex_common::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::Address;
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};

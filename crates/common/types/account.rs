@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use bytes::{BufMut, Bytes};
-use ethereum_types::{H256, U256};
+use crate::U256;
+use ethereum_types::H256;
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_trie::Trie;
 use rustc_hash::FxHashMap;
@@ -179,7 +180,7 @@ impl From<GenesisAccount> for Account {
             storage: genesis
                 .storage
                 .iter()
-                .map(|(k, v)| (H256(k.to_big_endian()), *v))
+                .map(|(k, v)| (H256(k.to_be_bytes::<32>()), *v))
                 .collect(),
         }
     }
@@ -339,7 +340,7 @@ impl RLPDecode for AccountStateSlimCodec {
 
 pub fn compute_storage_root(storage: &HashMap<U256, U256>) -> H256 {
     let iter = storage.iter().filter_map(|(k, v)| {
-        (!v.is_zero()).then_some((keccak_hash(k.to_big_endian()).to_vec(), v.encode_to_vec()))
+        (!v.is_zero()).then_some((keccak_hash(k.to_be_bytes::<32>()).to_vec(), v.encode_to_vec()))
     });
     Trie::compute_hash_from_unsorted_iter(iter)
 }

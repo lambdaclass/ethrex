@@ -845,8 +845,8 @@ impl PeerTableServer {
 
     fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
         let xor = node_id_1 ^ node_id_2;
-        let distance = U256::from_big_endian(xor.as_bytes());
-        distance.bits().saturating_sub(1)
+        let distance = U256::from_be_slice(xor.as_bytes());
+        distance.bit_len().saturating_sub(1)
     }
 
     fn is_validation_needed(contact: &Contact, revalidation_interval: Duration) -> bool {

@@ -46,20 +46,20 @@ impl ProgramOutput {
             #[cfg(feature = "l2")]
             self.blob_versioned_hash.to_fixed_bytes(),
             self.last_block_hash.to_fixed_bytes(),
-            self.chain_id.to_big_endian(),
-            self.non_privileged_count.to_big_endian(),
+            self.chain_id.to_be_bytes::<32>(),
+            self.non_privileged_count.to_be_bytes::<32>(),
         ]
         .concat();
 
         #[cfg(feature = "l2")]
         for balance_diff in &self.balance_diffs {
-            encoded.extend_from_slice(&balance_diff.chain_id.to_big_endian());
-            encoded.extend_from_slice(&balance_diff.value.to_big_endian());
+            encoded.extend_from_slice(&balance_diff.chain_id.to_be_bytes::<32>());
+            encoded.extend_from_slice(&balance_diff.value.to_be_bytes::<32>());
             for value_per_token in &balance_diff.value_per_token {
                 encoded.extend_from_slice(&value_per_token.token_l1.to_fixed_bytes());
                 encoded.extend_from_slice(&value_per_token.token_src_l2.to_fixed_bytes());
                 encoded.extend_from_slice(&value_per_token.token_dst_l2.to_fixed_bytes());
-                encoded.extend_from_slice(&value_per_token.value.to_big_endian());
+                encoded.extend_from_slice(&value_per_token.value.to_be_bytes::<32>());
             }
             encoded.extend(
                 balance_diff

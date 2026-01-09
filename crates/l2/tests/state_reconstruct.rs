@@ -78,18 +78,18 @@ async fn test_state_block(addresses: &[Address], block_number: u64, rich_account
                     &hex::decode("4417092b70a3e5f10dc504d0947dd256b965fc62").unwrap(),
                 )
             {
-                assert!(balance > U256::zero(), "Bridge owner has zero balance");
+                assert!(balance > U256::ZERO, "Bridge owner has zero balance");
                 continue;
             }
             assert_eq!(
                 balance,
-                U256::from_dec_str("500000000000000000000000000").unwrap(),
+                U256::from_str_radix("500000000000000000000000000", 10).unwrap(),
                 "Balance mismatch for address {address:#x} at block {block_number}. Expected 500000000000000000000000000, got {balance}"
             );
         } else {
             assert_eq!(
                 balance,
-                U256::zero(),
+                U256::ZERO,
                 "Balance should be zero for address {address:#x} at block {block_number}. Expected 0, got {balance}"
             );
         }

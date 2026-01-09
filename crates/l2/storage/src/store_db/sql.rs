@@ -2,7 +2,7 @@ use std::{fmt::Debug, path::Path, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
 use crate::{RollupStoreError, api::StoreEngineRollup};
-use ethereum_types::U256;
+use ethrex_common::U256;
 use ethrex_common::{
     H256,
     types::{
@@ -191,8 +191,8 @@ impl SQLStore {
                 "INSERT INTO balance_diffs VALUES (?1, ?2, ?3, ?4, ?5)",
                 (
                     batch_number,
-                    Vec::from(balance_diff.chain_id.to_big_endian()),
-                    Vec::from(balance_diff.value.to_big_endian()),
+                    Vec::from(balance_diff.chain_id.to_be_bytes::<32>()),
+                    Vec::from(balance_diff.value.to_be_bytes::<32>()),
                     balance_diff
                         .message_hashes
                         .iter()
@@ -511,8 +511,8 @@ impl StoreEngineRollup for SQLStore {
             )
             .await?;
         while let Some(row) = rows.next().await? {
-            let chain_id = U256::from_big_endian(&read_from_row_blob(&row, 1)?);
-            let value = U256::from_big_endian(&read_from_row_blob(&row, 2)?);
+            let chain_id = U256::from_be_slice(&read_from_row_blob(&row, 1)?);
+            let value = U256::from_be_slice(&read_from_row_blob(&row, 2)?);
             let blob = read_from_row_blob(&row, 3)?;
             let message_hashes = blob.chunks(32).map(H256::from_slice).collect::<Vec<_>>();
             let value_per_token: Vec<AssetDiff> =

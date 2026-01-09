@@ -152,7 +152,7 @@ mod test {
             )
             .unwrap(),
             logs_bloom: Bloom::from([0; 256]),
-            difficulty: U256::zero(),
+            difficulty: U256::ZERO,
             number: 1,
             gas_limit: 0x016345785d8a0000,
             gas_used: 0xa8de,
@@ -181,7 +181,7 @@ mod test {
             to: TxKind::Call(Address::from_slice(
                 &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
             )),
-            value: 3000000000000000_u64.into(),
+            value: U256::from(3000000000000000_u64),
             data: Bytes::from_static(b"0x1568"),
             signature_r: U256::from_str_radix(
                 "151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65d",

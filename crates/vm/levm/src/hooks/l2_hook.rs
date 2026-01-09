@@ -10,8 +10,9 @@ use crate::{
 
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H160, H256, U256,
+    Address, H160, H256, U256, U256Ext,
     constants::GAS_PER_BLOB,
+    utils::u256_from_big_endian,
     types::{
         Code, EIP1559Transaction, Fork, Transaction, TxKind,
         {
@@ -389,7 +390,7 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
     if tx_should_fail {
         // If the transaction failed some validation, but it must still be included
         // To prevent it from taking effect, we force it to revert
-        vm.current_call_frame.msg_value = U256::zero();
+        vm.current_call_frame.msg_value = U256::ZERO;
         vm.current_call_frame.set_code(Code {
             hash: H256::zero(),
             bytecode: vec![Opcode::INVALID.into()].into(),
@@ -456,7 +457,7 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
     let gaslimit_price_product = vm
         .env
         .gas_price
-        .checked_mul(vm.env.gas_limit.into())
+        .checked_mul(U256::from(vm.env.gas_limit))
         .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
 
     // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
@@ -549,7 +550,7 @@ fn encode_fee_token_call(selector: [u8; 4], address: Address, amount: U256) -> B
     data.extend_from_slice(&selector);
     data.extend_from_slice(&[0u8; 12]);
     data.extend_from_slice(&address.0);
-    data.extend_from_slice(&amount.to_big_endian());
+    data.extend_from_slice(&amount.to_be_bytes::<32>());
     data.into()
 }
 
@@ -644,16 +645,16 @@ fn simulate_common_bridge_call(
         max_fee_per_gas: SIMULATION_MAX_FEE,
         gas_limit: SIMULATION_GAS_LIMIT,
         to: TxKind::Call(to),
-        value: U256::zero(),
+        value: U256::ZERO,
         data,
         ..Default::default()
     };
     let tx = Transaction::EIP1559Transaction(simulation_tx);
     let mut env_clone = vm.env.clone();
     // Disable fee checks and update fields
-    env_clone.base_fee_per_gas = U256::zero();
+    env_clone.base_fee_per_gas = U256::ZERO;
     env_clone.block_excess_blob_gas = None;
-    env_clone.gas_price = U256::zero();
+    env_clone.gas_price = U256::ZERO;
     env_clone.origin = origin;
     env_clone.fee_token = None;
     env_clone.gas_limit = SIMULATION_GAS_LIMIT;
@@ -703,7 +704,7 @@ fn refund_sender_fee_token(
     pay_fee_token(
         vm,
         sender_address,
-        erc20_return_amount.saturating_mul(fee_token_ratio.into()),
+        erc20_return_amount.saturating_mul(U256::from(fee_token_ratio)),
     )?;
 
     Ok(())
@@ -716,11 +717,10 @@ fn calculate_l1_fee(
     fee_config: &L1FeeConfig,
     transaction_size: usize,
 ) -> Result<U256, crate::errors::VMError> {
-    let l1_fee_per_blob: U256 = fee_config
+    let l1_fee_per_blob: U256 = U256::from(fee_config
         .l1_fee_per_blob_gas
         .checked_mul(GAS_PER_BLOB.into())
-        .ok_or(InternalError::Overflow)?
-        .into();
+        .ok_or(InternalError::Overflow)?);
 
     let l1_fee_per_blob_byte = l1_fee_per_blob
         .checked_div(U256::from(SAFE_BYTES_PER_BLOB))
@@ -752,8 +752,8 @@ fn calculate_l1_fee_gas(
         .ok_or(InternalError::DivisionByZero)?;
 
     // Ensure at least 1 gas is charged if there is a non-zero l1 fee
-    if l1_fee_gas == U256::zero() && l1_fee > U256::zero() {
-        l1_fee_gas = U256::one();
+    if l1_fee_gas == U256::ZERO && l1_fee > U256::ZERO {
+        l1_fee_gas = U256::from(1u64);
     }
 
     Ok(l1_fee_gas.try_into().map_err(|_| InternalError::Overflow)?)
@@ -792,7 +792,7 @@ fn get_fee_token_ratio(vm: &mut VM<'_>, fee_token: H160) -> Result<U256, VMError
             "Failed to get fee token ratio".to_owned(),
         )));
     }
-    Ok(U256::from_big_endian(
+    Ok(u256_from_big_endian(
         fee_token_ratio
             .output
             .get(0..32)

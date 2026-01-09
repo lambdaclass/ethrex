@@ -6,7 +6,8 @@ use crate::{
     constants::EMPTY_KECCACK_HASH,
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
 };
-use ethereum_types::{Address, H256, U256};
+use crate::U256;
+use ethereum_types::{Address, H256};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};

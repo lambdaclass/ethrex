@@ -178,7 +178,7 @@ impl LEVM {
                 .get_account_mut(address)
                 .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
 
-            account.info.balance += increment.into();
+            account.info.balance += U256::from(increment);
         }
 
         // TODO: I don't like deciding the behavior based on the VMType here.
@@ -226,12 +226,12 @@ impl LEVM {
             origin: tx_sender,
             gas_limit: tx.gas_limit(),
             config,
-            block_number: block_header.number.into(),
+            block_number: U256::from(block_header.number),
             coinbase: block_header.coinbase,
-            timestamp: block_header.timestamp.into(),
+            timestamp: U256::from(block_header.timestamp),
             prev_randao: Some(block_header.prev_randao),
-            chain_id: chain_config.chain_id.into(),
-            base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
+            chain_id: U256::from(chain_config.chain_id),
+            base_fee_per_gas: U256::from(block_header.base_fee_per_gas.unwrap_or_default()),
             base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
             gas_price,
             block_excess_blob_gas,
@@ -339,7 +339,7 @@ impl LEVM {
                 .get_account_mut(address)
                 .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
 
-            account.info.balance += increment.into();
+            account.info.balance += U256::from(increment);
         }
         Ok(())
     }
@@ -525,12 +525,12 @@ pub fn generic_system_contract_levm(
         // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls have a gas limit of 30 million and they do not use intrinsic gas.
         // So we add the base cost that will be taken in the execution.
         gas_limit: SYS_CALL_GAS_LIMIT + TX_BASE_COST,
-        block_number: block_header.number.into(),
+        block_number: U256::from(block_header.number),
         coinbase: block_header.coinbase,
-        timestamp: block_header.timestamp.into(),
+        timestamp: U256::from(block_header.timestamp),
         prev_randao: Some(block_header.prev_randao),
-        base_fee_per_gas: U256::zero(),
-        gas_price: U256::zero(),
+        base_fee_per_gas: U256::ZERO,
+        gas_price: U256::ZERO,
         block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
         block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
         block_gas_limit: i64::MAX as u64, // System calls, have no constraint on the block's gas limit.
@@ -555,7 +555,7 @@ pub fn generic_system_contract_levm(
 
     let tx = &Transaction::EIP1559Transaction(EIP1559Transaction {
         to: TxKind::Call(contract_address),
-        value: U256::zero(),
+        value: U256::ZERO,
         data: calldata,
         ..Default::default()
     });
@@ -624,14 +624,13 @@ pub fn extract_all_requests_levm(
 pub fn calculate_gas_price_for_generic(tx: &GenericTransaction, basefee: u64) -> U256 {
     if tx.gas_price != 0 {
         // Legacy gas field was specified, use it
-        tx.gas_price.into()
+        U256::from(tx.gas_price)
     } else {
         // Backfill the legacy gas price for EVM execution, (zero if max_fee_per_gas is zero)
-        min(
+        U256::from(min(
             tx.max_priority_fee_per_gas.unwrap_or(0) + basefee,
             tx.max_fee_per_gas.unwrap_or(0),
-        )
-        .into()
+        ))
     }
 }
 
@@ -661,19 +660,19 @@ pub fn calculate_gas_price_for_tx(
         ));
     }
 
-    Ok(min(max_priority_fee + fee_per_gas, max_fee_per_gas).into())
+    Ok(U256::from(min(max_priority_fee + fee_per_gas, max_fee_per_gas)))
 }
 
 /// When basefee tracking is disabled  (ie. env.disable_base_fee = true; env.disable_block_gas_limit = true;)
 /// and no gas prices were specified, lower the basefee to 0 to avoid breaking EVM invariants (basefee < feecap)
 /// See https://github.com/ethereum/go-ethereum/blob/00294e9d28151122e955c7db4344f06724295ec5/core/vm/evm.go#L137
 fn adjust_disabled_base_fee(env: &mut Environment) {
-    if env.gas_price == U256::zero() {
-        env.base_fee_per_gas = U256::zero();
+    if env.gas_price == U256::ZERO {
+        env.base_fee_per_gas = U256::ZERO;
     }
     if env
         .tx_max_fee_per_blob_gas
-        .is_some_and(|v| v == U256::zero())
+        .is_some_and(|v| v == U256::ZERO)
     {
         env.block_excess_blob_gas = None;
     }
@@ -681,7 +680,7 @@ fn adjust_disabled_base_fee(env: &mut Environment) {
 
 /// When l2 fees are disabled (ie. env.gas_price = 0), set fee configs to None to avoid breaking failing fee deductions
 fn adjust_disabled_l2_fees(env: &Environment, vm_type: VMType) -> VMType {
-    if env.gas_price == U256::zero()
+    if env.gas_price == U256::ZERO
         && let VMType::L2(fee_config) = vm_type
     {
         // Don't deduct fees if no gas price is set
@@ -710,12 +709,12 @@ fn env_from_generic(
             .gas
             .unwrap_or(get_max_allowed_gas_limit(header.gas_limit, config.fork)), // Ensure tx doesn't fail due to gas limit
         config,
-        block_number: header.number.into(),
+        block_number: U256::from(header.number),
         coinbase: header.coinbase,
-        timestamp: header.timestamp.into(),
+        timestamp: U256::from(header.timestamp),
         prev_randao: Some(header.prev_randao),
-        chain_id: chain_config.chain_id.into(),
-        base_fee_per_gas: header.base_fee_per_gas.unwrap_or_default().into(),
+        chain_id: U256::from(chain_config.chain_id),
+        base_fee_per_gas: U256::from(header.base_fee_per_gas.unwrap_or_default()),
         base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
         gas_price,
         block_excess_blob_gas,

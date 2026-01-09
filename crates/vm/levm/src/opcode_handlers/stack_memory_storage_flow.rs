@@ -15,7 +15,7 @@ use ethrex_common::{
 // Stack, Memory, Storage and Flow Operations (15)
 // Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
 
-pub const OUT_OF_BOUNDS: U256 = U256([u64::MAX, 0, 0, 0]);
+pub const OUT_OF_BOUNDS: U256 = U256::from_limbs([u64::MAX, 0, 0, 0]);
 
 impl<'a> VM<'a> {
     // POP operation
@@ -185,8 +185,8 @@ impl<'a> VM<'a> {
                         .ok_or(InternalError::Overflow)?;
                 }
             } else {
-                if original_value != U256::zero() {
-                    if current_value == U256::zero() {
+                if original_value != U256::ZERO {
+                    if current_value == U256::ZERO {
                         gas_refunds = gas_refunds
                             .checked_sub(remove_slot_cost)
                             .ok_or(InternalError::Underflow)?;
@@ -197,7 +197,7 @@ impl<'a> VM<'a> {
                     }
                 }
                 if new_storage_slot_value == original_value {
-                    if original_value == U256::zero() {
+                    if original_value == U256::ZERO {
                         gas_refunds = gas_refunds
                             .checked_add(restore_empty_slot_cost)
                             .ok_or(InternalError::Overflow)?;
@@ -233,7 +233,7 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::MSIZE)?;
         current_call_frame
             .stack
-            .push(current_call_frame.memory.len().into())?;
+            .push(U256::from(current_call_frame.memory.len()))?;
         Ok(OpcodeResult::Continue)
     }
 
@@ -244,7 +244,7 @@ impl<'a> VM<'a> {
 
         let remaining_gas = current_call_frame.gas_remaining;
         // Note: These are not consumed gas calculations, but are related, so I used this wrapping here
-        current_call_frame.stack.push(remaining_gas.into())?;
+        current_call_frame.stack.push(U256::from(remaining_gas as u64))?;
 
         Ok(OpcodeResult::Continue)
     }

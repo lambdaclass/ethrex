@@ -6,7 +6,7 @@
 //! - [`RpcNamespace`]: RPC method namespace (eth, engine, debug, etc.)
 //! - Response types for success and error cases
 
-use ethrex_common::U256;
+use ethrex_common::{U256, U256Ext};
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
 use serde::{Deserialize, Serialize};
@@ -352,12 +352,12 @@ pub fn get_message_from_revert_data(data: &str) -> Result<String, EthClientError
                     "Failed to hex::decode when getting message from revert data".to_owned(),
                 )
             })?;
-        let string_length = U256::from_big_endian(abi_decoded_error_data.get(36..68).ok_or(
+        let string_length = U256::from_be_slice(abi_decoded_error_data.get(36..68).ok_or(
             EthClientError::Custom(
                 "Failed to slice index abi_decoded_error_data when getting message from revert data".to_owned(),
             ),
         )?);
-        let string_len = if string_length > usize::MAX.into() {
+        let string_len = if string_length > U256::from(usize::MAX) {
             return Err(EthClientError::Custom(
                 "Failed to convert string_length to usize when getting message from revert data"
                     .to_owned(),

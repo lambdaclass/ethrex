@@ -7,6 +7,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::{
     Address, Bloom, H256, H512, U256,
     constants::DEFAULT_REQUESTS_HASH,
+    utils::u256_from_big_endian,
     types::{
         Block, BlockBody, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, EIP1559Transaction, Genesis,
         LegacyTransaction, Transaction, TxKind,
@@ -57,7 +58,7 @@ fn test_header(block_num: u64) -> BlockHeader {
         )
         .unwrap(),
         logs_bloom: Bloom::from([0; 256]),
-        difficulty: U256::zero(),
+        difficulty: U256::ZERO,
         number: block_num,
         gas_limit: 0x016345785d8a0000,
         gas_used: 0xa8de,
@@ -110,13 +111,13 @@ fn legacy_tx_for_test(nonce: u64) -> Transaction {
         gas_price: U256::from(nonce) * U256::from(BASE_PRICE_IN_WEI),
         gas: 10000,
         to: TxKind::Create,
-        value: 100.into(),
+        value: U256::from(100),
         data: Default::default(),
         v: U256::from(0x1b),
-        r: U256::from_big_endian(&hex!(
+        r: u256_from_big_endian(&hex!(
             "7e09e26678ed4fac08a249ebe8ed680bf9051a5e14ad223e4b2b9d26e0208f37"
         )),
-        s: U256::from_big_endian(&hex!(
+        s: u256_from_big_endian(&hex!(
             "5f6e3f188e3e6eab7d7d3b6568f5eac7d687b08d307d3154ccd8c87b4630509b"
         )),
         ..Default::default()
@@ -133,7 +134,7 @@ fn eip1559_tx_for_test(nonce: u64) -> Transaction {
         max_priority_fee_per_gas: (nonce - 1) * BASE_PRICE_IN_WEI,
         gas_limit: 10000,
         to: TxKind::Create,
-        value: 100.into(),
+        value: U256::from(100),
         data: Default::default(),
         access_list: vec![],
         signature_y_parity: true,

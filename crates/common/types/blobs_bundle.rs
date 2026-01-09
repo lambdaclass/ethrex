@@ -308,10 +308,10 @@ mod tests {
             nonce: 3,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 0,
-            max_fee_per_blob_gas: 0.into(),
+            max_fee_per_blob_gas: crate::U256::ZERO,
             gas: 15_000_000,
             to: crate::Address::from_low_u64_be(1), // Normal tx
-            value: crate::U256::zero(),             // Value zero
+            value: crate::U256::ZERO,             // Value zero
             data: crate::Bytes::default(),          // No data
             access_list: Default::default(),        // No access list
             blob_versioned_hashes,
@@ -344,10 +344,10 @@ mod tests {
             nonce: 3,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 0,
-            max_fee_per_blob_gas: 0.into(),
+            max_fee_per_blob_gas: crate::U256::ZERO,
             gas: 15_000_000,
             to: crate::Address::from_low_u64_be(1), // Normal tx
-            value: crate::U256::zero(),             // Value zero
+            value: crate::U256::ZERO,             // Value zero
             data: crate::Bytes::default(),          // No data
             access_list: Default::default(),        // No access list
             blob_versioned_hashes,
@@ -380,10 +380,10 @@ mod tests {
             nonce: 3,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 0,
-            max_fee_per_blob_gas: 0.into(),
+            max_fee_per_blob_gas: crate::U256::ZERO,
             gas: 15_000_000,
             to: crate::Address::from_low_u64_be(1), // Normal tx
-            value: crate::U256::zero(),             // Value zero
+            value: crate::U256::ZERO,             // Value zero
             data: crate::Bytes::default(),          // No data
             access_list: Default::default(),        // No access list
             blob_versioned_hashes,
@@ -423,10 +423,10 @@ mod tests {
             nonce: 3,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 0,
-            max_fee_per_blob_gas: 0.into(),
+            max_fee_per_blob_gas: crate::U256::ZERO,
             gas: 15_000_000,
             to: crate::Address::from_low_u64_be(1), // Normal tx
-            value: crate::U256::zero(),             // Value zero
+            value: crate::U256::ZERO,             // Value zero
             data: crate::Bytes::default(),          // No data
             access_list: Default::default(),        // No access list
             blob_versioned_hashes: vec![
@@ -475,10 +475,10 @@ mod tests {
             nonce: 3,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 0,
-            max_fee_per_blob_gas: 0.into(),
+            max_fee_per_blob_gas: crate::U256::ZERO,
             gas: 15_000_000,
             to: crate::Address::from_low_u64_be(1), // Normal tx
-            value: crate::U256::zero(),             // Value zero
+            value: crate::U256::ZERO,             // Value zero
             data: crate::Bytes::default(),          // No data
             access_list: Default::default(),        // No access list
             blob_versioned_hashes: vec![
@@ -517,10 +517,10 @@ mod tests {
             nonce: 3,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 0,
-            max_fee_per_blob_gas: 0.into(),
+            max_fee_per_blob_gas: crate::U256::ZERO,
             gas: 15_000_000,
             to: crate::Address::from_low_u64_be(1), // Normal tx
-            value: crate::U256::zero(),             // Value zero
+            value: crate::U256::ZERO,             // Value zero
             data: crate::Bytes::default(),          // No data
             access_list: Default::default(),        // No access list
             blob_versioned_hashes,
