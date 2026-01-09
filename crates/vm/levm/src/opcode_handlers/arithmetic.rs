@@ -10,6 +10,7 @@ use ethrex_common::{U256, U512};
 
 impl<'a> VM<'a> {
     // ADD operation
+    #[inline]
     pub fn op_add(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::ADD)?;

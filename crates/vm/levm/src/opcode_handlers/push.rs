@@ -10,6 +10,7 @@ use ethrex_common::{U256, utils::u256_from_big_endian_const};
 
 impl<'a> VM<'a> {
     // Generic PUSH operation, optimized at compile time for the given N.
+    #[inline]
     pub fn op_push<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
         let call_frame = &mut self.current_call_frame;
         call_frame.increase_consumed_gas(gas_cost::PUSHN)?;

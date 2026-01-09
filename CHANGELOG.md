@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-01-08
+
+- Inline common opcodes [#5761](https://github.com/lambdaclass/ethrex/pull/5761)
+
 ### 2025-12-23
 
 - Remove needless allocs on store api [#5709](https://github.com/lambdaclass/ethrex/pull/5709)
