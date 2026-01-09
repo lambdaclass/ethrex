@@ -406,6 +406,7 @@ impl<'a> VM<'a> {
             .balance
             .checked_sub(decrease)
             .ok_or(InternalError::Underflow)?;
+
         Ok(())
     }
 
