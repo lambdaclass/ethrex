@@ -1,7 +1,6 @@
 name: Benchmark Block execution
 
 on:
-  workflow_dispatch:
   pull_request:
     branches: ["**"]
 

@@ -1,7 +1,6 @@
 name: PR Lines of Code Analysis
 
 on:
-  workflow_dispatch:
   pull_request:
     branches: ["**"]
 
