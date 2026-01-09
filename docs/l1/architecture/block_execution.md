@@ -298,6 +298,6 @@ Each fork may introduce:
 
 ## Related Documentation
 
-- [LEVM Documentation](../../../vm/levm/debug.md) - EVM implementation details
+- [LEVM Documentation](../../vm/levm/debug.md) - EVM implementation details
 - [Sync State Machine](./sync_state_machine.md) - How blocks flow during sync
 - [Crate Map](./crate_map.md) - Overview of involved crates
