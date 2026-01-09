@@ -34,7 +34,7 @@ use super::{
 };
 
 const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str =
-    "verifyBatchesAligned(uint256,bytes[],bytes32[][],bytes32[][])";
+    "verifyBatchesAligned(uint256,uint256,bytes32[][],bytes32[][])";
 
 pub async fn start_l1_proof_verifier(
     cfg: SequencerConfig,
@@ -146,7 +146,6 @@ impl L1ProofVerifier {
         &self,
         first_batch_number: u64,
     ) -> Result<Option<H256>, ProofVerifierError> {
-        let mut public_inputs_list = Vec::new();
         let mut sp1_merkle_proofs_list = Vec::new();
         let mut risc0_merkle_proofs_list = Vec::new();
 
@@ -206,13 +205,6 @@ impl L1ProofVerifier {
                 break;
             }
 
-            let public_inputs =
-                current_batch_public_inputs.ok_or(ProofVerifierError::InternalError(format!(
-                    "no proofs for batch {batch_number}, are there any needed proof types?"
-                )))?;
-
-            public_inputs_list.push(Value::Bytes(public_inputs.into()));
-
             let sp1_merkle_proof =
                 self.proof_of_inclusion(&aggregated_proofs_for_batch, ProverType::SP1);
             let risc0_merkle_proof =
@@ -223,17 +215,18 @@ impl L1ProofVerifier {
 
             batch_number += 1;
         }
-        let last_batch_number = batch_number - 1;
 
-        if public_inputs_list.is_empty() {
+        if first_batch_number == batch_number {
             return Ok(None);
         }
+
+        let last_batch_number = batch_number - 1;
 
         info!("Sending verify tx for batches {first_batch_number} to {last_batch_number}",);
 
         let calldata_values = [
             Value::Uint(U256::from(first_batch_number)),
-            Value::Array(public_inputs_list),
+            Value::Uint(U256::from(last_batch_number)),
             Value::Array(sp1_merkle_proofs_list),
             Value::Array(risc0_merkle_proofs_list),
         ];

@@ -49,7 +49,7 @@ use aligned_sdk::{
 
 use ethers::signers::{Signer as EthersSigner, Wallet};
 
-const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes,bytes,bytes,bytes)";
+const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes)";
 
 #[derive(Clone)]
 pub enum InMessage {
