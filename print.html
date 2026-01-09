@@ -1525,6 +1525,1549 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overr
 }
 
 </style>
+<h1 id="l1-architecture"><a class="header" href="#l1-architecture">L1 Architecture</a></h1>
+<p>This section covers the internal architecture of ethrex as an Ethereum L1 execution client. It explains how the different components interact, how blocks flow through the system, and the design decisions behind the implementation.</p>
+<ul>
+<li><a href="l1/architecture/./overview.html">System Overview</a> - High-level architecture and component interactions</li>
+<li><a href="l1/architecture/./block_execution.html">Block Execution Pipeline</a> - How blocks are validated and executed</li>
+<li><a href="l1/architecture/./sync_state_machine.html">Sync State Machine</a> - Full sync and snap sync algorithms</li>
+<li><a href="l1/architecture/./crate_map.html">Crate Map</a> - Overview of all crates and their responsibilities</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="system-overview"><a class="header" href="#system-overview">System Overview</a></h1>
+<p>This document provides a high-level overview of ethrex's L1 architecture as an Ethereum execution client.</p>
+<h2 id="introduction"><a class="header" href="#introduction">Introduction</a></h2>
+<p>ethrex is a Rust implementation of an Ethereum execution client. It implements the Ethereum protocol specification, including:</p>
+<ul>
+<li>Block validation and execution</li>
+<li>State management via Merkle Patricia Tries</li>
+<li>P2P networking (devp2p stack)</li>
+<li>JSON-RPC API for external interaction</li>
+<li>Engine API for consensus client communication</li>
+</ul>
+<h2 id="high-level-architecture"><a class="header" href="#high-level-architecture">High-Level Architecture</a></h2>
+<pre><code>                                    ┌─────────────────────┐
+                                    │   Consensus Client  │
+                                    │  (Lighthouse, etc)  │
+                                    └──────────┬──────────┘
+                                               │ Engine API
+                                               │ (JWT auth)
+                                               ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              ethrex Execution Client                          │
+│                                                                               │
+│  ┌─────────────┐     ┌──────────────┐     ┌────────────────────────────────┐ │
+│  │   JSON-RPC  │     │  Engine API  │     │           P2P Network          │ │
+│  │    Server   │     │   Handler    │     │  ┌────────┐  ┌──────────────┐  │ │
+│  │             │     │              │     │  │DiscV4  │  │    RLPx      │  │ │
+│  │ eth_*       │     │ engine_*     │     │  │        │  │  ┌────────┐  │  │ │
+│  │ debug_*     │     │ forkchoice   │     │  │        │  │  │ eth/68 │  │  │ │
+│  │ txpool_*    │     │ newPayload   │     │  │        │  │  │ snap/1 │  │  │ │
+│  │ admin_*     │     │ getPayload   │     │  │        │  │  └────────┘  │  │ │
+│  └──────┬──────┘     └──────┬───────┘     │  └────────┘  └──────────────┘  │ │
+│         │                   │             └────────────────┬───────────────┘ │
+│         │                   │                              │                 │
+│         └───────────────────┼──────────────────────────────┘                 │
+│                             │                                                 │
+│                             ▼                                                 │
+│  ┌───────────────────────────────────────────────────────────────────────┐   │
+│  │                           Blockchain                                   │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐   │   │
+│  │  │   Mempool   │  │  Payload    │  │ Fork Choice │  │   Block     │   │   │
+│  │  │             │  │  Builder    │  │   Update    │  │  Pipeline   │   │   │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘   │   │
+│  └───────────────────────────────────────────────────────────────────────┘   │
+│                             │                                                 │
+│                             ▼                                                 │
+│  ┌───────────────────────────────────────────────────────────────────────┐   │
+│  │                              EVM (LEVM)                                │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐   │   │
+│  │  │Transaction  │  │   Opcode    │  │  Precompiled│  │    State    │   │   │
+│  │  │ Execution   │  │   Handler   │  │  Contracts  │  │ Transitions │   │   │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘   │   │
+│  └───────────────────────────────────────────────────────────────────────┘   │
+│                             │                                                 │
+│                             ▼                                                 │
+│  ┌───────────────────────────────────────────────────────────────────────┐   │
+│  │                             Storage                                    │   │
+│  │  ┌───────────────────────────────────────────────────────────────┐    │   │
+│  │  │                     Store (High-level API)                     │    │   │
+│  │  └───────────────────────────────────────────────────────────────┘    │   │
+│  │                    │                              │                    │   │
+│  │         ┌──────────┴──────────┐        ┌─────────┴────────┐           │   │
+│  │         ▼                     ▼        ▼                  ▼           │   │
+│  │  ┌─────────────┐       ┌─────────────────┐       ┌───────────────┐    │   │
+│  │  │  InMemory   │       │    RocksDB      │       │  State Trie   │    │   │
+│  │  │  (Testing)  │       │  (Production)   │       │ (MPT + Flat)  │    │   │
+│  │  └─────────────┘       └─────────────────┘       └───────────────┘    │   │
+│  └───────────────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<h2 id="core-components"><a class="header" href="#core-components">Core Components</a></h2>
+<h3 id="1-network-layer"><a class="header" href="#1-network-layer">1. Network Layer</a></h3>
+<p>The network layer handles all external communication:</p>
+<p><strong>JSON-RPC Server</strong> (<code>crates/networking/rpc</code>)</p>
+<ul>
+<li>Implements the Ethereum JSON-RPC specification</li>
+<li>Namespaces: <code>eth_*</code>, <code>debug_*</code>, <code>txpool_*</code>, <code>admin_*</code>, <code>web3_*</code></li>
+<li>Validates and broadcasts incoming transactions</li>
+</ul>
+<p><strong>Engine API</strong> (<code>crates/networking/rpc/engine</code>)</p>
+<ul>
+<li>Communication channel with the consensus client</li>
+<li>Handles <code>engine_forkchoiceUpdatedV{1,2,3}</code>, <code>engine_newPayloadV{1,2,3}</code>, <code>engine_getPayloadV{1,2,3}</code></li>
+<li>JWT authentication for security</li>
+<li>Triggers sync when receiving unknown block hashes</li>
+</ul>
+<p><strong>P2P Network</strong> (<code>crates/networking/p2p</code>)</p>
+<ul>
+<li><strong>DiscV4</strong>: Node discovery protocol for finding peers</li>
+<li><strong>RLPx</strong>: Encrypted transport layer for peer communication</li>
+<li><strong>eth/68</strong>: Block and transaction propagation protocol</li>
+<li><strong>snap/1</strong>: Snap sync protocol for fast state download</li>
+</ul>
+<h3 id="2-blockchain-layer"><a class="header" href="#2-blockchain-layer">2. Blockchain Layer</a></h3>
+<p>The blockchain layer manages chain state and block processing:</p>
+<p><strong>Blockchain</strong> (<code>crates/blockchain</code>)</p>
+<ul>
+<li>Orchestrates block validation and execution</li>
+<li>Manages the mempool for pending transactions</li>
+<li>Handles fork choice updates from the consensus layer</li>
+<li>Coordinates payload building for block production</li>
+</ul>
+<p><strong>Mempool</strong></p>
+<ul>
+<li>Stores pending transactions awaiting inclusion</li>
+<li>Filters transactions by gas price, nonce, and validity</li>
+<li>Supports transaction replacement (EIP-1559 and EIP-4844)</li>
+<li>Broadcasts new transactions to peers</li>
+</ul>
+<p><strong>Fork Choice</strong></p>
+<ul>
+<li>Implements Ethereum's fork choice rule</li>
+<li>Updates the canonical chain based on consensus client signals</li>
+<li>Handles chain reorganizations</li>
+</ul>
+<h3 id="3-execution-layer"><a class="header" href="#3-execution-layer">3. Execution Layer</a></h3>
+<p><strong>LEVM (Lambda EVM)</strong> (<code>crates/vm/levm</code>)</p>
+<ul>
+<li>Custom EVM implementation in Rust</li>
+<li>Executes smart contract bytecode</li>
+<li>Implements all EVM opcodes up to the latest hard fork</li>
+<li>Handles precompiled contracts</li>
+</ul>
+<p><strong>Block Execution Pipeline</strong></p>
+<ol>
+<li>Validate block header</li>
+<li>Apply system-level operations (beacon root, block hash storage)</li>
+<li>Execute transactions in order</li>
+<li>Process withdrawals (post-Merge)</li>
+<li>Extract requests (post-Prague)</li>
+<li>Compute state root and verify against header</li>
+</ol>
+<h3 id="4-storage-layer"><a class="header" href="#4-storage-layer">4. Storage Layer</a></h3>
+<p><strong>Store</strong> (<code>crates/storage</code>)</p>
+<ul>
+<li>High-level API for all blockchain data</li>
+<li>Supports multiple backends: InMemory (testing), RocksDB (production)</li>
+<li>Manages block headers, bodies, receipts, and state</li>
+</ul>
+<p><strong>State Trie</strong> (<code>crates/common/trie</code>)</p>
+<ul>
+<li>Merkle Patricia Trie implementation</li>
+<li>Stores account states and contract storage</li>
+<li>Supports flat key-value storage for performance</li>
+<li>Handles trie node caching and persistence</li>
+</ul>
+<h2 id="data-flow"><a class="header" href="#data-flow">Data Flow</a></h2>
+<h3 id="block-import-from-p2p"><a class="header" href="#block-import-from-p2p">Block Import (from P2P)</a></h3>
+<pre><code>P2P Peer → Block Headers/Bodies → Syncer → Blockchain.add_block() → EVM.execute() → Store
+</code></pre>
+<ol>
+<li>Syncer requests headers from peers</li>
+<li>Headers are validated (parent exists, timestamps, gas limits, etc.)</li>
+<li>Bodies are requested and matched to headers</li>
+<li>Blocks are executed in batches</li>
+<li>State is committed to storage</li>
+</ol>
+<h3 id="block-import-from-consensus-client"><a class="header" href="#block-import-from-consensus-client">Block Import (from Consensus Client)</a></h3>
+<pre><code>Consensus Client → engine_newPayloadV3 → Blockchain.add_block_pipeline() → EVM.execute() → Store
+                 → engine_forkchoiceUpdated → Fork Choice Update → Canonical Chain Update
+</code></pre>
+<ol>
+<li>Consensus client sends new payload via Engine API</li>
+<li>Block is validated and executed</li>
+<li>Fork choice update makes the block canonical</li>
+<li>Sync is triggered if the block's parent is unknown</li>
+</ol>
+<h3 id="transaction-lifecycle"><a class="header" href="#transaction-lifecycle">Transaction Lifecycle</a></h3>
+<pre><code>User → JSON-RPC (eth_sendRawTransaction) → Mempool → Broadcast to Peers
+                                                   → Include in Block
+</code></pre>
+<ol>
+<li>Transaction arrives via JSON-RPC or P2P</li>
+<li>Validated for signature, nonce, balance, gas</li>
+<li>Added to mempool if valid</li>
+<li>Broadcast to connected peers</li>
+<li>Eventually included in a block by the payload builder</li>
+</ol>
+<h2 id="sync-modes-1"><a class="header" href="#sync-modes-1">Sync Modes</a></h2>
+<h3 id="full-sync"><a class="header" href="#full-sync">Full Sync</a></h3>
+<p>Downloads and executes every block from genesis (or a known checkpoint):</p>
+<ol>
+<li>Request block headers from peers</li>
+<li>Request block bodies for each header</li>
+<li>Execute blocks in batches (1024 blocks per batch)</li>
+<li>Commit state after each batch</li>
+<li>Update fork choice when sync head is reached</li>
+</ol>
+<h3 id="snap-sync"><a class="header" href="#snap-sync">Snap Sync</a></h3>
+<p>Downloads state directly instead of executing all historical blocks:</p>
+<ol>
+<li>Download block headers to find a recent "pivot" block</li>
+<li>Download account state trie leaves via snap protocol</li>
+<li>Download storage tries for accounts with storage</li>
+<li>Heal any missing trie nodes (state may have changed during download)</li>
+<li>Download bytecode for contract accounts</li>
+<li>Execute recent blocks (post-pivot) to catch up</li>
+</ol>
+<p>See <a href="l1/architecture/./sync_state_machine.html">Sync State Machine</a> for detailed documentation.</p>
+<h2 id="concurrency-model"><a class="header" href="#concurrency-model">Concurrency Model</a></h2>
+<p>ethrex uses Tokio for async I/O with the following patterns:</p>
+<ul>
+<li><strong>Async tasks</strong> for network I/O (RPC, P2P)</li>
+<li><strong>Blocking tasks</strong> for CPU-intensive work (block execution, trie operations)</li>
+<li><strong>Channels</strong> for inter-component communication (sync signals, mempool updates)</li>
+<li><strong>RwLock/Mutex</strong> for shared state (mempool, peer table)</li>
+</ul>
+<h2 id="configuration-1"><a class="header" href="#configuration-1">Configuration</a></h2>
+<p>Key configuration options:</p>
+<div class="table-wrapper"><table><thead><tr><th>Option</th><th>Description</th><th>Default</th></tr></thead><tbody>
+<tr><td><code>--network</code></td><td>Network to connect to</td><td><code>mainnet</code></td></tr>
+<tr><td><code>--datadir</code></td><td>Data directory for DB and keys</td><td><code>~/.ethrex</code></td></tr>
+<tr><td><code>--syncmode</code></td><td>Sync mode (<code>full</code> or <code>snap</code>)</td><td><code>snap</code></td></tr>
+<tr><td><code>--authrpc.port</code></td><td>Engine API port</td><td><code>8551</code></td></tr>
+<tr><td><code>--http.port</code></td><td>JSON-RPC HTTP port</td><td><code>8545</code></td></tr>
+<tr><td><code>--discovery.port</code></td><td>P2P discovery port</td><td><code>30303</code></td></tr>
+</tbody></table>
+</div>
+<p>See <a href="l1/architecture/../running/configuration.html">Configuration</a> for the complete reference.</p>
+<h2 id="next-steps"><a class="header" href="#next-steps">Next Steps</a></h2>
+<ul>
+<li><a href="l1/architecture/./block_execution.html">Block Execution Pipeline</a> - Deep dive into block processing</li>
+<li><a href="l1/architecture/./sync_state_machine.html">Sync State Machine</a> - Detailed sync algorithm documentation</li>
+<li><a href="l1/architecture/./crate_map.html">Crate Map</a> - Overview of all crates and dependencies</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="block-execution-pipeline"><a class="header" href="#block-execution-pipeline">Block Execution Pipeline</a></h1>
+<p>This document describes how ethrex validates and executes blocks, from receiving a block to committing state changes.</p>
+<h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
+<p>Block execution in ethrex follows the Ethereum specification closely. The pipeline handles:</p>
+<ol>
+<li>Block header validation</li>
+<li>System-level operations (beacon root contract, block hash storage)</li>
+<li>Transaction execution</li>
+<li>Withdrawal processing</li>
+<li>Request extraction (post-Prague)</li>
+<li>State root verification</li>
+</ol>
+<h2 id="entry-points"><a class="header" href="#entry-points">Entry Points</a></h2>
+<p>Blocks enter the execution pipeline through two main paths:</p>
+<h3 id="1-p2p-sync-syncer"><a class="header" href="#1-p2p-sync-syncer">1. P2P Sync (<code>Syncer</code>)</a></h3>
+<p>During synchronization, blocks are fetched from peers and executed in batches:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/networking/p2p/sync.rs
+Syncer::add_blocks() → Blockchain::add_blocks_in_batch() → execute each block
+<span class="boring">}</span></code></pre></pre>
+<h3 id="2-engine-api-engine_newpayloadv123"><a class="header" href="#2-engine-api-engine_newpayloadv123">2. Engine API (<code>engine_newPayloadV{1,2,3}</code>)</a></h3>
+<p>Post-Merge, the consensus client sends new blocks via the Engine API:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/networking/rpc/engine/payload.rs
+NewPayloadV3::handle() → Blockchain::add_block() → execute block
+<span class="boring">}</span></code></pre></pre>
+<h2 id="block-header-validation"><a class="header" href="#block-header-validation">Block Header Validation</a></h2>
+<p>Before executing a block, its header is validated:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/blockchain/blockchain.rs
+fn validate_header(header: &amp;BlockHeader, parent: &amp;BlockHeader) -&gt; Result&lt;()&gt;
+<span class="boring">}</span></code></pre></pre>
+<h3 id="validation-checks"><a class="header" href="#validation-checks">Validation Checks</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Check</th><th>Description</th></tr></thead><tbody>
+<tr><td>Parent hash</td><td>Must match parent block's hash</td></tr>
+<tr><td>Block number</td><td>Must be parent.number + 1</td></tr>
+<tr><td>Timestamp</td><td>Must be &gt; parent.timestamp</td></tr>
+<tr><td>Gas limit</td><td>Must be within bounds of parent (EIP-1559)</td></tr>
+<tr><td>Base fee</td><td>Must match calculated value (EIP-1559)</td></tr>
+<tr><td>Difficulty</td><td>Must be 0 (post-Merge)</td></tr>
+<tr><td>Nonce</td><td>Must be 0 (post-Merge)</td></tr>
+<tr><td>Ommers hash</td><td>Must be empty hash (post-Merge)</td></tr>
+<tr><td>Withdrawals root</td><td>Must match if Shanghai activated</td></tr>
+<tr><td>Blob gas fields</td><td>Must be present if Cancun activated</td></tr>
+<tr><td>Requests hash</td><td>Must match if Prague activated</td></tr>
+</tbody></table>
+</div>
+<h2 id="execution-flow"><a class="header" href="#execution-flow">Execution Flow</a></h2>
+<pre><code>┌─────────────────────────────────────────────────────────────────────┐
+│                        Block Execution                               │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  1. ┌────────────────────────────────────────────────────────────┐  │
+│     │             System Operations (post-Cancun)                 │  │
+│     │  • Store beacon block root (EIP-4788)                       │  │
+│     │  • Store parent block hash (EIP-2935)                       │  │
+│     └────────────────────────────────────────────────────────────┘  │
+│                              │                                       │
+│                              ▼                                       │
+│  2. ┌────────────────────────────────────────────────────────────┐  │
+│     │              Transaction Execution                          │  │
+│     │  For each transaction:                                      │  │
+│     │  • Validate signature and nonce                             │  │
+│     │  • Check sender balance                                     │  │
+│     │  • Execute in EVM                                           │  │
+│     │  • Apply gas refunds                                        │  │
+│     │  • Update account states                                    │  │
+│     │  • Generate receipt                                         │  │
+│     └────────────────────────────────────────────────────────────┘  │
+│                              │                                       │
+│                              ▼                                       │
+│  3. ┌────────────────────────────────────────────────────────────┐  │
+│     │              Withdrawal Processing (post-Shanghai)          │  │
+│     │  For each withdrawal:                                       │  │
+│     │  • Credit validator address with withdrawal amount          │  │
+│     └────────────────────────────────────────────────────────────┘  │
+│                              │                                       │
+│                              ▼                                       │
+│  4. ┌────────────────────────────────────────────────────────────┐  │
+│     │              Request Extraction (post-Prague)               │  │
+│     │  • Deposit requests from logs                               │  │
+│     │  • Withdrawal requests from system contract                 │  │
+│     │  • Consolidation requests from system contract              │  │
+│     └────────────────────────────────────────────────────────────┘  │
+│                              │                                       │
+│                              ▼                                       │
+│  5. ┌────────────────────────────────────────────────────────────┐  │
+│     │                  State Finalization                         │  │
+│     │  • Compute state root from account updates                  │  │
+│     │  • Verify against header.state_root                         │  │
+│     │  • Commit changes to storage                                │  │
+│     └────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<h2 id="transaction-execution"><a class="header" href="#transaction-execution">Transaction Execution</a></h2>
+<p>Each transaction goes through the following steps:</p>
+<h3 id="1-pre-execution-validation"><a class="header" href="#1-pre-execution-validation">1. Pre-Execution Validation</a></h3>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/blockchain/validate.rs
+fn validate_transaction(tx: &amp;Transaction, header: &amp;BlockHeader) -&gt; Result&lt;()&gt;
+<span class="boring">}</span></code></pre></pre>
+<ul>
+<li>Signature recovery and validation</li>
+<li>Nonce check (must match account nonce)</li>
+<li>Gas limit check (must be &lt;= block gas remaining)</li>
+<li>Balance check (must cover <code>gas_limit * gas_price + value</code>)</li>
+<li>Intrinsic gas calculation</li>
+<li>EIP-2930 access list validation</li>
+<li>EIP-4844 blob validation (if applicable)</li>
+</ul>
+<h3 id="2-evm-execution"><a class="header" href="#2-evm-execution">2. EVM Execution</a></h3>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/vm/levm/src/vm.rs
+VM::execute() → Result&lt;ExecutionReport&gt;
+<span class="boring">}</span></code></pre></pre>
+<p>The EVM executes the transaction bytecode:</p>
+<ol>
+<li><strong>Contract Call</strong>: Execute target contract code</li>
+<li><strong>Contract Creation</strong>: Deploy new contract, execute constructor</li>
+<li><strong>Transfer</strong>: Simple value transfer (no code execution)</li>
+</ol>
+<p>During execution:</p>
+<ul>
+<li>Opcodes are decoded and executed</li>
+<li>Gas is consumed for each operation</li>
+<li>State changes are tracked (but not committed)</li>
+<li>Logs are collected</li>
+<li>Errors revert all changes</li>
+</ul>
+<h3 id="3-post-execution"><a class="header" href="#3-post-execution">3. Post-Execution</a></h3>
+<p>After EVM execution:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/vm/levm/src/vm.rs
+fn finalize_transaction() -&gt; Receipt
+<span class="boring">}</span></code></pre></pre>
+<ul>
+<li>Calculate gas refund (max 1/5 of gas used, post-London)</li>
+<li>Credit coinbase with priority fee</li>
+<li>Generate receipt with logs and status</li>
+<li>Update cumulative gas used</li>
+</ul>
+<h2 id="state-management"><a class="header" href="#state-management">State Management</a></h2>
+<h3 id="account-updates"><a class="header" href="#account-updates">Account Updates</a></h3>
+<p>State changes are tracked as <code>AccountUpdate</code> structs:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct AccountUpdate {
+    pub address: Address,
+    pub removed: bool,
+    pub info: Option&lt;AccountInfo&gt;,       // balance, nonce, code_hash
+    pub code: Option&lt;Bytes&gt;,             // bytecode if changed
+    pub added_storage: HashMap&lt;H256, U256&gt;,
+}
+<span class="boring">}</span></code></pre></pre>
+<h3 id="state-root-computation"><a class="header" href="#state-root-computation">State Root Computation</a></h3>
+<p>After all transactions execute:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/storage/store.rs
+Store::apply_account_updates_batch(parent_hash, updates) -&gt; StateTrieHash
+<span class="boring">}</span></code></pre></pre>
+<p>This is one of the two merkelization backends (the other is used by <code>add_block_pipeline</code>):</p>
+<ol>
+<li>Load parent state trie</li>
+<li>Apply each account update to the trie</li>
+<li>For accounts with storage changes, update storage tries</li>
+<li>Compute new state root</li>
+<li>Verify it matches <code>header.state_root</code></li>
+</ol>
+<h2 id="payload-building"><a class="header" href="#payload-building">Payload Building</a></h2>
+<p>When ethrex acts as a block producer (validator), it builds payloads:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/blockchain/payload.rs
+Blockchain::build_payload(template: Block) -&gt; PayloadBuildResult
+<span class="boring">}</span></code></pre></pre>
+<h3 id="building-process"><a class="header" href="#building-process">Building Process</a></h3>
+<ol>
+<li>
+<p><strong>Fetch transactions</strong> from mempool, filtered by:</p>
+<ul>
+<li>Base fee (must afford current base fee)</li>
+<li>Blob fee (for EIP-4844 transactions)</li>
+<li>Nonce ordering (consecutive nonces per sender)</li>
+</ul>
+</li>
+<li>
+<p><strong>Order transactions</strong> by effective tip (highest first)</p>
+</li>
+<li>
+<p><strong>Execute transactions</strong> until:</p>
+<ul>
+<li>Block gas limit reached</li>
+<li>No more valid transactions</li>
+<li>Blob limit reached (for blob transactions)</li>
+</ul>
+</li>
+<li>
+<p><strong>Finalize block</strong>:</p>
+<ul>
+<li>Apply withdrawals</li>
+<li>Extract requests</li>
+<li>Compute state root</li>
+<li>Compute receipts root</li>
+<li>Generate logs bloom</li>
+</ul>
+</li>
+</ol>
+<h3 id="payload-rebuilding"><a class="header" href="#payload-rebuilding">Payload Rebuilding</a></h3>
+<p>Payloads are rebuilt continuously until requested:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/blockchain/payload.rs
+Blockchain::build_payload_loop(payload, cancel_token)
+<span class="boring">}</span></code></pre></pre>
+<p>This maximizes MEV by including the most profitable transactions available.</p>
+<h2 id="error-handling"><a class="header" href="#error-handling">Error Handling</a></h2>
+<p>Block execution can fail for various reasons:</p>
+<div class="table-wrapper"><table><thead><tr><th>Error</th><th>Cause</th><th>Recovery</th></tr></thead><tbody>
+<tr><td><code>InvalidBlock::InvalidStateRoot</code></td><td>Computed state root doesn't match header</td><td>Reject block</td></tr>
+<tr><td><code>InvalidBlock::InvalidGasUsed</code></td><td>Gas used doesn't match header</td><td>Reject block</td></tr>
+<tr><td><code>InvalidBlock::InvalidTransaction</code></td><td>Transaction validation failed</td><td>Reject block</td></tr>
+<tr><td><code>EvmError::OutOfGas</code></td><td>Transaction ran out of gas</td><td>Revert transaction, continue block</td></tr>
+<tr><td><code>EvmError::InvalidOpcode</code></td><td>Unknown opcode encountered</td><td>Revert transaction, continue block</td></tr>
+</tbody></table>
+</div>
+<h2 id="performance-considerations"><a class="header" href="#performance-considerations">Performance Considerations</a></h2>
+<h3 id="batch-execution"><a class="header" href="#batch-execution">Batch Execution</a></h3>
+<p>During sync, blocks are executed in batches (default 1024 blocks):</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/networking/p2p/sync.rs
+const EXECUTE_BATCH_SIZE: usize = 1024;
+<span class="boring">}</span></code></pre></pre>
+<p>This reduces database commits and improves throughput.</p>
+<h3 id="parallel-trie-operations"><a class="header" href="#parallel-trie-operations">Parallel Trie Operations</a></h3>
+<p>Storage trie updates can be parallelized across accounts:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Uses rayon for parallel iteration
+account_updates.par_iter().map(|update| update_storage_trie(update))
+<span class="boring">}</span></code></pre></pre>
+<h3 id="state-caching"><a class="header" href="#state-caching">State Caching</a></h3>
+<p>The EVM maintains a cache of accessed accounts and storage slots to minimize database reads during execution.</p>
+<h2 id="hard-fork-handling"><a class="header" href="#hard-fork-handling">Hard Fork Handling</a></h2>
+<p>Block execution adapts based on the active hard fork:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/common/types/chain_config.rs
+impl ChainConfig {
+    pub fn fork(&amp;self, timestamp: u64) -&gt; Fork { ... }
+    pub fn is_cancun_activated(&amp;self, timestamp: u64) -&gt; bool { ... }
+    pub fn is_prague_activated(&amp;self, timestamp: u64) -&gt; bool { ... }
+}
+<span class="boring">}</span></code></pre></pre>
+<p>Each fork may introduce:</p>
+<ul>
+<li>New opcodes (e.g., <code>PUSH0</code> in Shanghai)</li>
+<li>New precompiles (e.g., point evaluation in Cancun)</li>
+<li>New system contracts (e.g., beacon root contract in Cancun)</li>
+<li>Changed gas costs</li>
+<li>New transaction types</li>
+</ul>
+<h2 id="related-documentation"><a class="header" href="#related-documentation">Related Documentation</a></h2>
+<ul>
+<li><a href="l1/architecture/../../vm/levm/debug.html">LEVM Documentation</a> - EVM implementation details</li>
+<li><a href="l1/architecture/./sync_state_machine.html">Sync State Machine</a> - How blocks flow during sync</li>
+<li><a href="l1/architecture/./crate_map.html">Crate Map</a> - Overview of involved crates</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="sync-state-machine"><a class="header" href="#sync-state-machine">Sync State Machine</a></h1>
+<p>This document describes the synchronization algorithms implemented in ethrex, including full sync and snap sync.</p>
+<h2 id="overview-1"><a class="header" href="#overview-1">Overview</a></h2>
+<p>ethrex supports two synchronization modes:</p>
+<div class="table-wrapper"><table><thead><tr><th>Mode</th><th>Description</th><th>Use Case</th></tr></thead><tbody>
+<tr><td><strong>Full Sync</strong></td><td>Downloads and executes every block</td><td>Maximum security, slower</td></tr>
+<tr><td><strong>Snap Sync</strong></td><td>Downloads state directly, executes recent blocks</td><td>Faster initial sync</td></tr>
+</tbody></table>
+</div>
+<h2 id="sync-manager-architecture"><a class="header" href="#sync-manager-architecture">Sync Manager Architecture</a></h2>
+<pre><code>┌─────────────────────────────────────────────────────────────────┐
+│                        SyncManager                               │
+│  • Receives sync targets from Engine API / P2P                   │
+│  • Tracks current sync mode (Full / Snap)                        │
+│  • Coordinates Syncer for actual sync work                       │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                          Syncer                                  │
+│  • Executes sync cycles                                          │
+│  • Manages peer connections via PeerHandler                      │
+│  • Handles both full and snap sync algorithms                    │
+└─────────────────────────────────────────────────────────────────┘
+</code></pre>
+<h2 id="sync-triggers"><a class="header" href="#sync-triggers">Sync Triggers</a></h2>
+<p>Synchronization is triggered by:</p>
+<ol>
+<li><strong>Engine API</strong>: <code>engine_forkchoiceUpdated</code> with unknown head hash</li>
+<li><strong>P2P</strong>: Receiving block announcements for unknown blocks</li>
+<li><strong>Startup</strong>: When local chain is behind network</li>
+</ol>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/networking/rpc/engine/fork_choice.rs
+match apply_fork_choice(...) {
+    Err(InvalidForkChoice::Syncing) =&gt; {
+        syncer.sync_to_head(fork_choice_state.head_block_hash);
+        // Return SYNCING status to consensus client
+    }
+}
+<span class="boring">}</span></code></pre></pre>
+<h2 id="full-sync-algorithm"><a class="header" href="#full-sync-algorithm">Full Sync Algorithm</a></h2>
+<p>Full sync downloads blocks from the network and executes each one to reconstruct the state.</p>
+<h3 id="state-machine"><a class="header" href="#state-machine">State Machine</a></h3>
+<pre><code>                    ┌─────────────────┐
+                    │   START SYNC    │
+                    └────────┬────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+         ┌─────────│  Request Headers │◄─────────────┐
+         │         └────────┬────────┘              │
+         │                  │                        │
+         │                  ▼                        │
+         │         ┌─────────────────┐              │
+         │         │ Validate Headers│              │
+         │         └────────┬────────┘              │
+         │                  │                        │
+         │                  ▼                        │
+         │         ┌─────────────────┐              │
+         │         │ Found Canonical │──No──────────┘
+         │         │   Ancestor?     │
+         │         └────────┬────────┘
+         │                  │ Yes
+         │                  ▼
+         │         ┌─────────────────┐
+         │         │  Request Bodies │◄─────────────┐
+         │         └────────┬────────┘              │
+         │                  │                        │
+         │                  ▼                        │
+         │         ┌─────────────────┐              │
+         │         │ Execute Batch   │              │
+         │         │ (1024 blocks)   │              │
+         │         └────────┬────────┘              │
+         │                  │                        │
+         │                  ▼                        │
+         │         ┌─────────────────┐              │
+         │         │  More Blocks?   │──Yes─────────┘
+         │         └────────┬────────┘
+         │                  │ No
+         │                  ▼
+         │         ┌─────────────────┐
+         └─Error───│   SYNC DONE     │
+                   └─────────────────┘
+</code></pre>
+<h3 id="algorithm-details"><a class="header" href="#algorithm-details">Algorithm Details</a></h3>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/networking/p2p/sync.rs
+async fn sync_cycle_full(sync_head: H256, store: Store) -&gt; Result&lt;()&gt;
+<span class="boring">}</span></code></pre></pre>
+<ol>
+<li>
+<p><strong>Find Chain Link</strong></p>
+<ul>
+<li>Request headers backwards from sync_head</li>
+<li>Stop when reaching a canonical block (already known)</li>
+<li>This identifies the fork point</li>
+</ul>
+</li>
+<li>
+<p><strong>Store Headers</strong></p>
+<ul>
+<li>Save all new headers to temporary storage</li>
+<li>Headers are stored in batches during download</li>
+</ul>
+</li>
+<li>
+<p><strong>Download Bodies</strong></p>
+<ul>
+<li>Request bodies for stored headers</li>
+<li>Match bodies to headers by hash</li>
+<li>Maximum 64 bodies per request</li>
+</ul>
+</li>
+<li>
+<p><strong>Execute Blocks</strong></p>
+<ul>
+<li>Execute in batches of 1024 blocks</li>
+<li>Each block is fully validated and executed</li>
+<li>State is committed after each batch</li>
+</ul>
+</li>
+<li>
+<p><strong>Update Fork Choice</strong></p>
+<ul>
+<li>After all blocks executed, update canonical chain</li>
+<li>Set new head, safe, and finalized blocks</li>
+</ul>
+</li>
+</ol>
+<h3 id="key-constants"><a class="header" href="#key-constants">Key Constants</a></h3>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>const EXECUTE_BATCH_SIZE: usize = 1024;      // Blocks per execution batch
+const MAX_BLOCK_BODIES_TO_REQUEST: usize = 64; // Bodies per request
+<span class="boring">}</span></code></pre></pre>
+<h2 id="snap-sync-algorithm"><a class="header" href="#snap-sync-algorithm">Snap Sync Algorithm</a></h2>
+<p>Snap sync downloads state directly from peers instead of executing all historical blocks.</p>
+<h3 id="state-machine-1"><a class="header" href="#state-machine-1">State Machine</a></h3>
+<pre><code>┌─────────────────────────────────────────────────────────────────────────────┐
+│                           SNAP SYNC STATE MACHINE                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+    ┌──────────────┐
+    │  START SNAP  │
+    │    SYNC      │
+    └──────┬───────┘
+           │
+           ▼
+    ┌──────────────┐     ┌─────────────────────────────────────────────────────┐
+    │   Download   │     │  Download headers to find sync head                  │
+    │   Headers    │────▶│  Store hashes for later body download               │
+    └──────┬───────┘     └─────────────────────────────────────────────────────┘
+           │
+           ▼
+    ┌──────────────┐     ┌─────────────────────────────────────────────────────┐
+    │ Select Pivot │────▶│  Choose recent block as pivot (must not be stale)   │
+    │    Block     │     │  Pivot block is target for state download           │
+    └──────┬───────┘     └─────────────────────────────────────────────────────┘
+           │
+           ▼
+    ┌──────────────┐     ┌─────────────────────────────────────────────────────┐
+    │  Download    │────▶│  Request account ranges via SNAP protocol           │
+    │  Accounts    │     │  Store account states to disk as snapshots          │
+    └──────┬───────┘     └─────────────────────────────────────────────────────┘
+           │
+           ▼
+    ┌──────────────┐     ┌─────────────────────────────────────────────────────┐
+    │   Insert     │────▶│  Build account trie from downloaded leaves          │
+    │  Accounts    │     │  Identify accounts with non-empty storage           │
+    └──────┬───────┘     └─────────────────────────────────────────────────────┘
+           │
+           ▼
+    ┌──────────────┐     ┌─────────────────────────────────────────────────────┐
+    │  Download    │────▶│  For each account with storage:                     │
+    │  Storage     │     │  Request storage ranges and build storage tries.    │
+    │              │     │  Includes a healing loop to fix state trie changes. │
+    └──────┬───────┘     └─────────────────────────────────────────────────────┘
+           │
+           ▼
+    ┌──────────────┐     ┌─────────────────────────────────────────────────────┐
+    │    Heal      │────▶│  Heal state trie (fill missing nodes)               │
+    │    Tries     │     │  Heal storage tries for modified accounts           │
+    └──────┬───────┘     └─────────────────────────────────────────────────────┘
+           │
+           ▼
+    ┌──────────────┐     ┌─────────────────────────────────────────────────────┐
+    │  Download    │────▶│  Download bytecode for all contract accounts        │
+    │  Bytecode    │     │  Match by code hash                                 │
+    └──────┬───────┘     └─────────────────────────────────────────────────────┘
+           │
+           ▼
+    ┌──────────────┐
+    │  SNAP SYNC   │
+    │   COMPLETE   │
+    └──────┬───────┘
+           │
+           ▼
+    ┌──────────────┐     ┌─────────────────────────────────────────────────────┐
+    │   Switch to  │────▶│  Execute recent blocks from pivot to head           │
+    │  Full Sync   │     │  Continue with full sync for new blocks             │
+    └──────────────┘     └─────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="phase-1-header-download"><a class="header" href="#phase-1-header-download">Phase 1: Header Download</a></h3>
+<p>Download all block headers from current head to sync target:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/networking/p2p/sync.rs
+async fn sync_cycle_snap(sync_head: H256, store: Store) -&gt; Result&lt;()&gt;
+<span class="boring">}</span></code></pre></pre>
+<ul>
+<li>Request headers in batches</li>
+<li>Store header hashes for later use</li>
+<li>Identify pivot block (recent block whose state we'll download)</li>
+</ul>
+<h3 id="phase-2-pivot-selection"><a class="header" href="#phase-2-pivot-selection">Phase 2: Pivot Selection</a></h3>
+<p>The pivot block must be:</p>
+<ul>
+<li>Recent enough to have state available on peers</li>
+<li>Not "stale" (older than SNAP_LIMIT * 12 seconds)</li>
+</ul>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/networking/p2p/sync.rs
+fn block_is_stale(header: &amp;BlockHeader) -&gt; bool {
+    calculate_staleness_timestamp(header.timestamp) &lt; current_unix_time()
+}
+
+const SNAP_LIMIT: usize = 128; // Blocks before pivot is considered stale
+<span class="boring">}</span></code></pre></pre>
+<p>If the pivot becomes stale during sync, a new pivot is selected:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>async fn update_pivot(block_number: u64, ...) -&gt; Result&lt;BlockHeader&gt;
+<span class="boring">}</span></code></pre></pre>
+<h3 id="phase-3-account-download"><a class="header" href="#phase-3-account-download">Phase 3: Account Download</a></h3>
+<p>Download all account states at the pivot block:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Uses SNAP protocol GetAccountRange messages
+peers.request_account_range(start_hash, end_hash, snapshot_dir, pivot_header)
+<span class="boring">}</span></code></pre></pre>
+<ul>
+<li>Accounts are saved to disk as RLP-encoded snapshots</li>
+<li>Each snapshot file contains a batch of (hash, account_state) pairs</li>
+<li>Process tracks code hashes for later bytecode download</li>
+</ul>
+<h3 id="phase-4-account-trie-construction"><a class="header" href="#phase-4-account-trie-construction">Phase 4: Account Trie Construction</a></h3>
+<p>Build the account state trie from downloaded leaves:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>async fn insert_accounts(store, storage_accounts, snapshots_dir, ...) -&gt; (H256, accounts_with_storage)
+<span class="boring">}</span></code></pre></pre>
+<p>For RocksDB backend:</p>
+<ul>
+<li>Ingest snapshot files directly via SST ingestion</li>
+<li>Build trie using sorted insertion algorithm</li>
+<li>Track accounts with non-empty storage root</li>
+</ul>
+<h3 id="phase-5-storage-download"><a class="header" href="#phase-5-storage-download">Phase 5: Storage Download</a></h3>
+<p>For each account with storage, download storage slots:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>peers.request_storage_ranges(storage_accounts, snapshots_dir, chunk_index, pivot_header)
+<span class="boring">}</span></code></pre></pre>
+<ul>
+<li>Multiple accounts can be requested per message</li>
+<li>Large accounts are downloaded in chunks</li>
+<li>"Big accounts" (&gt;4096 slots) are marked for healing instead</li>
+</ul>
+<h3 id="phase-6-trie-healing"><a class="header" href="#phase-6-trie-healing">Phase 6: Trie Healing</a></h3>
+<p>State may have changed while downloading. Healing fixes inconsistencies:</p>
+<p><strong>State Trie Healing:</strong></p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>async fn heal_state_trie_wrap(state_root, store, peers, deadline, ...) -&gt; bool
+<span class="boring">}</span></code></pre></pre>
+<ul>
+<li>Walk trie from root</li>
+<li>Request missing nodes from peers</li>
+<li>Fill in gaps caused by state changes</li>
+</ul>
+<p><strong>Storage Trie Healing:</strong></p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>async fn heal_storage_trie(state_root, accounts, peers, store, ...) -&gt; bool
+<span class="boring">}</span></code></pre></pre>
+<ul>
+<li>For each account marked for healing</li>
+<li>Request missing storage trie nodes</li>
+<li>Verify storage roots match account state</li>
+</ul>
+<h3 id="phase-7-bytecode-download"><a class="header" href="#phase-7-bytecode-download">Phase 7: Bytecode Download</a></h3>
+<p>Download contract bytecode:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>peers.request_bytecodes(&amp;code_hashes)
+<span class="boring">}</span></code></pre></pre>
+<ul>
+<li>Code hashes collected during account download</li>
+<li>Bytecode downloaded in chunks (50,000 per batch)</li>
+<li>Verified by hashing and comparing to code_hash</li>
+</ul>
+<h3 id="phase-8-transition-to-full-sync"><a class="header" href="#phase-8-transition-to-full-sync">Phase 8: Transition to Full Sync</a></h3>
+<p>After snap sync completes:</p>
+<ol>
+<li>Store pivot block body</li>
+<li>Update fork choice to pivot</li>
+<li>Switch sync mode to Full</li>
+<li>Execute any remaining blocks normally</li>
+</ol>
+<h2 id="p2p-protocols-used"><a class="header" href="#p2p-protocols-used">P2P Protocols Used</a></h2>
+<h3 id="eth68-protocol"><a class="header" href="#eth68-protocol">eth/68 Protocol</a></h3>
+<p>Used for block header and body download:</p>
+<div class="table-wrapper"><table><thead><tr><th>Message</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>GetBlockHeaders</code></td><td>Request headers by number or hash</td></tr>
+<tr><td><code>BlockHeaders</code></td><td>Response with headers</td></tr>
+<tr><td><code>GetBlockBodies</code></td><td>Request bodies by hash</td></tr>
+<tr><td><code>BlockBodies</code></td><td>Response with bodies</td></tr>
+</tbody></table>
+</div>
+<h3 id="snap1-protocol"><a class="header" href="#snap1-protocol">snap/1 Protocol</a></h3>
+<p>Used for state download during snap sync:</p>
+<div class="table-wrapper"><table><thead><tr><th>Message</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>GetAccountRange</code></td><td>Request accounts in hash range</td></tr>
+<tr><td><code>AccountRange</code></td><td>Response with accounts and proof</td></tr>
+<tr><td><code>GetStorageRanges</code></td><td>Request storage for accounts</td></tr>
+<tr><td><code>StorageRanges</code></td><td>Response with storage and proofs</td></tr>
+<tr><td><code>GetByteCodes</code></td><td>Request bytecode by hash</td></tr>
+<tr><td><code>ByteCodes</code></td><td>Response with bytecode</td></tr>
+<tr><td><code>GetTrieNodes</code></td><td>Request specific trie nodes</td></tr>
+<tr><td><code>TrieNodes</code></td><td>Response with nodes</td></tr>
+</tbody></table>
+</div>
+<h2 id="error-recovery"><a class="header" href="#error-recovery">Error Recovery</a></h2>
+<h3 id="recoverable-errors"><a class="header" href="#recoverable-errors">Recoverable Errors</a></h3>
+<p>These errors cause sync to retry:</p>
+<ul>
+<li>Peer disconnection</li>
+<li>Invalid response from peer</li>
+<li>Timeout waiting for response</li>
+<li>Database errors (transient)</li>
+</ul>
+<h3 id="non-recoverable-errors"><a class="header" href="#non-recoverable-errors">Non-Recoverable Errors</a></h3>
+<p>These errors cause sync to abort with warning:</p>
+<ul>
+<li>Snapshot file corruption</li>
+<li>Database corruption</li>
+<li>State root mismatch after healing</li>
+</ul>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/networking/p2p/sync.rs
+impl SyncError {
+    pub fn is_recoverable(&amp;self) -&gt; bool {
+        match self {
+            SyncError::Chain(_) | SyncError::Store(_) | ... =&gt; true,
+            SyncError::CorruptDB | SyncError::SnapshotDecodeError(_) | ... =&gt; false,
+        }
+    }
+}
+<span class="boring">}</span></code></pre></pre>
+<h2 id="performance-optimizations"><a class="header" href="#performance-optimizations">Performance Optimizations</a></h2>
+<h3 id="parallel-operations"><a class="header" href="#parallel-operations">Parallel Operations</a></h3>
+<ul>
+<li>Account trie insertion uses Rayon for parallelism</li>
+<li>Storage tries built in parallel across accounts</li>
+<li>Bytecode downloads are batched</li>
+</ul>
+<h3 id="disk-io"><a class="header" href="#disk-io">Disk I/O</a></h3>
+<ul>
+<li>Snapshot files written in batches to reduce writes</li>
+<li>RocksDB SST ingestion for fast account loading</li>
+<li>Temporary directories cleaned up after sync</li>
+</ul>
+<h3 id="network"><a class="header" href="#network">Network</a></h3>
+<ul>
+<li>Multiple peers used concurrently</li>
+<li>Peer scoring based on response time and validity</li>
+<li>Automatic peer rotation for failed requests</li>
+</ul>
+<h2 id="metrics"><a class="header" href="#metrics">Metrics</a></h2>
+<p>Sync progress is tracked via metrics:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/networking/p2p/metrics.rs
+METRICS.account_tries_inserted     // Accounts added to trie
+METRICS.storage_leaves_inserted    // Storage slots added
+METRICS.current_step               // Current sync phase
+METRICS.sync_head_hash             // Current sync target
+<span class="boring">}</span></code></pre></pre>
+<h2 id="configuration-2"><a class="header" href="#configuration-2">Configuration</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Option</th><th>Description</th><th>Default</th></tr></thead><tbody>
+<tr><td><code>--syncmode</code></td><td>Sync mode (<code>full</code> or <code>snap</code>)</td><td><code>snap</code></td></tr>
+<tr><td><code>EXECUTE_BATCH_SIZE</code></td><td>Blocks per batch (env var)</td><td>1024</td></tr>
+<tr><td><code>MIN_FULL_BLOCKS</code></td><td>Min blocks to full sync in snap mode</td><td>10,000</td></tr>
+</tbody></table>
+</div>
+<h2 id="related-documentation-1"><a class="header" href="#related-documentation-1">Related Documentation</a></h2>
+<ul>
+<li><a href="l1/architecture/../fundamentals/snap_sync.html">Snap Sync Internals</a> - Detailed snap sync documentation</li>
+<li><a href="l1/architecture/./block_execution.html">Block Execution Pipeline</a> - How blocks are executed</li>
+<li><a href="l1/architecture/../fundamentals/networking.html">Networking</a> - P2P protocol details</li>
+</ul>
+<blockquote>
+<p><strong>Note:</strong> For comprehensive snap sync documentation, see <a href="l1/architecture/../fundamentals/snap_sync.html">Snap Sync Internals</a>.</p>
+</blockquote>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="crate-map"><a class="header" href="#crate-map">Crate Map</a></h1>
+<p>This document provides an overview of all crates in the ethrex monorepo and their responsibilities.</p>
+<h2 id="crate-dependency-graph"><a class="header" href="#crate-dependency-graph">Crate Dependency Graph</a></h2>
+<pre><code>                              ┌─────────────────────────────────────┐
+                              │           cmd/ethrex                │
+                              │      (Main binary entry point)      │
+                              └───────────────┬─────────────────────┘
+                                              │
+                    ┌─────────────────────────┼─────────────────────────┐
+                    │                         │                         │
+                    ▼                         ▼                         ▼
+        ┌───────────────────┐     ┌───────────────────┐     ┌───────────────────┐
+        │  networking/rpc   │     │  networking/p2p   │     │    blockchain     │
+        │   (JSON-RPC API)  │     │  (P2P networking) │     │ (Chain management)│
+        └─────────┬─────────┘     └─────────┬─────────┘     └─────────┬─────────┘
+                  │                         │                         │
+                  │                         │                         │
+                  └─────────────────────────┼─────────────────────────┘
+                                            │
+                                            ▼
+                              ┌─────────────────────────────┐
+                              │           vm/levm           │
+                              │    (EVM implementation)     │
+                              └─────────────┬───────────────┘
+                                            │
+                                            ▼
+                              ┌─────────────────────────────┐
+                              │          storage            │
+                              │     (Data persistence)      │
+                              └─────────────┬───────────────┘
+                                            │
+                    ┌───────────────────────┼───────────────────────┐
+                    │                       │                       │
+                    ▼                       ▼                       ▼
+        ┌───────────────────┐   ┌───────────────────┐   ┌───────────────────┐
+        │    common/trie    │   │    common/rlp     │   │   common/types    │
+        │ (Merkle Patricia) │   │ (RLP encoding)    │   │ (Core data types) │
+        └───────────────────┘   └───────────────────┘   └───────────────────┘
+</code></pre>
+<h2 id="core-crates"><a class="header" href="#core-crates">Core Crates</a></h2>
+<h3 id="ethrex-common"><a class="header" href="#ethrex-common"><code>ethrex-common</code></a></h3>
+<p><strong>Purpose:</strong> Core data types and utilities shared across all crates.</p>
+<p><strong>Key Modules:</strong></p>
+<ul>
+<li><code>types/</code> - Block, Transaction, Receipt, Account types</li>
+<li><code>trie/</code> - Merkle Patricia Trie implementation</li>
+<li><code>rlp/</code> - RLP encoding/decoding</li>
+<li><code>crypto/</code> - Keccak hashing, signature recovery</li>
+</ul>
+<p><strong>Notable Types:</strong></p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct Block { header: BlockHeader, body: BlockBody }
+pub struct Transaction { /* variants for Legacy, EIP-2930, EIP-1559, EIP-4844, EIP-7702 */ }
+pub struct AccountState { nonce: u64, balance: U256, storage_root: H256, code_hash: H256 }
+<span class="boring">}</span></code></pre></pre>
+<hr />
+<h3 id="ethrex-storage"><a class="header" href="#ethrex-storage"><code>ethrex-storage</code></a></h3>
+<p><strong>Purpose:</strong> Persistent storage layer with multiple backend support.</p>
+<p><strong>Key Components:</strong></p>
+<ul>
+<li><code>Store</code> - High-level API for all blockchain data</li>
+<li><code>StoreEngine</code> trait - Backend abstraction</li>
+<li><code>InMemoryStore</code> - Testing backend</li>
+<li><code>RocksDBStore</code> - Production backend</li>
+</ul>
+<p><strong>Stored Data:</strong></p>
+<div class="table-wrapper"><table><thead><tr><th>Table</th><th>Contents</th></tr></thead><tbody>
+<tr><td><code>block_numbers</code></td><td>Block hash → block number</td></tr>
+<tr><td><code>canonical_block_hashes</code></td><td>Block number → canonical hash</td></tr>
+<tr><td><code>headers</code></td><td>Block hash → BlockHeader</td></tr>
+<tr><td><code>bodies</code></td><td>Block hash → BlockBody</td></tr>
+<tr><td><code>receipts</code></td><td>Block hash + index → Receipt</td></tr>
+<tr><td><code>account_trie_nodes</code></td><td>Node hash → trie node data</td></tr>
+<tr><td><code>storage_trie_nodes</code></td><td>Node hash → trie node data</td></tr>
+<tr><td><code>account_codes</code></td><td>Code hash → bytecode</td></tr>
+<tr><td><code>account_flatkeyvalue</code></td><td>Account flat key-value store</td></tr>
+<tr><td><code>storage_flatkeyvalue</code></td><td>Storage flat key-value store</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h3 id="ethrex-blockchain"><a class="header" href="#ethrex-blockchain"><code>ethrex-blockchain</code></a></h3>
+<p><strong>Purpose:</strong> Chain management, block validation, and mempool.</p>
+<p><strong>Key Components:</strong></p>
+<ul>
+<li><code>Blockchain</code> - Main orchestrator for chain operations</li>
+<li><code>Mempool</code> - Pending transaction pool</li>
+<li><code>fork_choice</code> - Fork choice rule implementation</li>
+<li><code>payload</code> - Block building for validators</li>
+<li><code>validate</code> - Block and transaction validation</li>
+</ul>
+<p><strong>Public API:</strong></p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>impl Blockchain {
+    pub fn add_block(&amp;self, block: Block) -&gt; Result&lt;(), ChainError&gt;
+    pub fn add_block_pipeline(&amp;self, block: Block) -&gt; Result&lt;(), ChainError&gt;
+    pub fn validate_transaction(&amp;self, tx: &amp;Transaction) -&gt; Result&lt;(), MempoolError&gt;
+    pub fn build_payload(&amp;self, template: Block) -&gt; Result&lt;PayloadBuildResult, ChainError&gt;
+    pub fn get_payload(&amp;self, id: u64) -&gt; Result&lt;PayloadBuildResult, ChainError&gt;
+}
+<span class="boring">}</span></code></pre></pre>
+<hr />
+<h3 id="ethrex-vm--levm"><a class="header" href="#ethrex-vm--levm"><code>ethrex-vm</code> / <code>levm</code></a></h3>
+<p><strong>Purpose:</strong> Ethereum Virtual Machine implementation.</p>
+<p><strong>Key Components:</strong></p>
+<ul>
+<li><code>VM</code> - Main EVM execution engine</li>
+<li><code>Evm</code> trait - VM interface for different contexts</li>
+<li>Opcode handlers (one per EVM opcode)</li>
+<li>Precompiled contracts</li>
+<li>Gas metering</li>
+</ul>
+<p><strong>Execution Flow:</strong></p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>impl VM {
+    pub fn execute(&amp;mut self) -&gt; Result&lt;ExecutionReport, VMError&gt;
+    fn execute_opcode(&amp;mut self, opcode: u8) -&gt; Result&lt;(), VMError&gt;
+    fn call(&amp;mut self, ...) -&gt; Result&lt;CallOutcome, VMError&gt;
+    fn create(&amp;mut self, ...) -&gt; Result&lt;CreateOutcome, VMError&gt;
+}
+<span class="boring">}</span></code></pre></pre>
+<hr />
+<h3 id="ethrex-networkingrpc"><a class="header" href="#ethrex-networkingrpc"><code>ethrex-networking/rpc</code></a></h3>
+<p><strong>Purpose:</strong> JSON-RPC API server.</p>
+<p><strong>Supported Namespaces:</strong></p>
+<ul>
+<li><code>eth_*</code> - Standard Ethereum methods</li>
+<li><code>debug_*</code> - Debugging and tracing</li>
+<li><code>txpool_*</code> - Mempool inspection</li>
+<li><code>admin_*</code> - Node administration</li>
+<li><code>engine_*</code> - Consensus client communication</li>
+<li><code>web3_*</code> - Web3 utilities</li>
+</ul>
+<p><strong>Architecture:</strong></p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub trait RpcHandler: Send + Sync {
+    fn parse(params: &amp;Option&lt;Vec&lt;Value&gt;&gt;) -&gt; Result&lt;Self, RpcErr&gt;;
+    async fn handle(&amp;self, context: RpcApiContext) -&gt; Result&lt;Value, RpcErr&gt;;
+}
+<span class="boring">}</span></code></pre></pre>
+<hr />
+<h3 id="ethrex-networkingp2p"><a class="header" href="#ethrex-networkingp2p"><code>ethrex-networking/p2p</code></a></h3>
+<p><strong>Purpose:</strong> Peer-to-peer networking stack.</p>
+<p><strong>Protocol Layers:</strong></p>
+<ol>
+<li><strong>DiscV4</strong> - Node discovery</li>
+<li><strong>RLPx</strong> - Encrypted transport</li>
+<li><strong>eth/68</strong> - Ethereum wire protocol</li>
+<li><strong>snap/1</strong> - Snap sync protocol</li>
+</ol>
+<p><strong>Key Components:</strong></p>
+<ul>
+<li><code>PeerHandler</code> - Manages peer connections</li>
+<li><code>PeerTable</code> - Tracks known peers and their scores</li>
+<li><code>Syncer</code> - Synchronization state machine</li>
+<li><code>SyncManager</code> - Coordinates sync operations</li>
+</ul>
+<hr />
+<h2 id="supporting-crates"><a class="header" href="#supporting-crates">Supporting Crates</a></h2>
+<h3 id="ethrex-commontrie"><a class="header" href="#ethrex-commontrie"><code>ethrex-common/trie</code></a></h3>
+<p><strong>Purpose:</strong> Merkle Patricia Trie implementation.</p>
+<p><strong>Features:</strong></p>
+<ul>
+<li>Standard MPT operations (get, insert, delete)</li>
+<li>Proof generation and verification</li>
+<li>Sorted insertion for snap sync</li>
+<li>Flat key-value store integration</li>
+</ul>
+<hr />
+<h3 id="ethrex-commonrlp"><a class="header" href="#ethrex-commonrlp"><code>ethrex-common/rlp</code></a></h3>
+<p><strong>Purpose:</strong> Recursive Length Prefix encoding.</p>
+<p><strong>Traits:</strong></p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub trait RLPEncode {
+    fn encode(&amp;self, buf: &amp;mut dyn BufMut);
+    fn encode_to_vec(&amp;self) -&gt; Vec&lt;u8&gt;;
+}
+
+pub trait RLPDecode: Sized {
+    fn decode(rlp: &amp;[u8]) -&gt; Result&lt;Self, RLPDecodeError&gt;;
+    fn decode_unfinished(rlp: &amp;[u8]) -&gt; Result&lt;(Self, &amp;[u8]), RLPDecodeError&gt;;
+}
+<span class="boring">}</span></code></pre></pre>
+<hr />
+<h3 id="ethrex-metrics"><a class="header" href="#ethrex-metrics"><code>ethrex-metrics</code></a></h3>
+<p><strong>Purpose:</strong> Prometheus metrics collection.</p>
+<p><strong>Metric Categories:</strong></p>
+<ul>
+<li>Block metrics (height, gas, execution time)</li>
+<li>Transaction metrics (types, counts, errors)</li>
+<li>P2P metrics (peers, messages, sync progress)</li>
+<li>RPC metrics (requests, latency)</li>
+</ul>
+<hr />
+<h3 id="ethrex-crypto"><a class="header" href="#ethrex-crypto"><code>ethrex-crypto</code></a></h3>
+<p><strong>Purpose:</strong> Cryptographic primitives.</p>
+<p><strong>Features:</strong></p>
+<ul>
+<li>Keccak-256 hashing</li>
+<li>ECDSA signature recovery</li>
+<li>BLS signatures (for beacon chain)</li>
+</ul>
+<hr />
+<h2 id="l2-specific-crates"><a class="header" href="#l2-specific-crates">L2-Specific Crates</a></h2>
+<h3 id="ethrex-l2"><a class="header" href="#ethrex-l2"><code>ethrex-l2</code></a></h3>
+<p><strong>Purpose:</strong> L2 sequencer and prover integration.</p>
+<p><strong>Components:</strong></p>
+<ul>
+<li>Sequencer logic</li>
+<li>State diff computation</li>
+<li>Prover interface</li>
+<li>L1 interaction (deposits, withdrawals)</li>
+</ul>
+<hr />
+<h3 id="ethrex-prover"><a class="header" href="#ethrex-prover"><code>ethrex-prover</code></a></h3>
+<p><strong>Purpose:</strong> Zero-knowledge proof generation.</p>
+<p><strong>Supported Provers:</strong></p>
+<ul>
+<li>SP1 (Succinct)</li>
+<li>RISC0</li>
+<li>TDX (Trusted Execution)</li>
+</ul>
+<hr />
+<h2 id="test-and-development-crates"><a class="header" href="#test-and-development-crates">Test and Development Crates</a></h2>
+<h3 id="ef-tests"><a class="header" href="#ef-tests"><code>ef-tests</code></a></h3>
+<p><strong>Purpose:</strong> Ethereum Foundation test runner.</p>
+<p>Runs official Ethereum tests to verify protocol compliance.</p>
+<hr />
+<h3 id="ethrex-dev"><a class="header" href="#ethrex-dev"><code>ethrex-dev</code></a></h3>
+<p><strong>Purpose:</strong> Development mode utilities.</p>
+<p>Features:</p>
+<ul>
+<li>Local development network</li>
+<li>Block import from files</li>
+<li>Test fixtures</li>
+</ul>
+<hr />
+<h2 id="crate-features"><a class="header" href="#crate-features">Crate Features</a></h2>
+<p>Many crates support feature flags:</p>
+<div class="table-wrapper"><table><thead><tr><th>Crate</th><th>Feature</th><th>Effect</th></tr></thead><tbody>
+<tr><td><code>ethrex-storage</code></td><td><code>rocksdb</code></td><td>Enable RocksDB backend</td></tr>
+<tr><td><code>ethrex-blockchain</code></td><td><code>metrics</code></td><td>Enable Prometheus metrics</td></tr>
+<tr><td><code>ethrex-networking/p2p</code></td><td><code>sync-test</code></td><td>Testing utilities for sync</td></tr>
+<tr><td><code>ethrex-networking/p2p</code></td><td><code>experimental-discv5</code></td><td>Enable discv5 node discovery (experimental)</td></tr>
+</tbody></table>
+</div>
+<h2 id="adding-new-functionality"><a class="header" href="#adding-new-functionality">Adding New Functionality</a></h2>
+<p>When adding new features, consider:</p>
+<ol>
+<li>
+<p><strong>Where does it belong?</strong></p>
+<ul>
+<li>Pure data types → <code>ethrex-common</code></li>
+<li>Database operations → <code>ethrex-storage</code></li>
+<li>EVM changes → <code>ethrex-vm</code></li>
+<li>Chain logic → <code>ethrex-blockchain</code></li>
+<li>API endpoints → <code>ethrex-networking/rpc</code></li>
+<li>P2P messages → <code>ethrex-networking/p2p</code></li>
+</ul>
+</li>
+<li>
+<p><strong>Dependency direction</strong></p>
+<ul>
+<li>Lower-level crates should not depend on higher-level ones</li>
+<li>Common types flow down, behaviors flow up</li>
+</ul>
+</li>
+<li>
+<p><strong>Testing</strong></p>
+<ul>
+<li>Unit tests in the crate</li>
+<li>Integration tests in <code>tests/</code> directory</li>
+<li>EF tests for protocol compliance</li>
+</ul>
+</li>
+</ol>
+<h2 id="related-documentation-2"><a class="header" href="#related-documentation-2">Related Documentation</a></h2>
+<ul>
+<li><a href="l1/architecture/./overview.html">System Overview</a> - How crates work together</li>
+<li><a href="l1/architecture/./block_execution.html">Block Execution</a> - Execution flow across crates</li>
+<li><a href="l1/architecture/./sync_state_machine.html">Sync State Machine</a> - Sync implementation details</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
 <h1 id="fundamentals"><a class="header" href="#fundamentals">Fundamentals</a></h1>
 <p>This section covers the core concepts and technical details behind ethrex as an Ethereum execution client. Here you'll find explanations about sync modes, networking, databases, security, and more.</p>
 <div class="mdbook-alerts mdbook-alerts-note">
@@ -1862,10 +3405,10 @@ Finally, with <code>node_c</code> we connect to <code>node_b</code>. When the lo
 }
 
 </style>
-<h1 id="sync-modes-1"><a class="header" href="#sync-modes-1">Sync Modes</a></h1>
-<h2 id="full-sync"><a class="header" href="#full-sync">Full sync</a></h2>
+<h1 id="sync-modes-2"><a class="header" href="#sync-modes-2">Sync Modes</a></h1>
+<h2 id="full-sync-1"><a class="header" href="#full-sync-1">Full sync</a></h2>
 <p>Full syncing works by downloading and executing every block from genesis. This means that full syncing will only work for networks that started after <a href="https://ethereum.org/en/roadmap/merge/">The Merge</a>, as ethrex only supports post merge execution.</p>
-<h2 id="snap-sync"><a class="header" href="#snap-sync">Snap sync</a></h2>
+<h2 id="snap-sync-1"><a class="header" href="#snap-sync-1">Snap sync</a></h2>
 <p>For snap sync, you can view the <a href="l1/fundamentals/./snap_sync.html">main document here</a>.
 `</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
@@ -1936,7 +3479,7 @@ Finally, with <code>node_c</code> we connect to <code>node_b</code>. When the lo
 }
 
 </style>
-<h1 id="snap-sync-1"><a class="header" href="#snap-sync-1">Snap Sync</a></h1>
+<h1 id="snap-sync-2"><a class="header" href="#snap-sync-2">Snap Sync</a></h1>
 <p>API reference: https://github.com/ethereum/devp2p/blob/master/caps/snap.md</p>
 <p>Terminology:</p>
 <ul>
@@ -2621,7 +4164,7 @@ buffer and sends it back through the channels.</p>
 }
 
 </style>
-<h1 id="introduction"><a class="header" href="#introduction">Introduction</a></h1>
+<h1 id="introduction-1"><a class="header" href="#introduction-1">Introduction</a></h1>
 <p>Layer 2 (L2) solutions are protocols built on top of Ethereum to increase scalability and reduce transaction costs. L2s process transactions off-chain and, in the case of Rollups, they periodically post data or proofs back to Ethereum Layer 1, inheriting its security.</p>
 <p><strong>Ethrex</strong> is a framework that lets you launch your own L2 rollup or blockchain. With ethrex, you can deploy, run, and experiment with custom L2 networks, taking advantage of Ethereum's security while enabling high throughput and low fees.</p>
 <h2 id="get-started-with-your-l2"><a class="header" href="#get-started-with-your-l2">Get started with your L2</a></h2>
@@ -3740,7 +5283,7 @@ rex transfer 999999999999999999 0x67cad0d689b799f385d2ebcf3a626254a9074e12 0x414
 # Withdrawal
 rex l2 withdraw 111111111111111111 0x41443995d9eb6c6d6df51e55db2b188b12fe0f80d32817e57e11c64acff1feb8
 </code></pre>
-<h2 id="introduction-1"><a class="header" href="#introduction-1">Introduction</a></h2>
+<h2 id="introduction-2"><a class="header" href="#introduction-2">Introduction</a></h2>
 <h3 id="l1---l2-synchronous-composability"><a class="header" href="#l1---l2-synchronous-composability">L1 -&gt; L2 Synchronous Composability</a></h3>
 <h4 id="synchronous-deposits-1"><a class="header" href="#synchronous-deposits-1">Synchronous Deposits</a></h4>
 <p>Deposits are the process by which L1 users can enter L2 in some form. This process begins and ends on L1 through a series of steps:</p>
@@ -5371,7 +6914,7 @@ In this section we talk a bit about them, first going through the more specific 
 <li>Ensure blocks are verified in the correct order by invoking the <code>verify(..)</code> function in the <code>OnChainProposer</code> contract. Upon successful verification, an event is emitted to confirm the block's verification status.</li>
 <li>Operating on a configured interval defined by <code>proof_send_interval_ms</code>.</li>
 </ul>
-<h2 id="configuration-1"><a class="header" href="#configuration-1">Configuration</a></h2>
+<h2 id="configuration-3"><a class="header" href="#configuration-3">Configuration</a></h2>
 <p>Configuration is done either by CLI flags or through environment variables. Run <code>cargo run --release --bin ethrex -- l2 --help</code> in the repository's root directory to see the available CLI flags and envs.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
@@ -9259,7 +10802,7 @@ async fn main() -&gt; Result&lt;()&gt; {
 
 </style>
 <h1 id="shared-bridge"><a class="header" href="#shared-bridge">Shared Bridge</a></h1>
-<h2 id="introduction-2"><a class="header" href="#introduction-2">Introduction</a></h2>
+<h2 id="introduction-3"><a class="header" href="#introduction-3">Introduction</a></h2>
 <p>If a user wants to transfer funds from L2-A to an account on L2-B, the conventional process involves several steps: withdrawing assets from L2-A to Ethereum, claiming the unlocked funds on Ethereum, and then depositing those assets from Ethereum to L2-B. These multiple steps degrade the UX, and two of them require transactions on Ethereum, which are often expensive. This inefficiency arises because there is currently no direct communication channel between different L2s, forcing all interactions to route through their common hub: Ethereum.</p>
 <p>The Shared Bridge feature changes this by enabling seamless message passing between L2s. As a result, a user can achieve the same transfer by interacting only with the source chain (L2-A), with the outcome eventually reflecting on the destination chain (L2-B).</p>
 <p>While the user performs just one interaction and waits for the result, a similar process to the conventional flow occurs behind the scenes. In the following sections, we'll explore how it works.</p>
@@ -10016,7 +11559,7 @@ fn get_account_code(&amp;self, code_hash: H256) -&gt; Result&lt;Bytes, EvmError&
 }
 
 </style>
-<h1 id="metrics"><a class="header" href="#metrics">Metrics</a></h1>
+<h1 id="metrics-1"><a class="header" href="#metrics-1">Metrics</a></h1>
 <h2 id="quickstart"><a class="header" href="#quickstart">Quickstart</a></h2>
 <p>For a high level quickstart guide, please refer to <a href="developers/l1/../../l1/running/monitoring.html">Monitoring</a>.</p>
 <h2 id="ethereum-metrics-exporter"><a class="header" href="#ethereum-metrics-exporter">Ethereum Metrics Exporter</a></h2>
@@ -11481,7 +13024,7 @@ if you get an error like <code>risc0-ethereum/contracts/../lib/forge-std/src/Scr
 </ol>
 </li>
 </ul>
-<h2 id="configuration-2"><a class="header" href="#configuration-2">Configuration</a></h2>
+<h2 id="configuration-4"><a class="header" href="#configuration-4">Configuration</a></h2>
 <p>Configuration is done through environment variables or CLI flags.
 You can see a list of available flags by passing <code>--help</code> to the CLI, or checkout <a href="developers/l2/../../CLI.html">CLI</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
@@ -11672,7 +13215,7 @@ Ok(commit_tx_hash)  ```
 }
 
 </style>
-<h1 id="ethrex-prover"><a class="header" href="#ethrex-prover">ethrex-prover</a></h1>
+<h1 id="ethrex-prover-1"><a class="header" href="#ethrex-prover-1">ethrex-prover</a></h1>
 <p>The prover leverages ethrex's stateless execution to generate zero-knowledge proofs of a block (or batch of blocks) execution. Stateless execution works by asking a synced node for an execution witness (the minimal state data needed to execute that block or batch) and using the L1 client code to re-execute it. See <a href="prover/prover.html#stateless-execution-and-execution-witness">Stateless execution</a> for more details.</p>
 <p>The main interface to try the prover is <a href="prover/../ethrex_replay/ethrex_replay.html">ethrex-replay</a>, we also use it as a component of ethrex's L2 stack, to deploy zk-rollups or zk-validiums (a rollup publishes state information to L1 to reconstruct the L2 state if sequencing were to fail, a validium does not). Because of this the prover also supports some <a href="prover/prover.html#l2-specific-checks">L2 specific checks</a>.</p>
 <h2 id="how-do-you-prove-block-execution"><a class="header" href="#how-do-you-prove-block-execution">How do you prove block execution?</a></h2>
@@ -12838,7 +14381,7 @@ Block building options:
           [default: 60000000]
 </code></pre>
 <!-- END_CLI_HELP -->
-<h2 id="ethrex-l2"><a class="header" href="#ethrex-l2">ethrex l2</a></h2>
+<h2 id="ethrex-l2-1"><a class="header" href="#ethrex-l2-1">ethrex l2</a></h2>
 <pre><code>Usage: ethrex l2 [OPTIONS]
        ethrex l2 &lt;COMMAND&gt;
 

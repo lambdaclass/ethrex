@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Fundamentals - Ethrex</title>
+        <title>Architecture - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,25 +237,24 @@
 }
 
 </style>
-<h1 id="fundamentals"><a class="header" href="#fundamentals">Fundamentals</a></h1>
-<p>This section covers the core concepts and technical details behind ethrex as an Ethereum execution client. Here you'll find explanations about sync modes, networking, databases, security, and more.</p>
-<div class="mdbook-alerts mdbook-alerts-note">
-<p class="mdbook-alerts-title">
-  <span class="mdbook-alerts-icon"></span>
-  note
-</p>
-<p>This section is a work in progress and will be updated with more content and examples soon.</p>
-</div>
+<h1 id="l1-architecture"><a class="header" href="#l1-architecture">L1 Architecture</a></h1>
+<p>This section covers the internal architecture of ethrex as an Ethereum L1 execution client. It explains how the different components interact, how blocks flow through the system, and the design decisions behind the implementation.</p>
+<ul>
+<li><a href="./overview.html">System Overview</a> - High-level architecture and component interactions</li>
+<li><a href="./block_execution.html">Block Execution Pipeline</a> - How blocks are validated and executed</li>
+<li><a href="./sync_state_machine.html">Sync State Machine</a> - Full sync and snap sync algorithms</li>
+<li><a href="./crate_map.html">Crate Map</a> - Overview of all crates and their responsibilities</li>
+</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../l1/architecture/crate_map.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../l1/running/monitoring.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../l1/fundamentals/databases.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../l1/architecture/overview.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -265,11 +264,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../l1/architecture/crate_map.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../l1/running/monitoring.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../l1/fundamentals/databases.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../l1/architecture/overview.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

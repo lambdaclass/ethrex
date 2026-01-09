@@ -1,0 +1,579 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Crate Map - Ethrex</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../../favicon.svg">
+        <link rel="shortcut icon" href="../../favicon.png">
+        <link rel="stylesheet" href="../../css/variables.css">
+        <link rel="stylesheet" href="../../css/general.css">
+        <link rel="stylesheet" href="../../css/chrome.css">
+        <link rel="stylesheet" href="../../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="../../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../../toc.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Ethrex</h1>
+
+                    <div class="right-buttons">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="crate-map"><a class="header" href="#crate-map">Crate Map</a></h1>
+<p>This document provides an overview of all crates in the ethrex monorepo and their responsibilities.</p>
+<h2 id="crate-dependency-graph"><a class="header" href="#crate-dependency-graph">Crate Dependency Graph</a></h2>
+<pre><code>                              ┌─────────────────────────────────────┐
+                              │           cmd/ethrex                │
+                              │      (Main binary entry point)      │
+                              └───────────────┬─────────────────────┘
+                                              │
+                    ┌─────────────────────────┼─────────────────────────┐
+                    │                         │                         │
+                    ▼                         ▼                         ▼
+        ┌───────────────────┐     ┌───────────────────┐     ┌───────────────────┐
+        │  networking/rpc   │     │  networking/p2p   │     │    blockchain     │
+        │   (JSON-RPC API)  │     │  (P2P networking) │     │ (Chain management)│
+        └─────────┬─────────┘     └─────────┬─────────┘     └─────────┬─────────┘
+                  │                         │                         │
+                  │                         │                         │
+                  └─────────────────────────┼─────────────────────────┘
+                                            │
+                                            ▼
+                              ┌─────────────────────────────┐
+                              │           vm/levm           │
+                              │    (EVM implementation)     │
+                              └─────────────┬───────────────┘
+                                            │
+                                            ▼
+                              ┌─────────────────────────────┐
+                              │          storage            │
+                              │     (Data persistence)      │
+                              └─────────────┬───────────────┘
+                                            │
+                    ┌───────────────────────┼───────────────────────┐
+                    │                       │                       │
+                    ▼                       ▼                       ▼
+        ┌───────────────────┐   ┌───────────────────┐   ┌───────────────────┐
+        │    common/trie    │   │    common/rlp     │   │   common/types    │
+        │ (Merkle Patricia) │   │ (RLP encoding)    │   │ (Core data types) │
+        └───────────────────┘   └───────────────────┘   └───────────────────┘
+</code></pre>
+<h2 id="core-crates"><a class="header" href="#core-crates">Core Crates</a></h2>
+<h3 id="ethrex-common"><a class="header" href="#ethrex-common"><code>ethrex-common</code></a></h3>
+<p><strong>Purpose:</strong> Core data types and utilities shared across all crates.</p>
+<p><strong>Key Modules:</strong></p>
+<ul>
+<li><code>types/</code> - Block, Transaction, Receipt, Account types</li>
+<li><code>trie/</code> - Merkle Patricia Trie implementation</li>
+<li><code>rlp/</code> - RLP encoding/decoding</li>
+<li><code>crypto/</code> - Keccak hashing, signature recovery</li>
+</ul>
+<p><strong>Notable Types:</strong></p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct Block { header: BlockHeader, body: BlockBody }
+pub struct Transaction { /* variants for Legacy, EIP-2930, EIP-1559, EIP-4844, EIP-7702 */ }
+pub struct AccountState { nonce: u64, balance: U256, storage_root: H256, code_hash: H256 }
+<span class="boring">}</span></code></pre></pre>
+<hr />
+<h3 id="ethrex-storage"><a class="header" href="#ethrex-storage"><code>ethrex-storage</code></a></h3>
+<p><strong>Purpose:</strong> Persistent storage layer with multiple backend support.</p>
+<p><strong>Key Components:</strong></p>
+<ul>
+<li><code>Store</code> - High-level API for all blockchain data</li>
+<li><code>StoreEngine</code> trait - Backend abstraction</li>
+<li><code>InMemoryStore</code> - Testing backend</li>
+<li><code>RocksDBStore</code> - Production backend</li>
+</ul>
+<p><strong>Stored Data:</strong></p>
+<div class="table-wrapper"><table><thead><tr><th>Table</th><th>Contents</th></tr></thead><tbody>
+<tr><td><code>block_numbers</code></td><td>Block hash → block number</td></tr>
+<tr><td><code>canonical_block_hashes</code></td><td>Block number → canonical hash</td></tr>
+<tr><td><code>headers</code></td><td>Block hash → BlockHeader</td></tr>
+<tr><td><code>bodies</code></td><td>Block hash → BlockBody</td></tr>
+<tr><td><code>receipts</code></td><td>Block hash + index → Receipt</td></tr>
+<tr><td><code>account_trie_nodes</code></td><td>Node hash → trie node data</td></tr>
+<tr><td><code>storage_trie_nodes</code></td><td>Node hash → trie node data</td></tr>
+<tr><td><code>account_codes</code></td><td>Code hash → bytecode</td></tr>
+<tr><td><code>account_flatkeyvalue</code></td><td>Account flat key-value store</td></tr>
+<tr><td><code>storage_flatkeyvalue</code></td><td>Storage flat key-value store</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h3 id="ethrex-blockchain"><a class="header" href="#ethrex-blockchain"><code>ethrex-blockchain</code></a></h3>
+<p><strong>Purpose:</strong> Chain management, block validation, and mempool.</p>
+<p><strong>Key Components:</strong></p>
+<ul>
+<li><code>Blockchain</code> - Main orchestrator for chain operations</li>
+<li><code>Mempool</code> - Pending transaction pool</li>
+<li><code>fork_choice</code> - Fork choice rule implementation</li>
+<li><code>payload</code> - Block building for validators</li>
+<li><code>validate</code> - Block and transaction validation</li>
+</ul>
+<p><strong>Public API:</strong></p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>impl Blockchain {
+    pub fn add_block(&amp;self, block: Block) -&gt; Result&lt;(), ChainError&gt;
+    pub fn add_block_pipeline(&amp;self, block: Block) -&gt; Result&lt;(), ChainError&gt;
+    pub fn validate_transaction(&amp;self, tx: &amp;Transaction) -&gt; Result&lt;(), MempoolError&gt;
+    pub fn build_payload(&amp;self, template: Block) -&gt; Result&lt;PayloadBuildResult, ChainError&gt;
+    pub fn get_payload(&amp;self, id: u64) -&gt; Result&lt;PayloadBuildResult, ChainError&gt;
+}
+<span class="boring">}</span></code></pre></pre>
+<hr />
+<h3 id="ethrex-vm--levm"><a class="header" href="#ethrex-vm--levm"><code>ethrex-vm</code> / <code>levm</code></a></h3>
+<p><strong>Purpose:</strong> Ethereum Virtual Machine implementation.</p>
+<p><strong>Key Components:</strong></p>
+<ul>
+<li><code>VM</code> - Main EVM execution engine</li>
+<li><code>Evm</code> trait - VM interface for different contexts</li>
+<li>Opcode handlers (one per EVM opcode)</li>
+<li>Precompiled contracts</li>
+<li>Gas metering</li>
+</ul>
+<p><strong>Execution Flow:</strong></p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>impl VM {
+    pub fn execute(&amp;mut self) -&gt; Result&lt;ExecutionReport, VMError&gt;
+    fn execute_opcode(&amp;mut self, opcode: u8) -&gt; Result&lt;(), VMError&gt;
+    fn call(&amp;mut self, ...) -&gt; Result&lt;CallOutcome, VMError&gt;
+    fn create(&amp;mut self, ...) -&gt; Result&lt;CreateOutcome, VMError&gt;
+}
+<span class="boring">}</span></code></pre></pre>
+<hr />
+<h3 id="ethrex-networkingrpc"><a class="header" href="#ethrex-networkingrpc"><code>ethrex-networking/rpc</code></a></h3>
+<p><strong>Purpose:</strong> JSON-RPC API server.</p>
+<p><strong>Supported Namespaces:</strong></p>
+<ul>
+<li><code>eth_*</code> - Standard Ethereum methods</li>
+<li><code>debug_*</code> - Debugging and tracing</li>
+<li><code>txpool_*</code> - Mempool inspection</li>
+<li><code>admin_*</code> - Node administration</li>
+<li><code>engine_*</code> - Consensus client communication</li>
+<li><code>web3_*</code> - Web3 utilities</li>
+</ul>
+<p><strong>Architecture:</strong></p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub trait RpcHandler: Send + Sync {
+    fn parse(params: &amp;Option&lt;Vec&lt;Value&gt;&gt;) -&gt; Result&lt;Self, RpcErr&gt;;
+    async fn handle(&amp;self, context: RpcApiContext) -&gt; Result&lt;Value, RpcErr&gt;;
+}
+<span class="boring">}</span></code></pre></pre>
+<hr />
+<h3 id="ethrex-networkingp2p"><a class="header" href="#ethrex-networkingp2p"><code>ethrex-networking/p2p</code></a></h3>
+<p><strong>Purpose:</strong> Peer-to-peer networking stack.</p>
+<p><strong>Protocol Layers:</strong></p>
+<ol>
+<li><strong>DiscV4</strong> - Node discovery</li>
+<li><strong>RLPx</strong> - Encrypted transport</li>
+<li><strong>eth/68</strong> - Ethereum wire protocol</li>
+<li><strong>snap/1</strong> - Snap sync protocol</li>
+</ol>
+<p><strong>Key Components:</strong></p>
+<ul>
+<li><code>PeerHandler</code> - Manages peer connections</li>
+<li><code>PeerTable</code> - Tracks known peers and their scores</li>
+<li><code>Syncer</code> - Synchronization state machine</li>
+<li><code>SyncManager</code> - Coordinates sync operations</li>
+</ul>
+<hr />
+<h2 id="supporting-crates"><a class="header" href="#supporting-crates">Supporting Crates</a></h2>
+<h3 id="ethrex-commontrie"><a class="header" href="#ethrex-commontrie"><code>ethrex-common/trie</code></a></h3>
+<p><strong>Purpose:</strong> Merkle Patricia Trie implementation.</p>
+<p><strong>Features:</strong></p>
+<ul>
+<li>Standard MPT operations (get, insert, delete)</li>
+<li>Proof generation and verification</li>
+<li>Sorted insertion for snap sync</li>
+<li>Flat key-value store integration</li>
+</ul>
+<hr />
+<h3 id="ethrex-commonrlp"><a class="header" href="#ethrex-commonrlp"><code>ethrex-common/rlp</code></a></h3>
+<p><strong>Purpose:</strong> Recursive Length Prefix encoding.</p>
+<p><strong>Traits:</strong></p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub trait RLPEncode {
+    fn encode(&amp;self, buf: &amp;mut dyn BufMut);
+    fn encode_to_vec(&amp;self) -&gt; Vec&lt;u8&gt;;
+}
+
+pub trait RLPDecode: Sized {
+    fn decode(rlp: &amp;[u8]) -&gt; Result&lt;Self, RLPDecodeError&gt;;
+    fn decode_unfinished(rlp: &amp;[u8]) -&gt; Result&lt;(Self, &amp;[u8]), RLPDecodeError&gt;;
+}
+<span class="boring">}</span></code></pre></pre>
+<hr />
+<h3 id="ethrex-metrics"><a class="header" href="#ethrex-metrics"><code>ethrex-metrics</code></a></h3>
+<p><strong>Purpose:</strong> Prometheus metrics collection.</p>
+<p><strong>Metric Categories:</strong></p>
+<ul>
+<li>Block metrics (height, gas, execution time)</li>
+<li>Transaction metrics (types, counts, errors)</li>
+<li>P2P metrics (peers, messages, sync progress)</li>
+<li>RPC metrics (requests, latency)</li>
+</ul>
+<hr />
+<h3 id="ethrex-crypto"><a class="header" href="#ethrex-crypto"><code>ethrex-crypto</code></a></h3>
+<p><strong>Purpose:</strong> Cryptographic primitives.</p>
+<p><strong>Features:</strong></p>
+<ul>
+<li>Keccak-256 hashing</li>
+<li>ECDSA signature recovery</li>
+<li>BLS signatures (for beacon chain)</li>
+</ul>
+<hr />
+<h2 id="l2-specific-crates"><a class="header" href="#l2-specific-crates">L2-Specific Crates</a></h2>
+<h3 id="ethrex-l2"><a class="header" href="#ethrex-l2"><code>ethrex-l2</code></a></h3>
+<p><strong>Purpose:</strong> L2 sequencer and prover integration.</p>
+<p><strong>Components:</strong></p>
+<ul>
+<li>Sequencer logic</li>
+<li>State diff computation</li>
+<li>Prover interface</li>
+<li>L1 interaction (deposits, withdrawals)</li>
+</ul>
+<hr />
+<h3 id="ethrex-prover"><a class="header" href="#ethrex-prover"><code>ethrex-prover</code></a></h3>
+<p><strong>Purpose:</strong> Zero-knowledge proof generation.</p>
+<p><strong>Supported Provers:</strong></p>
+<ul>
+<li>SP1 (Succinct)</li>
+<li>RISC0</li>
+<li>TDX (Trusted Execution)</li>
+</ul>
+<hr />
+<h2 id="test-and-development-crates"><a class="header" href="#test-and-development-crates">Test and Development Crates</a></h2>
+<h3 id="ef-tests"><a class="header" href="#ef-tests"><code>ef-tests</code></a></h3>
+<p><strong>Purpose:</strong> Ethereum Foundation test runner.</p>
+<p>Runs official Ethereum tests to verify protocol compliance.</p>
+<hr />
+<h3 id="ethrex-dev"><a class="header" href="#ethrex-dev"><code>ethrex-dev</code></a></h3>
+<p><strong>Purpose:</strong> Development mode utilities.</p>
+<p>Features:</p>
+<ul>
+<li>Local development network</li>
+<li>Block import from files</li>
+<li>Test fixtures</li>
+</ul>
+<hr />
+<h2 id="crate-features"><a class="header" href="#crate-features">Crate Features</a></h2>
+<p>Many crates support feature flags:</p>
+<div class="table-wrapper"><table><thead><tr><th>Crate</th><th>Feature</th><th>Effect</th></tr></thead><tbody>
+<tr><td><code>ethrex-storage</code></td><td><code>rocksdb</code></td><td>Enable RocksDB backend</td></tr>
+<tr><td><code>ethrex-blockchain</code></td><td><code>metrics</code></td><td>Enable Prometheus metrics</td></tr>
+<tr><td><code>ethrex-networking/p2p</code></td><td><code>sync-test</code></td><td>Testing utilities for sync</td></tr>
+<tr><td><code>ethrex-networking/p2p</code></td><td><code>experimental-discv5</code></td><td>Enable discv5 node discovery (experimental)</td></tr>
+</tbody></table>
+</div>
+<h2 id="adding-new-functionality"><a class="header" href="#adding-new-functionality">Adding New Functionality</a></h2>
+<p>When adding new features, consider:</p>
+<ol>
+<li>
+<p><strong>Where does it belong?</strong></p>
+<ul>
+<li>Pure data types → <code>ethrex-common</code></li>
+<li>Database operations → <code>ethrex-storage</code></li>
+<li>EVM changes → <code>ethrex-vm</code></li>
+<li>Chain logic → <code>ethrex-blockchain</code></li>
+<li>API endpoints → <code>ethrex-networking/rpc</code></li>
+<li>P2P messages → <code>ethrex-networking/p2p</code></li>
+</ul>
+</li>
+<li>
+<p><strong>Dependency direction</strong></p>
+<ul>
+<li>Lower-level crates should not depend on higher-level ones</li>
+<li>Common types flow down, behaviors flow up</li>
+</ul>
+</li>
+<li>
+<p><strong>Testing</strong></p>
+<ul>
+<li>Unit tests in the crate</li>
+<li>Integration tests in <code>tests/</code> directory</li>
+<li>EF tests for protocol compliance</li>
+</ul>
+</li>
+</ol>
+<h2 id="related-documentation"><a class="header" href="#related-documentation">Related Documentation</a></h2>
+<ul>
+<li><a href="./overview.html">System Overview</a> - How crates work together</li>
+<li><a href="./block_execution.html">Block Execution</a> - Execution flow across crates</li>
+<li><a href="./sync_state_machine.html">Sync State Machine</a> - Sync implementation details</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../l1/architecture/sync_state_machine.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../../l1/fundamentals/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../l1/architecture/sync_state_machine.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../../l1/fundamentals/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../../elasticlunr.min.js"></script>
+        <script src="../../mark.min.js"></script>
+        <script src="../../searcher.js"></script>
+
+        <script src="../../clipboard.min.js"></script>
+        <script src="../../highlight.js"></script>
+        <script src="../../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../../mermaid.min.js"></script>
+        <script src="../../mermaid-init.js"></script>
+
+
+    </div>
+    </body>
+</html>

@@ -1,0 +1,702 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Sync State Machine - Ethrex</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../../favicon.svg">
+        <link rel="shortcut icon" href="../../favicon.png">
+        <link rel="stylesheet" href="../../css/variables.css">
+        <link rel="stylesheet" href="../../css/general.css">
+        <link rel="stylesheet" href="../../css/chrome.css">
+        <link rel="stylesheet" href="../../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="../../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../../toc.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Ethrex</h1>
+
+                    <div class="right-buttons">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="sync-state-machine"><a class="header" href="#sync-state-machine">Sync State Machine</a></h1>
+<p>This document describes the synchronization algorithms implemented in ethrex, including full sync and snap sync.</p>
+<h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
+<p>ethrex supports two synchronization modes:</p>
+<div class="table-wrapper"><table><thead><tr><th>Mode</th><th>Description</th><th>Use Case</th></tr></thead><tbody>
+<tr><td><strong>Full Sync</strong></td><td>Downloads and executes every block</td><td>Maximum security, slower</td></tr>
+<tr><td><strong>Snap Sync</strong></td><td>Downloads state directly, executes recent blocks</td><td>Faster initial sync</td></tr>
+</tbody></table>
+</div>
+<h2 id="sync-manager-architecture"><a class="header" href="#sync-manager-architecture">Sync Manager Architecture</a></h2>
+<pre><code>┌─────────────────────────────────────────────────────────────────┐
+│                        SyncManager                               │
+│  • Receives sync targets from Engine API / P2P                   │
+│  • Tracks current sync mode (Full / Snap)                        │
+│  • Coordinates Syncer for actual sync work                       │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                          Syncer                                  │
+│  • Executes sync cycles                                          │
+│  • Manages peer connections via PeerHandler                      │
+│  • Handles both full and snap sync algorithms                    │
+└─────────────────────────────────────────────────────────────────┘
+</code></pre>
+<h2 id="sync-triggers"><a class="header" href="#sync-triggers">Sync Triggers</a></h2>
+<p>Synchronization is triggered by:</p>
+<ol>
+<li><strong>Engine API</strong>: <code>engine_forkchoiceUpdated</code> with unknown head hash</li>
+<li><strong>P2P</strong>: Receiving block announcements for unknown blocks</li>
+<li><strong>Startup</strong>: When local chain is behind network</li>
+</ol>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/networking/rpc/engine/fork_choice.rs
+match apply_fork_choice(...) {
+    Err(InvalidForkChoice::Syncing) =&gt; {
+        syncer.sync_to_head(fork_choice_state.head_block_hash);
+        // Return SYNCING status to consensus client
+    }
+}
+<span class="boring">}</span></code></pre></pre>
+<h2 id="full-sync-algorithm"><a class="header" href="#full-sync-algorithm">Full Sync Algorithm</a></h2>
+<p>Full sync downloads blocks from the network and executes each one to reconstruct the state.</p>
+<h3 id="state-machine"><a class="header" href="#state-machine">State Machine</a></h3>
+<pre><code>                    ┌─────────────────┐
+                    │   START SYNC    │
+                    └────────┬────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+         ┌─────────│  Request Headers │◄─────────────┐
+         │         └────────┬────────┘              │
+         │                  │                        │
+         │                  ▼                        │
+         │         ┌─────────────────┐              │
+         │         │ Validate Headers│              │
+         │         └────────┬────────┘              │
+         │                  │                        │
+         │                  ▼                        │
+         │         ┌─────────────────┐              │
+         │         │ Found Canonical │──No──────────┘
+         │         │   Ancestor?     │
+         │         └────────┬────────┘
+         │                  │ Yes
+         │                  ▼
+         │         ┌─────────────────┐
+         │         │  Request Bodies │◄─────────────┐
+         │         └────────┬────────┘              │
+         │                  │                        │
+         │                  ▼                        │
+         │         ┌─────────────────┐              │
+         │         │ Execute Batch   │              │
+         │         │ (1024 blocks)   │              │
+         │         └────────┬────────┘              │
+         │                  │                        │
+         │                  ▼                        │
+         │         ┌─────────────────┐              │
+         │         │  More Blocks?   │──Yes─────────┘
+         │         └────────┬────────┘
+         │                  │ No
+         │                  ▼
+         │         ┌─────────────────┐
+         └─Error───│   SYNC DONE     │
+                   └─────────────────┘
+</code></pre>
+<h3 id="algorithm-details"><a class="header" href="#algorithm-details">Algorithm Details</a></h3>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/networking/p2p/sync.rs
+async fn sync_cycle_full(sync_head: H256, store: Store) -&gt; Result&lt;()&gt;
+<span class="boring">}</span></code></pre></pre>
+<ol>
+<li>
+<p><strong>Find Chain Link</strong></p>
+<ul>
+<li>Request headers backwards from sync_head</li>
+<li>Stop when reaching a canonical block (already known)</li>
+<li>This identifies the fork point</li>
+</ul>
+</li>
+<li>
+<p><strong>Store Headers</strong></p>
+<ul>
+<li>Save all new headers to temporary storage</li>
+<li>Headers are stored in batches during download</li>
+</ul>
+</li>
+<li>
+<p><strong>Download Bodies</strong></p>
+<ul>
+<li>Request bodies for stored headers</li>
+<li>Match bodies to headers by hash</li>
+<li>Maximum 64 bodies per request</li>
+</ul>
+</li>
+<li>
+<p><strong>Execute Blocks</strong></p>
+<ul>
+<li>Execute in batches of 1024 blocks</li>
+<li>Each block is fully validated and executed</li>
+<li>State is committed after each batch</li>
+</ul>
+</li>
+<li>
+<p><strong>Update Fork Choice</strong></p>
+<ul>
+<li>After all blocks executed, update canonical chain</li>
+<li>Set new head, safe, and finalized blocks</li>
+</ul>
+</li>
+</ol>
+<h3 id="key-constants"><a class="header" href="#key-constants">Key Constants</a></h3>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>const EXECUTE_BATCH_SIZE: usize = 1024;      // Blocks per execution batch
+const MAX_BLOCK_BODIES_TO_REQUEST: usize = 64; // Bodies per request
+<span class="boring">}</span></code></pre></pre>
+<h2 id="snap-sync-algorithm"><a class="header" href="#snap-sync-algorithm">Snap Sync Algorithm</a></h2>
+<p>Snap sync downloads state directly from peers instead of executing all historical blocks.</p>
+<h3 id="state-machine-1"><a class="header" href="#state-machine-1">State Machine</a></h3>
+<pre><code>┌─────────────────────────────────────────────────────────────────────────────┐
+│                           SNAP SYNC STATE MACHINE                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+    ┌──────────────┐
+    │  START SNAP  │
+    │    SYNC      │
+    └──────┬───────┘
+           │
+           ▼
+    ┌──────────────┐     ┌─────────────────────────────────────────────────────┐
+    │   Download   │     │  Download headers to find sync head                  │
+    │   Headers    │────▶│  Store hashes for later body download               │
+    └──────┬───────┘     └─────────────────────────────────────────────────────┘
+           │
+           ▼
+    ┌──────────────┐     ┌─────────────────────────────────────────────────────┐
+    │ Select Pivot │────▶│  Choose recent block as pivot (must not be stale)   │
+    │    Block     │     │  Pivot block is target for state download           │
+    └──────┬───────┘     └─────────────────────────────────────────────────────┘
+           │
+           ▼
+    ┌──────────────┐     ┌─────────────────────────────────────────────────────┐
+    │  Download    │────▶│  Request account ranges via SNAP protocol           │
+    │  Accounts    │     │  Store account states to disk as snapshots          │
+    └──────┬───────┘     └─────────────────────────────────────────────────────┘
+           │
+           ▼
+    ┌──────────────┐     ┌─────────────────────────────────────────────────────┐
+    │   Insert     │────▶│  Build account trie from downloaded leaves          │
+    │  Accounts    │     │  Identify accounts with non-empty storage           │
+    └──────┬───────┘     └─────────────────────────────────────────────────────┘
+           │
+           ▼
+    ┌──────────────┐     ┌─────────────────────────────────────────────────────┐
+    │  Download    │────▶│  For each account with storage:                     │
+    │  Storage     │     │  Request storage ranges and build storage tries.    │
+    │              │     │  Includes a healing loop to fix state trie changes. │
+    └──────┬───────┘     └─────────────────────────────────────────────────────┘
+           │
+           ▼
+    ┌──────────────┐     ┌─────────────────────────────────────────────────────┐
+    │    Heal      │────▶│  Heal state trie (fill missing nodes)               │
+    │    Tries     │     │  Heal storage tries for modified accounts           │
+    └──────┬───────┘     └─────────────────────────────────────────────────────┘
+           │
+           ▼
+    ┌──────────────┐     ┌─────────────────────────────────────────────────────┐
+    │  Download    │────▶│  Download bytecode for all contract accounts        │
+    │  Bytecode    │     │  Match by code hash                                 │
+    └──────┬───────┘     └─────────────────────────────────────────────────────┘
+           │
+           ▼
+    ┌──────────────┐
+    │  SNAP SYNC   │
+    │   COMPLETE   │
+    └──────┬───────┘
+           │
+           ▼
+    ┌──────────────┐     ┌─────────────────────────────────────────────────────┐
+    │   Switch to  │────▶│  Execute recent blocks from pivot to head           │
+    │  Full Sync   │     │  Continue with full sync for new blocks             │
+    └──────────────┘     └─────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="phase-1-header-download"><a class="header" href="#phase-1-header-download">Phase 1: Header Download</a></h3>
+<p>Download all block headers from current head to sync target:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/networking/p2p/sync.rs
+async fn sync_cycle_snap(sync_head: H256, store: Store) -&gt; Result&lt;()&gt;
+<span class="boring">}</span></code></pre></pre>
+<ul>
+<li>Request headers in batches</li>
+<li>Store header hashes for later use</li>
+<li>Identify pivot block (recent block whose state we'll download)</li>
+</ul>
+<h3 id="phase-2-pivot-selection"><a class="header" href="#phase-2-pivot-selection">Phase 2: Pivot Selection</a></h3>
+<p>The pivot block must be:</p>
+<ul>
+<li>Recent enough to have state available on peers</li>
+<li>Not "stale" (older than SNAP_LIMIT * 12 seconds)</li>
+</ul>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/networking/p2p/sync.rs
+fn block_is_stale(header: &amp;BlockHeader) -&gt; bool {
+    calculate_staleness_timestamp(header.timestamp) &lt; current_unix_time()
+}
+
+const SNAP_LIMIT: usize = 128; // Blocks before pivot is considered stale
+<span class="boring">}</span></code></pre></pre>
+<p>If the pivot becomes stale during sync, a new pivot is selected:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>async fn update_pivot(block_number: u64, ...) -&gt; Result&lt;BlockHeader&gt;
+<span class="boring">}</span></code></pre></pre>
+<h3 id="phase-3-account-download"><a class="header" href="#phase-3-account-download">Phase 3: Account Download</a></h3>
+<p>Download all account states at the pivot block:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Uses SNAP protocol GetAccountRange messages
+peers.request_account_range(start_hash, end_hash, snapshot_dir, pivot_header)
+<span class="boring">}</span></code></pre></pre>
+<ul>
+<li>Accounts are saved to disk as RLP-encoded snapshots</li>
+<li>Each snapshot file contains a batch of (hash, account_state) pairs</li>
+<li>Process tracks code hashes for later bytecode download</li>
+</ul>
+<h3 id="phase-4-account-trie-construction"><a class="header" href="#phase-4-account-trie-construction">Phase 4: Account Trie Construction</a></h3>
+<p>Build the account state trie from downloaded leaves:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>async fn insert_accounts(store, storage_accounts, snapshots_dir, ...) -&gt; (H256, accounts_with_storage)
+<span class="boring">}</span></code></pre></pre>
+<p>For RocksDB backend:</p>
+<ul>
+<li>Ingest snapshot files directly via SST ingestion</li>
+<li>Build trie using sorted insertion algorithm</li>
+<li>Track accounts with non-empty storage root</li>
+</ul>
+<h3 id="phase-5-storage-download"><a class="header" href="#phase-5-storage-download">Phase 5: Storage Download</a></h3>
+<p>For each account with storage, download storage slots:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>peers.request_storage_ranges(storage_accounts, snapshots_dir, chunk_index, pivot_header)
+<span class="boring">}</span></code></pre></pre>
+<ul>
+<li>Multiple accounts can be requested per message</li>
+<li>Large accounts are downloaded in chunks</li>
+<li>"Big accounts" (&gt;4096 slots) are marked for healing instead</li>
+</ul>
+<h3 id="phase-6-trie-healing"><a class="header" href="#phase-6-trie-healing">Phase 6: Trie Healing</a></h3>
+<p>State may have changed while downloading. Healing fixes inconsistencies:</p>
+<p><strong>State Trie Healing:</strong></p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>async fn heal_state_trie_wrap(state_root, store, peers, deadline, ...) -&gt; bool
+<span class="boring">}</span></code></pre></pre>
+<ul>
+<li>Walk trie from root</li>
+<li>Request missing nodes from peers</li>
+<li>Fill in gaps caused by state changes</li>
+</ul>
+<p><strong>Storage Trie Healing:</strong></p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>async fn heal_storage_trie(state_root, accounts, peers, store, ...) -&gt; bool
+<span class="boring">}</span></code></pre></pre>
+<ul>
+<li>For each account marked for healing</li>
+<li>Request missing storage trie nodes</li>
+<li>Verify storage roots match account state</li>
+</ul>
+<h3 id="phase-7-bytecode-download"><a class="header" href="#phase-7-bytecode-download">Phase 7: Bytecode Download</a></h3>
+<p>Download contract bytecode:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>peers.request_bytecodes(&amp;code_hashes)
+<span class="boring">}</span></code></pre></pre>
+<ul>
+<li>Code hashes collected during account download</li>
+<li>Bytecode downloaded in chunks (50,000 per batch)</li>
+<li>Verified by hashing and comparing to code_hash</li>
+</ul>
+<h3 id="phase-8-transition-to-full-sync"><a class="header" href="#phase-8-transition-to-full-sync">Phase 8: Transition to Full Sync</a></h3>
+<p>After snap sync completes:</p>
+<ol>
+<li>Store pivot block body</li>
+<li>Update fork choice to pivot</li>
+<li>Switch sync mode to Full</li>
+<li>Execute any remaining blocks normally</li>
+</ol>
+<h2 id="p2p-protocols-used"><a class="header" href="#p2p-protocols-used">P2P Protocols Used</a></h2>
+<h3 id="eth68-protocol"><a class="header" href="#eth68-protocol">eth/68 Protocol</a></h3>
+<p>Used for block header and body download:</p>
+<div class="table-wrapper"><table><thead><tr><th>Message</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>GetBlockHeaders</code></td><td>Request headers by number or hash</td></tr>
+<tr><td><code>BlockHeaders</code></td><td>Response with headers</td></tr>
+<tr><td><code>GetBlockBodies</code></td><td>Request bodies by hash</td></tr>
+<tr><td><code>BlockBodies</code></td><td>Response with bodies</td></tr>
+</tbody></table>
+</div>
+<h3 id="snap1-protocol"><a class="header" href="#snap1-protocol">snap/1 Protocol</a></h3>
+<p>Used for state download during snap sync:</p>
+<div class="table-wrapper"><table><thead><tr><th>Message</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>GetAccountRange</code></td><td>Request accounts in hash range</td></tr>
+<tr><td><code>AccountRange</code></td><td>Response with accounts and proof</td></tr>
+<tr><td><code>GetStorageRanges</code></td><td>Request storage for accounts</td></tr>
+<tr><td><code>StorageRanges</code></td><td>Response with storage and proofs</td></tr>
+<tr><td><code>GetByteCodes</code></td><td>Request bytecode by hash</td></tr>
+<tr><td><code>ByteCodes</code></td><td>Response with bytecode</td></tr>
+<tr><td><code>GetTrieNodes</code></td><td>Request specific trie nodes</td></tr>
+<tr><td><code>TrieNodes</code></td><td>Response with nodes</td></tr>
+</tbody></table>
+</div>
+<h2 id="error-recovery"><a class="header" href="#error-recovery">Error Recovery</a></h2>
+<h3 id="recoverable-errors"><a class="header" href="#recoverable-errors">Recoverable Errors</a></h3>
+<p>These errors cause sync to retry:</p>
+<ul>
+<li>Peer disconnection</li>
+<li>Invalid response from peer</li>
+<li>Timeout waiting for response</li>
+<li>Database errors (transient)</li>
+</ul>
+<h3 id="non-recoverable-errors"><a class="header" href="#non-recoverable-errors">Non-Recoverable Errors</a></h3>
+<p>These errors cause sync to abort with warning:</p>
+<ul>
+<li>Snapshot file corruption</li>
+<li>Database corruption</li>
+<li>State root mismatch after healing</li>
+</ul>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/networking/p2p/sync.rs
+impl SyncError {
+    pub fn is_recoverable(&amp;self) -&gt; bool {
+        match self {
+            SyncError::Chain(_) | SyncError::Store(_) | ... =&gt; true,
+            SyncError::CorruptDB | SyncError::SnapshotDecodeError(_) | ... =&gt; false,
+        }
+    }
+}
+<span class="boring">}</span></code></pre></pre>
+<h2 id="performance-optimizations"><a class="header" href="#performance-optimizations">Performance Optimizations</a></h2>
+<h3 id="parallel-operations"><a class="header" href="#parallel-operations">Parallel Operations</a></h3>
+<ul>
+<li>Account trie insertion uses Rayon for parallelism</li>
+<li>Storage tries built in parallel across accounts</li>
+<li>Bytecode downloads are batched</li>
+</ul>
+<h3 id="disk-io"><a class="header" href="#disk-io">Disk I/O</a></h3>
+<ul>
+<li>Snapshot files written in batches to reduce writes</li>
+<li>RocksDB SST ingestion for fast account loading</li>
+<li>Temporary directories cleaned up after sync</li>
+</ul>
+<h3 id="network"><a class="header" href="#network">Network</a></h3>
+<ul>
+<li>Multiple peers used concurrently</li>
+<li>Peer scoring based on response time and validity</li>
+<li>Automatic peer rotation for failed requests</li>
+</ul>
+<h2 id="metrics"><a class="header" href="#metrics">Metrics</a></h2>
+<p>Sync progress is tracked via metrics:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/networking/p2p/metrics.rs
+METRICS.account_tries_inserted     // Accounts added to trie
+METRICS.storage_leaves_inserted    // Storage slots added
+METRICS.current_step               // Current sync phase
+METRICS.sync_head_hash             // Current sync target
+<span class="boring">}</span></code></pre></pre>
+<h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Option</th><th>Description</th><th>Default</th></tr></thead><tbody>
+<tr><td><code>--syncmode</code></td><td>Sync mode (<code>full</code> or <code>snap</code>)</td><td><code>snap</code></td></tr>
+<tr><td><code>EXECUTE_BATCH_SIZE</code></td><td>Blocks per batch (env var)</td><td>1024</td></tr>
+<tr><td><code>MIN_FULL_BLOCKS</code></td><td>Min blocks to full sync in snap mode</td><td>10,000</td></tr>
+</tbody></table>
+</div>
+<h2 id="related-documentation"><a class="header" href="#related-documentation">Related Documentation</a></h2>
+<ul>
+<li><a href="../fundamentals/snap_sync.html">Snap Sync Internals</a> - Detailed snap sync documentation</li>
+<li><a href="./block_execution.html">Block Execution Pipeline</a> - How blocks are executed</li>
+<li><a href="../fundamentals/networking.html">Networking</a> - P2P protocol details</li>
+</ul>
+<blockquote>
+<p><strong>Note:</strong> For comprehensive snap sync documentation, see <a href="../fundamentals/snap_sync.html">Snap Sync Internals</a>.</p>
+</blockquote>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../l1/architecture/block_execution.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../../l1/architecture/crate_map.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../l1/architecture/block_execution.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../../l1/architecture/crate_map.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../../elasticlunr.min.js"></script>
+        <script src="../../mark.min.js"></script>
+        <script src="../../searcher.js"></script>
+
+        <script src="../../clipboard.min.js"></script>
+        <script src="../../highlight.js"></script>
+        <script src="../../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../../mermaid.min.js"></script>
+        <script src="../../mermaid-init.js"></script>
+
+
+    </div>
+    </body>
+</html>
