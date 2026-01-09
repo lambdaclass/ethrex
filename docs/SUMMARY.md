@@ -120,7 +120,7 @@
 
 # Roadmap
 
-- [Roadmap](./roadmap.md)
+- [Roadmap](../ROADMAP.md)
 
 # Other resources
 

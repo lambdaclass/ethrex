@@ -53,18 +53,6 @@ use std::{
     thread::JoinHandle,
 };
 use tracing::{debug, error, info};
-/// Number of state trie segments to fetch concurrently during state sync.
-///
-/// During snap sync, the state trie is divided into segments that can be
-/// fetched in parallel from peers. This constant controls the degree of
-/// parallelism.
-pub const STATE_TRIE_SEGMENTS: usize = 2;
-
-/// Maximum number of entries to read from snapshot in a single transaction.
-///
-/// This limit prevents performance degradation from long-lived read transactions
-/// in RocksDB. Snapshot iteration will yield at most this many entries per batch.
-pub const MAX_SNAPSHOT_READS: usize = 100;
 
 // We use one constant for in-memory and another for on-disk backends.
 // This is due to tests requiring state older than 128 blocks.

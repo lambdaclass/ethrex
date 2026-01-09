@@ -200,8 +200,7 @@ impl BranchNode {
         } else {
             // Remove own value (if it has one) and return it
             if !self.value.is_empty() {
-                let value = mem::take(&mut self.value);
-                (!value.is_empty()).then_some(value)
+                Some(mem::take(&mut self.value))
             } else {
                 None
             }
