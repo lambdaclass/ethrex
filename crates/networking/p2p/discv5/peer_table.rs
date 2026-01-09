@@ -1,4 +1,5 @@
 use crate::{
+    backend,
     discv4::server::MAX_NODES_IN_NEIGHBORS_PACKET,
     discv5::session::Session,
     metrics::METRICS,
@@ -7,6 +8,7 @@ use crate::{
     utils::distance,
 };
 use ethrex_common::H256;
+use ethrex_storage::Store;
 use indexmap::{IndexMap, map::Entry};
 use rand::seq::SliceRandom;
 use rustc_hash::FxHashSet;
@@ -159,9 +161,9 @@ pub struct PeerTable {
 }
 
 impl PeerTable {
-    pub fn spawn(target_peers: usize) -> PeerTable {
+    pub fn spawn(target_peers: usize, store: Store) -> PeerTable {
         PeerTable {
-            handle: PeerTableServer::new(target_peers).start(),
+            handle: PeerTableServer::new(target_peers, store).start(),
         }
     }
 
@@ -662,16 +664,18 @@ struct PeerTableServer {
     already_tried_peers: FxHashSet<H256>,
     discarded_contacts: FxHashSet<H256>,
     target_peers: usize,
+    store: Store,
 }
 
 impl PeerTableServer {
-    pub(crate) fn new(target_peers: usize) -> Self {
+    pub(crate) fn new(target_peers: usize, store: Store) -> Self {
         Self {
             contacts: Default::default(),
             peers: Default::default(),
             already_tried_peers: Default::default(),
             discarded_contacts: Default::default(),
             target_peers,
+            store,
         }
     }
     // Internal functions //
@@ -734,6 +738,7 @@ impl PeerTableServer {
                 && !self.already_tried_peers.contains(&node_id)
                 && contact.knows_us
                 && !contact.unwanted
+                && contact.is_fork_id_valid == Some(true)
             {
                 self.already_tried_peers.insert(node_id);
 
@@ -749,11 +754,7 @@ impl PeerTableServer {
     fn get_contact_for_lookup(&self) -> Option<Contact> {
         self.contacts
             .values()
-            .filter(|c| {
-                c.n_find_node_sent < MAX_FIND_NODE_PER_PEER
-                    && !c.disposable
-                    && c.is_fork_id_valid != Some(false)
-            })
+            .filter(|c| c.n_find_node_sent < MAX_FIND_NODE_PER_PEER && !c.disposable)
             .collect::<Vec<_>>()
             .choose(&mut rand::rngs::OsRng)
             .cloned()
@@ -842,9 +843,17 @@ impl PeerTableServer {
                     && node_id != local_node_id
                 {
                     let mut contact = Contact::from(node);
-                    // TODO: validate fork_id from enr
-                    // (https://github.com/lambdaclass/ethrex/issues/5776)
-                    //contact.is_fork_id_valid = backend.is_fork_id_valid(&node_record).await.ok().or(Some(false));
+                    let is_fork_id_valid =
+                        if let Some(remote_fork_id) = node_record.decode_pairs().eth {
+                            backend::is_fork_id_valid(&self.store, &remote_fork_id)
+                                .await
+                                .ok()
+                                .or(Some(false))
+                        } else {
+                            Some(false)
+                        };
+                    tracing::trace!("ENR Fork id valid: {is_fork_id_valid:?}");
+                    contact.is_fork_id_valid = is_fork_id_valid;
                     contact.record = Some(node_record);
                     vacant_entry.insert(contact);
                     METRICS.record_new_discovery().await;

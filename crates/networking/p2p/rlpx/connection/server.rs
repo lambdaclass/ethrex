@@ -6,6 +6,7 @@ use crate::rlpx::l2::{
     },
 };
 use crate::{
+    backend,
     metrics::METRICS,
     network::P2PContext,
     peer_table::PeerTable,
@@ -14,7 +15,6 @@ use crate::{
         connection::{codec::RLPxCodec, handshake},
         error::PeerConnectionError,
         eth::{
-            backend,
             blocks::{BlockBodies, BlockHeaders},
             receipts::{GetReceipts, Receipts68, Receipts69},
             status::{StatusMessage68, StatusMessage69},
