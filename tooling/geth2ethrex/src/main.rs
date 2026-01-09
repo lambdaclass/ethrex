@@ -144,11 +144,7 @@ fn geth2ethrex(mut store: Store, block_number: BlockNumber, args: &Args) -> eyre
         for item in gethdb
             .state_db
             .iterator(IteratorMode::From(b"A", rocksdb::Direction::Forward))
-            .take_while(|item| {
-                item.as_ref()
-                    .map(|(k, _)| k.starts_with(b"A"))
-                    .unwrap()
-            })
+            .take_while(|item| item.as_ref().map(|(k, _)| k.starts_with(b"A")).unwrap())
         {
             let (k, v) = item?;
             debug_assert!(k.len() <= 64);
@@ -183,11 +179,7 @@ fn geth2ethrex(mut store: Store, block_number: BlockNumber, args: &Args) -> eyre
         for item in gethdb
             .state_db
             .iterator(IteratorMode::From(b"O", rocksdb::Direction::Forward))
-            .take_while(|item| {
-                item.as_ref()
-                    .map(|(k, _)| k.starts_with(b"O"))
-                    .unwrap()
-            })
+            .take_while(|item| item.as_ref().map(|(k, _)| k.starts_with(b"O")).unwrap())
         {
             let (k, v) = item?;
             let account = H256::from_slice(&k[1..33]);
