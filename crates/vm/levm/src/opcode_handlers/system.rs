@@ -702,7 +702,7 @@ impl<'a> VM<'a> {
         self.increment_account_nonce(new_address)?; // 0 -> 1
         self.transfer(deployer, new_address, value)?;
 
-        self.substate.push_backup();
+        self.substate.push_backup(&self.substate_arena);
         self.substate.add_created_account(new_address); // Mostly for SELFDESTRUCT during initcode.
 
         Ok(OpcodeResult::Continue)
@@ -837,7 +837,7 @@ impl<'a> VM<'a> {
                 self.transfer(msg_sender, to, value)?;
             }
 
-            self.substate.push_backup();
+            self.substate.push_backup(&self.substate_arena);
         }
 
         Ok(OpcodeResult::Continue)

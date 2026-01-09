@@ -16,6 +16,7 @@ use crate::{
     },
     tracing::LevmCallTracer,
 };
+use bumpalo::Bump;
 use bytes::Bytes;
 use ethrex_common::{
     Address, H160, H256, U256,
@@ -26,6 +27,7 @@ use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     mem,
+    ptr::NonNull,
     rc::Rc,
 };
 
@@ -43,7 +45,7 @@ pub enum VMType {
 // if data is append-only.
 #[derive(Debug, Default)]
 pub struct Substate {
-    parent: Option<Box<Self>>,
+    parent: Option<NonNull<Self>>,
 
     selfdestruct_set: HashSet<Address>,
     accessed_addresses: HashSet<Address>,
@@ -54,7 +56,30 @@ pub struct Substate {
     logs: Vec<Log>,
 }
 
+#[derive(Default)]
+pub struct SubstateArena {
+    bump: Bump,
+}
+
+impl SubstateArena {
+    pub fn new() -> Self {
+        Self { bump: Bump::new() }
+    }
+
+    pub fn alloc_substate(&self, substate: Substate) -> NonNull<Substate> {
+        NonNull::from(self.bump.alloc(substate))
+    }
+}
+
 impl Substate {
+    fn parent(&self) -> Option<&Substate> {
+        self.parent.map(|ptr| unsafe { ptr.as_ref() })
+    }
+
+    fn parent_mut(&mut self) -> Option<&mut Substate> {
+        self.parent.map(|mut ptr| unsafe { ptr.as_mut() })
+    }
+
     pub fn from_accesses(
         accessed_addresses: HashSet<Address>,
         accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
@@ -74,17 +99,17 @@ impl Substate {
 
     /// Push a checkpoint that can be either reverted or committed. All data up to this point is
     /// still accessible.
-    pub fn push_backup(&mut self) {
+    pub fn push_backup(&mut self, arena: &SubstateArena) {
         let parent = mem::take(self);
         self.refunded_gas = parent.refunded_gas;
-        self.parent = Some(Box::new(parent));
+        self.parent = Some(arena.alloc_substate(parent));
     }
 
     /// Pop and merge with the last backup.
     ///
     /// Does nothing if the substate has no backup.
     pub fn commit_backup(&mut self) {
-        if let Some(parent) = self.parent.as_mut() {
+        if let Some(parent) = self.parent_mut() {
             let mut delta = mem::take(parent);
             mem::swap(self, &mut delta);
 
@@ -107,7 +132,7 @@ impl Substate {
     ///
     /// Does nothing if the substate has no backup.
     pub fn revert_backup(&mut self) {
-        if let Some(parent) = self.parent.as_mut() {
+        if let Some(parent) = self.parent_mut() {
             *self = mem::take(parent);
         }
     }
@@ -127,7 +152,7 @@ impl Substate {
                 if next_item.is_none()
                     && let Some(parent) = self.parent
                 {
-                    self.parent = parent.parent.as_deref();
+                    self.parent = parent.parent();
                     self.iter = parent.selfdestruct_set.iter();
 
                     return self.next();
@@ -138,7 +163,7 @@ impl Substate {
         }
 
         Iter {
-            parent: self.parent.as_deref(),
+            parent: self.parent(),
             iter: self.selfdestruct_set.iter(),
         }
     }
@@ -146,8 +171,7 @@ impl Substate {
     /// Mark an address as selfdestructed and return whether is was already marked.
     pub fn add_selfdestruct(&mut self, address: Address) -> bool {
         let is_present = self
-            .parent
-            .as_ref()
+            .parent()
             .map(|parent| parent.is_selfdestruct(&address))
             .unwrap_or_default();
 
@@ -158,8 +182,7 @@ impl Substate {
     pub fn is_selfdestruct(&self, address: &Address) -> bool {
         self.selfdestruct_set.contains(address)
             || self
-                .parent
-                .as_ref()
+                .parent()
                 .map(|parent| parent.is_selfdestruct(address))
                 .unwrap_or_default()
     }
@@ -177,7 +200,7 @@ impl Substate {
                     .extend(slot_set.iter().copied());
             }
 
-            current = match current.parent.as_deref() {
+            current = match current.parent() {
                 Some(x) => x,
                 None => break,
             };
@@ -195,8 +218,7 @@ impl Substate {
     /// Mark an address as accessed and return whether is was already marked.
     pub fn add_accessed_slot(&mut self, address: Address, key: H256) -> bool {
         let is_present = self
-            .parent
-            .as_ref()
+            .parent()
             .map(|parent| parent.is_slot_accessed(&address, &key))
             .unwrap_or_default();
 
@@ -215,8 +237,7 @@ impl Substate {
             .map(|slot_set| slot_set.contains(key))
             .unwrap_or_default()
             || self
-                .parent
-                .as_ref()
+                .parent()
                 .map(|parent| parent.is_slot_accessed(address, key))
                 .unwrap_or_default()
     }
@@ -224,8 +245,7 @@ impl Substate {
     /// Mark an address as accessed and return whether is was already marked.
     pub fn add_accessed_address(&mut self, address: Address) -> bool {
         let is_present = self
-            .parent
-            .as_ref()
+            .parent()
             .map(|parent| parent.is_address_accessed(&address))
             .unwrap_or_default();
 
@@ -236,8 +256,7 @@ impl Substate {
     pub fn is_address_accessed(&self, address: &Address) -> bool {
         self.accessed_addresses.contains(address)
             || self
-                .parent
-                .as_ref()
+                .parent()
                 .map(|parent| parent.is_address_accessed(address))
                 .unwrap_or_default()
     }
@@ -245,8 +264,7 @@ impl Substate {
     /// Mark an address as a new account and return whether is was already marked.
     pub fn add_created_account(&mut self, address: Address) -> bool {
         let is_present = self
-            .parent
-            .as_ref()
+            .parent()
             .map(|parent| parent.is_account_created(&address))
             .unwrap_or_default();
 
@@ -257,8 +275,7 @@ impl Substate {
     pub fn is_account_created(&self, address: &Address) -> bool {
         self.created_accounts.contains(address)
             || self
-                .parent
-                .as_ref()
+                .parent()
                 .map(|parent| parent.is_account_created(address))
                 .unwrap_or_default()
     }
@@ -269,8 +286,7 @@ impl Substate {
             .get(&(*to, *key))
             .copied()
             .unwrap_or_else(|| {
-                self.parent
-                    .as_ref()
+                self.parent()
                     .map(|parent| parent.get_transient(to, key))
                     .unwrap_or_default()
             })
@@ -284,7 +300,7 @@ impl Substate {
     /// Extract all logs in order.
     pub fn extract_logs(&self) -> Vec<Log> {
         fn inner(substrate: &Substate, target: &mut Vec<Log>) {
-            if let Some(parent) = substrate.parent.as_deref() {
+            if let Some(parent) = substrate.parent() {
                 inner(parent, target);
             }
 
@@ -310,6 +326,7 @@ pub struct VM<'a> {
     pub current_call_frame: CallFrame,
     pub env: Environment,
     pub substate: Substate,
+    pub substate_arena: SubstateArena,
     pub db: &'a mut GeneralizedDatabase,
     pub tx: Transaction,
     pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
@@ -338,6 +355,7 @@ impl<'a> VM<'a> {
     ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
+        let substate_arena = SubstateArena::new();
         let mut substate = Substate::initialize(&env, tx)?;
 
         let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
@@ -347,6 +365,7 @@ impl<'a> VM<'a> {
         let mut vm = Self {
             call_frames: Vec::new(),
             substate,
+            substate_arena,
             db,
             tx: tx.clone(),
             hooks: get_hooks(&vm_type),
@@ -423,7 +442,7 @@ impl<'a> VM<'a> {
             }
         }
 
-        self.substate.push_backup();
+        self.substate.push_backup(&self.substate_arena);
         let context_result = self.run_execution()?;
 
         let report = self.finalize_execution(context_result)?;

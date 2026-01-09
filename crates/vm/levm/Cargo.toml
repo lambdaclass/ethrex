@@ -13,6 +13,7 @@ ethrex-rlp.workspace = true
 derive_more = { version = "1.0.0", features = ["full"] }
 
 bytes.workspace = true
+bumpalo = "3.19.0"
 thiserror.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
