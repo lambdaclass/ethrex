@@ -381,9 +381,6 @@ impl Blockchain {
                     plain_account_status.insert(hashed_address, PlainAccountStatus::Tainted);
                 }
 
-                workers_tx[account_bucket as usize]
-                    .send(MerklizationRequest::LoadAccount(hashed_address))
-                    .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                 if update.removed_storage | update.removed {
                     for tx in &workers_tx {
                         tx.send(MerklizationRequest::Delete(hashed_address))
@@ -425,6 +422,10 @@ impl Blockchain {
                             hashed_account: hashed_address,
                             state: state.clone(),
                         })
+                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                } else {
+                    workers_tx[account_bucket as usize]
+                        .send(MerklizationRequest::LoadAccount(hashed_address))
                         .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                 }
             }
