@@ -17,19 +17,33 @@
 
 use arbitrary::Arbitrary;
 use bytes::Bytes;
-use ethrex_common::types::Fork;
 use ethrex_common::H160;
+use ethrex_common::types::Fork;
 use ethrex_levm::precompiles::execute_precompile;
 use libfuzzer_sys::fuzz_target;
 
 // BLS12-381 precompile addresses
-const BLS12_G1ADD: H160 = H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0b]);
-const BLS12_G1MSM: H160 = H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0c]);
-const BLS12_G2ADD: H160 = H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0d]);
-const BLS12_G2MSM: H160 = H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0e]);
-const BLS12_PAIRING: H160 = H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0f]);
-const BLS12_MAP_FP_TO_G1: H160 = H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10]);
-const BLS12_MAP_FP2_TO_G2: H160 = H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x11]);
+const BLS12_G1ADD: H160 = H160([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0b,
+]);
+const BLS12_G1MSM: H160 = H160([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0c,
+]);
+const BLS12_G2ADD: H160 = H160([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0d,
+]);
+const BLS12_G2MSM: H160 = H160([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0e,
+]);
+const BLS12_PAIRING: H160 = H160([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0f,
+]);
+const BLS12_MAP_FP_TO_G1: H160 = H160([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
+]);
+const BLS12_MAP_FP2_TO_G2: H160 = H160([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x11,
+]);
 
 /// BLS12-381 G1 point (128 bytes - padded format)
 #[derive(Arbitrary, Debug, Clone)]
@@ -160,6 +174,7 @@ struct MapFp2ToG2Input {
     truncate_at: Option<u8>,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Arbitrary, Debug)]
 enum Bls12Input {
     G1Add(G1AddInput),
@@ -185,8 +200,16 @@ fuzz_target!(|input: Bls12Input| {
     match input {
         Bls12Input::G1Add(add) => {
             let mut data = Vec::new();
-            let p1 = if add.use_infinity_p1 { Bls12G1Point::infinity() } else { add.p1 };
-            let p2 = if add.use_infinity_p2 { Bls12G1Point::infinity() } else { add.p2 };
+            let p1 = if add.use_infinity_p1 {
+                Bls12G1Point::infinity()
+            } else {
+                add.p1
+            };
+            let p2 = if add.use_infinity_p2 {
+                Bls12G1Point::infinity()
+            } else {
+                add.p2
+            };
             data.extend_from_slice(&p1.to_bytes());
             data.extend_from_slice(&p2.to_bytes());
             data.extend_from_slice(&add.extra);
@@ -196,14 +219,23 @@ fuzz_target!(|input: Bls12Input| {
                 data.truncate(len);
             }
 
-            let _ = execute_precompile(BLS12_G1ADD, &Bytes::from(data), &mut gas_remaining, Fork::Prague);
+            let _ = execute_precompile(
+                BLS12_G1ADD,
+                &Bytes::from(data),
+                &mut gas_remaining,
+                Fork::Prague,
+            );
         }
         Bls12Input::G1Msm(msm) => {
             let mut data = Vec::new();
             let num_pairs = ((msm.num_pairs % 4) + 1) as usize; // 1-4 pairs
 
             for i in 0..num_pairs {
-                let point = msm.points.get(i).cloned().unwrap_or_else(Bls12G1Point::infinity);
+                let point = msm
+                    .points
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(Bls12G1Point::infinity);
                 data.extend_from_slice(&point.to_bytes());
 
                 let scalar = if msm.use_zero_scalars {
@@ -215,12 +247,25 @@ fuzz_target!(|input: Bls12Input| {
             }
             data.extend_from_slice(&msm.extra);
 
-            let _ = execute_precompile(BLS12_G1MSM, &Bytes::from(data), &mut gas_remaining, Fork::Prague);
+            let _ = execute_precompile(
+                BLS12_G1MSM,
+                &Bytes::from(data),
+                &mut gas_remaining,
+                Fork::Prague,
+            );
         }
         Bls12Input::G2Add(add) => {
             let mut data = Vec::new();
-            let p1 = if add.use_infinity_p1 { Bls12G2Point::infinity() } else { add.p1 };
-            let p2 = if add.use_infinity_p2 { Bls12G2Point::infinity() } else { add.p2 };
+            let p1 = if add.use_infinity_p1 {
+                Bls12G2Point::infinity()
+            } else {
+                add.p1
+            };
+            let p2 = if add.use_infinity_p2 {
+                Bls12G2Point::infinity()
+            } else {
+                add.p2
+            };
             data.extend_from_slice(&p1.to_bytes());
             data.extend_from_slice(&p2.to_bytes());
             data.extend_from_slice(&add.extra);
@@ -230,14 +275,23 @@ fuzz_target!(|input: Bls12Input| {
                 data.truncate(len);
             }
 
-            let _ = execute_precompile(BLS12_G2ADD, &Bytes::from(data), &mut gas_remaining, Fork::Prague);
+            let _ = execute_precompile(
+                BLS12_G2ADD,
+                &Bytes::from(data),
+                &mut gas_remaining,
+                Fork::Prague,
+            );
         }
         Bls12Input::G2Msm(msm) => {
             let mut data = Vec::new();
             let num_pairs = ((msm.num_pairs % 3) + 1) as usize; // 1-3 pairs (G2 is larger)
 
             for i in 0..num_pairs {
-                let point = msm.points.get(i).cloned().unwrap_or_else(Bls12G2Point::infinity);
+                let point = msm
+                    .points
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(Bls12G2Point::infinity);
                 data.extend_from_slice(&point.to_bytes());
 
                 let scalar = if msm.use_zero_scalars {
@@ -249,7 +303,12 @@ fuzz_target!(|input: Bls12Input| {
             }
             data.extend_from_slice(&msm.extra);
 
-            let _ = execute_precompile(BLS12_G2MSM, &Bytes::from(data), &mut gas_remaining, Fork::Prague);
+            let _ = execute_precompile(
+                BLS12_G2MSM,
+                &Bytes::from(data),
+                &mut gas_remaining,
+                Fork::Prague,
+            );
         }
         Bls12Input::Pairing(pairing) => {
             let mut data = Vec::new();
@@ -259,13 +318,21 @@ fuzz_target!(|input: Bls12Input| {
                 let g1 = if pairing.use_infinity {
                     Bls12G1Point::infinity()
                 } else {
-                    pairing.g1_points.get(i).cloned().unwrap_or_else(Bls12G1Point::infinity)
+                    pairing
+                        .g1_points
+                        .get(i)
+                        .cloned()
+                        .unwrap_or_else(Bls12G1Point::infinity)
                 };
 
                 let g2 = if pairing.use_infinity {
                     Bls12G2Point::infinity()
                 } else {
-                    pairing.g2_points.get(i).cloned().unwrap_or_else(Bls12G2Point::infinity)
+                    pairing
+                        .g2_points
+                        .get(i)
+                        .cloned()
+                        .unwrap_or_else(Bls12G2Point::infinity)
                 };
 
                 data.extend_from_slice(&g1.to_bytes());
@@ -273,7 +340,12 @@ fuzz_target!(|input: Bls12Input| {
             }
             data.extend_from_slice(&pairing.extra);
 
-            let _ = execute_precompile(BLS12_PAIRING, &Bytes::from(data), &mut gas_remaining, Fork::Prague);
+            let _ = execute_precompile(
+                BLS12_PAIRING,
+                &Bytes::from(data),
+                &mut gas_remaining,
+                Fork::Prague,
+            );
         }
         Bls12Input::MapFpToG1(map) => {
             let mut data = Vec::new();
@@ -285,7 +357,12 @@ fuzz_target!(|input: Bls12Input| {
                 data.truncate(len);
             }
 
-            let _ = execute_precompile(BLS12_MAP_FP_TO_G1, &Bytes::from(data), &mut gas_remaining, Fork::Prague);
+            let _ = execute_precompile(
+                BLS12_MAP_FP_TO_G1,
+                &Bytes::from(data),
+                &mut gas_remaining,
+                Fork::Prague,
+            );
         }
         Bls12Input::MapFp2ToG2(map) => {
             let mut data = Vec::new();
@@ -298,36 +375,104 @@ fuzz_target!(|input: Bls12Input| {
                 data.truncate(len);
             }
 
-            let _ = execute_precompile(BLS12_MAP_FP2_TO_G2, &Bytes::from(data), &mut gas_remaining, Fork::Prague);
+            let _ = execute_precompile(
+                BLS12_MAP_FP2_TO_G2,
+                &Bytes::from(data),
+                &mut gas_remaining,
+                Fork::Prague,
+            );
         }
         // Raw inputs - limit sizes to prevent slowness
         Bls12Input::RawG1Add(data) => {
-            let data = if data.len() > 512 { data[..512].to_vec() } else { data };
-            let _ = execute_precompile(BLS12_G1ADD, &Bytes::from(data), &mut gas_remaining, Fork::Prague);
+            let data = if data.len() > 512 {
+                data[..512].to_vec()
+            } else {
+                data
+            };
+            let _ = execute_precompile(
+                BLS12_G1ADD,
+                &Bytes::from(data),
+                &mut gas_remaining,
+                Fork::Prague,
+            );
         }
         Bls12Input::RawG1Msm(data) => {
-            let data = if data.len() > 160 * 4 { data[..160 * 4].to_vec() } else { data };
-            let _ = execute_precompile(BLS12_G1MSM, &Bytes::from(data), &mut gas_remaining, Fork::Prague);
+            let data = if data.len() > 160 * 4 {
+                data[..160 * 4].to_vec()
+            } else {
+                data
+            };
+            let _ = execute_precompile(
+                BLS12_G1MSM,
+                &Bytes::from(data),
+                &mut gas_remaining,
+                Fork::Prague,
+            );
         }
         Bls12Input::RawG2Add(data) => {
-            let data = if data.len() > 1024 { data[..1024].to_vec() } else { data };
-            let _ = execute_precompile(BLS12_G2ADD, &Bytes::from(data), &mut gas_remaining, Fork::Prague);
+            let data = if data.len() > 1024 {
+                data[..1024].to_vec()
+            } else {
+                data
+            };
+            let _ = execute_precompile(
+                BLS12_G2ADD,
+                &Bytes::from(data),
+                &mut gas_remaining,
+                Fork::Prague,
+            );
         }
         Bls12Input::RawG2Msm(data) => {
-            let data = if data.len() > 288 * 3 { data[..288 * 3].to_vec() } else { data };
-            let _ = execute_precompile(BLS12_G2MSM, &Bytes::from(data), &mut gas_remaining, Fork::Prague);
+            let data = if data.len() > 288 * 3 {
+                data[..288 * 3].to_vec()
+            } else {
+                data
+            };
+            let _ = execute_precompile(
+                BLS12_G2MSM,
+                &Bytes::from(data),
+                &mut gas_remaining,
+                Fork::Prague,
+            );
         }
         Bls12Input::RawPairing(data) => {
-            let data = if data.len() > 384 * 3 { data[..384 * 3].to_vec() } else { data };
-            let _ = execute_precompile(BLS12_PAIRING, &Bytes::from(data), &mut gas_remaining, Fork::Prague);
+            let data = if data.len() > 384 * 3 {
+                data[..384 * 3].to_vec()
+            } else {
+                data
+            };
+            let _ = execute_precompile(
+                BLS12_PAIRING,
+                &Bytes::from(data),
+                &mut gas_remaining,
+                Fork::Prague,
+            );
         }
         Bls12Input::RawMapFpToG1(data) => {
-            let data = if data.len() > 128 { data[..128].to_vec() } else { data };
-            let _ = execute_precompile(BLS12_MAP_FP_TO_G1, &Bytes::from(data), &mut gas_remaining, Fork::Prague);
+            let data = if data.len() > 128 {
+                data[..128].to_vec()
+            } else {
+                data
+            };
+            let _ = execute_precompile(
+                BLS12_MAP_FP_TO_G1,
+                &Bytes::from(data),
+                &mut gas_remaining,
+                Fork::Prague,
+            );
         }
         Bls12Input::RawMapFp2ToG2(data) => {
-            let data = if data.len() > 256 { data[..256].to_vec() } else { data };
-            let _ = execute_precompile(BLS12_MAP_FP2_TO_G2, &Bytes::from(data), &mut gas_remaining, Fork::Prague);
+            let data = if data.len() > 256 {
+                data[..256].to_vec()
+            } else {
+                data
+            };
+            let _ = execute_precompile(
+                BLS12_MAP_FP2_TO_G2,
+                &Bytes::from(data),
+                &mut gas_remaining,
+                Fork::Prague,
+            );
         }
     }
 });
