@@ -6,44 +6,11 @@ use secp256k1::{
 };
 use sha2::{Digest, Sha256};
 
-/// Role of the local node in the given session
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionRole {
-    Initiator,
-    Recipient,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionKeys {
-    pub initiator_key: [u8; 16],
-    pub recipient_key: [u8; 16],
-}
-
 /// A discv5 session
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Session {
-    pub keys: SessionKeys,
-    pub role: SessionRole,
-}
-
-impl Session {
-    pub fn new(keys: SessionKeys, role: SessionRole) -> Self {
-        Self { keys, role }
-    }
-
-    pub fn outbound_key(&self) -> &[u8; 16] {
-        match self.role {
-            SessionRole::Initiator => &self.keys.initiator_key,
-            SessionRole::Recipient => &self.keys.recipient_key,
-        }
-    }
-
-    pub fn inbound_key(&self) -> &[u8; 16] {
-        match self.role {
-            SessionRole::Initiator => &self.keys.recipient_key,
-            SessionRole::Recipient => &self.keys.initiator_key,
-        }
-    }
+    pub outbound_key: [u8; 16],
+    pub inbound_key: [u8; 16],
 }
 
 /// Builds the challenge-data from a WHOAREYOU packet
@@ -62,7 +29,7 @@ pub fn derive_session_keys(
     node_id_a: &H256,
     node_id_b: &H256,
     challenge_data: &[u8],
-) -> SessionKeys {
+) -> Session {
     let shared_secret = compressed_shared_secret(dest_pubkey, ephemeral_key);
     let hkdf = Hkdf::<Sha256>::new(Some(challenge_data), &shared_secret);
 
@@ -74,9 +41,9 @@ pub fn derive_session_keys(
     hkdf.expand(&kdf_info, &mut key_data)
         .expect("key_data is 32 bytes long, it can never fail");
 
-    SessionKeys {
-        initiator_key: key_data[..16].try_into().expect("sizes always match"),
-        recipient_key: key_data[16..].try_into().expect("sizes always match"),
+    Session {
+        outbound_key: key_data[..16].try_into().expect("sizes always match"),
+        inbound_key: key_data[16..].try_into().expect("sizes always match"),
     }
 }
 
@@ -118,11 +85,8 @@ fn compressed_shared_secret(dest_pubkey: &PublicKey, ephemeral_key: &SecretKey) 
 
 #[cfg(test)]
 mod tests {
-    use crate::discv5::codec::Discv5Codec;
-
     use super::*;
     use hex_literal::hex;
-    use rand::{SeedableRng, rngs::StdRng};
 
     #[test]
     fn derivation_matches_vector() {
@@ -144,15 +108,21 @@ mod tests {
             "000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000"
         );
 
-        let keys = derive_session_keys(
+        let session = derive_session_keys(
             &ephemeral_key,
             &dest_pubkey,
             &node_id_a,
             &node_id_b,
             &challenge_data,
         );
-        assert_eq!(keys.initiator_key, hex!("dccc82d81bd610f4f76d3ebe97a40571"));
-        assert_eq!(keys.recipient_key, hex!("ac74bb8773749920b0d3a8881c173ec5"));
+        assert_eq!(
+            session.outbound_key,
+            hex!("dccc82d81bd610f4f76d3ebe97a40571")
+        );
+        assert_eq!(
+            session.inbound_key,
+            hex!("ac74bb8773749920b0d3a8881c173ec5")
+        );
     }
 
     #[test]
@@ -178,19 +148,5 @@ mod tests {
                 "94852a1e2318c4e5e9d422c98eaf19d1d90d876b29cd06ca7cb7546d0fff7b484fe86c09a064fe72bdbef73ba8e9c34df0cd2b53e9d65528c2c7f336d5dfc6e6"
             )
         );
-    }
-
-    #[test]
-    fn test_next_nonce_counter() {
-        let mut codec = Discv5Codec::new(H256::zero());
-
-        let mut rng = StdRng::seed_from_u64(7);
-
-        let n1 = codec.next_nonce(&mut rng);
-        let n2 = codec.next_nonce(&mut rng);
-
-        assert_eq!(&n1[..4], &[0, 0, 0, 0]);
-        assert_eq!(&n2[..4], &[0, 0, 0, 1]);
-        assert_ne!(&n1[4..], &n2[4..]);
     }
 }

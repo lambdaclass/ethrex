@@ -13,9 +13,9 @@ use ethrex_common::{
     },
 };
 use ethrex_p2p::{
-    discv4::peer_table::{PeerTable, TARGET_PEERS},
     network::P2PContext,
     peer_handler::PeerHandler,
+    peer_table::{PeerTable, TARGET_PEERS},
     rlpx::initiator::RLPxInitiator,
     sync::SyncMode,
     sync_manager::SyncManager,

@@ -6,9 +6,9 @@ use crate::rlpx::l2::{
     },
 };
 use crate::{
-    discv4::peer_table::PeerTable,
     metrics::METRICS,
     network::P2PContext,
+    peer_table::PeerTable,
     rlpx::{
         Message,
         connection::{codec::RLPxCodec, handshake},

@@ -221,3 +221,12 @@ pub fn dump_storages_to_file(
             .encode_to_vec(),
     )
 }
+
+/// Computes the distance between two nodes according to the discv4/5 protocols
+/// <https://github.com/ethereum/devp2p/blob/master/discv4.md#node-identities>
+/// <https://github.com/ethereum/devp2p/blob/master/discv5/discv5-theory.md#nodes-records-and-distances>
+pub fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
+    let xor = node_id_1 ^ node_id_2;
+    let distance = U256::from_big_endian(xor.as_bytes());
+    distance.bits().saturating_sub(1)
+}

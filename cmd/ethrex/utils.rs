@@ -3,7 +3,7 @@ use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
-    discv4::peer_table::PeerTable,
+    peer_table::PeerTable,
     sync::SyncMode,
     types::{Node, NodeRecord},
 };

@@ -2,8 +2,8 @@ mod code_collector;
 mod state_healing;
 mod storage_healing;
 
-use crate::discv4::peer_table::PeerTableError;
 use crate::peer_handler::{BlockRequestOrder, PeerHandlerError, SNAP_LIMIT};
+use crate::peer_table::PeerTableError;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::code_collector::CodeHashCollector;
 use crate::sync::state_healing::heal_state_trie_wrap;

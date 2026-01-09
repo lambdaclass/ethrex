@@ -3,8 +3,8 @@ use crate::{rpc::RpcApiContext, utils::RpcErr};
 use core::net::SocketAddr;
 use ethrex_common::H256;
 use ethrex_p2p::{
-    discv4::peer_table::PeerData,
     peer_handler::PeerHandler,
+    peer_table::PeerData,
     rlpx::{initiator::InMessage, p2p::Capability},
     types::Node,
 };
