@@ -2,13 +2,9 @@ name: L1
 on:
   push:
     branches: ["main"]
-    paths-ignore:
-      - "docs/**"
   merge_group:
   pull_request:
     branches: ["**"]
-    paths-ignore:
-      - "docs/**"
 
 permissions:
   contents: read
@@ -36,10 +32,14 @@ jobs:
           filters: |
             run_tests:
               - '!crates/l2/**'
+            non_docs:
+              - "!docs/**"
       - name: finish
         id: finish
         run: |
-          if [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
+          if [[ "${{ steps.filter.outputs.non_docs_count }}" == 0 ]]; then
+            echo "run_tests=false" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
               echo "run_tests=true" >> "$GITHUB_OUTPUT"
           else
               echo "run_tests=${{ steps.filter.outputs.run_tests }}" >> "$GITHUB_OUTPUT"
