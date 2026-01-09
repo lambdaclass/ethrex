@@ -34,7 +34,7 @@ use super::{
 };
 
 const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str =
-    "verifyBatchesAligned(uint256,bytes[],bytes32[][],bytes32[][])";
+    "verifyBatchesAligned(uint256,uint256,bytes32[][],bytes32[][])";
 
 pub async fn start_l1_proof_verifier(
     cfg: SequencerConfig,

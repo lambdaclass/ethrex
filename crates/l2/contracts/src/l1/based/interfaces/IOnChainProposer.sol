@@ -101,7 +101,6 @@ interface IOnChainProposer {
     /// Each proof corresponds to one batch, and batch numbers must increase by 1 sequentially.
     /// @param firstBatchNumber The batch number of the first proof to verify. Must be `lastVerifiedBatch + 1`.
     /// @param lastBatchNumber The batch number of the last proof to verify. Must be `lastBatchNumber <= lastCommittedBatch`.
-    /// @param publicInputsList An array of public input bytes, one per proof.
     /// @param sp1MerkleProofsList An array of Merkle proofs (sibling hashes), one per SP1 proof.
     /// @param risc0MerkleProofsList An array of Merkle proofs (sibling hashes), one per Risc0 proof.
     function verifyBatchesAligned(

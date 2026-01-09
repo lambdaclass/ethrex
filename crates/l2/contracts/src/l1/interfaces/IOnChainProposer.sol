@@ -108,12 +108,12 @@ interface IOnChainProposer {
     /// @notice Method used to verify a sequence of L2 batches in Aligned, starting from `firstBatchNumber`.
     /// Each proof corresponds to one batch, and batch numbers must increase by 1 sequentially.
     /// @param firstBatchNumber The batch number of the first proof to verify. Must be `lastVerifiedBatch + 1`.
-    /// @param publicInputsList An array of public input bytes, one per proof.
+    /// @param lastBatchNumber The batch number of the last proof to verify. Must be `lastBatchNumber <= lastCommittedBatch`.
     /// @param sp1MerkleProofsList An array of Merkle proofs (sibling hashes), one per SP1 proof.
     /// @param risc0MerkleProofsList An array of Merkle proofs (sibling hashes), one per Risc0 proof.
     function verifyBatchesAligned(
         uint256 firstBatchNumber,
-        bytes[] calldata publicInputsList,
+        uint256 lastBatchNumber,
         bytes32[][] calldata sp1MerkleProofsList,
         bytes32[][] calldata risc0MerkleProofsList
     ) external;
