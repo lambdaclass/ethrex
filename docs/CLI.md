@@ -72,7 +72,7 @@ Node options:
           [default: 10000]
 
       --generate-witness
-          Generate execution witnesses for received blocks.
+          Once synced, generates execution witnesses upon receiving newPayload messages and stores them in local storage
 
 P2P options:
       --bootnodes <BOOTNODE_LIST>...
