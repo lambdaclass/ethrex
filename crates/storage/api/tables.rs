@@ -97,10 +97,10 @@ pub const MISC_VALUES: &str = "misc_values";
 /// - [`Vec<u8>`] = `serde_json::to_vec(&witness)`
 pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 
-/// Oldest witness block column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = `b"oldest_witness_block"`
+/// Oldest witness block number column family: [`Vec<u8>`] => [`Vec<u8>`]
+/// - [`Vec<u8>`] = `b"oldest_witness_block_number"`
 /// - [`Vec<u8>`] = `oldest_block_number.to_le_bytes()`
-pub const OLDEST_WITNESS_BLOCK: &str = "oldest_witness_block";
+pub const OLDEST_WITNESS_BLOCK_NUMBER: &str = "oldest_witness_block_number";
 
 pub const TABLES: [&str; 19] = [
     CHAIN_DATA,
@@ -121,5 +121,5 @@ pub const TABLES: [&str; 19] = [
     STORAGE_FLATKEYVALUE,
     MISC_VALUES,
     EXECUTION_WITNESSES,
-    OLDEST_WITNESS_BLOCK,
+    OLDEST_WITNESS_BLOCK_NUMBER,
 ];
