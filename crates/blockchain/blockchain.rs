@@ -1369,13 +1369,11 @@ impl Blockchain {
             block.body.transactions.len(),
         );
 
-        if self.options.generate_witness && self.is_synced() {
+        if let Some(logger) = logger
+            && self.options.generate_witness
+            && self.is_synced()
+        {
             let block_hash = block.hash();
-            let Some(logger) = logger else {
-                return Err(ChainError::Custom(
-                    "Logger not found for witness generation".to_string(),
-                ));
-            };
             let account_updates = vm.get_state_transitions()?;
             let witness = self.generate_witness_from_account_updates(
                 account_updates,
