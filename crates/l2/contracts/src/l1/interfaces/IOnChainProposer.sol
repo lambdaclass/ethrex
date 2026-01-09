@@ -125,6 +125,8 @@ interface IOnChainProposer {
     ) external;
 
     /// @notice Allows unverified batches to be reverted
+    /// @param batchNumber the number of the batch to revert. The commitment for that batch
+    /// and for all subsequent batches will be removed. The batch can only be reverted if it is not verified.
     function revertBatch(uint256 batchNumber) external;
 
     /// @notice Allows the owner to pause the contract
