@@ -112,7 +112,7 @@ impl TrieLayerCache {
         if parent == state_root && key_values.is_empty() {
             return;
         } else if parent == state_root {
-            #[cfg(feature = "l2")]
+            #[cfg(not(feature = "l2"))]
             tracing::error!("Inconsistent state: parent == state_root but key_values not empty");
             return;
         }
