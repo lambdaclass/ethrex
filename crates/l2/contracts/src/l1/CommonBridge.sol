@@ -464,6 +464,7 @@ contract CommonBridge is
             IRouter(SHARED_BRIDGE_ROUTER).sendETHValue{
                 value: balanceDiffs[i].value
             }(balanceDiffs[i].chainId);
+            deposits[ETH_TOKEN][ETH_TOKEN] -= balanceDiffs[i].value;
 
             // Send ERC20 values if any
             for (uint j = 0; j < balanceDiffs[i].assetDiffs.length; j++) {
