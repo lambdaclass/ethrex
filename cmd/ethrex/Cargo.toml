@@ -113,6 +113,7 @@ l2 = [
   "ethrex-p2p/l2",
   "ethrex-prover",
   "ethrex-storage-rollup",
+  "ethrex-storage/l2",
   "dep:tui-logger",
   "dep:bytes",
   "dep:thiserror",
