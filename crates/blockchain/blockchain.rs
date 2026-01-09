@@ -185,6 +185,9 @@ pub struct BlockchainOptions {
     pub perf_logs_enabled: bool,
     /// Blockchain type (L1 or L2).
     pub r#type: BlockchainType,
+    /// EIP-7872: User-configured maximum blobs per block for local building.
+    /// If None, uses the protocol maximum for the current fork.
+    pub max_blobs_per_block: Option<u32>,
 }
 
 impl Default for BlockchainOptions {
@@ -193,6 +196,7 @@ impl Default for BlockchainOptions {
             max_mempool_size: MAX_MEMPOOL_SIZE_DEFAULT,
             perf_logs_enabled: false,
             r#type: BlockchainType::default(),
+            max_blobs_per_block: None,
         }
     }
 }
