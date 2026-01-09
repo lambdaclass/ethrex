@@ -284,7 +284,7 @@ pub struct Options {
         long = "generate-witness",
         action = ArgAction::SetTrue,
         default_value = "false",
-        help = "Generate execution witnesses for received blocks.",
+        help = "Once synced, generates execution witnesses upon receiving newPayload messages and stores them in local storage",
         help_heading = "Node options"
     )]
     pub generate_witness: bool,

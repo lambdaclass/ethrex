@@ -25,8 +25,11 @@ pub type CacheDB = FxHashMap<Address, LevmAccount>;
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
+    // Holds the current state of accounts being modified during execution
     pub current_accounts_state: CacheDB,
+    // Holds the initial state of accounts before the block execution started, used for calculating state transitions
     pub initial_accounts_state: CacheDB,
+    // Holds the state of accounts before the current transaction started, used for calculating state transitions per transaction (e.g. pipeline)
     pub previous_tx_accounts_state: CacheDB,
     pub codes: FxHashMap<H256, Code>,
     pub tx_backup: Option<CallFrameBackup>,
@@ -117,7 +120,7 @@ impl GeneralizedDatabase {
         self.get_code(code_hash)
     }
 
-    /// Gets storage slot from Database, storing in initial_accounts_state for efficiency when getting AccountUpdates.
+    /// Gets storage slot from Database, storing in initial_accounts_state and previous_tx_accounts_state for efficiency when getting AccountUpdates.
     fn get_value_from_database(
         &mut self,
         address: Address,

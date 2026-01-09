@@ -1334,6 +1334,8 @@ impl Blockchain {
         };
 
         let (mut vm, logger) = if self.options.generate_witness && self.is_synced() {
+            // If witness generation is enabled, we wrap the db with a logger
+            // to avoid executing the block more than once.
             let vm_db: DynVmDatabase = Box::new(StoreVmDatabase::new(
                 self.storage.clone(),
                 parent_header.clone(),
