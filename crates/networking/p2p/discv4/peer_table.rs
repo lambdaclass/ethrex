@@ -5,6 +5,7 @@ use crate::{
     types::{Node, NodeRecord},
 };
 use ethrex_common::{H256, U256};
+use ethrex_storage::Store;
 use indexmap::{IndexMap, map::Entry};
 use rand::seq::SliceRandom;
 use rustc_hash::FxHashSet;
@@ -154,7 +155,8 @@ pub struct PeerTable {
 }
 
 impl PeerTable {
-    pub fn spawn(target_peers: usize) -> PeerTable {
+    // It receives the store to maintain concistency with discv5 PeerTable
+    pub fn spawn(target_peers: usize, _store: Store) -> PeerTable {
         PeerTable {
             handle: PeerTableServer::new(target_peers).start(),
         }
