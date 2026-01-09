@@ -1024,7 +1024,6 @@ impl Blockchain {
         block: &Block,
         parent_header: BlockHeader,
         logger: &DatabaseLogger,
-        execution_result: BlockExecutionResult,
     ) -> Result<ExecutionWitness, ChainError> {
         // Get state at previous block
         let trie = self
@@ -1130,14 +1129,12 @@ impl Blockchain {
         }
 
         // Apply account updates to the trie recording all the necessary nodes to do so
-        let (storage_tries_after_update, account_updates_list) =
+        let (storage_tries_after_update, _account_updates_list) =
             self.storage.apply_account_updates_from_trie_with_witness(
                 trie,
                 &account_updates,
                 used_storage_tries,
             )?;
-
-        self.store_block(block.clone(), account_updates_list, execution_result)?;
 
         for (address, (witness, _storage_trie)) in storage_tries_after_update {
             let mut witness = witness.lock().map_err(|_| {
@@ -1370,7 +1367,7 @@ impl Blockchain {
             block.body.transactions.len(),
         );
 
-        let result = if self.options.generate_witness && self.is_synced() {
+        if self.options.generate_witness && self.is_synced() {
             let block_hash = block.hash();
             let Some(logger) = logger else {
                 return Err(ChainError::Custom(
@@ -1383,15 +1380,13 @@ impl Blockchain {
                 &block,
                 parent_header,
                 &logger,
-                res,
             )?;
             self.storage
-                .store_witness(block_hash, block_number, witness)
-                .map_err(|e| e.into())
-        } else {
-            // generate_witness_from_account_updates already stores the block
-            self.store_block(block, account_updates_list, res)
+                .store_witness(block_hash, block_number, witness)?;
         };
+
+        let result = self.store_block(block, account_updates_list, res);
+
         let stored = Instant::now();
 
         let instants = std::array::from_fn(move |i| {
