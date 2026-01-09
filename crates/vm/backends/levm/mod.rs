@@ -27,7 +27,7 @@ use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
-use ethrex_levm::tracing::LevmCallTracer;
+use ethrex_levm::tracing::NoOpTracer;
 use ethrex_levm::utils::get_base_fee_per_blob_gas;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
@@ -35,7 +35,9 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::VM,
 };
+use std::cell::RefCell;
 use std::cmp::min;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 
@@ -261,7 +263,7 @@ impl LEVM {
         vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
+        let mut vm = VM::new(env, db, tx, Rc::new(RefCell::new(NoOpTracer)), vm_type)?;
 
         vm.execute().map_err(VMError::into)
     }
@@ -279,7 +281,7 @@ impl LEVM {
         stack_pool: &mut Vec<Stack>,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
+        let mut vm = VM::new(env, db, tx, Rc::new(RefCell::new(NoOpTracer)), vm_type)?;
 
         std::mem::swap(&mut vm.stack_pool, stack_pool);
         let result = vm.execute().map_err(VMError::into);
@@ -560,7 +562,7 @@ pub fn generic_system_contract_levm(
         ..Default::default()
     });
     let mut vm =
-        VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type).map_err(EvmError::from)?;
+        VM::new(env, db, tx, Rc::new(RefCell::new(NoOpTracer)), vm_type).map_err(EvmError::from)?;
 
     let report = vm.execute().map_err(EvmError::from)?;
 
@@ -773,7 +775,7 @@ fn vm_from_generic<'a>(
     };
 
     let vm_type = adjust_disabled_l2_fees(&env, vm_type);
-    VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type)
+    VM::new(env, db, &tx, Rc::new(RefCell::new(NoOpTracer)), vm_type)
 }
 
 pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {

@@ -7,10 +7,10 @@ use ethrex_common::types::{
     compute_transactions_root,
 };
 use ethrex_common::{H256, U256};
-use ethrex_levm::{
-    tracing::LevmCallTracer,
-    vm::{VM, VMType},
-};
+use ethrex_levm::tracing::NoOpTracer;
+use ethrex_levm::vm::{VM, VMType};
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::str::FromStr;
 
 use crate::modules::types::TestCase;
@@ -39,7 +39,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
     // 1. We need to do a pre-execution with LEVM because we need to know gas used and generate receipts for the block header.
     let env = get_vm_env_for_test(test.env, test_case)?;
     let tx = get_tx_from_test_case(test_case).await?;
-    let tracer = LevmCallTracer::disabled();
+    let tracer = Rc::new(RefCell::new(NoOpTracer));
 
     let (mut db, initial_block_hash, store, _genesis) =
         load_initial_state(test, &test_case.fork).await;

@@ -1,10 +1,12 @@
+use std::{cell::RefCell, rc::Rc};
+
 use crate::{
     constants::POST_OSAKA_GAS_LIMIT_CAP,
     db::gen_db::GeneralizedDatabase,
     errors::{ContextResult, ExecutionReport, InternalError, TxValidationError, VMError},
     hooks::{DefaultHook, default_hook, hook::Hook},
     opcodes::Opcode,
-    tracing::LevmCallTracer,
+    tracing::NoOpTracer,
     vm::{VM, VMType},
 };
 
@@ -662,7 +664,7 @@ fn simulate_common_bridge_call(
         env_clone,
         &mut db_clone,
         &tx,
-        LevmCallTracer::disabled(),
+        Rc::new(RefCell::new(NoOpTracer)),
         VMType::L2(Default::default()),
     )?;
     new_vm.hooks = vec![];

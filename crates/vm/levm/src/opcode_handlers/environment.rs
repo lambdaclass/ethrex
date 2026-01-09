@@ -29,6 +29,9 @@ impl<'a> VM<'a> {
     pub fn op_balance(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
 
+        // Notify tracer of account access
+        self.tracer.borrow_mut().on_account_access(address, self.db);
+
         let address_was_cold = !self.substate.add_accessed_address(address);
         let account_balance = self.db.get_account(address)?.info.balance;
 
@@ -285,6 +288,10 @@ impl<'a> VM<'a> {
     // EXTCODESIZE operation
     pub fn op_extcodesize(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
+
+        // Notify tracer of account access
+        self.tracer.borrow_mut().on_account_access(address, self.db);
+
         let address_was_cold = !self.substate.add_accessed_address(address);
         // FIXME: a bit wasteful to fetch the whole code just to get the length.
         let account_code_length = self.db.get_account_code(address)?.bytecode.len().into();
@@ -304,10 +311,14 @@ impl<'a> VM<'a> {
         let [address, dest_offset, offset, size] = *call_frame.stack.pop()?;
 
         let address = word_to_address(address);
+
+        // Notify tracer of account access
+        self.tracer.borrow_mut().on_account_access(address, self.db);
+
         let (size, dest_offset) = size_offset_to_usize(size, dest_offset)?;
         let offset = u256_to_usize(offset).unwrap_or(usize::MAX);
 
-        let current_memory_size = call_frame.memory.len();
+        let current_memory_size = self.current_call_frame.memory.len();
         let address_was_cold = !self.substate.add_accessed_address(address);
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
@@ -417,6 +428,10 @@ impl<'a> VM<'a> {
     // EXTCODEHASH operation
     pub fn op_extcodehash(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
+
+        // Notify tracer of account access
+        self.tracer.borrow_mut().on_account_access(address, self.db);
+
         let address_was_cold = !self.substate.add_accessed_address(address);
         let account = self.db.get_account(address)?;
         let account_is_empty = account.is_empty();
