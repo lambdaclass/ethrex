@@ -221,6 +221,7 @@ impl BlockProducer {
         let execution_result = BlockExecutionResult {
             receipts: payload_build_result.receipts,
             requests: Vec::new(),
+            block_access_list: None,
         };
 
         let account_updates_list = self

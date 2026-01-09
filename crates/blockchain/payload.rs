@@ -239,7 +239,7 @@ impl PayloadBuildContext {
             .map_err(|e| EvmError::DB(e.to_string()))?
             .ok_or_else(|| EvmError::DB("parent header not found".to_string()))?;
         let vm_db = StoreVmDatabase::new(storage.clone(), parent_header)?;
-        let vm = new_evm(blockchain_type, vm_db)?;
+        let vm = new_evm(blockchain_type, vm_db)?.with_generate_bal(true);
 
         let payload_size = payload.length() as u64;
         Ok(PayloadBuildContext {

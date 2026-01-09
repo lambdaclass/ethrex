@@ -1,3 +1,5 @@
+use std::{cell::RefCell, rc::Rc};
+
 use colored::Colorize;
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use secp256k1::SecretKey;
@@ -10,8 +12,10 @@ use ethrex_common::{
     },
 };
 use ethrex_levm::{
-    EVMConfig, Environment, tracing::LevmCallTracer, utils::get_base_fee_per_blob_gas, vm::VM,
-    vm::VMType,
+    EVMConfig, Environment,
+    tracing::NoOpTracer,
+    utils::get_base_fee_per_blob_gas,
+    vm::{VM, VMType},
 };
 
 use crate::modules::{
@@ -68,7 +72,7 @@ pub async fn run_test(
             load_initial_state(test, &test_case.fork).await;
         let env = get_vm_env_for_test(test.env, test_case)?;
         let tx = get_tx_from_test_case(test_case).await?;
-        let tracer = LevmCallTracer::disabled();
+        let tracer = Rc::new(RefCell::new(NoOpTracer));
         let mut vm =
             VM::new(env, &mut db, &tx, tracer, VMType::L1).map_err(RunnerError::VMError)?;
 

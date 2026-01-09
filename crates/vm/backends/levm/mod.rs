@@ -27,7 +27,7 @@ use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
-use ethrex_levm::tracing::LevmCallTracer;
+use ethrex_levm::tracing::{BlockAccessListTracer, DynTracer, NoOpTracer, Tracer};
 use ethrex_levm::utils::get_base_fee_per_blob_gas;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
@@ -35,7 +35,9 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::VM,
 };
+use std::cell::RefCell;
 use std::cmp::min;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 
@@ -52,8 +54,18 @@ impl LEVM {
         block: &Block,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        generate_bal: bool,
     ) -> Result<BlockExecutionResult, EvmError> {
-        Self::prepare_block(block, db, vm_type)?;
+        let tracer = Rc::new(RefCell::new(BlockAccessListTracer::new()));
+
+        let (bal_tracer, tracer): (Option<Rc<RefCell<BlockAccessListTracer>>>, DynTracer) =
+            if generate_bal {
+                (Some(tracer.clone()), tracer)
+            } else {
+                (None, Rc::new(RefCell::new(NoOpTracer)))
+            };
+
+        Self::prepare_block(block, db, vm_type, tracer.clone())?;
 
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
@@ -69,7 +81,8 @@ impl LEVM {
                 )));
             }
 
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
+            let report =
+                Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, tracer.clone())?;
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
@@ -83,18 +96,24 @@ impl LEVM {
         }
 
         if let Some(withdrawals) = &block.body.withdrawals {
-            Self::process_withdrawals(db, withdrawals)?;
+            Self::process_withdrawals_with_tracing(db, withdrawals, tracer.clone())?;
         }
 
         // TODO: I don't like deciding the behavior based on the VMType here.
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
-            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
+            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, tracer)?,
             VMType::L2(_) => Default::default(),
         };
 
-        Ok(BlockExecutionResult { receipts, requests })
+        let block_access_list = bal_tracer.map(|t| t.borrow().get_result());
+
+        Ok(BlockExecutionResult {
+            receipts,
+            requests,
+            block_access_list,
+        })
     }
 
     pub fn execute_block_pipeline(
@@ -103,8 +122,18 @@ impl LEVM {
         vm_type: VMType,
         merkleizer: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
+        generate_bal: bool,
     ) -> Result<BlockExecutionResult, EvmError> {
-        Self::prepare_block(block, db, vm_type)?;
+        let tracer = Rc::new(RefCell::new(BlockAccessListTracer::new()));
+
+        let (bal_tracer, tracer): (Option<Rc<RefCell<BlockAccessListTracer>>>, DynTracer) =
+            if generate_bal {
+                (Some(tracer.clone()), tracer)
+            } else {
+                (None, Rc::new(RefCell::new(NoOpTracer)))
+            };
+
+        Self::prepare_block(block, db, vm_type, tracer.clone())?;
 
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
@@ -133,6 +162,7 @@ impl LEVM {
                 db,
                 vm_type,
                 &mut shared_stack_pool,
+                tracer.clone(),
             )?;
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
@@ -166,31 +196,24 @@ impl LEVM {
             LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
         }
 
-        for (address, increment) in block
-            .body
-            .withdrawals
-            .iter()
-            .flatten()
-            .filter(|withdrawal| withdrawal.amount > 0)
-            .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
-        {
-            let account = db
-                .get_account_mut(address)
-                .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
-
-            account.info.balance += increment.into();
+        if let Some(withdrawals) = &block.body.withdrawals {
+            Self::process_withdrawals_with_tracing(db, withdrawals, tracer.clone())?;
         }
 
         // TODO: I don't like deciding the behavior based on the VMType here.
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
-            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
+            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, tracer)?,
             VMType::L2(_) => Default::default(),
         };
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
-        Ok(BlockExecutionResult { receipts, requests })
+        Ok(BlockExecutionResult {
+            receipts,
+            requests,
+            block_access_list: bal_tracer.map(|t| t.borrow().get_result()),
+        })
     }
 
     fn send_state_transitions_tx(
@@ -259,11 +282,26 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        tracer: Rc<RefCell<dyn Tracer>>,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
+        let mut vm = VM::new(env, db, tx, tracer, vm_type)?;
 
-        vm.execute().map_err(VMError::into)
+        vm.tracer
+            .borrow_mut()
+            .txn_start(&vm.env, &vm.tx, tx_sender, vm.db);
+        let res = vm.execute()?;
+
+        let (error, _) = match res.result {
+            TxResult::Revert(ref err) => {
+                let reason = String::from_utf8(res.output.to_vec()).ok();
+                (Some(err.to_string()), reason)
+            }
+            _ => (None, None),
+        };
+        vm.tracer.borrow_mut().txn_end(res.gas_used, error, vm.db);
+
+        Ok(res)
     }
 
     // Like execute_tx but allows reusing the stack pool
@@ -277,14 +315,30 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         stack_pool: &mut Vec<Stack>,
+        tracer: Rc<RefCell<dyn Tracer>>,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
+        let mut vm = VM::new(env, db, tx, tracer, vm_type)?;
+
+        vm.tracer
+            .borrow_mut()
+            .txn_start(&vm.env, &vm.tx, tx_sender, vm.db);
 
         std::mem::swap(&mut vm.stack_pool, stack_pool);
-        let result = vm.execute().map_err(VMError::into);
+        let result = vm.execute()?;
         std::mem::swap(&mut vm.stack_pool, stack_pool);
-        result
+
+        let (error, _) = match result.result {
+            TxResult::Revert(ref err) => {
+                let reason = String::from_utf8(result.output.to_vec()).ok();
+                (Some(err.to_string()), reason)
+            }
+            _ => (None, None),
+        };
+        vm.tracer
+            .borrow_mut()
+            .txn_end(result.gas_used, error, vm.db);
+        Ok(result)
     }
 
     pub fn undo_last_tx(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
@@ -344,11 +398,29 @@ impl LEVM {
         Ok(())
     }
 
+    pub fn process_withdrawals_with_tracing(
+        db: &mut GeneralizedDatabase,
+        withdrawals: &[Withdrawal],
+        tracer: DynTracer,
+    ) -> Result<(), EvmError> {
+        // For every withdrawal we increment the target account's balance
+        for (address, increment) in withdrawals
+            .iter()
+            .filter(|withdrawal| withdrawal.amount > 0)
+            .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
+        {
+            db.increase_account_balance_with_tracing(address, increment.into(), tracer.clone())
+                .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
+        }
+        Ok(())
+    }
+
     // SYSTEM CONTRACTS
     pub fn beacon_root_contract_call(
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        tracer: Rc<RefCell<dyn Tracer>>,
     ) -> Result<(), EvmError> {
         if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
@@ -367,6 +439,7 @@ impl LEVM {
             BEACON_ROOTS_ADDRESS.address,
             SYSTEM_ADDRESS,
             vm_type,
+            tracer,
         )?;
         Ok(())
     }
@@ -375,6 +448,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        tracer: Rc<RefCell<dyn Tracer>>,
     ) -> Result<(), EvmError> {
         if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
@@ -389,6 +463,7 @@ impl LEVM {
             HISTORY_STORAGE_ADDRESS.address,
             SYSTEM_ADDRESS,
             vm_type,
+            tracer,
         )?;
         Ok(())
     }
@@ -396,6 +471,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        tracer: Rc<RefCell<dyn Tracer>>,
     ) -> Result<ExecutionReport, EvmError> {
         if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
@@ -410,6 +486,7 @@ impl LEVM {
             WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS.address,
             SYSTEM_ADDRESS,
             vm_type,
+            tracer,
         )?;
 
         match report.result {
@@ -425,6 +502,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        tracer: Rc<RefCell<dyn Tracer>>,
     ) -> Result<ExecutionReport, EvmError> {
         if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
@@ -439,6 +517,7 @@ impl LEVM {
             CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS.address,
             SYSTEM_ADDRESS,
             vm_type,
+            tracer,
         )?;
 
         match report.result {
@@ -483,6 +562,7 @@ impl LEVM {
         block: &Block,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        tracer: Rc<RefCell<dyn Tracer>>,
     ) -> Result<(), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let block_header = &block.header;
@@ -494,12 +574,12 @@ impl LEVM {
         }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-            Self::beacon_root_contract_call(block_header, db, vm_type)?;
+            Self::beacon_root_contract_call(block_header, db, vm_type, tracer.clone())?;
         }
 
         if fork >= Fork::Prague {
             //eip 2935: stores parent block hash in system contract
-            Self::process_block_hash_history(block_header, db, vm_type)?;
+            Self::process_block_hash_history(block_header, db, vm_type, tracer)?;
         }
         Ok(())
     }
@@ -512,6 +592,7 @@ pub fn generic_system_contract_levm(
     contract_address: Address,
     system_address: Address,
     vm_type: VMType,
+    tracer: Rc<RefCell<dyn Tracer>>,
 ) -> Result<ExecutionReport, EvmError> {
     let chain_config = db.store.get_chain_config()?;
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
@@ -559,10 +640,10 @@ pub fn generic_system_contract_levm(
         data: calldata,
         ..Default::default()
     });
-    let mut vm =
-        VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type).map_err(EvmError::from)?;
 
-    let report = vm.execute().map_err(EvmError::from)?;
+    let mut vm = VM::new(env, db, tx, tracer, vm_type)?;
+
+    let report = vm.call()?;
 
     if let Some(system_account) = system_account_backup {
         db.current_accounts_state
@@ -590,6 +671,7 @@ pub fn extract_all_requests_levm(
     db: &mut GeneralizedDatabase,
     header: &BlockHeader,
     vm_type: VMType,
+    tracer: Rc<RefCell<dyn Tracer>>,
 ) -> Result<Vec<Requests>, EvmError> {
     if let VMType::L2(_) = vm_type {
         return Err(EvmError::InvalidEVM(
@@ -604,12 +686,14 @@ pub fn extract_all_requests_levm(
         return Ok(Default::default());
     }
 
-    let withdrawals_data: Vec<u8> = LEVM::read_withdrawal_requests(header, db, vm_type)?
-        .output
-        .into();
-    let consolidation_data: Vec<u8> = LEVM::dequeue_consolidation_requests(header, db, vm_type)?
-        .output
-        .into();
+    let withdrawals_data: Vec<u8> =
+        LEVM::read_withdrawal_requests(header, db, vm_type, tracer.clone())?
+            .output
+            .into();
+    let consolidation_data: Vec<u8> =
+        LEVM::dequeue_consolidation_requests(header, db, vm_type, tracer)?
+            .output
+            .into();
 
     let deposits = Requests::from_deposit_receipts(chain_config.deposit_contract_address, receipts)
         .ok_or(EvmError::InvalidDepositRequest)?;
@@ -773,7 +857,7 @@ fn vm_from_generic<'a>(
     };
 
     let vm_type = adjust_disabled_l2_fees(&env, vm_type);
-    VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type)
+    VM::new(env, db, &tx, Rc::new(RefCell::new(NoOpTracer)), vm_type)
 }
 
 pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {

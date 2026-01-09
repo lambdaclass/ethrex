@@ -1,6 +1,6 @@
 use std::{fmt::Display, str::FromStr};
 
-use ethrex_common::types::{BlockHash, BlockHeader, BlockNumber};
+use ethrex_common::types::{Block, BlockHash, BlockHeader, BlockNumber};
 use ethrex_storage::{Store, error::StoreError};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -84,6 +84,13 @@ impl BlockIdentifier {
     ) -> Result<Option<BlockHeader>, StoreError> {
         match self.resolve_block_number(storage).await? {
             Some(block_number) => storage.get_block_header(block_number),
+            _ => Ok(None),
+        }
+    }
+
+    pub async fn resolve_block(&self, storage: &Store) -> Result<Option<Block>, StoreError> {
+        match self.resolve_block_number(storage).await? {
+            Some(block_number) => storage.get_block_by_number(block_number).await,
             _ => Ok(None),
         }
     }

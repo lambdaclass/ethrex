@@ -12,7 +12,7 @@ use ethrex_levm::{
     account::LevmAccount,
     db::gen_db::GeneralizedDatabase,
     opcodes::Opcode,
-    tracing::LevmCallTracer,
+    tracing::NoOpTracer,
     vm::{VM, VMType},
 };
 use ethrex_storage::Store;
@@ -22,7 +22,7 @@ use num_bigint::BigUint;
 use num_traits::Num;
 use runner::input::{InputAccount, InputTransaction, RunnerInput};
 use rustc_hash::FxHashMap;
-use std::{collections::BTreeMap, io::Write};
+use std::{cell::RefCell, collections::BTreeMap, io::Write, rc::Rc};
 use std::{
     fs::{self, File},
     io::BufReader,
@@ -155,7 +155,7 @@ fn main() {
         env,
         &mut db,
         &Transaction::LegacyTransaction(LegacyTransaction::from(runner_input.transaction.clone())),
-        LevmCallTracer::disabled(),
+        Rc::new(RefCell::new(NoOpTracer)),
         VMType::L1,
     )
     .expect("Failed to initialize VM");

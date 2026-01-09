@@ -3,9 +3,13 @@ use std::{
     time::Duration,
 };
 
-use ethrex_common::{H256, tracing::CallTrace, types::Block};
+use ethrex_common::{
+    H256,
+    tracing::CallTrace,
+    types::{Block, block_access_list::BlockAccessList},
+};
 use ethrex_storage::Store;
-use ethrex_vm::{Evm, EvmError};
+use ethrex_vm::{BlockExecutionResult, Evm, EvmError};
 
 use crate::{Blockchain, error::ChainError, vm::StoreVmDatabase};
 
@@ -117,6 +121,44 @@ impl Blockchain {
             vm.rerun_block(block, None)?;
         }
         Ok(vm)
+    }
+
+    pub async fn trace_block_access_list(
+        &self,
+        block: Block,
+    ) -> Result<BlockAccessList, ChainError> {
+        // // Obtain the block's parent state
+        // let mut vm = self
+        //     .rebuild_parent_state(block.header.parent_hash, reexec)
+        //     .await?;
+        // // Run anything necessary before executing the block's transactions (system calls, etc)
+        // vm.rerun_block(&block, Some(0))?;
+
+        let parent_header = self
+            .storage
+            .get_block_header_by_hash(block.header.parent_hash)?
+            .ok_or(ChainError::ParentNotFound)?;
+
+        let block_hash_cache = vec![(parent_header.number, parent_header.hash())]
+            .into_iter()
+            .collect();
+
+        let vm_db = StoreVmDatabase::new_with_block_hash_cache(
+            self.storage.clone(),
+            parent_header,
+            block_hash_cache,
+        )?;
+        let mut vm = self.new_evm(vm_db)?.with_generate_bal(true);
+
+        // Trace each transaction
+        // We need to do this in order to pass ownership of block & evm to a blocking process without cloning
+        let BlockExecutionResult {
+            block_access_list, ..
+        } = vm.execute_block(&block)?;
+
+        block_access_list.ok_or(ChainError::Custom(
+            "failed to get block access list".to_owned(),
+        ))
     }
 }
 

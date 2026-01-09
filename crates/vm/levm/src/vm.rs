@@ -7,6 +7,7 @@ use crate::{
     errors::{ContextResult, ExecutionReport, InternalError, OpcodeResult, VMError},
     hooks::{
         backup_hook::BackupHook,
+        default_hook,
         hook::{Hook, get_hooks},
     },
     memory::Memory,
@@ -14,7 +15,8 @@ use crate::{
     precompiles::{
         self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
     },
-    tracing::LevmCallTracer,
+    tracing::Tracer,
+    utils::convert_context_result_to_exit_args,
 };
 use bytes::Bytes;
 use ethrex_common::{
@@ -316,7 +318,7 @@ pub struct VM<'a> {
     /// Original storage values before the transaction. Used for gas calculations in SSTORE.
     pub storage_original_values: BTreeMap<(Address, H256), U256>,
     /// When enabled, it "logs" relevant information during execution
-    pub tracer: LevmCallTracer,
+    pub tracer: Rc<RefCell<dyn Tracer>>,
     /// Mode for printing some useful stuff, only used in development!
     pub debug_mode: DebugMode,
     /// A pool of stacks to avoid reallocating too much when creating new call frames.
@@ -329,11 +331,12 @@ pub struct VM<'a> {
 }
 
 impl<'a> VM<'a> {
+    /// Use `Rc<RefCell<NoOpTracer>>` when tracing is not wanted.
     pub fn new(
         env: Environment,
         db: &'a mut GeneralizedDatabase,
         tx: &Transaction,
-        tracer: LevmCallTracer,
+        tracer: Rc<RefCell<dyn Tracer>>,
         vm_type: VMType,
     ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
@@ -376,20 +379,9 @@ impl<'a> VM<'a> {
             opcode_table: VM::build_opcode_table(fork),
         };
 
-        let call_type = if is_create {
-            CallType::CREATE
-        } else {
-            CallType::CALL
-        };
-        vm.tracer.enter(
-            call_type,
-            vm.env.origin,
-            callee,
-            vm.tx.value(),
-            vm.env.gas_limit,
-            vm.tx.data(),
-        );
-
+        // clippy lint will error if this line is removed since clippy doesn't know debug feature
+        // needs mutates vm
+        vm.debug_mode.enabled = false;
         #[cfg(feature = "debug")]
         {
             // Enable debug mode for printing in Solidity contracts.
@@ -403,6 +395,74 @@ impl<'a> VM<'a> {
         self.hooks.push(Rc::new(RefCell::new(hook)));
     }
 
+    /// Executes a whole txn without state transitions
+    pub fn call(&mut self) -> Result<ExecutionReport, VMError> {
+        let from = self.current_call_frame.msg_sender;
+        let call_type = if self.current_call_frame.is_create {
+            CallType::CREATE
+        } else {
+            CallType::CALL
+        };
+        let to = self.current_call_frame.to;
+        let gas_limit = self.current_call_frame.gas_limit;
+        let value = self.tx.value();
+        let data = self.tx.data();
+        self.tracer
+            .borrow_mut()
+            .enter(call_type, from, to, value, gas_limit, data);
+
+        default_hook::set_bytecode_and_code_address(self)?;
+
+        if self.is_create()? {
+            // Create contract, reverting the Tx if address is already occupied.
+            if let Some(mut context_result) = self.handle_create_transaction()? {
+                let (gas_used, output, error, revert_reason) =
+                    convert_context_result_to_exit_args(&context_result);
+
+                self.tracer.borrow_mut().exit(
+                    self.current_call_frame.depth,
+                    gas_used,
+                    output,
+                    error,
+                    revert_reason,
+                )?;
+
+                let report = ExecutionReport {
+                    result: context_result.result.clone(),
+                    gas_used: context_result.gas_used,
+                    gas_refunded: self.substate.refunded_gas,
+                    output: std::mem::take(&mut context_result.output),
+                    logs: self.substate.extract_logs(),
+                };
+                return Ok(report);
+            }
+        }
+
+        self.substate.push_backup();
+        let mut context_result = self.run_execution()?;
+
+        let (gas_used, output, error, revert_reason) =
+            convert_context_result_to_exit_args(&context_result);
+
+        self.tracer.borrow_mut().exit(
+            self.current_call_frame.depth,
+            gas_used,
+            output,
+            error,
+            revert_reason,
+        )?;
+
+        let report = ExecutionReport {
+            result: context_result.result.clone(),
+            gas_used: context_result.gas_used,
+            gas_refunded: self.substate.refunded_gas,
+            output: std::mem::take(&mut context_result.output),
+            logs: self.substate.extract_logs(),
+        };
+
+        Ok(report)
+    }
+
     /// Executes a whole external transaction. Performing validations at the beginning.
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
         if let Err(e) = self.prepare_execution() {
@@ -410,7 +470,6 @@ impl<'a> VM<'a> {
             self.restore_cache_state()?;
             return Err(e);
         }
-
         // Clear callframe backup so that changes made in prepare_execution are written in stone.
         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
         self.current_call_frame.call_frame_backup.clear();
@@ -427,7 +486,6 @@ impl<'a> VM<'a> {
         let context_result = self.run_execution()?;
 
         let report = self.finalize_execution(context_result)?;
-
         Ok(report)
     }
 
@@ -526,9 +584,24 @@ impl<'a> VM<'a> {
     }
 
     fn prepare_execution(&mut self) -> Result<(), VMError> {
+        let from = self.current_call_frame.msg_sender;
+
         for hook in self.hooks.clone() {
             hook.borrow_mut().prepare_execution(self)?;
         }
+
+        let call_type = if self.current_call_frame.is_create {
+            CallType::CREATE
+        } else {
+            CallType::CALL
+        };
+        let to = self.current_call_frame.to;
+        let gas_limit = self.current_call_frame.gas_limit;
+        let value = self.tx.value();
+        let data = self.tx.data();
+        self.tracer
+            .borrow_mut()
+            .enter(call_type, from, to, value, gas_limit, data);
 
         Ok(())
     }
@@ -542,7 +615,15 @@ impl<'a> VM<'a> {
                 .finalize_execution(self, &mut ctx_result)?;
         }
 
-        self.tracer.exit_context(&ctx_result, true)?;
+        let (gas_used, output, error, revert_reason) =
+            convert_context_result_to_exit_args(&ctx_result);
+        self.tracer.borrow_mut().exit(
+            self.current_call_frame.depth,
+            gas_used,
+            output,
+            error,
+            revert_reason,
+        )?;
 
         let report = ExecutionReport {
             result: ctx_result.result.clone(),

@@ -1,4 +1,6 @@
 pub mod levm;
+use ethrex_common::types::block_access_list::BlockAccessList;
+use ethrex_levm::tracing::NoOpTracer;
 use levm::LEVM;
 
 use crate::db::{DynVmDatabase, VmDatabase};
@@ -14,6 +16,8 @@ pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::vm::VMType;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc::Sender;
@@ -23,6 +27,7 @@ use tracing::instrument;
 pub struct Evm {
     pub db: GeneralizedDatabase,
     pub vm_type: VMType,
+    pub generate_bal: bool,
 }
 
 impl core::fmt::Debug for Evm {
@@ -38,6 +43,7 @@ impl Evm {
         Evm {
             db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
             vm_type: VMType::L1,
+            generate_bal: false,
         }
     }
 
@@ -50,6 +56,7 @@ impl Evm {
         let evm = Evm {
             db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
             vm_type: VMType::L2(fee_config),
+            generate_bal: false,
         };
 
         Ok(evm)
@@ -70,11 +77,17 @@ impl Evm {
         Evm {
             db: GeneralizedDatabase::new(store),
             vm_type,
+            generate_bal: false,
         }
     }
 
+    pub fn with_generate_bal(mut self, generate_bal: bool) -> Self {
+        self.generate_bal = generate_bal;
+        self
+    }
+
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
-        LEVM::execute_block(block, &mut self.db, self.vm_type)
+        LEVM::execute_block(block, &mut self.db, self.vm_type, self.generate_bal)
     }
 
     #[instrument(
@@ -89,7 +102,14 @@ impl Evm {
         merkleizer: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
     ) -> Result<BlockExecutionResult, EvmError> {
-        LEVM::execute_block_pipeline(block, &mut self.db, self.vm_type, merkleizer, queue_length)
+        LEVM::execute_block_pipeline(
+            block,
+            &mut self.db,
+            self.vm_type,
+            merkleizer,
+            queue_length,
+            self.generate_bal,
+        )
     }
 
     /// Wraps [LEVM::execute_tx].
@@ -102,8 +122,17 @@ impl Evm {
         remaining_gas: &mut u64,
         sender: Address,
     ) -> Result<(Receipt, u64), EvmError> {
-        let execution_report =
-            LEVM::execute_tx(tx, sender, block_header, &mut self.db, self.vm_type)?;
+        // if self.generate_bal {
+        //     tracer = Rc::new(RefCell::new());
+        // }
+        let execution_report = LEVM::execute_tx(
+            tx,
+            sender,
+            block_header,
+            &mut self.db,
+            self.vm_type,
+            Rc::new(RefCell::new(NoOpTracer)),
+        )?;
 
         *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
 
@@ -128,11 +157,21 @@ impl Evm {
         let fork = chain_config.fork(block_header.timestamp);
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-            LEVM::beacon_root_contract_call(block_header, &mut self.db, self.vm_type)?;
+            LEVM::beacon_root_contract_call(
+                block_header,
+                &mut self.db,
+                self.vm_type,
+                Rc::new(RefCell::new(NoOpTracer)),
+            )?;
         }
 
         if fork >= Fork::Prague {
-            LEVM::process_block_hash_history(block_header, &mut self.db, self.vm_type)?;
+            LEVM::process_block_hash_history(
+                block_header,
+                &mut self.db,
+                self.vm_type,
+                Rc::new(RefCell::new(NoOpTracer)),
+            )?;
         }
 
         Ok(())
@@ -155,7 +194,13 @@ impl Evm {
         receipts: &[Receipt],
         header: &BlockHeader,
     ) -> Result<Vec<Requests>, EvmError> {
-        levm::extract_all_requests_levm(receipts, &mut self.db, header, self.vm_type)
+        levm::extract_all_requests_levm(
+            receipts,
+            &mut self.db,
+            header,
+            self.vm_type,
+            Rc::new(RefCell::new(NoOpTracer)),
+        )
     }
 
     pub fn simulate_tx_from_generic(
@@ -205,4 +250,5 @@ impl Evm {
 pub struct BlockExecutionResult {
     pub receipts: Vec<Receipt>,
     pub requests: Vec<Requests>,
+    pub block_access_list: Option<BlockAccessList>,
 }

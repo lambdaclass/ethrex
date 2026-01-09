@@ -58,6 +58,9 @@ impl<'a> VM<'a> {
             )
         };
 
+        // Notify tracer of account access
+        self.tracer.borrow_mut().on_account_access(callee, self.db);
+
         // VALIDATIONS
         if self.current_call_frame.is_static && !value.is_zero() {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
@@ -104,7 +107,9 @@ impl<'a> VM<'a> {
         let is_static = callframe.is_static;
         let data = self.get_calldata(args_offset, args_size)?;
 
-        self.tracer.enter(CALL, from, to, value, gas_limit, &data);
+        self.tracer
+            .borrow_mut()
+            .enter(CALL, from, to, value, gas_limit, &data);
 
         self.generic_call(
             gas_limit,
@@ -162,6 +167,9 @@ impl<'a> VM<'a> {
             )
         };
 
+        // Notify tracer of account access
+        self.tracer.borrow_mut().on_account_access(address, self.db);
+
         // CHECK EIP7702
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(self.db, &mut self.substate, address)?;
@@ -202,6 +210,7 @@ impl<'a> VM<'a> {
         let data = self.get_calldata(args_offset, args_size)?;
 
         self.tracer
+            .borrow_mut()
             .enter(CALLCODE, from, code_address, value, gas_limit, &data);
 
         self.generic_call(
@@ -278,6 +287,9 @@ impl<'a> VM<'a> {
             )
         };
 
+        // Notify tracer of account access
+        self.tracer.borrow_mut().on_account_access(address, self.db);
+
         // CHECK EIP7702
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(self.db, &mut self.substate, address)?;
@@ -320,6 +332,7 @@ impl<'a> VM<'a> {
 
         // In this trace the `from` is the current contract, we don't want the `from` to be, for example, the EOA that sent the transaction
         self.tracer
+            .borrow_mut()
             .enter(DELEGATECALL, to, code_address, value, gas_limit, &data);
 
         self.generic_call(
@@ -375,6 +388,9 @@ impl<'a> VM<'a> {
             )
         };
 
+        // Notify tracer of account access
+        self.tracer.borrow_mut().on_account_access(address, self.db);
+
         // CHECK EIP7702
         let (is_delegation_7702, eip7702_gas_consumed, _, bytecode) =
             eip7702_get_code(self.db, &mut self.substate, address)?;
@@ -415,6 +431,7 @@ impl<'a> VM<'a> {
         let data = self.get_calldata(args_offset, args_size)?;
 
         self.tracer
+            .borrow_mut()
             .enter(STATICCALL, from, to, value, gas_limit, &data);
 
         self.generic_call(
@@ -543,6 +560,12 @@ impl<'a> VM<'a> {
             (target_address, to)
         };
 
+        // Notify tracer of account access and selfdestruct
+        self.tracer
+            .borrow_mut()
+            .on_account_access(beneficiary, self.db);
+        self.tracer.borrow_mut().on_selfdestruct(to, self.db);
+
         let target_account_is_cold = !self.substate.add_accessed_address(beneficiary);
         let target_account_is_empty = self.db.get_account(beneficiary)?.is_empty();
 
@@ -575,9 +598,16 @@ impl<'a> VM<'a> {
         }
 
         self.tracer
+            .borrow_mut()
             .enter(SELFDESTRUCT, to, beneficiary, balance, 0, &Bytes::new());
 
-        self.tracer.exit_early(0, None)?;
+        self.tracer.borrow_mut().exit(
+            self.current_call_frame.depth,
+            0,
+            Bytes::new(),
+            None,
+            None,
+        )?;
 
         Ok(OpcodeResult::Halt)
     }
@@ -628,6 +658,12 @@ impl<'a> VM<'a> {
             None => calculate_create_address(deployer, deployer_nonce),
         };
 
+        // Notify tracer of account access and creation
+        self.tracer
+            .borrow_mut()
+            .on_account_access(new_address, self.db);
+        self.tracer.borrow_mut().on_create(new_address, self.db);
+
         // Add new contract to accessed addresses
         self.substate.add_accessed_address(new_address);
 
@@ -637,6 +673,7 @@ impl<'a> VM<'a> {
             None => CallType::CREATE,
         };
         self.tracer
+            .borrow_mut()
             .enter(call_type, deployer, new_address, value, gas_limit, &code);
 
         let new_depth = self
@@ -668,8 +705,13 @@ impl<'a> VM<'a> {
         let new_account = self.get_account_mut(new_address)?;
         if new_account.create_would_collide() {
             self.current_call_frame.stack.push(FAIL)?;
-            self.tracer
-                .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
+            self.tracer.borrow_mut().exit(
+                self.current_call_frame.depth,
+                0,
+                Bytes::new(),
+                Some("CreateAccExists".to_string()),
+                None,
+            )?;
             return Ok(OpcodeResult::Continue);
         }
 
@@ -806,7 +848,15 @@ impl<'a> VM<'a> {
                 self.transfer(msg_sender, to, value)?;
             }
 
-            self.tracer.exit_context(&ctx_result, false)?;
+            let (gas_used, output, error, revert_reason) =
+                convert_context_result_to_exit_args(&ctx_result);
+            self.tracer.borrow_mut().exit(
+                self.current_call_frame.depth,
+                gas_used,
+                output,
+                error,
+                revert_reason,
+            )?;
         } else {
             let mut stack = self.stack_pool.pop().unwrap_or_default();
             stack.clear();
@@ -925,7 +975,15 @@ impl<'a> VM<'a> {
             }
         };
 
-        self.tracer.exit_context(ctx_result, false)?;
+        let (gas_used, output, error, revert_reason) =
+            convert_context_result_to_exit_args(ctx_result);
+        self.tracer.borrow_mut().exit(
+            self.current_call_frame.depth,
+            gas_used,
+            output,
+            error,
+            revert_reason,
+        )?;
 
         let mut stack = executed_call_frame.stack;
         stack.clear();
@@ -977,7 +1035,15 @@ impl<'a> VM<'a> {
             }
         };
 
-        self.tracer.exit_context(ctx_result, false)?;
+        let (gas_used, output, error, revert_reason) =
+            convert_context_result_to_exit_args(ctx_result);
+        self.tracer.borrow_mut().exit(
+            self.current_call_frame.depth,
+            gas_used,
+            output,
+            error,
+            revert_reason,
+        )?;
 
         let mut stack = executed_call_frame.stack;
         stack.clear();
@@ -1036,7 +1102,9 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Overflow)?;
         callframe.stack.push(FAIL)?; // It's the same as revert for CREATE
 
-        self.tracer.exit_early(0, Some(reason))?;
+        self.tracer
+            .borrow_mut()
+            .exit(callframe.depth, 0, Bytes::new(), Some(reason), None)?;
         Ok(())
     }
 }

@@ -4,7 +4,7 @@ use crate::{
     call_frame::CallFrameBackup,
     constants::*,
     db::gen_db::GeneralizedDatabase,
-    errors::{ExceptionalHalt, InternalError, TxValidationError, VMError},
+    errors::{ContextResult, ExceptionalHalt, InternalError, TxResult, TxValidationError, VMError},
     gas_cost::{
         self, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST, BLOB_GAS_PER_BLOB,
         COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
@@ -611,4 +611,21 @@ pub fn size_offset_to_usize(size: U256, offset: U256) -> Result<(usize, usize), 
     } else {
         Ok((u256_to_usize(size)?, u256_to_usize(offset)?))
     }
+}
+
+/// converts ContextResult to args for Tracer::on_exit
+pub fn convert_context_result_to_exit_args(
+    ctx_result: &ContextResult,
+) -> (u64, Bytes, Option<String>, Option<String>) {
+    let (gas_used, output) = (ctx_result.gas_used, ctx_result.output.clone());
+
+    let (error, revert_reason) = match ctx_result.result {
+        TxResult::Revert(ref err) => {
+            let reason = String::from_utf8(ctx_result.output.to_vec()).ok();
+            (Some(err.to_string()), reason)
+        }
+        _ => (None, None),
+    };
+
+    (gas_used, output, error, revert_reason)
 }
