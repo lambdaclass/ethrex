@@ -73,7 +73,7 @@ impl GeneralizedDatabase {
 
     // ================== Account related functions =====================
     /// Loads account
-    /// If it's the first time it's loaded store it in `initial_accounts_state` and also cache it in `current_accounts_state` for making changes to it
+    /// If it's the first time it's loaded store it in `initial_accounts_state` and in `previous_tx_accounts_state`. Also cache it in `current_accounts_state` for making changes to it
     fn load_account(&mut self, address: Address) -> Result<&mut LevmAccount, InternalError> {
         match self.current_accounts_state.entry(address) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
