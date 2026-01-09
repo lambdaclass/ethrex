@@ -48,6 +48,12 @@ codegen-units = 1
 inherits = "release"
 debug = 2
 
+[profile.pgo-gen]
+inherits = "release"
+
+[profile.pgo-use]
+inherits = "release"
+
 [workspace.dependencies]
 ethrex-blockchain = { path = "./crates/blockchain", default-features = false }
 ethrex-common = { path = "./crates/common", default-features = false }
