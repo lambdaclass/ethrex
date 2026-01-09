@@ -342,12 +342,9 @@ contract OnChainProposer is
         uint256 batchNumber,
         //risc0
         bytes memory risc0BlockProof,
-        bytes calldata risc0Journal,
         //sp1
         bytes calldata sp1PublicValues,
-        bytes memory sp1ProofBytes,
         //tdx
-        bytes calldata tdxPublicValues,
         bytes memory tdxSignature
     ) external {
         require(
@@ -382,17 +379,10 @@ contract OnChainProposer is
             );
         }
 
+        // Reconstruct public inputs from commitments
+        bytes memory publicInputs = _getPublicInputsFromCommitment(batchNumber);
+
         if (REQUIRE_RISC0_PROOF) {
-            // If the verification fails, it will revert.
-            string memory reason = _verifyPublicData(batchNumber, risc0Journal);
-            if (bytes(reason).length != 0) {
-                revert(
-                    string.concat(
-                        "OnChainProposer: Invalid RISC0 proof: ",
-                        reason
-                    )
-                );
-            }
             bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
             bytes32 risc0Vk = verificationKeys[batchCommitHash][
                 RISC0_VERIFIER_ID
@@ -401,7 +391,7 @@ contract OnChainProposer is
                 IRiscZeroVerifier(RISC0_VERIFIER_ADDRESS).verify(
                     risc0BlockProof,
                     risc0Vk,
-                    sha256(risc0Journal)
+                    sha256(publicInputs)
                 )
             {} catch {
                 revert(
@@ -411,25 +401,12 @@ contract OnChainProposer is
         }
 
         if (REQUIRE_SP1_PROOF) {
-            // If the verification fails, it will revert.
-            string memory reason = _verifyPublicData(
-                batchNumber,
-                sp1PublicValues
-            );
-            if (bytes(reason).length != 0) {
-                revert(
-                    string.concat(
-                        "OnChainProposer: Invalid SP1 proof: ",
-                        reason
-                    )
-                );
-            }
             bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
             bytes32 sp1Vk = verificationKeys[batchCommitHash][SP1_VERIFIER_ID];
             try
                 ISP1Verifier(SP1_VERIFIER_ADDRESS).verifyProof(
                     sp1Vk,
-                    sp1PublicValues,
+                    publicInputs,
                     sp1ProofBytes
                 )
             {} catch {
@@ -440,22 +417,9 @@ contract OnChainProposer is
         }
 
         if (REQUIRE_TDX_PROOF) {
-            // If the verification fails, it will revert.
-            string memory reason = _verifyPublicData(
-                batchNumber,
-                tdxPublicValues
-            );
-            if (bytes(reason).length != 0) {
-                revert(
-                    string.concat(
-                        "OnChainProposer: Invalid TDX proof: ",
-                        reason
-                    )
-                );
-            }
             try
                 ITDXVerifier(TDX_VERIFIER_ADDRESS).verify(
-                    tdxPublicValues,
+                    publicInputs,
                     tdxSignature
                 )
             {} catch {
@@ -476,7 +440,7 @@ contract OnChainProposer is
     /// @inheritdoc IOnChainProposer
     function verifyBatchesAligned(
         uint256 firstBatchNumber,
-        bytes[] calldata publicInputsList,
+        uint256 lastBatchNumber,
         bytes32[][] calldata sp1MerkleProofsList,
         bytes32[][] calldata risc0MerkleProofsList
     ) external override {
@@ -488,23 +452,29 @@ contract OnChainProposer is
             firstBatchNumber == lastVerifiedBatch + 1,
             "OnChainProposer: incorrect first batch number"
         );
+        require(
+            lastBatchNumber <= lastCommittedBatch,
+            "OnChainProposer: last batch number exceeds last committed batch"
+        );
+
+        uint256 batchesToVerify = (lastBatchNumber - firstBatchNumber) + 1;
 
         if (REQUIRE_SP1_PROOF) {
             require(
-                publicInputsList.length == sp1MerkleProofsList.length,
+                batchesToVerify == sp1MerkleProofsList.length,
                 "OnChainProposer: SP1 input/proof array length mismatch"
             );
         }
         if (REQUIRE_RISC0_PROOF) {
             require(
-                publicInputsList.length == risc0MerkleProofsList.length,
+                batchesToVerify == risc0MerkleProofsList.length,
                 "OnChainProposer: Risc0 input/proof array length mismatch"
             );
         }
 
         uint256 batchNumber = firstBatchNumber;
 
-        for (uint256 i = 0; i < publicInputsList.length; i++) {
+        for (uint256 i = 0; i < batchesToVerify; i++) {
             require(
                 batchCommitments[batchNumber].newStateRoot != bytes32(0),
                 "OnChainProposer: cannot verify an uncommitted batch"
@@ -523,19 +493,10 @@ contract OnChainProposer is
                 );
             }
 
-            // Verify public data for the batch
-            string memory reason = _verifyPublicData(
-                batchNumber,
-                publicInputsList[i]
+            // Reconstruct public inputs from commitments
+            bytes memory publicInputs = _getPublicInputsFromCommitment(
+                batchNumber
             );
-            if (bytes(reason).length != 0) {
-                revert(
-                    string.concat(
-                        "OnChainProposer: Invalid ALIGNED proof: ",
-                        reason
-                    )
-                );
-            }
 
             if (REQUIRE_SP1_PROOF) {
                 _verifyProofInclusionAligned(
@@ -543,7 +504,7 @@ contract OnChainProposer is
                     verificationKeys[batchCommitments[batchNumber].commitHash][
                         SP1_VERIFIER_ID
                     ],
-                    publicInputsList[i]
+                    publicInputs
                 );
             }
 
@@ -553,7 +514,7 @@ contract OnChainProposer is
                     verificationKeys[batchCommitments[batchNumber].commitHash][
                         RISC0_VERIFIER_ID
                     ],
-                    publicInputsList[i]
+                    publicInputs
                 );
             }
 
@@ -567,62 +528,92 @@ contract OnChainProposer is
         emit BatchVerified(lastVerifiedBatch);
     }
 
-    function _verifyPublicData(
-        uint256 batchNumber,
-        bytes calldata publicData
-    ) internal view returns (string memory) {
-        if (publicData.length != 256) {
-            return "invalid public data length";
-        }
-        bytes32 initialStateRoot = bytes32(publicData[0:32]);
-        if (
-            batchCommitments[lastVerifiedBatch].newStateRoot != initialStateRoot
-        ) {
-            return
-                "initial state root public inputs don't match with initial state root";
-        }
-        bytes32 finalStateRoot = bytes32(publicData[32:64]);
-        if (batchCommitments[batchNumber].newStateRoot != finalStateRoot) {
-            return
-                "final state root public inputs don't match with final state root";
-        }
-        bytes32 withdrawalsMerkleRoot = bytes32(publicData[64:96]);
-        if (
-            batchCommitments[batchNumber].withdrawalsLogsMerkleRoot !=
-            withdrawalsMerkleRoot
-        ) {
-            return
-                "withdrawals public inputs don't match with committed withdrawals";
-        }
-        bytes32 privilegedTransactionsHash = bytes32(publicData[96:128]);
-        if (
-            batchCommitments[batchNumber]
-                .processedPrivilegedTransactionsRollingHash !=
-            privilegedTransactionsHash
-        ) {
-            return
-                "privileged transactions hash public input does not match with committed transactions";
-        }
-        bytes32 lastBlockHash = bytes32(publicData[128:160]);
-        if (batchCommitments[batchNumber].lastBlockHash != lastBlockHash) {
-            return
-                "last block hash public inputs don't match with last block hash";
-        }
-        uint256 chainId = uint256(bytes32(publicData[160:182]));
-        if (chainId != CHAIN_ID) {
-            return "given chain id does not correspond to this network";
-        }
-        uint256 nonPrivilegedTransactions = uint256(
-            bytes32(publicData[192:224])
+    /// @notice Constructs public inputs from committed batch data for proof verification.
+    /// @dev Public inputs structure:
+    /// Fixed-size fields (256 bytes):
+    /// - bytes 0-32: Initial state root (from the last verified batch)
+    /// - bytes 32-64: Final state root (from the current batch)
+    /// - bytes 64-96: Withdrawals merkle root (from the current batch)
+    /// - bytes 96-128: Processed L1 messages rolling hash (from the current batch)
+    /// - bytes 128-160: Blob versioned hash (from the current batch)
+    /// - bytes 160-192: Last block hash (from the current batch)
+    /// - bytes 192-224: Chain ID
+    /// - bytes 224-256: Non-privileged transactions count (from the current batch)
+    /// Variable-size fields:
+    /// - For each targeted chain in balance diffs:
+    ///   - bytes: Chain ID (32 bytes)
+    ///   - bytes: Value (32 bytes)
+    ///   - For each asset diff in the targeted chain:
+    ///     - bytes: Token L1 address (20 bytes)
+    ///     - bytes: Token L2 address (20 bytes)
+    ///     - bytes: Destination Token L2 address (20 bytes)
+    ///     - bytes: Value (32 bytes)
+    ///   - For each message hash in the targeted chain:
+    ///     - bytes: Message hash (32 bytes)
+    /// - For each L2 in message rolling hash:
+    ///   - bytes: Chain ID (32 bytes)
+    ///   - bytes: Rolling hash (32 bytes)
+    /// @param batchNumber The batch number for which to construct public inputs.
+    /// @return publicInputs The constructed public inputs as a byte array.
+    function _getPublicInputsFromCommitment(
+        uint256 batchNumber
+    ) internal view returns (bytes memory) {
+        BatchCommitmentInfo memory currentBatch = batchCommitments[batchNumber];
+        ICommonBridge.BalanceDiff[] memory balanceDiffs = batchCommitments[
+            batchNumber
+        ].balanceDiffs;
+        uint256 targetedChainsCount = balanceDiffs.length;
+
+        bytes memory fixedSizeFields = bytes.concat(
+            batchCommitments[lastVerifiedBatch].newStateRoot,
+            currentBatch.newStateRoot,
+            currentBatch.withdrawalsLogsMerkleRoot,
+            currentBatch.processedPrivilegedTransactionsRollingHash,
+            currentBatch.stateDiffKZGVersionedHash,
+            currentBatch.lastBlockHash,
+            bytes32(CHAIN_ID),
+            bytes32(currentBatch.nonPrivilegedTransactionsCount)
         );
-        if (
-            batchCommitments[batchNumber].nonPrivilegedTransactions !=
-            nonPrivilegedTransactions
-        ) {
-            return
-                "non-privileged transactions public input does not match with committed transactions";
+
+        bytes memory variableSizeFields;
+        for (uint256 i = 0; i < targetedChainsCount; i++) {
+            variableSizeFields = bytes.concat(
+                variableSizeFields,
+                bytes32(balanceDiffs[i].chainId),
+                bytes32(balanceDiffs[i].value)
+            );
+            for (uint256 j = 0; j < balanceDiffs[i].assetDiffs.length; j++) {
+                variableSizeFields = bytes.concat(
+                    variableSizeFields,
+                    bytes20(balanceDiffs[i].assetDiffs[j].tokenL1),
+                    bytes20(balanceDiffs[i].assetDiffs[j].tokenL2),
+                    bytes20(balanceDiffs[i].assetDiffs[j].destTokenL2),
+                    bytes32(balanceDiffs[i].assetDiffs[j].value)
+                );
+            }
+            for (
+                uint256 j = 0;
+                j < balanceDiffs[i].message_hashes.length;
+                j++
+            ) {
+                variableSizeFields = bytes.concat(
+                    variableSizeFields,
+                    balanceDiffs[i].message_hashes[j]
+                );
+            }
         }
-        return "";
+        for (
+            uint256 k = 0;
+            k < currentBatch.l2InMessageRollingHashes.length;
+            k++
+        ) {
+            variableSizeFields = bytes.concat(
+                variableSizeFields,
+                bytes32(currentBatch.l2InMessageRollingHashes[k].chainId),
+                currentBatch.l2InMessageRollingHashes[k].rollingHash
+            );
+        }
+        return bytes.concat(fixedSizeFields, variableSizeFields);
     }
 
     function _verifyProofInclusionAligned(
