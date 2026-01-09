@@ -12,7 +12,8 @@ use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIM
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{
-    EMPTY_TRIE_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, MIN_BASE_FEE_PER_BLOB_GAS,
+    EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE,
+    MIN_BASE_FEE_PER_BLOB_GAS,
 };
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
@@ -40,7 +41,7 @@ use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::mpsc::Sender;
@@ -164,7 +165,16 @@ struct CollectedStorageMsg {
     nodes: Vec<TrieNode>,
 }
 
-#[derive(Default)]
+/// Used to track if an account is plain (no storage)
+#[derive(Debug, PartialEq, Eq)]
+enum PlainAccountStatus {
+    /// The account was seen, and seems plain so far
+    Ok,
+    /// The account was seen as non-plain at least once
+    Tainted,
+}
+
+#[derive(Clone, Default)]
 struct PreMerkelizedAccountState {
     info: Option<AccountInfo>,
     storage_root: Option<Box<BranchNode>>,
@@ -358,6 +368,7 @@ impl Blockchain {
 
         let mut account_state: FxHashMap<H256, PreMerkelizedAccountState> = Default::default();
         let mut code_updates: Vec<(H256, Code)> = vec![];
+        let mut plain_account_status: FxHashMap<H256, PlainAccountStatus> = Default::default();
 
         for updates in rx {
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
@@ -365,6 +376,11 @@ impl Blockchain {
             for update in updates {
                 let hashed_address = keccak(update.address);
                 let account_bucket = hashed_address.as_fixed_bytes()[0] >> 4;
+
+                if !update.added_storage.is_empty() || update.removed_storage || update.removed {
+                    plain_account_status.insert(hashed_address, PlainAccountStatus::Tainted);
+                }
+
                 workers_tx[account_bucket as usize]
                     .send(MerklizationRequest::LoadAccount(hashed_address))
                     .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
@@ -398,6 +414,18 @@ impl Blockchain {
                         info: Some(Default::default()),
                         ..Default::default()
                     };
+                }
+                if *plain_account_status
+                    .entry(hashed_address)
+                    .or_insert(PlainAccountStatus::Ok)
+                    != PlainAccountStatus::Tainted
+                {
+                    workers_tx[account_bucket as usize]
+                        .send(MerklizationRequest::MerklizeAccount {
+                            hashed_account: hashed_address,
+                            state: state.clone(),
+                        })
+                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                 }
             }
         }
@@ -434,6 +462,9 @@ impl Blockchain {
         let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
 
         for (hashed_account, state) in account_state {
+            if plain_account_status.get(&hashed_account) == Some(&PlainAccountStatus::Ok) {
+                continue;
+            }
             let bucket = hashed_account.as_fixed_bytes()[0] >> 4;
             workers_tx[bucket as usize]
                 .send(MerklizationRequest::MerklizeAccount {
