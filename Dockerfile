@@ -57,10 +57,25 @@ COPY fixtures ./fixtures
 COPY .git ./.git
 COPY .cargo/ ./.cargo
 
-# Optional build flags
+# Optional build flags (e.g., --profile release-with-debug-assertions)
+# If BUILD_FLAGS contains --profile, we use it as-is, otherwise default to --release
 ARG BUILD_FLAGS=""
 ENV COMPILE_CONTRACTS=true
-RUN cargo build --release $BUILD_FLAGS
+RUN if echo "$BUILD_FLAGS" | grep -q -- '--profile'; then \
+        cargo build $BUILD_FLAGS; \
+    else \
+        cargo build --release $BUILD_FLAGS; \
+    fi
+
+# Determine the correct target directory based on profile
+# Extract profile name from BUILD_FLAGS if present, otherwise use "release"
+RUN mkdir -p /ethrex/bin && \
+    if echo "$BUILD_FLAGS" | grep -q -- '--profile'; then \
+        PROFILE=$(echo "$BUILD_FLAGS" | sed -n 's/.*--profile[= ]\([^ ]*\).*/\1/p'); \
+        cp /ethrex/target/${PROFILE}/ethrex /ethrex/bin/ethrex; \
+    else \
+        cp /ethrex/target/release/ethrex /ethrex/bin/ethrex; \
+    fi
 
 # --- Final Image ---
 # Copy the ethrex binary into a minimalist image to reduce bloat size.
@@ -71,7 +86,7 @@ WORKDIR /usr/local/bin
 RUN apt-get update && apt-get install -y --no-install-recommends libssl3
 
 COPY cmd/ethrex/networks ./cmd/ethrex/networks
-COPY --from=builder /ethrex/target/release/ethrex .
+COPY --from=builder /ethrex/bin/ethrex .
 
 # Common ports:
 # -  8545: RPC
