@@ -356,7 +356,6 @@ impl Blockchain {
             workers_tx.push(tx);
         }
 
-        let mut account_updates = Vec::new();
         let mut account_state: FxHashMap<H256, PreMerkelizedAccountState> = Default::default();
         let mut code_updates: Vec<(H256, Code)> = vec![];
 
@@ -369,8 +368,6 @@ impl Blockchain {
                 workers_tx[account_bucket as usize]
                     .send(MerklizationRequest::LoadAccount(hashed_address))
                     .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-
-                account_updates.push(update.clone());
                 if update.removed_storage | update.removed {
                     for tx in &workers_tx {
                         tx.send(MerklizationRequest::Delete(hashed_address))
