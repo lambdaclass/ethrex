@@ -185,6 +185,7 @@ pub struct BlockchainOptions {
     pub perf_logs_enabled: bool,
     /// Blockchain type (L1 or L2).
     pub r#type: BlockchainType,
+    pub generate_witness: bool,
 }
 
 impl Default for BlockchainOptions {
@@ -193,6 +194,7 @@ impl Default for BlockchainOptions {
             max_mempool_size: MAX_MEMPOOL_SIZE_DEFAULT,
             perf_logs_enabled: false,
             r#type: BlockchainType::default(),
+            generate_witness: false,
         }
     }
 }
@@ -284,7 +286,7 @@ impl Blockchain {
         &self,
         block: &Block,
         parent_header: &BlockHeader,
-        mut vm: Evm,
+        vm: &mut Evm,
     ) -> Result<
         (
             BlockExecutionResult,
@@ -942,14 +944,12 @@ impl Blockchain {
             }
 
             // Apply account updates to the trie recording all the necessary nodes to do so
-            let (storage_tries_after_update, account_updates_list) = self
-                .storage
-                .apply_account_updates_from_trie_with_witness(
+            let (storage_tries_after_update, account_updates_list) =
+                self.storage.apply_account_updates_from_trie_with_witness(
                     trie,
                     &account_updates,
                     used_storage_tries,
-                )
-                .await?;
+                )?;
 
             // We cannot ensure that the users of this function have the necessary
             // state stored, so in order for it to not assume anything, we update
@@ -1103,6 +1103,248 @@ impl Blockchain {
         })
     }
 
+    pub fn generate_witness_from_account_updates(
+        &self,
+        account_updates: Vec<AccountUpdate>,
+        block: &Block,
+        parent_header: BlockHeader,
+        logger: &DatabaseLogger,
+    ) -> Result<ExecutionWitness, ChainError> {
+        // Get state at previous block
+        let trie = self
+            .storage
+            .state_trie(parent_header.hash())
+            .map_err(|_| ChainError::ParentStateNotFound)?
+            .ok_or(ChainError::ParentStateNotFound)?;
+        let initial_state_root = trie.hash_no_commit();
+
+        let (trie_witness, trie) = TrieLogger::open_trie(trie);
+
+        let mut touched_account_storage_slots = BTreeMap::new();
+        // This will become the state trie + storage trie
+        let mut used_trie_nodes = Vec::new();
+
+        // Store the root node in case the block is empty and the witness does not record any nodes
+        let root_node = trie.root_node().map_err(|_| {
+            ChainError::WitnessGeneration("Failed to get root state node".to_string())
+        })?;
+
+        let mut codes = Vec::new();
+
+        for account_update in &account_updates {
+            touched_account_storage_slots.insert(
+                account_update.address,
+                account_update
+                    .added_storage
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<H256>>(),
+            );
+        }
+
+        // Get the used block hashes from the logger
+        let blockhash_opcode_references = logger
+            .block_hashes_accessed
+            .lock()
+            .map_err(|_e| ChainError::WitnessGeneration("Failed to get block hashes".to_string()))?
+            .clone();
+
+        // Access all the accounts needed for withdrawals
+        if let Some(withdrawals) = block.body.withdrawals.as_ref() {
+            for withdrawal in withdrawals {
+                trie.get(&hash_address(&withdrawal.address)).map_err(|_e| {
+                    ChainError::Custom("Failed to access account from trie".to_string())
+                })?;
+            }
+        }
+
+        let mut used_storage_tries = HashMap::new();
+
+        // Access all the accounts from the initial trie
+        // Record all the storage nodes for the initial state
+        for (account, acc_keys) in logger
+            .state_accessed
+            .lock()
+            .map_err(|_e| {
+                ChainError::WitnessGeneration("Failed to execute with witness".to_string())
+            })?
+            .iter()
+        {
+            // Access the account from the state trie to record the nodes used to access it
+            trie.get(&hash_address(account)).map_err(|_e| {
+                ChainError::WitnessGeneration("Failed to access account from trie".to_string())
+            })?;
+            // Get storage trie at before updates
+            if !acc_keys.is_empty()
+                && let Ok(Some(storage_trie)) =
+                    self.storage.storage_trie(parent_header.hash(), *account)
+            {
+                let (storage_trie_witness, storage_trie) = TrieLogger::open_trie(storage_trie);
+                // Access all the keys
+                for storage_key in acc_keys {
+                    let hashed_key = hash_key(storage_key);
+                    storage_trie.get(&hashed_key).map_err(|_e| {
+                        ChainError::WitnessGeneration("Failed to access storage key".to_string())
+                    })?;
+                }
+                // Store the tries to reuse when applying account updates
+                used_storage_tries.insert(*account, (storage_trie_witness, storage_trie));
+            }
+        }
+
+        // Store all the accessed evm bytecodes
+        for code_hash in logger
+            .code_accessed
+            .lock()
+            .map_err(|_e| {
+                ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
+            })?
+            .iter()
+        {
+            let code = self
+                .storage
+                .get_account_code(*code_hash)
+                .map_err(|_e| {
+                    ChainError::WitnessGeneration("Failed to get account code".to_string())
+                })?
+                .ok_or(ChainError::WitnessGeneration(
+                    "Failed to get account code".to_string(),
+                ))?;
+            codes.push(code.bytecode.to_vec());
+        }
+
+        // Apply account updates to the trie recording all the necessary nodes to do so
+        let (storage_tries_after_update, _account_updates_list) =
+            self.storage.apply_account_updates_from_trie_with_witness(
+                trie,
+                &account_updates,
+                used_storage_tries,
+            )?;
+
+        for (address, (witness, _storage_trie)) in storage_tries_after_update {
+            let mut witness = witness.lock().map_err(|_| {
+                ChainError::WitnessGeneration("Failed to lock storage trie witness".to_string())
+            })?;
+            let witness = std::mem::take(&mut *witness);
+            let witness = witness.into_values().collect::<Vec<_>>();
+            used_trie_nodes.extend_from_slice(&witness);
+            touched_account_storage_slots.entry(address).or_default();
+        }
+
+        used_trie_nodes.extend_from_slice(&Vec::from_iter(
+            trie_witness
+                .lock()
+                .map_err(|_| {
+                    ChainError::WitnessGeneration("Failed to lock state trie witness".to_string())
+                })?
+                .clone()
+                .into_values(),
+        ));
+
+        // If the witness is empty at least try to store the root
+        if used_trie_nodes.is_empty()
+            && let Some(root) = root_node
+        {
+            used_trie_nodes.push((*root).clone());
+        }
+
+        // - We now need necessary block headers, these go from the first block referenced (via BLOCKHASH or just the first block to execute) up to the parent of the last block to execute.
+        let mut block_headers_bytes = Vec::new();
+
+        let first_blockhash_opcode_number = blockhash_opcode_references.keys().min();
+        let first_needed_block_hash = first_blockhash_opcode_number
+            .and_then(|n| {
+                (*n < block.header.number.saturating_sub(1))
+                    .then(|| blockhash_opcode_references.get(n))?
+                    .copied()
+            })
+            .unwrap_or(block.header.parent_hash);
+
+        let mut current_header = block.header.clone();
+
+        // Headers from latest - 1 until we reach first block header we need.
+        // We do it this way because we want to fetch headers by hash, not by number
+        while current_header.hash() != first_needed_block_hash {
+            let parent_hash = current_header.parent_hash;
+            let current_number = current_header.number - 1;
+
+            current_header = self
+                .storage
+                .get_block_header_by_hash(parent_hash)?
+                .ok_or_else(|| {
+                    ChainError::WitnessGeneration(format!(
+                        "Failed to get block {current_number} header"
+                    ))
+                })?;
+
+            block_headers_bytes.push(current_header.encode_to_vec());
+        }
+
+        // Create a list of all read/write addresses and storage slots
+        let mut keys = Vec::new();
+        for (address, touched_storage_slots) in touched_account_storage_slots {
+            keys.push(address.as_bytes().to_vec());
+            for slot in touched_storage_slots.iter() {
+                keys.push(slot.as_bytes().to_vec());
+            }
+        }
+
+        // Get initial state trie root and embed the rest of the trie into it
+        let nodes: BTreeMap<H256, Node> = used_trie_nodes
+            .into_iter()
+            .map(|node| (node.compute_hash().finalize(), node))
+            .collect();
+        let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
+            Trie::get_embedded_root(&nodes, initial_state_root)?
+        {
+            Some((*state_trie_root).clone())
+        } else {
+            None
+        };
+
+        // Get all initial storage trie roots and embed the rest of the trie into it
+        let state_trie = if let Some(state_trie_root) = &state_trie_root {
+            Trie::new_temp_with_root(state_trie_root.clone().into())
+        } else {
+            Trie::new_temp()
+        };
+        let mut storage_trie_roots = BTreeMap::new();
+        for key in &keys {
+            if key.len() != 20 {
+                continue; // not an address
+            }
+            let address = Address::from_slice(key);
+            let hashed_address = hash_address(&address);
+            let Some(encoded_account) = state_trie.get(&hashed_address)? else {
+                continue; // empty account, doesn't have a storage trie
+            };
+            let storage_root_hash = AccountState::decode(&encoded_account)?.storage_root;
+            if storage_root_hash == *EMPTY_TRIE_HASH {
+                continue; // empty storage trie
+            }
+            if !nodes.contains_key(&storage_root_hash) {
+                continue; // storage trie isn't relevant to this execution
+            }
+            let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
+            let NodeRef::Node(node, _) = node else {
+                return Err(ChainError::Custom(
+                    "execution witness does not contain non-empty storage trie".to_string(),
+                ));
+            };
+            storage_trie_roots.insert(address, (*node).clone());
+        }
+
+        Ok(ExecutionWitness {
+            codes,
+            block_headers_bytes,
+            first_block_number: parent_header.number,
+            chain_config: self.storage.get_chain_config(),
+            state_trie_root,
+            storage_trie_roots,
+            keys,
+        })
+    }
+
     #[instrument(
         level = "trace",
         name = "Block DB update",
@@ -1176,11 +1418,34 @@ impl Blockchain {
             return Err(ChainError::ParentNotFound);
         };
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
-        let vm = self.new_evm(vm_db)?;
+        let (mut vm, logger) = if self.options.generate_witness && self.is_synced() {
+            // If witness generation is enabled, we wrap the db with a logger
+            // to avoid executing the block more than once.
+            let vm_db: DynVmDatabase = Box::new(StoreVmDatabase::new(
+                self.storage.clone(),
+                parent_header.clone(),
+            )?);
+
+            let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
+
+            let vm = match self.options.r#type.clone() {
+                BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
+                BlockchainType::L2(l2_config) => Evm::new_from_db_for_l2(
+                    logger.clone(),
+                    *l2_config.fee_config.read().map_err(|_| {
+                        EvmError::Custom("Fee config lock was poisoned".to_string())
+                    })?,
+                ),
+            };
+            (vm, Some(logger))
+        } else {
+            let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
+            let vm = self.new_evm(vm_db)?;
+            (vm, None)
+        };
 
         let (res, account_updates_list, merkle_queue_length, instants) =
-            self.execute_block_pipeline(&block, &parent_header, vm)?;
+            self.execute_block_pipeline(&block, &parent_header, &mut vm)?;
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -1189,7 +1454,24 @@ impl Blockchain {
             block.body.transactions.len(),
         );
 
+        if let Some(logger) = logger
+            && self.options.generate_witness
+            && self.is_synced()
+        {
+            let block_hash = block.hash();
+            let account_updates = vm.get_state_transitions()?;
+            let witness = self.generate_witness_from_account_updates(
+                account_updates,
+                &block,
+                parent_header,
+                &logger,
+            )?;
+            self.storage
+                .store_witness(block_hash, block_number, witness)?;
+        };
+
         let result = self.store_block(block, account_updates_list, res);
+
         let stored = Instant::now();
 
         let instants = std::array::from_fn(move |i| {
@@ -1199,6 +1481,7 @@ impl Blockchain {
                 stored
             }
         });
+
         if self.options.perf_logs_enabled {
             Self::print_add_block_pipeline_logs(
                 gas_used,
@@ -1209,6 +1492,7 @@ impl Blockchain {
                 instants,
             );
         }
+
         result
     }
 

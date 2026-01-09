@@ -280,6 +280,14 @@ pub struct Options {
         help_heading = "Block building options"
     )]
     pub gas_limit: u64,
+    #[arg(
+        long = "generate-witness",
+        action = ArgAction::SetTrue,
+        default_value = "false",
+        help = "Once synced, generates execution witnesses upon receiving newPayload messages and stores them in local storage",
+        help_heading = "Node options"
+    )]
+    pub generate_witness: bool,
 }
 
 impl Options {
@@ -355,6 +363,7 @@ impl Default for Options {
             lookup_interval: Default::default(),
             extra_data: get_minimal_client_version(),
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
+            generate_witness: false,
         }
     }
 }

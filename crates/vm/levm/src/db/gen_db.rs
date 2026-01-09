@@ -25,8 +25,12 @@ pub type CacheDB = FxHashMap<Address, LevmAccount>;
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
+    // Holds the current state of accounts being modified during execution
     pub current_accounts_state: CacheDB,
+    // Holds the initial state of accounts before the block execution started, used for calculating state transitions
     pub initial_accounts_state: CacheDB,
+    // Holds the state of accounts before the current transaction started, used for calculating state transitions per transaction (e.g. pipeline)
+    pub previous_tx_accounts_state: CacheDB,
     pub codes: FxHashMap<H256, Code>,
     pub tx_backup: Option<CallFrameBackup>,
 }
@@ -37,6 +41,7 @@ impl GeneralizedDatabase {
             store,
             current_accounts_state: Default::default(),
             initial_accounts_state: Default::default(),
+            previous_tx_accounts_state: Default::default(),
             tx_backup: None,
             codes: Default::default(),
         }
@@ -59,7 +64,8 @@ impl GeneralizedDatabase {
         Self {
             store,
             current_accounts_state: levm_accounts.clone(),
-            initial_accounts_state: levm_accounts,
+            initial_accounts_state: levm_accounts.clone(),
+            previous_tx_accounts_state: levm_accounts,
             tx_backup: None,
             codes,
         }
@@ -67,7 +73,7 @@ impl GeneralizedDatabase {
 
     // ================== Account related functions =====================
     /// Loads account
-    /// If it's the first time it's loaded store it in `initial_accounts_state` and also cache it in `current_accounts_state` for making changes to it
+    /// If it's the first time it's loaded store it in `initial_accounts_state` and in `previous_tx_accounts_state`. Also cache it in `current_accounts_state` for making changes to it
     fn load_account(&mut self, address: Address) -> Result<&mut LevmAccount, InternalError> {
         match self.current_accounts_state.entry(address) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
@@ -75,6 +81,8 @@ impl GeneralizedDatabase {
                 let state = self.store.get_account_state(address)?;
                 let account = LevmAccount::from(state);
                 self.initial_accounts_state.insert(address, account.clone());
+                self.previous_tx_accounts_state
+                    .insert(address, account.clone());
                 Ok(entry.insert(account))
             }
         }
@@ -112,25 +120,30 @@ impl GeneralizedDatabase {
         self.get_code(code_hash)
     }
 
-    /// Gets storage slot from Database, storing in initial_accounts_state for efficiency when getting AccountUpdates.
+    /// Gets storage slot from Database, storing in initial_accounts_state and previous_tx_accounts_state for efficiency when getting AccountUpdates.
     fn get_value_from_database(
         &mut self,
         address: Address,
         key: H256,
     ) -> Result<U256, InternalError> {
         let value = self.store.get_storage_value(address, key)?;
-        // Account must already be in initial_accounts_state
-        match self.initial_accounts_state.get_mut(&address) {
-            Some(account) => {
-                account.storage.insert(key, value);
-            }
-            None => {
-                // If we are fetching the storage of an account it means that we previously fetched the account from database before.
-                return Err(InternalError::msg(
-                    "Account not found in InMemoryDB when fetching storage",
-                ));
-            }
-        }
+
+        self.initial_accounts_state
+            .get_mut(&address)
+            .ok_or_else(|| {
+                InternalError::msg("Account not found in InMemoryDB when fetching storage")
+            })?
+            .storage
+            .insert(key, value);
+
+        self.previous_tx_accounts_state
+            .get_mut(&address)
+            .ok_or_else(|| {
+                InternalError::msg("Account not found in InMemoryDB when fetching storage")
+            })?
+            .storage
+            .insert(key, value);
+
         Ok(value)
     }
 
@@ -158,7 +171,6 @@ impl GeneralizedDatabase {
                 // Skip processing account that we know wasn't mutably accessed during execution
                 continue;
             }
-            // In case the account is not in immutable_cache (rare) we search for it in the actual database.
             let initial_state_account =
                 self.initial_accounts_state.get(address).ok_or_else(|| {
                     VMError::Internal(InternalError::Custom(format!(
@@ -257,13 +269,15 @@ impl GeneralizedDatabase {
                 // Skip processing account that we know wasn't mutably accessed during execution
                 continue;
             }
-            // [LIE] In case the account is not in immutable_cache (rare) we search for it in the actual database.
+
             let initial_state_account =
-                self.initial_accounts_state.get(address).ok_or_else(|| {
-                    VMError::Internal(InternalError::Custom(format!(
-                        "Failed to get account {address} from immutable cache",
-                    )))
-                })?;
+                self.previous_tx_accounts_state
+                    .get(address)
+                    .ok_or_else(|| {
+                        VMError::Internal(InternalError::Custom(format!(
+                            "Failed to get account {address} from immutable cache",
+                        )))
+                    })?;
 
             let mut acc_info_updated = false;
             let mut storage_updated = false;
@@ -340,7 +354,7 @@ impl GeneralizedDatabase {
 
             account_updates.push(account_update);
         }
-        self.initial_accounts_state.extend(
+        self.previous_tx_accounts_state.extend(
             self.current_accounts_state
                 .iter()
                 .map(|(k, v)| (*k, v.clone())),

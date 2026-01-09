@@ -214,6 +214,7 @@ pub async fn init_l2(
         max_mempool_size: opts.node_opts.mempool_max_size,
         r#type: BlockchainType::L2(l2_config),
         perf_logs_enabled: true,
+        generate_witness: opts.node_opts.generate_witness,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
