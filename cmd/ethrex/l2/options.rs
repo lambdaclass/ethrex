@@ -85,8 +85,9 @@ pub struct SequencerOptions {
     #[arg(
         long = "builder.max-blobs",
         value_name = "MAX_BLOBS",
-        help = "EIP-7872: Maximum blobs per block for local building. Defaults to protocol max.",
-        help_heading = "Block building options"
+        help = "EIP-7872: Maximum blobs per block for local building. Minimum of 1. Defaults to protocol max.",
+        help_heading = "Block building options",
+        value_parser = clap::value_parser!(u32).range(1..)
     )]
     pub max_blobs_per_block: Option<u32>,
     #[arg(

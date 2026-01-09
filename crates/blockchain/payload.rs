@@ -489,7 +489,7 @@ impl Blockchain {
     }
 
     /// EIP-7872: Computes effective max blobs per block.
-    /// Returns min(protocol_max, user_configured_max), with a floor of 1.
+    /// Returns min(protocol_max, user_configured_max).
     fn effective_max_blobs(&self, context: &PayloadBuildContext) -> usize {
         let protocol_max = context
             .chain_config()
@@ -497,7 +497,7 @@ impl Blockchain {
             .map(|schedule| schedule.max)
             .unwrap_or_default();
         match self.options.max_blobs_per_block {
-            Some(user_max) => protocol_max.min(user_max).max(1) as usize,
+            Some(user_max) => protocol_max.min(user_max) as usize,
             None => protocol_max as usize,
         }
     }
