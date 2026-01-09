@@ -1,4 +1,4 @@
-use prometheus::{CounterVec, HistogramVec, register_counter_vec, register_histogram_vec};
+use prometheus::{CounterVec, HistogramOpts, HistogramVec, register_counter_vec, register_histogram_vec};
 use std::{future::Future, sync::LazyLock};
 
 pub static METRICS_RPC_REQUEST_OUTCOMES: LazyLock<CounterVec> =
@@ -6,6 +6,9 @@ pub static METRICS_RPC_REQUEST_OUTCOMES: LazyLock<CounterVec> =
 
 pub static METRICS_RPC_DURATION: LazyLock<HistogramVec> =
     LazyLock::new(initialize_rpc_duration_histogram);
+
+pub static METRICS_RPC_DURATION_NEWPAYLOAD: LazyLock<HistogramVec> =
+    LazyLock::new(initialize_rpc_duration_newpayload_histogram);
 
 // Metrics defined in this module register into the Prometheus default registry.
 // The metrics API exposes them by calling `gather_default_metrics()`.
@@ -26,6 +29,26 @@ fn initialize_rpc_duration_histogram() -> HistogramVec {
         &["namespace", "method"],
     )
     .unwrap()
+}
+
+fn initialize_rpc_duration_newpayload_histogram() -> HistogramVec {
+    let opts = HistogramOpts::new(
+        "rpc_request_duration_newpayload_seconds",
+        "Histogram of RPC request handling duration for newPayload methods partitioned by namespace and method",
+    )
+    .buckets({
+        let mut buckets = vec![0.0];
+        // Fine buckets from 0.01s to 0.7s (step 0.01s, 70 buckets: 0.01, 0.02, ..., 0.7)
+        buckets.extend(prometheus::linear_buckets(0.01, 0.01, 70).unwrap());
+        // Coarser buckets from 0.8s to 3.0s (step 0.1s, 23 buckets: 0.8, 0.9, ..., 3.0)
+        buckets.extend(prometheus::linear_buckets(0.8, 0.1, 23).unwrap());
+        // Higher buckets for rare outliers
+        buckets.extend(vec![5.0, 10.0]);
+        buckets
+    });
+    let histogram = HistogramVec::new(opts, &["namespace", "method"]).unwrap();
+    prometheus::register(Box::new(histogram.clone())).unwrap();
+    histogram
 }
 
 /// Represents the outcome of an RPC request when recording metrics.
@@ -60,6 +83,7 @@ pub fn record_rpc_outcome(namespace: &str, method: &str, outcome: RpcOutcome) {
 pub fn initialize_rpc_metrics() {
     METRICS_RPC_REQUEST_OUTCOMES.reset();
     METRICS_RPC_DURATION.reset();
+    METRICS_RPC_DURATION_NEWPAYLOAD.reset();
 }
 
 /// Records the duration of an async operation in the RPC request duration histogram.
@@ -75,7 +99,12 @@ pub async fn record_async_duration<Fut, T>(namespace: &str, method: &str, future
 where
     Fut: Future<Output = T>,
 {
-    let timer = METRICS_RPC_DURATION
+    let histogram = if namespace == "engine" && method.starts_with("newPayload") {
+        &METRICS_RPC_DURATION_NEWPAYLOAD
+    } else {
+        &METRICS_RPC_DURATION
+    };
+    let timer = histogram
         .with_label_values(&[namespace, method])
         .start_timer();
 
