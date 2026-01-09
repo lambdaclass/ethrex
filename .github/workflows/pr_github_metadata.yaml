@@ -1,6 +1,7 @@
 name: PR Github Metadata
 
 on:
+  workflow_dispatch:
   pull_request:
     types: [opened, edited, reopened]
 
