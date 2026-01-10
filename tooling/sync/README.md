@@ -131,7 +131,7 @@ The `docker_monitor.py` script manages the sync lifecycle:
 5. **Failed**: Timeout, stall, or error detected
 
 The monitor checks for:
-- Sync timeout (default 4 hours)
+- Sync timeout (default 6 hours)
 - Block processing stall (10 minutes without new blocks)
 - Node unresponsiveness
 

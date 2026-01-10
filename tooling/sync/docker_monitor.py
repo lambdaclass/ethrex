@@ -24,7 +24,7 @@ if os.path.exists('.env'):
                 os.environ[key.strip()] = value.strip()
 
 CHECK_INTERVAL = 10
-SYNC_TIMEOUT = 4 * 60  # 4 hours default sync timeout (in minutes)
+SYNC_TIMEOUT = 6 * 60  # 6 hours default sync timeout (in minutes)
 BLOCK_PROCESSING_DURATION = 22 * 60 # Monitor block processing for 22 minutes
 BLOCK_STALL_TIMEOUT = 10 * 60  # Fail if no new block for 10 minutes
 STATUS_PRINT_INTERVAL = 30
