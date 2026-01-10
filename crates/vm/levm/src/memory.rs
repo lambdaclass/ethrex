@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::UnsafeCell, rc::Rc};
 
 use crate::{
     constants::{MEMORY_EXPANSION_QUOTIENT, WORD_SIZE_IN_BYTES_U64, WORD_SIZE_IN_BYTES_USIZE},
@@ -16,16 +16,30 @@ use ethrex_common::{
 /// When a new callframe is created a RC clone of this memory is made, with the current base offset at the length of the buffer at that time.
 #[derive(Debug, Clone)]
 pub struct Memory {
-    pub buffer: Rc<RefCell<Vec<u8>>>,
+    buffer: Rc<UnsafeCell<Vec<u8>>>,
     pub len: usize,
     current_base: usize,
 }
 
 impl Memory {
+    #[inline(always)]
+    #[expect(unsafe_code)]
+    fn buffer(&self) -> &Vec<u8> {
+        // SAFETY: Callers must ensure no mutable access is done while holding the ref
+        unsafe { &*self.buffer.get() }
+    }
+
+    #[inline(always)]
+    #[expect(unsafe_code)]
+    fn buffer_mut(&self) -> &mut Vec<u8> {
+        // SAFETY: Callers must ensure access is unique
+        unsafe { &mut *self.buffer.get() }
+    }
+
     #[inline]
     pub fn new() -> Self {
         Self {
-            buffer: Rc::new(RefCell::new(Vec::new())),
+            buffer: Rc::new(UnsafeCell::new(Vec::new())),
             len: 0,
             current_base: 0,
         }
@@ -35,7 +49,7 @@ impl Memory {
     #[inline]
     pub fn next_memory(&self) -> Memory {
         let mut mem = self.clone();
-        mem.current_base = mem.buffer.borrow().len();
+        mem.current_base = mem.buffer().len();
         mem.len = 0;
         mem
     }
@@ -47,8 +61,7 @@ impl Memory {
     pub fn clean_from_base(&self) {
         #[expect(unsafe_code)]
         unsafe {
-            self.buffer
-                .borrow_mut()
+            self.buffer_mut()
                 .get_unchecked_mut(self.current_base..(self.current_base.wrapping_add(self.len)))
                 .fill(0);
         }
@@ -86,15 +99,13 @@ impl Memory {
 
         self.len = new_memory_size;
 
-        let mut buffer = self.buffer.borrow_mut();
-
         #[allow(clippy::arithmetic_side_effects)]
         let real_new_memory_size = new_memory_size + self.current_base;
 
-        if real_new_memory_size > buffer.len() {
+        if real_new_memory_size > self.buffer_mut().len() {
             // when resizing, avoid really small resizes.
             let new_size = real_new_memory_size.next_multiple_of(64);
-            buffer.resize(new_size, 0);
+            self.buffer_mut().resize(new_size, 0);
         }
 
         Ok(())
@@ -112,12 +123,10 @@ impl Memory {
 
         let true_offset = offset.wrapping_add(self.current_base);
 
-        let buf = self.buffer.borrow();
-
         // SAFETY: resize already makes sure bounds are correct.
         #[allow(unsafe_code)]
         unsafe {
-            Ok(Bytes::copy_from_slice(buf.get_unchecked(
+            Ok(Bytes::copy_from_slice(self.buffer().get_unchecked(
                 true_offset..(true_offset.wrapping_add(size)),
             )))
         }
@@ -131,11 +140,11 @@ impl Memory {
 
         let true_offset = offset.checked_add(self.current_base).ok_or(OutOfBounds)?;
 
-        let buf = self.buffer.borrow();
         // SAFETY: resize already makes sure bounds are correct.
         #[allow(unsafe_code)]
         unsafe {
-            Ok(*buf
+            Ok(*self
+                .buffer()
                 .get_unchecked(true_offset..(true_offset.wrapping_add(N)))
                 .as_ptr()
                 .cast::<[u8; N]>())
@@ -153,14 +162,12 @@ impl Memory {
     ///
     /// Internal use.
     #[inline(always)]
-    fn store(&self, data: &[u8], at_offset: usize, data_size: usize) -> Result<(), VMError> {
+    fn store(&mut self, data: &[u8], at_offset: usize, data_size: usize) -> Result<(), VMError> {
         if data_size == 0 {
             return Ok(());
         }
 
         let real_offset = self.current_base.wrapping_add(at_offset);
-
-        let mut buffer = self.buffer.borrow_mut();
 
         let real_data_size = data_size.min(data.len());
 
@@ -170,7 +177,7 @@ impl Memory {
         unsafe {
             std::ptr::copy_nonoverlapping(
                 data.get_unchecked(..real_data_size).as_ptr(),
-                buffer
+                self.buffer_mut()
                     .get_unchecked_mut(real_offset..(real_offset + real_data_size))
                     .as_mut_ptr(),
                 real_data_size,
@@ -230,9 +237,7 @@ impl Memory {
         let true_to_offset = to_offset
             .checked_add(self.current_base)
             .ok_or(OutOfBounds)?;
-        let mut buffer = self.buffer.borrow_mut();
-
-        buffer.copy_within(
+        self.buffer_mut().copy_within(
             true_from_offset
                 ..(true_from_offset
                     .checked_add(size)
@@ -253,12 +258,10 @@ impl Memory {
         self.resize(new_size)?;
 
         let real_offset = self.current_base.wrapping_add(offset);
-        let mut buffer = self.buffer.borrow_mut();
-
         // resize ensures bounds are correct
         #[expect(unsafe_code)]
         unsafe {
-            buffer
+            self.buffer_mut()
                 .get_unchecked_mut(real_offset..(real_offset.wrapping_add(size)))
                 .fill(0);
         }
@@ -319,6 +322,7 @@ pub fn calculate_memory_size(offset: usize, size: usize) -> Result<usize, VMErro
 #[cfg(test)]
 mod test {
     #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+    use bytes::Bytes;
     use ethrex_common::U256;
 
     use crate::memory::Memory;
@@ -329,7 +333,10 @@ mod test {
 
         mem.store_data(0, &[1, 2, 3, 4, 0, 0, 0, 0, 0, 0]).unwrap();
 
-        assert_eq!(&mem.buffer.borrow()[0..10], &[1, 2, 3, 4, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            mem.load_range(0, 10).unwrap(),
+            Bytes::copy_from_slice(&[1, 2, 3, 4, 0, 0, 0, 0, 0, 0])
+        );
         assert_eq!(mem.len(), 32);
     }
 
