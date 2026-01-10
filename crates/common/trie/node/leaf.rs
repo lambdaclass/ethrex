@@ -37,8 +37,9 @@ impl LeafNode {
     }
 
     /// Returns the stored value if the given path matches the stored path
+    /// Returns None if the value is empty (Ethereum trie semantics: empty value = no value)
     pub fn get(&self, path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
-        if self.partial == path {
+        if self.partial == path && !self.value.is_empty() {
             Ok(Some(self.value.clone()))
         } else {
             Ok(None)

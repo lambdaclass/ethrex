@@ -1,0 +1,143 @@
+name: Security
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["**"]
+  schedule:
+    # Run daily at 6 AM UTC
+    - cron: '0 6 * * *'
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  # Audit dependencies for known vulnerabilities
+  cargo-audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run cargo audit
+        run: cargo audit --deny warnings
+
+  # Check dependencies against advisory database and license policies
+  cargo-deny:
+    name: Dependency Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      - name: Run cargo deny
+        run: cargo deny check
+
+  # Security-focused clippy lints
+  clippy-security:
+    name: Security Lints
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+        with:
+          components: clippy
+
+      - name: Run security-focused clippy lints
+        run: |
+          cargo clippy -- \
+            -D clippy::unwrap_used \
+            -D clippy::expect_used \
+            -D clippy::panic \
+            -D clippy::todo \
+            -D clippy::unimplemented \
+            -D clippy::unreachable \
+            -W clippy::integer_arithmetic \
+            -W clippy::arithmetic_side_effects \
+            -W clippy::cast_possible_truncation \
+            -W clippy::cast_sign_loss \
+            -W clippy::cast_possible_wrap \
+            -W clippy::indexing_slicing
+        continue-on-error: true  # Report but don't fail initially
+
+  # Check for unsafe code usage
+  unsafe-audit:
+    name: Unsafe Code Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Install cargo-geiger
+        run: cargo install cargo-geiger --locked
+
+      - name: Run cargo geiger
+        run: cargo geiger --all-features --all-targets 2>&1 | tee unsafe-report.txt
+        continue-on-error: true
+
+      - name: Upload unsafe code report
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsafe-code-report
+          path: unsafe-report.txt
+
+  # SARIF output for GitHub Security tab (on schedule only to avoid noise)
+  sarif-clippy:
+    name: SARIF Security Report
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'push'
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+        with:
+          components: clippy
+
+      - name: Install clippy-sarif and sarif-fmt
+        run: |
+          cargo install clippy-sarif sarif-fmt --locked
+
+      - name: Run clippy with SARIF output
+        run: |
+          cargo clippy --message-format=json 2>&1 | clippy-sarif | tee clippy-results.sarif | sarif-fmt
+        continue-on-error: true
+
+      - name: Upload SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: clippy-results.sarif
+          wait-for-processing: true

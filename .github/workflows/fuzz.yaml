@@ -1,0 +1,157 @@
+name: Fuzzing
+
+on:
+  # Run weekly on Sunday at midnight UTC
+  schedule:
+    - cron: '0 0 * * 0'
+  # Allow manual triggering
+  workflow_dispatch:
+    inputs:
+      fuzz_target:
+        description: 'Fuzz target to run (or "all" for all targets)'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - rlp_decode
+          - rlp_roundtrip
+          - trie_operations
+          - transaction_decode
+          - block_decode
+          - block_header_decode
+          - precompile_all
+          - precompile_ecrecover
+          - precompile_modexp
+          - precompile_bn254
+          - precompile_bls12_381
+      duration:
+        description: 'Fuzzing duration per target (in seconds)'
+        required: true
+        default: '300'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  fuzz:
+    name: Fuzz - ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - rlp_decode
+          - rlp_roundtrip
+          - trie_operations
+          - transaction_decode
+          - block_decode
+          - block_header_decode
+          - precompile_all
+          - precompile_ecrecover
+          - precompile_modexp
+          - precompile_bn254
+          - precompile_bls12_381
+    steps:
+      - name: Check if target should run
+        id: check
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            if [[ "${{ github.event.inputs.fuzz_target }}" == "all" ]] || [[ "${{ github.event.inputs.fuzz_target }}" == "${{ matrix.target }}" ]]; then
+              echo "run=true" >> "$GITHUB_OUTPUT"
+              echo "duration=${{ github.event.inputs.duration }}" >> "$GITHUB_OUTPUT"
+            else
+              echo "run=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            # Scheduled run - run all targets for 5 minutes each
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "duration=300" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout sources
+        if: steps.check.outputs.run == 'true'
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        if: steps.check.outputs.run == 'true'
+        uses: ./.github/actions/free-disk
+
+      - name: Install Rust nightly
+        if: steps.check.outputs.run == 'true'
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Add Rust Cache
+        if: steps.check.outputs.run == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz -> target
+
+      - name: Install cargo-fuzz
+        if: steps.check.outputs.run == 'true'
+        run: cargo install cargo-fuzz --locked
+
+      - name: Download corpus (if exists)
+        if: steps.check.outputs.run == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: fuzz-corpus-${{ matrix.target }}
+          path: fuzz/corpus/${{ matrix.target }}
+        continue-on-error: true
+
+      - name: Run fuzzer
+        if: steps.check.outputs.run == 'true'
+        working-directory: fuzz
+        run: |
+          cargo fuzz run ${{ matrix.target }} -- \
+            -max_total_time=${{ steps.check.outputs.duration }} \
+            -max_len=4096
+
+      - name: Upload corpus
+        if: steps.check.outputs.run == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-corpus-${{ matrix.target }}
+          path: fuzz/corpus/${{ matrix.target }}
+          retention-days: 30
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore
+
+  # Quick smoke test for PRs - just compile fuzz targets
+  fuzz-compile-check:
+    name: Fuzz Compile Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Add Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz -> target
+
+      - name: Check fuzz targets compile
+        working-directory: fuzz
+        run: cargo check --all-targets

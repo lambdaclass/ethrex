@@ -1,0 +1,11 @@
+# Fuzzing artifacts
+target/
+corpus/
+artifacts/
+coverage/
+
+# Crash reports
+crash-*
+leak-*
+timeout-*
+oom-*

@@ -613,6 +613,7 @@ mod tests {
     use hex_literal::hex;
 
     use crate::constants::{RLP_EMPTY_LIST, RLP_NULL};
+    use crate::decode::RLPDecode;
 
     use super::RLPEncode;
 
@@ -951,5 +952,231 @@ mod tests {
         let expected = vec![0xc0 + 2, 0x01, 0x02];
         assert_eq!(encoded, expected);
         assert_eq!(encoded.len(), tuple.length());
+    }
+
+    // Property-based tests
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// u8 encode/decode roundtrip
+            #[test]
+            fn roundtrip_u8(value: u8) {
+                let mut encoded = Vec::new();
+                value.encode(&mut encoded);
+                let decoded = u8::decode(&encoded).unwrap();
+                prop_assert_eq!(value, decoded);
+                prop_assert_eq!(encoded.len(), value.length());
+            }
+
+            /// u16 encode/decode roundtrip
+            #[test]
+            fn roundtrip_u16(value: u16) {
+                let mut encoded = Vec::new();
+                value.encode(&mut encoded);
+                let decoded = u16::decode(&encoded).unwrap();
+                prop_assert_eq!(value, decoded);
+                prop_assert_eq!(encoded.len(), value.length());
+            }
+
+            /// u32 encode/decode roundtrip
+            #[test]
+            fn roundtrip_u32(value: u32) {
+                let mut encoded = Vec::new();
+                value.encode(&mut encoded);
+                let decoded = u32::decode(&encoded).unwrap();
+                prop_assert_eq!(value, decoded);
+                prop_assert_eq!(encoded.len(), value.length());
+            }
+
+            /// u64 encode/decode roundtrip
+            #[test]
+            fn roundtrip_u64(value: u64) {
+                let mut encoded = Vec::new();
+                value.encode(&mut encoded);
+                let decoded = u64::decode(&encoded).unwrap();
+                prop_assert_eq!(value, decoded);
+                prop_assert_eq!(encoded.len(), value.length());
+            }
+
+            /// u128 encode/decode roundtrip
+            #[test]
+            fn roundtrip_u128(value: u128) {
+                let mut encoded = Vec::new();
+                value.encode(&mut encoded);
+                let decoded = u128::decode(&encoded).unwrap();
+                prop_assert_eq!(value, decoded);
+                prop_assert_eq!(encoded.len(), value.length());
+            }
+
+            /// bool encode/decode roundtrip
+            #[test]
+            fn roundtrip_bool(value: bool) {
+                let mut encoded = Vec::new();
+                value.encode(&mut encoded);
+                let decoded = bool::decode(&encoded).unwrap();
+                prop_assert_eq!(value, decoded);
+                prop_assert_eq!(encoded.len(), value.length());
+            }
+
+            /// String encode/decode roundtrip
+            #[test]
+            fn roundtrip_string(value: String) {
+                let mut encoded = Vec::new();
+                value.encode(&mut encoded);
+                let decoded = String::decode(&encoded).unwrap();
+                prop_assert_eq!(value, decoded);
+                prop_assert_eq!(encoded.len(), value.length());
+            }
+
+            /// bytes encode/decode roundtrip
+            #[test]
+            fn roundtrip_bytes(value in prop::collection::vec(any::<u8>(), 0..1000)) {
+                let mut encoded = Vec::new();
+                value.as_slice().encode(&mut encoded);
+                let decoded = bytes::Bytes::decode(&encoded).unwrap();
+                prop_assert_eq!(value.as_slice(), decoded.as_ref());
+                prop_assert_eq!(encoded.len(), value.as_slice().length());
+            }
+
+            /// Vec<u8> encode/decode roundtrip (as RLP list, not bytes)
+            #[test]
+            fn roundtrip_vec_u8(value in prop::collection::vec(any::<u8>(), 0..100)) {
+                let mut encoded = Vec::new();
+                value.encode(&mut encoded);
+                let decoded = Vec::<u8>::decode(&encoded).unwrap();
+                prop_assert_eq!(value, decoded);
+                prop_assert_eq!(encoded.len(), value.length());
+            }
+
+            /// Vec<u64> encode/decode roundtrip
+            #[test]
+            fn roundtrip_vec_u64(value in prop::collection::vec(any::<u64>(), 0..50)) {
+                let mut encoded = Vec::new();
+                value.encode(&mut encoded);
+                let decoded = Vec::<u64>::decode(&encoded).unwrap();
+                prop_assert_eq!(value, decoded);
+                prop_assert_eq!(encoded.len(), value.length());
+            }
+
+            /// Vec<String> encode/decode roundtrip
+            #[test]
+            fn roundtrip_vec_string(value in prop::collection::vec(".*", 0..20)) {
+                let mut encoded = Vec::new();
+                value.encode(&mut encoded);
+                let decoded = Vec::<String>::decode(&encoded).unwrap();
+                prop_assert_eq!(value, decoded);
+                prop_assert_eq!(encoded.len(), value.length());
+            }
+
+            /// Nested Vec encode/decode roundtrip
+            #[test]
+            fn roundtrip_nested_vec(
+                value in prop::collection::vec(
+                    prop::collection::vec(any::<u8>(), 0..10),
+                    0..10
+                )
+            ) {
+                let mut encoded = Vec::new();
+                value.encode(&mut encoded);
+                let decoded = Vec::<Vec<u8>>::decode(&encoded).unwrap();
+                prop_assert_eq!(value, decoded);
+                prop_assert_eq!(encoded.len(), value.length());
+            }
+
+            /// Tuple (u8, u8) encode/decode roundtrip
+            #[test]
+            fn roundtrip_tuple_2(a: u8, b: u8) {
+                let value = (a, b);
+                let mut encoded = Vec::new();
+                value.encode(&mut encoded);
+                let decoded = <(u8, u8)>::decode(&encoded).unwrap();
+                prop_assert_eq!(value, decoded);
+                prop_assert_eq!(encoded.len(), value.length());
+            }
+
+            /// Tuple (u64, String) encode/decode roundtrip
+            #[test]
+            fn roundtrip_tuple_mixed(a: u64, b: String) {
+                let value = (a, b);
+                let mut encoded = Vec::new();
+                value.encode(&mut encoded);
+                let decoded = <(u64, String)>::decode(&encoded).unwrap();
+                prop_assert_eq!(value, decoded);
+                prop_assert_eq!(encoded.len(), value.length());
+            }
+
+            /// U256 encode/decode roundtrip
+            #[test]
+            fn roundtrip_u256(bytes in prop::collection::vec(any::<u8>(), 32)) {
+                let value = U256::from_big_endian(&bytes);
+                let mut encoded = Vec::new();
+                value.encode(&mut encoded);
+                let decoded = U256::decode(&encoded).unwrap();
+                prop_assert_eq!(value, decoded);
+                prop_assert_eq!(encoded.len(), value.length());
+            }
+
+            /// Address encode/decode roundtrip
+            #[test]
+            fn roundtrip_address(bytes in prop::collection::vec(any::<u8>(), 20)) {
+                let value = Address::from_slice(&bytes);
+                let mut encoded = Vec::new();
+                value.encode(&mut encoded);
+                let decoded = Address::decode(&encoded).unwrap();
+                prop_assert_eq!(value, decoded);
+                prop_assert_eq!(encoded.len(), value.length());
+            }
+
+            /// H256 encode/decode roundtrip
+            #[test]
+            fn roundtrip_h256(bytes in prop::collection::vec(any::<u8>(), 32)) {
+                let value = ethereum_types::H256::from_slice(&bytes);
+                let mut encoded = Vec::new();
+                value.encode(&mut encoded);
+                let decoded = ethereum_types::H256::decode(&encoded).unwrap();
+                prop_assert_eq!(value, decoded);
+                prop_assert_eq!(encoded.len(), value.length());
+            }
+
+            /// Encoding is deterministic - same value always produces same encoding
+            #[test]
+            fn encoding_is_deterministic(value: u64) {
+                let mut encoded1 = Vec::new();
+                let mut encoded2 = Vec::new();
+                value.encode(&mut encoded1);
+                value.encode(&mut encoded2);
+                prop_assert_eq!(encoded1, encoded2);
+            }
+
+            /// Length calculation matches actual encoded length for various sizes
+            #[test]
+            fn length_matches_encoded_bytes(value in prop::collection::vec(any::<u8>(), 0..500)) {
+                let calculated_length = value.as_slice().length();
+                let mut encoded = Vec::new();
+                value.as_slice().encode(&mut encoded);
+                prop_assert_eq!(calculated_length, encoded.len());
+            }
+
+            /// Long strings (>55 bytes) encode/decode correctly
+            #[test]
+            fn roundtrip_long_bytes(value in prop::collection::vec(any::<u8>(), 56..1000)) {
+                let mut encoded = Vec::new();
+                value.as_slice().encode(&mut encoded);
+                let decoded = bytes::Bytes::decode(&encoded).unwrap();
+                prop_assert_eq!(value.as_slice(), decoded.as_ref());
+            }
+
+            /// IPv4 address encode/decode roundtrip
+            #[test]
+            fn roundtrip_ipv4(a: u8, b: u8, c: u8, d: u8) {
+                let value = std::net::Ipv4Addr::new(a, b, c, d);
+                let mut encoded = Vec::new();
+                value.encode(&mut encoded);
+                let decoded = std::net::Ipv4Addr::decode(&encoded).unwrap();
+                prop_assert_eq!(value, decoded);
+            }
+        }
     }
 }

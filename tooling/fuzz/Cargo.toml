@@ -1,0 +1,99 @@
+[package]
+name = "ethrex-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+ethrex-common.workspace = true
+ethrex-rlp.workspace = true
+ethrex-trie.workspace = true
+ethrex-levm = { workspace = true, default-features = false, features = ["secp256k1"] }
+bytes = "1.6.0"
+ethereum-types = "0.15.1"
+
+# RLP fuzzing
+[[bin]]
+name = "rlp_decode"
+path = "fuzzers/rlp_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rlp_roundtrip"
+path = "fuzzers/rlp_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+# Trie fuzzing
+[[bin]]
+name = "trie_operations"
+path = "fuzzers/trie_operations.rs"
+test = false
+doc = false
+bench = false
+
+# Transaction/Block fuzzing
+[[bin]]
+name = "transaction_decode"
+path = "fuzzers/transaction_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "block_decode"
+path = "fuzzers/block_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "block_header_decode"
+path = "fuzzers/block_header_decode.rs"
+test = false
+doc = false
+bench = false
+
+# Precompile fuzzing
+[[bin]]
+name = "precompile_all"
+path = "fuzzers/precompile_all.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "precompile_ecrecover"
+path = "fuzzers/precompile_ecrecover.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "precompile_modexp"
+path = "fuzzers/precompile_modexp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "precompile_bn254"
+path = "fuzzers/precompile_bn254.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "precompile_bls12_381"
+path = "fuzzers/precompile_bls12_381.rs"
+test = false
+doc = false
+bench = false
