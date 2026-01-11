@@ -122,9 +122,9 @@ impl RpcHandler for FeeHistoryRequest {
                     "Could not get body for block {block_number}"
                 )))?;
 
-            let max_blob_gas_per_block = config
-                .get_fork_blob_schedule(header.timestamp)
-                .map(|schedule| schedule.max * GAS_PER_BLOB);
+            let blob_schedule_opt = config.get_fork_blob_schedule(header.timestamp);
+            let max_blob_gas_per_block =
+                blob_schedule_opt.map(|schedule| schedule.max * GAS_PER_BLOB);
             let blob_gas_used_r = match (header.blob_gas_used, max_blob_gas_per_block) {
                 (Some(blob_gas_used), Some(max_blob_gas)) => {
                     blob_gas_used as f64 / max_blob_gas as f64
@@ -132,9 +132,7 @@ impl RpcHandler for FeeHistoryRequest {
                 _ => 0.0,
             };
 
-            let blob_schedule = config
-                .get_fork_blob_schedule(header.timestamp)
-                .unwrap_or_default();
+            let blob_schedule = blob_schedule_opt.unwrap_or_default();
 
             let fork = config.get_fork(header.timestamp);
 
