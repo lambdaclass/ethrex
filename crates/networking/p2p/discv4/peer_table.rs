@@ -688,7 +688,7 @@ impl PeerTableServer {
                 && !self.already_tried_peers.contains(&node_id)
                 && contact.knows_us
                 && !contact.unwanted
-                && contact.is_fork_id_valid == Some(true)
+                && contact.is_fork_id_valid != Some(false)
             {
                 self.already_tried_peers.insert(node_id);
 
