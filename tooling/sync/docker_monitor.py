@@ -24,7 +24,7 @@ if os.path.exists('.env'):
                 os.environ[key.strip()] = value.strip()
 
 CHECK_INTERVAL = 10
-SYNC_TIMEOUT = 6 * 60  # 6 hours default sync timeout (in minutes)
+SYNC_TIMEOUT = 8 * 60  # 8 hours default sync timeout (in minutes)
 BLOCK_PROCESSING_DURATION = 22 * 60 # Monitor block processing for 22 minutes
 BLOCK_STALL_TIMEOUT = 10 * 60  # Fail if no new block for 10 minutes
 STATUS_PRINT_INTERVAL = 30
@@ -60,6 +60,7 @@ class Instance:
     block_check_start: float = 0
     initial_block: int = 0  # Block when entering block_processing
     error: str = ""
+    consecutive_failures: int = 0
 
     @property
     def rpc_url(self) -> str:
@@ -258,6 +259,7 @@ def reset_instance(inst: Instance):
     inst.block_check_start = 0
     inst.initial_block = 0
     inst.error = ""
+    inst.consecutive_failures = 0
 
 
 def print_status(instances: list[Instance]):
@@ -289,9 +291,13 @@ def update_instance(inst: Instance, timeout_min: int) -> bool:
     
     if block is None:
         if inst.status != "waiting":
-            inst.status, inst.error = "failed", "Node stopped responding"
-            return True
+            inst.consecutive_failures += 1
+            if inst.consecutive_failures >= 6:
+                inst.status, inst.error = "failed", "Node stopped responding"
+                return True
         return False
+
+    inst.consecutive_failures = 0
     
     if inst.status == "waiting":
         inst.status, inst.start_time = "syncing", inst.start_time or now
