@@ -17,12 +17,9 @@ use spawned_concurrency::{
 };
 use tracing::{debug, error, info};
 
+use crate::sequencer::sequencer_state::{SequencerState, SequencerStatus};
 use crate::utils::state_reconstruct::get_batch;
-use crate::{
-    SequencerConfig,
-    based::sequencer_state::{SequencerState, SequencerStatus},
-    sequencer::utils::node_is_up_to_date,
-};
+use crate::{SequencerConfig, sequencer::utils::node_is_up_to_date};
 
 #[derive(Debug, thiserror::Error)]
 pub enum BlockFetcherError {
@@ -235,7 +232,7 @@ impl BlockFetcher {
         last_l2_batch_number_known: u64,
     ) -> Result<(), BlockFetcherError> {
         let mut missing_batches_logs =
-            filter_logs(&batch_committed_logs, last_l2_batch_number_known).await?;
+            filter_logs(&batch_committed_logs, last_l2_batch_number_known)?;
 
         missing_batches_logs.sort_by_key(|(_log, batch_number)| *batch_number);
 
@@ -368,7 +365,7 @@ impl GenServer for BlockFetcher {
 /// Given the logs from the event `BatchCommitted`,
 /// this function gets the committed batches that are missing in the local store.
 /// It does that by comparing if the batch number is greater than the last known batch number.
-async fn filter_logs(
+fn filter_logs(
     logs: &[RpcLog],
     last_batch_number_known: u64,
 ) -> Result<Vec<(RpcLog, U256)>, BlockFetcherError> {

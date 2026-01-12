@@ -37,7 +37,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{Level, debug, error, info, warn};
+#[cfg(not(feature = "l2"))]
+use tracing::error;
+use tracing::{Level, debug, info, warn};
 use tracing_subscriber::{
     EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt, reload,
 };
@@ -48,7 +50,12 @@ const _: () = {
     compile_error!("Database feature must be enabled (Available: `rocksdb`).");
 };
 
-pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
+pub fn init_tracing(
+    opts: &Options,
+) -> (
+    reload::Handle<EnvFilter, Registry>,
+    Option<tracing_appender::non_blocking::WorkerGuard>,
+) {
     let log_filter = EnvFilter::builder()
         .with_default_directive(Directive::from(opts.log_level))
         .from_env_lossy();
@@ -66,19 +73,58 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
 
     let fmt_layer = fmt::layer()
         .with_target(include_target)
-        .with_ansi(use_color)
-        .with_filter(filter);
+        .with_ansi(use_color);
+
+    let (file_layer, guard) = if let Some(log_dir) = &opts.log_dir {
+        if !log_dir.exists() {
+            std::fs::create_dir_all(log_dir).expect("Failed to create log directory");
+        }
+
+        let branch = env!("VERGEN_GIT_BRANCH").replace('/', "-");
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let log_file = log_dir.join(format!("ethrex_{}_{}.log", branch, timestamp));
+
+        let file = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(log_file)
+            .expect("Failed to open log file");
+
+        let (non_blocking, guard) = tracing_appender::non_blocking(file);
+        let file_layer = fmt::layer()
+            .with_target(include_target)
+            .with_ansi(false)
+            .with_writer(non_blocking);
+        (Some(file_layer), Some(guard))
+    } else {
+        (None, None)
+    };
 
     let profiling_layer = opts.metrics_enabled.then_some(FunctionProfilingLayer);
 
-    let subscriber = Registry::default().with(fmt_layer).with(profiling_layer);
+    let subscriber = Registry::default()
+        .with(fmt_layer.and_then(file_layer).with_filter(filter))
+        .with(profiling_layer);
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
-    filter_handle
+    (filter_handle, guard)
 }
 
-pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
+pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
+    // Initialize node version metrics
+    ethrex_metrics::node::MetricsNode::init(
+        env!("CARGO_PKG_VERSION"),
+        env!("VERGEN_GIT_SHA"),
+        env!("VERGEN_GIT_BRANCH"),
+        env!("VERGEN_RUSTC_SEMVER"),
+        env!("VERGEN_RUSTC_HOST_TRIPLE"),
+        &network.to_string(),
+    );
+
     tracing::info!(
         "Starting metrics server on {}:{}",
         opts.metrics_addr,
@@ -194,6 +240,7 @@ pub async fn init_network(
     blockchain: Arc<Blockchain>,
     context: P2PContext,
 ) {
+    #[cfg(not(feature = "l2"))]
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
         panic!(
@@ -418,6 +465,7 @@ pub async fn init_l1(
             max_mempool_size: opts.mempool_max_size,
             perf_logs_enabled: true,
             r#type: BlockchainType::L1,
+            max_blobs_per_block: opts.max_blobs_per_block,
         },
     );
 
@@ -448,7 +496,6 @@ pub async fn init_l1(
         opts.tx_broadcasting_time_interval,
         opts.lookup_interval,
     )
-    .await
     .expect("P2P context could not be created");
 
     let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;
@@ -469,7 +516,7 @@ pub async fn init_l1(
     .await;
 
     if opts.metrics_enabled {
-        init_metrics(&opts, tracker.clone());
+        init_metrics(&opts, &network, tracker.clone());
     }
 
     if opts.dev {

@@ -131,6 +131,13 @@ pub struct Options {
     )]
     pub log_color: LogColor,
     #[arg(
+        long = "log.dir",
+        value_name = "LOG_DIR",
+        help = "Directory to store log files.",
+        help_heading = "Node options"
+    )]
+    pub log_dir: Option<PathBuf>,
+    #[arg(
         help = "Maximum size of the mempool in number of transactions",
         long = "mempool.maxsize",
         default_value_t = 10_000,
@@ -273,6 +280,14 @@ pub struct Options {
         help_heading = "Block building options"
     )]
     pub gas_limit: u64,
+    #[arg(
+        long = "builder.max-blobs",
+        value_name = "MAX_BLOBS",
+        help = "EIP-7872: Maximum blobs per block for local building. Minimum of 1. Defaults to protocol max.",
+        help_heading = "Block building options",
+        value_parser = clap::value_parser!(u32).range(1..)
+    )]
+    pub max_blobs_per_block: Option<u32>,
 }
 
 impl Options {
@@ -325,6 +340,7 @@ impl Default for Options {
             ws_port: Default::default(),
             log_level: Level::INFO,
             log_color: Default::default(),
+            log_dir: None,
             authrpc_addr: Default::default(),
             authrpc_port: Default::default(),
             authrpc_jwtsecret: Default::default(),
@@ -347,6 +363,7 @@ impl Default for Options {
             lookup_interval: Default::default(),
             extra_data: get_minimal_client_version(),
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
+            max_blobs_per_block: None,
         }
     }
 }
@@ -435,13 +452,15 @@ pub enum Subcommand {
 impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
         // L2 has its own init_tracing because of the ethrex monitor
-        match self {
+        let _guard = match &self {
             #[cfg(feature = "l2")]
-            Self::L2(_) => {}
+            Self::L2(_) => None,
             _ => {
-                init_tracing(opts);
+                let (_, guard) = init_tracing(opts);
+                guard
             }
-        }
+        };
+
         match self {
             Subcommand::RemoveDB { datadir, force } => {
                 remove_db(&datadir, force);
