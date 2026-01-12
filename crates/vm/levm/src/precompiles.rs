@@ -385,6 +385,17 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
     padded_calldata.into()
 }
 
+#[expect(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+#[inline(always)]
+fn copy_segment(calldata: &Bytes, dst: &mut [u8], start: usize) {
+    if start >= calldata.len() {
+        return;
+    }
+    let end = (start + dst.len()).min(calldata.len());
+    let src = &calldata[start..end];
+    dst[..src.len()].copy_from_slice(src);
+}
+
 #[cfg(all(
     not(feature = "sp1"),
     not(feature = "risc0"),
@@ -404,19 +415,9 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     let mut raw_v = [0u8; WORD];
     let mut raw_sig = [0u8; SIG_LEN];
 
-    #[expect(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
-    let copy_segment = |dst: &mut [u8], start: usize| {
-        if start >= calldata.len() {
-            return;
-        }
-        let end = (start + dst.len()).min(calldata.len());
-        let src = &calldata[start..end];
-        dst[..src.len()].copy_from_slice(src);
-    };
-
-    copy_segment(&mut raw_hash, 0);
-    copy_segment(&mut raw_v, WORD);
-    copy_segment(&mut raw_sig, WORD * 2);
+    copy_segment(calldata, &mut raw_hash, 0);
+    copy_segment(calldata, &mut raw_v, WORD);
+    copy_segment(calldata, &mut raw_sig, WORD * 2);
 
     // EVM expects v ∈ {27, 28}. Anything else is invalid → empty return.
     if raw_v[..(WORD - 1)].iter().any(|&b| b != 0) {
