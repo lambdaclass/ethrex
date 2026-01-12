@@ -858,15 +858,17 @@ impl Blockchain {
             // Gather account updates
             let account_updates = vm.get_state_transitions()?;
 
-            for account_update in &account_updates {
-                touched_account_storage_slots.insert(
-                    account_update.address,
-                    account_update
-                        .added_storage
-                        .keys()
-                        .cloned()
-                        .collect::<Vec<H256>>(),
-                );
+            let state_accessed = logger
+                .state_accessed
+                .lock()
+                .map_err(|_e| {
+                    ChainError::WitnessGeneration("Failed to execute with witness".to_string())
+                })?
+                .clone();
+
+            for (account, acc_keys) in state_accessed.iter() {
+                let slots = touched_account_storage_slots.entry(*account).or_default();
+                slots.extend(acc_keys.iter().copied());
             }
 
             // Get the used block hashes from the logger
@@ -893,14 +895,7 @@ impl Blockchain {
 
             // Access all the accounts from the initial trie
             // Record all the storage nodes for the initial state
-            for (account, acc_keys) in logger
-                .state_accessed
-                .lock()
-                .map_err(|_e| {
-                    ChainError::WitnessGeneration("Failed to execute with witness".to_string())
-                })?
-                .iter()
-            {
+            for (account, acc_keys) in state_accessed.iter() {
                 // Access the account from the state trie to record the nodes used to access it
                 trie.get(&hash_address(account)).map_err(|_e| {
                     ChainError::WitnessGeneration("Failed to access account from trie".to_string())
