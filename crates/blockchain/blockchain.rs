@@ -867,7 +867,8 @@ impl Blockchain {
                 .clone();
 
             for (account, acc_keys) in state_accessed.iter() {
-                let slots = touched_account_storage_slots.entry(*account).or_default();
+                let slots: &mut Vec<H256> =
+                    touched_account_storage_slots.entry(*account).or_default();
                 slots.extend(acc_keys.iter().copied());
             }
 
