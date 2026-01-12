@@ -3,6 +3,8 @@ name: L2 (SP1 Backend)
 on:
   push:
     branches: ["main"]
+    paths-ignore:
+      - "docs/**"
   pull_request:
     paths:
       - ".github/workflows/main_prover.yaml"
@@ -17,6 +19,9 @@ concurrency:
 env:
   DOCKER_ETHREX_WORKDIR: /usr/local/bin
   PROVER: sp1
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
 
 jobs:
   test:
@@ -116,10 +121,12 @@ jobs:
         run: |
           cd crates/l2
           make init-prover-sp1 GPU=true &
-          docker logs --follow ethrex_l2 & DOCKER_LOGS_PID=$!
+          docker logs --follow ethrex_l2 & DOCKER_LOGS_L2_PID=$!
+          docker logs --follow ethrex_l1 & DOCKER_LOGS_L1_PID=$!
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
-          kill $DOCKER_LOGS_PID || true
+          kill $DOCKER_LOGS_L2_PID || true
+          kill $DOCKER_LOGS_L1_PID || true
 
       - name: Destroy Docker containers
         if: always()

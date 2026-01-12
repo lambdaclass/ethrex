@@ -23,7 +23,7 @@ use crate::{
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::{Address, U256, evm::calculate_create_address, types::Fork};
+use ethrex_common::{Address, H256, U256, evm::calculate_create_address, types::Fork};
 use ethrex_common::{tracing::CallType, types::Code};
 
 pub struct OpCallHandler;
@@ -543,7 +543,8 @@ impl<'a> VM<'a> {
             deployer,
             new_address,
             new_address,
-            Code::from_bytecode(code),
+            // SAFETY: init code hash is never used
+            Code::from_bytecode_unchecked(code, H256::zero()),
             value,
             Bytes::new(),
             false,
@@ -847,7 +848,6 @@ impl<'a> VM<'a> {
     }
 
     /// Obtains the values needed for CALL, CALLCODE, DELEGATECALL and STATICCALL opcodes to calculate total gas cost
-    #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
     fn get_call_gas_params(
         &mut self,
         args_offset: usize,

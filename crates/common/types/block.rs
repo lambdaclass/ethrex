@@ -80,9 +80,7 @@ impl RLPDecode for Block {
 }
 
 /// Header part of a block on the chain.
-#[derive(
-    Clone, Debug, PartialEq, Eq, Serialize, Default, Deserialize, RSerialize, RDeserialize, Archive,
-)]
+#[derive(Clone, Debug, Serialize, Default, Deserialize, RSerialize, RDeserialize, Archive, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockHeader {
     #[serde(skip)]
@@ -144,6 +142,58 @@ pub struct BlockHeader {
     #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
     #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
     pub requests_hash: Option<H256>,
+}
+
+// Needs a explicit impl due to the hash OnceLock.
+impl PartialEq for BlockHeader {
+    fn eq(&self, other: &Self) -> bool {
+        let BlockHeader {
+            hash: _,
+            parent_hash,
+            ommers_hash,
+            coinbase,
+            state_root,
+            transactions_root,
+            receipts_root,
+            logs_bloom,
+            difficulty,
+            number,
+            gas_limit,
+            gas_used,
+            timestamp,
+            extra_data,
+            prev_randao,
+            nonce,
+            base_fee_per_gas,
+            withdrawals_root,
+            blob_gas_used,
+            excess_blob_gas,
+            parent_beacon_block_root,
+            requests_hash,
+        } = self;
+
+        parent_hash == &other.parent_hash
+            && number == &other.number
+            && timestamp == &other.timestamp
+            && nonce == &other.nonce
+            && gas_used == &other.gas_used
+            && gas_limit == &other.gas_limit
+            && base_fee_per_gas == &other.base_fee_per_gas
+            && blob_gas_used == &other.blob_gas_used
+            && excess_blob_gas == &other.excess_blob_gas
+            && parent_beacon_block_root == &other.parent_beacon_block_root
+            && prev_randao == &other.prev_randao
+            && coinbase == &other.coinbase
+            && state_root == &other.state_root
+            && transactions_root == &other.transactions_root
+            && receipts_root == &other.receipts_root
+            && withdrawals_root == &other.withdrawals_root
+            && difficulty == &other.difficulty
+            && ommers_hash == &other.ommers_hash
+            && requests_hash == &other.requests_hash
+            && logs_bloom == &other.logs_bloom
+            && extra_data == &other.extra_data
+    }
 }
 
 impl RLPEncode for BlockHeader {
@@ -383,13 +433,13 @@ fn check_gas_limit(gas_limit: u64, parent_gas_limit: u64) -> bool {
 
 /// Calculates the base fee per blob gas for the current block based on
 /// it's parent excess blob gas and the update fraction, which depends on the fork.
-pub fn calculate_base_fee_per_blob_gas(parent_excess_blob_gas: u64, update_fraction: u64) -> u64 {
+pub fn calculate_base_fee_per_blob_gas(parent_excess_blob_gas: u64, update_fraction: u64) -> U256 {
     if update_fraction == 0 {
-        return 0;
+        return U256::zero();
     }
     fake_exponential(
-        MIN_BASE_FEE_PER_BLOB_GAS,
-        parent_excess_blob_gas,
+        U256::from(MIN_BASE_FEE_PER_BLOB_GAS),
+        U256::from(parent_excess_blob_gas),
         update_fraction,
     )
     .unwrap_or_default()
@@ -400,33 +450,34 @@ pub fn calculate_base_fee_per_blob_gas(parent_excess_blob_gas: u64, update_fract
 /// 400_000_000 numerator is the limit for this operation to work with U256,
 /// it will overflow with a larger numerator
 pub fn fake_exponential(
-    factor: u64,
-    numerator: u64,
+    factor: U256,
+    numerator: U256,
     denominator: u64,
-) -> Result<u64, FakeExponentialError> {
+) -> Result<U256, FakeExponentialError> {
     if denominator == 0 {
         return Err(FakeExponentialError::DenominatorIsZero);
     }
 
-    if numerator == 0 {
+    if numerator.is_zero() {
         return Ok(factor);
     }
 
-    let mut output = 0u64;
+    let mut output: U256 = U256::zero();
+    let denominator_u256: U256 = denominator.into();
 
     // Initial multiplication: factor * denominator
     let mut numerator_accum = factor
-        .checked_mul(denominator)
+        .checked_mul(denominator_u256)
         .ok_or(FakeExponentialError::CheckedMul)?;
 
-    let mut denominator_by_i = denominator;
+    let mut denominator_by_i = denominator_u256;
 
     #[expect(
         clippy::arithmetic_side_effects,
         reason = "division can't overflow since denominator is not 0"
     )]
     {
-        while numerator_accum != 0 {
+        while !numerator_accum.is_zero() {
             // Safe addition to output
             output = output
                 .checked_add(numerator_accum)
@@ -434,12 +485,12 @@ pub fn fake_exponential(
 
             // Safe multiplication and division within loop
             numerator_accum = numerator_accum
-                .checked_mul(numerator.into())
+                .checked_mul(numerator)
                 .ok_or(FakeExponentialError::CheckedMul)?
                 / denominator_by_i;
 
             // denominator comes from a u64 value, will never overflow before other variables.
-            denominator_by_i += denominator;
+            denominator_by_i += denominator_u256;
         }
 
         output
@@ -895,7 +946,9 @@ mod test {
             requests_hash: Some(*EMPTY_KECCACK_HASH),
             ..Default::default()
         };
-        assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok())
+        assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok());
+        assert_eq!(parent_block.encode_to_vec().len(), parent_block.length());
+        assert_eq!(block.encode_to_vec().len(), block.length());
     }
 
     #[test]
@@ -999,7 +1052,7 @@ mod test {
     #[test]
     fn test_fake_exponential_overflow() {
         // With u64 this overflows
-        assert!(fake_exponential(57532635, 3145728, 3338477).is_ok());
+        assert!(fake_exponential(57532635.into(), 3145728.into(), 3338477).is_ok());
     }
 
     #[test]
@@ -1007,7 +1060,7 @@ mod test {
         // Making sure the limit we state in the documentation of 400_000_000 works
         let thing = fake_exponential(
             MIN_BASE_FEE_PER_BLOB_GAS.into(),
-            400_000_000,
+            400_000_000.into(),
             BLOB_BASE_FEE_UPDATE_FRACTION,
         );
         // With u64 this overflows

@@ -2,6 +2,37 @@
 
 ## Perf
 
+### 2025-12-23
+
+- Remove needless allocs on store api [#5709](https://github.com/lambdaclass/ethrex/pull/5709)
+
+### 2025-12-22
+
+- Avoid double parsing and extra clones in doc signature formatting [#9285](https://github.com/starkware-libs/cairo/pull/9285)
+
+
+### 2025-12-19
+
+- Make HashSet use fxhash in discv4 peer_table [#5688](https://github.com/lambdaclass/ethrex/pull/5688)
+- Validate tx blobs after checking if it's already in the mempool [#5686](https://github.com/lambdaclass/ethrex/pull/5686)
+
+### 2025-12-02
+
+- Avoid unnecessary hashing of init codes and already hashed codes [#5397](https://github.com/lambdaclass/ethrex/pull/5397)
+
+### 2025-11-28
+
+- Change some calls from `encode_to_vec().len()` to `.length()` when wanting to get the rlp encoded length [#5374](https://github.com/lambdaclass/ethrex/pull/5374)
+- Use our keccak implementation for receipts bloom filter calculation [#5454](https://github.com/lambdaclass/ethrex/pull/5454)
+
+### 2025-11-27
+
+- Use unchecked swap for stack [#5439](https://github.com/lambdaclass/ethrex/pull/5439)
+
+### 2025-11-20
+
+- Improve rlp encoding by avoiding extra loops and remove unneeded array vec, also adding a alloc-less length method the default trait impl [#5350](https://github.com/lambdaclass/ethrex/pull/5350)
+
 ### 2025-11-19
 
 - Parallelize merkleization [#5377](https://github.com/lambdaclass/ethrex/pull/5377)

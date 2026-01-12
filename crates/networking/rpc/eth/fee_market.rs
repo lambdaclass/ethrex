@@ -143,7 +143,7 @@ impl RpcHandler for FeeHistoryRequest {
             );
 
             base_fee_per_gas[idx] = header.base_fee_per_gas.unwrap_or_default();
-            base_fee_per_blob_gas[idx] = blob_base_fee;
+            base_fee_per_blob_gas[idx] = blob_base_fee.try_into().unwrap();
             gas_used_ratio[idx] = header.gas_used as f64 / header.gas_limit as f64;
             blob_gas_used_ratio[idx] = blob_gas_used_r;
 
@@ -206,7 +206,7 @@ fn project_next_block_base_fee_values(
     let next_excess_blob_gas = calc_excess_blob_gas(header, schedule, fork);
     let base_fee_per_blob =
         calculate_base_fee_per_blob_gas(next_excess_blob_gas, schedule.base_fee_update_fraction);
-    (base_fee_per_gas, base_fee_per_blob)
+    (base_fee_per_gas, base_fee_per_blob.try_into().unwrap())
 }
 
 async fn get_range(

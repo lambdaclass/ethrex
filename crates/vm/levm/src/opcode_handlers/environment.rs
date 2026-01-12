@@ -27,7 +27,7 @@ use crate::{
     vm::VM,
 };
 use ethrex_common::U256;
-use std::{mem, usize};
+use std::mem;
 
 /// Implementation for the `ADDRESS` opcode.
 pub struct OpAddressHandler;

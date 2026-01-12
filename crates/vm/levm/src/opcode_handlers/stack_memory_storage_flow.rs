@@ -227,6 +227,7 @@ impl OpcodeHandler for OpSLoadHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let key = {
             let key = vm.current_call_frame.stack.pop1()?;
+            #[expect(unsafe_code)]
             unsafe {
                 let mut hash = mem::transmute::<U256, H256>(key);
                 hash.0.reverse();
@@ -260,6 +261,7 @@ impl OpcodeHandler for OpSStoreHandler {
         }
 
         let [key, value] = *vm.current_call_frame.stack.pop()?;
+        #[expect(unsafe_code)]
         let key = unsafe {
             let mut hash = mem::transmute::<U256, H256>(key);
             hash.0.reverse();

@@ -346,7 +346,19 @@ pub fn execute_precompile(
         .flatten()
         .ok_or(VMError::Internal(InternalError::InvalidPrecompileAddress))?;
 
-    precompile(calldata, gas_remaining, fork)
+    #[cfg(feature = "perf_opcode_timings")]
+    let precompile_time_start = std::time::Instant::now();
+
+    let result = precompile(calldata, gas_remaining, fork);
+
+    #[cfg(feature = "perf_opcode_timings")]
+    {
+        let time = precompile_time_start.elapsed();
+        let mut timings = crate::timings::PRECOMPILES_TIMINGS.lock().expect("poison");
+        timings.update(address, time);
+    }
+
+    result
 }
 
 /// Consumes gas and if it's higher than the gas limit returns an error.
@@ -675,8 +687,22 @@ fn mod_exp(base: Natural, exponent: Natural, modulus: Natural) -> Natural {
     } else if exponent == Natural::ZERO {
         Natural::from(1_u8) % modulus
     } else {
-        let base_mod = base % &modulus; // malachite requires base to be reduced to modulus first
-        base_mod.mod_pow(&exponent, &modulus)
+        #[cfg(not(feature = "zisk"))]
+        {
+            let base_mod = base % &modulus; // malachite requires base to be reduced to modulus first
+            base_mod.mod_pow(&exponent, &modulus)
+        }
+
+        #[cfg(feature = "zisk")]
+        {
+            use ziskos::zisklib::modexp_u64;
+            let (mut base, mut exponent, mut modulus) = (base, exponent, modulus);
+            let base_limbs = base.to_limbs_asc();
+            let exponent_limbs = exponent.to_limbs_asc();
+            let modulus_limbs = modulus.to_limbs_asc();
+            let result_limbs = modexp_u64(&base_limbs, &exponent_limbs, &modulus_limbs);
+            Natural::from_owned_limbs_asc(result_limbs)
+        }
     }
 }
 
@@ -707,23 +733,23 @@ pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
 
     increase_precompile_consumed_gas(ECADD_COST, gas_remaining)?;
 
-    let first_point_x = calldata.get(0..32).ok_or(InternalError::Slicing)?;
-    let first_point_y = calldata.get(32..64).ok_or(InternalError::Slicing)?;
-    let second_point_x = calldata.get(64..96).ok_or(InternalError::Slicing)?;
-    let second_point_y = calldata.get(96..128).ok_or(InternalError::Slicing)?;
+    let (Some(first_point), Some(second_point)) =
+        (parse_bn254_g1(&calldata, 0), parse_bn254_g1(&calldata, 64))
+    else {
+        return Err(InternalError::Slicing.into());
+    };
+    validate_bn254_g1_coords(&first_point)?;
+    validate_bn254_g1_coords(&second_point)?;
+    bn254_g1_add(first_point, second_point)
+}
 
-    if u256_from_big_endian(first_point_x) >= ALT_BN128_PRIME
-        || u256_from_big_endian(first_point_y) >= ALT_BN128_PRIME
-        || u256_from_big_endian(second_point_x) >= ALT_BN128_PRIME
-        || u256_from_big_endian(second_point_y) >= ALT_BN128_PRIME
-    {
-        return Err(PrecompileError::InvalidPoint.into());
-    }
-
-    let first_point_x = ark_bn254::Fq::from_be_bytes_mod_order(first_point_x);
-    let first_point_y = ark_bn254::Fq::from_be_bytes_mod_order(first_point_y);
-    let second_point_x = ark_bn254::Fq::from_be_bytes_mod_order(second_point_x);
-    let second_point_y = ark_bn254::Fq::from_be_bytes_mod_order(second_point_y);
+#[cfg(not(feature = "zisk"))]
+#[inline]
+pub fn bn254_g1_add(first_point: G1, second_point: G1) -> Result<Bytes, VMError> {
+    let first_point_x = ark_bn254::Fq::from_be_bytes_mod_order(&first_point.0.to_big_endian());
+    let first_point_y = ark_bn254::Fq::from_be_bytes_mod_order(&first_point.1.to_big_endian());
+    let second_point_x = ark_bn254::Fq::from_be_bytes_mod_order(&second_point.0.to_big_endian());
+    let second_point_y = ark_bn254::Fq::from_be_bytes_mod_order(&second_point.1.to_big_endian());
 
     let first_point_is_zero = first_point_x.is_zero() && first_point_y.is_zero();
     let second_point_is_zero = second_point_x.is_zero() && second_point_y.is_zero();
@@ -773,6 +799,88 @@ pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
     Ok(Bytes::from(out))
 }
 
+#[cfg(feature = "zisk")]
+#[inline]
+pub fn bn254_g1_add(first_point: G1, second_point: G1) -> Result<Bytes, VMError> {
+    // SP1 patches the substrate-bn crate too, but some Ethereum Mainnet blocks fail to execute with it with a GasMismatch error
+    // so for now we will only use it for ZisK.
+    use substrate_bn::{AffineG1, Fq, G1 as SubstrateG1, Group};
+
+    if first_point.is_zero() && second_point.is_zero() {
+        return Ok(Bytes::from([0u8; 64].to_vec()));
+    }
+
+    if first_point.is_zero() {
+        let (g1_x, g1_y) = (
+            Fq::from_slice(&second_point.0.to_big_endian())
+                .map_err(|_| PrecompileError::ParsingInputError)?,
+            Fq::from_slice(&second_point.1.to_big_endian())
+                .map_err(|_| PrecompileError::ParsingInputError)?,
+        );
+        // Validate that the point is on the curve
+        AffineG1::new(g1_x, g1_y).map_err(|_| PrecompileError::InvalidPoint)?;
+
+        let mut x_bytes = [0u8; 32];
+        let mut y_bytes = [0u8; 32];
+        g1_x.to_big_endian(&mut x_bytes);
+        g1_y.to_big_endian(&mut y_bytes);
+        return Ok(Bytes::from([x_bytes, y_bytes].concat()));
+    }
+
+    if second_point.is_zero() {
+        let (g1_x, g1_y) = (
+            Fq::from_slice(&first_point.0.to_big_endian())
+                .map_err(|_| PrecompileError::ParsingInputError)?,
+            Fq::from_slice(&first_point.1.to_big_endian())
+                .map_err(|_| PrecompileError::ParsingInputError)?,
+        );
+        // Validate that the point is on the curve
+        AffineG1::new(g1_x, g1_y).map_err(|_| PrecompileError::InvalidPoint)?;
+
+        let mut x_bytes = [0u8; 32];
+        let mut y_bytes = [0u8; 32];
+        g1_x.to_big_endian(&mut x_bytes);
+        g1_y.to_big_endian(&mut y_bytes);
+        return Ok(Bytes::from([x_bytes, y_bytes].concat()));
+    }
+
+    let (first_x, first_y) = (
+        Fq::from_slice(&first_point.0.to_big_endian())
+            .map_err(|_| PrecompileError::ParsingInputError)?,
+        Fq::from_slice(&first_point.1.to_big_endian())
+            .map_err(|_| PrecompileError::ParsingInputError)?,
+    );
+
+    let (second_x, second_y) = (
+        Fq::from_slice(&second_point.0.to_big_endian())
+            .map_err(|_| PrecompileError::ParsingInputError)?,
+        Fq::from_slice(&second_point.1.to_big_endian())
+            .map_err(|_| PrecompileError::ParsingInputError)?,
+    );
+
+    let first: SubstrateG1 = AffineG1::new(first_x, first_y)
+        .map_err(|_| PrecompileError::InvalidPoint)?
+        .into();
+
+    let second: SubstrateG1 = AffineG1::new(second_x, second_y)
+        .map_err(|_| PrecompileError::InvalidPoint)?
+        .into();
+
+    #[allow(
+        clippy::arithmetic_side_effects,
+        reason = "G1 addition doesn't overflow, intermediate operations that could overflow should be handled correctly by the library"
+    )]
+    let result = first + second;
+
+    let mut x_bytes = [0u8; 32];
+    let mut y_bytes = [0u8; 32];
+    result.x().to_big_endian(&mut x_bytes);
+    result.y().to_big_endian(&mut y_bytes);
+    let out = [x_bytes, y_bytes].concat();
+
+    Ok(Bytes::from(out))
+}
+
 /// Makes a scalar multiplication on the elliptic curve 'alt_bn128'
 pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
@@ -789,7 +897,7 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
     bn254_g1_mul(g1, scalar)
 }
 
-#[cfg(not(feature = "sp1"))]
+#[cfg(not(any(feature = "sp1", feature = "zisk")))]
 #[inline]
 pub fn bn254_g1_mul(point: G1, scalar: U256) -> Result<Bytes, VMError> {
     let x = ark_bn254::Fq::from_be_bytes_mod_order(&point.0.to_big_endian());
@@ -820,7 +928,7 @@ pub fn bn254_g1_mul(point: G1, scalar: U256) -> Result<Bytes, VMError> {
     Ok(Bytes::from(out))
 }
 
-#[cfg(feature = "sp1")]
+#[cfg(any(feature = "sp1", feature = "zisk"))]
 #[inline]
 pub fn bn254_g1_mul(g1: G1, scalar: U256) -> Result<Bytes, VMError> {
     use substrate_bn::{AffineG1, Fq, Fr, G1, Group};
@@ -836,9 +944,17 @@ pub fn bn254_g1_mul(g1: G1, scalar: U256) -> Result<Bytes, VMError> {
 
     let g1 = AffineG1::new(g1_x, g1_y).map_err(|_| PrecompileError::InvalidPoint)?;
 
+    // Small difference between the patched versions of substrate-bn
+    #[cfg(feature = "zisk")]
+    let g1: G1 = g1.into();
+
     let scalar =
         Fr::from_slice(&scalar.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?;
 
+    #[allow(
+        clippy::arithmetic_side_effects,
+        reason = "G1 scalar multiplication doesn't overflow, intermediate operations that could overflow should be handled correctly by the library"
+    )]
     let result = g1 * scalar;
 
     let mut x_bytes = [0u8; 32];

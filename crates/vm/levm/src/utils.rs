@@ -10,11 +10,9 @@ use crate::{
         COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
         TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
     },
-    opcodes::Opcode,
     vm::{Substate, VM},
 };
 use ExceptionalHalt::OutOfGas;
-use bitvec::{bitvec, order::Msb0, vec::BitVec};
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
@@ -68,66 +66,6 @@ pub fn calculate_create2_address(
     Ok(generated_address)
 }
 
-/// # Filter for jump target offsets.
-///
-/// Used to filter which program offsets are not valid jump targets. Implemented as a sorted list of
-/// offsets of bytes `0x5B` (`JUMPDEST`) within push constants.
-#[derive(Debug)]
-pub struct JumpTargetFilter {
-    bytecode: Bytes,
-    jumpdests: Option<BitVec<u8, Msb0>>,
-}
-
-impl JumpTargetFilter {
-    /// Create an empty `JumpTargetFilter`.
-    pub fn new(bytecode: Bytes) -> Self {
-        Self {
-            bytecode,
-            jumpdests: None,
-        }
-    }
-
-    /// Check whether a target jump address is blacklisted or not.
-    ///
-    /// Builds the jumpdest table on the first call, and caches it for future calls.
-    #[expect(
-        clippy::as_conversions,
-        clippy::arithmetic_side_effects,
-        clippy::indexing_slicing
-    )]
-    pub fn is_blacklisted(&mut self, address: usize) -> bool {
-        match self.jumpdests {
-            // Already built the jumpdest table, just check it
-            Some(ref jumpdests) => address >= jumpdests.len() || !jumpdests[address],
-            // First time we are called, need to build the jumpdest table
-            None => {
-                let code = &self.bytecode;
-                let len = code.len();
-                let mut jumpdests = bitvec![u8, Msb0; 0; len]; // All false, size = len
-
-                let mut i = 0;
-                while i < len {
-                    let opcode = Opcode::from(code[i]);
-                    if opcode == Opcode::JUMPDEST {
-                        jumpdests.set(i, true);
-                    } else if (Opcode::PUSH1..=Opcode::PUSH32).contains(&opcode) {
-                        // PUSH1 (0x60) to PUSH32 (0x7f): skip 1 to 32 bytes
-                        let skip = opcode as usize - Opcode::PUSH0 as usize;
-                        i += skip; // Advance past data bytes
-                    }
-                    i += 1;
-                }
-
-                let is_blacklisted = address >= jumpdests.len() || !jumpdests[address];
-
-                self.jumpdests = Some(jumpdests);
-
-                is_blacklisted
-            }
-        }
-    }
-}
-
 // ================== Backup related functions =======================
 
 /// Restore the state of the cache to the state it in the callframe backup.
@@ -162,11 +100,11 @@ pub fn restore_cache_state(
 pub fn get_base_fee_per_blob_gas(
     block_excess_blob_gas: Option<u64>,
     evm_config: &EVMConfig,
-) -> Result<u64, VMError> {
+) -> Result<U256, VMError> {
     let base_fee_update_fraction = evm_config.blob_schedule.base_fee_update_fraction;
     fake_exponential(
-        MIN_BASE_FEE_PER_BLOB_GAS,
-        block_excess_blob_gas.unwrap_or_default(),
+        MIN_BASE_FEE_PER_BLOB_GAS.into(),
+        block_excess_blob_gas.unwrap_or_default().into(),
         base_fee_update_fraction,
     )
     .map_err(|err| VMError::Internal(InternalError::FakeExponentialError(err)))
@@ -213,7 +151,7 @@ pub fn calculate_blob_gas_cost(
 
     let blob_gas_used: U256 = blob_gas_used.into();
     let blob_fee: U256 = blob_gas_used
-        .checked_mul(base_fee_per_blob_gas.into())
+        .checked_mul(base_fee_per_blob_gas)
         .ok_or(InternalError::Overflow)?;
 
     Ok(blob_fee)

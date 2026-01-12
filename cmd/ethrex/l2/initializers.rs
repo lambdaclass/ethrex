@@ -12,8 +12,7 @@ use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::sequencer::block_producer;
-use ethrex_l2::sequencer::l1_committer;
-use ethrex_l2::sequencer::l1_committer::regenerate_head_state;
+use ethrex_l2::sequencer::l1_committer::{self, regenerate_state};
 use ethrex_p2p::{
     discv4::peer_table::PeerTable,
     network::P2PContext,
@@ -36,7 +35,7 @@ use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
 use url::Url;
 
 #[allow(clippy::too_many_arguments)]
-async fn init_rpc_api(
+fn init_rpc_api(
     opts: &L1Options,
     l2_opts: &L2Options,
     peer_handler: Option<PeerHandler>,
@@ -105,7 +104,17 @@ pub async fn init_rollup_store(datadir: &Path) -> StoreRollup {
     rollup_store
 }
 
-fn init_metrics(opts: &L1Options, tracker: TaskTracker) {
+fn init_metrics(opts: &L1Options, network: &str, tracker: TaskTracker) {
+    // Initialize node version metrics
+    ethrex_metrics::node::MetricsNode::init(
+        env!("CARGO_PKG_VERSION"),
+        env!("VERGEN_GIT_SHA"),
+        env!("VERGEN_GIT_BRANCH"),
+        env!("VERGEN_RUSTC_SEMVER"),
+        env!("VERGEN_RUSTC_HOST_TRIPLE"),
+        network,
+    );
+
     tracing::info!(
         "Starting metrics server on {}:{}",
         opts.metrics_addr,
@@ -118,7 +127,12 @@ fn init_metrics(opts: &L1Options, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-pub fn init_tracing(opts: &L2Options) -> Option<reload::Handle<EnvFilter, Registry>> {
+pub fn init_tracing(
+    opts: &L2Options,
+) -> (
+    Option<reload::Handle<EnvFilter, Registry>>,
+    Option<tracing_appender::non_blocking::WorkerGuard>,
+) {
     if !opts.sequencer_opts.no_monitor {
         let level_filter = EnvFilter::builder()
             .parse_lossy("debug,tower_http::trace=debug,reqwest_tracing=off,hyper=off,libsql=off,ethrex::initializers=off,ethrex::l2::initializers=off,ethrex::l2::command=off");
@@ -130,9 +144,10 @@ pub fn init_tracing(opts: &L2Options) -> Option<reload::Handle<EnvFilter, Regist
         tui_logger::init_logger(LevelFilter::max()).expect("Failed to initialize tui_logger");
 
         // Monitor already registers all log levels
-        None
+        (None, None)
     } else {
-        Some(initializers::init_tracing(&opts.node_opts))
+        let (handle, guard) = initializers::init_tracing(&opts.node_opts);
+        (Some(handle), guard)
     }
 }
 
@@ -174,10 +189,10 @@ pub async fn init_l2(
     let network = get_network(&opts.node_opts);
 
     let genesis = network.get_genesis()?;
-    let store = init_store(&datadir, genesis.clone()).await;
+    let store = init_store(&datadir, genesis.clone()).await?;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
-    let operator_fee_config = get_operator_fee_config(&opts.sequencer_opts).await?;
+    let operator_fee_config = get_operator_fee_config(&opts.sequencer_opts)?;
     let l1_fee_config = get_l1_fee_config(&opts.sequencer_opts);
 
     let fee_config = FeeConfig {
@@ -199,11 +214,12 @@ pub async fn init_l2(
         max_mempool_size: opts.node_opts.mempool_max_size,
         r#type: BlockchainType::L2(l2_config),
         perf_logs_enabled: true,
+        max_blobs_per_block: None, // L2 doesn't support blob transactions
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
 
-    regenerate_head_state(&store, &rollup_store, &blockchain).await?;
+    regenerate_state(&store, &rollup_store, &blockchain, None).await?;
 
     let signer = get_signer(&datadir);
 
@@ -217,9 +233,10 @@ pub async fn init_l2(
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
-    let based = opts.sequencer_opts.based;
-
-    let (peer_handler, syncer) = if based {
+    let (peer_handler, syncer) = if !opts.node_opts.p2p_disabled {
+        if !opts.sequencer_opts.based {
+            blockchain.set_synced();
+        }
         let peer_table = PeerTable::spawn(opts.node_opts.target_peers);
         let p2p_context = P2PContext::new(
             local_p2p_node.clone(),
@@ -247,8 +264,8 @@ pub async fn init_l2(
                 ),
             }),
             opts.node_opts.tx_broadcasting_time_interval,
+            opts.node_opts.lookup_interval,
         )
-        .await
         .expect("P2P context could not be created");
         let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;
         let peer_handler = PeerHandler::new(peer_table, initiator);
@@ -296,12 +313,11 @@ pub async fn init_l2(
         rollup_store.clone(),
         log_filter_handler,
         Some(opts.sequencer_opts.block_producer_opts.block_gas_limit),
-    )
-    .await;
+    );
 
     // Initialize metrics if enabled
     if opts.node_opts.metrics_enabled {
-        init_metrics(&opts.node_opts, tracker);
+        init_metrics(&opts.node_opts, &network.to_string(), tracker);
     }
 
     let sequencer_cancellation_token = CancellationToken::new();
@@ -339,10 +355,10 @@ pub async fn init_l2(
     let node_config_path = datadir.join("node_config.json");
     info!(path = %node_config_path.display(), "Storing node config");
     cancel_token.cancel();
-    if based {
+    if !opts.node_opts.p2p_disabled {
         let peer_handler = peer_handler.ok_or_eyre("Peer handler not initialized")?;
         let node_config = NodeConfigFile::new(peer_handler.peer_table, local_node_record).await;
-        store_node_config_file(node_config, node_config_path).await;
+        store_node_config_file(node_config, node_config_path);
     }
     tokio::time::sleep(Duration::from_secs(1)).await;
     info!("Server shutting down!");
@@ -364,7 +380,7 @@ pub fn get_l1_fee_config(sequencer_opts: &SequencerOptions) -> Option<L1FeeConfi
         })
 }
 
-pub async fn get_operator_fee_config(
+pub fn get_operator_fee_config(
     sequencer_opts: &SequencerOptions,
 ) -> eyre::Result<Option<OperatorFeeConfig>> {
     if sequencer_opts.based {

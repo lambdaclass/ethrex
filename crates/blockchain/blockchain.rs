@@ -1,3 +1,47 @@
+//! # ethrex Blockchain
+//!
+//! Core blockchain logic for the ethrex Ethereum client.
+//!
+//! ## Overview
+//!
+//! This module implements the blockchain layer, which is responsible for:
+//! - Block validation and execution
+//! - State management and transitions
+//! - Fork choice rule implementation
+//! - Transaction mempool management
+//! - Payload building for block production
+//!
+//! ## Key Components
+//!
+//! - [`Blockchain`]: Main interface for blockchain operations
+//! - [`Mempool`]: Transaction pool for pending transactions
+//! - [`fork_choice`]: Fork choice rule implementation
+//! - [`payload`]: Block payload building for consensus
+//!
+//! ## Block Execution Flow
+//!
+//! ```text
+//! 1. Receive block from consensus/P2P
+//! 2. Validate block header (parent, timestamp, gas limit, etc.)
+//! 3. Execute transactions in EVM
+//! 4. Verify state root matches header
+//! 5. Store block and update canonical chain
+//! ```
+//!
+//! ## Usage
+//!
+//! ```ignore
+//! use ethrex_blockchain::Blockchain;
+//!
+//! let blockchain = Blockchain::new(store, BlockchainOptions::default());
+//!
+//! // Add a block
+//! blockchain.add_block(&block)?;
+//!
+//! // Add transaction to mempool
+//! blockchain.add_transaction_to_mempool(tx).await?;
+//! ```
+
 pub mod constants;
 pub mod error;
 pub mod fork_choice;
@@ -28,11 +72,13 @@ use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H160, H256, TrieLogger};
 use ethrex_metrics::metrics;
+use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
+use ethrex_trie::node::{BranchNode, ExtensionNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
@@ -65,39 +111,83 @@ type StoreUpdatesMap = FxHashMap<H256, (Result<Trie, StoreError>, FxHashMap<Nibb
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
+/// Specifies whether the blockchain operates as L1 (mainnet/testnet) or L2 (rollup).
 #[derive(Debug, Clone, Default)]
 pub enum BlockchainType {
+    /// Standard Ethereum L1 blockchain.
     #[default]
     L1,
+    /// Layer 2 rollup with additional fee configuration.
     L2(L2Config),
 }
 
+/// Configuration for L2 rollup operation.
 #[derive(Debug, Clone, Default)]
 pub struct L2Config {
-    /// We use a RwLock because the Watcher updates the L1 fee config periodically
+    /// Fee configuration for L2 transactions.
+    ///
+    /// Uses `RwLock` because the Watcher updates L1 fee config periodically.
     pub fee_config: Arc<RwLock<FeeConfig>>,
 }
 
+/// Core blockchain implementation for block validation and execution.
+///
+/// The `Blockchain` struct is the main entry point for all blockchain operations:
+/// - Adding and validating blocks
+/// - Managing the transaction mempool
+/// - Building payloads for block production
+/// - Handling fork choice updates
+///
+/// # Thread Safety
+///
+/// `Blockchain` uses interior mutability for thread-safe access to shared state.
+/// The mempool and payload storage are protected by appropriate synchronization primitives.
+///
+/// # Example
+///
+/// ```ignore
+/// let blockchain = Blockchain::new(store, BlockchainOptions::default());
+///
+/// // Validate and add a block
+/// blockchain.add_block(&block)?;
+///
+/// // Check sync status
+/// if blockchain.is_synced() {
+///     // Process transactions from mempool
+/// }
+/// ```
 #[derive(Debug)]
 pub struct Blockchain {
+    /// Underlying storage for blocks and state.
     storage: Store,
+    /// Transaction mempool for pending transactions.
     pub mempool: Mempool,
-    /// Whether the node's chain is in or out of sync with the current chain
-    /// This will be set to true once the initial sync has taken place and wont be set to false after
-    /// This does not reflect whether there is an ongoing sync process
+    /// Whether the node has completed initial sync.
+    ///
+    /// Set to true after initial sync completes, never reset to false.
+    /// Does not reflect whether an ongoing sync is in progress.
     is_synced: AtomicBool,
+    /// Configuration options for blockchain behavior.
     pub options: BlockchainOptions,
-    /// Mapping from a payload id to either a complete payload or a payload build task
-    /// We need to keep completed payloads around in case consensus requests them twice
+    /// Cache of recently built payloads.
+    ///
+    /// Maps payload IDs to either completed payloads or in-progress build tasks.
+    /// Kept around in case consensus requests the same payload twice.
     pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
 }
 
+/// Configuration options for the blockchain.
 #[derive(Debug, Clone)]
 pub struct BlockchainOptions {
+    /// Maximum number of transactions in the mempool.
     pub max_mempool_size: usize,
-    /// Whether performance logs should be emitted
+    /// Whether to emit performance logging.
     pub perf_logs_enabled: bool,
+    /// Blockchain type (L1 or L2).
     pub r#type: BlockchainType,
+    /// EIP-7872: User-configured maximum blobs per block for local building.
+    /// If None, uses the protocol maximum for the current fork.
+    pub max_blobs_per_block: Option<u32>,
 }
 
 impl Default for BlockchainOptions {
@@ -106,6 +196,7 @@ impl Default for BlockchainOptions {
             max_mempool_size: MAX_MEMPOOL_SIZE_DEFAULT,
             perf_logs_enabled: false,
             r#type: BlockchainType::default(),
+            max_blobs_per_block: None,
         }
     }
 }
@@ -172,7 +263,7 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header);
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
         let mut vm = self.new_evm(vm_db)?;
 
         let execution_result = vm.execute_block(block)?;
@@ -196,6 +287,8 @@ impl Blockchain {
     fn execute_block_pipeline(
         &self,
         block: &Block,
+        parent_header: &BlockHeader,
+        mut vm: Evm,
     ) -> Result<
         (
             BlockExecutionResult,
@@ -207,21 +300,12 @@ impl Blockchain {
         ChainError,
     > {
         let start_instant = Instant::now();
-        // Validate if it can be the new head and find the parent
-        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
-            // If the parent is not present, we store it as pending.
-            self.storage.add_pending_block(block.clone())?;
-            return Err(ChainError::ParentNotFound);
-        };
 
         let chain_config = self.storage.get_chain_config();
 
         // Validate the block pre-execution
-        validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        validate_block(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         let block_validated_instant = Instant::now();
-
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone());
-        let mut vm = self.new_evm(vm_db)?;
 
         let exec_merkle_start = Instant::now();
         let queue_length = AtomicUsize::new(0);
@@ -432,20 +516,34 @@ impl Blockchain {
             state_updates_map.extend(worker_result.state_updates);
         }
 
-        if real_root.choices.iter().filter(|c| c.is_valid()).count() < 2 {
-            // On most chains, there's no way to go from a branch root node to a leaf or extension.
-            // There are exceptions in networks engineered to trigger this case, but it's
-            // not expected in normal operation.
-            //
-            // Example: network starts with a single account in genesis, transfers to other addresses,
-            // generating more subtries, then deploys a contract which self-destructs in each of those
-            // addresses, reverting back to the base case.
-            //
-            // TODO(#5387): support this case
-            todo!("real root has less than 2 valid subtries after merkleization");
-        }
-        let root_node = real_root.encode_to_vec();
-        let state_trie_hash = keccak(&root_node);
+        // Turn the root back into an extension or leaf if applicable
+        let root_node_opt = {
+            let children = real_root
+                .choices
+                .iter()
+                .filter(|child| child.is_valid())
+                // No need to check all of them
+                .take(2)
+                .count();
+
+            match children {
+                0 | 1 => collapse_root_node(
+                    real_root,
+                    &mut state_updates_map,
+                    &self.storage,
+                    parent_header,
+                )?,
+                // More than one child. Keep as branch
+                _ => Some(Node::Branch(real_root)),
+            }
+        };
+
+        let (state_trie_hash, root_node) = if let Some(root_node) = &root_node_opt {
+            let encoded_root_node = root_node.encode_to_vec();
+            (keccak(&encoded_root_node), encoded_root_node)
+        } else {
+            (*EMPTY_TRIE_HASH, vec![RLP_NULL])
+        };
         state_updates_map.insert(Nibbles::default(), root_node);
         let state_updates = state_updates_map.into_iter().collect();
         let storage_updates = storage_updates_map
@@ -605,8 +703,8 @@ impl Blockchain {
                         (
                             storage.open_storage_trie(
                                 hashed_address_h256,
-                                account_state.storage_root,
                                 parent_header.state_root,
+                                account_state.storage_root,
                             ),
                             Default::default(),
                         )
@@ -733,7 +831,7 @@ impl Blockchain {
             // doesn't fail, later in this function we store the new state after
             // re-execution.
             let vm_db: DynVmDatabase =
-                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_header));
+                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_header)?);
 
             let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
 
@@ -1075,8 +1173,18 @@ impl Blockchain {
     }
 
     pub fn add_block_pipeline(&self, block: Block) -> Result<(), ChainError> {
+        // Validate if it can be the new head and find the parent
+        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+            // If the parent is not present, we store it as pending.
+            self.storage.add_pending_block(block)?;
+            return Err(ChainError::ParentNotFound);
+        };
+
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
+        let vm = self.new_evm(vm_db)?;
+
         let (res, account_updates_list, merkle_queue_length, instants) =
-            self.execute_block_pipeline(&block)?;
+            self.execute_block_pipeline(&block, &parent_header, vm)?;
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -1252,7 +1360,8 @@ impl Blockchain {
             self.storage.clone(),
             parent_header,
             block_hash_cache,
-        );
+        )
+        .map_err(|e| (ChainError::EvmError(e), None))?;
         let mut vm = self.new_evm(vm_db).map_err(|e| (e.into(), None))?;
 
         let blocks_len = blocks.len();
@@ -1380,17 +1489,19 @@ impl Blockchain {
         transaction: EIP4844Transaction,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, MempoolError> {
-        // Validate blobs bundle
-
         let fork = self.current_fork().await?;
-
-        blobs_bundle.validate(&transaction, fork)?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
         let hash = transaction.hash();
         if self.mempool.contains_tx(hash)? {
             return Ok(hash);
         }
+
+        // Validate blobs bundle after checking if it's already added.
+        if let Transaction::EIP4844Transaction(transaction) = &transaction {
+            blobs_bundle.validate(transaction, fork)?;
+        }
+
         let sender = transaction.sender()?;
 
         // Validate transaction
@@ -1400,7 +1511,7 @@ impl Blockchain {
 
         // Add transaction and blobs bundle to storage
         self.mempool
-            .add_transaction(hash, MempoolTransaction::new(transaction, sender))?;
+            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
         self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
         Ok(hash)
     }
@@ -1426,7 +1537,7 @@ impl Blockchain {
 
         // Add transaction to storage
         self.mempool
-            .add_transaction(hash, MempoolTransaction::new(transaction, sender))?;
+            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
 
         Ok(hash)
     }
@@ -1654,6 +1765,7 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
                 .fee_config
                 .read()
                 .map_err(|_| EvmError::Custom("Fee config lock was poisoned".to_string()))?;
+
             Evm::new_for_l2(vm_db, fee_config)?
         }
     };
@@ -1742,6 +1854,9 @@ pub fn find_parent_header(
 /// Performs pre-execution validation of the block's header values in reference to the parent_header
 /// Verifies that blob gas fields in the header are correct in reference to the block's body.
 /// If a block passes this check, execution will still fail with execute_block when a transaction runs out of gas
+///
+/// Note that this doesn't validate that the transactions or withdrawals root of the header matches the body
+/// contents, since we assume the caller already did it. And, in any case, that wouldn't invalidate the block header.
 pub fn validate_block(
     block: &Block,
     parent_header: &BlockHeader,
@@ -1753,7 +1868,7 @@ pub fn validate_block(
         .map_err(InvalidBlockError::from)?;
 
     if chain_config.is_osaka_activated(block.header.timestamp) {
-        let block_rlp_size = block.encode_to_vec().len();
+        let block_rlp_size = block.length();
         if block_rlp_size > MAX_RLP_BLOCK_SIZE as usize {
             return Err(error::ChainError::InvalidBlock(
                 InvalidBlockError::MaximumRlpSizeExceeded(
@@ -1866,6 +1981,58 @@ fn verify_transaction_max_gas_limit(block: &Block) -> Result<(), ChainError> {
 /// Calculates the blob gas required by a transaction
 pub fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
     GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u32
+}
+
+/// Collapses a root branch node into an extension or leaf node if it has only one valid child.
+/// Returns None if there are no valid children.
+///
+/// NOTE: this assumes the branch has 0 or 1 children. If there are more than 1,
+/// it will discard all but the first valid child found.
+#[cold]
+fn collapse_root_node(
+    real_root: Box<BranchNode>,
+    state_updates_map: &mut FxHashMap<Nibbles, Vec<u8>>,
+    storage: &Store,
+    parent_header: &BlockHeader,
+) -> Result<Option<Node>, StoreError> {
+    // Collapse the branch into an extension or leaf
+    let Some((choice, only_child)) = real_root
+        .choices
+        .into_iter()
+        .enumerate()
+        .find(|(_, c)| c.is_valid())
+    else {
+        return Ok(None);
+    };
+    let path = Nibbles::from_hex(vec![choice as u8]);
+    let child_bytes = match state_updates_map.get(&path) {
+        Some(v) => v.clone(),
+        None => storage
+            .state_trie(parent_header.hash())?
+            .ok_or(StoreError::MissingStore)?
+            .db()
+            .get(path)?
+            .ok_or_else(|| StoreError::Custom("Missing child node during root collapse".into()))?,
+    };
+    // Same match as in [`BranchNode::remove`]
+    let child = match Node::decode(&child_bytes)? {
+        // Replace root with an extension node leading to the child
+        Node::Branch(_) => {
+            ExtensionNode::new(Nibbles::from_hex(vec![choice as u8]), only_child).into()
+        }
+        // Replace root with the child extension node, updating its path in the process
+        Node::Extension(mut extension_node) => {
+            let mut extension_node = extension_node.take();
+            extension_node.prefix.prepend(choice as u8);
+            extension_node.into()
+        }
+        Node::Leaf(mut leaf) => {
+            let mut leaf = leaf.take();
+            leaf.partial.prepend(choice as u8);
+            leaf.into()
+        }
+    };
+    Ok(Some(child))
 }
 
 #[cfg(test)]

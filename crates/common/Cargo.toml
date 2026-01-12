@@ -26,6 +26,7 @@ libc = "0.2"
 crc32fast.workspace = true
 bytes.workspace = true
 hex.workspace = true
+hex-literal.workspace = true
 lazy_static.workspace = true
 rayon.workspace = true
 url.workspace = true
@@ -46,6 +47,7 @@ secp256k1 = ["dep:secp256k1"]
 risc0 = ["ethrex-crypto/risc0"]
 sp1 = []
 zisk = []
+openvm = ["ethrex-crypto/openvm"]
 
 [lib]
 path = "./common.rs"

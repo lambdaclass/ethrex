@@ -211,7 +211,7 @@ pub struct PayloadBuildContext {
     pub receipts: Vec<Receipt>,
     pub requests: Option<Vec<EncodedRequests>>,
     pub block_value: U256,
-    base_fee_per_blob_gas: u64,
+    base_fee_per_blob_gas: U256,
     pub blobs_bundle: BlobsBundle,
     pub store: Store,
     pub vm: Evm,
@@ -238,10 +238,10 @@ impl PayloadBuildContext {
             .get_block_header_by_hash(payload.header.parent_hash)
             .map_err(|e| EvmError::DB(e.to_string()))?
             .ok_or_else(|| EvmError::DB("parent header not found".to_string()))?;
-        let vm_db = StoreVmDatabase::new(storage.clone(), parent_header);
+        let vm_db = StoreVmDatabase::new(storage.clone(), parent_header)?;
         let vm = new_evm(blockchain_type, vm_db)?;
 
-        let payload_size = payload.encode_to_vec().len() as u64;
+        let payload_size = payload.length() as u64;
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
             receipts: vec![],
@@ -463,7 +463,7 @@ impl Blockchain {
         let tx_filter = PendingTxFilter {
             /*TODO(https://github.com/lambdaclass/ethrex/issues/680): add tip filter */
             base_fee: context.base_fee_per_gas(),
-            blob_fee: Some(context.base_fee_per_blob_gas),
+            blob_fee: Some(context.base_fee_per_blob_gas.try_into().unwrap()),
             ..Default::default()
         };
         let plain_tx_filter = PendingTxFilter {
@@ -488,14 +488,25 @@ impl Blockchain {
         ))
     }
 
+    /// EIP-7872: Computes effective max blobs per block.
+    /// Returns min(protocol_max, user_configured_max).
+    fn effective_max_blobs(&self, context: &PayloadBuildContext) -> usize {
+        let protocol_max = context
+            .chain_config()
+            .get_fork_blob_schedule(context.payload.header.timestamp)
+            .map(|schedule| schedule.max)
+            .unwrap_or_default();
+        match self.options.max_blobs_per_block {
+            Some(user_max) => protocol_max.min(user_max) as usize,
+            None => protocol_max as usize,
+        }
+    }
+
     /// Fills the payload with transactions taken from the mempool
     /// Returns the block value
     pub fn fill_transactions(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
         let chain_config = context.chain_config();
-        let max_blob_number_per_block = chain_config
-            .get_fork_blob_schedule(context.payload.header.timestamp)
-            .map(|schedule| schedule.max)
-            .unwrap_or_default() as usize;
+        let max_blob_number_per_block = self.effective_max_blobs(context);
 
         debug!("Fetching transactions from mempool");
         // Fetch mempool transactions
@@ -607,11 +618,7 @@ impl Blockchain {
     ) -> Result<Receipt, ChainError> {
         // Fetch blobs bundle
         let tx_hash = head.tx.hash();
-        let chain_config = context.chain_config();
-        let max_blob_number_per_block = chain_config
-            .get_fork_blob_schedule(context.payload.header.timestamp)
-            .map(|schedule| schedule.max)
-            .unwrap_or_default() as usize;
+        let max_blob_number_per_block = self.effective_max_blobs(context);
         let Some(blobs_bundle) = self.mempool.get_blobs_bundle(tx_hash)? else {
             // No blob tx should enter the mempool without its blobs bundle so this is an internal error
             return Err(

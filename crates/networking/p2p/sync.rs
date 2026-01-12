@@ -23,12 +23,14 @@ use ethrex_common::types::Code;
 use ethrex_common::{
     H256,
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
-    types::{AccountState, Block, BlockHash, BlockHeader},
+    types::{AccountState, Block, BlockHeader},
 };
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
+use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
+#[cfg(feature = "rocksdb")]
+use ethrex_trie::Trie;
+use ethrex_trie::TrieError;
 use ethrex_trie::trie_sorted::TrieGenerationError;
-use ethrex_trie::{Trie, TrieError};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -59,6 +61,9 @@ const BYTECODE_CHUNK_SIZE: usize = 50_000;
 /// based update pivot algorithm. This is also used to try to find "safe" blocks in the chain
 /// that are unlikely to be re-orged.
 const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
+
+/// Maximum attempts before giving up on header downloads during syncing
+const MAX_HEADER_FETCH_ATTEMPTS: u64 = 100;
 
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
@@ -188,15 +193,12 @@ impl Syncer {
             Err(e) => return Err(e.into()),
         };
 
+        let mut attempts = 0;
+
         // We validate that we have the folders that are being used empty, as we currently assume
         // they are. If they are not empty we empty the folder
         delete_leaves_folder(&self.datadir);
         loop {
-            debug!("Sync Log 1: In snap sync");
-            debug!(
-                "Sync Log 2: State block hashes len {}",
-                block_sync_state.block_hashes.len()
-            );
             debug!("Requesting Block Headers from {current_head}");
 
             let Some(mut block_headers) = self
@@ -204,9 +206,21 @@ impl Syncer {
                 .request_block_headers(current_head_number, sync_head)
                 .await?
             else {
-                warn!("Sync failed to find target block header, aborting");
-                return Ok(());
+                if attempts > MAX_HEADER_FETCH_ATTEMPTS {
+                    warn!("Sync failed to find target block header, aborting");
+                    return Ok(());
+                }
+                attempts += 1;
+                tokio::time::sleep(Duration::from_millis(1.1_f64.powf(attempts as f64) as u64))
+                    .await;
+                continue;
             };
+
+            debug!("Sync Log 1: In snap sync");
+            debug!(
+                "Sync Log 2: State block hashes len {}",
+                block_sync_state.block_hashes.len()
+            );
 
             let (first_block_hash, first_block_number, first_block_parent_hash) =
                 match block_headers.first() {
@@ -323,6 +337,8 @@ impl Syncer {
         let mut headers = vec![];
         let mut single_batch = true;
 
+        let mut attempts = 0;
+
         // Request and store all block headers from the advertised sync head
         loop {
             let Some(mut block_headers) = self
@@ -330,9 +346,14 @@ impl Syncer {
                 .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
                 .await?
             else {
-                warn!("Sync failed to find target block header, aborting");
-                debug!("Sync Log 8: Sync failed to find target block header, aborting");
-                return Ok(());
+                if attempts > MAX_HEADER_FETCH_ATTEMPTS {
+                    warn!("Sync failed to find target block header, aborting");
+                    return Ok(());
+                }
+                attempts += 1;
+                tokio::time::sleep(Duration::from_millis(1.1_f64.powf(attempts as f64) as u64))
+                    .await;
+                continue;
             };
             debug!("Sync Log 9: Received {} block headers", block_headers.len());
 
@@ -397,7 +418,7 @@ impl Syncer {
                 let header_batch = &headers[..min(MAX_BLOCK_BODIES_TO_REQUEST, headers.len())];
                 let bodies = self
                     .peers
-                    .request_and_validate_block_bodies(header_batch)
+                    .request_block_bodies(header_batch)
                     .await?
                     .ok_or(SyncError::BodiesNotFound)?;
                 debug!("Obtained: {} block bodies", bodies.len());
@@ -493,7 +514,7 @@ impl Syncer {
 
         store
             .forkchoice_update(
-                Some(numbers_and_hashes),
+                numbers_and_hashes,
                 last_block_number,
                 last_block_hash,
                 None,
@@ -531,71 +552,53 @@ impl Syncer {
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         // If we found the sync head, run the blocks sequentially to store all the blocks's state
         if sync_head_found {
-            let mut last_valid_hash = H256::default();
-            for block in blocks {
-                let block_hash = block.hash();
-                blockchain.add_block_pipeline(block).map_err(|e| {
-                    (
-                        e,
-                        Some(BatchBlockProcessingFailure {
-                            last_valid_hash,
-                            failed_block_hash: block_hash,
-                        }),
-                    )
-                })?;
-                last_valid_hash = block_hash;
-            }
-            Ok(())
+            tokio::task::spawn_blocking(move || {
+                let mut last_valid_hash = H256::default();
+                for block in blocks {
+                    let block_hash = block.hash();
+                    blockchain.add_block_pipeline(block).map_err(|e| {
+                        (
+                            e,
+                            Some(BatchBlockProcessingFailure {
+                                last_valid_hash,
+                                failed_block_hash: block_hash,
+                            }),
+                        )
+                    })?;
+                    last_valid_hash = block_hash;
+                }
+                Ok(())
+            })
+            .await
+            .map_err(|e| (ChainError::Custom(e.to_string()), None))?
         } else {
             blockchain.add_blocks_in_batch(blocks, cancel_token).await
         }
     }
 }
 
-/// Fetches all block bodies for the given block hashes via p2p and stores them
+/// Fetches all block bodies for the given block headers via p2p and stores them
 async fn store_block_bodies(
-    mut block_hashes: Vec<BlockHash>,
+    mut block_headers: Vec<BlockHeader>,
     mut peers: PeerHandler,
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
         debug!("Requesting Block Bodies ");
-        if let Some(block_bodies) = peers.request_block_bodies(&block_hashes).await? {
+        if let Some(block_bodies) = peers.request_block_bodies(&block_headers).await? {
             debug!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
-            let current_block_hashes = block_hashes.drain(..block_bodies.len());
+            let current_block_headers = block_headers.drain(..block_bodies.len());
             // Add bodies to storage
-            for (hash, body) in current_block_hashes.zip(block_bodies.into_iter()) {
+            for (hash, body) in current_block_headers
+                .map(|h| h.hash())
+                .zip(block_bodies.into_iter())
+            {
                 store.add_block_body(hash, body).await?;
             }
 
             // Check if we need to ask for another batch
-            if block_hashes.is_empty() {
-                break;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Fetches all receipts for the given block hashes via p2p and stores them
-// TODO: remove allow when used again
-#[allow(unused)]
-async fn store_receipts(
-    mut block_hashes: Vec<BlockHash>,
-    mut peers: PeerHandler,
-    store: Store,
-) -> Result<(), SyncError> {
-    loop {
-        debug!("Requesting Receipts ");
-        if let Some(receipts) = peers.request_receipts(block_hashes.clone()).await? {
-            debug!(" Received {} Receipts", receipts.len());
-            // Track which blocks we have already fetched receipts for
-            for (block_hash, receipts) in block_hashes.drain(0..receipts.len()).zip(receipts) {
-                store.add_receipts(block_hash, receipts).await?;
-            }
-            // Check if we need to ask for another batch
-            if block_hashes.is_empty() {
+            if block_headers.is_empty() {
                 break;
             }
         }
@@ -773,7 +776,7 @@ impl Syncer {
                     storage_accounts.accounts_with_storage_root.len()
                 );
                 storage_range_request_attempts += 1;
-                if storage_range_request_attempts < 3 {
+                if storage_range_request_attempts < 5 {
                     chunk_index = self
                         .peers
                         .request_storage_ranges(
@@ -802,6 +805,9 @@ impl Syncer {
                             old_intervals.len()
                         );
                     }
+
+                    warn!("Storage could not be downloaded after multiple attempts. Marking for healing.
+                        This could impact snap sync time (healing may take a while).");
 
                     storage_accounts.accounts_with_storage_root.clear();
                 }
@@ -929,7 +935,11 @@ impl Syncer {
                             .write_account_code_batch(
                                 code_hashes_to_download
                                     .drain(..)
-                                    .zip(bytecodes.into_iter().map(Code::from_bytecode))
+                                    .zip(bytecodes)
+                                    // SAFETY: hash already checked by the download worker
+                                    .map(|(hash, code)| {
+                                        (hash, Code::from_bytecode_unchecked(code, hash))
+                                    })
                                     .collect(),
                             )
                             .await?;
@@ -950,7 +960,9 @@ impl Syncer {
                 .write_account_code_batch(
                     code_hashes_to_download
                         .drain(..)
-                        .zip(bytecodes.into_iter().map(Code::from_bytecode))
+                        .zip(bytecodes)
+                        // SAFETY: hash already checked by the download worker
+                        .map(|(hash, code)| (hash, Code::from_bytecode_unchecked(code, hash)))
                         .collect(),
                 )
                 .await?;
@@ -961,9 +973,14 @@ impl Syncer {
 
         *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
 
-        debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root).await);
+        debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root));
 
-        store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
+        store_block_bodies(
+            vec![pivot_header.clone()],
+            self.peers.clone(),
+            store.clone(),
+        )
+        .await?;
 
         let block = store
             .get_block_by_hash(pivot_header.hash())
@@ -982,7 +999,7 @@ impl Syncer {
 
         store
             .forkchoice_update(
-                Some(numbers_and_hashes),
+                numbers_and_hashes,
                 pivot_header.number,
                 pivot_header.hash(),
                 None,
@@ -992,6 +1009,9 @@ impl Syncer {
         Ok(())
     }
 }
+
+#[cfg(not(feature = "rocksdb"))]
+use ethrex_rlp::encode::RLPEncode;
 
 #[cfg(not(feature = "rocksdb"))]
 type StorageRoots = (H256, Vec<(ethrex_trie::Nibbles, Vec<u8>)>);
@@ -1217,65 +1237,53 @@ impl<T> From<SendError<T>> for SyncError {
 
 pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
     info!("Starting validate_state_root");
-    let computed_state_root = tokio::task::spawn_blocking(move || {
-        Trie::compute_hash_from_unsorted_iter(
-            store
-                .iter_accounts(state_root)
-                .expect("we couldn't iterate over accounts")
-                .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())),
-        )
+    let validated = tokio::task::spawn_blocking(move || {
+        store
+            .open_locked_state_trie(state_root)
+            .expect("couldn't open trie")
+            .validate()
     })
     .await
     .expect("We should be able to create threads");
 
-    let tree_validated = state_root == computed_state_root;
-    if tree_validated {
+    if validated.is_ok() {
         info!("Succesfully validated tree, {state_root} found");
     } else {
-        error!(
-            "We have failed the validation of the state tree {state_root} expected but {computed_state_root} found"
-        );
+        error!("We have failed the validation of the state tree");
+        std::process::exit(1);
     }
-    tree_validated
+    validated.is_ok()
 }
 
 pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     info!("Starting validate_storage_root");
-    let is_valid = store
-        .clone()
-        .iter_accounts(state_root)
-        .expect("We should be able to open the store")
-        .par_bridge()
-        .map(|(hashed_address, account_state)|
-    {
-        let store_clone = store.clone();
-        let computed_storage_root = Trie::compute_hash_from_unsorted_iter(
+    let is_valid = tokio::task::spawn_blocking(move || {
+        store
+            .iter_accounts(state_root)
+            .expect("couldn't iterate accounts")
+            .par_bridge()
+            .try_for_each(|(hashed_address, account_state)| {
+                let store_clone = store.clone();
                 store_clone
-                    .iter_storage(state_root, hashed_address)
-                    .expect("we couldn't iterate over accounts")
-                    .expect("This address should be valid")
-                    .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())),
-            );
-
-        let tree_validated = account_state.storage_root == computed_storage_root;
-        if !tree_validated {
-            error!(
-                "We have failed the validation of the storage tree {:x} expected but {computed_storage_root:x} found for the account {:x}",
-                account_state.storage_root,
-                hashed_address
-            );
-        }
-        tree_validated
+                    .open_locked_storage_trie(
+                        hashed_address,
+                        state_root,
+                        account_state.storage_root,
+                    )
+                    .expect("couldn't open storage trie")
+                    .validate()
+            })
     })
-    .all(|valid| valid);
+    .await
+    .expect("We should be able to create threads");
     info!("Finished validate_storage_root");
-    if !is_valid {
+    if is_valid.is_err() {
         std::process::exit(1);
     }
-    is_valid
+    is_valid.is_ok()
 }
 
-pub async fn validate_bytecodes(store: Store, state_root: H256) -> bool {
+pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
     info!("Starting validate_bytecodes");
     let mut is_valid = true;
     for (account_hash, account_state) in store

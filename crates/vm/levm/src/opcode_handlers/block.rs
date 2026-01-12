@@ -224,7 +224,7 @@ impl OpcodeHandler for OpBlobBaseFeeHandler {
             .increase_consumed_gas(gas_cost::BLOBBASEFEE)?;
 
         vm.current_call_frame.stack.push(
-            get_base_fee_per_blob_gas(vm.env.block_excess_blob_gas, &vm.env.config)?.into(),
+            get_base_fee_per_blob_gas(vm.env.block_excess_blob_gas, &vm.env.config)?,
         )?;
 
         Ok(OpcodeResult::Continue)

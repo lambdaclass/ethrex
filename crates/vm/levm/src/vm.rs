@@ -29,28 +29,55 @@ use std::{
     rc::Rc,
 };
 
+/// Storage mapping from slot key to value.
 pub type Storage = HashMap<U256, H256>;
 
+/// Specifies whether the VM operates in L1 or L2 mode.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum VMType {
+    /// Standard Ethereum L1 execution.
     #[default]
     L1,
+    /// L2 rollup execution with additional fee handling.
     L2(FeeConfig),
 }
 
-/// Information that changes during transaction execution.
-// Most fields are private by design. The backup mechanism (`parent` field) will only work properly
-// if data is append-only.
+/// Execution substate that tracks changes during transaction execution.
+///
+/// The substate maintains all information that may need to be reverted if a
+/// call fails, including:
+/// - Self-destructed accounts
+/// - Accessed addresses and storage slots (for EIP-2929 gas accounting)
+/// - Created accounts
+/// - Gas refunds
+/// - Transient storage (EIP-1153)
+/// - Event logs
+///
+/// # Backup Mechanism
+///
+/// The substate supports checkpointing via [`push_backup`] and restoration via
+/// [`revert_backup`] or commitment via [`commit_backup`]. This is used to handle
+/// nested calls where inner calls may fail and need to be reverted.
+///
+/// Most fields are private by design. The backup mechanism only works correctly
+/// if data modifications are append-only.
 #[derive(Debug, Default)]
 pub struct Substate {
+    /// Parent checkpoint for reverting on failure.
     parent: Option<Box<Self>>,
-
+    /// Accounts marked for self-destruction (deleted at end of transaction).
     selfdestruct_set: HashSet<Address>,
+    /// Addresses accessed during execution (for EIP-2929 warm/cold gas costs).
     accessed_addresses: HashSet<Address>,
+    /// Storage slots accessed per address (for EIP-2929 warm/cold gas costs).
     accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
+    /// Accounts created during this transaction.
     created_accounts: HashSet<Address>,
+    /// Accumulated gas refund (e.g., from storage clears).
     pub refunded_gas: u64,
+    /// Transient storage (EIP-1153), cleared at end of transaction.
     transient_storage: TransientStorage,
+    /// Event logs emitted during execution.
     logs: Vec<Log>,
 }
 
@@ -202,6 +229,7 @@ impl Substate {
 
         // Note: Do not simplify this expression, it uses `||` to avoid executing the right hand
         //   expression if not necessary.
+        #[expect(clippy::nonminimal_bool, reason = "order of evaluation matters")]
         !(is_present
             || !self
                 .accessed_storage_slots
@@ -233,6 +261,7 @@ impl Substate {
 
         // Note: Do not simplify this expression, it uses `||` to avoid executing the right hand
         //   expression if not necessary.
+        #[expect(clippy::nonminimal_bool, reason = "order of evaluation matters")]
         !(is_present || !self.accessed_addresses.insert(address))
     }
 
@@ -307,25 +336,65 @@ impl Substate {
     }
 }
 
+/// The LEVM (Lambda EVM) execution engine.
+///
+/// The VM executes Ethereum transactions by processing EVM bytecode. It maintains
+/// a call stack, memory, and tracks all state changes during execution.
+///
+/// # Execution Model
+///
+/// 1. Transaction is validated (nonce, balance, gas limit)
+/// 2. Initial call frame is created with transaction data
+/// 3. Opcodes are executed sequentially until completion or error
+/// 4. State changes are committed or reverted based on success
+///
+/// # Call Stack
+///
+/// Nested calls (CALL, DELEGATECALL, etc.) push new frames onto `call_frames`.
+/// Each frame has its own memory, stack, and execution context. The `current_call_frame`
+/// is always the active frame being executed.
+///
+/// # Hooks
+///
+/// The VM supports hooks for extending functionality (e.g., tracing, debugging).
+/// Hooks are called at various points during execution and implement pre/post-execution
+/// logic. L2-specific behavior (such as fee handling) is implemented via hooks.
+///
+/// # Example
+///
+/// ```ignore
+/// let mut vm = VM::new(env, db, &tx, tracer, debug_mode, vm_type);
+/// let report = vm.execute()?;
+/// if report.is_success() {
+///     println!("Gas used: {}, Output: {:?}", report.gas_used, report.output);
+/// } else {
+///     println!("Transaction reverted");
+/// }
+/// ```
 pub struct VM<'a> {
-    /// Parent callframes.
+    /// Stack of parent call frames (for nested calls).
     pub call_frames: Vec<CallFrame>,
-    /// The current call frame.
+    /// The currently executing call frame.
     pub current_call_frame: CallFrame,
+    /// Block and transaction environment.
     pub env: Environment,
+    /// Execution substate (accessed addresses, logs, refunds, etc.).
     pub substate: Substate,
+    /// Database for reading/writing account state.
     pub db: &'a mut GeneralizedDatabase,
+    /// The transaction being executed.
     pub tx: Transaction,
+    /// Execution hooks for tracing and debugging.
     pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
-    pub substate_backups: Vec<Substate>,
-    /// Original storage values before the transaction. Used for gas calculations in SSTORE.
+    /// Original storage values before transaction (for SSTORE gas calculation).
     pub storage_original_values: BTreeMap<(Address, H256), U256>,
-    /// When enabled, it "logs" relevant information during execution
+    /// Call tracer for execution tracing.
     pub tracer: LevmCallTracer,
-    /// Mode for printing some useful stuff, only used in development!
+    /// Debug mode for development diagnostics.
     pub debug_mode: DebugMode,
-    /// A pool of stacks to avoid reallocating too much when creating new call frames.
+    /// Pool of reusable stacks to reduce allocations.
     pub stack_pool: Vec<Stack>,
+    /// VM type (L1 or L2 with fee config).
     pub vm_type: VMType,
 
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
@@ -355,7 +424,6 @@ impl<'a> VM<'a> {
             db,
             tx: tx.clone(),
             hooks: get_hooks(&vm_type),
-            substate_backups: Vec::new(),
             storage_original_values: BTreeMap::new(),
             tracer,
             debug_mode: DebugMode::disabled(),
@@ -462,14 +530,27 @@ impl<'a> VM<'a> {
         }
 
         let mut error = OnceCell::<VMError>::new();
+
+        #[cfg(feature = "perf_opcode_timings")]
+        let mut timings = crate::timings::OPCODE_TIMINGS.lock().expect("poison");
+
         loop {
             let opcode = self.current_call_frame.next_opcode();
             self.advance_pc(1)?;
+
+            #[cfg(feature = "perf_opcode_timings")]
+            let opcode_time_start = std::time::Instant::now();
 
             // Call the opcode, using the opcode function lookup table.
             // Indexing will not panic as all the opcode values fit within the table.
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
             let op_result = self.opcode_table[opcode as usize].call(self, &mut error);
+
+            #[cfg(feature = "perf_opcode_timings")]
+            {
+                let time = opcode_time_start.elapsed();
+                timings.update(opcode, time);
+            }
 
             let result = match op_result {
                 OpcodeResult::Continue => continue,

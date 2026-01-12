@@ -204,14 +204,32 @@ impl OpcodeHandler for OpMulModHandler {
         if lhs.is_zero() || rhs.is_zero() || r#mod.is_zero() {
             vm.current_call_frame.stack.push_zero()?;
         } else {
-            let res = lhs.full_mul(rhs);
+            #[cfg(not(feature = "zisk"))]
+            let res = {
+                let res = lhs.full_mul(rhs);
 
-            let r#mod = r#mod.into();
-            #[expect(clippy::unwrap_used, reason = "unreachable")]
-            let res = match res.cmp(&r#mod) {
-                Ordering::Less => res.try_into().unwrap(),
-                Ordering::Equal => U256::zero(),
-                Ordering::Greater => (res % r#mod).try_into().unwrap(),
+                let r#mod = r#mod.into();
+                #[expect(clippy::unwrap_used, reason = "unreachable")]
+                match res.cmp(&r#mod) {
+                    Ordering::Less => res.try_into().unwrap(),
+                    Ordering::Equal => U256::zero(),
+                    Ordering::Greater => (res % r#mod).try_into().unwrap(),
+                }
+            };
+
+            #[cfg(feature = "zisk")]
+            let res = unsafe {
+                use std::mem::MaybeUninit;
+                use ziskos::zisklib::mulmod256_c;
+
+                let res = MaybeUninit::<[u64; 4]>::uninit();
+                mulmod256_c(
+                    lhs.0.as_ptr(),
+                    rhs.0.as_ptr(),
+                    r#mod.0.as_ptr(),
+                    res.as_mut_ptr(),
+                );
+                U256(res.assume_init())
             };
 
             vm.current_call_frame.stack.push(res)?;
