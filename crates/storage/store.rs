@@ -174,11 +174,6 @@ pub struct Store {
     /// those changes already affect the code hash stored in the account, and only
     /// may result in this cache having useless data.
     account_code_cache: Arc<Mutex<CodeCache>>,
-    /// LRU cache for contract bytecode, keyed by code hash.
-    ///
-    /// Entries are not removed on code changes since the code hash
-    /// in the account already reflects the change.
-    account_code_cache: Arc<CodeCache>,
 
     background_threads: Arc<ThreadList>,
 }
@@ -1363,7 +1358,6 @@ impl Store {
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
-            account_code_cache: Arc::new(CodeCache::default()),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
