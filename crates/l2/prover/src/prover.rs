@@ -158,7 +158,8 @@ impl<B: ProverBackend> Prover<B> {
                 blob_commitment: input.blob_commitment,
                 #[cfg(feature = "l2")]
                 blob_proof: input.blob_proof,
-                fee_configs: Some(input.fee_configs),
+                #[cfg(feature = "l2")]
+                fee_configs: input.fee_configs,
             },
             format,
         }))
