@@ -54,6 +54,8 @@ loc_report_github.txt
 loc_report.json
 performance_report_github.txt
 performance_report_slack.json
+block_time_report_github.txt
+block_time_report_slack.json
 
 # used by Flamegraph and Samply
 tooling/ef_tests/state/levm_perfgraphs
