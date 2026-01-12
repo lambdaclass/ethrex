@@ -47,7 +47,6 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::AtomicU64,
         mpsc::{SyncSender, TryRecvError, sync_channel},
     },
     thread::JoinHandle,
@@ -71,76 +70,110 @@ enum FKVGeneratorControlMessage {
 // 64mb
 const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
 
-// TODO: don't use atomic here, instead wrap in Mutex the whole cache
 #[derive(Debug)]
 struct CodeCache {
-    inner_cache: Mutex<LruCache<H256, Code, FxBuildHasher>>,
-    cache_size: AtomicU64,
+    inner_cache: LruCache<H256, Code, FxBuildHasher>,
+    cache_size: u64,
 }
 
 impl Default for CodeCache {
     fn default() -> Self {
         Self {
-            inner_cache: Mutex::new(LruCache::unbounded_with_hasher(FxBuildHasher)),
-            cache_size: AtomicU64::new(0),
+            inner_cache: LruCache::unbounded_with_hasher(FxBuildHasher),
+            cache_size: 0,
         }
     }
 }
 
 impl CodeCache {
-    fn get(&self, code_hash: &H256) -> Result<Option<Code>, StoreError> {
-        let mut cache = self.inner_cache.lock().map_err(|_| StoreError::LockError)?;
-        Ok(cache.get(code_hash).cloned())
+    fn get(&mut self, code_hash: &H256) -> Result<Option<Code>, StoreError> {
+        Ok(self.inner_cache.get(code_hash).cloned())
     }
 
-    fn insert(&self, code: &Code) -> Result<(), StoreError> {
-        let mut cache = self.inner_cache.lock().map_err(|_| StoreError::LockError)?;
+    fn insert(&mut self, code: &Code) -> Result<(), StoreError> {
         let code_size = code.size();
-        self.cache_size
-            .fetch_add(code_size as u64, std::sync::atomic::Ordering::SeqCst);
-        let cache_len = cache.len() + 1;
-        let mut current_size = self.cache_size.load(std::sync::atomic::Ordering::SeqCst);
+        let cache_len = self.inner_cache.len() + 1;
+        self.cache_size += code_size as u64;
+        let current_size = self.cache_size;
         debug!(
             "[ACCOUNT CODE CACHE] cache elements (): {cache_len}, total size: {current_size} bytes"
         );
 
-        while current_size > CODE_CACHE_MAX_SIZE {
-            if let Some((_, code)) = cache.pop_lru() {
-                self.cache_size
-                    .fetch_sub(code.size() as u64, std::sync::atomic::Ordering::SeqCst);
-                current_size = self.cache_size.load(std::sync::atomic::Ordering::SeqCst);
+        while self.cache_size > CODE_CACHE_MAX_SIZE {
+            if let Some((_, code)) = self.inner_cache.pop_lru() {
+                self.cache_size -= code.size() as u64;
             } else {
                 break;
             }
         }
 
-        cache.get_or_insert(code.hash, || code.clone());
+        self.inner_cache.get_or_insert(code.hash, || code.clone());
         Ok(())
     }
 }
 
+/// Main storage interface for the ethrex client.
+///
+/// The `Store` provides a high-level API for all blockchain data operations:
+/// - Block storage and retrieval
+/// - State trie management
+/// - Account and storage queries
+/// - Transaction indexing
+///
+/// # Thread Safety
+///
+/// `Store` is `Clone` and thread-safe. All clones share the same underlying
+/// database connection and caches via `Arc`.
+///
+/// # Caching
+///
+/// The store maintains several caches for performance:
+/// - **Trie Layer Cache**: Recent trie nodes for fast state access
+/// - **Code Cache**: LRU cache for contract bytecode (64MB default)
+/// - **Latest Block Cache**: Cached latest block header for RPC
+///
+/// # Example
+///
+/// ```ignore
+/// let store = Store::new("./data", EngineType::RocksDB)?;
+///
+/// // Add a block
+/// store.add_block(block).await?;
+///
+/// // Query account balance
+/// let info = store.get_account_info(block_number, address)?;
+/// let balance = info.map(|a| a.balance).unwrap_or_default();
+/// ```
 #[derive(Debug, Clone)]
 pub struct Store {
+    /// Path to the database directory.
     db_path: PathBuf,
+    /// Storage backend (InMemory or RocksDB).
     backend: Arc<dyn StorageBackend>,
+    /// Chain configuration (fork schedule, chain ID, etc.).
     chain_config: ChainConfig,
+    /// Cache for trie nodes from recent blocks.
     trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
+    /// Channel for controlling the FlatKeyValue generator background task.
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
+    /// Channel for sending trie updates to the background worker.
     trie_update_worker_tx: std::sync::mpsc::SyncSender<TrieUpdate>,
-    /// Keeps the latest canonical block header
-    /// It's wrapped in an Arc to allow for cheap reads with infrequent writes
-    /// Reading an out-of-date value is acceptable, since it's only used as:
-    /// - a cache of the (frequently requested) header
-    /// - a Latest tag for RPC, where a small extra delay before the newest block is expected
-    /// - sync-related operations, which must be idempotent in order to handle reorgs
+    /// Cached latest canonical block header.
+    ///
+    /// Wrapped in Arc for cheap reads with infrequent writes.
+    /// May be slightly out of date, which is acceptable for:
+    /// - Caching frequently requested headers
+    /// - RPC "latest" block queries (small delay acceptable)
+    /// - Sync operations (must be idempotent anyway)
     latest_block_header: LatestBlockHeaderCache,
+    /// Last computed FlatKeyValue for incremental updates.
     last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
 
     /// Cache for account bytecodes, keyed by the bytecode hash.
     /// Note that we don't remove entries on account code changes, since
     /// those changes already affect the code hash stored in the account, and only
     /// may result in this cache having useless data.
-    account_code_cache: Arc<CodeCache>,
+    account_code_cache: Arc<Mutex<CodeCache>>,
 
     background_threads: Arc<ThreadList>,
 }
@@ -158,34 +191,56 @@ impl Drop for ThreadList {
     }
 }
 
+/// Storage trie nodes grouped by account address hash.
+///
+/// Each entry contains the hashed account address and the trie nodes
+/// for that account's storage trie.
 pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
 
+/// Storage backend type selection.
+///
+/// Used when creating a new [`Store`] to specify which backend to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
+    /// In-memory storage, non-persistent. Suitable for testing.
     InMemory,
+    /// RocksDB storage, persistent. Suitable for production.
     #[cfg(feature = "rocksdb")]
     RocksDB,
 }
 
+/// Batch of updates to apply to the store atomically.
+///
+/// Used during block execution to collect all state changes before
+/// committing them to the database in a single transaction.
 pub struct UpdateBatch {
-    /// Nodes to be added to the state trie
+    /// New nodes to add to the state trie.
     pub account_updates: Vec<TrieNode>,
-    /// Storage tries updated and their new nodes
+    /// Storage trie updates per account (keyed by hashed address).
     pub storage_updates: Vec<(H256, Vec<TrieNode>)>,
-    /// Blocks to be added
+    /// Blocks to store.
     pub blocks: Vec<Block>,
-    /// Receipts added per block
+    /// Receipts to store, grouped by block hash.
     pub receipts: Vec<(H256, Vec<Receipt>)>,
-    /// Code updates
+    /// Contract code updates (code hash -> bytecode).
     pub code_updates: Vec<(H256, Code)>,
 }
 
+/// Storage trie updates grouped by account address hash.
 pub type StorageUpdates = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
 
+/// Collection of account state changes from block execution.
+///
+/// Contains all the data needed to update the state trie after
+/// executing a block: account updates, storage updates, and code deployments.
 pub struct AccountUpdatesList {
+    /// Root hash of the state trie after applying these updates.
     pub state_trie_hash: H256,
+    /// State trie node updates (path -> RLP-encoded node).
     pub state_updates: Vec<(Nibbles, Vec<u8>)>,
+    /// Storage trie updates per account.
     pub storage_updates: StorageUpdates,
+    /// New contract bytecode deployments.
     pub code_updates: Vec<(H256, Code)>,
 }
 
@@ -611,7 +666,12 @@ impl Store {
     /// reads the database, and if it exists, decodes and returns it.
     pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError> {
         // check cache first
-        if let Some(code) = self.account_code_cache.get(&code_hash)? {
+        if let Some(code) = self
+            .account_code_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get(&code_hash)?
+        {
             return Ok(Some(code));
         }
 
@@ -633,7 +693,10 @@ impl Store {
         };
 
         // insert into cache and evict if needed
-        self.account_code_cache.insert(&code)?;
+        self.account_code_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .insert(&code)?;
 
         Ok(Some(code))
     }
@@ -1294,7 +1357,7 @@ impl Store {
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
-            account_code_cache: Arc::new(CodeCache::default()),
+            account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
