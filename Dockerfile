@@ -57,25 +57,17 @@ COPY fixtures ./fixtures
 COPY .git ./.git
 COPY .cargo/ ./.cargo
 
-# Optional build flags (e.g., --profile release-with-debug-assertions)
-# If BUILD_FLAGS contains --profile, we use it as-is, otherwise default to --release
+# Build configuration
+# PROFILE: Cargo profile to use (release, release-with-debug-assertions, etc.)
+# BUILD_FLAGS: Additional cargo flags (features, etc.)
+ARG PROFILE="release"
 ARG BUILD_FLAGS=""
 ENV COMPILE_CONTRACTS=true
-RUN if echo "$BUILD_FLAGS" | grep -q -- '--profile'; then \
-        cargo build $BUILD_FLAGS; \
-    else \
-        cargo build --release $BUILD_FLAGS; \
-    fi
 
-# Determine the correct target directory based on profile
-# Extract profile name from BUILD_FLAGS if present, otherwise use "release"
+RUN cargo build --profile $PROFILE $BUILD_FLAGS
+
 RUN mkdir -p /ethrex/bin && \
-    if echo "$BUILD_FLAGS" | grep -q -- '--profile'; then \
-        PROFILE=$(echo "$BUILD_FLAGS" | sed -n 's/.*--profile[= ]\([^ ]*\).*/\1/p'); \
-        cp /ethrex/target/${PROFILE}/ethrex /ethrex/bin/ethrex; \
-    else \
-        cp /ethrex/target/release/ethrex /ethrex/bin/ethrex; \
-    fi
+    cp /ethrex/target/${PROFILE}/ethrex /ethrex/bin/ethrex
 
 # --- Final Image ---
 # Copy the ethrex binary into a minimalist image to reduce bloat size.
