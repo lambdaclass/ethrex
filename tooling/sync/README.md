@@ -70,8 +70,8 @@ This feature allows running multiple Ethrex nodes in parallel (hoodi, sepolia, m
 
 The parallel snapsync system:
 - Spawns multiple networks simultaneously via Docker Compose
-- Monitors snapsync progress with a 4-hour timeout
-- Verifies block processing for 22 minutes after sync completion
+- Monitors snapsync progress with configurable timeout (default 8 hours)
+- Verifies block processing after sync completion (default 22 minutes)
 - Sends Slack notifications on success/failure
 - Maintains a history log of all runs
 - On success: restarts containers and begins a new sync cycle
@@ -111,6 +111,14 @@ Create a `.env` file in `tooling/sync/` with:
 # Slack notifications (optional)
 SLACK_WEBHOOK_URL_SUCCESS=https://hooks.slack.com/services/...
 SLACK_WEBHOOK_URL_FAILED=https://hooks.slack.com/services/...
+
+# Monitoring timeouts (optional - values shown are defaults)
+SYNC_TIMEOUT=480                  # Sync timeout in minutes (default: 8 hours)
+BLOCK_PROCESSING_DURATION=1320    # Block processing verification in seconds (default: 22 minutes)
+BLOCK_STALL_TIMEOUT=600           # Fail if no new block for this many seconds (default: 10 minutes)
+NODE_UNRESPONSIVE_TIMEOUT=300     # Fail if node unresponsive for this many seconds (default: 5 minutes)
+CHECK_INTERVAL=10                 # How often to check node status in seconds
+STATUS_PRINT_INTERVAL=30          # How often to print status in seconds
 ```
 
 The `MULTISYNC_NETWORKS` variable controls which networks to sync (default: `hoodi,sepolia,mainnet`):
@@ -125,15 +133,15 @@ make multisync-loop MULTISYNC_NETWORKS=hoodi,sepolia
 The `docker_monitor.py` script manages the sync lifecycle:
 
 1. **Waiting**: Node container starting up
-2. **Syncing**: Snapsync in progress (4-hour timeout)
-3. **Block Processing**: Sync complete, verifying block processing (22 minutes)
+2. **Syncing**: Snapsync in progress
+3. **Block Processing**: Sync complete, verifying block processing
 4. **Success**: Network synced and processing blocks
 5. **Failed**: Timeout, stall, or error detected
 
 The monitor checks for:
-- Sync timeout (default 4 hours)
-- Block processing stall (10 minutes without new blocks)
-- Node unresponsiveness
+- Sync timeout (default 8 hours, configurable via `SYNC_TIMEOUT`)
+- Block processing stall (default 10 minutes without new blocks, configurable via `BLOCK_STALL_TIMEOUT`)
+- Node unresponsiveness (default 5 minutes, configurable via `NODE_UNRESPONSIVE_TIMEOUT`)
 
 ### Logs and History
 
