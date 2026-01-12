@@ -47,7 +47,6 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::AtomicU64,
         mpsc::{SyncSender, TryRecvError, sync_channel},
     },
     thread::JoinHandle,
@@ -71,50 +70,44 @@ enum FKVGeneratorControlMessage {
 // 64mb
 const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
 
-// TODO: don't use atomic here, instead wrap in Mutex the whole cache
 #[derive(Debug)]
 struct CodeCache {
-    inner_cache: Mutex<LruCache<H256, Code, FxBuildHasher>>,
-    cache_size: AtomicU64,
+    inner_cache: LruCache<H256, Code, FxBuildHasher>,
+    cache_size: u64,
 }
 
 impl Default for CodeCache {
     fn default() -> Self {
         Self {
-            inner_cache: Mutex::new(LruCache::unbounded_with_hasher(FxBuildHasher)),
-            cache_size: AtomicU64::new(0),
+            inner_cache: LruCache::unbounded_with_hasher(FxBuildHasher),
+            cache_size: 0,
         }
     }
 }
 
 impl CodeCache {
-    fn get(&self, code_hash: &H256) -> Result<Option<Code>, StoreError> {
-        let mut cache = self.inner_cache.lock().map_err(|_| StoreError::LockError)?;
-        Ok(cache.get(code_hash).cloned())
+    fn get(&mut self, code_hash: &H256) -> Result<Option<Code>, StoreError> {
+        Ok(self.inner_cache.get(code_hash).cloned())
     }
 
-    fn insert(&self, code: &Code) -> Result<(), StoreError> {
-        let mut cache = self.inner_cache.lock().map_err(|_| StoreError::LockError)?;
+    fn insert(&mut self, code: &Code) -> Result<(), StoreError> {
         let code_size = code.size();
-        self.cache_size
-            .fetch_add(code_size as u64, std::sync::atomic::Ordering::SeqCst);
-        let cache_len = cache.len() + 1;
-        let mut current_size = self.cache_size.load(std::sync::atomic::Ordering::SeqCst);
+        let cache_len = self.inner_cache.len() + 1;
+        self.cache_size += code_size as u64;
+        let current_size = self.cache_size;
         debug!(
             "[ACCOUNT CODE CACHE] cache elements (): {cache_len}, total size: {current_size} bytes"
         );
 
-        while current_size > CODE_CACHE_MAX_SIZE {
-            if let Some((_, code)) = cache.pop_lru() {
-                self.cache_size
-                    .fetch_sub(code.size() as u64, std::sync::atomic::Ordering::SeqCst);
-                current_size = self.cache_size.load(std::sync::atomic::Ordering::SeqCst);
+        while self.cache_size > CODE_CACHE_MAX_SIZE {
+            if let Some((_, code)) = self.inner_cache.pop_lru() {
+                self.cache_size -= code.size() as u64;
             } else {
                 break;
             }
         }
 
-        cache.get_or_insert(code.hash, || code.clone());
+        self.inner_cache.get_or_insert(code.hash, || code.clone());
         Ok(())
     }
 }
@@ -175,11 +168,12 @@ pub struct Store {
     latest_block_header: LatestBlockHeaderCache,
     /// Last computed FlatKeyValue for incremental updates.
     last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
-    /// LRU cache for contract bytecode, keyed by code hash.
-    ///
-    /// Entries are not removed on code changes since the code hash
-    /// in the account already reflects the change.
-    account_code_cache: Arc<CodeCache>,
+
+    /// Cache for account bytecodes, keyed by the bytecode hash.
+    /// Note that we don't remove entries on account code changes, since
+    /// those changes already affect the code hash stored in the account, and only
+    /// may result in this cache having useless data.
+    account_code_cache: Arc<Mutex<CodeCache>>,
 
     background_threads: Arc<ThreadList>,
 }
@@ -672,7 +666,12 @@ impl Store {
     /// reads the database, and if it exists, decodes and returns it.
     pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError> {
         // check cache first
-        if let Some(code) = self.account_code_cache.get(&code_hash)? {
+        if let Some(code) = self
+            .account_code_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get(&code_hash)?
+        {
             return Ok(Some(code));
         }
 
@@ -694,7 +693,10 @@ impl Store {
         };
 
         // insert into cache and evict if needed
-        self.account_code_cache.insert(&code)?;
+        self.account_code_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .insert(&code)?;
 
         Ok(Some(code))
     }
@@ -1355,7 +1357,7 @@ impl Store {
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
-            account_code_cache: Arc::new(CodeCache::default()),
+            account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
