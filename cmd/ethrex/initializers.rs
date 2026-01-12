@@ -465,6 +465,7 @@ pub async fn init_l1(
             max_mempool_size: opts.mempool_max_size,
             perf_logs_enabled: true,
             r#type: BlockchainType::L1,
+            max_blobs_per_block: opts.max_blobs_per_block,
         },
     );
 
