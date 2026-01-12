@@ -59,13 +59,13 @@ pub async fn is_fork_id_valid(
         latest_block_header.timestamp,
         latest_block_number,
     );
-    return Ok(local_fork_id.is_valid(
+    Ok(local_fork_id.is_valid(
         remote_fork_id.clone(),
         latest_block_number,
         latest_block_header.timestamp,
         chain_config,
         genesis_header,
-    ));
+    ))
 }
 
 #[cfg(test)]
