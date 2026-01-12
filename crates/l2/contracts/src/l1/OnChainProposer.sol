@@ -142,8 +142,20 @@ contract OnChainProposer is
         REQUIRE_SP1_PROOF = requireSp1Proof;
         REQUIRE_TDX_PROOF = requireTdxProof;
 
+        require(
+            !REQUIRE_RISC0_PROOF || r0verifier != address(0),
+            "OnChainProposer: missing RISC0 verifier address"
+        );
         RISC0_VERIFIER_ADDRESS = r0verifier;
+        require(
+            !REQUIRE_SP1_PROOF || sp1verifier != address(0),
+            "OnChainProposer: missing SP1 verifier address"
+        );
         SP1_VERIFIER_ADDRESS = sp1verifier;
+        require(
+            !REQUIRE_TDX_PROOF || tdxverifier != address(0),
+            "OnChainProposer: missing TDX verifier address"
+        );
         TDX_VERIFIER_ADDRESS = tdxverifier;
 
         ALIGNED_MODE = aligned;
@@ -536,6 +548,19 @@ contract OnChainProposer is
                 );
             }
 
+            ICommonBridge.L2MessageRollingHash[]
+                memory batchL2InRollingHashes = batchCommitments[batchNumber]
+                    .l2InMessageRollingHashes;
+            for (uint256 j = 0; j < batchL2InRollingHashes.length; j++) {
+                uint16 l2_messages_count = uint16(
+                    bytes2(batchL2InRollingHashes[j].rollingHash)
+                );
+                ICommonBridge(BRIDGE).removePendingL2Messages(
+                    batchL2InRollingHashes[j].chainId,
+                    l2_messages_count
+                );
+            }
+
             // Verify public data for the batch
             string memory reason = _verifyPublicData(
                 batchNumber,
@@ -569,6 +594,10 @@ contract OnChainProposer is
                     publicInputsList[i]
                 );
             }
+
+            ICommonBridge(BRIDGE).publishL2Messages(
+                batchCommitments[batchNumber].balanceDiffs
+            );
 
             // Remove previous batch commitment
             delete batchCommitments[batchNumber - 1];
@@ -761,20 +790,20 @@ contract OnChainProposer is
         uint256 batchNumber
     ) external override onlyOwner whenPaused {
         require(
-            batchNumber >= lastVerifiedBatch,
+            batchNumber > lastVerifiedBatch,
             "010" // OnChainProposer: can't revert verified batch
         );
         require(
-            batchNumber < lastCommittedBatch,
+            batchNumber <= lastCommittedBatch,
             "011" // OnChainProposer: no batches are being reverted
         );
 
-        // Remove old batches
-        for (uint256 i = batchNumber; i < lastCommittedBatch; i++) {
-            delete batchCommitments[i + 1];
+        // Remove batch commitments from batchNumber to lastCommittedBatch
+        for (uint256 i = batchNumber; i <= lastCommittedBatch; i++) {
+            delete batchCommitments[i];
         }
 
-        lastCommittedBatch = batchNumber;
+        lastCommittedBatch = batchNumber - 1;
 
         emit BatchReverted(batchCommitments[lastCommittedBatch].newStateRoot);
     }
