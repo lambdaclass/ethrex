@@ -42,7 +42,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         );
     }
 
-    function mintETH(address to) external payable {
+    function mintETH(address to) external payable onlySelf {
         (bool success, ) = to.call{value: msg.value}("");
         if (!success) {
             this.withdraw{value: msg.value}(to);
