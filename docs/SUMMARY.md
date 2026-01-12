@@ -33,6 +33,7 @@
     - [Can an account disappear from Ethereum's state trie?](./internal/l1/delete_accounts.md)
     - [Future Rewrite Concerns](./l1/fundamentals/snap_sync_concerns.md)
     - [Sorted Trie Insertion](./internal/l1/sorted_trie_insert.md)
+    - [Healing Explanation](./internal/l1/healing.md)
   - [Pruning]()
 
 # Ethrex for L2 chains
