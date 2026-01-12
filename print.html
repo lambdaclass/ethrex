@@ -3854,7 +3854,7 @@ struct StorageTaskResult {
 <li>Downloading the leaves of the state (account states) and storage tries (storage slots)</li>
 <li>Healing (reconciling the state).</li>
 </ul>
-<p>Healing is needed because the leaves can be downloaded from disparate blocks, and to "fix" only the nodes of the trie that changed between nodes. <a href="https://www.notion.so/lambdaclass/Healing-Algorithm-Explanation-and-Documentation-269b9462471380e4a275edd77c8b5dc5?source=copy_link">In depth explanation</a>.</p>
+<p>Healing is needed because the leaves can be downloaded from disparate blocks, and to "fix" only the nodes of the trie that changed between nodes. <a href="internal/l1/./healing.html">In depth explanation</a>.</p>
 <p>We were working under the assumption that accounts were never deleted, so we adopted some specific optimizations. During the state healing stage every account that was "healed" was added into a list of accounts that needed to be checked for storage healing. When healing the storage of those accounts the algorithm requested their account states and expected them to be there to see if they had any storage that needed healing. This lead to the storage healing threads panicking when they failed to find the account that was deleted.</p>
 <p>During the test of snapsync mainnet, we started seeing that storage healing was panicking, so we added some logs to see what account hashes were being accessed and when where they healed vs accessed. Exploring the database we saw that the offending account was present in a previous state and missing in the next one, with the corresponding merkle proof matching the block state root. Originally we suspected a reorg, but searching the blocks we saw they were finalized in the chain.</p>
 <p>The account state present indicated an account with nonce 0, no code and no storage but with balance. We didn't have access to the account address, as the state trie only stores the hash of the account address so we turned to another strategy to find it. Using <a href="https://docs.etherscan.io/api-endpoints/accounts#get-internal-transactions-by-block-range">etherscan's API</a> allowing to search internal transactions from a block range, we explored the range where we knew the account existed in the state trie. Hashing all of the <code>to</code> and <code>from</code> of the transactions <a href="https://etherscan.io/tx/0xf23b2c233410141cda0c6d24f21f0074c494565bfd54ce008c5ce1b30b23b0da">we found the transaction</a> that deleted the account with a self destruct. Despite the account becoming a contract just during that transaction, we saw that 900 blocks before it was <a href="https://etherscan.io/tx/0xbc9f52ba45a6915878318be944cb20bd3bb1bbf36b2ce8ff5e6575ce1689f1b6">created with a transfer</a>. The result of the self destruct was the transfer of 0.044 ETH from one account to another.</p>
@@ -4096,6 +4096,144 @@ algorithm to receive empty buffers and the writing task clears the
 buffer and sends it back through the channels.</p>
 <p>These tasks are executed using a custom thread pool defined in
 <code>/crates/concurrency/concurrency.rs</code></p>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="healing-algorithm-explanation-and-documentation-before-path-based"><a class="header" href="#healing-algorithm-explanation-and-documentation-before-path-based">Healing Algorithm Explanation and Documentation (Before Path Based)</a></h1>
+<p>Healing is the last step of Snap Sync. Snap begins the downloading of the state and storage tries by downloading the leaves (account states and storage slots), and from those leaves we reconstruct the intermediate nodes (branches and extension). Afterwards we may be left with a malformed trie, as that step will resume the download of leaves with a new state root if the old one times out.</p>
+<p>The purpose of the healing algorithm is “heal” that trie so that it ends up in a consistent state.</p>
+<h1 id="healing-conceptually"><a class="header" href="#healing-conceptually">Healing Conceptually</a></h1>
+<p>The malformed trie is going to have large sections of the trie which are in a correct state, as we had all of the leaves in that sections and those accounts haven’t been modified in the blocks that happened concurrently to the snapsync algorithm.</p>
+<p><img src="internal/l1/healing/Example_1_Step_0.svg" alt="Image of a trie, where the root node is in red, indicating that it’s in an incorrect state. It points to two branches, one is correct and one was computed from faulty data, and such doesn’t exist in the latest block" /></p>
+<p>Example of a trie where 3 leaves where downloaded in block 1 and 1 was downloaded in block 2. The trie root is different from the state root of block 2, as one of the leaf nodes was modified in block 2.</p>
+<p>The algorithm attempts to rebuild the trie through downloading the missing nodes, starting from the top. If the node is present in the database that means that we have that and all of their child nodes present in the database. If not, we download the node and check if the children of the root are present, applying the algorithm recursively.</p>
+<p><img src="internal/l1/healing/Example_1_Step_1.svg" alt="Iteration 1 of algorithm" /></p>
+<p>Iteration 1 of algorithm</p>
+<p><img src="internal/l1/healing/Example_1_Step_2.svg" alt="Iteration 2 of algorithm" /></p>
+<p>Iteration 2 of algorithm</p>
+<p><img src="internal/l1/healing/Example_1_Step_3.svg" alt="Iteration 3 of algorithm" /></p>
+<p>Iteration 3 of algorithm</p>
+<p><img src="internal/l1/healing/Example_1_Step_4.svg" alt="Final state of trie after healing" /></p>
+<p>Final state of trie after healing</p>
+<h1 id="implementation-2"><a class="header" href="#implementation-2">Implementation</a></h1>
+<p>The algorithm is implemented in ethrex currently in <code>crates/networking/p2p/sync/state_healings.rs</code> and <code>crates/networking/p2p/sync/storage_healing.rs</code>. All of our code examples are from the account state trie.</p>
+<h3 id="api-1"><a class="header" href="#api-1">API</a></h3>
+<p>The API used is the ethereum capability snap/1, documented at https://github.com/ethereum/devp2p/blob/master/caps/snap.md and for healing the only method used is <code>GetTrieNodes</code>. This method allows us to ask our peers for nodes in a trie. We ask the nodes by <strong>path</strong> to the node, not by hash.</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct GetTrieNodes {    
+    pub id: u64,    
+    pub root_hash: H256,    
+    // [[acc_path, slot_path_1, slot_path_2,...]...]    
+    // The paths can be either full paths (hash) or 
+    // only the partial path (compact-encoded nibbles)    
+    pub paths: Vec&lt;Vec&lt;Bytes&gt;&gt;,    
+    pub bytes: u64,
+}
+<span class="boring">}</span></code></pre></pre>
+<h3 id="staleness"><a class="header" href="#staleness">Staleness</a></h3>
+<p>The spec allows the nodes to stop responding if the request is older than 128 blocks. In that case, the response to the <code>GetTrieNodes</code> will be empty. As such, our algorithm checks periodically if the block is stale, and stops executing. In that scenario, we must be sure that the we leave the storage in a consistent state at any given time and doesn’t break our invariants.</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Current Staleness logic code
+// We check with a clock if we are stale        
+if !is_stale &amp;&amp; current_unix_time() &gt; staleness_timestamp {
+    info!("state healing is stale");            
+    is_stale = true;       
+}
+// We make sure that we have stored everything that we need to the database
+if is_stale &amp;&amp; nodes_to_heal.is_empty() &amp;&amp; inflight_tasks == 0 {
+  info!("Finished inflight tasks");            
+  db_joinset.join_all().await;            
+  break;
+}
+<span class="boring">}</span></code></pre></pre>
+<h3 id="membatch"><a class="header" href="#membatch">Membatch</a></h3>
+<p>Currently, our algorithm has an invariant, which is that if we have a node in storage we have its and all of its children are present. Therefore, when we download for a node if some of it’s children are missing we can’t immediately store it on disk. Our implementation currently stores the nodes in temporary structure called membatch, which stores the node and how many of it’s children are missing. When a child gets stored, we reduce the counter of missing children of the parent. If that numbers reaches 0, we write the parent to the database.</p>
+<p>In code, the membatch is current <code>HashMap&lt;Nibbles, MembatchEntryValue&gt;</code> with the value being the following struct</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct MembatchEntryValue {
+    /// The node to be flushed into storage
+    node: Node,
+    /// How many of the nodes that are child of this are not in storage
+    children_not_in_storage_count: u64,
+    /// Which is the parent of this node
+    parent_path: Nibbles,
+}
+<span class="boring">}</span></code></pre></pre>
+<h2 id="known-optimization-issues"><a class="header" href="#known-optimization-issues">Known Optimization Issues</a></h2>
+<ul>
+<li>Membatch gets cleared between iterations, while it could be preserved and the hash checked.</li>
+<li>When checking if a child is present in storage, we can also check if it’s in the membatch. If it is, we can skip that download and act like we have immediately downloaded that node.</li>
+<li>Membatch is currently a <code>HashMap</code>, a <code>BTreeMap</code> or other structures may be faster in real use.</li>
+<li>Storage healing receives as a parameter a list of accounts that need to be healed and it has get their state before it can run. Doing those reads could be more efficient.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
