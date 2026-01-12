@@ -547,7 +547,7 @@ contract OnChainProposer is
         BatchCommitmentInfo memory currentBatch = batchCommitments[batchNumber];
 
         return
-            bytes.concat(
+            abi.encodePacked(
                 batchCommitments[lastVerifiedBatch].newStateRoot,
                 currentBatch.newStateRoot,
                 currentBatch.withdrawalsLogsMerkleRoot,
