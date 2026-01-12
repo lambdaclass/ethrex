@@ -2,7 +2,9 @@
 flamegraph-branch flamegraph-inner flamegraph-mainnet flamegraph-sepolia flamegraph-holesky \
 flamegraph-hoodi start-lighthouse start-ethrex backup-db start-mainnet-metrics-docker \
 start-sepolia-metrics-docker start-holesky-metrics-docker start-hoodi-metrics-docker \
-start-metrics-docker tail-syncing-logs tail-metrics-logs copy_flamegraph import-with-metrics
+start-metrics-docker tail-syncing-logs tail-metrics-logs copy_flamegraph import-with-metrics \
+multisync-up multisync-down multisync-clean multisync-logs multisync-status \
+multisync-restart multisync-monitor multisync-run multisync-loop
 
 ETHREX_DIR ?= "../.."
 EVM ?= levm
@@ -220,3 +222,76 @@ server-sync:
 	sleep 0.2
 
 	tmux new-window -t sync:2 -n ethrex "cd ../../metrics && docker stop metrics-ethereum-metrics-exporter-1 || true && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d && cd .. && ulimit -n 1000000 && rm -rf ~/.local/share/ethrex && RUST_LOG=info,ethrex_p2p::sync=debug $(if $(DEBUG_ASSERT),RUSTFLAGS='-C debug-assertions=yes') $(if $(HEALING),SKIP_START_SNAP_SYNC=1) cargo run --release --bin ethrex --features rocksdb --  --http.addr 0.0.0.0 --metrics --metrics.port 3701 --network $(SERVER_SYNC_NETWORK) $(if $(MEMORY),--datadir memory) --authrpc.jwtsecret ~/secrets/jwt.hex $(if $(or $(FULL_SYNC),$(HEALING)),--syncmode full)  2>&1 | tee $(LOGS_FILE)"
+
+# ==============================================================================
+# Docker Compose Multi-Network Snapsync
+# ==============================================================================
+
+MULTISYNC_COMPOSE = docker compose -f docker-compose.multisync.yaml
+MULTISYNC_NETWORKS ?= hoodi,sepolia,mainnet
+comma := ,
+MULTISYNC_NETWORK_LIST := $(subst $(comma), ,$(MULTISYNC_NETWORKS))
+MULTISYNC_SERVICES := $(foreach n,$(MULTISYNC_NETWORK_LIST),setup-jwt-$(n) ethrex-$(n) consensus-$(n))
+
+multisync-up: ## Start all networks specified in MULTISYNC_NETWORKS via Docker Compose.
+	$(MULTISYNC_COMPOSE) up -d $(MULTISYNC_SERVICES)
+
+multisync-down: ## Stop and remove all snapsync containers.
+	$(MULTISYNC_COMPOSE) down
+
+multisync-clean: ## Stop, remove containers AND volumes (full reset).
+	$(MULTISYNC_COMPOSE) down -v
+
+multisync-logs: ## Tail logs from all networks.
+	$(MULTISYNC_COMPOSE) logs -f
+
+multisync-logs-%: ## Tail logs for a specific network (e.g., multisync-logs-hoodi).
+	$(MULTISYNC_COMPOSE) logs -f ethrex-$* consensus-$*
+
+multisync-logs-ethrex-%: ## Tail only ethrex logs for a network (e.g., multisync-logs-ethrex-hoodi).
+	$(MULTISYNC_COMPOSE) logs -f ethrex-$*
+
+multisync-logs-consensus-%: ## Tail only consensus logs for a network (e.g., multisync-logs-consensus-hoodi).
+	$(MULTISYNC_COMPOSE) logs -f consensus-$*
+
+multisync-restart: ## Restart the cycle (clean volumes + start fresh).
+	$(MULTISYNC_COMPOSE) down -v
+	$(MULTISYNC_COMPOSE) up -d $(MULTISYNC_SERVICES)
+
+multisync-monitor: ## Monitor all networks (one-shot, exits on completion).
+	python3 docker_monitor.py --networks $(MULTISYNC_NETWORKS) --exit-on-success
+
+multisync-run: ## Full run: start + monitor (one-shot, exits on completion).
+	$(MULTISYNC_COMPOSE) up -d $(MULTISYNC_SERVICES)
+	@echo "Waiting 10s for containers to start..."
+	@sleep 10
+	python3 docker_monitor.py --networks $(MULTISYNC_NETWORKS) --exit-on-success
+
+multisync-loop: ## Continuous loop: sync all networks, restart on success, repeat forever.
+	$(MULTISYNC_COMPOSE) up -d $(MULTISYNC_SERVICES)
+	@echo "Waiting 10s for containers to start..."
+	@sleep 10
+	python3 docker_monitor.py --networks $(MULTISYNC_NETWORKS) --compose-file docker-compose.multisync.yaml --compose-dir $(CURDIR)
+
+multisync-history: ## View the run history log.
+	@if [ -f multisync_logs/run_history.log ]; then \
+		cat multisync_logs/run_history.log; \
+	else \
+		echo "No run history found. Run 'make multisync-loop' first."; \
+	fi
+
+multisync-list-logs: ## List all saved run logs.
+	@if [ -d multisync_logs ]; then \
+		echo "=== Saved Run Logs ===" && \
+		ls -la multisync_logs/ && \
+		echo "" && \
+		for dir in multisync_logs/run_*/; do \
+			if [ -d "$$dir" ]; then \
+				echo "$$dir:"; \
+				ls "$$dir"; \
+				echo ""; \
+			fi; \
+		done; \
+	else \
+		echo "No logs directory found."; \
+	fi
