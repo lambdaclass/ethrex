@@ -98,13 +98,13 @@ pub fn restore_cache_state(
 
 // ================= Blob hash related functions =====================
 pub fn get_base_fee_per_blob_gas(
-    block_excess_blob_gas: Option<U256>,
+    block_excess_blob_gas: Option<u64>,
     evm_config: &EVMConfig,
 ) -> Result<U256, VMError> {
     let base_fee_update_fraction = evm_config.blob_schedule.base_fee_update_fraction;
     fake_exponential(
-        MIN_BASE_FEE_PER_BLOB_GAS,
-        block_excess_blob_gas.unwrap_or_default(),
+        MIN_BASE_FEE_PER_BLOB_GAS.into(),
+        block_excess_blob_gas.unwrap_or_default().into(),
         base_fee_update_fraction,
     )
     .map_err(|err| VMError::Internal(InternalError::FakeExponentialError(err)))
@@ -135,7 +135,7 @@ pub fn get_max_blob_gas_price(
 /// Calculate the actual blob gas cost.
 pub fn calculate_blob_gas_cost(
     tx_blob_hashes: &[H256],
-    block_excess_blob_gas: Option<U256>,
+    block_excess_blob_gas: Option<u64>,
     evm_config: &EVMConfig,
 ) -> Result<U256, VMError> {
     let blobhash_amount: u64 = tx_blob_hashes
@@ -345,9 +345,9 @@ pub fn eip7702_get_code(
     let auth_address = get_authorized_address_from_code(&bytecode.bytecode)?;
 
     let access_cost = if accrued_substate.add_accessed_address(auth_address) {
-        WARM_ADDRESS_ACCESS_COST
-    } else {
         COLD_ADDRESS_ACCESS_COST
+    } else {
+        WARM_ADDRESS_ACCESS_COST
     };
 
     let authorized_bytecode = db.get_account_code(auth_address)?.clone();
@@ -363,7 +363,7 @@ impl<'a> VM<'a> {
         // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
         // If transaction execution results in failure (any exceptional condition or code reverting), setting delegation designations is not rolled back.
         for auth_tuple in self.tx.authorization_list().cloned().unwrap_or_default() {
-            let chain_id_not_equals_this_chain_id = auth_tuple.chain_id != self.env.chain_id;
+            let chain_id_not_equals_this_chain_id = auth_tuple.chain_id != self.env.chain_id.into();
             let chain_id_not_zero = !auth_tuple.chain_id.is_zero();
 
             // 1. Verify the chain id is either 0 or the chain’s current ID.

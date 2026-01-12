@@ -7,9 +7,13 @@ use crate::{
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::{Address, U256};
-use ethrex_common::{H256, types::Code};
-use std::{collections::HashMap, fmt, hint::assert_unchecked};
+use ethrex_common::{Address, H256, U256, types::Code};
+use std::{
+    collections::HashMap,
+    fmt,
+    hash::{Hash, Hasher},
+    hint::assert_unchecked,
+};
 
 /// [`u64`]s that make up a [`U256`]
 const U64_PER_U256: usize = U256::MAX.0.len();
@@ -215,6 +219,12 @@ impl fmt::Debug for Stack {
         f.debug_tuple("Stack")
             .field(&StackValues(&self.values[self.offset..]))
             .finish()
+    }
+}
+
+impl Hash for Stack {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.values[self.offset..].hash(state);
     }
 }
 

@@ -1,21 +1,24 @@
+//! # Stack duplication operations
+//!
+//! Includes the following opcodes:
+//!   - `DUP1` to `DUP16`
+
 use crate::{
     errors::{OpcodeResult, VMError},
     gas_cost,
+    opcode_handlers::OpcodeHandler,
     vm::VM,
 };
 
-// Duplication Operation (16)
-// Opcodes: DUP1 ... DUP16
-
-impl<'a> VM<'a> {
-    // DUP operation
-    pub fn op_dup<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
-        // Increase the consumed gas
-        self.current_call_frame
+/// Implementation for the `DUPn` opcodes.
+pub struct OpDupHandler<const N: usize>;
+impl<const N: usize> OpcodeHandler for OpDupHandler<N> {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
             .increase_consumed_gas(gas_cost::DUPN)?;
 
-        // Duplicate the value at the specified depth
-        self.current_call_frame.stack.dup::<N>()?;
+        vm.current_call_frame.stack.dup::<N>()?;
 
         Ok(OpcodeResult::Continue)
     }

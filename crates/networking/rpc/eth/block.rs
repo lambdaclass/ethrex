@@ -360,7 +360,7 @@ pub async fn get_all_block_rpc_receipts(
             tx.clone(),
             index,
             gas_used,
-            blob_base_fee,
+            blob_base_fee.try_into().unwrap(),
             base_fee_per_gas,
         )?;
         let receipt = RpcReceipt::new(

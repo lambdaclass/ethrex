@@ -463,7 +463,7 @@ impl Blockchain {
         let tx_filter = PendingTxFilter {
             /*TODO(https://github.com/lambdaclass/ethrex/issues/680): add tip filter */
             base_fee: context.base_fee_per_gas(),
-            blob_fee: Some(context.base_fee_per_blob_gas),
+            blob_fee: Some(context.base_fee_per_blob_gas.try_into().unwrap()),
             ..Default::default()
         };
         let plain_tx_filter = PendingTxFilter {

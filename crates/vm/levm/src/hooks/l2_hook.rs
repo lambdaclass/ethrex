@@ -213,10 +213,10 @@ fn validate_sufficient_max_fee_per_gas_l2(
     let total_fee = vm
         .env
         .base_fee_per_gas
-        .checked_add(U256::from(fee_config.operator_fee_per_gas))
+        .checked_add(fee_config.operator_fee_per_gas)
         .ok_or(TxValidationError::InsufficientMaxFeePerGas)?;
 
-    if vm.env.tx_max_fee_per_gas.unwrap_or(vm.env.gas_price) < total_fee {
+    if vm.env.tx_max_fee_per_gas.unwrap_or(vm.env.gas_price) < total_fee.into() {
         return Err(TxValidationError::InsufficientMaxFeePerGas);
     }
     Ok(())
@@ -260,7 +260,7 @@ fn compute_priority_fee_per_gas(
     let priority_fee = vm
         .env
         .gas_price
-        .checked_sub(vm.env.base_fee_per_gas)
+        .checked_sub(vm.env.base_fee_per_gas.into())
         .ok_or(InternalError::Underflow)?;
 
     if let Some(fee_config) = operator_fee_config {
@@ -282,7 +282,7 @@ fn pay_base_fee_vault(
     use_fee_token: bool,
 ) -> Result<(), crate::errors::VMError> {
     let base_fee = U256::from(gas_to_pay)
-        .checked_mul(vm.env.base_fee_per_gas)
+        .checked_mul(vm.env.base_fee_per_gas.into())
         .ok_or(InternalError::Overflow)?;
 
     if use_fee_token {
@@ -638,7 +638,7 @@ fn simulate_common_bridge_call(
     let nonce = db_clone.get_account(origin)?.info.nonce;
     let simulation_tx = EIP1559Transaction {
         // we are simulating the transaction
-        chain_id: vm.env.chain_id.as_u64(),
+        chain_id: vm.env.chain_id,
         nonce,
         max_priority_fee_per_gas: SIMULATION_MAX_FEE,
         max_fee_per_gas: SIMULATION_MAX_FEE,
@@ -651,7 +651,7 @@ fn simulate_common_bridge_call(
     let tx = Transaction::EIP1559Transaction(simulation_tx);
     let mut env_clone = vm.env.clone();
     // Disable fee checks and update fields
-    env_clone.base_fee_per_gas = U256::zero();
+    env_clone.base_fee_per_gas = 0;
     env_clone.block_excess_blob_gas = None;
     env_clone.gas_price = U256::zero();
     env_clone.origin = origin;
