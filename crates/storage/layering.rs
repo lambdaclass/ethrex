@@ -112,7 +112,7 @@ impl TrieLayerCache {
         if parent == state_root && key_values.is_empty() {
             return;
         } else if parent == state_root {
-            tracing::error!("Inconsistent state: parent == state_root but key_values not empty");
+            tracing::debug!("parent == state_root but key_values not empty");
             return;
         }
         if self.layers.contains_key(&state_root) {
