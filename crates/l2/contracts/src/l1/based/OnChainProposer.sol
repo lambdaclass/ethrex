@@ -343,7 +343,7 @@ contract OnChainProposer is
         //risc0
         bytes memory risc0BlockProof,
         //sp1
-        bytes calldata sp1ProofBytes,
+        bytes memory sp1ProofBytes,
         //tdx
         bytes memory tdxSignature
     ) external {
@@ -539,20 +539,6 @@ contract OnChainProposer is
     /// - bytes 160-192: Last block hash (from the current batch)
     /// - bytes 192-224: Chain ID
     /// - bytes 224-256: Non-privileged transactions count (from the current batch)
-    /// Variable-size fields:
-    /// - For each targeted chain in balance diffs:
-    ///   - bytes: Chain ID (32 bytes)
-    ///   - bytes: Value (32 bytes)
-    ///   - For each asset diff in the targeted chain:
-    ///     - bytes: Token L1 address (20 bytes)
-    ///     - bytes: Token L2 address (20 bytes)
-    ///     - bytes: Destination Token L2 address (20 bytes)
-    ///     - bytes: Value (32 bytes)
-    ///   - For each message hash in the targeted chain:
-    ///     - bytes: Message hash (32 bytes)
-    /// - For each L2 in message rolling hash:
-    ///   - bytes: Chain ID (32 bytes)
-    ///   - bytes: Rolling hash (32 bytes)
     /// @param batchNumber The batch number for which to construct public inputs.
     /// @return publicInputs The constructed public inputs as a byte array.
     function _getPublicInputsFromCommitment(
