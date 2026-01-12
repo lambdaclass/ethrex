@@ -51,7 +51,7 @@ runs:
       run: |
         echo "Building ethrex with profile: ${BUILD_PROFILE}"
         docker build \
-          --build-arg BUILD_FLAGS="--profile ${BUILD_PROFILE}" \
+          --build-arg PROFILE="${BUILD_PROFILE}" \
           -t ethrex-local:${IMAGE_TAG} \
           -f Dockerfile .
 
