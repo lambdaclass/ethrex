@@ -1,3 +1,47 @@
+//! # ethrex Blockchain
+//!
+//! Core blockchain logic for the ethrex Ethereum client.
+//!
+//! ## Overview
+//!
+//! This module implements the blockchain layer, which is responsible for:
+//! - Block validation and execution
+//! - State management and transitions
+//! - Fork choice rule implementation
+//! - Transaction mempool management
+//! - Payload building for block production
+//!
+//! ## Key Components
+//!
+//! - [`Blockchain`]: Main interface for blockchain operations
+//! - [`Mempool`]: Transaction pool for pending transactions
+//! - [`fork_choice`]: Fork choice rule implementation
+//! - [`payload`]: Block payload building for consensus
+//!
+//! ## Block Execution Flow
+//!
+//! ```text
+//! 1. Receive block from consensus/P2P
+//! 2. Validate block header (parent, timestamp, gas limit, etc.)
+//! 3. Execute transactions in EVM
+//! 4. Verify state root matches header
+//! 5. Store block and update canonical chain
+//! ```
+//!
+//! ## Usage
+//!
+//! ```ignore
+//! use ethrex_blockchain::Blockchain;
+//!
+//! let blockchain = Blockchain::new(store, BlockchainOptions::default());
+//!
+//! // Add a block
+//! blockchain.add_block(&block)?;
+//!
+//! // Add transaction to mempool
+//! blockchain.add_transaction_to_mempool(tx).await?;
+//! ```
+
 pub mod constants;
 pub mod error;
 pub mod fork_choice;
@@ -68,39 +112,83 @@ const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
+/// Specifies whether the blockchain operates as L1 (mainnet/testnet) or L2 (rollup).
 #[derive(Debug, Clone, Default)]
 pub enum BlockchainType {
+    /// Standard Ethereum L1 blockchain.
     #[default]
     L1,
+    /// Layer 2 rollup with additional fee configuration.
     L2(L2Config),
 }
 
+/// Configuration for L2 rollup operation.
 #[derive(Debug, Clone, Default)]
 pub struct L2Config {
-    /// We use a RwLock because the Watcher updates the L1 fee config periodically
+    /// Fee configuration for L2 transactions.
+    ///
+    /// Uses `RwLock` because the Watcher updates L1 fee config periodically.
     pub fee_config: Arc<RwLock<FeeConfig>>,
 }
 
+/// Core blockchain implementation for block validation and execution.
+///
+/// The `Blockchain` struct is the main entry point for all blockchain operations:
+/// - Adding and validating blocks
+/// - Managing the transaction mempool
+/// - Building payloads for block production
+/// - Handling fork choice updates
+///
+/// # Thread Safety
+///
+/// `Blockchain` uses interior mutability for thread-safe access to shared state.
+/// The mempool and payload storage are protected by appropriate synchronization primitives.
+///
+/// # Example
+///
+/// ```ignore
+/// let blockchain = Blockchain::new(store, BlockchainOptions::default());
+///
+/// // Validate and add a block
+/// blockchain.add_block(&block)?;
+///
+/// // Check sync status
+/// if blockchain.is_synced() {
+///     // Process transactions from mempool
+/// }
+/// ```
 #[derive(Debug)]
 pub struct Blockchain {
+    /// Underlying storage for blocks and state.
     storage: Store,
+    /// Transaction mempool for pending transactions.
     pub mempool: Mempool,
-    /// Whether the node's chain is in or out of sync with the current chain
-    /// This will be set to true once the initial sync has taken place and wont be set to false after
-    /// This does not reflect whether there is an ongoing sync process
+    /// Whether the node has completed initial sync.
+    ///
+    /// Set to true after initial sync completes, never reset to false.
+    /// Does not reflect whether an ongoing sync is in progress.
     is_synced: AtomicBool,
+    /// Configuration options for blockchain behavior.
     pub options: BlockchainOptions,
-    /// Mapping from a payload id to either a complete payload or a payload build task
-    /// We need to keep completed payloads around in case consensus requests them twice
+    /// Cache of recently built payloads.
+    ///
+    /// Maps payload IDs to either completed payloads or in-progress build tasks.
+    /// Kept around in case consensus requests the same payload twice.
     pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
 }
 
+/// Configuration options for the blockchain.
 #[derive(Debug, Clone)]
 pub struct BlockchainOptions {
+    /// Maximum number of transactions in the mempool.
     pub max_mempool_size: usize,
-    /// Whether performance logs should be emitted
+    /// Whether to emit performance logging.
     pub perf_logs_enabled: bool,
+    /// Blockchain type (L1 or L2).
     pub r#type: BlockchainType,
+    /// EIP-7872: User-configured maximum blobs per block for local building.
+    /// If None, uses the protocol maximum for the current fork.
+    pub max_blobs_per_block: Option<u32>,
 }
 
 impl Default for BlockchainOptions {
@@ -109,6 +197,7 @@ impl Default for BlockchainOptions {
             max_mempool_size: MAX_MEMPOOL_SIZE_DEFAULT,
             perf_logs_enabled: false,
             r#type: BlockchainType::default(),
+            max_blobs_per_block: None,
         }
     }
 }
