@@ -26,8 +26,8 @@
 #   hoodi-2: localhost:8548
 
 x-ethrex-common: &ethrex-common
-  image: "ghcr.io/lambdaclass/ethrex:main"
-  pull_policy: always
+  image: "${ETHREX_IMAGE:-ghcr.io/lambdaclass/ethrex:main}"
+  pull_policy: "${ETHREX_PULL_POLICY:-always}"
   ulimits:
     nofile: 1000000
   restart: unless-stopped
