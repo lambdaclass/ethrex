@@ -14,20 +14,10 @@ use ethrex_common::{
 };
 use ethrex_crypto::{blake2f::blake2b_f, kzg::verify_kzg_proof};
 use k256::elliptic_curve::Field;
-use lambdaworks_math::cyclic_group::IsGroup;
-use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bn_254::curve::{
-    BN254FieldElement, BN254TwistCurveFieldElement,
-};
-use lambdaworks_math::elliptic_curve::short_weierstrass::point::ShortWeierstrassProjectivePoint;
 use lambdaworks_math::{
-    elliptic_curve::{
-        short_weierstrass::curves::{
-            bls12_381::{curve::BLS12381TwistCurveFieldElement, twist::BLS12381TwistCurve},
-            bn_254::{curve::BN254Curve, pairing::BN254AtePairing, twist::BN254TwistCurve},
-        },
-        traits::{IsEllipticCurve, IsPairing},
+    elliptic_curve::short_weierstrass::curves::bls12_381::{
+        curve::BLS12381TwistCurveFieldElement, twist::BLS12381TwistCurve,
     },
-    field::extensions::quadratic::QuadraticExtensionFieldElement,
     traits::ByteConversion,
     unsigned_integer::element::UnsignedInteger,
 };
@@ -1133,59 +1123,52 @@ pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
 #[cfg(all(not(feature = "sp1"), not(feature = "risc0"), not(feature = "zisk")))]
 #[inline]
 pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
-    use lambdaworks_math::errors::PairingError;
+    use ark_bn254::{Bn254, G1Affine, G2Affine};
+    use ark_ec::pairing::Pairing;
+    use ark_ff::{Fp, One, QuadExtField};
 
-    type Fq = BN254FieldElement;
-    type Fq2 = BN254TwistCurveFieldElement;
-    type LambdaworksG1 = BN254Curve;
-    type LambdaworksG2 = BN254TwistCurve;
-    type ProjectiveG1 = ShortWeierstrassProjectivePoint<LambdaworksG1>;
-    type ProjectiveG2 = ShortWeierstrassProjectivePoint<LambdaworksG2>;
+    let mut g1_points = Vec::with_capacity(batch.len());
+    let mut g2_points = Vec::with_capacity(batch.len());
 
-    if batch.is_empty() {
-        return Ok(true);
-    }
-
-    let mut valid_batch = Vec::with_capacity(batch.len());
     for (g1, g2) in batch {
-        let g1 = if g1.is_zero() {
-            ProjectiveG1::neutral_element()
+        g1_points.push(if g1.is_zero() {
+            G1Affine::identity()
         } else {
-            let (g1_x, g1_y) = (
-                Fq::from_bytes_be(&g1.0.to_big_endian())
-                    .map_err(|_| InternalError::msg("failed to parse g1 x"))?,
-                Fq::from_bytes_be(&g1.1.to_big_endian())
-                    .map_err(|_| InternalError::msg("failed to parse g1 y"))?,
+            let p = G1Affine::new_unchecked(
+                Fp::from_le_bytes_mod_order(&g1.0.to_little_endian()),
+                Fp::from_le_bytes_mod_order(&g1.1.to_little_endian()),
             );
-            LambdaworksG1::create_point_from_affine(g1_x, g1_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?
-        };
-        let g2 = if g2.is_zero() {
-            ProjectiveG2::neutral_element()
-        } else {
-            let (g2_x, g2_y) = {
-                let x_bytes = [g2.0.to_big_endian(), g2.1.to_big_endian()].concat();
-                let y_bytes = [g2.2.to_big_endian(), g2.3.to_big_endian()].concat();
-                let (x, y) = (
-                    Fq2::from_bytes_be(&x_bytes)
-                        .map_err(|_| InternalError::msg("failed to parse g2 x"))?,
-                    Fq2::from_bytes_be(&y_bytes)
-                        .map_err(|_| InternalError::msg("failed to parse g2 y"))?,
-                );
-                (x, y)
-            };
-            LambdaworksG2::create_point_from_affine(g2_x, g2_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?
-        };
-        valid_batch.push((g1, g2));
-    }
-    let valid_batch_refs: Vec<_> = valid_batch.iter().map(|(p1, p2)| (p1, p2)).collect();
-    let result = BN254AtePairing::compute_batch(&valid_batch_refs).map_err(|e| match e {
-        PairingError::PointNotInSubgroup => PrecompileError::PointNotInSubgroup,
-        PairingError::DivisionByZero => PrecompileError::InvalidPoint,
-    })?;
 
-    Ok(result == QuadraticExtensionFieldElement::one())
+            if !p.is_on_curve() || !p.is_in_correct_subgroup_assuming_on_curve() {
+                return Err(PrecompileError::InvalidPoint.into());
+            }
+
+            p
+        });
+
+        g2_points.push(if g2.is_zero() {
+            G2Affine::identity()
+        } else {
+            let p = G2Affine::new_unchecked(
+                QuadExtField::new(
+                    Fp::from_le_bytes_mod_order(&g2.0.to_little_endian()),
+                    Fp::from_le_bytes_mod_order(&g2.1.to_little_endian()),
+                ),
+                QuadExtField::new(
+                    Fp::from_le_bytes_mod_order(&g2.2.to_little_endian()),
+                    Fp::from_le_bytes_mod_order(&g2.3.to_little_endian()),
+                ),
+            );
+
+            if !p.is_on_curve() || !p.is_in_correct_subgroup_assuming_on_curve() {
+                return Err(PrecompileError::InvalidPoint.into());
+            }
+
+            p
+        });
+    }
+
+    Ok(Bn254::multi_pairing(g1_points, g2_points).0 == QuadExtField::one())
 }
 
 /// Returns the result of Blake2 hashing algorithm given a certain parameters from the calldata.
