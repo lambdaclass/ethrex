@@ -158,43 +158,27 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        #[expect(
-            clippy::arithmetic_side_effects,
-            clippy::indexing_slicing,
-            reason = "bounds checked"
-        )]
-        {
-            // we already verified calldata_len >= calldata_offset
-            let available_data = calldata_len - calldata_offset;
-            let copy_size = size.min(available_data);
-            let zero_fill_size = size - copy_size;
+        // We already verified calldata_len >= calldata_offset.
+        let available_data = calldata_len - calldata_offset;
+        let copy_size = size.min(available_data);
+        let zero_fill_size = size - copy_size;
 
-            if zero_fill_size == 0 {
-                // no zero padding needed
-
-                // calldata_offset + copy_size can't overflow because its the min of size and (calldata_len - calldata_offset).
-                let src_slice =
-                    &current_call_frame.calldata[calldata_offset..calldata_offset + copy_size];
-                current_call_frame
-                    .memory
-                    .store_data(dest_offset, src_slice)?;
-            } else {
-                let mut data = vec![0u8; size];
-
-                let available_data = calldata_len - calldata_offset;
-                let copy_size = size.min(available_data);
-
-                if copy_size > 0 {
-                    data[..copy_size].copy_from_slice(
-                        &current_call_frame.calldata[calldata_offset..calldata_offset + copy_size],
-                    );
-                }
-
-                current_call_frame.memory.store_data(dest_offset, &data)?;
-            }
-
-            Ok(OpcodeResult::Continue)
+        if copy_size > 0 {
+            #[expect(clippy::indexing_slicing, reason = "bounds checked")]
+            let src_slice =
+                &current_call_frame.calldata[calldata_offset..calldata_offset + copy_size];
+            current_call_frame
+                .memory
+                .store_data(dest_offset, src_slice)?;
         }
+
+        if zero_fill_size > 0 {
+            current_call_frame
+                .memory
+                .store_zeros(dest_offset + copy_size, zero_fill_size)?;
+        }
+
+        Ok(OpcodeResult::Continue)
     }
 
     // CODESIZE operation
@@ -245,28 +229,29 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        let mut data = vec![0u8; size];
-        if code_offset < current_call_frame.bytecode.bytecode.len() {
-            let diff = current_call_frame
-                .bytecode
-                .bytecode
-                .len()
-                .wrapping_sub(code_offset);
-            let final_size = size.min(diff);
-            let end = code_offset.wrapping_add(final_size);
+        let code_len = current_call_frame.bytecode.bytecode.len();
+        if code_offset < code_len {
+            let available_data = code_len - code_offset;
+            let copy_size = size.min(available_data);
+            let end = code_offset + copy_size;
 
             #[expect(unsafe_code, reason = "bounds checked beforehand")]
-            unsafe {
-                data.get_unchecked_mut(..final_size).copy_from_slice(
-                    current_call_frame
-                        .bytecode
-                        .bytecode
-                        .get_unchecked(code_offset..end),
-                );
-            }
-        }
+            let slice = unsafe {
+                current_call_frame
+                    .bytecode
+                    .bytecode
+                    .get_unchecked(code_offset..end)
+            };
+            current_call_frame.memory.store_data(dest_offset, slice)?;
 
-        current_call_frame.memory.store_data(dest_offset, &data)?;
+            if copy_size < size {
+                current_call_frame
+                    .memory
+                    .store_zeros(dest_offset + copy_size, size - copy_size)?;
+            }
+        } else {
+            current_call_frame.memory.store_zeros(dest_offset, size)?;
+        }
 
         Ok(OpcodeResult::Continue)
     }
@@ -340,22 +325,28 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        let mut data = vec![0u8; size];
-        if offset < bytecode.bytecode.len() {
-            let diff = bytecode.bytecode.len().wrapping_sub(offset);
-            let final_size = size.min(diff);
-            let end = offset.wrapping_add(final_size);
+        let code_len = bytecode.bytecode.len();
+        if offset < code_len {
+            let available_data = code_len - offset;
+            let copy_size = size.min(available_data);
+            let end = offset + copy_size;
 
             #[expect(unsafe_code, reason = "bounds checked beforehand")]
-            unsafe {
-                data.get_unchecked_mut(..final_size)
-                    .copy_from_slice(bytecode.bytecode.get_unchecked(offset..end));
-            }
-        }
+            let slice = unsafe { bytecode.bytecode.get_unchecked(offset..end) };
+            self.current_call_frame
+                .memory
+                .store_data(dest_offset, slice)?;
 
-        self.current_call_frame
-            .memory
-            .store_data(dest_offset, &data)?;
+            if copy_size < size {
+                self.current_call_frame
+                    .memory
+                    .store_zeros(dest_offset + copy_size, size - copy_size)?;
+            }
+        } else {
+            self.current_call_frame
+                .memory
+                .store_zeros(dest_offset, size)?;
+        }
 
         Ok(OpcodeResult::Continue)
     }
