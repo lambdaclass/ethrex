@@ -112,7 +112,10 @@ impl TrieLayerCache {
         if parent == state_root && key_values.is_empty() {
             return;
         } else if parent == state_root {
-            tracing::error!("Inconsistent state: parent == state_root but key_values not empty");
+            // L1 always changes the state root (system contracts run even on empty blocks), so
+            // this should not happen there. L2 can legitimately keep the same root on empty blocks
+            // because it has no system contract calls.
+            tracing::trace!("parent == state_root but key_values not empty");
             return;
         }
         if self.layers.contains_key(&state_root) {
