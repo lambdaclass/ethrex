@@ -27,6 +27,7 @@ CHECK_INTERVAL = 10
 SYNC_TIMEOUT = 8 * 60  # 8 hours default sync timeout (in minutes)
 BLOCK_PROCESSING_DURATION = 22 * 60 # Monitor block processing for 22 minutes
 BLOCK_STALL_TIMEOUT = 10 * 60  # Fail if no new block for 10 minutes
+NODE_UNRESPONSIVE_TIMEOUT = 5 * 60  # Fail if node unresponsive for 5 minutes
 STATUS_PRINT_INTERVAL = 30
 
 # Network to port mapping (fixed in docker-compose.multisync.yaml)
@@ -60,7 +61,7 @@ class Instance:
     block_check_start: float = 0
     initial_block: int = 0  # Block when entering block_processing
     error: str = ""
-    consecutive_failures: int = 0
+    first_failure_time: float = 0
 
     @property
     def rpc_url(self) -> str:
@@ -259,7 +260,7 @@ def reset_instance(inst: Instance):
     inst.block_check_start = 0
     inst.initial_block = 0
     inst.error = ""
-    inst.consecutive_failures = 0
+    inst.first_failure_time = 0
 
 
 def print_status(instances: list[Instance]):
@@ -291,13 +292,14 @@ def update_instance(inst: Instance, timeout_min: int) -> bool:
     
     if block is None:
         if inst.status != "waiting":
-            inst.consecutive_failures += 1
-            if inst.consecutive_failures >= 6:
-                inst.status, inst.error = "failed", "Node stopped responding"
+            if inst.first_failure_time == 0:
+                inst.first_failure_time = now
+            elif (now - inst.first_failure_time) >= 5 * 60:
+                inst.status, inst.error = "failed", f"Node stopped responding for {fmt_time(now - inst.first_failure_time)}"
                 return True
         return False
 
-    inst.consecutive_failures = 0
+    inst.first_failure_time = 0
     
     if inst.status == "waiting":
         inst.status, inst.start_time = "syncing", inst.start_time or now
