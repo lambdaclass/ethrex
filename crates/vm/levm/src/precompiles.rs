@@ -14,20 +14,10 @@ use ethrex_common::{
 };
 use ethrex_crypto::{blake2f::blake2b_f, kzg::verify_kzg_proof};
 use k256::elliptic_curve::Field;
-use lambdaworks_math::cyclic_group::IsGroup;
-use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bn_254::curve::{
-    BN254FieldElement, BN254TwistCurveFieldElement,
-};
-use lambdaworks_math::elliptic_curve::short_weierstrass::point::ShortWeierstrassProjectivePoint;
 use lambdaworks_math::{
-    elliptic_curve::{
-        short_weierstrass::curves::{
-            bls12_381::{curve::BLS12381TwistCurveFieldElement, twist::BLS12381TwistCurve},
-            bn_254::{curve::BN254Curve, pairing::BN254AtePairing, twist::BN254TwistCurve},
-        },
-        traits::{IsEllipticCurve, IsPairing},
+    elliptic_curve::short_weierstrass::curves::bls12_381::{
+        curve::BLS12381TwistCurveFieldElement, twist::BLS12381TwistCurve,
     },
-    field::extensions::quadratic::QuadraticExtensionFieldElement,
     traits::ByteConversion,
     unsigned_integer::element::UnsignedInteger,
 };
