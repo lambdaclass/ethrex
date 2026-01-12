@@ -536,6 +536,9 @@ impl<'a> VM<'a> {
                 0x01 => self.op_add(),
                 0x39 => self.op_codecopy(),
                 0x51 => self.op_mload(),
+                0x56 => self.op_jump(),
+                0x57 => self.op_jumpi(),
+                0x5b => self.op_jumpdest(),
                 _ => {
                     // Call the opcode, using the opcode function lookup table.
                     // Indexing will not panic as all the opcode values fit within the table.
