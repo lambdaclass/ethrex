@@ -10,6 +10,7 @@ on:
 permissions:
   contents: read
   actions: write
+  packages: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -117,9 +118,11 @@ jobs:
       - name: Build L1 docker image
         uses: ./.github/actions/build-docker
         with:
+          registry: ghcr.io
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           tags: ethrex:main
+          variant: l1
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -144,11 +147,13 @@ jobs:
       - name: Build L2 docker image
         uses: ./.github/actions/build-docker
         with:
+          registry: ghcr.io
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           tags: ethrex:main-l2
           artifact_path: ethrex_image_l2.tar
           build_args: BUILD_FLAGS=--features l2,l2-sql
+          variant: l2
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
