@@ -1,3 +1,5 @@
+use std::{fmt::Debug, sync::OnceLock, time::{Duration, Instant}};
+
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
@@ -12,11 +14,6 @@ use sp1_sdk::cuda::builder::CudaProverBuilder;
 use sp1_sdk::{
     HashableKey, Prover, SP1ProofMode, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
     SP1VerifyingKey,
-};
-use std::{
-    fmt::Debug,
-    sync::OnceLock,
-    time::{Duration, Instant},
 };
 use url::Url;
 
