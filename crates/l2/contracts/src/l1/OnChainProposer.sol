@@ -625,23 +625,12 @@ contract OnChainProposer is
         uint256 batchNumber
     ) internal view returns (bytes memory) {
         BatchCommitmentInfo memory currentBatch = batchCommitments[batchNumber];
-        ICommonBridge.BalanceDiff[] memory balanceDiffs = currentBatch
-            .balanceDiffs;
+        ICommonBridge.BalanceDiff[] memory balanceDiffs = batchCommitments[
+            batchNumber
+        ].balanceDiffs;
+        uint256 targetedChainsCount = balanceDiffs.length;
 
-        uint256 chunks = 1; // fixed fields
-
-        for (uint256 i = 0; i < balanceDiffs.length; i++) {
-            chunks += 1; // chainId + value
-            chunks += balanceDiffs[i].assetDiffs.length;
-            chunks += balanceDiffs[i].message_hashes.length;
-        }
-        chunks += currentBatch.l2InMessageRollingHashes.length;
-
-        bytes[] memory parts = new bytes[](chunks);
-        uint256 pos = 0;
-
-        // Fixed-size fields
-        parts[pos] = abi.encodePacked(
+        bytes memory fixedSizeFields = bytes.concat(
             batchCommitments[lastVerifiedBatch].newStateRoot,
             currentBatch.newStateRoot,
             currentBatch.withdrawalsLogsMerkleRoot,
@@ -651,53 +640,46 @@ contract OnChainProposer is
             bytes32(CHAIN_ID),
             bytes32(currentBatch.nonPrivilegedTransactions)
         );
-        pos += 1;
 
-        for (uint256 i = 0; i < balanceDiffs.length; i++) {
-            parts[pos] = abi.encodePacked(
+        bytes memory variableSizeFields;
+        for (uint256 i = 0; i < targetedChainsCount; i++) {
+            variableSizeFields = bytes.concat(
+                variableSizeFields,
                 bytes32(balanceDiffs[i].chainId),
                 bytes32(balanceDiffs[i].value)
             );
-            pos += 1;
-
             for (uint256 j = 0; j < balanceDiffs[i].assetDiffs.length; j++) {
-                ICommonBridge.AssetDiff memory ad = balanceDiffs[i].assetDiffs[
-                    j
-                ];
-                parts[pos] = abi.encodePacked(
-                    ad.tokenL1,
-                    ad.tokenL2,
-                    ad.destTokenL2,
-                    bytes32(ad.value)
+                variableSizeFields = bytes.concat(
+                    variableSizeFields,
+                    bytes20(balanceDiffs[i].assetDiffs[j].tokenL1),
+                    bytes20(balanceDiffs[i].assetDiffs[j].tokenL2),
+                    bytes20(balanceDiffs[i].assetDiffs[j].destTokenL2),
+                    bytes32(balanceDiffs[i].assetDiffs[j].value)
                 );
-                pos += 1;
             }
-
             for (
                 uint256 j = 0;
                 j < balanceDiffs[i].message_hashes.length;
                 j++
             ) {
-                parts[pos] = abi.encodePacked(
+                variableSizeFields = bytes.concat(
+                    variableSizeFields,
                     balanceDiffs[i].message_hashes[j]
                 );
-                pos += 1;
             }
         }
-
         for (
             uint256 k = 0;
             k < currentBatch.l2InMessageRollingHashes.length;
             k++
         ) {
-            parts[pos] = abi.encodePacked(
+            variableSizeFields = bytes.concat(
+                variableSizeFields,
                 bytes32(currentBatch.l2InMessageRollingHashes[k].chainId),
                 currentBatch.l2InMessageRollingHashes[k].rollingHash
             );
-            pos += 1;
         }
-
-        return bytes.concat(parts);
+        return bytes.concat(fixedSizeFields, variableSizeFields);
     }
 
     /// @inheritdoc IOnChainProposer
