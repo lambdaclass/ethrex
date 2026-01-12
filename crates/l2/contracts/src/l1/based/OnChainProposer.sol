@@ -343,7 +343,7 @@ contract OnChainProposer is
         //risc0
         bytes memory risc0BlockProof,
         //sp1
-        bytes calldata sp1PublicValues,
+        bytes calldata sp1ProofBytes,
         //tdx
         bytes memory tdxSignature
     ) external {
@@ -559,67 +559,24 @@ contract OnChainProposer is
         uint256 batchNumber
     ) internal view returns (bytes memory) {
         BatchCommitmentInfo memory currentBatch = batchCommitments[batchNumber];
-        ICommonBridge.BalanceDiff[] memory balanceDiffs = batchCommitments[
-            batchNumber
-        ].balanceDiffs;
-        uint256 targetedChainsCount = balanceDiffs.length;
 
-        bytes memory fixedSizeFields = bytes.concat(
-            batchCommitments[lastVerifiedBatch].newStateRoot,
-            currentBatch.newStateRoot,
-            currentBatch.withdrawalsLogsMerkleRoot,
-            currentBatch.processedPrivilegedTransactionsRollingHash,
-            currentBatch.stateDiffKZGVersionedHash,
-            currentBatch.lastBlockHash,
-            bytes32(CHAIN_ID),
-            bytes32(currentBatch.nonPrivilegedTransactionsCount)
-        );
-
-        bytes memory variableSizeFields;
-        for (uint256 i = 0; i < targetedChainsCount; i++) {
-            variableSizeFields = bytes.concat(
-                variableSizeFields,
-                bytes32(balanceDiffs[i].chainId),
-                bytes32(balanceDiffs[i].value)
+        return
+            bytes.concat(
+                batchCommitments[lastVerifiedBatch].newStateRoot,
+                currentBatch.newStateRoot,
+                currentBatch.withdrawalsLogsMerkleRoot,
+                currentBatch.processedPrivilegedTransactionsRollingHash,
+                currentBatch.blobVersionedHash,
+                currentBatch.lastBlockHash,
+                bytes32(CHAIN_ID),
+                bytes32(currentBatch.nonPrivilegedTransactions)
             );
-            for (uint256 j = 0; j < balanceDiffs[i].assetDiffs.length; j++) {
-                variableSizeFields = bytes.concat(
-                    variableSizeFields,
-                    bytes20(balanceDiffs[i].assetDiffs[j].tokenL1),
-                    bytes20(balanceDiffs[i].assetDiffs[j].tokenL2),
-                    bytes20(balanceDiffs[i].assetDiffs[j].destTokenL2),
-                    bytes32(balanceDiffs[i].assetDiffs[j].value)
-                );
-            }
-            for (
-                uint256 j = 0;
-                j < balanceDiffs[i].message_hashes.length;
-                j++
-            ) {
-                variableSizeFields = bytes.concat(
-                    variableSizeFields,
-                    balanceDiffs[i].message_hashes[j]
-                );
-            }
-        }
-        for (
-            uint256 k = 0;
-            k < currentBatch.l2InMessageRollingHashes.length;
-            k++
-        ) {
-            variableSizeFields = bytes.concat(
-                variableSizeFields,
-                bytes32(currentBatch.l2InMessageRollingHashes[k].chainId),
-                currentBatch.l2InMessageRollingHashes[k].rollingHash
-            );
-        }
-        return bytes.concat(fixedSizeFields, variableSizeFields);
     }
 
     function _verifyProofInclusionAligned(
         bytes32[] calldata merkleProofsList,
         bytes32 verificationKey,
-        bytes calldata publicInputsList
+        bytes memory publicInputsList
     ) internal view {
         bytes memory callData = abi.encodeWithSignature(
             "verifyProofInclusion(bytes32[],bytes32,bytes)",

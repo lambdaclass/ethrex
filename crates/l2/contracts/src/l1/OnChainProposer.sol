@@ -440,8 +440,8 @@ contract OnChainProposer is
         if (REQUIRE_TDX_PROOF) {
             try
                 ITDXVerifier(TDX_VERIFIER_ADDRESS).verify(
-                    tdxPublicValues,
-                    publicInputs
+                    publicInputs,
+                    tdxSignature
                 )
             {} catch {
                 revert(
@@ -573,7 +573,7 @@ contract OnChainProposer is
     function _verifyProofInclusionAligned(
         bytes32[] calldata merkleProofsList,
         bytes32 verificationKey,
-        bytes calldata publicInputsList
+        bytes memory publicInputsList
     ) internal view {
         bytes memory callData = abi.encodeWithSignature(
             "verifyProofInclusion(bytes32[],bytes32,bytes)",
@@ -635,10 +635,10 @@ contract OnChainProposer is
             currentBatch.newStateRoot,
             currentBatch.withdrawalsLogsMerkleRoot,
             currentBatch.processedPrivilegedTransactionsRollingHash,
-            currentBatch.stateDiffKZGVersionedHash,
+            currentBatch.blobKZGVersionedHash,
             currentBatch.lastBlockHash,
             bytes32(CHAIN_ID),
-            bytes32(currentBatch.nonPrivilegedTransactionsCount)
+            bytes32(currentBatch.nonPrivilegedTransactions)
         );
 
         bytes memory variableSizeFields;
