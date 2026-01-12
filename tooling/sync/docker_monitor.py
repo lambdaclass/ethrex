@@ -294,8 +294,9 @@ def update_instance(inst: Instance, timeout_min: int) -> bool:
         if inst.status != "waiting":
             if inst.first_failure_time == 0:
                 inst.first_failure_time = now
-            elif (now - inst.first_failure_time) >= 5 * 60:
-                inst.status, inst.error = "failed", f"Node stopped responding for {fmt_time(now - inst.first_failure_time)}"
+            elif (now - inst.first_failure_time) >= NODE_UNRESPONSIVE_TIMEOUT:
+                first_fail_str = datetime.fromtimestamp(inst.first_failure_time).strftime("%H:%M:%S")
+                inst.status, inst.error = "failed", f"Node stopped responding (first failure at {first_fail_str}, down for {fmt_time(now - inst.first_failure_time)})"
                 return True
         return False
 
