@@ -23,12 +23,12 @@ if os.path.exists('.env'):
                 key, _, value = line.partition('=')
                 os.environ[key.strip()] = value.strip()
 
-CHECK_INTERVAL = 10
-SYNC_TIMEOUT = 8 * 60  # 8 hours default sync timeout (in minutes)
-BLOCK_PROCESSING_DURATION = 22 * 60 # Monitor block processing for 22 minutes
-BLOCK_STALL_TIMEOUT = 10 * 60  # Fail if no new block for 10 minutes
-NODE_UNRESPONSIVE_TIMEOUT = 5 * 60  # Fail if node unresponsive for 5 minutes
-STATUS_PRINT_INTERVAL = 30
+CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", 10))
+SYNC_TIMEOUT = int(os.environ.get("SYNC_TIMEOUT", 8 * 60))  # default 8 hours (in minutes)
+BLOCK_PROCESSING_DURATION = int(os.environ.get("BLOCK_PROCESSING_DURATION", 22 * 60))  # default 22 minutes (in seconds)
+BLOCK_STALL_TIMEOUT = int(os.environ.get("BLOCK_STALL_TIMEOUT", 10 * 60))  # default 10 minutes (in seconds)
+NODE_UNRESPONSIVE_TIMEOUT = int(os.environ.get("NODE_UNRESPONSIVE_TIMEOUT", 5 * 60))  # default 5 minutes (in seconds)
+STATUS_PRINT_INTERVAL = int(os.environ.get("STATUS_PRINT_INTERVAL", 30))
 
 # Network to port mapping (fixed in docker-compose.multisync.yaml)
 NETWORK_PORTS = {
