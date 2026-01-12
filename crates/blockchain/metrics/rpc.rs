@@ -1,4 +1,7 @@
-use prometheus::{CounterVec, HistogramVec, register_counter_vec, register_histogram_vec};
+use prometheus::{
+    CounterVec, Gauge, HistogramVec, IntGauge, register_counter_vec, register_gauge,
+    register_histogram_vec, register_int_gauge,
+};
 use std::{future::Future, sync::LazyLock};
 
 pub static METRICS_RPC_REQUEST_OUTCOMES: LazyLock<CounterVec> =
@@ -6,6 +9,12 @@ pub static METRICS_RPC_REQUEST_OUTCOMES: LazyLock<CounterVec> =
 
 pub static METRICS_RPC_DURATION: LazyLock<HistogramVec> =
     LazyLock::new(initialize_rpc_duration_histogram);
+
+pub static METRICS_NEWPAYLOAD_V4_BLOCK_NUMBER: LazyLock<IntGauge> =
+    LazyLock::new(initialize_newpayload_v4_block_number);
+
+pub static METRICS_NEWPAYLOAD_V4_LATENCY_MS: LazyLock<Gauge> =
+    LazyLock::new(initialize_newpayload_v4_latency);
 
 // Metrics defined in this module register into the Prometheus default registry.
 // The metrics API exposes them by calling `gather_default_metrics()`.
@@ -24,6 +33,22 @@ fn initialize_rpc_duration_histogram() -> HistogramVec {
         "rpc_request_duration_seconds",
         "Histogram of RPC request handling duration partitioned by namespace and method",
         &["namespace", "method"],
+    )
+    .unwrap()
+}
+
+fn initialize_newpayload_v4_block_number() -> IntGauge {
+    register_int_gauge!(
+        "newpayload_v4_latest_block_number",
+        "Block number of the latest newPayloadV4 request"
+    )
+    .unwrap()
+}
+
+fn initialize_newpayload_v4_latency() -> Gauge {
+    register_gauge!(
+        "newpayload_v4_latest_latency_ms",
+        "Latency in milliseconds of the latest newPayloadV4 request"
     )
     .unwrap()
 }
@@ -82,4 +107,11 @@ where
     let output = future.await;
     timer.observe_duration();
     output
+}
+
+/// Records the block number and latency for a newPayloadV4 request.
+/// Both metrics are updated atomically to allow correlation in Grafana.
+pub fn record_newpayload_v4_metrics(block_number: u64, latency_ms: f64) {
+    METRICS_NEWPAYLOAD_V4_BLOCK_NUMBER.set(block_number as i64);
+    METRICS_NEWPAYLOAD_V4_LATENCY_MS.set(latency_ms);
 }
