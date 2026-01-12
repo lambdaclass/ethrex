@@ -166,6 +166,9 @@ Block building options:
           Target block gas limit.
 
           [default: 60000000]
+
+      --builder.max-blobs <MAX_BLOBS>
+          EIP-7872: Maximum blobs per block for local building. Minimum of 1. Defaults to protocol max.
 ```
 
 <!-- END_CLI_HELP -->
