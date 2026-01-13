@@ -1,7 +1,9 @@
 use bytes::Bytes;
-use ethrex_common::types::fee_config::FeeConfig;
-use ethrex_common::types::{blob_from_bytes, kzg_commitment_to_versioned_hash, Block, Commitment, Proof};
 use ethrex_common::H256;
+use ethrex_common::types::fee_config::FeeConfig;
+use ethrex_common::types::{
+    Block, Commitment, Proof, blob_from_bytes, kzg_commitment_to_versioned_hash,
+};
 use ethrex_crypto::kzg::verify_blob_kzg_proof;
 use ethrex_rlp::encode::RLPEncode;
 

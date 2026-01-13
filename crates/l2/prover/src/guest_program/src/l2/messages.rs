@@ -1,9 +1,11 @@
 use std::collections::BTreeMap;
 
-use ethrex_common::types::{Block, PrivilegedL2Transaction, Receipt};
 use ethrex_common::H256;
+use ethrex_common::types::{Block, PrivilegedL2Transaction, Receipt};
 use ethrex_l2_common::merkle_tree::compute_merkle_root;
-use ethrex_l2_common::messages::{L1Message, L2Message, get_block_l1_messages, get_block_l2_out_messages, get_l1_message_hash};
+use ethrex_l2_common::messages::{
+    L1Message, L2Message, get_block_l1_messages, get_block_l2_out_messages, get_l1_message_hash,
+};
 use ethrex_l2_common::privileged_transactions::{
     compute_privileged_transactions_hash, get_block_l1_in_messages, get_block_l2_in_messages,
 };

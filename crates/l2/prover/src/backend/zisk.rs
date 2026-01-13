@@ -49,10 +49,9 @@ impl ZiskBackend {
     }
 
     fn serialize_input(input: &ProgramInput) -> Result<(), BackendError> {
-        let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(input)
-            .map_err(BackendError::serialization)?;
-        std::fs::write(INPUT_PATH, input_bytes.as_slice())
-            .map_err(BackendError::serialization)?;
+        let input_bytes =
+            rkyv::to_bytes::<rkyv::rancor::Error>(input).map_err(BackendError::serialization)?;
+        std::fs::write(INPUT_PATH, input_bytes.as_slice()).map_err(BackendError::serialization)?;
         Ok(())
     }
 }

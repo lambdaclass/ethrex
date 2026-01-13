@@ -22,10 +22,15 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Execution
         last_block_hash,
         non_privileged_count,
         chain_id,
-    } = execute_blocks(&blocks, execution_witness, ELASTICITY_MULTIPLIER, |db, _| {
-        // L1 VM factory - simple creation without fee configs
-        Ok(Evm::new_for_l1(db.clone()))
-    })?;
+    } = execute_blocks(
+        &blocks,
+        execution_witness,
+        ELASTICITY_MULTIPLIER,
+        |db, _| {
+            // L1 VM factory - simple creation without fee configs
+            Ok(Evm::new_for_l1(db.clone()))
+        },
+    )?;
 
     Ok(ProgramOutput {
         initial_state_hash,

@@ -39,7 +39,8 @@ impl ProverBackend for OpenVmBackend {
         let sdk = Sdk::standard();
         let stdin = Self::serialize_input(&input)?;
 
-        sdk.execute(PROGRAM_ELF, stdin).map_err(BackendError::execution)?;
+        sdk.execute(PROGRAM_ELF, stdin)
+            .map_err(BackendError::execution)?;
 
         Ok(())
     }
@@ -54,7 +55,9 @@ impl ProverBackend for OpenVmBackend {
 
         let proof = match format {
             ProofFormat::Compressed => {
-                let (proof, _) = sdk.prove(PROGRAM_ELF, stdin).map_err(BackendError::proving)?;
+                let (proof, _) = sdk
+                    .prove(PROGRAM_ELF, stdin)
+                    .map_err(BackendError::proving)?;
                 OpenVmProveOutput::Compressed(proof)
             }
             ProofFormat::Groth16 => {

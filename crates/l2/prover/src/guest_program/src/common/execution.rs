@@ -49,16 +49,18 @@ where
 {
     let chain_id = execution_witness.chain_config.chain_id;
 
-    let guest_program_state: GuestProgramState = report_cycles(
-        "guest_program_state_initialization",
-        || execution_witness.try_into().map_err(ExecutionError::GuestProgramState),
-    )?;
+    let guest_program_state: GuestProgramState =
+        report_cycles("guest_program_state_initialization", || {
+            execution_witness
+                .try_into()
+                .map_err(ExecutionError::GuestProgramState)
+        })?;
 
     let mut wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
 
-    let chain_config = wrapped_db
-        .get_chain_config()
-        .map_err(|_| ExecutionError::Internal("No chain config in execution witness".to_string()))?;
+    let chain_config = wrapped_db.get_chain_config().map_err(|_| {
+        ExecutionError::Internal("No chain config in execution witness".to_string())
+    })?;
 
     // Hashing is expensive in zkVMs - initialize block header hashes once
     report_cycles("initialize_block_header_hashes", || {
@@ -103,8 +105,13 @@ where
     for (i, block) in blocks.iter().enumerate() {
         // Validate the block
         report_cycles("validate_block", || {
-            validate_block(block, parent_block_header, &chain_config, elasticity_multiplier)
-                .map_err(ExecutionError::BlockValidation)
+            validate_block(
+                block,
+                parent_block_header,
+                &chain_config,
+                elasticity_multiplier,
+            )
+            .map_err(ExecutionError::BlockValidation)
         })?;
 
         // Create VM using the provided factory

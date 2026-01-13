@@ -10,4 +10,3 @@ pub struct ProgramInput {
     /// Database containing all the data necessary to execute.
     pub execution_witness: ExecutionWitness,
 }
-

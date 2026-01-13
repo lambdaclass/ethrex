@@ -20,11 +20,8 @@ impl ExecBackend {
         Self
     }
 
-    fn execution_program(
-        input: ProgramInput,
-    ) -> Result<ProgramOutput, BackendError> {
-        guest_program::execution::execution_program(input)
-            .map_err(BackendError::execution)
+    fn execution_program(input: ProgramInput) -> Result<ProgramOutput, BackendError> {
+        guest_program::execution::execution_program(input).map_err(BackendError::execution)
     }
 
     fn to_calldata(proof: &ProgramOutput) -> ProofCalldata {

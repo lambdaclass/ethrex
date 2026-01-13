@@ -1,6 +1,6 @@
 use ethrex_blockchain::error::ChainError;
-use ethrex_common::types::block_execution_witness::GuestProgramStateError;
 use ethrex_common::types::BlobsBundleError;
+use ethrex_common::types::block_execution_witness::GuestProgramStateError;
 use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;
 use ethrex_vm::EvmError;
 
@@ -51,8 +51,12 @@ impl From<crate::common::ExecutionError> for L2ExecutionError {
         match err {
             ExecutionError::BlockValidation(e) => L2ExecutionError::BlockValidation(e),
             ExecutionError::GasValidation(e) => L2ExecutionError::GasValidation(e),
-            ExecutionError::RequestsRootValidation(e) => L2ExecutionError::RequestsRootValidation(e),
-            ExecutionError::ReceiptsRootValidation(e) => L2ExecutionError::ReceiptsRootValidation(e),
+            ExecutionError::RequestsRootValidation(e) => {
+                L2ExecutionError::RequestsRootValidation(e)
+            }
+            ExecutionError::ReceiptsRootValidation(e) => {
+                L2ExecutionError::ReceiptsRootValidation(e)
+            }
             ExecutionError::Evm(e) => L2ExecutionError::Evm(e),
             ExecutionError::EmptyBatch => L2ExecutionError::EmptyBatch,
             ExecutionError::GuestProgramState(e) => L2ExecutionError::GuestProgramState(e),

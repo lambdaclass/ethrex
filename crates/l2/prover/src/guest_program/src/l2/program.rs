@@ -36,14 +36,12 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, L2Executi
         elasticity_multiplier,
         |db: &GuestProgramStateWrapper, i: usize| -> Result<Evm, crate::common::ExecutionError> {
             // L2 VM factory - requires fee config for each block
-            let fee_config = fee_configs
-                .get(i)
-                .cloned()
-                .ok_or_else(|| crate::common::ExecutionError::Internal(
-                    "FeeConfig not provided for L2 execution".to_string()
-                ))?;
-            Evm::new_for_l2(db.clone(), fee_config)
-                .map_err(crate::common::ExecutionError::Evm)
+            let fee_config = fee_configs.get(i).cloned().ok_or_else(|| {
+                crate::common::ExecutionError::Internal(
+                    "FeeConfig not provided for L2 execution".to_string(),
+                )
+            })?;
+            Evm::new_for_l2(db.clone(), fee_config).map_err(crate::common::ExecutionError::Evm)
         },
     )?;
 
