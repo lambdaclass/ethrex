@@ -1,6 +1,6 @@
 [package]
 name = "zkvm-risc0-program"
-version = "8.0.0"
+version = "9.0.0"
 edition = "2024"
 
 [workspace]
