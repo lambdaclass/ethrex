@@ -296,6 +296,7 @@ impl Blockchain {
         (
             BlockExecutionResult,
             AccountUpdatesList,
+            Option<Vec<AccountUpdate>>,
             // FIXME: extract to stats struct
             usize,
             [Instant; 6],
@@ -314,7 +315,7 @@ impl Blockchain {
         let queue_length = AtomicUsize::new(0);
         let queue_length_ref = &queue_length;
         let mut max_queue_length = 0;
-        let (execution_result, account_updates_list) = std::thread::scope(|s| {
+        let (execution_result, merkleization_result) = std::thread::scope(|s| {
             let max_queue_length_ref = &mut max_queue_length;
             let (tx, rx) = channel();
             let execution_handle = std::thread::Builder::new()
@@ -340,7 +341,7 @@ impl Blockchain {
             let merkleize_handle = std::thread::Builder::new()
                 .name("block_executor_merkleizer".to_string())
                 .spawn_scoped(s, move || -> Result<_, StoreError> {
-                    let account_updates_list = self.handle_merkleization(
+                    let (account_updates_list, accumulated_updates) = self.handle_merkleization(
                         s,
                         rx,
                         parent_header_ref,
@@ -348,7 +349,11 @@ impl Blockchain {
                         max_queue_length_ref,
                     )?;
                     let merkle_end_instant = Instant::now();
-                    Ok((account_updates_list, merkle_end_instant))
+                    Ok((
+                        account_updates_list,
+                        accumulated_updates,
+                        merkle_end_instant,
+                    ))
                 })
                 .expect("Failed to spawn block_executor merkleizer thread");
             (
@@ -362,13 +367,14 @@ impl Blockchain {
                 }),
             )
         });
-        let (account_updates_list, merkle_end_instant) = account_updates_list?;
+        let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
         let (execution_result, exec_end_instant) = execution_result?;
         let exec_merkle_end_instant = Instant::now();
 
         Ok((
             execution_result,
             account_updates_list,
+            accumulated_updates,
             max_queue_length,
             [
                 start_instant,
@@ -427,7 +433,7 @@ impl Blockchain {
         parent_header: &'b BlockHeader,
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
-    ) -> Result<AccountUpdatesList, StoreError>
+    ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError>
     where
         'a: 's,
         'b: 's,
@@ -478,9 +484,34 @@ impl Blockchain {
         let mut storage_updates_map: StoreUpdatesMap = Default::default();
         let mut code_updates: FxHashMap<H256, Code> = Default::default();
         let mut hashed_address_cache: FxHashMap<H160, H256> = Default::default();
+
+        // Accumulator for witness generation (only used if accumulate_updates is true)
+        let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
+            if self.options.generate_witness {
+                Some(FxHashMap::default())
+            } else {
+                None
+            };
+
         for updates in rx {
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
             *max_queue_length = current_length.max(*max_queue_length);
+
+            // Accumulate updates for witness generation if enabled
+            // We clone here only when witness generation is needed
+            if let Some(acc) = &mut accumulator {
+                for update in updates.clone() {
+                    match acc.entry(update.address) {
+                        Entry::Vacant(e) => {
+                            e.insert(update);
+                        }
+                        Entry::Occupied(mut e) => {
+                            e.get_mut().merge(update);
+                        }
+                    }
+                }
+            }
+
             let mut hashed_updates: Vec<_> = updates
                 .into_iter()
                 .map(|u| {
@@ -555,12 +586,17 @@ impl Blockchain {
             .collect();
         let code_updates = code_updates.into_iter().collect();
 
-        Ok(AccountUpdatesList {
-            state_trie_hash,
-            state_updates,
-            storage_updates,
-            code_updates,
-        })
+        let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
+
+        Ok((
+            AccountUpdatesList {
+                state_trie_hash,
+                state_updates,
+                storage_updates,
+                code_updates,
+            },
+            accumulated_updates,
+        ))
     }
 
     fn handle_merkleization_sequential(
@@ -569,7 +605,7 @@ impl Blockchain {
         parent_header: &BlockHeader,
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
-    ) -> Result<AccountUpdatesList, StoreError> {
+    ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
         let mut state_trie = self
             .storage
             .state_trie(parent_header.hash())?
@@ -582,9 +618,33 @@ impl Blockchain {
 
         let mut hashed_address_cache: FxHashMap<H160, H256> = Default::default();
 
+        // Accumulator for witness generation (only used if generate_witness is true)
+        let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
+            if self.options.generate_witness {
+                Some(FxHashMap::default())
+            } else {
+                None
+            };
+
         for updates in rx {
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
             *max_queue_length = current_length.max(*max_queue_length);
+
+            // Accumulate updates for witness generation if enabled
+            // We clone here only when witness generation is needed
+            if let Some(acc) = &mut accumulator {
+                for update in updates.clone() {
+                    match acc.entry(update.address) {
+                        Entry::Vacant(e) => {
+                            e.insert(update);
+                        }
+                        Entry::Occupied(mut e) => {
+                            e.get_mut().merge(update);
+                        }
+                    }
+                }
+            }
+
             let hashed_updates: Vec<_> = updates
                 .into_iter()
                 .map(|u| {
@@ -612,12 +672,17 @@ impl Blockchain {
             .collect();
         let code_updates = code_updates.into_iter().collect();
 
-        Ok(AccountUpdatesList {
-            state_trie_hash,
-            state_updates,
-            storage_updates,
-            code_updates,
-        })
+        let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
+
+        Ok((
+            AccountUpdatesList {
+                state_trie_hash,
+                state_updates,
+                storage_updates,
+                code_updates,
+            },
+            accumulated_updates,
+        ))
     }
 
     /// Processes a batch of account updates, applying them to the state trie and storage tries,
@@ -1425,7 +1490,8 @@ impl Blockchain {
 
         let (mut vm, logger) = if self.options.generate_witness && self.is_synced() {
             // If witness generation is enabled, we wrap the db with a logger
-            // to avoid executing the block more than once.
+            // to track state access (block hashes, storage keys, codes) during execution
+            // avoiding the need to re-execute the block later.
             let vm_db: DynVmDatabase = Box::new(StoreVmDatabase::new(
                 self.storage.clone(),
                 parent_header.clone(),
@@ -1449,7 +1515,7 @@ impl Blockchain {
             (vm, None)
         };
 
-        let (res, account_updates_list, merkle_queue_length, instants) =
+        let (res, account_updates_list, accumulated_updates, merkle_queue_length, instants) =
             self.execute_block_pipeline(&block, &parent_header, &mut vm)?;
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
@@ -1460,11 +1526,9 @@ impl Blockchain {
         );
 
         if let Some(logger) = logger
-            && self.options.generate_witness
-            && self.is_synced()
+            && let Some(account_updates) = accumulated_updates
         {
             let block_hash = block.hash();
-            let account_updates = vm.get_state_transitions()?;
             let witness = self.generate_witness_from_account_updates(
                 account_updates,
                 &block,
