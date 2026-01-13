@@ -65,7 +65,7 @@ async fn do_loop(private_key: &SecretKey, commit_hash: String) -> Result<u64, St
     let signature = sign_eip191(&output, private_key);
     let calldata = ProofCalldata {
         prover_type: ProverType::TDX,
-        calldata: vec![Value::Bytes(output.into()), Value::Bytes(signature.into())],
+        calldata: vec![Value::Bytes(signature.into())],
     };
 
     submit_proof(batch_number, BatchProof::ProofCalldata(calldata)).await?;
