@@ -1495,6 +1495,8 @@ async fn insert_accounts(
     )
     .map_err(SyncError::TrieGenerationError)?;
 
+    drop(db); // close db before removing directory
+
     std::fs::remove_dir_all(account_state_snapshots_dir)
         .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?;
     std::fs::remove_dir_all(get_rocksdb_temp_accounts_dir(datadir))
@@ -1633,6 +1635,10 @@ async fn insert_storages(
             pool.execute(task);
         }
     });
+
+    // close db before removing directory
+    drop(snapshot);
+    drop(db);
 
     std::fs::remove_dir_all(account_storages_snapshots_dir)
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
