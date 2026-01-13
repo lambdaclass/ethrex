@@ -34,7 +34,8 @@ pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), Strin
                     blob_commitment: input.blob_commitment,
                     #[cfg(feature = "l2")]
                     blob_proof: input.blob_proof,
-                    fee_configs: Some(input.fee_configs),
+                    #[cfg(feature = "l2")]
+                    fee_configs: input.fee_configs,
                 },
             )),
             _ => Err("No blocks to prove.".to_owned()),
