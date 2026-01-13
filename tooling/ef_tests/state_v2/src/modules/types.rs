@@ -430,7 +430,7 @@ impl From<&AccountState> for GenesisAccount {
     fn from(value: &AccountState) -> Self {
         Self {
             code: value.code.clone(),
-            storage: value.storage.clone(),
+            storage: value.storage.iter().map(|(k, v)| (*k, *v)).collect(),
             balance: value.balance,
             nonce: value.nonce,
         }
