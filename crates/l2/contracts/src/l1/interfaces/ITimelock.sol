@@ -58,17 +58,14 @@ interface ITimelock {
     function verifyBatch(
         uint256 batchNumber,
         bytes memory risc0BlockProof,
-        bytes calldata risc0Journal,
-        bytes calldata sp1PublicValues,
         bytes memory sp1ProofBytes,
-        bytes calldata tdxPublicValues,
         bytes memory tdxSignature
     ) external;
 
     /// @notice Verifies multiple batches through the timelock using aligned proofs.
     function verifyBatchesAligned(
         uint256 firstBatchNumber,
-        bytes[] calldata publicInputsList,
+        uint256 lastBatchNumber,
         bytes32[][] calldata sp1MerkleProofsList,
         bytes32[][] calldata risc0MerkleProofsList
     ) external;

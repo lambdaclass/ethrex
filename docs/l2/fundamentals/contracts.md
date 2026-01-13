@@ -64,10 +64,6 @@ The `OnChainProposer` is an upgradeable smart contract that ensures the advancem
     - **`verifyBatch()`**: Verifies a single batch using RISC0, SP1, or TDX proofs
     - **`verifyBatchesAligned()`**: Verifies multiple batches in sequence using aligned proofs with Merkle verification
 
-3. **State Validation**
-    - **`_verifyPublicData()`**: Internal function used during `verifyBatch()` or `verifyBatchesAligned()` that validates public proof inputs match previous data from `commitBatch()`
-
-
 ## L2 Contracts
 
 ### `CommonBridgeL2`

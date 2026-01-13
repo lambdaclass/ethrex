@@ -173,12 +173,8 @@ pub fn to_batch_proof(
 }
 
 fn to_calldata(proof: ProveOutput) -> ProofCalldata {
-    // bytes calldata publicValues,
     // bytes calldata proofBytes
-    let calldata = vec![
-        Value::Bytes(proof.proof.public_values.to_vec().into()),
-        Value::Bytes(proof.proof.bytes().into()),
-    ];
+    let calldata = vec![Value::Bytes(proof.proof.bytes().into())];
 
     ProofCalldata {
         prover_type: ProverType::SP1,

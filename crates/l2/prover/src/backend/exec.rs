@@ -50,11 +50,10 @@ pub fn verify(_proof: &ProgramOutput) -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
-fn to_calldata(proof: ProgramOutput) -> ProofCalldata {
-    let public_inputs = proof.encode();
+fn to_calldata(_proof: ProgramOutput) -> ProofCalldata {
     ProofCalldata {
         prover_type: ProverType::Exec,
-        calldata: vec![Value::Bytes(public_inputs.into())],
+        calldata: vec![Value::Bytes(vec![].into())],
     }
 }
 
