@@ -25,11 +25,17 @@ pub type CacheDB = FxHashMap<Address, LevmAccount>;
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
-    // Holds the current state of accounts being modified during execution
+    /// Holds the current state of accounts being modified during execution.
+    /// This is the "working" cache that gets updated as transactions execute.
     pub current_accounts_state: CacheDB,
-    // Holds the initial state of accounts before the block execution started, used for calculating state transitions
+    /// Holds the initial state of accounts before execution started.
+    /// When executing a batch of blocks, this represents the state
+    /// before the entire batch started. Used by `get_state_transitions()`
+    /// to compute the final state diff.
     pub initial_accounts_state: CacheDB,
-    // Holds the state of accounts before the current transaction started, used for calculating state transitions per transaction (e.g. pipeline)
+    /// Holds the state of accounts before the current transaction started.
+    /// Used in pipeline execution to calculate per-transaction state transitions via
+    /// `get_state_transitions_tx()`.
     pub previous_tx_accounts_state: CacheDB,
     pub codes: FxHashMap<H256, Code>,
     pub tx_backup: Option<CallFrameBackup>,
