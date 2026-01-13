@@ -1,0 +1,7 @@
+{
+  "name": "mul",
+  "category": "arithmetic",
+  "description": "MUL with two immediate operands",
+  "body_hex": "600360040250",
+  "repeat": 10
+}

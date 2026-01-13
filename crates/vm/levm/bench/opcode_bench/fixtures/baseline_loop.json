@@ -1,0 +1,7 @@
+{
+  "name": "baseline_loop",
+  "category": "baseline",
+  "description": "Loop overhead only (empty body)",
+  "body_hex": "",
+  "repeat": 1
+}

@@ -1,0 +1,40 @@
+{
+  "defaults": {
+    "runs": 10,
+    "iterations": 100000
+  },
+  "fixtures": {
+    "add": {
+      "runs": 50,
+      "iterations": 1000000
+    },
+    "mul": {
+      "runs": 50,
+      "iterations": 1000000
+    },
+    "sha3_empty": {
+      "runs": 20,
+      "iterations": 200000
+    },
+    "sload_warm": {
+      "runs": 20,
+      "iterations": 200000
+    },
+    "sstore_noop": {
+      "runs": 10,
+      "iterations": 50000
+    },
+    "precompile_identity": {
+      "runs": 10,
+      "iterations": 1000
+    },
+    "precompile_sha256": {
+      "runs": 10,
+      "iterations": 500
+    },
+    "precompile_ripemd160": {
+      "runs": 10,
+      "iterations": 500
+    }
+  }
+}

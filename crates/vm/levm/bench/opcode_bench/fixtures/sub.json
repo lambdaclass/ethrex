@@ -1,0 +1,7 @@
+{
+  "name": "sub",
+  "category": "arithmetic",
+  "description": "SUB with two immediate operands",
+  "body_hex": "600160020350",
+  "repeat": 10
+}

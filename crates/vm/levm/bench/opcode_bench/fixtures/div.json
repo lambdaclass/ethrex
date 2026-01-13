@@ -1,0 +1,7 @@
+{
+  "name": "div",
+  "category": "arithmetic",
+  "description": "DIV with two immediate operands (4 / 2)",
+  "body_hex": "600260040450",
+  "repeat": 10
+}

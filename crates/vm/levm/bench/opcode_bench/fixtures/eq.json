@@ -1,0 +1,7 @@
+{
+  "name": "eq",
+  "category": "comparison",
+  "description": "EQ with two immediate operands (5 == 5)",
+  "body_hex": "600560051450",
+  "repeat": 10
+}

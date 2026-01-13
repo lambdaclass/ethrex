@@ -1,0 +1,7 @@
+{
+  "name": "selfbalance",
+  "category": "environment",
+  "description": "SELFBALANCE returns contract balance",
+  "body_hex": "4750",
+  "repeat": 10
+}

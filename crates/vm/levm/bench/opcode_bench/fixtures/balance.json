@@ -1,0 +1,7 @@
+{
+  "name": "balance",
+  "category": "environment",
+  "description": "BALANCE for a fixed address",
+  "body_hex": "7300000000000000000000000000000000000000423150",
+  "repeat": 10
+}

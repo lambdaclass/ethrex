@@ -1,0 +1,8 @@
+{
+  "name": "calldatasize",
+  "category": "calldata",
+  "description": "CALLDATASIZE returns input length",
+  "body_hex": "3650",
+  "calldata_hex": "0000000000000000000000000000000000000000000000000000000000000042",
+  "repeat": 10
+}

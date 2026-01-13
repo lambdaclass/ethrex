@@ -1,0 +1,7 @@
+{
+  "name": "precompile_sha256",
+  "category": "precompile",
+  "description": "CALL to SHA256 precompile (0x02) with 32-byte input",
+  "body_hex": "7f11223344556677889900aabbccddeeff00112233445566778899aabbccddeeff60005260206000602060006000600261fffff150",
+  "repeat": 10
+}

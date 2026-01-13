@@ -1,0 +1,7 @@
+{
+  "name": "extcodecopy",
+  "category": "code",
+  "description": "EXTCODECOPY 32 bytes from a fixed address",
+  "body_hex": "6020600060007300000000000000000000000000000000000000423c",
+  "repeat": 10
+}

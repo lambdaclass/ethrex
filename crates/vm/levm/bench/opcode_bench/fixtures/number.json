@@ -1,0 +1,7 @@
+{
+  "name": "number",
+  "category": "environment",
+  "description": "NUMBER returns block height",
+  "body_hex": "4350",
+  "repeat": 10
+}

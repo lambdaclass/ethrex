@@ -1,0 +1,7 @@
+{
+  "name": "gasprice",
+  "category": "environment",
+  "description": "GASPRICE returns tx gas price",
+  "body_hex": "3a50",
+  "repeat": 10
+}

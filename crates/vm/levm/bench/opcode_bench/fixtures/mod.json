@@ -1,0 +1,7 @@
+{
+  "name": "mod",
+  "category": "arithmetic",
+  "description": "MOD with two immediate operands (7 % 3)",
+  "body_hex": "600360070650",
+  "repeat": 10
+}

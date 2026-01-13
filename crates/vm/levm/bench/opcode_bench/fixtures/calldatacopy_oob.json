@@ -1,0 +1,8 @@
+{
+  "name": "calldatacopy_oob",
+  "category": "calldata",
+  "description": "CALLDATACOPY from offset beyond calldata length",
+  "body_hex": "60206040600037",
+  "calldata_hex": "0000000000000000000000000000000000000000000000000000000000000042",
+  "repeat": 10
+}

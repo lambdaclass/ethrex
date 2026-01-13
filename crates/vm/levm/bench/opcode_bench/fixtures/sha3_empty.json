@@ -1,0 +1,7 @@
+{
+  "name": "sha3_empty",
+  "category": "crypto",
+  "description": "SHA3 over empty memory (offset 0, size 0)",
+  "body_hex": "600060002050",
+  "repeat": 10
+}

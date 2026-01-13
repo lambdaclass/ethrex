@@ -1,0 +1,7 @@
+{
+  "name": "address",
+  "category": "environment",
+  "description": "ADDRESS returns current contract address",
+  "body_hex": "3050",
+  "repeat": 10
+}

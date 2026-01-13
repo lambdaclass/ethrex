@@ -1,0 +1,7 @@
+{
+  "name": "exp",
+  "category": "arithmetic",
+  "description": "EXP with base=2, exponent=10",
+  "body_hex": "600a60020a50",
+  "repeat": 10
+}

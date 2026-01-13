@@ -1,0 +1,7 @@
+{
+  "name": "extcodecopy_zero_len",
+  "category": "code",
+  "description": "EXTCODECOPY with zero length",
+  "body_hex": "6000600060007300000000000000000000000000000000000000423c",
+  "repeat": 10
+}

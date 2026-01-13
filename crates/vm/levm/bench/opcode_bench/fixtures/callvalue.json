@@ -1,0 +1,7 @@
+{
+  "name": "callvalue",
+  "category": "environment",
+  "description": "CALLVALUE returns msg.value",
+  "body_hex": "3450",
+  "repeat": 10
+}

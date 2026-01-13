@@ -1,0 +1,7 @@
+{
+  "name": "origin",
+  "category": "environment",
+  "description": "ORIGIN returns tx origin",
+  "body_hex": "3250",
+  "repeat": 10
+}

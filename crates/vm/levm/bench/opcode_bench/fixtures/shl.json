@@ -1,0 +1,7 @@
+{
+  "name": "shl",
+  "category": "shift",
+  "description": "SHL with shift=1, value=8",
+  "body_hex": "600860011b50",
+  "repeat": 10
+}

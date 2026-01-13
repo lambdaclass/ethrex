@@ -1,0 +1,8 @@
+{
+  "name": "calldatacopy_zero_len",
+  "category": "calldata",
+  "description": "CALLDATACOPY with zero length",
+  "body_hex": "60006000600037",
+  "calldata_hex": "0000000000000000000000000000000000000000000000000000000000000042",
+  "repeat": 10
+}

@@ -1,0 +1,7 @@
+{
+  "name": "not",
+  "category": "bitwise",
+  "description": "NOT with immediate operand",
+  "body_hex": "60011950",
+  "repeat": 10
+}

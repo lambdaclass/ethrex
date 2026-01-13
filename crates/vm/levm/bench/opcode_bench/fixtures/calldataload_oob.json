@@ -1,0 +1,8 @@
+{
+  "name": "calldataload_oob",
+  "category": "calldata",
+  "description": "CALLDATALOAD beyond calldata length",
+  "body_hex": "60403550",
+  "calldata_hex": "0000000000000000000000000000000000000000000000000000000000000042",
+  "repeat": 10
+}

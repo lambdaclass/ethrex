@@ -1,0 +1,8 @@
+{
+  "name": "calldataload",
+  "category": "calldata",
+  "description": "CALLDATALOAD at offset 0",
+  "body_hex": "60003550",
+  "calldata_hex": "0000000000000000000000000000000000000000000000000000000000000042",
+  "repeat": 10
+}

@@ -1,0 +1,7 @@
+{
+  "name": "iszero",
+  "category": "comparison",
+  "description": "ISZERO with zero input",
+  "body_hex": "60001550",
+  "repeat": 10
+}

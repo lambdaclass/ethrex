@@ -1,0 +1,7 @@
+{
+  "name": "add",
+  "category": "arithmetic",
+  "description": "ADD with two immediate operands",
+  "body_hex": "600160020150",
+  "repeat": 10
+}

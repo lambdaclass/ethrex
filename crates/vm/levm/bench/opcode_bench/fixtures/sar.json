@@ -1,0 +1,7 @@
+{
+  "name": "sar",
+  "category": "shift",
+  "description": "SAR with shift=1, value=0xff (signed -1)",
+  "body_hex": "60ff60011d50",
+  "repeat": 10
+}

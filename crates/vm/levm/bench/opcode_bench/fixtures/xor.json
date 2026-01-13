@@ -1,0 +1,7 @@
+{
+  "name": "xor",
+  "category": "bitwise",
+  "description": "XOR with two immediate operands",
+  "body_hex": "60ff600f1850",
+  "repeat": 10
+}

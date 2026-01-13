@@ -1,0 +1,7 @@
+{
+  "name": "extcodesize",
+  "category": "code",
+  "description": "EXTCODESIZE for a fixed address",
+  "body_hex": "7300000000000000000000000000000000000000423b50",
+  "repeat": 10
+}

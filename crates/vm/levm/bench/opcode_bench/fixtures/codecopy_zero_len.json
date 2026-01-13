@@ -1,0 +1,7 @@
+{
+  "name": "codecopy_zero_len",
+  "category": "code",
+  "description": "CODECOPY with zero length",
+  "body_hex": "60006000600039",
+  "repeat": 10
+}

@@ -1,0 +1,7 @@
+{
+  "name": "caller",
+  "category": "environment",
+  "description": "CALLER returns msg.sender",
+  "body_hex": "3350",
+  "repeat": 10
+}

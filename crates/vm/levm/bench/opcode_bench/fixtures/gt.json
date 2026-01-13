@@ -1,0 +1,7 @@
+{
+  "name": "gt",
+  "category": "comparison",
+  "description": "GT with two immediate operands (2 > 1)",
+  "body_hex": "600160021150",
+  "repeat": 10
+}

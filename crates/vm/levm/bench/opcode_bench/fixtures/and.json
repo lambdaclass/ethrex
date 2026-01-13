@@ -1,0 +1,7 @@
+{
+  "name": "and",
+  "category": "bitwise",
+  "description": "AND with two immediate operands",
+  "body_hex": "600f60f01650",
+  "repeat": 10
+}

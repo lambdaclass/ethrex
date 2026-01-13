@@ -1,0 +1,7 @@
+{
+  "name": "codecopy_oob",
+  "category": "code",
+  "description": "CODECOPY from offset beyond code size",
+  "body_hex": "602060ff600039",
+  "repeat": 10
+}

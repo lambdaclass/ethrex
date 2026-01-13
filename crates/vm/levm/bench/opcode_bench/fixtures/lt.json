@@ -1,0 +1,7 @@
+{
+  "name": "lt",
+  "category": "comparison",
+  "description": "LT with two immediate operands (1 < 2)",
+  "body_hex": "600260011050",
+  "repeat": 10
+}
