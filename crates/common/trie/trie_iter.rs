@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, sync::Arc};
+use std::cmp::Ordering;
 
 use crate::{
     PathRLP, Trie, TrieDB, TrieError, ValueRLP,
