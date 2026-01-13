@@ -418,13 +418,13 @@ impl Command {
                     .enumerate()
                 {
                     let batch_number = file_number as u64 + 1;
-                    let blob = std::fs::read(file.path())?;
+                    let raw_blob = std::fs::read(file.path())?;
 
-                    if blob.len() != BYTES_PER_BLOB {
+                    if raw_blob.len() != BYTES_PER_BLOB {
                         panic!("Invalid blob size");
                     }
 
-                    let blob = bytes_from_blob(blob.into());
+                    let blob = bytes_from_blob(raw_blob.clone().into());
 
                     // Decode blocks
                     let blocks_count = u64::from_be_bytes(
@@ -501,8 +501,10 @@ impl Command {
                     .await?;
 
                     // Prepare batch sealing
-                    let blob = blobs_bundle::blob_from_bytes(Bytes::copy_from_slice(&blob))
-                        .expect("Failed to create blob from bytes; blob was just read from file");
+                    let blob_array: [u8; BYTES_PER_BLOB] = raw_blob
+                        .as_slice()
+                        .try_into()
+                        .expect("Blob size was validated to match BYTES_PER_BLOB");
 
                     let wrapper_version = if let Some(activated) = osaka_activated
                         && !activated
@@ -513,7 +515,7 @@ impl Command {
                     };
 
                     let blobs_bundle =
-                        BlobsBundle::create_from_blobs(&vec![blob], wrapper_version)?;
+                        BlobsBundle::create_from_blobs(&vec![blob_array], wrapper_version)?;
 
                     let batch = get_batch(
                         &store,
