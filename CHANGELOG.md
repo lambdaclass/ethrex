@@ -2,9 +2,13 @@
 
 ## Perf
 
-### 2026-01-08
+### 2026-01-13
 
 - Inline common opcodes [#5761](https://github.com/lambdaclass/ethrex/pull/5761)
+
+### 2026-01-12
+
+- Refactor `ecpairing` using ark [#5792](https://github.com/lambdaclass/ethrex/pull/5792)
 
 ### 2025-12-23
 
@@ -13,7 +17,6 @@
 ### 2025-12-22
 
 - Avoid double parsing and extra clones in doc signature formatting [#9285](https://github.com/starkware-libs/cairo/pull/9285)
-
 
 ### 2025-12-19
 
