@@ -289,13 +289,13 @@ pub struct Options {
     )]
     pub max_blobs_per_block: Option<u32>,
     #[arg(
-        long = "generate-witness",
+        long = "precompute-witnesses",
         action = ArgAction::SetTrue,
         default_value = "false",
-        help = "Once synced, generates execution witnesses upon receiving newPayload messages and stores them in local storage",
+        help = "Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage",
         help_heading = "Node options"
     )]
-    pub generate_witness: bool,
+    pub precompute_witnesses: bool,
 }
 
 impl Options {
@@ -372,7 +372,7 @@ impl Default for Options {
             extra_data: get_minimal_client_version(),
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
             max_blobs_per_block: None,
-            generate_witness: false,
+            precompute_witnesses: false,
         }
     }
 }

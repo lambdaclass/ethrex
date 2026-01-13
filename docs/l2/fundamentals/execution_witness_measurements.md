@@ -38,7 +38,7 @@ Each configuration was measured over a contiguous range of blocks, and latency w
 ## How to Get Metrics
 
 1. Ensure the node is synced.  
-   Use the `--generate-witness` flag to generate and store execution witnesses upon receiving a `newPayload` message.
+   Use the `--precompute-witnesses` flag to generate and store execution witnesses upon receiving a `newPayload` message.
 
 2. Enable debug logging for `ethrex-replay` by editing `src/main.rs:21`:
    ```

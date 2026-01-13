@@ -198,8 +198,8 @@ pub struct BlockchainOptions {
     /// EIP-7872: User-configured maximum blobs per block for local building.
     /// If None, uses the protocol maximum for the current fork.
     pub max_blobs_per_block: Option<u32>,
-    /// If true, generates execution witnesses upon receiving newPayload messages and stores them in local storage
-    pub generate_witness: bool,
+    /// If true, computes execution witnesses upon receiving newPayload messages and stores them in local storage
+    pub precompute_witnesses: bool,
 }
 
 impl Default for BlockchainOptions {
@@ -209,7 +209,7 @@ impl Default for BlockchainOptions {
             perf_logs_enabled: false,
             r#type: BlockchainType::default(),
             max_blobs_per_block: None,
-            generate_witness: false,
+            precompute_witnesses: false,
         }
     }
 }
@@ -485,9 +485,9 @@ impl Blockchain {
         let mut code_updates: FxHashMap<H256, Code> = Default::default();
         let mut hashed_address_cache: FxHashMap<H160, H256> = Default::default();
 
-        // Accumulator for witness generation (only used if generate_witness is true)
+        // Accumulator for witness generation (only used if precompute_witnesses is true)
         let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
-            if self.options.generate_witness {
+            if self.options.precompute_witnesses {
                 Some(FxHashMap::default())
             } else {
                 None
@@ -618,9 +618,9 @@ impl Blockchain {
 
         let mut hashed_address_cache: FxHashMap<H160, H256> = Default::default();
 
-        // Accumulator for witness generation (only used if generate_witness is true)
+        // Accumulator for witness generation (only used if precompute_witnesses is true)
         let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
-            if self.options.generate_witness {
+            if self.options.precompute_witnesses {
                 Some(FxHashMap::default())
             } else {
                 None
@@ -1488,8 +1488,8 @@ impl Blockchain {
             return Err(ChainError::ParentNotFound);
         };
 
-        let (mut vm, logger) = if self.options.generate_witness && self.is_synced() {
-            // If witness generation is enabled, we wrap the db with a logger
+        let (mut vm, logger) = if self.options.precompute_witnesses && self.is_synced() {
+            // If witness pre-generation is enabled, we wrap the db with a logger
             // to track state access (block hashes, storage keys, codes) during execution
             // avoiding the need to re-execute the block later.
             let vm_db: DynVmDatabase = Box::new(StoreVmDatabase::new(
