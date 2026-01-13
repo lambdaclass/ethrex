@@ -13,10 +13,7 @@ use sp1_sdk::{
     HashableKey, Prover, SP1ProofMode, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
     SP1VerifyingKey,
 };
-use std::{
-    fmt::Debug,
-    sync::OnceLock,
-};
+use std::{fmt::Debug, sync::OnceLock};
 use url::Url;
 
 use crate::backend::{BackendError, ProverBackend};
@@ -98,8 +95,7 @@ impl Sp1Backend {
 
     fn serialize_input(input: &ProgramInput) -> Result<SP1Stdin, BackendError> {
         let mut stdin = SP1Stdin::new();
-        let bytes = rkyv::to_bytes::<Error>(input)
-            .map_err(BackendError::serialization)?;
+        let bytes = rkyv::to_bytes::<Error>(input).map_err(BackendError::serialization)?;
         stdin.write_slice(bytes.as_slice());
         Ok(stdin)
     }
@@ -174,8 +170,7 @@ impl ProverBackend for Sp1Backend {
         let batch_proof = match format {
             ProofFormat::Compressed => BatchProof::ProofBytes(ProofBytes {
                 prover_type: ProverType::SP1,
-                proof: bincode::serialize(&proof.proof)
-                    .map_err(BackendError::batch_proof)?,
+                proof: bincode::serialize(&proof.proof).map_err(BackendError::batch_proof)?,
                 public_values: proof.proof.public_values.to_vec(),
             }),
             ProofFormat::Groth16 => BatchProof::ProofCalldata(Self::to_calldata(&proof)),

@@ -6,7 +6,9 @@ use guest_program::{
     input::ProgramInput,
     methods::{ZKVM_RISC0_PROGRAM_ELF, ZKVM_RISC0_PROGRAM_ID},
 };
-use risc0_zkvm::{ExecutorEnv, InnerReceipt, ProverOpts, Receipt, default_executor, default_prover};
+use risc0_zkvm::{
+    ExecutorEnv, InnerReceipt, ProverOpts, Receipt, default_executor, default_prover,
+};
 use rkyv::rancor::Error as RkyvError;
 
 use crate::backend::{BackendError, ProverBackend};
@@ -84,11 +86,14 @@ impl ProverBackend for Risc0Backend {
         Ok(())
     }
 
-    fn prove(&self, input: ProgramInput, format: ProofFormat) -> Result<Self::ProofOutput, BackendError> {
+    fn prove(
+        &self,
+        input: ProgramInput,
+        format: ProofFormat,
+    ) -> Result<Self::ProofOutput, BackendError> {
         let mut stdout = Vec::new();
 
-        let bytes =
-            rkyv::to_bytes::<RkyvError>(&input).map_err(BackendError::serialization)?;
+        let bytes = rkyv::to_bytes::<RkyvError>(&input).map_err(BackendError::serialization)?;
         let env = ExecutorEnv::builder()
             .stdout(&mut stdout)
             .write_slice(bytes.as_slice())
@@ -121,8 +126,7 @@ impl ProverBackend for Risc0Backend {
         let batch_proof = match format {
             ProofFormat::Compressed => BatchProof::ProofBytes(ProofBytes {
                 prover_type: ProverType::RISC0,
-                proof: bincode::serialize(&proof.inner)
-                    .map_err(BackendError::batch_proof)?,
+                proof: bincode::serialize(&proof.inner).map_err(BackendError::batch_proof)?,
                 public_values: proof.journal.bytes,
             }),
             ProofFormat::Groth16 => BatchProof::ProofCalldata(Self::to_calldata(&proof)?),

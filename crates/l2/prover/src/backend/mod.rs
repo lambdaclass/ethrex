@@ -86,7 +86,11 @@ pub trait ProverBackend {
     fn execute(&self, input: ProgramInput) -> Result<(), BackendError>;
 
     /// Generate a proof for the given input.
-    fn prove(&self, input: ProgramInput, format: ProofFormat) -> Result<Self::ProofOutput, BackendError>;
+    fn prove(
+        &self,
+        input: ProgramInput,
+        format: ProofFormat,
+    ) -> Result<Self::ProofOutput, BackendError>;
 
     /// Verify a proof.
     fn verify(&self, proof: &Self::ProofOutput) -> Result<(), BackendError>;
