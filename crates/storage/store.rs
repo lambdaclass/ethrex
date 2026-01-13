@@ -1052,9 +1052,9 @@ impl Store {
                 for (node_path, node_data) in nodes {
                     let key = apply_prefix(Some(address_hash), node_path);
                     if node_data.is_empty() {
-                        txn.delete(STORAGE_TRIE_NODES, key.as_ref())?;
+                        txn.delete(STORAGE_TRIE_NODES, key.as_bytes().as_ref())?;
                     } else {
-                        txn.put(STORAGE_TRIE_NODES, key.as_ref(), &node_data)?;
+                        txn.put(STORAGE_TRIE_NODES, key.as_bytes().as_ref(), &node_data)?;
                     }
                 }
             }
@@ -2431,7 +2431,7 @@ impl Store {
     fn flatkeyvalue_computed(&self, account: H256) -> Result<bool, StoreError> {
         let account_nibbles = Nibbles::from_bytes(account.as_bytes());
         let last_computed_flatkeyvalue = self.last_written()?;
-        Ok(&last_computed_flatkeyvalue[0..64] > account_nibbles.as_ref())
+        Ok(&last_computed_flatkeyvalue[0..64] > account_nibbles.as_bytes().as_ref())
     }
 }
 
@@ -2611,15 +2611,15 @@ fn flatkeyvalue_generator(
             };
             let account_state = AccountState::decode(&node.value)?;
             let account_hash = H256::from_slice(&path.to_bytes());
-            write_txn.put(MISC_VALUES, "last_written".as_bytes(), path.as_ref())?;
-            write_txn.put(ACCOUNT_FLATKEYVALUE, path.as_ref(), &node.value)?;
+            write_txn.put(MISC_VALUES, "last_written".as_bytes(), path.as_bytes().as_ref())?;
+            write_txn.put(ACCOUNT_FLATKEYVALUE, path.as_bytes().as_ref(), &node.value)?;
             ctr += 1;
             if ctr > 10_000 {
                 write_txn.commit()?;
                 write_txn = backend.begin_write()?;
                 *last_computed_fkv
                     .lock()
-                    .map_err(|_| StoreError::LockError)? = path.as_ref().to_vec();
+                    .map_err(|_| StoreError::LockError)? = path.as_bytes().as_ref().to_vec();
                 ctr = 0;
             }
 
@@ -2627,7 +2627,7 @@ fn flatkeyvalue_generator(
                 Box::new(BackendTrieDB::new_for_account_storage(
                     backend.clone(),
                     account_hash,
-                    path.as_ref().to_vec(),
+                    path.as_bytes().as_ref().to_vec(),
                 )?),
                 account_state.storage_root,
             )
@@ -2641,8 +2641,8 @@ fn flatkeyvalue_generator(
                     return Ok(());
                 };
                 let key = apply_prefix(Some(account_hash), path);
-                write_txn.put(MISC_VALUES, "last_written".as_bytes(), key.as_ref())?;
-                write_txn.put(STORAGE_FLATKEYVALUE, key.as_ref(), &node.value)?;
+                write_txn.put(MISC_VALUES, "last_written".as_bytes(), key.as_bytes().as_ref())?;
+                write_txn.put(STORAGE_FLATKEYVALUE, key.as_bytes().as_ref(), &node.value)?;
                 ctr += 1;
                 if ctr > 10_000 {
                     write_txn.commit()?;

@@ -1,5 +1,6 @@
 #![allow(dead_code, unused_imports)]
 use std::{
+    borrow::Cow,
     cmp::{self, Ordering},
     hash::Hash,
     mem,
@@ -133,6 +134,15 @@ impl Nibbles {
 
     pub fn into_vec(self) -> Vec<u8> {
         expand(&self.data, self.len)
+    }
+
+    /// Returns the expanded nibble slice (allocates to expand the packed bytes).
+    pub fn as_bytes(&self) -> Cow<'_, [u8]> {
+        if self.len == 0 {
+            Cow::Borrowed(&[])
+        } else {
+            Cow::Owned(expand(&self.data, self.len))
+        }
     }
 
     /// Returns the amount of nibbles

@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     cmp::{self},
     mem,
 };
@@ -92,6 +93,11 @@ impl Nibbles {
         self.data
     }
 
+    /// Returns the underlying nibble slice.
+    pub fn as_bytes(&self) -> Cow<'_, [u8]> {
+        Cow::Borrowed(&self.data)
+    }
+
     /// Returns the amount of nibbles
     pub fn len(&self) -> usize {
         self.data.len()
@@ -105,7 +111,8 @@ impl Nibbles {
     /// If `prefix` is a prefix of self, move the offset after
     /// the prefix and return true, otherwise return false.
     pub fn skip_prefix(&mut self, prefix: &Nibbles) -> bool {
-        if self.len() >= prefix.len() && &self.data[..prefix.len()] == prefix.as_ref() {
+        if self.len() >= prefix.len() && &self.data[..prefix.len()] == prefix.as_bytes().as_ref()
+        {
             self.data = self.data[prefix.len()..].to_vec();
             self.already_consumed.extend(&prefix.data);
             true
@@ -125,9 +132,9 @@ impl Nibbles {
 
     /// Compares self to another and returns the shared nibble count (amount of nibbles that are equal, from the start)
     pub fn count_prefix(&self, other: &Nibbles) -> usize {
-        self.as_ref()
+        self.data
             .iter()
-            .zip(other.as_ref().iter())
+            .zip(other.as_bytes().as_ref().iter())
             .take_while(|(a, b)| a == b)
             .count()
     }
@@ -160,7 +167,7 @@ impl Nibbles {
 
     /// Extends the nibbles with another list of nibbles
     pub fn extend(&mut self, other: &Nibbles) {
-        self.data.extend_from_slice(other.as_ref());
+        self.data.extend_from_slice(other.as_bytes().as_ref());
     }
 
     /// Return the nibble at the given index, will panic if the index is out of range
@@ -274,12 +281,6 @@ impl Nibbles {
     }
 }
 
-impl AsRef<[u8]> for Nibbles {
-    fn as_ref(&self) -> &[u8] {
-        &self.data
-    }
-}
-
 impl RLPEncode for Nibbles {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         Encoder::new(buf).encode_field(&self.data).finish();
@@ -339,7 +340,7 @@ mod test {
         let mut a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
         let b = Nibbles::from_hex(vec![1, 2, 3]);
         assert!(a.skip_prefix(&b));
-        assert_eq!(a.as_ref(), &[4, 5])
+        assert_eq!(a.as_bytes().as_ref(), &[4, 5])
     }
 
     #[test]
@@ -355,7 +356,7 @@ mod test {
         let mut a = Nibbles::from_hex(vec![1, 2, 3]);
         let b = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
         assert!(!a.skip_prefix(&b));
-        assert_eq!(a.as_ref(), &[1, 2, 3])
+        assert_eq!(a.as_bytes().as_ref(), &[1, 2, 3])
     }
 
     #[test]
@@ -363,7 +364,7 @@ mod test {
         let mut a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
         let b = Nibbles::from_hex(vec![1, 2, 4]);
         assert!(!a.skip_prefix(&b));
-        assert_eq!(a.as_ref(), &[1, 2, 3, 4, 5])
+        assert_eq!(a.as_bytes().as_ref(), &[1, 2, 3, 4, 5])
     }
 
     #[test]
@@ -445,7 +446,7 @@ mod test {
         assert_eq!(encoded, expected);
 
         let decoded = Nibbles::decode(&encoded).unwrap();
-        assert_eq!(decoded.as_ref(), nibbles.as_ref());
+        assert_eq!(decoded.as_bytes().as_ref(), nibbles.as_bytes().as_ref());
         assert!(decoded.current().is_empty());
     }
 }

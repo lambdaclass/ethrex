@@ -342,7 +342,7 @@ mod test {
             .unwrap();
         assert!(none.is_none());
 
-        assert_eq!(node.prefix.as_ref(), &[0]);
+        assert_eq!(node.prefix.as_bytes().as_ref(), &[0]);
     }
 
     #[test]

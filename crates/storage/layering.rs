@@ -126,7 +126,9 @@ impl TrieLayerCache {
         // add this new bloom to the global one.
         if let Some(filter) = &mut self.bloom {
             for (p, _) in &key_values {
-                if let Err(qfilter::Error::CapacityExceeded) = filter.insert(p.as_ref()) {
+                if let Err(qfilter::Error::CapacityExceeded) =
+                    filter.insert(p.as_bytes().as_ref())
+                {
                     tracing::warn!("TrieLayerCache: put_batch capacity exceeded");
                     self.bloom = None;
                     break;
@@ -222,7 +224,7 @@ impl TrieDB for TrieWrapper {
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);
-        if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
+        if let Some(value) = self.inner.get(self.state_root, key.as_bytes().as_ref()) {
             return Ok(Some(value));
         }
         self.db.get(key)

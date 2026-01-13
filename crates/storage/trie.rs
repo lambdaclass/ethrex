@@ -166,7 +166,7 @@ impl TrieDB for BackendTrieDBLocked {
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let tx = self.tx_for_key(&key);
-        tx.get(key.as_ref())
+        tx.get(key.as_bytes().as_ref())
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
     }
 

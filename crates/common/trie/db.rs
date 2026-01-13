@@ -103,7 +103,7 @@ impl TrieDB for InMemoryTrieDB {
             .inner
             .lock()
             .map_err(|_| TrieError::LockError)?
-            .get(self.apply_prefix(key).as_ref())
+            .get(self.apply_prefix(key).as_bytes().as_ref())
             .cloned())
     }
 
