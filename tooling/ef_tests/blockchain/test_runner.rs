@@ -16,9 +16,9 @@ use ethrex_common::{
         InvalidBlockHeaderError,
     },
 };
-use ethrex_prover_lib::{BackendType, ExecBackend, ProverBackend};
 #[cfg(feature = "sp1")]
 use ethrex_prover_lib::Sp1Backend;
+use ethrex_prover_lib::{BackendType, ExecBackend, ProverBackend};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmError;
