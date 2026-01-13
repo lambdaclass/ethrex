@@ -126,8 +126,7 @@ impl TrieLayerCache {
         // add this new bloom to the global one.
         if let Some(filter) = &mut self.bloom {
             for (p, _) in &key_values {
-                if let Err(qfilter::Error::CapacityExceeded) =
-                    filter.insert(p.as_bytes().as_ref())
+                if let Err(qfilter::Error::CapacityExceeded) = filter.insert(p.as_bytes().as_ref())
                 {
                     tracing::warn!("TrieLayerCache: put_batch capacity exceeded");
                     self.bloom = None;

@@ -54,7 +54,7 @@ fn expand(bytes: &[u8], len: usize) -> Vec<u8> {
     rkyv::Serialize,
     rkyv::Archive,
 )]
-struct Nibbles {
+pub struct Nibbles {
     len: usize,
     data: Vec<u8>,
     already_consumed: Vec<u8>,
@@ -109,11 +109,16 @@ impl Ord for Nibbles {
 impl Nibbles {
     /// Create `Nibbles` from  hex-encoded nibbles
     pub fn from_hex(hex: Vec<u8>) -> Self {
+        let mut hex = hex;
+        let is_leaf = matches!(hex.last(), Some(16));
+        if is_leaf {
+            hex.pop();
+        }
         Self {
             len: hex.len(),
             data: compact(hex),
             already_consumed: vec![],
-            is_leaf: false,
+            is_leaf,
         }
     }
 
@@ -133,26 +138,33 @@ impl Nibbles {
     }
 
     pub fn into_vec(self) -> Vec<u8> {
-        expand(&self.data, self.len)
+        let mut expanded = expand(&self.data, self.len);
+        if self.is_leaf() {
+            expanded.push(16);
+        }
+        expanded
     }
 
     /// Returns the expanded nibble slice (allocates to expand the packed bytes).
     pub fn as_bytes(&self) -> Cow<'_, [u8]> {
-        if self.len == 0 {
-            Cow::Borrowed(&[])
-        } else {
-            Cow::Owned(expand(&self.data, self.len))
+        if self.len == 0 && !self.is_leaf {
+            return Cow::Borrowed(&[]);
         }
+        let mut expanded = expand(&self.data, self.len);
+        if self.is_leaf() {
+            expanded.push(16);
+        }
+        Cow::Owned(expanded)
     }
 
     /// Returns the amount of nibbles
     pub fn len(&self) -> usize {
-        self.len
+        self.len + usize::from(self.is_leaf)
     }
 
     /// Returns true if there are no nibbles
     pub fn is_empty(&self) -> bool {
-        self.len == 0
+        self.len() == 0
     }
 
     /// If `prefix` is a prefix of self, move the offset after
@@ -160,11 +172,34 @@ impl Nibbles {
     pub fn skip_prefix(&mut self, prefix: &Self) -> bool {
         let prefix_len = self.count_prefix(prefix);
         if prefix_len == prefix.len() {
-            let expanded = expand(&self.data, self.len)[prefix_len..].to_vec();
-            self.len = expanded.len();
-            self.data = compact(expanded);
-            let prefix_nibbles = expand(&prefix.data, prefix.len);
-            self.already_consumed.extend(prefix_nibbles);
+            assert!(
+                prefix_len <= self.len,
+                "prefix length exceeds packed data length"
+            );
+            let remaining_len = self
+                .len
+                .checked_sub(prefix_len)
+                .expect("prefix length out of range");
+            let mut new_data = Vec::with_capacity(remaining_len.div_ceil(2));
+            for i in 0..remaining_len {
+                let nibble = self.at(prefix_len + i) as u8;
+                if i.is_multiple_of(2) {
+                    new_data.push(nibble << 4);
+                } else {
+                    let last = new_data.len() - 1;
+                    new_data[last] |= nibble & 0x0F;
+                }
+            }
+
+            self.len = remaining_len;
+            self.data = new_data;
+
+            if prefix.len > 0 {
+                self.already_consumed.reserve(prefix.len);
+                for i in 0..prefix.len {
+                    self.already_consumed.push(prefix.at(i) as u8);
+                }
+            }
             true
         } else {
             false
@@ -172,7 +207,8 @@ impl Nibbles {
     }
 
     pub fn compare_prefix(&self, prefix: &Self) -> Ordering {
-        let odd_cleanup = self.len().min(prefix.len()) % 2 == 1;
+        let common_nibbles = self.len.min(prefix.len);
+        let odd_cleanup = common_nibbles % 2 == 1;
         let mut it = self.data.iter().zip(prefix.data.iter()).peekable();
 
         while let Some((b1, b2)) = it.next() {
@@ -186,26 +222,66 @@ impl Nibbles {
                 return ord;
             }
         }
+        // Raw parts are equal; compare a potential leaf terminator if it falls within the prefix.
+        if self.len == prefix.len {
+            if self.is_leaf && prefix.is_leaf {
+                return Ordering::Equal;
+            }
+            return Ordering::Equal;
+        }
+        if self.len < prefix.len {
+            if self.is_leaf {
+                return 16u8.cmp(&(prefix.at(self.len) as u8));
+            }
+            return Ordering::Equal;
+        }
+        if prefix.is_leaf {
+            return (self.at(prefix.len) as u8).cmp(&16u8);
+        }
         Ordering::Equal
     }
 
     /// Compares self to another and returns the shared nibble count (amount of nibbles that are equal, from the start)
     pub fn count_prefix(&self, other: &Self) -> usize {
-        let odd_cleanup = self.len().min(other.len()) % 2 == 1;
-        let mut it = self.data.iter().zip(other.data.iter()).peekable();
+        let common_nibbles = self.len.min(other.len);
+        let full_bytes = common_nibbles / 2;
         let mut count = 0;
 
-        while let Some((b1, b2)) = it.next() {
-            let is_last = it.peek().is_none();
-            let mut ord = b1.cmp(b2);
+        for i in 0..full_bytes {
+            assert!(i < self.data.len(), "prefix index out of bounds (self)");
+            assert!(i < other.data.len(), "prefix index out of bounds (other)");
+            let b1 = self.data[i];
+            let b2 = other.data[i];
+            if b1 == b2 {
+                count += 2;
+            } else {
+                if (b1 >> 4) == (b2 >> 4) {
+                    count += 1;
+                }
+                return count;
+            }
+        }
 
-            if odd_cleanup && is_last {
-                ord = (b1 & 0xF0).cmp(&(b2 & 0xF0))
+        if common_nibbles % 2 == 1 {
+            assert!(
+                full_bytes < self.data.len(),
+                "prefix nibble index out of bounds (self)"
+            );
+            assert!(
+                full_bytes < other.data.len(),
+                "prefix nibble index out of bounds (other)"
+            );
+            let b1 = self.data[full_bytes];
+            let b2 = other.data[full_bytes];
+            if (b1 >> 4) == (b2 >> 4) {
+                count += 1;
+            } else {
+                return count;
             }
-            if ord != Ordering::Equal {
-                break;
-            }
-            count += if odd_cleanup && is_last { 1 } else { 2 };
+        }
+
+        if count == common_nibbles && self.is_leaf && other.is_leaf && self.len == other.len {
+            count += 1;
         }
         count
     }
@@ -214,6 +290,8 @@ impl Nibbles {
         if self.is_empty() {
             None
         } else {
+            assert!(self.len > 0, "non-empty nibbles must have length > 0");
+            assert!(!self.data.is_empty(), "non-empty nibbles must have data");
             let l = self.data[0] >> 4;
             for b in 0..self.data.len() {
                 self.data[b] <<= 4;
@@ -229,6 +307,14 @@ impl Nibbles {
     /// Removes and returns the first nibble
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<u8> {
+        if self.is_empty() {
+            return None;
+        }
+        if self.len == 0 {
+            self.is_leaf = false;
+            self.already_consumed.push(16);
+            return Some(16);
+        }
         let l = self.shl()?;
         self.len = self.len.saturating_sub(1);
         let target_len = self.len.div_ceil(2);
@@ -244,15 +330,51 @@ impl Nibbles {
 
     /// Returns the nibbles after the given offset
     pub fn offset(&self, offset: usize) -> Self {
-        let mut ret = self.slice(offset, self.len());
-        let prefix = expand(&self.data, self.len)[0..offset].to_vec();
-        ret.already_consumed = [self.already_consumed.as_slice(), prefix.as_slice()].concat();
+        let total_len = self.len();
+        let mut ret = self.slice(offset, total_len);
+        let mut consumed = self.already_consumed.clone();
+        if offset > 0 {
+            consumed.reserve(offset);
+            for i in 0..offset {
+                consumed.push(self.at(i) as u8);
+            }
+        }
+        ret.already_consumed = consumed;
         ret
     }
 
     /// Returns the nibbles between the start and end indexes
     pub fn slice(&self, start: usize, end: usize) -> Self {
-        Self::from_hex(expand(&self.data, self.len)[start..end].to_vec())
+        let total_len = self.len();
+        if start > end || end > total_len {
+            panic!("index out of range");
+        }
+
+        let mut data = Vec::with_capacity(end.saturating_sub(start).div_ceil(2));
+        let mut len = 0usize;
+        let mut is_leaf = false;
+
+        for i in start..end {
+            if self.is_leaf && i == self.len {
+                is_leaf = true;
+                continue;
+            }
+            let nibble = self.at(i) as u8;
+            if len.is_multiple_of(2) {
+                data.push(nibble << 4);
+            } else {
+                let last = data.len() - 1;
+                data[last] |= nibble & 0x0F;
+            }
+            len += 1;
+        }
+
+        Self {
+            len,
+            data,
+            already_consumed: vec![],
+            is_leaf,
+        }
     }
 
     /// Extends the nibbles with another list of nibbles
@@ -263,6 +385,10 @@ impl Nibbles {
         let odd_len = self.len % 2 == 1;
         self.data.reserve(other.data.len());
         if odd_len {
+            assert!(
+                !self.data.is_empty(),
+                "odd-length packed data must be non-empty"
+            );
             let mut l = self.data.len() - 1;
             let mut r = 0;
             while r < other.data.len() {
@@ -277,15 +403,24 @@ impl Nibbles {
         } else {
             self.data.extend(&other.data);
         }
-        self.len += other.len();
+        self.len += other.len;
+        self.is_leaf = other.is_leaf;
     }
 
     /// Return the nibble at the given index, will panic if the index is out of range
     pub fn at(&self, i: usize) -> usize {
+        if self.is_leaf && i == self.len {
+            return 16;
+        }
+        if i >= self.len {
+            panic!("index out of range");
+        }
+        let idx = i / 2;
+        assert!(idx < self.data.len(), "packed index out of bounds");
         if i.is_multiple_of(2) {
-            (self.data[i / 2] >> 4) as usize
+            (self.data[idx] >> 4) as usize
         } else {
-            (self.data[i / 2] & 0x0F) as usize
+            (self.data[idx] & 0x0F) as usize
         }
     }
 
@@ -299,6 +434,10 @@ impl Nibbles {
             self.data[l + 1] <<= 4;
         }
         if odd_len {
+            assert!(
+                !self.data.is_empty(),
+                "odd-length packed data must be non-empty"
+            );
             self.data.pop();
         }
     }
@@ -307,6 +446,10 @@ impl Nibbles {
     pub fn append(&mut self, nibble: u8) {
         let odd_len = self.len % 2 == 1;
         if odd_len {
+            assert!(
+                !self.data.is_empty(),
+                "odd-length packed data must be non-empty"
+            );
             let last = self.data.len() - 1;
             self.data[last] |= nibble & 0x0F;
         } else {
@@ -317,9 +460,9 @@ impl Nibbles {
 
     /// Encodes the nibbles in compact form
     pub fn encode_compact(&self) -> Vec<u8> {
-        let mut compact = vec![];
         let is_leaf = self.is_leaf();
         let mut hex = expand(&self.data, self.len);
+        let mut compact = Vec::with_capacity(1 + hex.len().div_ceil(2));
         // node type    path length    |    prefix    hexchar
         // --------------------------------------------------
         // extension    even           |    0000      0x0
@@ -350,7 +493,7 @@ impl Nibbles {
             hex.pop();
         }
         let mut nibbles = Self::from_hex(hex);
-        nibbles.is_leaf = is_leaf && !nibbles.is_empty();
+        nibbles.is_leaf = is_leaf;
         nibbles
     }
 
@@ -365,14 +508,28 @@ impl Nibbles {
 
     /// Concatenates self and another Nibbles returning a new Nibbles
     pub fn concat(&self, other: &Self) -> Self {
-        let mut n = self.clone();
+        let mut data = Vec::with_capacity(self.data.len() + other.data.len());
+        data.extend_from_slice(&self.data);
+        let mut n = Self {
+            len: self.len,
+            data,
+            already_consumed: self.already_consumed.clone(),
+            is_leaf: self.is_leaf,
+        };
         n.extend(other);
         n
     }
 
     /// Returns a copy of self with the nibble added at the and
     pub fn append_new(&self, nibble: u8) -> Self {
-        let mut n = self.clone();
+        let mut data = Vec::with_capacity(self.data.len() + 1);
+        data.extend_from_slice(&self.data);
+        let mut n = Self {
+            len: self.len,
+            data,
+            already_consumed: self.already_consumed.clone(),
+            is_leaf: self.is_leaf,
+        };
         n.append(nibble);
         n
     }
@@ -395,19 +552,11 @@ impl Nibbles {
 
 impl std::hash::Hash for Nibbles {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        let mut cur = 0;
-        let mut words = vec![];
-        while cur < self.len {
-            let pos = cur % 2;
-            let word = if pos == 1 {
-                self.data[cur / 2] & 0x0F
-            } else {
-                self.data[cur / 2] >> 4
-            };
-            words.push(word);
-            cur += 1;
+        let total_len = self.len();
+        total_len.hash(state);
+        for idx in 0..total_len {
+            (self.at(idx) as u8).hash(state);
         }
-        words.hash(state);
     }
 }
 
@@ -430,7 +579,7 @@ impl RLPDecode for Nibbles {
             data.pop();
         }
         let mut nibbles = Self::from_hex(data);
-        nibbles.is_leaf = is_leaf && !nibbles.is_empty();
+        nibbles.is_leaf = is_leaf;
         Ok((nibbles, decoder.finish()?))
     }
 }
@@ -572,9 +721,9 @@ mod test {
         assert_eq!(raw.into_vec(), vec![0xA, 0xB, 0xC, 0xD]);
 
         let leaf = Nibbles::from_bytes(&bytes);
-        assert_eq!(leaf.len(), 4);
+        assert_eq!(leaf.len(), 5);
         assert!(leaf.is_leaf());
-        assert_eq!(leaf.into_vec(), vec![0xA, 0xB, 0xC, 0xD]);
+        assert_eq!(leaf.into_vec(), vec![0xA, 0xB, 0xC, 0xD, 16]);
 
         let empty = Nibbles::from_hex(vec![]);
         assert!(empty.is_empty());
@@ -668,12 +817,11 @@ mod test {
 
     #[test]
     fn compact_encode_decode_compact_odd_leaf() {
-        let mut compact = Nibbles::from_raw(&[0x12], true);
-        compact.append(0x3);
+        let compact = Nibbles::from_hex(vec![1, 2, 3, 16]);
         let encoded = compact.encode_compact();
         let decoded = Nibbles::decode_compact(&encoded);
         assert!(decoded.is_leaf());
-        assert_eq!(decoded.into_vec(), vec![1, 2, 3]);
+        assert_eq!(decoded.into_vec(), vec![1, 2, 3, 16]);
     }
 
     #[test]
@@ -736,7 +884,10 @@ mod test {
 
         let decoded = Nibbles::decode(&encoded).unwrap();
         assert!(decoded.current().is_empty());
-        assert_eq!(decoded.clone().into_vec(), vec![0x00, 0x01, 0x02, 0x0f]);
+        assert_eq!(
+            decoded.clone().into_vec(),
+            vec![0x00, 0x01, 0x02, 0x0f, 0x10]
+        );
         assert!(decoded.is_leaf());
     }
 }

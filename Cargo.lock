@@ -3641,10 +3641,12 @@ dependencies = [
  "ethrex-config",
  "ethrex-l2-rpc",
  "ethrex-storage",
+ "ethrex-trie",
  "secp256k1",
  "serde_json",
  "tempfile",
  "tokio",
+ "uuid 1.18.1",
 ]
 
 [[package]]

@@ -25,9 +25,15 @@ criterion = { version = "0.5.1", features = [
 secp256k1.workspace = true
 tempfile.workspace = true
 ethrex-l2-rpc.workspace = true
+ethrex-trie.workspace = true
+uuid.workspace = true
 
 [[bench]]
 name = "build_block_benchmark"
+harness = false
+
+[[bench]]
+name = "trie_benchmark"
 harness = false
 
 [lints]

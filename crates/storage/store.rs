@@ -2611,7 +2611,11 @@ fn flatkeyvalue_generator(
             };
             let account_state = AccountState::decode(&node.value)?;
             let account_hash = H256::from_slice(&path.to_bytes());
-            write_txn.put(MISC_VALUES, "last_written".as_bytes(), path.as_bytes().as_ref())?;
+            write_txn.put(
+                MISC_VALUES,
+                "last_written".as_bytes(),
+                path.as_bytes().as_ref(),
+            )?;
             write_txn.put(ACCOUNT_FLATKEYVALUE, path.as_bytes().as_ref(), &node.value)?;
             ctr += 1;
             if ctr > 10_000 {
@@ -2641,7 +2645,11 @@ fn flatkeyvalue_generator(
                     return Ok(());
                 };
                 let key = apply_prefix(Some(account_hash), path);
-                write_txn.put(MISC_VALUES, "last_written".as_bytes(), key.as_bytes().as_ref())?;
+                write_txn.put(
+                    MISC_VALUES,
+                    "last_written".as_bytes(),
+                    key.as_bytes().as_ref(),
+                )?;
                 write_txn.put(STORAGE_FLATKEYVALUE, key.as_bytes().as_ref(), &node.value)?;
                 ctr += 1;
                 if ctr > 10_000 {

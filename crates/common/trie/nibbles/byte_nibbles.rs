@@ -111,8 +111,7 @@ impl Nibbles {
     /// If `prefix` is a prefix of self, move the offset after
     /// the prefix and return true, otherwise return false.
     pub fn skip_prefix(&mut self, prefix: &Nibbles) -> bool {
-        if self.len() >= prefix.len() && &self.data[..prefix.len()] == prefix.as_bytes().as_ref()
-        {
+        if self.len() >= prefix.len() && &self.data[..prefix.len()] == prefix.as_bytes().as_ref() {
             self.data = self.data[prefix.len()..].to_vec();
             self.already_consumed.extend(&prefix.data);
             true
