@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-01-13
+
+- Remove needless allocs in CALLDATACOPY/CODECOPY/EXTCODECOPY [#5810](https://github.com/lambdaclass/ethrex/pull/5810)
+
 ### 2026-01-12
 
 - Refactor `ecpairing` using ark [#5792](https://github.com/lambdaclass/ethrex/pull/5792)

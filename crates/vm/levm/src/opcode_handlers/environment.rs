@@ -132,6 +132,7 @@ impl<'a> VM<'a> {
     }
 
     // CALLDATACOPY operation
+    #[expect(clippy::arithmetic_side_effects, reason = "bound checked")]
     pub fn op_calldatacopy(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         let [dest_offset, calldata_offset, size] = *current_call_frame.stack.pop()?;
@@ -230,6 +231,8 @@ impl<'a> VM<'a> {
         }
 
         let code_len = current_call_frame.bytecode.bytecode.len();
+
+        #[expect(clippy::arithmetic_side_effects)]
         if code_offset < code_len {
             let available_data = code_len - code_offset;
             let copy_size = size.min(available_data);
@@ -244,6 +247,7 @@ impl<'a> VM<'a> {
             };
             current_call_frame.memory.store_data(dest_offset, slice)?;
 
+            #[expect(clippy::arithmetic_side_effects)]
             if copy_size < size {
                 current_call_frame
                     .memory
@@ -326,6 +330,8 @@ impl<'a> VM<'a> {
         }
 
         let code_len = bytecode.bytecode.len();
+
+        #[expect(clippy::arithmetic_side_effects)]
         if offset < code_len {
             let available_data = code_len - offset;
             let copy_size = size.min(available_data);
