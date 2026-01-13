@@ -376,6 +376,12 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
 }
 
 #[expect(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+#[cfg(all(
+    not(feature = "sp1"),
+    not(feature = "risc0"),
+    not(feature = "zisk"),
+    feature = "secp256k1"
+))]
 #[inline(always)]
 fn copy_segment(calldata: &Bytes, dst: &mut [u8], start: usize) {
     if start >= calldata.len() {
