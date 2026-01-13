@@ -1,0 +1,7 @@
+{
+  "name": "precompile_blake2f_213",
+  "category": "precompile",
+  "description": "CALL to blake2f precompile (0x09) with 213-byte zero input",
+  "body_hex": "6040600060d560006000600961fffff150",
+  "repeat": 1
+}

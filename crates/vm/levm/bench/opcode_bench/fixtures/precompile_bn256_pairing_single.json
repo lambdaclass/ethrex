@@ -1,0 +1,7 @@
+{
+  "name": "precompile_bn256_pairing_single",
+  "category": "precompile",
+  "description": "CALL to bn256pairing precompile (0x08) with one 192-byte pair (zero input)",
+  "body_hex": "6020600060c060006000600861fffff150",
+  "repeat": 1
+}

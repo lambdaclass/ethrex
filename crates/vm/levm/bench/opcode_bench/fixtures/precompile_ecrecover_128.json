@@ -1,0 +1,7 @@
+{
+  "name": "precompile_ecrecover_128",
+  "category": "precompile",
+  "description": "CALL to ecrecover precompile (0x01) with 128-byte zero input",
+  "body_hex": "60206000608060006000600161fffff150",
+  "repeat": 1
+}

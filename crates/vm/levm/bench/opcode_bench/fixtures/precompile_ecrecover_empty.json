@@ -1,0 +1,7 @@
+{
+  "name": "precompile_ecrecover_empty",
+  "category": "precompile",
+  "description": "CALL to ecrecover precompile (0x01) with empty input",
+  "body_hex": "60206000600060006000600161fffff150",
+  "repeat": 1
+}

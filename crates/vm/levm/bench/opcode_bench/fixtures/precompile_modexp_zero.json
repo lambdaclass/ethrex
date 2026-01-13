@@ -1,0 +1,7 @@
+{
+  "name": "precompile_modexp_zero",
+  "category": "precompile",
+  "description": "CALL to modexp precompile (0x05) with zero lengths",
+  "body_hex": "60006000606060006000600561fffff150",
+  "repeat": 1
+}

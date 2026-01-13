@@ -1,0 +1,7 @@
+{
+  "name": "precompile_bn256_pairing_empty",
+  "category": "precompile",
+  "description": "CALL to bn256pairing precompile (0x08) with empty input",
+  "body_hex": "60206000600060006000600861fffff150",
+  "repeat": 1
+}

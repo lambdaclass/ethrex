@@ -1,0 +1,7 @@
+{
+  "name": "precompile_modexp_small",
+  "category": "precompile",
+  "description": "CALL to modexp precompile (0x05) with 1-byte base/exp/mod",
+  "body_hex": "60016000526001602052600160405260026060536003606153600560625360016000606360006000600561fffff150",
+  "repeat": 1
+}

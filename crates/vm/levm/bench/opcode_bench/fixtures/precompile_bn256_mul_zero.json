@@ -1,0 +1,7 @@
+{
+  "name": "precompile_bn256_mul_zero",
+  "category": "precompile",
+  "description": "CALL to bn256mul precompile (0x07) with 96-byte zero input",
+  "body_hex": "60406000606060006000600761fffff150",
+  "repeat": 1
+}
