@@ -108,6 +108,16 @@ const MAX_PAYLOADS: usize = 10;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 
 type StoreUpdatesMap = FxHashMap<H256, (Result<Trie, StoreError>, FxHashMap<Nibbles, Vec<u8>>)>;
+
+// Result type for execute_block_pipeline
+type BlockExecutionPipelineResult = (
+    BlockExecutionResult,
+    AccountUpdatesList,
+    Option<Vec<AccountUpdate>>,
+    usize,        // max queue length
+    [Instant; 6], // timing instants
+);
+
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
@@ -292,17 +302,7 @@ impl Blockchain {
         block: &Block,
         parent_header: &BlockHeader,
         vm: &mut Evm,
-    ) -> Result<
-        (
-            BlockExecutionResult,
-            AccountUpdatesList,
-            Option<Vec<AccountUpdate>>,
-            // FIXME: extract to stats struct
-            usize,
-            [Instant; 6],
-        ),
-        ChainError,
-    > {
+    ) -> Result<BlockExecutionPipelineResult, ChainError> {
         let start_instant = Instant::now();
 
         let chain_config = self.storage.get_chain_config();
