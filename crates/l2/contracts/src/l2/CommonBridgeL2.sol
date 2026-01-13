@@ -9,7 +9,7 @@ import "./interfaces/IERC20L2.sol";
 /// @author LambdaClass
 contract CommonBridgeL2 is ICommonBridgeL2 {
     address public constant L1_MESSENGER =
-        0x000000000000000000000000000000000000FFFE;
+        0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
     address public constant BURN_ADDRESS =
         0x0000000000000000000000000000000000000000;
     /// @notice Token address used to represent ETH
