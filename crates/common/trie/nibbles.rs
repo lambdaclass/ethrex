@@ -1,4 +1,9 @@
-use std::{cmp, mem};
+#![allow(dead_code, unused_imports)]
+use std::{
+    cmp::{self, Ordering},
+    hash::Hash,
+    mem,
+};
 
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -328,6 +333,7 @@ fn keybytes_to_hex(keybytes: &[u8]) -> Vec<u8> {
 mod test {
     use super::*;
     use std::cmp::Ordering;
+    use std::hash::{DefaultHasher, Hash, Hasher};
 
     #[test]
     fn skip_prefix_true() {
@@ -415,5 +421,337 @@ mod test {
         let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
         let b = Nibbles::from_hex(vec![1, 2, 3]);
         assert_eq!(a.compare_prefix(&b), Ordering::Equal);
+    }
+
+    #[test]
+    fn hash_nibble() {
+        let a = Nibbles::from_hex(vec![1, 2, 3]);
+        let mut s = DefaultHasher::new();
+        a.hash(&mut s);
+        assert_eq!(s.finish(), 8086395815454877121);
+    }
+
+    #[test]
+    fn compact_hash_nibble() {
+        let a = CompactNibbles::from_hex(vec![1, 2, 3]);
+        let mut s = DefaultHasher::new();
+        a.hash(&mut s);
+        assert_eq!(s.finish(), 8086395815454877121);
+    }
+
+    #[test]
+    fn compact_to_bytes() {
+        let a = Nibbles::from_hex(vec![0x0F, 0x0F, 0x0F]);
+        let b = CompactNibbles::from_hex(vec![0x0F, 0x0F, 0x0F]);
+        assert_eq!(a.to_bytes(), b.to_bytes());
+    }
+
+    #[test]
+    fn compact_count_prefix_all() {
+        let a = CompactNibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        let b = CompactNibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        assert_eq!(a.count_prefix(&b), a.len());
+    }
+
+    #[test]
+    fn compact_count_prefix_partial() {
+        let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        let b = Nibbles::from_hex(vec![1, 2, 3]);
+        assert_eq!(a.count_prefix(&b), b.len());
+    }
+
+    #[test]
+    fn compact_count_prefix_none() {
+        let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        let b = Nibbles::from_hex(vec![2, 3, 4, 5, 6]);
+        assert_eq!(a.count_prefix(&b), 0);
+    }
+
+    #[test]
+    fn compact_compare_prefix_equal() {
+        let a = CompactNibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        let b = CompactNibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        assert_eq!(a.compare_prefix(&b), Ordering::Equal);
+    }
+
+    #[test]
+    fn compact_compare_prefix_less() {
+        let a = CompactNibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        let b = CompactNibbles::from_hex(vec![1, 2, 4, 4, 5]);
+        assert_eq!(a.compare_prefix(&b), Ordering::Less);
+    }
+
+    #[test]
+    fn compact_compare_prefix_greater() {
+        let a = CompactNibbles::from_hex(vec![1, 2, 4, 4, 5]);
+        let b = CompactNibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        assert_eq!(a.compare_prefix(&b), Ordering::Greater);
+    }
+
+    #[test]
+    fn compact_compare_prefix_equal_b_longer() {
+        let a = CompactNibbles::from_hex(vec![1, 2, 3]);
+        let b = CompactNibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        assert_eq!(a.compare_prefix(&b), Ordering::Equal);
+    }
+
+    #[test]
+    fn compact_compare_prefix_equal_a_longer() {
+        let a = CompactNibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        let b = CompactNibbles::from_hex(vec![1, 2, 3]);
+        assert_eq!(a.compare_prefix(&b), Ordering::Equal);
+    }
+
+    #[test]
+    fn compact_skip_prefix_true() {
+        let mut a = CompactNibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        let b = CompactNibbles::from_hex(vec![1, 2, 3]);
+        assert!(a.skip_prefix(&b));
+        assert_eq!(a.into_vec(), &[4, 5])
+    }
+
+    #[test]
+    fn compact_skip_prefix_true_same_length() {
+        let mut a = CompactNibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        let b = CompactNibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        assert!(a.skip_prefix(&b));
+        assert!(a.is_empty());
+    }
+
+    #[test]
+    fn compact_skip_prefix_longer_prefix() {
+        let mut a = CompactNibbles::from_hex(vec![1, 2, 3]);
+        let b = CompactNibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        assert!(!a.skip_prefix(&b));
+        assert_eq!(a.into_vec(), &[1, 2, 3])
+    }
+
+    #[test]
+    fn compact_skip_prefix_false() {
+        let mut a = CompactNibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        let b = CompactNibbles::from_hex(vec![1, 2, 4]);
+        assert!(!a.skip_prefix(&b));
+        assert_eq!(a.into_vec(), &[1, 2, 3, 4, 5])
+    }
+}
+
+fn compact(mut hex: Vec<u8>) -> Vec<u8> {
+    let mut l = 0;
+    let mut r = 0;
+    while r < hex.len() {
+        hex[l] = hex[r] << 4;
+        if r < hex.len() - 1 {
+            hex[l] |= hex[r + 1] & 0x0F;
+            r += 1;
+        }
+        l += 1;
+        r += 1;
+    }
+    hex.truncate(l);
+    hex
+}
+
+fn expand(bytes: &[u8], len: usize) -> Vec<u8> {
+    let mut it = bytes.iter().peekable();
+    let odd_cleanup = len % 2 == 1;
+    let mut res = Vec::with_capacity(len);
+
+    while let Some(b) = it.next() {
+        let is_last = it.peek().is_none();
+        res.push(b >> 4);
+        if !(odd_cleanup && is_last) {
+            res.push(b & 0x0F);
+        }
+    }
+    res
+}
+
+#[derive(Debug)]
+struct CompactNibbles {
+    len: usize,
+    data: Vec<u8>,
+    already_consumed: Vec<u8>,
+    is_leaf: bool,
+}
+
+impl CompactNibbles {
+    pub fn from_hex(hex: Vec<u8>) -> Self {
+        Self {
+            len: hex.len(),
+            data: compact(hex),
+            already_consumed: vec![],
+            is_leaf: false,
+        }
+    }
+
+    /// Splits incoming bytes into nibbles and appends the leaf flag (a 16 nibble at the end)
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        Self::from_raw(bytes, true)
+    }
+
+    /// Splits incoming bytes into nibbles and appends the leaf flag (a 16 nibble at the end) if is_leaf is true
+    pub fn from_raw(bytes: &[u8], is_leaf: bool) -> Self {
+        Self {
+            data: bytes.to_vec(),
+            len: bytes.len() * 2,
+            already_consumed: vec![],
+            is_leaf,
+        }
+    }
+
+    pub fn into_vec(self) -> Vec<u8> {
+        expand(&self.data, self.len)
+    }
+
+    /// Returns the amount of nibbles
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Returns true if there are no nibbles
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// If `prefix` is a prefix of self, move the offset after
+    /// the prefix and return true, otherwise return false.
+    pub fn skip_prefix(&mut self, prefix: &Self) -> bool {
+        let prefix_len = self.count_prefix(prefix);
+        if prefix_len == prefix.len() {
+            let expanded = expand(&self.data, self.len)[prefix_len..].to_vec();
+            self.len = expanded.len();
+            self.data = compact(expanded);
+            self.already_consumed.extend(&prefix.data);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn compare_prefix(&self, prefix: &Self) -> Ordering {
+        let odd_cleanup = self.len().min(prefix.len()) % 2 == 1;
+        let mut it = self.data.iter().zip(prefix.data.iter()).peekable();
+
+        while let Some((b1, b2)) = it.next() {
+            let is_last = it.peek().is_none();
+            let mut ord = b1.cmp(b2);
+
+            if odd_cleanup && is_last {
+                ord = (b1 & 0xF0).cmp(&(b2 & 0xF0))
+            }
+            if ord != Ordering::Equal {
+                return ord;
+            }
+        }
+        Ordering::Equal
+    }
+
+    /// Compares self to another and returns the shared nibble count (amount of nibbles that are equal, from the start)
+    pub fn count_prefix(&self, other: &Self) -> usize {
+        let odd_cleanup = self.len().min(other.len()) % 2 == 1;
+        let mut it = self.data.iter().zip(other.data.iter()).peekable();
+        let mut count = 0;
+
+        while let Some((b1, b2)) = it.next() {
+            let is_last = it.peek().is_none();
+            let mut ord = b1.cmp(b2);
+
+            if odd_cleanup && is_last {
+                ord = (b1 & 0xF0).cmp(&(b2 & 0xF0))
+            }
+            if ord != Ordering::Equal {
+                break;
+            }
+            count += if odd_cleanup && is_last { 1 } else { 2 };
+        }
+        count
+    }
+
+    fn shl(&mut self) -> Option<u8> {
+        if self.is_empty() {
+            None
+        } else {
+            let l = self.data[0] >> 4;
+            for b in 0..self.data.len() {
+                self.data[b] <<= 4;
+                if b < self.data.len() - 1 {
+                    self.data[b] |= self.data[b + 1] >> 4;
+                    self.data[b + 1] &= 0x0F;
+                }
+            }
+            Some(l)
+        }
+    }
+
+    /// Removes and returns the first nibble
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self) -> Option<u8> {
+        self.shl().inspect(|l| {
+            self.already_consumed.push(*l);
+        })
+    }
+
+    /// Removes and returns the first nibble if it is a suitable choice index (aka < 16)
+    pub fn next_choice(&mut self) -> Option<usize> {
+        self.next().filter(|choice| *choice < 16).map(usize::from)
+    }
+
+    /// Returns the nibbles after the given offset
+    pub fn offset(&self, offset: usize) -> Self {
+        let mut ret = self.slice(offset, self.len());
+        ret.already_consumed = [&self.already_consumed, &self.data[0..offset]].concat();
+        ret
+    }
+
+    /// Returns the nibbles between the start and end indexes
+    pub fn slice(&self, start: usize, end: usize) -> Self {
+        Self::from_hex(expand(&self.data, self.len)[start..end].to_vec())
+    }
+
+    /// Extends the nibbles with another list of nibbles
+    pub fn extend(&mut self, other: &Nibbles) {
+        self.data.extend_from_slice(other.as_ref());
+    }
+
+    /// Return the nibble at the given index, will panic if the index is out of range
+    pub fn at(&self, i: usize) -> usize {
+        self.data[i] as usize
+    }
+
+    /// Inserts a nibble at the start
+    pub fn prepend(&mut self, nibble: u8) {
+        self.data.insert(0, nibble);
+    }
+
+    /// Inserts a nibble at the end
+    pub fn append(&mut self, nibble: u8) {
+        self.data.push(nibble);
+    }
+
+    /// Returns true if the nibbles contain the leaf flag (16) at the end
+    pub fn is_leaf(&self) -> bool {
+        if self.is_empty() { false } else { self.is_leaf }
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.data.clone()
+    }
+}
+
+impl std::hash::Hash for CompactNibbles {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        let mut cur = 0;
+        let mut words = vec![];
+        while cur < self.len {
+            let pos = cur % 2;
+            let word = if pos == 1 {
+                self.data[cur / 2] & 0x0F
+            } else {
+                self.data[cur / 2] >> 4
+            };
+            words.push(word);
+            cur += 1;
+        }
+        words.hash(state);
     }
 }
