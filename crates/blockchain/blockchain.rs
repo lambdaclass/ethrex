@@ -485,7 +485,7 @@ impl Blockchain {
         let mut code_updates: FxHashMap<H256, Code> = Default::default();
         let mut hashed_address_cache: FxHashMap<H160, H256> = Default::default();
 
-        // Accumulator for witness generation (only used if accumulate_updates is true)
+        // Accumulator for witness generation (only used if generate_witness is true)
         let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
             if self.options.generate_witness {
                 Some(FxHashMap::default())
