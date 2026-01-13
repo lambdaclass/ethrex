@@ -119,8 +119,10 @@ jobs:
         uses: ./.github/actions/build-docker
         with:
           registry: ghcr.io
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
+          dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
           tags: ethrex:main
           variant: l1
 
@@ -148,8 +150,10 @@ jobs:
         uses: ./.github/actions/build-docker
         with:
           registry: ghcr.io
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
+          dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
           tags: ethrex:main-l2
           artifact_path: ethrex_image_l2.tar
           build_args: BUILD_FLAGS=--features l2,l2-sql

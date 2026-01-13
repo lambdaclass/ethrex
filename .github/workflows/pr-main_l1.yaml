@@ -135,8 +135,10 @@ jobs:
         uses: ./.github/actions/build-docker
         with:
           registry: ghcr.io
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
+          dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
           variant: l1
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
