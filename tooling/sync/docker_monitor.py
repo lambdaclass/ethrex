@@ -23,11 +23,12 @@ if os.path.exists('.env'):
                 key, _, value = line.partition('=')
                 os.environ[key.strip()] = value.strip()
 
-CHECK_INTERVAL = 10
-SYNC_TIMEOUT = 4 * 60  # 4 hours default sync timeout (in minutes)
-BLOCK_PROCESSING_DURATION = 22 * 60 # Monitor block processing for 22 minutes
-BLOCK_STALL_TIMEOUT = 10 * 60  # Fail if no new block for 10 minutes
-STATUS_PRINT_INTERVAL = 30
+CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", 10))
+SYNC_TIMEOUT = int(os.environ.get("SYNC_TIMEOUT", 8 * 60))  # default 8 hours (in minutes)
+BLOCK_PROCESSING_DURATION = int(os.environ.get("BLOCK_PROCESSING_DURATION", 22 * 60))  # default 22 minutes (in seconds)
+BLOCK_STALL_TIMEOUT = int(os.environ.get("BLOCK_STALL_TIMEOUT", 10 * 60))  # default 10 minutes (in seconds)
+NODE_UNRESPONSIVE_TIMEOUT = int(os.environ.get("NODE_UNRESPONSIVE_TIMEOUT", 5 * 60))  # default 5 minutes (in seconds)
+STATUS_PRINT_INTERVAL = int(os.environ.get("STATUS_PRINT_INTERVAL", 30))
 
 # Network to port mapping (fixed in docker-compose.multisync.yaml)
 NETWORK_PORTS = {
@@ -60,6 +61,7 @@ class Instance:
     block_check_start: float = 0
     initial_block: int = 0  # Block when entering block_processing
     error: str = ""
+    first_failure_time: float = 0
 
     @property
     def rpc_url(self) -> str:
@@ -258,6 +260,7 @@ def reset_instance(inst: Instance):
     inst.block_check_start = 0
     inst.initial_block = 0
     inst.error = ""
+    inst.first_failure_time = 0
 
 
 def print_status(instances: list[Instance]):
@@ -289,9 +292,15 @@ def update_instance(inst: Instance, timeout_min: int) -> bool:
     
     if block is None:
         if inst.status != "waiting":
-            inst.status, inst.error = "failed", "Node stopped responding"
-            return True
+            if inst.first_failure_time == 0:
+                inst.first_failure_time = now
+            elif (now - inst.first_failure_time) >= NODE_UNRESPONSIVE_TIMEOUT:
+                first_fail_str = datetime.fromtimestamp(inst.first_failure_time).strftime("%H:%M:%S")
+                inst.status, inst.error = "failed", f"Node stopped responding (first failure at {first_fail_str}, down for {fmt_time(now - inst.first_failure_time)})"
+                return True
         return False
+
+    inst.first_failure_time = 0
     
     if inst.status == "waiting":
         inst.status, inst.start_time = "syncing", inst.start_time or now
