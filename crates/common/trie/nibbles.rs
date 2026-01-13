@@ -455,15 +455,15 @@ mod test {
 
     #[test]
     fn compact_count_prefix_partial() {
-        let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
-        let b = Nibbles::from_hex(vec![1, 2, 3]);
+        let a = CompactNibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        let b = CompactNibbles::from_hex(vec![1, 2, 3]);
         assert_eq!(a.count_prefix(&b), b.len());
     }
 
     #[test]
     fn compact_count_prefix_none() {
-        let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
-        let b = Nibbles::from_hex(vec![2, 3, 4, 5, 6]);
+        let a = CompactNibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        let b = CompactNibbles::from_hex(vec![2, 3, 4, 5, 6]);
         assert_eq!(a.count_prefix(&b), 0);
     }
 
@@ -533,6 +533,162 @@ mod test {
         assert!(!a.skip_prefix(&b));
         assert_eq!(a.into_vec(), &[1, 2, 3, 4, 5])
     }
+
+    #[test]
+    fn compact_extend_odd_even() {
+        let mut a = CompactNibbles::from_hex(vec![1, 2, 3]);
+        let b = CompactNibbles::from_hex(vec![1, 2]);
+        a.extend(&b);
+        assert_eq!(a.into_vec(), &[1, 2, 3, 1, 2])
+    }
+
+    #[test]
+    fn compact_extend_odd_odd() {
+        let mut a = CompactNibbles::from_hex(vec![1, 2, 3]);
+        let b = CompactNibbles::from_hex(vec![4]);
+        a.extend(&b);
+        assert_eq!(a.into_vec(), &[1, 2, 3, 4,])
+    }
+
+    #[test]
+    fn compact_extend_even_odd() {
+        let mut a = CompactNibbles::from_hex(vec![1, 2, 3]);
+        let b = CompactNibbles::from_hex(vec![4]);
+        a.extend(&b);
+        assert_eq!(a.into_vec(), &[1, 2, 3, 4,])
+    }
+
+    #[test]
+    fn compact_from_raw_and_leaf_flags() {
+        let bytes = vec![0xAB, 0xCD];
+        let raw = CompactNibbles::from_raw(&bytes, false);
+        assert_eq!(raw.len(), 4);
+        assert!(!raw.is_leaf());
+        assert_eq!(raw.to_bytes(), bytes);
+        assert_eq!(raw.into_vec(), vec![0xA, 0xB, 0xC, 0xD]);
+
+        let leaf = CompactNibbles::from_bytes(&bytes);
+        assert_eq!(leaf.len(), 4);
+        assert!(leaf.is_leaf());
+        assert_eq!(leaf.into_vec(), vec![0xA, 0xB, 0xC, 0xD]);
+
+        let empty = CompactNibbles::from_hex(vec![]);
+        assert!(empty.is_empty());
+        assert!(!empty.is_leaf());
+    }
+
+    #[test]
+    fn compact_next_and_choice_update_state() {
+        let mut n = CompactNibbles::from_hex(vec![1, 2, 3]);
+        assert_eq!(n.len(), 3);
+        assert_eq!(n.next(), Some(1));
+        assert_eq!(n.len(), 2);
+        assert_eq!(n.current().into_vec(), vec![1]);
+        assert_eq!(n.next_choice(), Some(2));
+        assert_eq!(n.len(), 1);
+        assert_eq!(n.current().into_vec(), vec![1, 2]);
+        assert_eq!(n.next(), Some(3));
+        assert!(n.is_empty());
+        assert_eq!(n.next(), None);
+    }
+
+    #[test]
+    fn compact_slice_offset_at() {
+        let n = CompactNibbles::from_hex(vec![0xA, 0xB, 0xC, 0xD, 0xE]);
+        assert_eq!(n.at(0), 0xA);
+        assert_eq!(n.at(1), 0xB);
+        assert_eq!(n.at(4), 0xE);
+
+        let slice = n.slice(1, 4);
+        assert_eq!(slice.into_vec(), vec![0xB, 0xC, 0xD]);
+
+        let offset = n.offset(2);
+        assert_eq!(offset.into_vec(), vec![0xC, 0xD, 0xE]);
+    }
+
+    #[test]
+    fn compact_prepend_append() {
+        let mut n = CompactNibbles::from_hex(vec![1, 2, 3]);
+        n.prepend(4);
+        n.append(5);
+        assert_eq!(n.into_vec(), vec![4, 1, 2, 3, 5]);
+    }
+
+    #[test]
+    fn compact_concat_and_append_new() {
+        let a = CompactNibbles::from_hex(vec![1, 2]);
+        let b = CompactNibbles::from_hex(vec![3, 4]);
+        let c = a.concat(&b);
+        assert_eq!(c.into_vec(), vec![1, 2, 3, 4]);
+
+        let appended = a.append_new(5);
+        assert_eq!(appended.into_vec(), vec![1, 2, 5]);
+        assert_eq!(a.into_vec(), vec![1, 2]);
+    }
+
+    #[test]
+    fn compact_take_clears_self() {
+        let mut n = CompactNibbles::from_raw(&[0xAB, 0xCD], true);
+        let taken = n.take();
+        assert!(n.is_empty());
+        assert_eq!(n.len(), 0);
+        assert!(!n.is_leaf());
+        assert_eq!(taken.to_bytes(), vec![0xAB, 0xCD]);
+        assert!(taken.is_leaf());
+    }
+
+    #[test]
+    fn compact_encode_compact_matches_nibbles() {
+        let nibbles = vec![1, 2, 3, 4, 5];
+        let regular = Nibbles::from_hex(nibbles.clone());
+        let compact = CompactNibbles::from_hex(nibbles);
+        assert_eq!(compact.encode_compact(), regular.encode_compact());
+    }
+
+    #[test]
+    fn compact_decode_compact_leaf_roundtrip() {
+        let bytes = vec![0xAB, 0xCD];
+        let compact = CompactNibbles::from_raw(&bytes, true);
+        let encoded = compact.encode_compact();
+        let decoded = CompactNibbles::decode_compact(&encoded);
+        assert_eq!(decoded.to_bytes(), bytes);
+        assert!(decoded.is_leaf());
+    }
+
+    #[test]
+    fn compact_decode_compact_empty() {
+        let decoded = CompactNibbles::decode_compact(&[]);
+        assert!(decoded.is_empty());
+        assert!(!decoded.is_leaf());
+        assert_eq!(decoded.to_bytes(), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn compact_encode_decode_compact_odd_leaf() {
+        let mut compact = CompactNibbles::from_raw(&[0x12], true);
+        compact.append(0x3);
+        let encoded = compact.encode_compact();
+        let decoded = CompactNibbles::decode_compact(&encoded);
+        assert!(decoded.is_leaf());
+        assert_eq!(decoded.into_vec(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn compact_skip_prefix_updates_current() {
+        let mut n = CompactNibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        let prefix = CompactNibbles::from_hex(vec![1, 2, 3]);
+        assert!(n.skip_prefix(&prefix));
+        assert_eq!(n.current().into_vec(), vec![1, 2, 3]);
+        assert_eq!(n.into_vec(), vec![4, 5]);
+    }
+
+    #[test]
+    fn compact_offset_updates_current() {
+        let n = CompactNibbles::from_hex(vec![1, 2, 3, 4, 5]);
+        let offset = n.offset(2);
+        assert_eq!(offset.current().into_vec(), vec![1, 2]);
+        assert_eq!(offset.into_vec(), vec![3, 4, 5]);
+    }
 }
 
 fn compact(mut hex: Vec<u8>) -> Vec<u8> {
@@ -566,7 +722,7 @@ fn expand(bytes: &[u8], len: usize) -> Vec<u8> {
     res
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct CompactNibbles {
     len: usize,
     data: Vec<u8>,
@@ -575,6 +731,7 @@ struct CompactNibbles {
 }
 
 impl CompactNibbles {
+    /// Create `Nibbles` from  hex-encoded nibbles
     pub fn from_hex(hex: Vec<u8>) -> Self {
         Self {
             len: hex.len(),
@@ -621,7 +778,8 @@ impl CompactNibbles {
             let expanded = expand(&self.data, self.len)[prefix_len..].to_vec();
             self.len = expanded.len();
             self.data = compact(expanded);
-            self.already_consumed.extend(&prefix.data);
+            let prefix_nibbles = expand(&prefix.data, prefix.len);
+            self.already_consumed.extend(prefix_nibbles);
             true
         } else {
             false
@@ -686,9 +844,12 @@ impl CompactNibbles {
     /// Removes and returns the first nibble
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<u8> {
-        self.shl().inspect(|l| {
-            self.already_consumed.push(*l);
-        })
+        let l = self.shl()?;
+        self.len = self.len.saturating_sub(1);
+        let target_len = (self.len + 1) / 2;
+        self.data.truncate(target_len);
+        self.already_consumed.push(l);
+        Some(l)
     }
 
     /// Removes and returns the first nibble if it is a suitable choice index (aka < 16)
@@ -699,7 +860,9 @@ impl CompactNibbles {
     /// Returns the nibbles after the given offset
     pub fn offset(&self, offset: usize) -> Self {
         let mut ret = self.slice(offset, self.len());
-        ret.already_consumed = [&self.already_consumed, &self.data[0..offset]].concat();
+        let prefix = expand(&self.data, self.len)[0..offset].to_vec();
+        ret.already_consumed =
+            [self.already_consumed.as_slice(), prefix.as_slice()].concat();
         ret
     }
 
@@ -709,23 +872,102 @@ impl CompactNibbles {
     }
 
     /// Extends the nibbles with another list of nibbles
-    pub fn extend(&mut self, other: &Nibbles) {
-        self.data.extend_from_slice(other.as_ref());
+    pub fn extend(&mut self, other: &Self) {
+        if other.is_empty() {
+            return;
+        }
+        let odd_len = self.len % 2 == 1;
+        self.data.reserve(other.data.len());
+        if odd_len {
+            let mut l = self.data.len() - 1;
+            let mut r = 0;
+            while r < other.data.len() {
+                self.data[l] |= other.data[r] >> 4;
+                self.data.push(other.data[r] << 4);
+                l += 1;
+                r += 1
+            }
+            if other.len % 2 == 1 {
+                self.data.pop();
+            }
+        } else {
+            self.data.extend(&other.data);
+        }
+        self.len += other.len();
     }
 
     /// Return the nibble at the given index, will panic if the index is out of range
     pub fn at(&self, i: usize) -> usize {
-        self.data[i] as usize
+        if i.is_multiple_of(2) {
+            (self.data[i / 2] >> 4) as usize
+        } else {
+            (self.data[i / 2] & 0x0F) as usize
+        }
     }
 
     /// Inserts a nibble at the start
     pub fn prepend(&mut self, nibble: u8) {
-        self.data.insert(0, nibble);
+        let odd_len = self.len % 2 == 1;
+        self.data.insert(0, nibble << 4);
+        self.len += 1;
+        for l in 0..self.data.len() - 1 {
+            self.data[l] |= self.data[l + 1] >> 4;
+            self.data[l + 1] <<= 4;
+        }
+        if odd_len {
+            self.data.pop();
+        }
     }
 
     /// Inserts a nibble at the end
     pub fn append(&mut self, nibble: u8) {
-        self.data.push(nibble);
+        let odd_len = self.len % 2 == 1;
+        if odd_len {
+            let last = self.data.len() - 1;
+            self.data[last] |= nibble & 0x0F;
+        } else {
+            self.data.push(nibble << 4);
+        }
+        self.len += 1;
+    }
+
+    /// Encodes the nibbles in compact form
+    pub fn encode_compact(&self) -> Vec<u8> {
+        let mut compact = vec![];
+        let is_leaf = self.is_leaf();
+        let mut hex = expand(&self.data, self.len);
+        // node type    path length    |    prefix    hexchar
+        // --------------------------------------------------
+        // extension    even           |    0000      0x0
+        // extension    odd            |    0001      0x1
+        // leaf         even           |    0010      0x2
+        // leaf         odd            |    0011      0x3
+        let v = if hex.len() % 2 == 1 {
+            let v = 0x10 + hex[0];
+            hex = hex[1..].to_vec();
+            v
+        } else {
+            0x00
+        };
+
+        compact.push(v + if is_leaf { 0x20 } else { 0x00 });
+        for i in 0..(hex.len() / 2) {
+            compact.push((hex[i * 2] * 16) + (hex[i * 2 + 1]));
+        }
+
+        compact
+    }
+
+    /// Encodes the nibbles in compact form
+    pub fn decode_compact(compact: &[u8]) -> Self {
+        let mut hex = compact_to_hex(compact);
+        let is_leaf = matches!(hex.last(), Some(16));
+        if is_leaf {
+            hex.pop();
+        }
+        let mut nibbles = Self::from_hex(hex);
+        nibbles.is_leaf = is_leaf && !nibbles.is_empty();
+        nibbles
     }
 
     /// Returns true if the nibbles contain the leaf flag (16) at the end
@@ -735,6 +977,35 @@ impl CompactNibbles {
 
     pub fn to_bytes(&self) -> Vec<u8> {
         self.data.clone()
+    }
+
+    /// Concatenates self and another Nibbles returning a new Nibbles
+    pub fn concat(&self, other: &Self) -> Self {
+        let mut n = self.clone();
+        n.extend(other);
+        n
+    }
+
+    /// Returns a copy of self with the nibble added at the and
+    pub fn append_new(&self, nibble: u8) -> Self {
+        let mut n = self.clone();
+        n.append(nibble);
+        n
+    }
+
+    /// Return already consumed parts of path
+    pub fn current(&self) -> Self {
+        Self::from_hex(self.already_consumed.clone())
+    }
+
+    /// Empties `self.data` and returns the content
+    pub fn take(&mut self) -> Self {
+        CompactNibbles {
+            data: mem::take(&mut self.data),
+            already_consumed: mem::take(&mut self.already_consumed),
+            len: mem::take(&mut self.len),
+            is_leaf: mem::take(&mut self.is_leaf),
+        }
     }
 }
 
