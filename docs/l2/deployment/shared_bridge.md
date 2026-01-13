@@ -76,7 +76,7 @@ Replace `ROUTER_ADDRESS` with the outputs of the first deploy
 	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
 	--deposit-rich \
 	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
-	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
+	--genesis-l1-path ../../fixtures/genesis/l1.json \
 	--genesis-l2-path ../../fixtures/genesis/l2_2.json \
     --randomize-contract-deployment \
     --router.address <ROUTER_ADDRESS>

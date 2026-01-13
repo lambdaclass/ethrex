@@ -45,13 +45,9 @@ run-image: build-image ## 🏃 Run the Docker image
 	docker run --rm -p 127.0.0.1:8545:8545 ethrex:main --http.addr 0.0.0.0
 
 dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
-	cargo run --bin ethrex -- \
-			--network ./fixtures/genesis/l1.json \
-			--http.port 8545 \
-			--http.addr 0.0.0.0 \
-			--authrpc.port 8551 \
-			--dev \
-			--datadir memory
+	cargo run --release -- \
+		--dev \
+		--datadir memory
 
 ETHEREUM_PACKAGE_REVISION := 82e5a7178138d892c0c31c3839c89d53ffd42d9a
 ETHEREUM_PACKAGE_DIR := ethereum-package
