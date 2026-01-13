@@ -1,5 +1,13 @@
 # Step by Step
 
+0. Compile ethrex:
+
+```bash
+COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,zisk,gpu
+```
+
+  This will generate the elf in `crates/l2/prover/src/guest_program/src/zisk/out/riscv64ima-zisk-elf`
+
 1. clone zisk:
 
 ```bash
