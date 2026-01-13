@@ -37,7 +37,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{Level, debug, error, info, warn};
+#[cfg(not(feature = "l2"))]
+use tracing::error;
+use tracing::{Level, debug, info, warn};
 use tracing_subscriber::{
     EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt, reload,
 };
@@ -240,6 +242,7 @@ pub async fn init_network(
     blockchain: Arc<Blockchain>,
     context: P2PContext,
 ) {
+    #[cfg(not(feature = "l2"))]
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
         panic!(
@@ -472,6 +475,7 @@ pub async fn init_l1(
             max_mempool_size: opts.mempool_max_size,
             perf_logs_enabled: true,
             r#type: BlockchainType::L1,
+            max_blobs_per_block: opts.max_blobs_per_block,
         },
     );
 

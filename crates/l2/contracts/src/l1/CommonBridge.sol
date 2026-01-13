@@ -110,7 +110,7 @@ contract CommonBridge is
     uint256 private pendingPrivilegedTxIndex;
 
     /// @notice Address of the SharedBridgeRouter contract
-    address public SHARED_BRIDGE_ROUTER = address(0);
+    address public SHARED_BRIDGE_ROUTER;
 
     /// @notice Chain ID of the network
     uint256 public CHAIN_ID;
@@ -464,6 +464,7 @@ contract CommonBridge is
             IRouter(SHARED_BRIDGE_ROUTER).sendETHValue{
                 value: balanceDiffs[i].value
             }(balanceDiffs[i].chainId);
+            deposits[ETH_TOKEN][ETH_TOKEN] -= balanceDiffs[i].value;
 
             // Send ERC20 values if any
             for (uint j = 0; j < balanceDiffs[i].assetDiffs.length; j++) {
@@ -507,7 +508,9 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
-    function receiveETHFromSharedBridge() public payable override {}
+    function receiveETHFromSharedBridge() public payable override {
+        deposits[ETH_TOKEN][ETH_TOKEN] += msg.value;
+    }
 
     /// @inheritdoc ICommonBridge
     function receiveERC20FromSharedBridge(
@@ -528,7 +531,7 @@ contract CommonBridge is
         uint256 withdrawalBatchNumber,
         uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
-    ) public override whenNotPaused {
+    ) public override whenNotPaused nonReentrant {
         _claimWithdrawal(
             ETH_TOKEN,
             ETH_TOKEN,

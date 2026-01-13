@@ -17,6 +17,11 @@
   - [Node startup](./l1/running/startup.md)
   - [Configuration](./l1/running/configuration.md)
   - [Monitoring and metrics](./l1/running/monitoring.md)
+- [Architecture](./l1/architecture/README.md)
+  - [System Overview](./l1/architecture/overview.md)
+  - [Block Execution Pipeline](./l1/architecture/block_execution.md)
+  - [Sync State Machine](./l1/architecture/sync_state_machine.md)
+  - [Crate Map](./l1/architecture/crate_map.md)
 - [Fundamentals](./l1/fundamentals/README.md)
   - [Metrics]()
   - [Logs]()
@@ -28,6 +33,7 @@
     - [Can an account disappear from Ethereum's state trie?](./internal/l1/delete_accounts.md)
     - [Future Rewrite Concerns](./l1/fundamentals/snap_sync_concerns.md)
     - [Sorted Trie Insertion](./internal/l1/sorted_trie_insert.md)
+    - [Healing Explanation](./internal/l1/healing.md)
   - [Pruning]()
 
 # Ethrex for L2 chains
@@ -42,7 +48,7 @@
   - [Synchronous Composability PoC](./l2/deployment/synchronous_composability_poc.md)
   - [Deploying a shared bridge enabled L2](./l2/deployment/shared_bridge.md)
   - [Deploying a fee token](./l2/deployment/fee_token.md)
-  - [Migrations](./l2/deployment/migrations.md)
+  - [Upgrades](./l2/deployment/upgrades.md)
 - [Run a prover](./l2/deployment/prover/README.md)
   - [Overview](./l2/deployment/prover/overview.md)
   - [Run an ethrex SP1 prover](./l2/deployment/prover/sp1.md)
@@ -77,6 +83,7 @@
     - [L1MessageSender]()
   - [Based sequencing](./l2/fundamentals/based.md)
   - [Transaction fees](./l2/fundamentals/transaction_fees.md)
+  - [Exit Window](./l2/fundamentals/exit_window.md)
   - [Fee token](./l2/fundamentals/fee_token.md)
   - [Shared Bridge](./l2/fundamentals/shared_bridge.md)
 
@@ -114,7 +121,7 @@
 
 # Roadmap
 
-- [Roadmap](./roadmap.md)
+- [Roadmap](../ROADMAP.md)
 
 # Other resources
 

@@ -2,6 +2,18 @@
 
 ## Perf
 
+### 2026-01-12
+
+- Refactor `ecpairing` using ark [#5792](https://github.com/lambdaclass/ethrex/pull/5792)
+
+### 2025-12-23
+
+- Remove needless allocs on store api [#5709](https://github.com/lambdaclass/ethrex/pull/5709)
+
+### 2025-12-22
+
+- Avoid double parsing and extra clones in doc signature formatting [#9285](https://github.com/starkware-libs/cairo/pull/9285)
+
 ### 2025-12-19
 
 - Make HashSet use fxhash in discv4 peer_table [#5688](https://github.com/lambdaclass/ethrex/pull/5688)

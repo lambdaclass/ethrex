@@ -47,16 +47,11 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::AtomicU64,
         mpsc::{SyncSender, TryRecvError, sync_channel},
     },
+    thread::JoinHandle,
 };
 use tracing::{debug, error, info};
-/// Number of state trie segments to fetch concurrently during state sync
-pub const STATE_TRIE_SEGMENTS: usize = 2;
-/// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
-/// This will always be the amount yielded by snapshot reads unless there are less elements left
-pub const MAX_SNAPSHOT_READS: usize = 100;
 
 // We use one constant for in-memory and another for on-disk backends.
 // This is due to tests requiring state older than 128 blocks.
@@ -75,106 +70,177 @@ enum FKVGeneratorControlMessage {
 // 64mb
 const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
 
-// TODO: don't use atomic here, instead wrap in Mutex the whole cache
 #[derive(Debug)]
 struct CodeCache {
-    inner_cache: Mutex<LruCache<H256, Code, FxBuildHasher>>,
-    cache_size: AtomicU64,
+    inner_cache: LruCache<H256, Code, FxBuildHasher>,
+    cache_size: u64,
 }
 
 impl Default for CodeCache {
     fn default() -> Self {
         Self {
-            inner_cache: Mutex::new(LruCache::unbounded_with_hasher(FxBuildHasher)),
-            cache_size: AtomicU64::new(0),
+            inner_cache: LruCache::unbounded_with_hasher(FxBuildHasher),
+            cache_size: 0,
         }
     }
 }
 
 impl CodeCache {
-    fn get(&self, code_hash: &H256) -> Result<Option<Code>, StoreError> {
-        let mut cache = self.inner_cache.lock().map_err(|_| StoreError::LockError)?;
-        Ok(cache.get(code_hash).cloned())
+    fn get(&mut self, code_hash: &H256) -> Result<Option<Code>, StoreError> {
+        Ok(self.inner_cache.get(code_hash).cloned())
     }
 
-    fn insert(&self, code: &Code) -> Result<(), StoreError> {
-        let mut cache = self.inner_cache.lock().map_err(|_| StoreError::LockError)?;
+    fn insert(&mut self, code: &Code) -> Result<(), StoreError> {
         let code_size = code.size();
-        self.cache_size
-            .fetch_add(code_size as u64, std::sync::atomic::Ordering::SeqCst);
-        let cache_len = cache.len() + 1;
-        let mut current_size = self.cache_size.load(std::sync::atomic::Ordering::SeqCst);
+        let cache_len = self.inner_cache.len() + 1;
+        self.cache_size += code_size as u64;
+        let current_size = self.cache_size;
         debug!(
             "[ACCOUNT CODE CACHE] cache elements (): {cache_len}, total size: {current_size} bytes"
         );
 
-        while current_size > CODE_CACHE_MAX_SIZE {
-            if let Some((_, code)) = cache.pop_lru() {
-                self.cache_size
-                    .fetch_sub(code.size() as u64, std::sync::atomic::Ordering::SeqCst);
-                current_size = self.cache_size.load(std::sync::atomic::Ordering::SeqCst);
+        while self.cache_size > CODE_CACHE_MAX_SIZE {
+            if let Some((_, code)) = self.inner_cache.pop_lru() {
+                self.cache_size -= code.size() as u64;
             } else {
                 break;
             }
         }
 
-        cache.get_or_insert(code.hash, || code.clone());
+        self.inner_cache.get_or_insert(code.hash, || code.clone());
         Ok(())
     }
 }
 
+/// Main storage interface for the ethrex client.
+///
+/// The `Store` provides a high-level API for all blockchain data operations:
+/// - Block storage and retrieval
+/// - State trie management
+/// - Account and storage queries
+/// - Transaction indexing
+///
+/// # Thread Safety
+///
+/// `Store` is `Clone` and thread-safe. All clones share the same underlying
+/// database connection and caches via `Arc`.
+///
+/// # Caching
+///
+/// The store maintains several caches for performance:
+/// - **Trie Layer Cache**: Recent trie nodes for fast state access
+/// - **Code Cache**: LRU cache for contract bytecode (64MB default)
+/// - **Latest Block Cache**: Cached latest block header for RPC
+///
+/// # Example
+///
+/// ```ignore
+/// let store = Store::new("./data", EngineType::RocksDB)?;
+///
+/// // Add a block
+/// store.add_block(block).await?;
+///
+/// // Query account balance
+/// let info = store.get_account_info(block_number, address)?;
+/// let balance = info.map(|a| a.balance).unwrap_or_default();
+/// ```
 #[derive(Debug, Clone)]
 pub struct Store {
+    /// Path to the database directory.
     db_path: PathBuf,
+    /// Storage backend (InMemory or RocksDB).
     backend: Arc<dyn StorageBackend>,
+    /// Chain configuration (fork schedule, chain ID, etc.).
     chain_config: ChainConfig,
+    /// Cache for trie nodes from recent blocks.
     trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
+    /// Channel for controlling the FlatKeyValue generator background task.
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
+    /// Channel for sending trie updates to the background worker.
     trie_update_worker_tx: std::sync::mpsc::SyncSender<TrieUpdate>,
-    /// Keeps the latest canonical block header
-    /// It's wrapped in an Arc to allow for cheap reads with infrequent writes
-    /// Reading an out-of-date value is acceptable, since it's only used as:
-    /// - a cache of the (frequently requested) header
-    /// - a Latest tag for RPC, where a small extra delay before the newest block is expected
-    /// - sync-related operations, which must be idempotent in order to handle reorgs
+    /// Cached latest canonical block header.
+    ///
+    /// Wrapped in Arc for cheap reads with infrequent writes.
+    /// May be slightly out of date, which is acceptable for:
+    /// - Caching frequently requested headers
+    /// - RPC "latest" block queries (small delay acceptable)
+    /// - Sync operations (must be idempotent anyway)
     latest_block_header: LatestBlockHeaderCache,
+    /// Last computed FlatKeyValue for incremental updates.
     last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
 
     /// Cache for account bytecodes, keyed by the bytecode hash.
     /// Note that we don't remove entries on account code changes, since
     /// those changes already affect the code hash stored in the account, and only
     /// may result in this cache having useless data.
-    account_code_cache: Arc<CodeCache>,
+    account_code_cache: Arc<Mutex<CodeCache>>,
+
+    background_threads: Arc<ThreadList>,
 }
 
+#[derive(Debug, Default)]
+struct ThreadList {
+    list: Vec<JoinHandle<()>>,
+}
+
+impl Drop for ThreadList {
+    fn drop(&mut self) {
+        for handle in self.list.drain(..) {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// Storage trie nodes grouped by account address hash.
+///
+/// Each entry contains the hashed account address and the trie nodes
+/// for that account's storage trie.
 pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
 
+/// Storage backend type selection.
+///
+/// Used when creating a new [`Store`] to specify which backend to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
+    /// In-memory storage, non-persistent. Suitable for testing.
     InMemory,
+    /// RocksDB storage, persistent. Suitable for production.
     #[cfg(feature = "rocksdb")]
     RocksDB,
 }
 
+/// Batch of updates to apply to the store atomically.
+///
+/// Used during block execution to collect all state changes before
+/// committing them to the database in a single transaction.
 pub struct UpdateBatch {
-    /// Nodes to be added to the state trie
+    /// New nodes to add to the state trie.
     pub account_updates: Vec<TrieNode>,
-    /// Storage tries updated and their new nodes
+    /// Storage trie updates per account (keyed by hashed address).
     pub storage_updates: Vec<(H256, Vec<TrieNode>)>,
-    /// Blocks to be added
+    /// Blocks to store.
     pub blocks: Vec<Block>,
-    /// Receipts added per block
+    /// Receipts to store, grouped by block hash.
     pub receipts: Vec<(H256, Vec<Receipt>)>,
-    /// Code updates
+    /// Contract code updates (code hash -> bytecode).
     pub code_updates: Vec<(H256, Code)>,
 }
 
+/// Storage trie updates grouped by account address hash.
 pub type StorageUpdates = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
 
+/// Collection of account state changes from block execution.
+///
+/// Contains all the data needed to update the state trie after
+/// executing a block: account updates, storage updates, and code deployments.
 pub struct AccountUpdatesList {
+    /// Root hash of the state trie after applying these updates.
     pub state_trie_hash: H256,
+    /// State trie node updates (path -> RLP-encoded node).
     pub state_updates: Vec<(Nibbles, Vec<u8>)>,
+    /// Storage trie updates per account.
     pub storage_updates: StorageUpdates,
+    /// New contract bytecode deployments.
     pub code_updates: Vec<(H256, Code)>,
 }
 
@@ -600,7 +666,12 @@ impl Store {
     /// reads the database, and if it exists, decodes and returns it.
     pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError> {
         // check cache first
-        if let Some(code) = self.account_code_cache.get(&code_hash)? {
+        if let Some(code) = self
+            .account_code_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get(&code_hash)?
+        {
             return Ok(Some(code));
         }
 
@@ -622,7 +693,10 @@ impl Store {
         };
 
         // insert into cache and evict if needed
-        self.account_code_cache.insert(&code)?;
+        self.account_code_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .insert(&code)?;
 
         Ok(Some(code))
     }
@@ -1273,7 +1347,8 @@ impl Store {
                 last_written
             }
         };
-        let store = Self {
+        let mut background_threads = Vec::new();
+        let mut store = Self {
             db_path,
             backend,
             chain_config: Default::default(),
@@ -1282,11 +1357,12 @@ impl Store {
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
-            account_code_cache: Arc::new(CodeCache::default()),
+            account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
+            background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
         let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
-        std::thread::spawn(move || {
+        background_threads.push(std::thread::spawn(move || {
             let rx = fkv_rx;
             // Wait for the first Continue to start generation
             loop {
@@ -1302,7 +1378,7 @@ impl Store {
 
             let _ = flatkeyvalue_generator(&backend_clone, &last_computed_fkv, &rx)
                 .inspect_err(|err| error!("Error while generating FlatKeyValue: {err}"));
-        });
+        }));
         let backend = store.backend.clone();
         let flatkeyvalue_control_tx = store.flatkeyvalue_control_tx.clone();
         let trie_cache = store.trie_cache.clone();
@@ -1326,7 +1402,7 @@ impl Store {
 
             - Third, it removes the (no longer needed) bottom-most diff layer from the trie layers in the same way as the first step.
         */
-        std::thread::spawn(move || {
+        background_threads.push(std::thread::spawn(move || {
             let rx = trie_upd_rx;
             loop {
                 match rx.recv() {
@@ -1346,6 +1422,9 @@ impl Store {
                     }
                 }
             }
+        }));
+        store.background_threads = Arc::new(ThreadList {
+            list: background_threads,
         });
         Ok(store)
     }
@@ -1384,9 +1463,9 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        let hashed_address = hash_address(&address);
+        let hashed_address = hash_address_fixed(&address);
 
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+        let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
 
@@ -1406,7 +1485,7 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        let Some(encoded_state) = state_trie.get(&account_hash.to_fixed_bytes().to_vec())? else {
+        let Some(encoded_state) = state_trie.get(account_hash.as_bytes())? else {
             return Ok(None);
         };
         let account_state = AccountState::decode(&encoded_state)?;
@@ -1439,8 +1518,8 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+        let hashed_address = hash_address_fixed(&address);
+        let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
         let account_state = AccountState::decode(&encoded_state)?;
@@ -1458,8 +1537,8 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+        let hashed_address = hash_address_fixed(&address);
+        let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
         let account_state = AccountState::decode(&encoded_state)?;
@@ -1492,15 +1571,15 @@ impl Store {
         let mut code_updates = Vec::new();
         let state_root = state_trie.hash_no_commit();
         for update in account_updates {
-            let hashed_address = hash_address(&update.address);
+            let hashed_address = hash_address_fixed(&update.address);
             if update.removed {
                 // Remove account from trie
-                state_trie.remove(&hashed_address)?;
+                state_trie.remove(hashed_address.as_bytes())?;
                 continue;
             }
             // Add or update AccountState in the trie
             // Fetch current state or create a new state to be inserted
-            let mut account_state = match state_trie.get(&hashed_address)? {
+            let mut account_state = match state_trie.get(hashed_address.as_bytes())? {
                 Some(encoded_state) => AccountState::decode(&encoded_state)?,
                 None => AccountState::default(),
             };
@@ -1518,11 +1597,8 @@ impl Store {
             }
             // Store the added storage in the account's storage trie and compute its new root
             if !update.added_storage.is_empty() {
-                let mut storage_trie = self.open_storage_trie(
-                    H256::from_slice(&hashed_address),
-                    state_root,
-                    account_state.storage_root,
-                )?;
+                let mut storage_trie =
+                    self.open_storage_trie(hashed_address, state_root, account_state.storage_root)?;
                 for (storage_key, storage_value) in &update.added_storage {
                     let hashed_key = hash_key(storage_key);
                     if storage_value.is_zero() {
@@ -1534,9 +1610,12 @@ impl Store {
                 let (storage_hash, storage_updates) =
                     storage_trie.collect_changes_since_last_hash();
                 account_state.storage_root = storage_hash;
-                ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
+                ret_storage_updates.push((hashed_address, storage_updates));
             }
-            state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+            state_trie.insert(
+                hashed_address.as_bytes().to_vec(),
+                account_state.encode_to_vec(),
+            )?;
         }
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
 
@@ -1783,14 +1862,13 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        let hashed_address = hash_address(&address);
-        let account_hash = H256::from_slice(&hashed_address);
+        let account_hash = hash_address_fixed(&address);
         let storage_root = if self.flatkeyvalue_computed(account_hash)? {
             // We will use FKVs, we don't need the root
             *EMPTY_TRIE_HASH
         } else {
             let state_trie = self.open_state_trie(state_root)?;
-            let Some(encoded_account) = state_trie.get(&hashed_address)? else {
+            let Some(encoded_account) = state_trie.get(account_hash.as_bytes())? else {
                 return Ok(None);
             };
             let account = AccountState::decode(&encoded_account)?;
@@ -1798,7 +1876,7 @@ impl Store {
         };
         let storage_trie = self.open_storage_trie(account_hash, state_root, storage_root)?;
 
-        let hashed_key = hash_key(&storage_key);
+        let hashed_key = hash_key_fixed(&storage_key);
         storage_trie
             .get(&hashed_key)?
             .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
@@ -1863,15 +1941,15 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        let hashed_address = hash_address(&address);
-        let Some(encoded_account) = state_trie.get(&hashed_address)? else {
+        let hashed_address = hash_address_fixed(&address);
+        let Some(encoded_account) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
         let account = AccountState::decode(&encoded_account)?;
         // Open storage_trie
         let storage_root = account.storage_root;
         Ok(Some(self.open_storage_trie(
-            H256::from_slice(&hashed_address),
+            hashed_address,
             header.state_root,
             storage_root,
         )?))
@@ -1905,8 +1983,8 @@ impl Store {
         state_trie: &Trie,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
-        let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+        let hashed_address = hash_address_fixed(&address);
+        let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
         Ok(Some(AccountState::decode(&encoded_state)?))
@@ -1927,11 +2005,10 @@ impl Store {
         //     return Ok(None);
         // };
         let state_trie = self.open_state_trie(state_root)?;
-        let hashed_address = hash_address_fixed(&address);
-        let address_path = hashed_address.0.to_vec();
-        let proof = state_trie.get_proof(&address_path)?;
+        let address_path = hash_address_fixed(&address);
+        let proof = state_trie.get_proof(address_path.as_bytes())?;
         let account_opt = state_trie
-            .get(&address_path)?
+            .get(address_path.as_bytes())?
             .map(|encoded_state| AccountState::decode(&encoded_state))
             .transpose()?;
 
@@ -1939,7 +2016,7 @@ impl Store {
 
         if let Some(account) = &account_opt {
             let storage_trie =
-                self.open_storage_trie(hashed_address, state_root, account.storage_root)?;
+                self.open_storage_trie(address_path, state_root, account.storage_root)?;
 
             for key in storage_keys {
                 let hashed_key = hash_key(key);
@@ -2005,7 +2082,7 @@ impl Store {
         starting_slot: H256,
     ) -> Result<Option<impl Iterator<Item = (H256, U256)>>, StoreError> {
         let state_trie = self.open_locked_state_trie(state_root)?;
-        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
+        let Some(account_rlp) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
         let storage_root = AccountState::decode(&account_rlp)?.storage_root;
@@ -2035,9 +2112,9 @@ impl Store {
         last_hash: Option<H256>,
     ) -> Result<Vec<Vec<u8>>, StoreError> {
         let state_trie = self.open_state_trie(state_root)?;
-        let mut proof = state_trie.get_proof(&starting_hash.as_bytes().to_vec())?;
+        let mut proof = state_trie.get_proof(starting_hash.as_bytes())?;
         if let Some(last_hash) = last_hash {
-            proof.extend_from_slice(&state_trie.get_proof(&last_hash.as_bytes().to_vec())?);
+            proof.extend_from_slice(&state_trie.get_proof(last_hash.as_bytes())?);
         }
         Ok(proof)
     }
@@ -2050,14 +2127,14 @@ impl Store {
         last_hash: Option<H256>,
     ) -> Result<Option<Vec<Vec<u8>>>, StoreError> {
         let state_trie = self.open_state_trie(state_root)?;
-        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
+        let Some(account_rlp) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
         let storage_root = AccountState::decode(&account_rlp)?.storage_root;
         let storage_trie = self.open_storage_trie(hashed_address, state_root, storage_root)?;
-        let mut proof = storage_trie.get_proof(&starting_hash.as_bytes().to_vec())?;
+        let mut proof = storage_trie.get_proof(starting_hash.as_bytes())?;
         if let Some(last_hash) = last_hash {
-            proof.extend_from_slice(&storage_trie.get_proof(&last_hash.as_bytes().to_vec())?);
+            proof.extend_from_slice(&storage_trie.get_proof(last_hash.as_bytes())?);
         }
         Ok(Some(proof))
     }
@@ -2678,6 +2755,10 @@ fn hash_address_fixed(address: &Address) -> H256 {
 
 pub fn hash_key(key: &H256) -> Vec<u8> {
     keccak_hash(key.to_fixed_bytes()).to_vec()
+}
+
+pub fn hash_key_fixed(key: &H256) -> [u8; 32] {
+    keccak_hash(key.to_fixed_bytes())
 }
 
 fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {
