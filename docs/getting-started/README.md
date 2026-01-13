@@ -9,7 +9,7 @@ The client supports running in two different modes:
 ## Quickstart L1
 
 > [!CAUTION]
-> Before starting, ensure your hardware meets the [hardware requirements](./hardware_requirements.md).
+> Before starting, ensure your hardware meets the [hardware requirements](../getting-started/hardware_requirements.md).
 
 Follow these steps to sync an ethrex node on the Hoodi testnet.
 

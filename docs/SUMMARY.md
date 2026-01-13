@@ -17,6 +17,11 @@
   - [Node startup](./l1/running/startup.md)
   - [Configuration](./l1/running/configuration.md)
   - [Monitoring and metrics](./l1/running/monitoring.md)
+- [Architecture](./l1/architecture/README.md)
+  - [System Overview](./l1/architecture/overview.md)
+  - [Block Execution Pipeline](./l1/architecture/block_execution.md)
+  - [Sync State Machine](./l1/architecture/sync_state_machine.md)
+  - [Crate Map](./l1/architecture/crate_map.md)
 - [Fundamentals](./l1/fundamentals/README.md)
   - [Metrics]()
   - [Logs]()
@@ -28,6 +33,7 @@
     - [Can an account disappear from Ethereum's state trie?](./internal/l1/delete_accounts.md)
     - [Future Rewrite Concerns](./l1/fundamentals/snap_sync_concerns.md)
     - [Sorted Trie Insertion](./internal/l1/sorted_trie_insert.md)
+    - [Healing Explanation](./internal/l1/healing.md)
   - [Pruning]()
 
 # Ethrex for L2 chains
