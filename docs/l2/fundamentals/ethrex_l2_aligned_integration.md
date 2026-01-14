@@ -8,11 +8,11 @@ This document provides a comprehensive technical overview of how ethrex L2 integ
 2. [What is Aligned Layer?](#what-is-aligned-layer)
 3. [Architecture](#architecture)
 4. [Component Details](#component-details)
-5. [Proof Workflow](#proof-workflow)
-6. [Smart Contract Integration](#smart-contract-integration)
-7. [Configuration](#configuration)
-8. [Deployment Guide](#deployment-guide)
-9. [Behavioral Differences](#behavioral-differences)
+5. [Smart Contract Integration](#smart-contract-integration)
+6. [Configuration](#configuration)
+7. [Behavioral Differences](#behavioral-differences)
+8. [Error Handling](#error-handling)
+9. [Monitoring](#monitoring)
 
 ---
 
@@ -28,7 +28,7 @@ Aligned mode offers significant cost savings by aggregating multiple proofs befo
 ### Key Benefits of Aligned Mode
 
 - **Lower verification costs**: Proof aggregation amortizes verification costs across multiple proofs
-- **Batch verification**: Multiple batches can be verified in a single L1 transaction
+- **Multi-batch verification**: Multiple L2 batches can be verified in a single L1 transaction (via `verifyBatchesAligned()`)
 - **Compressed proofs**: Uses STARK compressed format instead of Groth16, optimized for aggregation
 
 ---
@@ -58,29 +58,30 @@ Ethrex L2 supports the following proving systems with Aligned:
 ### High-Level System Flow
 
 ```
+┌──────────────────┐
+│      Prover      │ (Separate binary)
+│    (SP1/RISC0)   │
+└────────┬─────────┘
+         │ TCP
+         ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              ETHREX L2 NODE                                 │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  ┌──────────────┐    ┌──────────────────┐    ┌──────────────────┐           │
-│  │    Prover    │───▶│ ProofCoordinator │───▶│  L1ProofSender   │           │
-│  │   (SP1/R0)   │    │    (TCP Server)  │    │                  │           │
-│  └──────────────┘    └──────────────────┘    └────────┬─────────┘           │
-│         │                     │                       │                     │
-│         │              ┌──────▼──────┐                │                     │
-│         │              │RollupStorage│                │                     │
-│         │              │   (Proofs)  │◀───────────────┤                     │
-│         │              └─────────────┘                │                     │
-│         │                                             │                     │
-│         ▼                                             ▼                     │
-│  ┌──────────────┐                          ┌──────────────────┐             │
-│  │  Compressed  │                          │  Aligned Batcher │             │
-│  │    Proof     │                          │   (WebSocket)    │             │
-│  └──────────────┘                          └────────┬─────────┘             │
-│                                                     │                       │
-└─────────────────────────────────────────────────────┼───────────────────────┘
-                                                      │
-                                                      ▼
+│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐       │
+│  │ ProofCoordinator │───▶│  L1ProofSender   │───▶│  Aligned Batcher │       │
+│  │   (TCP Server)   │    │                  │    │   (WebSocket)    │       │
+│  └────────┬─────────┘    └────────┬─────────┘    └────────┬─────────┘       │
+│           │                       │                       │                 │
+│           ▼                       ▼                       │                 │
+│  ┌─────────────────────────────────────┐                  │                 │
+│  │          RollupStorage              │                  │                 │
+│  │     (Proofs, Batch State)           │                  │                 │
+│  └─────────────────────────────────────┘                  │                 │
+│                                                           │                 │
+└───────────────────────────────────────────────────────────┼─────────────────┘
+                                                            │
+                                                            ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           ALIGNED LAYER                                     │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -89,8 +90,8 @@ Ethrex L2 supports the following proving systems with Aligned:
 │  │                  │    │   (SP1/RISC0)    │    │                  │       │
 │  └──────────────────┘    └──────────────────┘    └──────────────────┘       │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                                      │
-                                                      ▼
+                                                            │
+                                                            ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              ETHEREUM L1                                    │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -101,50 +102,25 @@ Ethrex L2 supports the following proving systems with Aligned:
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+> **Note**: The Prover runs as a separate binary outside the L2 node, connecting via TCP to the ProofCoordinator. For deployment instructions, see [Running Ethrex in Aligned Mode](../deployment/aligned.md).
+
 ### Component Interactions
 
 #### Proof Sender Flow (Aligned Mode)
 
-```
-┌─────────────────┐
-│  proof_sender   │
-└────────┬────────┘
-         │
-    ┌────┴────┐
-    │         │
-    ▼         ▼
-┌────────┐ ┌─────────────────┐
-│rollup_ │ │    Aligned      │
-│storage │ │    Batcher      │
-└────────┘ └─────────────────┘
-     │              │
-     │              │
-     └──────┬───────┘
-            │
-   lastSentProof / send_proof_to_aligned
-```
+![Proof Sender Aligned Mode](../img/aligned_mode_proof_sender.png)
+
+The proof sender tracks the last sent proof in the rollup storage and submits compressed proofs to the Aligned Batcher.
 
 #### Proof Verifier Flow (Aligned Mode)
 
-```
-┌──────────────────┐
-│  proof_verifier  │
-└────────┬─────────┘
-         │
-    ┌────┴────────────────────────┐
-    │                             │
-    ▼                             ▼
-┌────────────────┐      ┌─────────────────┐
-│OnChainProposer │      │AlignedProof     │
-│lastVerifiedBatch│     │AggregatorService│
-└───────┬────────┘      └────────┬────────┘
-        │                        │
-        │  verifyBatchesAligned  │
-        └────────────────────────┘
-                    │
-                    ▼
-           verifyProofInclusion
-```
+![Proof Verifier Aligned Mode](../img/aligned_mode_proof_verifier.png)
+
+The proof verifier:
+1. Queries `lastVerifiedBatch` from `OnChainProposer`
+2. Checks proof aggregation status via `AlignedProofAggregatorService`
+3. Calls `verifyBatchesAligned()` on `OnChainProposer`
+4. Which internally calls `verifyProofInclusion()` on the aggregator service
 
 ---
 
@@ -194,15 +170,7 @@ async fn send_proof_to_aligned(
 }
 ```
 
-**Configuration** (`AlignedConfig`):
-
-| Field | Description |
-|-------|-------------|
-| `aligned_mode` | Enable/disable Aligned integration |
-| `network` | Aligned network (devnet, testnet, mainnet) |
-| `fee_estimate` | Fee estimation type ("instant" or "default") |
-| `beacon_urls` | Beacon client URLs for blob verification |
-| `aligned_verifier_interval_ms` | Polling interval for verification checks |
+See the [Configuration](#configuration) section for `AlignedConfig` details.
 
 ### 2. L1ProofVerifier (`l1_proof_verifier.rs`)
 
@@ -450,89 +418,20 @@ pub struct AlignedConfig {
 
 ### Environment Variables
 
+**Node Configuration:**
+
 | Variable | Description |
 |----------|-------------|
 | `ETHREX_ALIGNED_MODE` | Enable Aligned mode |
 | `ETHREX_ALIGNED_BEACON_URL` | Beacon client URL |
 | `ETHREX_ALIGNED_NETWORK` | Aligned network |
+
+**Deployer Configuration:**
+
+| Variable | Description |
+|----------|-------------|
 | `ETHREX_L2_ALIGNED` | Enable Aligned during deployment |
 | `ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS` | Address of `AlignedProofAggregatorService` |
-
----
-
-## Deployment Guide
-
-### Prerequisites
-
-1. **Prover ELF/VK**: Generate the prover program and verification key:
-   ```bash
-   make -C crates/l2 build-prover-<sp1/risc0>  # Optional: GPU=true
-   ```
-
-2. **Aligned Environment**: Ensure Aligned Layer infrastructure is running on your target network
-
-3. **Beacon Client**: Access to a beacon client supporting `/eth/v1/beacon/blobs`
-
-### Step 1: Deploy L1 Contracts
-
-```bash
-COMPILE_CONTRACTS=true \
-ETHREX_L2_ALIGNED=true \
-ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS=<ALIGNED_AGGREGATOR_ADDRESS> \
-ETHREX_L2_SP1=true \
-ethrex l2 deploy \
-  --eth-rpc-url <ETH_RPC_URL> \
-  --private-key <YOUR_PRIVATE_KEY> \
-  --on-chain-proposer-owner <OWNER_ADDRESS> \
-  --bridge-owner <BRIDGE_OWNER_ADDRESS> \
-  --genesis-l2-path fixtures/genesis/l2.json \
-  --proof-sender.l1-address <PROOF_SENDER_ADDRESS>
-```
-
-### Step 2: Fund Aligned Batcher
-
-Deposit funds to the `AlignedBatcherPaymentService` contract:
-
-```bash
-aligned deposit-to-batcher \
-  --network <NETWORK> \
-  --private_key <PROOF_SENDER_PRIVATE_KEY> \
-  --rpc_url <RPC_URL> \
-  --amount <DEPOSIT_AMOUNT>
-```
-
-### Step 3: Start L2 Node
-
-```bash
-ethrex l2 \
-  --network fixtures/genesis/l2.json \
-  --l1.bridge-address <BRIDGE_ADDRESS> \
-  --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> \
-  --eth.rpc-url <ETH_RPC_URL> \
-  --aligned \
-  --aligned-network <ALIGNED_NETWORK> \
-  --aligned.beacon-url <BEACON_URL> \
-  --block-producer.coinbase-address <COINBASE> \
-  --committer.l1-private-key <COMMITTER_PK> \
-  --proof-coordinator.l1-private-key <PROOF_COORDINATOR_PK> \
-  --datadir ethrex_l2
-```
-
-### Step 4: Start Prover(s)
-
-```bash
-make -C crates/l2 init-prover-<sp1/risc0>  # Optional: GPU=true
-```
-
-### Step 5: Trigger Proof Aggregation
-
-After proofs are submitted, trigger aggregation:
-
-```bash
-make -C aligned_layer proof_aggregator_start AGGREGATOR=<sp1/risc0>
-# Or with GPU:
-make -C aligned_layer proof_aggregator_start_gpu AGGREGATOR=<sp1/risc0>
-```
 
 ---
 
@@ -642,5 +541,5 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 - [Aligned Layer Documentation](https://docs.alignedlayer.com/)
 - [Aligned SDK API Reference](https://docs.alignedlayer.com/guides/1.2_sdk_api_reference)
 - [Aligned Contract Addresses](https://docs.alignedlayer.com/guides/7_contract_addresses)
-- [ethrex L2 Deployment Guide](./overview.md)
+- [ethrex L2 Deployment Guide](../deployment/overview.md)
 - [ethrex Prover Documentation](../architecture/prover.md)

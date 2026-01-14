@@ -286,7 +286,7 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 ### Prover
 
 - Generates `Compressed` proofs instead of `Groth16`.
-- Required because Aligned currently only accepts SP1 compressed proofs.
+- Required because Aligned accepts compressed proofs (both SP1 and RISC0).
 
 ### Proof Sender
 
