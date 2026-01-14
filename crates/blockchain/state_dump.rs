@@ -114,7 +114,7 @@ impl StateAccessDump {
             error_type,
             timestamp: SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
+                .expect("System time should be after UNIX_EPOCH")
                 .as_secs(),
             accounts_accessed: tracker
                 .accounts_accessed
@@ -158,7 +158,7 @@ impl StateAccessDump {
         );
         let path = dir.join(filename);
         let json = serde_json::to_string_pretty(self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
         std::fs::write(&path, json)?;
         Ok(path)
     }
