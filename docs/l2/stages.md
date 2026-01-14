@@ -180,13 +180,44 @@ To achieve Stage 2, ethrex would need (in addition to Stage 1 requirements):
 
 ## Comparison with Other Rollups
 
+### Based Rollups
+
+Based rollups delegate sequencing to Ethereum L1 validators rather than using a centralized sequencer. This is particularly relevant for ethrex as it implements based sequencing.
+
+| Project | Current Stage | Main Gaps | Proof System | Sequencer Model |
+|---------|---------------|-----------|--------------|-----------------|
+| **ethrex L2** | Stage 0 | Forced inclusion, permissionless proving | Multi-proof (ZK + TEE) | Based (round-robin) |
+| Taiko Alethia | Stage 0 | Full ZK coverage, exit window | Multi-proof (SGX + ZK) | Based (permissionless) |
+| Surge | Not deployed | N/A (template) | Based on Taiko stack | Based (L1 validators) |
+
+**Taiko Alethia** is the first based rollup on mainnet. It uses a multi-proof system requiring SGX (mandatory) plus one of SP1/RISC0/SGX(Reth). Blocks can currently be proven without ZK proofs if both SGX verifiers are used. Taiko plans to achieve Stage 1 with the Shasta upgrade (full ZK coverage) by end of 2025.
+
+**Surge** is a based rollup template by Nethermind, built on the Taiko stack and designed to target Stage 2 from inception. It removes centralized sequencing entirely, letting Ethereum validators handle transaction ordering. Not yet deployed as a production rollup.
+
+### ZK Rollups
+
 | Project | Current Stage | Main Gaps | Proof System |
 |---------|---------------|-----------|--------------|
 | **ethrex L2** | Stage 0 | Forced inclusion, permissionless proving | Multi-proof (ZK + TEE) |
-| Arbitrum One | Stage 1 | 30-day window, permissionless proving | Optimistic (fraud proofs) |
-| Optimism | Stage 1 | 30-day window, permissionless proving | Optimistic (fault proofs) |
+| Scroll | Stage 1 | 30-day window, multi-prover | ZK validity proofs |
 | zkSync Era | Stage 0 | Exit window, prover decentralization | ZK validity proofs |
 | Starknet | Stage 1 | 30-day window, permissionless proving | ZK validity proofs (STARK) |
+
+**Scroll** became the first ZK rollup to achieve Stage 1 (April 2025) through the Euclid upgrade, which introduced permissionless sequencing fallback and a 12-member Security Council with 75% threshold.
+
+### Optimistic Rollups
+
+| Project | Current Stage | Main Gaps | Proof System |
+|---------|---------------|-----------|--------------|
+| Arbitrum One | Stage 1 | 30-day window, permissionless proving | Optimistic (fraud proofs) |
+| Optimism | Stage 1 | 30-day window, permissionless proving | Optimistic (fault proofs) |
+
+### Key Observations
+
+1. **No rollup has achieved Stage 2 yet** - All production rollups remain at Stage 0 or Stage 1
+2. **Based rollups are newer** - Taiko and ethrex are pioneering based sequencing, both at Stage 0
+3. **ZK rollups catching up** - Scroll and Starknet reached Stage 1 in 2025, showing ZK rollups can achieve meaningful decentralization
+4. **Multi-proof is emerging** - ethrex, Taiko, and Scroll are all exploring multi-proof systems for enhanced security
 
 ## Recommendations
 
@@ -241,9 +272,17 @@ The path to **Stage 1** is clear but requires implementing censorship-resistant 
 
 ## References
 
+### L2Beat Resources
 - [L2Beat Stages Framework](https://l2beat.com/stages)
 - [L2Beat Forum: Stages Update](https://forum.l2beat.com/t/stages-update-a-high-level-guiding-principle-for-stage-1/338)
 - [L2Beat: Introducing Stages](https://medium.com/l2beat/introducing-stages-a-framework-to-evaluate-rollups-maturity-d290bb22befe)
+
+### Rollup Comparisons
+- [Taiko Alethia on L2Beat](https://l2beat.com/scaling/projects/taiko)
+- [Scroll on L2Beat](https://l2beat.com/scaling/projects/scroll)
+- [Surge: A Based Rollup Template](https://www.nethermind.io/blog/surge-a-based-rollup-template-designed-for-ethereums-future)
+
+### ethrex Documentation
 - [ethrex Data Availability](./fundamentals/data_availability.md)
 - [ethrex Withdrawals](./fundamentals/withdrawals.md)
 - [ethrex Based Sequencing](./fundamentals/based.md)
