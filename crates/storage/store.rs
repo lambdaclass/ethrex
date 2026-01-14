@@ -7,7 +7,7 @@ use crate::{
         tables::{
             ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
             CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS,
-            INVALID_CHAINS, MISC_VALUES, OLDEST_WITNESS_BLOCK_NUMBER, PENDING_BLOCKS, RECEIPTS,
+            INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS,
             SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
@@ -1846,7 +1846,7 @@ impl Store {
 
     fn update_oldest_witness_number(&self, oldest_block_number: u64) -> Result<(), StoreError> {
         self.write(
-            OLDEST_WITNESS_BLOCK_NUMBER,
+            MISC_VALUES,
             b"oldest_witness_block_number".to_vec(),
             oldest_block_number.to_le_bytes().to_vec(),
         )?;
@@ -1855,7 +1855,7 @@ impl Store {
 
     fn get_oldest_witness_number(&self) -> Result<Option<u64>, StoreError> {
         let Some(value) = self.read(
-            OLDEST_WITNESS_BLOCK_NUMBER,
+            MISC_VALUES,
             b"oldest_witness_block_number".to_vec(),
         )?
         else {
