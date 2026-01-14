@@ -197,12 +197,14 @@ fn run_fixture(fixture: &Fixture, runs: u64, iterations: u32) -> f64 {
     let body = hex::decode(&fixture.body_hex).expect("Invalid body_hex in fixture");
     let body = repeat_body(&body, fixture.repeat.unwrap_or(1));
     let counter_offset = fixture.counter_offset.unwrap_or(0x80);
-    let bytecode = build_loop_bytecode(&body, iterations, counter_offset);
+    let bytecode = build_loop_bytecode(&body, black_box(iterations), counter_offset);
+    let bytecode = black_box(bytecode);
     let calldata = fixture
         .calldata_hex
         .as_deref()
         .map(|hex| Bytes::from(hex::decode(hex).expect("Invalid calldata_hex")))
         .unwrap_or_else(Bytes::new);
+    let calldata = black_box(calldata);
 
     let mut db = init_db(bytecode, fixture);
 
