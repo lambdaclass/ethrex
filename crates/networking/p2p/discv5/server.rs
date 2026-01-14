@@ -172,7 +172,7 @@ impl DiscoveryServer {
 
         tracing::trace!(received = %ordinary.message, from = %src_id, %addr);
 
-        self.handle_message(ordinary).await
+        self.handle_message(ordinary, addr).await
     }
 
     async fn handle_who_are_you(
@@ -235,14 +235,15 @@ impl DiscoveryServer {
     }
 
     async fn revalidate(&mut self) -> Result<(), DiscoveryServerError> {
-        for _contact in self
+        let contacts = self
             .peer_table
             .get_contacts_to_revalidate(REVALIDATION_INTERVAL)
-            .await?
-        {
-            // TODO: Implement Ping/Pong workflow
-            // (https://github.com/lambdaclass/ethrex/issues/5778)
-            // self.send_ping(&contact.node).await?;
+            .await?;
+
+        for contact in contacts {
+            if let Err(e) = self.send_ping(&contact.node).await {
+                trace!(node = %contact.node.node_id(), err = ?e, "Failed to send revalidation PING");
+            }
         }
         Ok(())
     }
@@ -310,19 +311,48 @@ impl DiscoveryServer {
 
     async fn handle_ping(
         &mut self,
-        _ping_message: PingMessage,
+        ping_message: PingMessage,
+        sender_id: H256,
+        sender_addr: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
-        // TODO: Implement Ping/Pong workflow
-        // (https://github.com/lambdaclass/ethrex/issues/5778)
+        trace!(from = %sender_id, enr_seq = ping_message.enr_seq, "Received PING");
+
+        // Build PONG response
+        let pong = Message::Pong(PongMessage {
+            req_id: ping_message.req_id,
+            enr_seq: self.local_node_record.seq,
+            recipient_addr: sender_addr.ip(),
+        });
+
+        // Get sender node for sending response (need public key for encryption)
+        if let Some(contact) = self.peer_table.get_contact(sender_id).await? {
+            self.send_ordinary(&pong, &contact.node).await?;
+        } else {
+            trace!(from = %sender_id, "Received PING from unknown node, cannot respond");
+        }
+
         Ok(())
     }
 
     async fn handle_pong(
         &mut self,
-        _pong_message: PongMessage,
+        pong_message: PongMessage,
+        sender_id: H256,
     ) -> Result<(), DiscoveryServerError> {
-        // TODO: Implement Ping/Pong workflow
-        // (https://github.com/lambdaclass/ethrex/issues/5778)
+        trace!(
+            from = %sender_id,
+            enr_seq = pong_message.enr_seq,
+            recipient_addr = %pong_message.recipient_addr,
+            "Received PONG"
+        );
+
+        // Validate and record PONG (clears ping_req_id if matches)
+        self.peer_table
+            .record_pong_received(&sender_id, pong_message.req_id)
+            .await?;
+
+        // TODO: If sender's enr_seq > our cached version, request updated ENR
+
         Ok(())
     }
 
@@ -343,6 +373,25 @@ impl DiscoveryServer {
         self.peer_table
             .new_contact_records(nodes_message.nodes, self.local_node.node_id())
             .await?;
+        Ok(())
+    }
+
+    async fn send_ping(&mut self, node: &Node) -> Result<(), DiscoveryServerError> {
+        let mut rng = OsRng;
+        let req_id = Bytes::from(rng.gen::<u64>().to_be_bytes().to_vec());
+
+        let ping = Message::Ping(PingMessage {
+            req_id: req_id.clone(),
+            enr_seq: self.local_node_record.seq,
+        });
+
+        self.send_ordinary(&ping, node).await?;
+
+        // Record ping sent for later PONG verification
+        self.peer_table
+            .record_ping_sent(&node.node_id(), req_id)
+            .await?;
+
         Ok(())
     }
 
@@ -479,15 +528,23 @@ impl DiscoveryServer {
         }
     }
 
-    async fn handle_message(&mut self, ordinary: Ordinary) -> Result<(), DiscoveryServerError> {
+    async fn handle_message(
+        &mut self,
+        ordinary: Ordinary,
+        sender_addr: SocketAddr,
+    ) -> Result<(), DiscoveryServerError> {
         // Ignore packets sent by ourselves
-        if ordinary.src_id == self.local_node.node_id() {
+        let sender_id = ordinary.src_id;
+        if sender_id == self.local_node.node_id() {
             return Ok(());
         }
         match ordinary.message {
-            Message::Ping(ping_message) => self.handle_ping(ping_message).await?,
+            Message::Ping(ping_message) => {
+                self.handle_ping(ping_message, sender_id, sender_addr)
+                    .await?
+            }
             Message::Pong(pong_message) => {
-                self.handle_pong(pong_message).await?;
+                self.handle_pong(pong_message, sender_id).await?;
             }
             Message::FindNode(find_node_message) => {
                 self.handle_find_node(find_node_message).await?;
