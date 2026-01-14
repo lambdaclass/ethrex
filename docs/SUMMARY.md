@@ -86,6 +86,7 @@
   - [Exit Window](./l2/fundamentals/exit_window.md)
   - [Fee token](./l2/fundamentals/fee_token.md)
   - [Shared Bridge](./l2/fundamentals/shared_bridge.md)
+  - [Aligned Layer Integration](./l2/fundamentals/ethrex_l2_aligned_integration.md)
 
 # Ethrex for developers
 
