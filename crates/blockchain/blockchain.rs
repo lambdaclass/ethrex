@@ -48,10 +48,11 @@ pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
 mod smoke_test;
+pub mod state_dump;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::{debug, info, instrument, trace};
+use ::tracing::{debug, info, instrument, trace, warn};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -85,6 +86,9 @@ use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
 use rustc_hash::FxHashMap;
+use state_dump::{
+    StateAccessTracker, StateDumpConfig, generate_and_save_dump,
+};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{
@@ -97,6 +101,8 @@ use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
 use vm::StoreVmDatabase;
+
+type StateTracker = Arc<Mutex<StateAccessTracker>>;
 
 #[cfg(feature = "metrics")]
 use ethrex_metrics::blocks::METRICS_BLOCKS;
@@ -188,6 +194,8 @@ pub struct BlockchainOptions {
     /// EIP-7872: User-configured maximum blobs per block for local building.
     /// If None, uses the protocol maximum for the current fork.
     pub max_blobs_per_block: Option<u32>,
+    /// State dump configuration
+    pub state_dump_config: Option<StateDumpConfig>,
 }
 
 impl Default for BlockchainOptions {
@@ -197,6 +205,7 @@ impl Default for BlockchainOptions {
             perf_logs_enabled: false,
             r#type: BlockchainType::default(),
             max_blobs_per_block: None,
+            state_dump_config: None,
         }
     }
 }
@@ -251,6 +260,26 @@ impl Blockchain {
         &self,
         block: &Block,
     ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
+        // Enable tracking if state dumps are configured
+        let tracker = if self
+            .options
+            .state_dump_config
+            .as_ref()
+            .map_or(false, |c| c.enabled)
+        {
+            Some(Arc::new(Mutex::new(StateAccessTracker::new())))
+        } else {
+            None
+        };
+        self.execute_block_with_tracking(block, tracker)
+    }
+
+    /// Executes a block with optional state tracking for diagnostics
+    fn execute_block_with_tracking(
+        &self,
+        block: &Block,
+        tracker: Option<StateTracker>,
+    ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -261,20 +290,86 @@ impl Blockchain {
         let chain_config = self.storage.get_chain_config();
 
         // Validate the block pre-execution
-        validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        if let Err(e) = validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)
+        {
+            if let Some(ref t) = tracker {
+                self.handle_validation_error(t, block, &e);
+            }
+            return Err(e);
+        }
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
+        let mut vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
+        if let Some(ref t) = tracker {
+            vm_db = vm_db.with_state_tracker(t.clone());
+        }
         let mut vm = self.new_evm(vm_db)?;
 
         let execution_result = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
-        validate_gas_used(&execution_result.receipts, &block.header)?;
-        validate_receipts_root(&block.header, &execution_result.receipts)?;
-        validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
+        if let Err(e) = validate_gas_used(&execution_result.receipts, &block.header) {
+            if let Some(ref t) = tracker {
+                self.handle_validation_error(t, block, &e);
+            }
+            return Err(e);
+        }
+        if let Err(e) = validate_receipts_root(&block.header, &execution_result.receipts) {
+            if let Some(ref t) = tracker {
+                self.handle_validation_error(t, block, &e);
+            }
+            return Err(e);
+        }
+        if let Err(e) =
+            validate_requests_hash(&block.header, &chain_config, &execution_result.requests)
+        {
+            if let Some(ref t) = tracker {
+                self.handle_validation_error(t, block, &e);
+            }
+            return Err(e);
+        }
 
         Ok((execution_result, account_updates))
+    }
+
+    fn handle_validation_error(
+        &self,
+        tracker: &StateTracker,
+        block: &Block,
+        error: &ChainError,
+    ) {
+        let error_str = format!("{:?}", error);
+        let block_number = block.header.number;
+        let block_hash = block.hash();
+
+        if let Some(config) = &self.options.state_dump_config {
+            if config.enabled && config.auto_save {
+                if let Some(path) = generate_and_save_dump(
+                    tracker,
+                    block_number,
+                    block_hash,
+                    &error_str,
+                    &config.dump_dir,
+                ) {
+                    // Log summary statistics
+                    if let Ok(t) = tracker.lock() {
+                        warn!(
+                            error_type = %error_str,
+                            block_number = block_number,
+                            block_hash = %format!("{:?}", block_hash),
+                            dump_path = %path.display(),
+                            accounts_accessed = t.accounts_accessed.len(),
+                            storage_slots_accessed = t.storage_accessed.values().map(|s| s.len()).sum::<usize>(),
+                            trie_nodes_accessed = t.trie_nodes_accessed.len(),
+                            code_hashes_accessed = t.code_hashes_accessed.len(),
+                            block_hashes_accessed = t.block_hashes_accessed.len(),
+                            "State dump generated for block validation failure"
+                        );
+                    }
+                    return;
+                }
+            }
+        }
     }
 
     /// Executes a block withing a new vm instance and state
