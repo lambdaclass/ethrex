@@ -31,7 +31,7 @@ Stage 0 ("Full Training Wheels") represents the basic operational requirements f
 
 Yes. As stated in [the introduction](./introduction.md):
 
-> ethrex is a framework that lets you launch your own L2 rollup or blockchain.
+> Ethrex is a framework that lets you launch your own L2 rollup or blockchain.
 
 #### Are L2 state roots posted on L1?
 
@@ -185,8 +185,8 @@ To achieve Stage 2, ethrex would need (in addition to Stage 1 requirements):
 | **ethrex L2** | Stage 0 | Forced inclusion, permissionless proving | Multi-proof (ZK + TEE) |
 | Arbitrum One | Stage 1 | 30-day window, permissionless proving | Optimistic (fraud proofs) |
 | Optimism | Stage 1 | 30-day window, permissionless proving | Optimistic (fault proofs) |
-| zkSync Era | Stage 0 | Exit window, SC restrictions | ZK validity proofs |
-| Starknet | Stage 0 | Exit window, forced inclusion | ZK validity proofs |
+| zkSync Era | Stage 0 | Exit window, prover decentralization | ZK validity proofs |
+| Starknet | Stage 1 | 30-day window, permissionless proving | ZK validity proofs (STARK) |
 
 ## Recommendations
 
