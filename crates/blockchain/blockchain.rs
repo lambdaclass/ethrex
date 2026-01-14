@@ -265,7 +265,7 @@ impl Blockchain {
             .options
             .state_dump_config
             .as_ref()
-            .map_or(false, |c| c.enabled)
+            .is_some_and(|c| c.enabled)
         {
             Some(Arc::new(Mutex::new(StateAccessTracker::new())))
         } else {
@@ -342,34 +342,31 @@ impl Blockchain {
         let block_number = block.header.number;
         let block_hash = block.hash();
 
-        if let Some(config) = &self.options.state_dump_config {
-            if config.enabled && config.auto_save {
-                if let Some(path) = generate_and_save_dump(
-                    tracker,
-                    block_number,
-                    block_hash,
-                    &error_str,
-                    &config.dump_dir,
-                ) {
-                    // Log summary statistics
-                    if let Ok(t) = tracker.lock() {
-                        warn!(
-                            error_type = %error_str,
-                            block_number = block_number,
-                            block_hash = %format!("{:?}", block_hash),
-                            dump_path = %path.display(),
-                            accounts_accessed = t.accounts_accessed.len(),
-                            storage_slots_accessed = t.storage_accessed.values().map(|s| s.len()).sum::<usize>(),
-                            trie_nodes_accessed = t.trie_nodes_accessed.len(),
-                            code_hashes_accessed = t.code_hashes_accessed.len(),
-                            block_hashes_accessed = t.block_hashes_accessed.len(),
-                            "State dump generated for block validation failure"
-                        );
-                    }
-                    return;
+        if let Some(config) = &self.options.state_dump_config
+            && config.enabled && config.auto_save
+            && let Some(path) = generate_and_save_dump(
+                tracker,
+                block_number,
+                block_hash,
+                &error_str,
+                &config.dump_dir,
+            ) {
+                // Log summary statistics
+                if let Ok(t) = tracker.lock() {
+                    warn!(
+                        error_type = %error_str,
+                        block_number = block_number,
+                        block_hash = %format!("{:?}", block_hash),
+                        dump_path = %path.display(),
+                        accounts_accessed = t.accounts_accessed.len(),
+                        storage_slots_accessed = t.storage_accessed.values().map(|s| s.len()).sum::<usize>(),
+                        trie_nodes_accessed = t.trie_nodes_accessed.len(),
+                        code_hashes_accessed = t.code_hashes_accessed.len(),
+                        block_hashes_accessed = t.block_hashes_accessed.len(),
+                        "State dump generated for block validation failure"
+                    );
                 }
             }
-        }
     }
 
     /// Executes a block withing a new vm instance and state

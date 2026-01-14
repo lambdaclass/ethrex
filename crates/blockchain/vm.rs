@@ -84,7 +84,7 @@ impl VmDatabase for StoreVmDatabase {
     )]
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
         if let Some(ref tracker) = self.state_tracker {
-            tracker.lock().ok().map(|mut t| t.record_account_access(address));
+            if let Some(mut t) = tracker.lock().ok() { t.record_account_access(address) }
         }
         self.store
             .get_account_state_by_root(self.state_root, address)
@@ -99,7 +99,7 @@ impl VmDatabase for StoreVmDatabase {
     )]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
         if let Some(ref tracker) = self.state_tracker {
-            tracker.lock().ok().map(|mut t| t.record_storage_access(address, key));
+            if let Some(mut t) = tracker.lock().ok() { t.record_storage_access(address, key) }
         }
         self.store
             .get_storage_at_root(self.state_root, address, key)
@@ -114,7 +114,7 @@ impl VmDatabase for StoreVmDatabase {
     )]
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
         if let Some(ref tracker) = self.state_tracker {
-            tracker.lock().ok().map(|mut t| t.record_block_hash_access(block_number));
+            if let Some(mut t) = tracker.lock().ok() { t.record_block_hash_access(block_number) }
         }
         let mut block_hash_cache = self
             .block_hash_cache
@@ -182,7 +182,7 @@ impl VmDatabase for StoreVmDatabase {
             return Ok(Code::default());
         }
         if let Some(ref tracker) = self.state_tracker {
-            tracker.lock().ok().map(|mut t| t.record_code_access(code_hash));
+            if let Some(mut t) = tracker.lock().ok() { t.record_code_access(code_hash) }
         }
         match self.store.get_account_code(code_hash) {
             Ok(Some(code)) => Ok(code),
