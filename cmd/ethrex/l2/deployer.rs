@@ -141,7 +141,7 @@ pub struct DeployerOptions {
         env = "ETHREX_DEPLOYER_GENESIS_L1_PATH",
         required_if_eq("deposit_rich", "true"),
         help_heading = "Deployer options",
-        help = "Path to the genesis file. The default is ../../fixtures/genesis/l1.json"
+        help = "Path to the genesis file. The default is ../../fixtures/genesis/l1-dev.json"
     )]
     pub genesis_l1_path: Option<PathBuf>,
     #[arg(
@@ -398,7 +398,7 @@ impl Default for DeployerOptions {
             env_file_path: Some(PathBuf::from(".env")),
             deposit_rich: true,
             private_keys_file_path: None,
-            genesis_l1_path: Some("../../fixtures/genesis/l1.json".into()),
+            genesis_l1_path: Some("../../fixtures/genesis/l1-dev.json".into()),
             genesis_l2_path: "../../fixtures/genesis/l2.json".into(),
             // 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
             committer_l1_address: H160([

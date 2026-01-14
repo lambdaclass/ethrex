@@ -52,7 +52,7 @@ impl Simulator {
         let jwt_secret = generate_jwt_secret();
         std::fs::write("jwt.hex", hex::encode(&jwt_secret)).unwrap();
 
-        let genesis_path = std::path::absolute("../../fixtures/genesis/l1.json")
+        let genesis_path = std::path::absolute("../../fixtures/genesis/l1-dev.json")
             .unwrap()
             .canonicalize()
             .unwrap();

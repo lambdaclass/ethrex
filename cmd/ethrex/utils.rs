@@ -192,7 +192,3 @@ pub fn display_chain_initialization(genesis: &Genesis) {
     info!("Genesis Block Hash: {hash:x}");
     info!("{border}");
 }
-
-pub fn is_memory_datadir(datadir: &Path) -> bool {
-    datadir.ends_with("memory")
-}
