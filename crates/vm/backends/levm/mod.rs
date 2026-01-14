@@ -236,7 +236,7 @@ impl LEVM {
             gas_price,
             block_excess_blob_gas,
             block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-            tx_blob_hashes: tx.blob_versioned_hashes(),
+            tx_blob_hashes: tx.blob_versioned_hashes().to_vec(),
             tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
             tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
             tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas(),

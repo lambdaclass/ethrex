@@ -138,7 +138,7 @@ impl RpcHandler for NewPayloadV3Request {
             &self.payload,
             context,
             block,
-            self.expected_blob_versioned_hashes.clone(),
+            &self.expected_blob_versioned_hashes,
         )
         .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -218,7 +218,7 @@ impl RpcHandler for NewPayloadV4Request {
             &self.payload,
             context,
             block,
-            self.expected_blob_versioned_hashes.clone(),
+            &self.expected_blob_versioned_hashes,
         )
         .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -625,17 +625,15 @@ async fn handle_new_payload_v3(
     payload: &ExecutionPayload,
     context: RpcApiContext,
     block: Block,
-    expected_blob_versioned_hashes: Vec<H256>,
+    expected_blob_versioned_hashes: &[H256],
 ) -> Result<PayloadStatus, RpcErr> {
     // V3 specific: validate blob hashes
-    let blob_versioned_hashes: Vec<H256> = block
-        .body
-        .transactions
-        .iter()
-        .flat_map(|tx| tx.blob_versioned_hashes())
-        .collect();
+    let mut blob_versioned_hashes = Vec::new();
+    for tx in &block.body.transactions {
+        blob_versioned_hashes.extend_from_slice(tx.blob_versioned_hashes());
+    }
 
-    if expected_blob_versioned_hashes != blob_versioned_hashes {
+    if expected_blob_versioned_hashes != blob_versioned_hashes.as_slice() {
         return Ok(PayloadStatus::invalid_with_err(
             "Invalid blob_versioned_hashes",
         ));
@@ -670,9 +668,7 @@ fn get_block_from_payload(
     let block_number = payload.block_number;
     info!(%block_hash, %block_number, "Received new payload");
 
-    payload
-        .clone()
-        .into_block(parent_beacon_block_root, requests_hash)
+    payload.into_block(parent_beacon_block_root, requests_hash)
 }
 
 fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), RpcErr> {
