@@ -102,6 +102,25 @@ jobs:
         run: |
           cargo fmt --all -- --check
 
+  validate-blobs:
+    # Fast validation to catch stale blobs early
+    # This prevents waiting for state-diff-test to fail
+    name: Validate Blob Fixtures
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Validate blobs match genesis
+        run: |
+          cd crates/l2
+          make validate-blobs
+
   build-docker:
     name: Build docker image
     runs-on: ubuntu-latest
@@ -541,7 +560,7 @@ jobs:
   state-diff-test:
     name: State Reconstruction Tests
     runs-on: ubuntu-latest
-    needs: [detect-changes, build-docker, build-docker-l2]
+    needs: [detect-changes, build-docker, build-docker-l2, validate-blobs]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
       - name: Checkout sources
