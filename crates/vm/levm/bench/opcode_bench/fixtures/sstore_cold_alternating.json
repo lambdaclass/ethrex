@@ -1,0 +1,8 @@
+{
+  "name": "sstore_cold_alternating",
+  "category": "storage",
+  "description": "SSTORE to a different slot each iteration using the loop counter as key",
+  "body_hex": "600160805155",
+  "counter_offset": 128,
+  "repeat": 1
+}
