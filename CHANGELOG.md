@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-01-14
+
+- Avoid unnecesary clones in engine_newPayloadV3/V4 [#5836](https://github.com/lambdaclass/ethrex/pull/5836)
+
 ### 2026-01-13
 
 - Improve ecrecover precompile by removing heap allocs and conversions [#5709](https://github.com/lambdaclass/ethrex/pull/5709)
