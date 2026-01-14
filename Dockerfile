@@ -33,8 +33,14 @@ RUN cargo chef prepare --recipe-path recipe.json
 # previous stage has changed, which only happens when dependencies change.
 FROM chef AS builder
 
+# Build configuration
+# PROFILE: Cargo profile to use (release, release-with-debug-assertions, etc.)
+# BUILD_FLAGS: Additional cargo flags (features, etc.)
+ARG PROFILE="release"
+ARG BUILD_FLAGS=""
+
 COPY --from=planner /ethrex/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json $BUILD_FLAGS
 
 RUN  if [ "$(uname -m)" = aarch64 ]; \
     then \
@@ -54,14 +60,8 @@ COPY fixtures/genesis ./fixtures/genesis
 COPY .git ./.git
 COPY Cargo.* ./
 COPY fixtures ./fixtures
-COPY .git ./.git
 COPY .cargo/ ./.cargo
 
-# Build configuration
-# PROFILE: Cargo profile to use (release, release-with-debug-assertions, etc.)
-# BUILD_FLAGS: Additional cargo flags (features, etc.)
-ARG PROFILE="release"
-ARG BUILD_FLAGS=""
 ENV COMPILE_CONTRACTS=true
 
 RUN cargo build --profile $PROFILE $BUILD_FLAGS
