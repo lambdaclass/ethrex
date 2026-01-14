@@ -569,7 +569,8 @@ impl PeerTable {
         }
     }
 
-    /// Get peer channels for communication
+    /// Get peer channels for communication. It returns a PeerConnection that implements
+    /// at least one of the required capabilities.
     pub async fn get_peer_connections(
         &mut self,
         capabilities: &[Capability],

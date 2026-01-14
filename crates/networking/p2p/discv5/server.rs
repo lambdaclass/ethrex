@@ -146,7 +146,8 @@ impl DiscoveryServer {
             0x00 => self.handle_ordinary(packet, from).await,
             0x01 => self.handle_who_are_you(packet, from).await,
             0x02 => {
-                tracing::info!("NonWhoAreYou!");
+                // Handshake handling not yet implemented
+                tracing::info!("Received handsake message");
                 Ok(())
             }
             _ => Err(PacketCodecError::MalformedData)?,
@@ -536,7 +537,8 @@ impl GenServer for DiscoveryServer {
                 let _ = self
                     .handle_packet(*message)
                     .await
-                    .inspect_err(|e| error!(err=?e, "Error Handling Discovery message"));
+                    // log level trace as we don't want to spam decoding errors from bad peers.
+                    .inspect_err(|e| trace!(err=?e, "Error Handling Discovery message"));
             }
             Self::CastMsg::Revalidate => {
                 trace!(received = "Revalidate");
@@ -596,29 +598,36 @@ pub fn lookup_interval_function(progress: f64, lower_limit: f64, upper_limit: f6
 
 #[cfg(test)]
 mod tests {
-    // use rand::{SeedableRng, rngs::StdRng};
+    use std::sync::Arc;
+    use rand::{SeedableRng, rngs::StdRng};
+    use secp256k1::SecretKey;
+    use tokio::net::UdpSocket;
+    use crate::{discv5::server::DiscoveryServer, peer_table::PeerTable, types::{Node, NodeRecord}};
 
-    // use crate::discv5::server::DiscoveryServer;
+    #[tokio::test]
+    async fn test_next_nonce_counter() {
+        let mut rng = StdRng::seed_from_u64(7);
+        let local_node = Node::from_enode_url(
+            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+        ).expect("Bad enode url");
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+        let mut server = DiscoveryServer {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:30303").await.unwrap()),
+            peer_table: PeerTable::spawn(10),
+            initial_lookup_interval: 1000.0,
+            counter: 0,
+            messages_by_nonce: Default::default(),
+        };
 
-    // #[test]
-    // fn test_next_nonce_counter() {
-    //     let mut rng = StdRng::seed_from_u64(7);
-    //     let server = DiscoveryServer {
-    //         local_node: Default::default(),
-    //         local_node_record: todo!(),
-    //         signer: todo!(),
-    //         udp_socket: todo!(),
-    //         store: todo!(),
-    //         peer_table: todo!(),
-    //         initial_lookup_interval: todo!(),
-    //         counter: 0,
-    //     };
+        let n1 = server.next_nonce(&mut rng);
+        let n2 = server.next_nonce(&mut rng);
 
-    //     let n1 = server.next_nonce(&mut rng);
-    //     let n2 = server.next_nonce(&mut rng);
-
-    //     assert_eq!(&n1[..4], &[0, 0, 0, 0]);
-    //     assert_eq!(&n2[..4], &[0, 0, 0, 1]);
-    //     assert_ne!(&n1[4..], &n2[4..]);
-    // }
+        assert_eq!(&n1[..4], &[0, 0, 0, 0]);
+        assert_eq!(&n2[..4], &[0, 0, 0, 1]);
+        assert_ne!(&n1[4..], &n2[4..]);
+    }
 }
