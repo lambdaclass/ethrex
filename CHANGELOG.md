@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-01-14
+
+- Improve SSTORE opcode by adding a (address, key) → (current, original) cache #[5835](https://github.com/lambdaclass/ethrex/pull/5835)
+
 ### 2026-01-13
 
 - Improve ecrecover precompile by removing heap allocs and conversions [#5709](https://github.com/lambdaclass/ethrex/pull/5709)
