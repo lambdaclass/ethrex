@@ -794,7 +794,10 @@ mod tests {
     use ethrex_common::{H264, H512};
     use hex_literal::hex;
     use secp256k1::SecretKey;
-    use std::{net::{Ipv4Addr, SocketAddr}, str::FromStr};
+    use std::{
+        net::{Ipv4Addr, SocketAddr},
+        str::FromStr,
+    };
 
     /// A Packet Wrapper to unify the API for the different packet types
     #[derive(Debug, Clone, PartialEq, Eq)]

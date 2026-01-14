@@ -155,7 +155,6 @@ impl DiscoveryServer {
                 tracing::info!("Unexpected flag {f}");
                 Err(PacketCodecError::MalformedData)?
             }
-
         }
     }
     async fn handle_ordinary(
