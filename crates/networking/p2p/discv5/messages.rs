@@ -8,7 +8,7 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
-use std::{array::TryFromSliceError, fmt::Display, net::IpAddr};
+use std::{array::TryFromSliceError, fmt::Display, net::SocketAddr};
 
 use crate::types::NodeRecord;
 
@@ -571,7 +571,7 @@ impl RLPDecode for PingMessage {
 pub struct PongMessage {
     pub req_id: Bytes,
     pub enr_seq: u64,
-    pub recipient_addr: IpAddr,
+    pub recipient_addr: SocketAddr,
 }
 
 impl RLPEncode for PongMessage {
@@ -579,23 +579,26 @@ impl RLPEncode for PongMessage {
         Encoder::new(buf)
             .encode_field(&self.req_id)
             .encode_field(&self.enr_seq)
-            .encode_field(&self.recipient_addr)
+            .encode_field(&self.recipient_addr.ip())
+            .encode_field(&self.recipient_addr.port())
             .finish();
     }
 }
 
 impl RLPDecode for PongMessage {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        use std::net::IpAddr;
         let decoder = Decoder::new(rlp)?;
         let (req_id, decoder) = decoder.decode_field("req_id")?;
         let (enr_seq, decoder) = decoder.decode_field("enr_seq")?;
-        let (recipient_addr, decoder) = decoder.decode_field("recipient_addr")?;
+        let (recipient_ip, decoder): (IpAddr, _) = decoder.decode_field("recipient_ip")?;
+        let (recipient_port, decoder): (u16, _) = decoder.decode_field("recipient_port")?;
 
         Ok((
             Self {
                 req_id,
                 enr_seq,
-                recipient_addr,
+                recipient_addr: SocketAddr::new(recipient_ip, recipient_port),
             },
             decoder.finish()?,
         ))
@@ -785,7 +788,7 @@ mod tests {
     use ethrex_common::{H264, H512};
     use hex_literal::hex;
     use secp256k1::SecretKey;
-    use std::{net::Ipv4Addr, str::FromStr};
+    use std::{net::{Ipv4Addr, SocketAddr}, str::FromStr};
 
     /// A Packet Wrapper to unify the API for the different packet types
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1639,7 +1642,7 @@ mod tests {
         let pkt = PongMessage {
             req_id: Bytes::from_static(&[1, 2, 3, 4]),
             enr_seq: 4321,
-            recipient_addr: Ipv4Addr::BROADCAST.into(),
+            recipient_addr: SocketAddr::new(Ipv4Addr::BROADCAST.into(), 30303),
         };
 
         let buf = pkt.encode_to_vec();

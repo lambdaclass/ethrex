@@ -321,7 +321,7 @@ impl DiscoveryServer {
         let pong = Message::Pong(PongMessage {
             req_id: ping_message.req_id,
             enr_seq: self.local_node_record.seq,
-            recipient_addr: sender_addr.ip(),
+            recipient_addr: sender_addr,
         });
 
         // Get sender node for sending response (need public key for encryption)
