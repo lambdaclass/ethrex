@@ -1,3 +1,4 @@
+use crate::state_dump::StateAccessTracker;
 use ethrex_common::{
     Address, H256, U256,
     constants::EMPTY_KECCACK_HASH,
@@ -12,6 +13,8 @@ use std::{
 };
 use tracing::instrument;
 
+type StateTracker = Arc<Mutex<StateAccessTracker>>;
+
 #[derive(Clone)]
 pub struct StoreVmDatabase {
     pub store: Store,
@@ -21,6 +24,7 @@ pub struct StoreVmDatabase {
     // and may need to access hashes of blocks previously executed in the batch
     pub block_hash_cache: Arc<Mutex<BTreeMap<BlockNumber, BlockHash>>>,
     pub state_root: H256,
+    pub state_tracker: Option<StateTracker>,
 }
 
 impl StoreVmDatabase {
@@ -40,6 +44,7 @@ impl StoreVmDatabase {
             block_hash: block_header.hash(),
             block_hash_cache: Arc::new(Mutex::new(BTreeMap::new())),
             state_root: block_header.state_root,
+            state_tracker: None,
         })
     }
 
@@ -60,7 +65,13 @@ impl StoreVmDatabase {
             block_hash: block_header.hash(),
             block_hash_cache: Arc::new(Mutex::new(block_hash_cache)),
             state_root: block_header.state_root,
+            state_tracker: None,
         })
+    }
+
+    pub fn with_state_tracker(mut self, tracker: StateTracker) -> Self {
+        self.state_tracker = Some(tracker);
+        self
     }
 }
 
@@ -72,6 +83,9 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
+        if let Some(ref tracker) = self.state_tracker {
+            tracker.lock().ok().map(|mut t| t.record_account_access(address));
+        }
         self.store
             .get_account_state_by_root(self.state_root, address)
             .map_err(|e| EvmError::DB(e.to_string()))
@@ -84,6 +98,9 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
+        if let Some(ref tracker) = self.state_tracker {
+            tracker.lock().ok().map(|mut t| t.record_storage_access(address, key));
+        }
         self.store
             .get_storage_at_root(self.state_root, address, key)
             .map_err(|e| EvmError::DB(e.to_string()))
@@ -96,6 +113,9 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
+        if let Some(ref tracker) = self.state_tracker {
+            tracker.lock().ok().map(|mut t| t.record_block_hash_access(block_number));
+        }
         let mut block_hash_cache = self
             .block_hash_cache
             .lock()
@@ -120,6 +140,7 @@ impl VmDatabase for StoreVmDatabase {
             }
         // If our block is not canonical then we must look for the target in our block's ancestors
         } else {
+            // Block is not canonical, look for target in block's ancestors
             // Find the oldest known hash after the target block to shortcut the lookup
             let oldest_succesor = block_hash_cache
                 .iter()
@@ -159,6 +180,9 @@ impl VmDatabase for StoreVmDatabase {
     fn get_account_code(&self, code_hash: H256) -> Result<Code, EvmError> {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Code::default());
+        }
+        if let Some(ref tracker) = self.state_tracker {
+            tracker.lock().ok().map(|mut t| t.record_code_access(code_hash));
         }
         match self.store.get_account_code(code_hash) {
             Ok(Some(code)) => Ok(code),
