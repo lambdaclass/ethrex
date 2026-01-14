@@ -9,14 +9,14 @@ use crate::modules::{
 use std::str::FromStr;
 
 use ethrex_common::{
+    Address, Bytes, H160, H256, U256,
     constants::GAS_PER_BLOB,
     types::{
-        AuthorizationTuple, Fork, Genesis, GenesisAccount, TxKind, BASE_FEE_MAX_CHANGE_DENOMINATOR,
+        AuthorizationTuple, BASE_FEE_MAX_CHANGE_DENOMINATOR, Fork, Genesis, GenesisAccount, TxKind,
     },
-    Address, Bytes, H160, H256, U256,
 };
 use ethrex_common::{
-    serde_utils::{bytes, u256, u64},
+    serde_utils::{bytes, u64, u256},
     types::{BlobSchedule, ChainConfig},
 };
 
