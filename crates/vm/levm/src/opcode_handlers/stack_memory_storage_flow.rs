@@ -167,8 +167,8 @@ impl<'a> VM<'a> {
 
         // Get current and original (pre-tx) values.
         let key = u256_to_h256(storage_slot_key);
-        let (current_value, storage_slot_was_cold) = self.access_storage_slot(to, key)?;
-        let original_value = self.get_original_storage(to, key)?;
+        let (current_value, original_value, storage_slot_was_cold) =
+            self.access_storage_slot_with_original(to, key)?;
 
         // Gas Refunds
         // Sync gas refund with global env, ensuring consistency accross contexts.

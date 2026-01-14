@@ -592,7 +592,8 @@ impl<'a> VM<'a> {
     }
 
     fn prepare_execution(&mut self) -> Result<(), VMError> {
-        for hook in self.hooks.clone() {
+        for i in 0..self.hooks.len() {
+            let hook = self.hooks[i].clone();
             hook.borrow_mut().prepare_execution(self)?;
         }
 
@@ -603,7 +604,8 @@ impl<'a> VM<'a> {
         &mut self,
         mut ctx_result: ContextResult,
     ) -> Result<ExecutionReport, VMError> {
-        for hook in self.hooks.clone() {
+        for i in 0..self.hooks.len() {
+            let hook = self.hooks[i].clone();
             hook.borrow_mut()
                 .finalize_execution(self, &mut ctx_result)?;
         }

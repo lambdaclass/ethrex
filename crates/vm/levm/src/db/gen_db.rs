@@ -480,6 +480,35 @@ impl<'a> VM<'a> {
         Ok((storage_slot, storage_slot_was_cold))
     }
 
+    /// Accesses a storage slot and returns both current and original values.
+    ///
+    /// This is an optimized version that combines `access_storage_slot` and
+    /// `get_original_storage` to avoid redundant cache lookups. Use this
+    /// for SSTORE which needs both values.
+    ///
+    /// Returns (current_value, original_value, was_cold).
+    pub fn access_storage_slot_with_original(
+        &mut self,
+        address: Address,
+        key: H256,
+    ) -> Result<(U256, U256, bool), InternalError> {
+        let storage_slot_was_cold = !self.substate.add_accessed_slot(address, key);
+        let current_value = self.get_storage_value(address, key)?;
+
+        // Get or populate original value. On first access within a transaction,
+        // current_value IS the original value, so we can reuse it directly.
+        let original_value =
+            if let Some(value) = self.storage_original_values.get(&(address, key)) {
+                *value
+            } else {
+                self.storage_original_values
+                    .insert((address, key), current_value);
+                current_value
+            };
+
+        Ok((current_value, original_value, storage_slot_was_cold))
+    }
+
     /// Gets storage value of an account, caching it if not already cached.
     #[inline(always)]
     pub fn get_storage_value(
