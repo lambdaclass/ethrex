@@ -1,0 +1,7 @@
+{
+  "name": "sstore_set",
+  "category": "storage",
+  "description": "SSTORE writing non-zero value to an empty slot",
+  "body_hex": "7f00000000000000000000000000000000000000000000000000000000000000037f000000000000000000000000000000000000000000000000000000000000000155",
+  "repeat": 10
+}

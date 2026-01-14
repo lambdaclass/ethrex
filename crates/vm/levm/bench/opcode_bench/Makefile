@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-OPCODE_BENCH := cargo run --bin opcode_bench --
+OPCODE_BENCH := cargo run --release --bin opcode_bench --
 
 RUNS ?= 10
 ITERS ?= 100000
