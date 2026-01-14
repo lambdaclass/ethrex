@@ -8,9 +8,8 @@ use crate::modules::{
 };
 use std::str::FromStr;
 
-use ::bytes::Bytes;
 use ethrex_common::{
-    Address, H160, H256, U256,
+    Address, Bytes, H160, H256, U256,
     constants::GAS_PER_BLOB,
     types::{
         AuthorizationTuple, BASE_FEE_MAX_CHANGE_DENOMINATOR, Fork, Genesis, GenesisAccount, TxKind,
@@ -430,7 +429,7 @@ impl From<&AccountState> for GenesisAccount {
     fn from(value: &AccountState) -> Self {
         Self {
             code: value.code.clone(),
-            storage: value.storage.clone(),
+            storage: value.storage.iter().map(|(&k, &v)| (k, v)).collect(),
             balance: value.balance,
             nonce: value.nonce,
         }
