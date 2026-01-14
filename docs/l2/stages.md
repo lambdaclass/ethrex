@@ -280,6 +280,10 @@ The path to **Stage 1** is clear but requires implementing censorship-resistant 
 ### Rollup Comparisons
 - [Taiko Alethia on L2Beat](https://l2beat.com/scaling/projects/taiko)
 - [Scroll on L2Beat](https://l2beat.com/scaling/projects/scroll)
+- [zkSync Era on L2Beat](https://l2beat.com/scaling/projects/zksync-era)
+- [Starknet on L2Beat](https://l2beat.com/scaling/projects/starknet)
+- [Arbitrum One on L2Beat](https://l2beat.com/scaling/projects/arbitrum)
+- [Optimism on L2Beat](https://l2beat.com/scaling/projects/optimism)
 - [Surge: A Based Rollup Template](https://www.nethermind.io/blog/surge-a-based-rollup-template-designed-for-ethereums-future)
 
 ### ethrex Documentation
