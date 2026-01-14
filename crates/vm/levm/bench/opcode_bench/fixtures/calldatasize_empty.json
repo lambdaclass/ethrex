@@ -3,5 +3,5 @@
   "category": "calldata",
   "description": "CALLDATASIZE with empty calldata",
   "body_hex": "3650",
-  "repeat": 10
+  "repeat": 100
 }

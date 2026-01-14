@@ -3,5 +3,5 @@
   "category": "environment",
   "description": "COINBASE returns block beneficiary",
   "body_hex": "4150",
-  "repeat": 10
+  "repeat": 100
 }

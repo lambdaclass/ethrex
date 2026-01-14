@@ -3,5 +3,5 @@
   "category": "code",
   "description": "CODESIZE returns contract bytecode length",
   "body_hex": "3850",
-  "repeat": 10
+  "repeat": 50
 }

@@ -3,5 +3,5 @@
   "category": "environment",
   "description": "BASEFEE returns base fee",
   "body_hex": "4850",
-  "repeat": 10
+  "repeat": 100
 }

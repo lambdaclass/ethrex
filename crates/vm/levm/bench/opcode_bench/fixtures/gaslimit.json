@@ -3,5 +3,5 @@
   "category": "environment",
   "description": "GASLIMIT returns block gas limit",
   "body_hex": "4550",
-  "repeat": 10
+  "repeat": 100
 }

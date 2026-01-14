@@ -3,5 +3,5 @@
   "category": "environment",
   "description": "TIMESTAMP returns block time",
   "body_hex": "4250",
-  "repeat": 10
+  "repeat": 100
 }

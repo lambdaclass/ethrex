@@ -3,5 +3,5 @@
   "category": "memory",
   "description": "MLOAD from offset 0x40 (default zero)",
   "body_hex": "60405150",
-  "repeat": 10
+  "repeat": 100
 }

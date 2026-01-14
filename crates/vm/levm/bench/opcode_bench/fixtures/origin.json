@@ -3,5 +3,5 @@
   "category": "environment",
   "description": "ORIGIN returns tx origin",
   "body_hex": "3250",
-  "repeat": 10
+  "repeat": 100
 }

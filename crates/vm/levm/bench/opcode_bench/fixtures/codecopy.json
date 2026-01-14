@@ -3,5 +3,5 @@
   "category": "code",
   "description": "CODECOPY 32 bytes to memory",
   "body_hex": "60206000600039",
-  "repeat": 10
+  "repeat": 20
 }

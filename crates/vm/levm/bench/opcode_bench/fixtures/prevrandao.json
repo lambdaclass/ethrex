@@ -3,5 +3,5 @@
   "category": "environment",
   "description": "PREVRANDAO returns mix digest",
   "body_hex": "4450",
-  "repeat": 10
+  "repeat": 100
 }

@@ -3,5 +3,5 @@
   "category": "environment",
   "description": "CHAINID returns chain id",
   "body_hex": "4650",
-  "repeat": 10
+  "repeat": 100
 }
