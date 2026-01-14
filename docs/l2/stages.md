@@ -1,124 +1,249 @@
-# Rollup stages and Ethrex
+# Rollup Stages and ethrex
 
-This document explains how the [L2Beat rollup stage definitions](https://l2beat.com/stages) map to the current Ethrex L2 stack.
+This document explains how the [L2Beat rollup stage definitions](https://l2beat.com/stages) map to the current ethrex L2 stack.
 
-Stages are properties of a **deployed** L2, whereas Ethrex is a framework that different projects may configure and govern in their own way. In what follows we make two simplifying assumptions:
+## Important Distinctions
 
-- If Ethrex provides the functionality required to deploy a Stage X rollup, we consider Ethrex capable of achieving Stage X, even if a particular deployment chooses not to enable some of these features (for example, not using a Security Council).
-- When we talk about **Ethrex L2** we are referring to Ethrex in **rollup mode**, not Validium. In rollup mode, Ethereum L1 is the data availability layer; in Validium mode it is not.
+Stages are properties of a **deployed** L2, whereas ethrex is a framework that different projects may configure and govern in their own way. In what follows we make two simplifying assumptions:
 
-The sections below answer every question or requirement of each Stage from the perspective of Ethrex’s default rollup configuration.
+- If ethrex provides the functionality required to deploy a Stage X rollup, we consider ethrex capable of achieving Stage X, even if a particular deployment chooses not to enable some features.
+- When we talk about **ethrex L2** we are referring to ethrex in **rollup mode**, not Validium. In rollup mode, Ethereum L1 is the data availability layer; in Validium mode it is not.
+
+The L2Beat framework evaluates *decentralization* specifically, not security from bugs. A Stage 2 rollup could still have vulnerabilities if the proof system is experimental or unaudited.
 
 ## Stage 0
 
+Stage 0 ("Full Training Wheels") represents the basic operational requirements for a rollup.
+
 ### Summary
 
-| Requirement | Status | Reason (short) |
-| --- | --- | --- |
-| Project calls itself a rollup | ✅ | Docs describe Ethrex as a framework to launch an L2 rollup. |
-| L2 state roots posted on L1 | ✅ | Each committed batch stores `newStateRoot` in `OnChainProposer` on L1. |
-| Data availability on L1 | ✅ | In rollup mode every batch must publish a non‑zero EIP‑4844 blob hash. |
-| Software to reconstruct state | ✅ | Node, blobs tooling, and prover docs describe how to replay blobs and rebuild state. |
-| Proper proof system used | ✅ | Batches can be verified using zkVM validity proofs (SP1/RISC0) or TDX attestations, and zk proofs can optionally be aggregated via Aligned. |
+| Requirement | Status | Details |
+|-------------|--------|---------|
+| Project calls itself a rollup | ✅ Met | Docs describe ethrex as a framework to launch an L2 rollup |
+| L2 state roots posted on L1 | ✅ Met | Each committed batch stores `newStateRoot` in `OnChainProposer` |
+| Data availability on L1 | ✅ Met | In rollup mode every batch must publish a non-zero EIP-4844 blob hash |
+| Software to reconstruct state | ✅ Met | Node, blobs tooling, and prover docs describe how to rebuild state |
+| Proper proof system used | ✅ Met | Batches verified using zkVM validity proofs (SP1/RISC0) or TDX attestations |
 
-### Does the project call itself a rollup?
+### Detailed Analysis
 
-Yes.
+#### Does the project call itself a rollup?
 
-As pointed out in [the introduction](./introduction.md):
+Yes. As stated in [the introduction](./introduction.md):
 
-> Ethrex is a framework that lets you launch your own L2 rollup or blockchain.
+> ethrex is a framework that lets you launch your own L2 rollup or blockchain.
 
-### Are L2 state roots posted on L1?
+#### Are L2 state roots posted on L1?
 
-Yes.
+Yes. Every time a batch is committed to the `OnChainProposer` on L1, the new L2 state root is sent and stored in the `batchCommitments` mapping as `newStateRoot` for that batch.
 
-Every time a batch is committed to the `OnChainProposer` on L1, the new L2 state root is sent and stored in the `batchCommitments` mapping as `newStateRoot` for that batch.
+#### Does the project provide data availability on L1?
 
-### Does the project provide data availability on L1?
+Yes. When committing a batch in rollup mode (non-validium), the transaction must include a non-zero blob hash, so a blob MUST be sent to the `OnChainProposer` on L1.
 
-Yes.
+- The [architecture docs](./architecture/overview.md) state that the blob contains the **RLP-encoded L2 blocks and fee configuration**
+- The blob commitment (`blobKZGVersionedHash`) is included in the batch commitment and re-checked during proof verification
 
-When committing a batch in non‑validium (rollup) mode the transaction must include a non‑zero blob hash, so a blob MUST be sent in the transaction to the `OnChainProposer` on L1.
+This means all data needed to reconstruct the L2 (transactions and state) is published on L1 as blobs.
 
-- The [architecture docs](./architecture/overview.md) state that the blob contains the **RLP‑encoded L2 blocks and fee configuration**.
-- The blob commitment (`blobKZGVersionedHash` / `blobVersionedHash`) is included in the batch commitment and re‑checked during proof verification.
-
-This means that all data needed to reconstruct the L2 (transactions and state) is published on L1 as blobs.
-
-### Is software capable of reconstructing the rollup’s state available?
+#### Is software capable of reconstructing the rollup's state available?
 
 Yes.
 
-- The L2 node can follow the L1 commitments and blobs to reconstruct the L2 state.
-- The [State reconstruction blobs](../developers/l2/state-reconstruction-blobs.md) doc explains how to generate and use blobs for a test that replays a fixed set of blobs to reconstruct a known final state.
-- The [“Reconstructing state or Data Availability”](./fundamentals/data_availability.md#reconstructing-state-or-data-availability) and [“EIP‑4844 (a.k.a. Blobs)”](./fundamentals/data_availability.md#eip-4844-aka-blobs) sections and the [prover docs](../prover/prover.md) describe how the published data is used to reconstruct and verify state.
+- The L2 node can follow the L1 commitments and blobs to reconstruct the L2 state
+- The [state reconstruction blobs](../developers/l2/state-reconstruction-blobs.md) doc explains how to generate and use blobs for replaying state
+- The [data availability](./fundamentals/data_availability.md) and [prover docs](../prover/prover.md) describe how published data is used to reconstruct and verify state
 
-### Does the project use a proper proof system?
+#### Does the project use a proper proof system?
 
 Yes, assuming proofs are enabled.
 
-Ethrex supports multiple proving mechanisms: zkVM-based validity proofs (for example SP1 and RISC0) and TDX-based attestations. ZK proofs can optionally be aggregated and verified via Aligned. The `OnChainProposer` contract can be configured to require any combination of these mechanisms when verifying. A batch is only verified on L1 if all configured proofs pass and their public inputs match the committed data (state roots, withdrawals, blobs, etc.).
+ethrex supports multiple proving mechanisms:
+- **zkVM validity proofs**: SP1 and RISC0
+- **TDX attestations**: TEE-based verification
+- **Aligned Layer**: Optional proof aggregation for cost efficiency
 
-### Are there at least 5 external actors that can submit a fraud proof?
+The `OnChainProposer` contract can be configured to require any combination of these mechanisms. A batch is only verified on L1 if all configured proofs pass and their public inputs match the committed data (state roots, withdrawals, blobs, etc.).
 
-Not applicable, and not implemented as a fraud‑proof system.
+#### Are there at least 5 external actors that can submit a fraud proof?
 
-Ethrex uses **validity proofs**, not fraud proofs. There is no on‑chain “challenge game” where watchers can submit alternate traces to invalidate a state root.
+Not applicable. ethrex uses **validity proofs**, not fraud proofs. There is no on-chain "challenge game" where watchers submit alternate traces to invalidate a state root.
+
+### Stage 0 Assessment
+
+**ethrex L2 meets all Stage 0 requirements.**
 
 ## Stage 1
 
+Stage 1 ("Limited Training Wheels") requires that users have trustless exit guarantees, with a Security Council retaining only limited emergency powers.
+
+### Core Principle
+
+> "The only way (other than bugs) for a rollup to indefinitely block an L2→L1 message or push an invalid L2→L1 message is by compromising ≥75% of the Security Council."
+
 ### Summary
 
-| Requirement | Status | Reason (short) |
-| --- | --- | --- |
-| Censorship‑resistant L2→L1 messages | ❌ | Sequencer can indefinitely censor withdrawals; there is no forced‑inclusion mechanism on L1. |
-| Sequencer cannot push invalid L2→L1 messages | ✅ | Sequencer alone cannot make L1 accept an invalid withdrawal; this would require a contract change and VK update controlled by the Security Council (`owner`). |
-| ≥7‑day exit window for non‑SC upgrades | ✅ | Only the Security Council (`owner`) can upgrade contracts; there is no upgrade path from entities outside the Council. |
+| Requirement | Status | Details |
+|-------------|--------|---------|
+| Censorship-resistant L2→L1 messages | ❌ Gap | Sequencer can indefinitely censor withdrawals; no forced-inclusion mechanism |
+| Sequencer cannot push invalid messages | ✅ Met | Invalid withdrawals require contract/VK changes controlled by owner |
+| ≥7-day exit window for non-SC upgrades | ✅ Met | Only owner can upgrade; no non-SC upgrade path exists |
 
-### The only way (other than bugs) for a rollup to indefinitely block an L2→L1 message (e.g. a withdrawal) or push an invalid L2→L1 message (e.g. an invalid withdrawal) is by compromising ≥75% of the Security Council.
+### Detailed Analysis
 
-Ethrex does **not** meet this requirement today.
+#### Can L2→L1 messages be censored?
 
-Both `OnChainProposer` and `CommonBridge` are upgradeable contracts, and both are controlled by a single `owner` address. Ethrex itself does not hard‑code a Security Council, but a deployment can introduce one by making the `owner` a multisig. According to L2Beat requirements this Council should have at least 8 members. If the owner is treated as a Security Council there are no actors with more authority than this multisig.
+**Yes, this is the main Stage 1 gap.**
 
-- The sequencer can indefinitely block/censor an L2→L1 message by simply not including the withdrawal transaction in an L2 block. This does not require compromising the owner / Security Council. This could be addressed by implementing forced inclusion of withdrawals enforced by L1 contracts, where a user can submit their withdrawal directly on L1 and the sequencer must include it in a subsequent batch within a bounded time window or lose the ability to continue sequencing.
-- The sequencer cannot unilaterally make L1 accept an invalid L2→L1 message; this would require changing contract code and updating the verifying key in `OnChainProposer`, and only the Security Council (owner) is capable of performing those upgrades.
+The sequencer can indefinitely block/censor an L2→L1 message (e.g., a withdrawal) by simply not including the withdrawal transaction in an L2 block. This does not require compromising the owner/Security Council.
 
-### Upgrades initiated by entities outside of the Security Council are allowed if they provide at least a 7‑day exit window.
+**What's missing**: A forced-inclusion mechanism where users can submit their withdrawal directly on L1, and the sequencer must include it in a subsequent batch within a bounded time window or lose sequencing rights.
 
-In Ethrex L2 contracts there is no concept of an exit window, but there are also no entities other than the Security Council (`owner`) that can update them. Therefore, upgrades initiated by entities outside the Security Council are not possible; if such an upgrade path were introduced, it would need to provide the required exit window.
+> [!NOTE]
+> This is the primary blocker for Stage 1 compliance. Implementing forced inclusion of withdrawals enforced by L1 contracts would address this gap.
+
+#### Can the sequencer push invalid L2→L1 messages?
+
+**No.** The sequencer cannot unilaterally make L1 accept an invalid L2→L1 message. This would require:
+- Changing contract code
+- Updating the verifying key in `OnChainProposer`
+
+Only the Security Council (owner) can perform those upgrades.
+
+#### What about upgrades from entities outside the Security Council?
+
+In ethrex L2 contracts, there are no entities other than the owner that can perform upgrades. Therefore:
+- Upgrades initiated by entities outside the Security Council are not possible
+- If such an upgrade path were introduced, it would need to provide the required 7-day exit window
+
+#### Security Council Configuration
+
+Both `OnChainProposer` and `CommonBridge` are upgradeable contracts controlled by a single `owner` address. ethrex itself does not hard-code a Security Council, but a deployment can introduce one by making the `owner` a multisig.
+
+According to L2Beat requirements, the Security Council should have:
+- At least 8 members
+- ≥75% threshold for critical actions
+- Diverse signers from different organizations/jurisdictions
+
+### Stage 1 Assessment
+
+**ethrex L2 does not meet Stage 1 requirements today.**
+
+The main gap is censorship-resistant L2→L1 messages. The sequencer can ignore withdrawal transactions indefinitely, and there is no forced-inclusion mechanism (unlike the existing forced-inclusion mechanism for deposits).
+
+### Path to Stage 1
+
+To achieve Stage 1, ethrex would need:
+
+1. **Forced withdrawal inclusion**: Implement an L1 mechanism where users can submit withdrawals directly, with sequencer penalties for non-inclusion
+2. **Security Council multisig**: Deploy owner as an 8+ member multisig with ≥75% threshold
+3. **Exit window enforcement**: Add timelock delays for non-emergency upgrades
 
 ## Stage 2
 
-Stage 2 focuses on **fully permissionless proving / challenging** and on tightly constraining emergency upgrade powers.
+Stage 2 ("No Training Wheels") requires fully permissionless proving and tightly constrained emergency upgrade powers.
 
 ### Summary
 
-| Requirement | Status | Reason (short) |
-| --- | --- | --- |
-| Permissionless validity proof system | ❌ | In the standard `OnChainProposer` only authorized sequencer addresses can commit and verify batches. |
-| ≥30‑day exit window for unwanted upgrades | ❌ | There is no protocol‑level exit window; UUPS upgrades by `owner` have no mandatory delay. |
-| Security Council restricted to on‑chain errors | ❌ | The `owner` can pause or upgrade contracts for any reason allowed by the implementation. |
+| Requirement | Status | Details |
+|-------------|--------|---------|
+| Permissionless validity proofs | ❌ Gap | Only authorized sequencers can commit and verify batches |
+| ≥30-day exit window | ❌ Gap | No protocol-level exit window; UUPS upgrades have no mandatory delay |
+| SC restricted to on-chain errors | ❌ Gap | Owner can pause/upgrade for any reason |
 
-### Is the validity proof system permissionless?
+### Detailed Analysis
 
-No.
+#### Is the validity proof system permissionless?
 
-In the standard `OnChainProposer` implementation (`crates/l2/contracts/src/l1/OnChainProposer.sol`), committing and verifying batches are restricted to the authorized sequencer addresses only, so submitting proofs is not permissionless.
+**No.** In the standard `OnChainProposer` implementation (`crates/l2/contracts/src/l1/OnChainProposer.sol`), committing and verifying batches are restricted to authorized sequencer addresses only. Submitting proofs is not permissionless.
 
-### Do users have at least 30 days to exit in case of unwanted upgrades?
+#### Do users have at least 30 days to exit before unwanted upgrades?
 
-No.
+**No.** There is no protocol-level exit window tied to contract upgrades. UUPS upgrades can be executed by the owner without a mandatory delay.
 
-There is **no protocol‑level exit window** tied to contract upgrades; UUPS upgrades can be executed by the `owner` without a mandatory delay.
+#### Is the Security Council restricted to act only due to on-chain errors?
 
-### Is the Security Council restricted to act only due to errors detected on‑chain?
+**No.** There is no built-in restriction that limits the owner to responding only to detected on-chain bugs. The owner can pause or upgrade contracts for any reason.
 
-No.
+### Stage 2 Assessment
 
-There is **no built‑in Security Council role** that is restricted to on‑chain bug responses; the `owner` can pause or upgrade contracts for any reason allowed by the implementation.
+**ethrex L2 does not meet Stage 2 requirements.**
+
+### Path to Stage 2
+
+To achieve Stage 2, ethrex would need (in addition to Stage 1 requirements):
+
+1. **Permissionless proving**: Allow anyone to submit validity proofs for batches
+2. **30-day exit window**: Implement mandatory delay for all contract upgrades
+3. **Restricted SC powers**: Limit Security Council actions to adjudicable on-chain bugs only
+4. **Mature proof system**: Battle-tested ZK provers with comprehensive security audits
+
+## Comparison with Other Rollups
+
+| Project | Current Stage | Main Gaps | Proof System |
+|---------|---------------|-----------|--------------|
+| **ethrex L2** | Stage 0 | Forced inclusion, permissionless proving | Multi-proof (ZK + TEE) |
+| Arbitrum One | Stage 1 | 30-day window, permissionless proving | Optimistic (fraud proofs) |
+| Optimism | Stage 1 | 30-day window, permissionless proving | Optimistic (fault proofs) |
+| zkSync Era | Stage 0 | Exit window, SC restrictions | ZK validity proofs |
+| Starknet | Stage 0 | Exit window, forced inclusion | ZK validity proofs |
+
+## Recommendations
+
+### For Stage 1 Compliance
+
+1. **Implement forced withdrawal inclusion**
+   - Users can submit withdrawal requests directly to L1
+   - Sequencer must include within N blocks or face penalties
+   - Fallback mechanism if sequencer fails to include
+
+2. **Deploy Security Council as multisig**
+   - 8+ diverse signers
+   - 75%+ threshold (e.g., 6/8)
+   - Document emergency procedures
+
+3. **Add upgrade timelock**
+   - Minimum 7-day delay for non-emergency upgrades
+   - Emergency path requires SC threshold
+
+### For Future Stage 2 Transition
+
+1. **Open proof submission**
+   - Remove sequencer-only restriction on `verifyBatch()`
+   - Anyone can submit valid proofs
+
+2. **Extend exit window to 30+ days**
+   - Mandatory delay on all upgrade paths
+   - Clear user notification mechanism
+
+3. **Formalize SC restrictions**
+   - On-chain governance limiting SC powers
+   - Transparent criteria for emergency actions
+
+4. **Proof system maturity**
+   - Comprehensive security audits
+   - Multiple independent prover implementations
+   - Operational track record
 
 ## Conclusion
 
-Ethrex L2 currently satisfies all Stage 0 requirements and is very close to becoming a Stage 1 rollup. The main missing piece is censorship‑resistant L2→L1 messages (for example withdrawals): today the sequencer can ignore withdrawal transactions indefinitely, and there is no forced‑inclusion mechanism for them (unlike the existing forced‑inclusion mechanism for deposits).
+ethrex L2 currently satisfies all **Stage 0** requirements and provides a solid foundation for rollup deployments.
+
+The path to **Stage 1** is clear but requires implementing censorship-resistant withdrawals through a forced-inclusion mechanism. This is the primary gap preventing Stage 1 compliance.
+
+**Stage 2** requires additional work on permissionless proving, extended exit windows, and formal restrictions on Security Council powers.
+
+| Stage | Status | Primary Blocker |
+|-------|--------|-----------------|
+| Stage 0 | ✅ Met | - |
+| Stage 1 | ❌ Not met | Forced inclusion for withdrawals |
+| Stage 2 | ❌ Not met | Permissionless proving, 30-day exit window |
+
+## References
+
+- [L2Beat Stages Framework](https://l2beat.com/stages)
+- [L2Beat Forum: Stages Update](https://forum.l2beat.com/t/stages-update-a-high-level-guiding-principle-for-stage-1/338)
+- [L2Beat: Introducing Stages](https://medium.com/l2beat/introducing-stages-a-framework-to-evaluate-rollups-maturity-d290bb22befe)
+- [ethrex Data Availability](./fundamentals/data_availability.md)
+- [ethrex Withdrawals](./fundamentals/withdrawals.md)
+- [ethrex Based Sequencing](./fundamentals/based.md)
