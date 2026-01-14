@@ -54,7 +54,7 @@ Node options:
 
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
-          
+
           [env: ETHREX_LOG_LEVEL=]
           [default: INFO]
 
@@ -70,6 +70,9 @@ Node options:
           Maximum size of the mempool in number of transactions
 
           [default: 10000]
+
+      --precompute-witnesses
+          Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
 
 P2P options:
       --bootnodes <BOOTNODE_LIST>...
@@ -102,14 +105,14 @@ P2P options:
           [default: 1000]
 
       --p2p.target-peers <MAX_PEERS>
-           Max amount of connected peers.
- 
-           [default: 100]
- 
+          Max amount of connected peers.
+
+          [default: 100]
+
       --p2p.lookup-interval <INITIAL_LOOKUP_INTERVAL>
           Initial Lookup Time Interval (ms) to trigger each Discovery lookup message and RLPx connection attempt.
-          
-         [default: 100]
+
+          [default: 100]
 
 RPC options:
       --http.addr <ADDRESS>

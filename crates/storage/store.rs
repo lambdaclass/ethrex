@@ -6,9 +6,9 @@ use crate::{
         StorageBackend,
         tables::{
             ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
-            CANONICAL_BLOCK_HASHES, CHAIN_DATA, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS,
-            MISC_VALUES, PENDING_BLOCKS, RECEIPTS, SNAP_STATE, STORAGE_FLATKEYVALUE,
-            STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS,
+            INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS, SNAP_STATE,
+            STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -26,7 +26,7 @@ use ethrex_common::{
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
         BlockNumber, ChainConfig, Code, ForkId, Genesis, GenesisAccount, Index, Receipt,
-        Transaction,
+        Transaction, block_execution_witness::ExecutionWitness,
     },
     utils::keccak,
 };
@@ -52,6 +52,9 @@ use std::{
     thread::JoinHandle,
 };
 use tracing::{debug, error, info};
+
+/// Maximum number of execution witnesses to keep in the database
+pub const MAX_WITNESSES: u64 = 128;
 
 // We use one constant for in-memory and another for on-disk backends.
 // This is due to tests requiring state older than 128 blocks.
@@ -196,6 +199,7 @@ impl Drop for ThreadList {
 /// Each entry contains the hashed account address and the trie nodes
 /// for that account's storage trie.
 pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
+type StorageTries = HashMap<Address, (TrieWitness, Trie)>;
 
 /// Storage backend type selection.
 ///
@@ -1629,12 +1633,12 @@ impl Store {
 
     /// Performs the same actions as apply_account_updates_from_trie
     ///  but also returns the used storage tries with witness recorded
-    pub async fn apply_account_updates_from_trie_with_witness(
+    pub fn apply_account_updates_from_trie_with_witness(
         &self,
         mut state_trie: Trie,
         account_updates: &[AccountUpdate],
-        mut storage_tries: HashMap<Address, (TrieWitness, Trie)>,
-    ) -> Result<(HashMap<Address, (TrieWitness, Trie)>, AccountUpdatesList), StoreError> {
+        mut storage_tries: StorageTries,
+    ) -> Result<(StorageTries, AccountUpdatesList), StoreError> {
         let mut ret_storage_updates = Vec::new();
 
         let mut code_updates = Vec::new();
@@ -1778,6 +1782,101 @@ impl Store {
         tx.commit()?;
 
         Ok(state_root)
+    }
+
+    // Key format: block_number (8 bytes, big-endian) + block_hash (32 bytes)
+    fn make_witness_key(block_number: u64, block_hash: &BlockHash) -> Vec<u8> {
+        let mut composite_key = Vec::with_capacity(8 + 32);
+        composite_key.extend_from_slice(&block_number.to_be_bytes());
+        composite_key.extend_from_slice(block_hash.as_bytes());
+        composite_key
+    }
+
+    pub fn store_witness(
+        &self,
+        block_hash: BlockHash,
+        block_number: u64,
+        witness: ExecutionWitness,
+    ) -> Result<(), StoreError> {
+        let key = Self::make_witness_key(block_number, &block_hash);
+        let value = serde_json::to_vec(&witness)?;
+        self.write(EXECUTION_WITNESSES, key, value)?;
+        // Clean up old witnesses (keep only last 128)
+        self.cleanup_old_witnesses(block_number)
+    }
+
+    fn cleanup_old_witnesses(&self, latest_block_number: u64) -> Result<(), StoreError> {
+        // If we have less than 128 blocks, no cleanup needed
+        if latest_block_number <= MAX_WITNESSES {
+            return Ok(());
+        }
+
+        let threshold = latest_block_number - MAX_WITNESSES;
+
+        if let Some(oldest_block_number) = self.get_oldest_witness_number()? {
+            let prefix = oldest_block_number.to_be_bytes();
+            let mut to_delete = Vec::new();
+
+            {
+                let read_txn = self.backend.begin_read()?;
+                let iter = read_txn.prefix_iterator(EXECUTION_WITNESSES, &prefix)?;
+
+                // We may have multiple witnesses for the same block number (forks)
+                for item in iter {
+                    let (key, _value) = item?;
+                    let mut block_number_bytes = [0u8; 8];
+                    block_number_bytes.copy_from_slice(&key[0..8]);
+                    let block_number = u64::from_be_bytes(block_number_bytes);
+                    if block_number > threshold {
+                        break;
+                    }
+                    to_delete.push(key.to_vec());
+                }
+            }
+
+            for key in to_delete {
+                self.delete(EXECUTION_WITNESSES, key)?;
+            }
+        };
+
+        self.update_oldest_witness_number(threshold + 1)?;
+
+        Ok(())
+    }
+
+    fn update_oldest_witness_number(&self, oldest_block_number: u64) -> Result<(), StoreError> {
+        self.write(
+            MISC_VALUES,
+            b"oldest_witness_block_number".to_vec(),
+            oldest_block_number.to_le_bytes().to_vec(),
+        )?;
+        Ok(())
+    }
+
+    fn get_oldest_witness_number(&self) -> Result<Option<u64>, StoreError> {
+        let Some(value) = self.read(MISC_VALUES, b"oldest_witness_block_number".to_vec())? else {
+            return Ok(None);
+        };
+
+        let array: [u8; 8] = value.as_slice().try_into().map_err(|_| {
+            StoreError::Custom("Invalid oldest witness block number bytes".to_string())
+        })?;
+        Ok(Some(u64::from_le_bytes(array)))
+    }
+
+    pub fn get_witness_by_number_and_hash(
+        &self,
+        block_number: u64,
+        block_hash: BlockHash,
+    ) -> Result<Option<ExecutionWitness>, StoreError> {
+        let key = Self::make_witness_key(block_number, &block_hash);
+        match self.read(EXECUTION_WITNESSES, key)? {
+            Some(value) => {
+                let witness: ExecutionWitness = serde_json::from_slice(&value)?;
+                Ok(Some(witness))
+            }
+            None => Ok(None),
+        }
     }
 
     pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
