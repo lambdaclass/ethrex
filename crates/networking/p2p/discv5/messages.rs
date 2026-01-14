@@ -36,6 +36,10 @@ pub const DISTANCES_PER_FIND_NODE_MSG: u8 = 3;
 pub enum PacketCodecError {
     #[error("RLP decoding error")]
     RLPDecodeError(#[from] RLPDecodeError),
+    #[error("Packet header decoding error")]
+    InvalidHeader,
+    #[error("Message decoding error, message type: {0}")]
+    InvalidMessage(u8),
     #[error("Invalid packet size")]
     InvalidSize,
     #[error("Session not established yet")]
@@ -78,7 +82,8 @@ impl Packet {
 
         let mut cipher = <Aes128Ctr64BE as KeyIvInit>::new(dest_id[..16].into(), masking_iv.into());
 
-        let header = PacketHeader::decode(&mut cipher, encoded_packet)?;
+        let header = PacketHeader::decode(&mut cipher, encoded_packet)
+            .map_err(|_e| PacketCodecError::InvalidHeader)?;
         let encrypted_message = encoded_packet[header.header_end_offset..].to_vec();
         Ok(Packet {
             masking_iv: masking_iv.try_into()?,
@@ -245,7 +250,8 @@ impl Ordinary {
 
         let src_id = H256::from_slice(&packet.header.authdata);
 
-        let message = Message::decode(&message)?;
+        let message =
+            Message::decode(&message).map_err(|_e| PacketCodecError::InvalidMessage(message[0]))?;
         Ok(Ordinary { src_id, message })
     }
 
@@ -484,35 +490,35 @@ impl Message {
         }
     }
 
-    pub fn decode(encrypted_message: &[u8]) -> Result<Message, RLPDecodeError> {
-        let message_type = encrypted_message[0];
+    pub fn decode(message: &[u8]) -> Result<Message, RLPDecodeError> {
+        let message_type = message[0];
         match message_type {
             0x01 => {
-                let ping = PingMessage::decode(&encrypted_message[1..])?;
+                let ping = PingMessage::decode(&message[1..])?;
                 Ok(Message::Ping(ping))
             }
             0x02 => {
-                let pong = PongMessage::decode(&encrypted_message[1..])?;
+                let pong = PongMessage::decode(&message[1..])?;
                 Ok(Message::Pong(pong))
             }
             0x03 => {
-                let find_node_msg = FindNodeMessage::decode(&encrypted_message[1..])?;
+                let find_node_msg = FindNodeMessage::decode(&message[1..])?;
                 Ok(Message::FindNode(find_node_msg))
             }
             0x04 => {
-                let nodes_msg = NodesMessage::decode(&encrypted_message[1..])?;
+                let nodes_msg = NodesMessage::decode(&message[1..])?;
                 Ok(Message::Nodes(nodes_msg))
             }
             0x05 => {
-                let talk_req_msg = TalkReqMessage::decode(&encrypted_message[1..])?;
+                let talk_req_msg = TalkReqMessage::decode(&message[1..])?;
                 Ok(Message::TalkReq(talk_req_msg))
             }
             0x06 => {
-                let enr_response_msg = TalkResMessage::decode(&encrypted_message[1..])?;
+                let enr_response_msg = TalkResMessage::decode(&message[1..])?;
                 Ok(Message::TalkRes(enr_response_msg))
             }
             0x08 => {
-                let ticket_msg = TicketMessage::decode(&encrypted_message[1..])?;
+                let ticket_msg = TicketMessage::decode(&message[1..])?;
                 Ok(Message::Ticket(ticket_msg))
             }
             _ => Err(RLPDecodeError::MalformedData),

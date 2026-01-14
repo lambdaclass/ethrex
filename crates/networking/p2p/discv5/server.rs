@@ -36,10 +36,10 @@ use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
 use tracing::{debug, error, info, trace};
 
-/// Interval between revalidation checks.
-const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours,
-/// Interval between revalidations.
-const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours,
+/// Interval between revalidation checks (how often we run the revalidation loop).
+const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(10);
+/// Nodes not validated within this interval are candidates for revalidation.
+const REVALIDATION_INTERVAL: Duration = Duration::from_secs(30);
 /// The initial interval between peer lookups, until the number of peers reaches
 /// [target_peers](DiscoverySideCarState::target_peers), or the number of
 /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
@@ -56,9 +56,7 @@ pub enum DiscoveryServerError {
     #[error(transparent)]
     IoError(#[from] std::io::Error),
     #[error("Failed to decode packet")]
-    InvalidPacket(#[from] PacketCodecError),
-    #[error("Failed to send message")]
-    MessageSendFailure(PacketCodecError),
+    DecodeError(#[from] PacketCodecError),
     #[error("Only partial message was sent")]
     PartialMessageSent,
     #[error("Unknown or invalid contact")]
@@ -153,7 +151,11 @@ impl DiscoveryServer {
                 tracing::info!("NonWhoAreYou!");
                 Ok(())
             }
-            _ => Err(PacketCodecError::MalformedData)?,
+            f => {
+                tracing::info!("Unexpected flag {f}");
+                Err(PacketCodecError::MalformedData)?
+            }
+
         }
     }
     async fn handle_ordinary(
@@ -339,13 +341,6 @@ impl DiscoveryServer {
         pong_message: PongMessage,
         sender_id: H256,
     ) -> Result<(), DiscoveryServerError> {
-        trace!(
-            from = %sender_id,
-            enr_seq = pong_message.enr_seq,
-            recipient_addr = %pong_message.recipient_addr,
-            "Received PONG"
-        );
-
         // Validate and record PONG (clears ping_req_id if matches)
         self.peer_table
             .record_pong_received(&sender_id, pong_message.req_id)
@@ -378,7 +373,7 @@ impl DiscoveryServer {
 
     async fn send_ping(&mut self, node: &Node) -> Result<(), DiscoveryServerError> {
         let mut rng = OsRng;
-        let req_id = Bytes::from(rng.gen::<u64>().to_be_bytes().to_vec());
+        let req_id = Bytes::from(rng.r#gen::<u64>().to_be_bytes().to_vec());
 
         let ping = Message::Ping(PingMessage {
             req_id: req_id.clone(),
@@ -613,21 +608,21 @@ impl GenServer for DiscoveryServer {
                 let _ = self
                     .handle_packet(*message)
                     .await
-                    .inspect_err(|e| error!(err=?e, "Error Handling Discovery message"));
+                    .inspect_err(|e| error!(err=%e, "Error Handling Discovery message"));
             }
             Self::CastMsg::Revalidate => {
                 trace!(received = "Revalidate");
                 let _ = self
                     .revalidate()
                     .await
-                    .inspect_err(|e| error!(err=?e, "Error revalidating discovered peers"));
+                    .inspect_err(|e| error!(err=%e, "Error revalidating discovered peers"));
             }
             Self::CastMsg::Lookup => {
                 trace!(received = "Lookup");
                 let _ = self
                     .lookup()
                     .await
-                    .inspect_err(|e| error!(err=?e, "Error performing Discovery lookup"));
+                    .inspect_err(|e| error!(err=%e, "Error performing Discovery lookup"));
 
                 let interval = self.get_lookup_interval().await;
                 send_after(interval, handle.clone(), Self::CastMsg::Lookup);
