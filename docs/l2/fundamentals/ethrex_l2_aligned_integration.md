@@ -102,7 +102,8 @@ Ethrex L2 supports the following proving systems with Aligned:
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-> **Note**: The Prover runs as a separate binary outside the L2 node, connecting via TCP to the ProofCoordinator. For deployment instructions, see [Running Ethrex in Aligned Mode](../deployment/aligned.md).
+> [!NOTE]
+> The Prover runs as a separate binary outside the L2 node, connecting via TCP to the ProofCoordinator. For deployment instructions, see [Running Ethrex in Aligned Mode](../deployment/aligned.md).
 
 ### Component Interactions
 
@@ -541,5 +542,6 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 - [Aligned Layer Documentation](https://docs.alignedlayer.com/)
 - [Aligned SDK API Reference](https://docs.alignedlayer.com/guides/1.2_sdk_api_reference)
 - [Aligned Contract Addresses](https://docs.alignedlayer.com/guides/7_contract_addresses)
+- [Running Ethrex in Aligned Mode](../deployment/aligned.md)
 - [ethrex L2 Deployment Guide](../deployment/overview.md)
 - [ethrex Prover Documentation](../architecture/prover.md)
