@@ -475,20 +475,18 @@ Prover → ProofCoordinator → L1ProofSender → OnChainProposer.verifyBatch()
 **Aligned Mode**:
 ```
 Prover → ProofCoordinator → L1ProofSender → Aligned Batcher
-                                                    │
-                                                    ▼
-                                          Aligned Aggregation
-                                                    │
-                                                    ▼
-                                   AlignedProofAggregatorService
-                                                    │
-                            (L1ProofVerifier polls for aggregation)
-                                                    │
-                                                    ▼
-                              OnChainProposer.verifyBatchesAligned()
-                                                    │
-                                                    ▼
-                        AlignedProofAggregatorService.verifyProofInclusion()
+                                                     │
+                                                     ▼
+                                            Aligned Aggregation
+                                                     │
+                                                     ▼
+L1ProofVerifier  ←  (polls for aggregation)  ←  AlignedProofAggregatorService
+        │
+        ▼
+OnChainProposer.verifyBatchesAligned()
+        │
+        ▼
+AlignedProofAggregatorService.verifyProofInclusion()
 ```
 
 ---
