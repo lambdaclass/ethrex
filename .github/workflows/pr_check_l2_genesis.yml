@@ -3,6 +3,12 @@ name: Check L2 Genesis
 on:
   pull_request:
     branches: ["**"]
+    paths:
+      - "crates/l2/contracts/src/**"
+      - "cmd/ethrex/build.rs"
+      - "cmd/ethrex/build_l2.rs"
+      - "fixtures/genesis/l2.json"
+      - "crates/common/types/genesis.rs"
 
 permissions:
   contents: read
