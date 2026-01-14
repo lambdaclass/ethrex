@@ -273,8 +273,19 @@
 <p>The Dockerfile is located at the root of the repository and can be built by running</p>
 <pre><code>docker build -t ethrex .
 </code></pre>
-<p>The <code>BUILD_FLAGS</code> argument can be used to pass flags to cargo, for example</p>
-<pre><code>docker build -t ethrex --build-arg BUILD_FLAGS="--features &lt;features&gt;" .
+<p>Build arguments:</p>
+<ul>
+<li><code>PROFILE</code>: Cargo profile to use (default: <code>release</code>). Example: <code>release-with-debug-assertions</code></li>
+<li><code>BUILD_FLAGS</code>: Additional cargo flags (features, etc.)</li>
+</ul>
+<pre><code># Custom profile
+docker build -t ethrex --build-arg PROFILE="release-with-debug-assertions" .
+
+# With features
+docker build -t ethrex --build-arg BUILD_FLAGS="--features l2" .
+
+# Both
+docker build -t ethrex --build-arg PROFILE="release-with-debug-assertions" --build-arg BUILD_FLAGS="--features l2" .
 </code></pre>
 
                     </main>

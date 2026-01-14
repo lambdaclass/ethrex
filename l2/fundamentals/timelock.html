@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Fundamentals - Ethrex</title>
+        <title>Timelock - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,49 +237,62 @@
 }
 
 </style>
-<h1 id="fundamentals"><a class="header" href="#fundamentals">Fundamentals</a></h1>
-<p>In L2 mode, the ethrex code is repurposed to run a rollup that settles on Ethereum as the L1.</p>
-<p>The main differences between this mode and regular ethrex are:</p>
+<h1 id="timelock-contract"><a class="header" href="#timelock-contract">Timelock Contract</a></h1>
+<p>The Timelock contract gates access to the OnChainProposer (OCP) contract. Changes to the OCP can only be made by first interacting with the Timelock, which manages permissions based on roles assigned to different users.</p>
+<h2 id="timelock-roles"><a class="header" href="#timelock-roles">Timelock Roles</a></h2>
 <ul>
-<li>In regular rollup mode, there is no consensus; the node is turned into a sequencer that proposes blocks for the chain. In based rollup mode, consensus is achieved by a mechanism that rotates sequencers, enforced by the L1.</li>
-<li>Block execution is proven using a RISC-V zkVM (or attested to using TDX, a Trusted Execution Environment) and its proofs (or signatures/attestations) are sent to L1 for verification.</li>
-<li>A set of Solidity contracts to be deployed to the L1 are included as part of chain initialization.</li>
-<li>Two new types of transactions are included: deposits (native token mints) and withdrawals.</li>
+<li>Sequencers: Can commit and verify batches.</li>
+<li>Governance: Can schedule and execute operations, respecting a delay. In practice this could be the role of a DAO, though it depends on the implementation.</li>
+<li>Security Council: Can bypass the minimum delay for executing any operation that the Timelock can execute. It can also manage other roles in the Timelock.</li>
 </ul>
-<p>At a high level, the following new parts are added to the node:</p>
+<p><strong>Sequencers</strong> will send <code>commitBatch</code>, <code>verifyBatch</code>, and <code>verifyBatchesAligned</code> to the Timelock, and this will execute the operations in the <code>OnChainProposer</code>. Eventually there will be Timelock logic, and there will be a time window between commitment and proof verification for security reasons.</p>
+<p>The <strong>Governance</strong> is able to schedule important operations like contract upgrades respecting the minimum time window for the L2 participants to exit in case of undesired updates. Not only can they make changes in the logic of the OnChainProposer, but they can also update the Timelock itself.</p>
+<p>The <strong>Security Council</strong> is designed as a powerful entity that can execute anything within the Timelock or OnChainProposer without delay. We call it security council because its actions are limitless, as it can upgrade any of the contracts whenever it wants, so ideally it should be a multisig composed of many diverse members, and it should be able to take action only if 75% of members agree. Ideally, in a more mature rollup the Security Council would have fewer permissions and would only need to act upon bugs detected on-chain if such a mechanism exists.
+We call this mechanism of executing without delay the <code>emergencyExecute</code>.</p>
+<h2 id="basic-functionalities"><a class="header" href="#basic-functionalities">Basic Functionalities</a></h2>
+<p>These are the things that we can do with the Timelock:</p>
 <ul>
-<li>A <code>proposer</code> component, in charge of continually creating new blocks from the mempool transactions. This replaces the regular flow that an Ethereum L1 node has, where new blocks come from the consensus layer through the <code>forkChoiceUpdate</code> -&gt; <code>getPayload</code> -&gt; <code>NewPayload</code> Engine API flow in communication with the consensus layer.</li>
-<li>A <code>prover</code> subsystem, which itself consists of two parts:
-<ul>
-<li>A <code>proverClient</code> that takes new blocks from the node, proves them, then sends the proof back to the node to send to the L1. This is a separate binary running outside the node, as proving has very different (and higher) hardware requirements than the sequencer.</li>
-<li>A <code>proverServer</code> component inside the node that communicates with the prover, sending witness data for proving and receiving proofs for settlement on L1.</li>
+<li>Schedule: <code>schedule(...)</code> and <code>scheduleBatch(...)</code></li>
+<li>Execute: <code>execute(...)</code> and <code>executeBatch(...)</code></li>
+<li>Cancel: <code>cancel(bytes32 id)</code></li>
+<li>Update Delay: <code>updateDelay(uint256 newDelay)</code></li>
 </ul>
-</li>
-<li>L1 contracts with functions to commit to new state and then verify the state transition function, only advancing the state of the L2 if the proof verifies. It also has functionality to process deposits and withdrawals to/from the L2.</li>
-<li>The EVM is lightly modified with new features to process deposits and withdrawals accordingly.</li>
-</ul>
-<h2 id="ethrex-l2-documentation"><a class="header" href="#ethrex-l2-documentation">Ethrex L2 documentation</a></h2>
-<p>For general documentation, see:</p>
+<p>When an operation is <strong>scheduled</strong>, the Governance role may <strong>cancel</strong> it or, after the established delay, <strong>execute</strong> it.
+The delay can be updated, always respecting the current delay to do so.</p>
+<p>It also has a few utility functions:</p>
 <ul>
-<li><a href="../architecture/overview.html">Architecture overview</a> for a high-level view of the ethrex L2 stack.</li>
-<li><a href="./contracts.html">Smart contracts</a> has information on L1 and L2 smart contracts including steps to upgrade and transfer ownserhip.</li>
-<li><a href="./based.html">Based sequencing</a> contains ethrex's roadmap for becoming based.</li>
-<li><a href="./state_diffs.html">State diffs</a> explains the mechanism needed to provide data availability.</li>
-<li>How asset <a href="./deposits.html">deposits</a> and <a href="./withdrawals.html">withdrawals</a> work.</li>
-<li><a href="./fee_token.html">Fee token</a></li>
-<li><a href="./exit_window.html">Exit window</a> and <a href="./timelock.html">Timelock</a> for upgrade safety mechanisms.</li>
-<li><a href="./ethrex_l2_aligned_integration.html">Aligned Layer Integration</a> details how ethrex L2 integrates with Aligned Layer for proof aggregation and verification.</li>
+<li><code>getMinDelay()</code>: current minimum delay for new schedules.</li>
+<li><code>hashOperation(...)</code>, <code>hashOperationBatch(...)</code>: pure helpers to compute ids.</li>
+<li><code>getTimestamp(id)</code>, <code>getOperationState(id)</code>, <code>isOperation*</code>: query operation status.</li>
+</ul>
+<p>Remember that <code>Timelock</code> inherits from <code>TimelockControllerUpgradeable</code> (which itself extends <code>AccessControlUpgradeable</code>) and <code>UUPSUpgradeable</code>, so it will inherit their behavior as well.</p>
+<h2 id="important-remarks"><a class="header" href="#important-remarks">Important Remarks</a></h2>
+<h3 id="operation-id-collision"><a class="header" href="#operation-id-collision">Operation ID collision</a></h3>
+<p>Every scheduled operation is identified by a 32-byte <strong>operation id</strong>. This ID is determined by hashing fields like the target address, value transferred, data, predecessor, and salt.
+Two operations with the same fields will result in the same ID. That's why, if we want to schedule the same operation more than once, we should probably use a salt.
+Example: If for some reason we want to schedule the pause of the OnChainProposer and we use salt zero, the next time we schedule that same operation we'll have to change the salt (assuming no predecessor was specified) in order for the id to be different.</p>
+<h3 id="cancelling-a-scheduled-operation"><a class="header" href="#cancelling-a-scheduled-operation">Cancelling a scheduled operation</a></h3>
+<p><code>cancel(bytes32 id)</code> requires the operation id. You typically get it by:</p>
+<ol>
+<li>Reading it from the <code>CallScheduled(id, ...)</code> event emitted by <code>schedule</code>/<code>scheduleBatch</code>, or</li>
+<li>Computing it yourself (off-chain), or</li>
+<li>Calling <code>hashOperation(...)</code> / <code>hashOperationBatch(...)</code> on-chain to compute it.</li>
+</ol>
+<p>Note that:</p>
+<ul>
+<li><code>hashOperation(...) = keccak256(abi.encode(target, value, data, predecessor, salt))</code></li>
+<li><code>hashOperationBatch(...) = keccak256(abi.encode(targets, values, payloads, predecessor, salt))</code></li>
 </ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../l2/interacting/shared_bridge.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../l2/fundamentals/exit_window.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../l2/fundamentals/state_diffs.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../l2/fundamentals/fee_token.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -289,11 +302,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../l2/interacting/shared_bridge.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../l2/fundamentals/exit_window.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../l2/fundamentals/state_diffs.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../l2/fundamentals/fee_token.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

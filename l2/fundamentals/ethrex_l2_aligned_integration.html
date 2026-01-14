@@ -1,0 +1,769 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Aligned Layer Integration - Ethrex</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../../favicon.svg">
+        <link rel="shortcut icon" href="../../favicon.png">
+        <link rel="stylesheet" href="../../css/variables.css">
+        <link rel="stylesheet" href="../../css/general.css">
+        <link rel="stylesheet" href="../../css/chrome.css">
+        <link rel="stylesheet" href="../../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="../../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../../toc.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Ethrex</h1>
+
+                    <div class="right-buttons">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="ethrex-l2-integration-with-aligned-layer"><a class="header" href="#ethrex-l2-integration-with-aligned-layer">Ethrex L2 Integration with Aligned Layer</a></h1>
+<p>This document provides a comprehensive technical overview of how ethrex L2 integrates with Aligned Layer for proof aggregation and verification.</p>
+<h2 id="table-of-contents"><a class="header" href="#table-of-contents">Table of Contents</a></h2>
+<ol>
+<li><a href="#overview">Overview</a></li>
+<li><a href="#what-is-aligned-layer">What is Aligned Layer?</a></li>
+<li><a href="#architecture">Architecture</a></li>
+<li><a href="#component-details">Component Details</a></li>
+<li><a href="#smart-contract-integration">Smart Contract Integration</a></li>
+<li><a href="#configuration">Configuration</a></li>
+<li><a href="#behavioral-differences">Behavioral Differences</a></li>
+<li><a href="#error-handling">Error Handling</a></li>
+<li><a href="#monitoring">Monitoring</a></li>
+</ol>
+<hr />
+<h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
+<p>Ethrex L2 supports two modes of proof verification:</p>
+<ol>
+<li><strong>Standard Mode</strong>: Proofs are verified directly on L1 via smart contract verifiers (SP1Verifier, RISC0Verifier, TDXVerifier)</li>
+<li><strong>Aligned Mode</strong>: Proofs are sent to Aligned Layer for aggregation, then verified on L1 via the <code>AlignedProofAggregatorService</code> contract</li>
+</ol>
+<p>Aligned mode offers significant cost savings by aggregating multiple proofs before on-chain verification, reducing the gas cost per proof verification.</p>
+<h3 id="key-benefits-of-aligned-mode"><a class="header" href="#key-benefits-of-aligned-mode">Key Benefits of Aligned Mode</a></h3>
+<ul>
+<li><strong>Lower verification costs</strong>: Proof aggregation amortizes verification costs across multiple proofs</li>
+<li><strong>Multi-batch verification</strong>: Multiple L2 batches can be verified in a single L1 transaction (via <code>verifyBatchesAligned()</code>)</li>
+<li><strong>Compressed proofs</strong>: Uses STARK compressed format instead of Groth16, optimized for aggregation</li>
+</ul>
+<hr />
+<h2 id="what-is-aligned-layer"><a class="header" href="#what-is-aligned-layer">What is Aligned Layer?</a></h2>
+<p><a href="https://docs.alignedlayer.com/">Aligned Layer</a> is a proof aggregation and verification infrastructure for Ethereum. It provides:</p>
+<ul>
+<li><strong>Proof Aggregation Service</strong>: Collects proofs from multiple sources and aggregates them</li>
+<li><strong>Batcher</strong>: Receives individual proofs and batches them for aggregation</li>
+<li><strong>On-chain Verification</strong>: Verifies aggregated proofs via the <code>AlignedProofAggregatorService</code> contract</li>
+<li><strong>SDK</strong>: Client libraries for submitting proofs and checking verification status</li>
+</ul>
+<h3 id="supported-proving-systems"><a class="header" href="#supported-proving-systems">Supported Proving Systems</a></h3>
+<p>Ethrex L2 supports the following proving systems with Aligned:</p>
+<div class="table-wrapper"><table><thead><tr><th>Prover Type</th><th>Aligned ProvingSystemId</th><th>Notes</th></tr></thead><tbody>
+<tr><td>SP1</td><td><code>ProvingSystemId::SP1</code></td><td>Compressed STARK format</td></tr>
+<tr><td>RISC0</td><td><code>ProvingSystemId::Risc0</code></td><td>Compressed STARK format</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="architecture"><a class="header" href="#architecture">Architecture</a></h2>
+<h3 id="high-level-system-flow"><a class="header" href="#high-level-system-flow">High-Level System Flow</a></h3>
+<pre><code>┌──────────────────┐
+│      Prover      │ (Separate binary)
+│    (SP1/RISC0)   │
+└────────┬─────────┘
+         │ TCP
+         ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              ETHREX L2 NODE                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐       │
+│  │ ProofCoordinator │───▶│  L1ProofSender   │───▶│  Aligned Batcher │       │
+│  │   (TCP Server)   │    │                  │    │   (WebSocket)    │       │
+│  └────────┬─────────┘    └────────┬─────────┘    └────────┬─────────┘       │
+│           │                       │                       │                 │
+│           ▼                       ▼                       │                 │
+│  ┌─────────────────────────────────────┐                  │                 │
+│  │          RollupStorage              │                  │                 │
+│  │     (Proofs, Batch State)           │                  │                 │
+│  └─────────────────────────────────────┘                  │                 │
+│                                                           │                 │
+└───────────────────────────────────────────────────────────┼─────────────────┘
+                                                            │
+                                                            ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           ALIGNED LAYER                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐       │
+│  │  Proof Batcher   │───▶│ Proof Aggregator │───▶│  L1 Settlement   │       │
+│  │                  │    │   (SP1/RISC0)    │    │                  │       │
+│  └──────────────────┘    └──────────────────┘    └──────────────────┘       │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                                            │
+                                                            ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              ETHEREUM L1                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  ┌─────────────────────────────────┐    ┌──────────────────────────────┐    │
+│  │      OnChainProposer            │───▶│ AlignedProofAggregatorService│    │
+│  │  (verifyBatchesAligned())       │    │   (Merkle proof validation)  │    │
+│  └─────────────────────────────────┘    └──────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>The Prover runs as a separate binary outside the L2 node, connecting via TCP to the ProofCoordinator. For deployment instructions, see <a href="../deployment/aligned.html">Running Ethrex in Aligned Mode</a>.</p>
+</div>
+<h3 id="component-interactions"><a class="header" href="#component-interactions">Component Interactions</a></h3>
+<h4 id="proof-sender-flow-aligned-mode"><a class="header" href="#proof-sender-flow-aligned-mode">Proof Sender Flow (Aligned Mode)</a></h4>
+<p><img src="../img/aligned_mode_proof_sender.png" alt="Proof Sender Aligned Mode" /></p>
+<p>The proof sender tracks the last sent proof in the rollup storage and submits compressed proofs to the Aligned Batcher.</p>
+<h4 id="proof-verifier-flow-aligned-mode"><a class="header" href="#proof-verifier-flow-aligned-mode">Proof Verifier Flow (Aligned Mode)</a></h4>
+<p><img src="../img/aligned_mode_proof_verifier.png" alt="Proof Verifier Aligned Mode" /></p>
+<p>The proof verifier:</p>
+<ol>
+<li>Queries <code>lastVerifiedBatch</code> from <code>OnChainProposer</code></li>
+<li>Checks proof aggregation status via <code>AlignedProofAggregatorService</code></li>
+<li>Calls <code>verifyBatchesAligned()</code> on <code>OnChainProposer</code></li>
+<li>Which internally calls <code>verifyProofInclusion()</code> on the aggregator service</li>
+</ol>
+<hr />
+<h2 id="component-details"><a class="header" href="#component-details">Component Details</a></h2>
+<h3 id="1-l1proofsender-l1_proof_senderrs"><a class="header" href="#1-l1proofsender-l1_proof_senderrs">1. L1ProofSender (<code>l1_proof_sender.rs</code>)</a></h3>
+<p>The <code>L1ProofSender</code> handles submitting proofs to Aligned Layer.</p>
+<p><strong>Key Responsibilities</strong>:</p>
+<ul>
+<li>Monitors for completed proofs in the rollup store</li>
+<li>Sends compressed proofs to the Aligned Batcher via WebSocket</li>
+<li>Tracks the last sent batch proof number</li>
+<li>Handles nonce management for the Aligned batcher</li>
+</ul>
+<p><strong>Aligned-Specific Logic</strong>:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>async fn send_proof_to_aligned(
+    &amp;self,
+    batch_number: u64,
+    batch_proofs: impl IntoIterator&lt;Item = &amp;BatchProof&gt;,
+) -&gt; Result&lt;(), ProofSenderError&gt; {
+    // Estimate fee from Aligned
+    let fee_estimation = Self::estimate_fee(self).await?;
+
+    // Get nonce from Aligned batcher
+    let nonce = get_nonce_from_batcher(self.network.clone(), self.signer.address()).await?;
+
+    for batch_proof in batch_proofs {
+        // Build verification data for Aligned
+        let verification_data = VerificationData {
+            proving_system: match prover_type {
+                ProverType::RISC0 =&gt; ProvingSystemId::Risc0,
+                ProverType::SP1 =&gt; ProvingSystemId::SP1,
+            },
+            proof: batch_proof.compressed(),
+            proof_generator_addr: self.signer.address(),
+            vm_program_code: Some(vm_program_code),  // ELF or VK
+            pub_input: Some(batch_proof.public_values()),
+            verification_key: None,
+        };
+
+        // Submit to Aligned batcher
+        submit(self.network.clone(), &amp;verification_data, fee_estimation, wallet, nonce).await?;
+    }
+}
+<span class="boring">}</span></code></pre></pre>
+<p>See the <a href="#configuration">Configuration</a> section for <code>AlignedConfig</code> details.</p>
+<h3 id="2-l1proofverifier-l1_proof_verifierrs"><a class="header" href="#2-l1proofverifier-l1_proof_verifierrs">2. L1ProofVerifier (<code>l1_proof_verifier.rs</code>)</a></h3>
+<p>The <code>L1ProofVerifier</code> monitors Aligned Layer for aggregated proofs and triggers on-chain verification.</p>
+<p><strong>Key Responsibilities</strong>:</p>
+<ul>
+<li>Polls Aligned Layer to check if proofs have been aggregated</li>
+<li>Collects Merkle proofs of inclusion for verified proofs</li>
+<li>Batches multiple verified proofs into a single L1 transaction</li>
+<li>Calls <code>verifyBatchesAligned()</code> on the OnChainProposer contract</li>
+</ul>
+<p><strong>Verification Flow</strong>:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>async fn verify_proofs_aggregation(&amp;self, first_batch_number: u64) -&gt; Result&lt;Option&lt;H256&gt;&gt; {
+    let mut sp1_merkle_proofs_list = Vec::new();
+    let mut risc0_merkle_proofs_list = Vec::new();
+
+    // For each consecutive batch
+    loop {
+        for (prover_type, proof) in proofs_for_batch {
+            // Build verification data
+            let verification_data = match prover_type {
+                ProverType::SP1 =&gt; AggregationModeVerificationData::SP1 {
+                    vk: self.sp1_vk,
+                    public_inputs: proof.public_values(),
+                },
+                ProverType::RISC0 =&gt; AggregationModeVerificationData::Risc0 {
+                    image_id: self.risc0_vk,
+                    public_inputs: proof.public_values(),
+                },
+            };
+
+            // Check if proof was aggregated by Aligned
+            if let Some((merkle_root, merkle_path)) =
+                self.check_proof_aggregation(verification_data).await?
+            {
+                aggregated_proofs.insert(prover_type, merkle_path);
+            }
+        }
+
+        // Collect merkle proofs for this batch
+        sp1_merkle_proofs_list.push(sp1_merkle_proof);
+        risc0_merkle_proofs_list.push(risc0_merkle_proof);
+    }
+
+    // Send single transaction to verify all batches
+    let calldata = encode_calldata(
+        "verifyBatchesAligned(uint256,uint256,bytes32[][],bytes32[][])",
+        &amp;[first_batch, last_batch, sp1_proofs, risc0_proofs]
+    );
+
+    send_verify_tx(calldata, target_address).await
+}
+<span class="boring">}</span></code></pre></pre>
+<h3 id="3-prover-modification"><a class="header" href="#3-prover-modification">3. Prover Modification</a></h3>
+<p>In Aligned mode, the prover generates <strong>Compressed</strong> proofs instead of <strong>Groth16</strong> proofs.</p>
+<p><strong>Proof Format Selection</strong>:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub enum ProofFormat {
+    /// Groth16 - EVM-friendly, for direct on-chain verification
+    Groth16,
+    /// Compressed STARK - For Aligned Layer aggregation
+    Compressed,
+}
+<span class="boring">}</span></code></pre></pre>
+<p><strong>BatchProof Types</strong>:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub enum BatchProof {
+    /// For direct on-chain verification (Standard mode)
+    ProofCalldata(ProofCalldata),
+    /// For Aligned Layer submission (Aligned mode)
+    ProofBytes(ProofBytes),
+}
+
+pub struct ProofBytes {
+    pub prover_type: ProverType,
+    pub proof: Vec&lt;u8&gt;,           // Compressed STARK proof
+    pub public_values: Vec&lt;u8&gt;,   // Public inputs
+}
+<span class="boring">}</span></code></pre></pre>
+<hr />
+<h2 id="smart-contract-integration"><a class="header" href="#smart-contract-integration">Smart Contract Integration</a></h2>
+<h3 id="onchainproposer-contract"><a class="header" href="#onchainproposer-contract">OnChainProposer Contract</a></h3>
+<p>The <code>OnChainProposer.sol</code> contract supports both verification modes:</p>
+<p><strong>State Variables</strong>:</p>
+<pre><code class="language-solidity">/// True if verification is done through Aligned Layer
+bool public ALIGNED_MODE;
+
+/// Address of the AlignedProofAggregatorService contract
+address public ALIGNEDPROOFAGGREGATOR;
+
+/// Verification keys per git commit hash and verifier type
+mapping(bytes32 commitHash =&gt; mapping(uint8 verifierId =&gt; bytes32 vk))
+    public verificationKeys;
+</code></pre>
+<p><strong>Standard Verification</strong> (<code>verifyBatch</code>):</p>
+<pre><code class="language-solidity">function verifyBatch(
+    uint256 batchNumber,
+    bytes memory risc0BlockProof,
+    bytes memory sp1ProofBytes,
+    bytes memory tdxSignature
+) external onlyOwner whenNotPaused {
+    require(!ALIGNED_MODE, "008");  // Use verifyBatchesAligned instead
+
+    // Verify proofs directly via verifier contracts
+    if (REQUIRE_SP1_PROOF) {
+        ISP1Verifier(SP1_VERIFIER_ADDRESS).verifyProof(sp1Vk, publicInputs, sp1ProofBytes);
+    }
+    if (REQUIRE_RISC0_PROOF) {
+        IRiscZeroVerifier(RISC0_VERIFIER_ADDRESS).verify(risc0BlockProof, risc0Vk, sha256(publicInputs));
+    }
+}
+</code></pre>
+<p><strong>Aligned Verification</strong> (<code>verifyBatchesAligned</code>):</p>
+<pre><code class="language-solidity">function verifyBatchesAligned(
+    uint256 firstBatchNumber,
+    uint256 lastBatchNumber,
+    bytes32[][] calldata sp1MerkleProofsList,
+    bytes32[][] calldata risc0MerkleProofsList
+) external onlyOwner whenNotPaused {
+    require(ALIGNED_MODE, "00h");  // Use verifyBatch instead
+
+    for (uint256 i = 0; i &lt; batchesToVerify; i++) {
+        bytes memory publicInputs = _getPublicInputsFromCommitment(batchNumber);
+
+        if (REQUIRE_SP1_PROOF) {
+            _verifyProofInclusionAligned(
+                sp1MerkleProofsList[i],
+                verificationKeys[commitHash][SP1_VERIFIER_ID],
+                publicInputs
+            );
+        }
+
+        if (REQUIRE_RISC0_PROOF) {
+            _verifyProofInclusionAligned(
+                risc0MerkleProofsList[i],
+                verificationKeys[commitHash][RISC0_VERIFIER_ID],
+                publicInputs
+            );
+        }
+    }
+}
+</code></pre>
+<p><strong>Aligned Proof Inclusion Verification</strong>:</p>
+<pre><code class="language-solidity">function _verifyProofInclusionAligned(
+    bytes32[] calldata merkleProofsList,
+    bytes32 verificationKey,
+    bytes memory publicInputsList
+) internal view {
+    bytes memory callData = abi.encodeWithSignature(
+        "verifyProofInclusion(bytes32[],bytes32,bytes)",
+        merkleProofsList,
+        verificationKey,
+        publicInputsList
+    );
+
+    (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR.staticcall(callData);
+    require(callResult, "00y");  // Call to ALIGNEDPROOFAGGREGATOR failed
+
+    bool proofVerified = abi.decode(response, (bool));
+    require(proofVerified, "00z");  // Aligned proof verification failed
+}
+</code></pre>
+<h3 id="public-inputs-structure"><a class="header" href="#public-inputs-structure">Public Inputs Structure</a></h3>
+<p>The public inputs for proof verification are reconstructed from batch commitments:</p>
+<pre><code>Fixed-size fields (256 bytes):
+├── bytes 0-32:    Initial state root (from last verified batch)
+├── bytes 32-64:   Final state root (from current batch)
+├── bytes 64-96:   Withdrawals merkle root
+├── bytes 96-128:  Processed privileged transactions rolling hash
+├── bytes 128-160: Blob KZG versioned hash
+├── bytes 160-192: Last block hash
+├── bytes 192-224: Chain ID
+└── bytes 224-256: Non-privileged transactions count
+
+Variable-size fields:
+├── For each balance diff:
+│   ├── Chain ID (32 bytes)
+│   ├── Value (32 bytes)
+│   └── Asset diffs + Message hashes
+└── For each L2 message rolling hash:
+    ├── Chain ID (32 bytes)
+    └── Rolling hash (32 bytes)
+</code></pre>
+<hr />
+<h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
+<h3 id="sequencer-configuration"><a class="header" href="#sequencer-configuration">Sequencer Configuration</a></h3>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct AlignedConfig {
+    /// Enable Aligned mode
+    pub aligned_mode: bool,
+
+    /// Interval (ms) between verification checks
+    pub aligned_verifier_interval_ms: u64,
+
+    /// Beacon client URLs for blob verification
+    pub beacon_urls: Vec&lt;Url&gt;,
+
+    /// Aligned network (devnet, testnet, mainnet)
+    pub network: Network,
+
+    /// Fee estimation type ("instant" or "default")
+    pub fee_estimate: String,
+}
+<span class="boring">}</span></code></pre></pre>
+<h3 id="cli-flags"><a class="header" href="#cli-flags">CLI Flags</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Flag</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>--aligned</code></td><td>Enable Aligned mode</td></tr>
+<tr><td><code>--aligned-network</code></td><td>Network for Aligned SDK (devnet/testnet/mainnet)</td></tr>
+<tr><td><code>--aligned.beacon-url</code></td><td>Beacon client URL supporting <code>/eth/v1/beacon/blobs</code></td></tr>
+</tbody></table>
+</div>
+<h3 id="environment-variables"><a class="header" href="#environment-variables">Environment Variables</a></h3>
+<p><strong>Node Configuration:</strong></p>
+<div class="table-wrapper"><table><thead><tr><th>Variable</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>ETHREX_ALIGNED_MODE</code></td><td>Enable Aligned mode</td></tr>
+<tr><td><code>ETHREX_ALIGNED_BEACON_URL</code></td><td>Beacon client URL</td></tr>
+<tr><td><code>ETHREX_ALIGNED_NETWORK</code></td><td>Aligned network</td></tr>
+</tbody></table>
+</div>
+<p><strong>Deployer Configuration:</strong></p>
+<div class="table-wrapper"><table><thead><tr><th>Variable</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>ETHREX_L2_ALIGNED</code></td><td>Enable Aligned during deployment</td></tr>
+<tr><td><code>ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS</code></td><td>Address of <code>AlignedProofAggregatorService</code></td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="behavioral-differences"><a class="header" href="#behavioral-differences">Behavioral Differences</a></h2>
+<h3 id="standard-mode-vs-aligned-mode"><a class="header" href="#standard-mode-vs-aligned-mode">Standard Mode vs Aligned Mode</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Aspect</th><th>Standard Mode</th><th>Aligned Mode</th></tr></thead><tbody>
+<tr><td><strong>Proof Format</strong></td><td>Groth16 (EVM-friendly)</td><td>Compressed STARK</td></tr>
+<tr><td><strong>Submission Target</strong></td><td>OnChainProposer contract</td><td>Aligned Batcher (WebSocket)</td></tr>
+<tr><td><strong>Verification Method</strong></td><td><code>verifyBatch()</code></td><td><code>verifyBatchesAligned()</code></td></tr>
+<tr><td><strong>Verifier Contract</strong></td><td>SP1Verifier/RISC0Verifier</td><td>AlignedProofAggregatorService</td></tr>
+<tr><td><strong>Batch Verification</strong></td><td>One batch per tx</td><td>Multiple batches per tx</td></tr>
+<tr><td><strong>Gas Cost</strong></td><td>Higher (per-proof verification)</td><td>Lower (amortized via aggregation)</td></tr>
+<tr><td><strong>Additional Component</strong></td><td>None</td><td>L1ProofVerifier process</td></tr>
+<tr><td><strong>Proof Tracking</strong></td><td>Via rollup store</td><td>Via Aligned SDK</td></tr>
+</tbody></table>
+</div>
+<h3 id="prover-differences"><a class="header" href="#prover-differences">Prover Differences</a></h3>
+<p><strong>Standard Mode</strong>:</p>
+<ul>
+<li>Generates Groth16 proof (calldata format)</li>
+<li>Proof sent directly to <code>OnChainProposer.verifyBatch()</code></li>
+</ul>
+<p><strong>Aligned Mode</strong>:</p>
+<ul>
+<li>Generates Compressed STARK proof (bytes format)</li>
+<li>Proof submitted to Aligned Batcher via SDK</li>
+<li>Must wait for Aligned aggregation before on-chain verification</li>
+</ul>
+<h3 id="verification-flow-differences"><a class="header" href="#verification-flow-differences">Verification Flow Differences</a></h3>
+<p><strong>Standard Mode</strong>:</p>
+<pre><code>Prover → ProofCoordinator → L1ProofSender → OnChainProposer.verifyBatch()
+                                                    │
+                                                    ▼
+                                          SP1Verifier/RISC0Verifier
+</code></pre>
+<p><strong>Aligned Mode</strong>:</p>
+<pre><code>Prover → ProofCoordinator → L1ProofSender → Aligned Batcher
+                                                     │
+                                                     ▼
+                                            Aligned Aggregation
+                                                     │
+                                                     ▼
+L1ProofVerifier  ←  (polls for aggregation)  ←  AlignedProofAggregatorService
+        │
+        ▼
+OnChainProposer.verifyBatchesAligned()
+        │
+        ▼
+AlignedProofAggregatorService.verifyProofInclusion()
+</code></pre>
+<hr />
+<h2 id="error-handling"><a class="header" href="#error-handling">Error Handling</a></h2>
+<h3 id="proof-sender-errors"><a class="header" href="#proof-sender-errors">Proof Sender Errors</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Error</th><th>Description</th><th>Recovery</th></tr></thead><tbody>
+<tr><td><code>AlignedGetNonceError</code></td><td>Failed to get nonce from batcher</td><td>Retry with backoff</td></tr>
+<tr><td><code>AlignedFeeEstimateError</code></td><td>Fee estimation failed</td><td>Retry all RPC URLs</td></tr>
+<tr><td><code>AlignedWrongProofFormat</code></td><td>Proof is not compressed</td><td>Re-generate proof in Aligned mode</td></tr>
+<tr><td><code>InvalidProof</code></td><td>Aligned rejected the proof</td><td>Delete proof, regenerate</td></tr>
+</tbody></table>
+</div>
+<h3 id="proof-verifier-errors"><a class="header" href="#proof-verifier-errors">Proof Verifier Errors</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Error</th><th>Description</th><th>Recovery</th></tr></thead><tbody>
+<tr><td><code>MismatchedPublicInputs</code></td><td>Proofs have different public inputs</td><td>Investigation required</td></tr>
+<tr><td><code>UnsupportedProverType</code></td><td>Prover type not supported by Aligned</td><td>Use SP1 or RISC0</td></tr>
+<tr><td><code>BeaconClient</code></td><td>Beacon URL failed</td><td>Try next beacon URL</td></tr>
+<tr><td><code>EthereumProviderError</code></td><td>RPC URL failed</td><td>Try next RPC URL</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="monitoring"><a class="header" href="#monitoring">Monitoring</a></h2>
+<h3 id="key-metrics"><a class="header" href="#key-metrics">Key Metrics</a></h3>
+<ul>
+<li><code>batch_verification_gas</code>: Gas used per batch verification</li>
+<li><code>latest_sent_batch_proof</code>: Last batch proof submitted to Aligned</li>
+<li><code>last_verified_batch</code>: Last batch verified on L1</li>
+</ul>
+<h3 id="log-messages"><a class="header" href="#log-messages">Log Messages</a></h3>
+<p><strong>Proof Sender</strong>:</p>
+<pre><code>INFO ethrex_l2::sequencer::l1_proof_sender: Sending batch proof(s) to Aligned Layer batch_number=1
+INFO ethrex_l2::sequencer::l1_proof_sender: Submitted proof to Aligned prover_type=SP1 batch_number=1
+</code></pre>
+<p><strong>Proof Verifier</strong>:</p>
+<pre><code>INFO ethrex_l2::sequencer::l1_proof_verifier: Proof aggregated by Aligned batch_number=1 merkle_root=0x... commitment=0x...
+INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainProposer, with transaction hash 0x...
+</code></pre>
+<hr />
+<h2 id="references"><a class="header" href="#references">References</a></h2>
+<ul>
+<li><a href="https://docs.alignedlayer.com/">Aligned Layer Documentation</a></li>
+<li><a href="https://docs.alignedlayer.com/guides/1.2_sdk_api_reference">Aligned SDK API Reference</a></li>
+<li><a href="https://docs.alignedlayer.com/guides/7_contract_addresses">Aligned Contract Addresses</a></li>
+<li><a href="../deployment/aligned.html">Running Ethrex in Aligned Mode</a></li>
+<li><a href="../deployment/overview.html">ethrex L2 Deployment Guide</a></li>
+<li><a href="../architecture/prover.html">ethrex Prover Documentation</a></li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../l2/fundamentals/shared_bridge.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../../developers/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../l2/fundamentals/shared_bridge.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../../developers/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../../elasticlunr.min.js"></script>
+        <script src="../../mark.min.js"></script>
+        <script src="../../searcher.js"></script>
+
+        <script src="../../clipboard.min.js"></script>
+        <script src="../../highlight.js"></script>
+        <script src="../../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../../mermaid.min.js"></script>
+        <script src="../../mermaid-init.js"></script>
+
+
+    </div>
+    </body>
+</html>

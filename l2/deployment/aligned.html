@@ -238,7 +238,11 @@
 
 </style>
 <h1 id="running-ethrex-in-aligned-mode"><a class="header" href="#running-ethrex-in-aligned-mode">Running Ethrex in Aligned Mode</a></h1>
-<p>This guide extends the <a href="./overview.html">Deploy an L2 overview</a> and shows how to run an ethrex L2 with <strong>Aligned mode</strong> enabled. It assumes:</p>
+<p>This guide extends the <a href="./overview.html">Deploy an L2 overview</a> and shows how to run an ethrex L2 with <strong>Aligned mode</strong> enabled.</p>
+<blockquote>
+<p><strong>For a comprehensive technical deep-dive into the Aligned integration architecture, see <a href="../fundamentals/ethrex_l2_aligned_integration.html">Aligned Layer Integration</a>.</strong></p>
+</blockquote>
+<p>It assumes:</p>
 <ul>
 <li>
 <p>You already installed the <code>ethrex</code> binary to your <code>$PATH</code> (for example from the repo root with <code>cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql --force</code>).</p>
@@ -484,7 +488,7 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 <h3 id="prover"><a class="header" href="#prover">Prover</a></h3>
 <ul>
 <li>Generates <code>Compressed</code> proofs instead of <code>Groth16</code>.</li>
-<li>Required because Aligned currently only accepts SP1 compressed proofs.</li>
+<li>Required because Aligned accepts compressed proofs (both SP1 and RISC0).</li>
 </ul>
 <h3 id="proof-sender"><a class="header" href="#proof-sender">Proof Sender</a></h3>
 <ul>
