@@ -3,6 +3,7 @@ use ethrex_l2_common::prover::{BatchProof, ProofBytes, ProofCalldata, ProofForma
 use guest_program::{ZKVM_ZISK_PROGRAM_ELF, input::ProgramInput, output::ProgramOutput};
 use std::{
     io::ErrorKind,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
@@ -14,6 +15,12 @@ const ZISK_VK_PATH: &str = concat!(
     "/src/guest_program/src/zisk/out/riscv64ima-zisk-vk"
 );
 
+fn resolve_elf_path() -> PathBuf {
+    std::env::var_os("ZISK_ELF_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(ELF_PATH))
+}
+
 pub struct ProveOutput {
     pub proof: Vec<u8>,
     pub publics: Vec<u8>,
@@ -21,12 +28,17 @@ pub struct ProveOutput {
 }
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
-    write_elf_file()?;
+    let elf_path = resolve_elf_path();
+    if elf_path == Path::new(ELF_PATH) {
+        write_elf_file()?;
+    } else if !elf_path.exists() {
+        return Err(format!("ELF file not found at {}", elf_path.display()).into());
+    }
 
     let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?;
     std::fs::write(INPUT_PATH, input_bytes.as_slice())?;
 
-    let args = vec!["--elf", ELF_PATH, "--inputs", INPUT_PATH];
+    let args = vec!["--elf", elf_path.to_string_lossy().as_ref(), "--inputs", INPUT_PATH];
     let output = Command::new("ziskemu")
         .args(args)
         .stdin(Stdio::inherit())
@@ -47,13 +59,18 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
 pub fn execute_timed(
     input: ProgramInput,
 ) -> Result<std::time::Duration, Box<dyn std::error::Error>> {
-    write_elf_file()?;
+    let elf_path = resolve_elf_path();
+    if elf_path == Path::new(ELF_PATH) {
+        write_elf_file()?;
+    } else if !elf_path.exists() {
+        return Err(format!("ELF file not found at {}", elf_path.display()).into());
+    }
 
     let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?;
     std::fs::write(INPUT_PATH, input_bytes.as_slice())?;
 
     let start = std::time::Instant::now();
-    let args = vec!["--elf", ELF_PATH, "--inputs", INPUT_PATH];
+    let args = vec!["--elf", elf_path.to_string_lossy().as_ref(), "--inputs", INPUT_PATH];
     let output = Command::new("ziskemu")
         .args(args)
         .stdin(Stdio::inherit())
@@ -76,7 +93,12 @@ pub fn prove(
     input: ProgramInput,
     format: ProofFormat,
 ) -> Result<ProveOutput, Box<dyn std::error::Error>> {
-    write_elf_file()?;
+    let elf_path = resolve_elf_path();
+    if elf_path == Path::new(ELF_PATH) {
+        write_elf_file()?;
+    } else if !elf_path.exists() {
+        return Err(format!("ELF file not found at {}", elf_path.display()).into());
+    }
 
     let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?;
     std::fs::write(INPUT_PATH, input_bytes.as_slice())?;
@@ -84,7 +106,7 @@ pub fn prove(
     let static_args = vec![
         "prove",
         "--elf",
-        ELF_PATH,
+        elf_path.to_string_lossy().as_ref(),
         "--input",
         INPUT_PATH,
         "--output-dir",

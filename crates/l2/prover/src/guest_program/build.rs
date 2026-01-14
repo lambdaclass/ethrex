@@ -129,6 +129,12 @@ fn build_zisk_program() {
     #[cfg(not(feature = "ci"))]
     let mut vkey_command = zisk_command();
 
+    let features = if cfg!(feature = "l2") {
+        vec!["l2".to_string()]
+    } else {
+        vec![]
+    };
+
     build_command
         .env("RUSTC", rustc_path("zisk"))
         .env_remove("RUSTFLAGS")
@@ -143,6 +149,9 @@ fn build_zisk_program() {
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
         .current_dir("./src/zisk");
+    if !features.is_empty() {
+        build_command.arg("--features").arg(features.join(","));
+    }
     #[cfg(not(feature = "ci"))]
     {
         setup_command
