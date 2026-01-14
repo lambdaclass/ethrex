@@ -35,7 +35,7 @@ jobs:
             run_tests:
               - "crates/l2/**"
               - "fixtures/keys/**"
-              - "fixtures/genesis/l1-dev.json"
+              - "fixtures/genesis/l1.json"
               - "fixtures/genesis/l2.json"
               - "fixtures/cache/**"
               - "fixtures/blobs/**"

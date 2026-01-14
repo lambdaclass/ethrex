@@ -132,12 +132,10 @@ pub fn to_batch_proof(
 
 fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Error> {
     let seal = encode_seal(&receipt)?;
-    let journal = receipt.journal.bytes;
 
     // bytes calldata seal,
     // bytes32 imageId,
-    // bytes journal
-    let calldata = vec![Value::Bytes(seal.into()), Value::Bytes(journal.into())];
+    let calldata = vec![Value::Bytes(seal.into())];
 
     Ok(ProofCalldata {
         prover_type: ProverType::RISC0,
