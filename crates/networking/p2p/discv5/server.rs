@@ -3,7 +3,7 @@ use crate::{
         codec::Discv5Codec,
         messages::{
             DISTANCES_PER_FIND_NODE_MSG, FindNodeMessage, Handshake, Message, NodesMessage,
-            Ordinary, Packet, PacketCodecError, PacketHeader, PingMessage, PongMessage,
+            Ordinary, Packet, PacketCodecError, PingMessage, PongMessage,
         },
         session::{build_challenge_data, create_id_signature, derive_session_keys},
     },
@@ -362,22 +362,7 @@ impl DiscoveryServer {
         let masking_iv: u128 = rng.r#gen();
         let nonce = self.next_nonce(&mut rng);
 
-        let (static_header, authdata, encrypted_message) =
-            ordinary.encode(&nonce, &masking_iv.to_be_bytes(), &encrypt_key)?;
-
-        let header = PacketHeader {
-            static_header,
-            flag: 0x00,
-            nonce,
-            authdata,
-            header_end_offset: 23,
-        };
-
-        let packet = Packet {
-            masking_iv: masking_iv.to_be_bytes(),
-            header,
-            encrypted_message,
-        };
+        let packet = ordinary.encode(&nonce, masking_iv.to_be_bytes(), &encrypt_key)?;
 
         let mut buf = BytesMut::new();
         packet.encode(&mut buf, &node.node_id())?;
@@ -416,22 +401,7 @@ impl DiscoveryServer {
         let masking_iv: u128 = rng.r#gen();
         let nonce = self.next_nonce(&mut rng);
 
-        let (static_header, authdata, encrypted_message) =
-            handshake.encode(&nonce, &masking_iv.to_be_bytes(), &encrypt_key)?;
-
-        let header = PacketHeader {
-            static_header,
-            flag: 0x02,
-            nonce,
-            authdata,
-            header_end_offset: 23,
-        };
-
-        let packet = Packet {
-            masking_iv: masking_iv.to_be_bytes(),
-            header,
-            encrypted_message,
-        };
+        let packet = handshake.encode(&nonce, masking_iv.to_be_bytes(), &encrypt_key)?;
 
         let mut buf = BytesMut::new();
         packet.encode(&mut buf, &node.node_id())?;
@@ -598,11 +568,15 @@ pub fn lookup_interval_function(progress: f64, lower_limit: f64, upper_limit: f6
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use crate::{
+        discv5::server::DiscoveryServer,
+        peer_table::PeerTable,
+        types::{Node, NodeRecord},
+    };
     use rand::{SeedableRng, rngs::StdRng};
     use secp256k1::SecretKey;
+    use std::sync::Arc;
     use tokio::net::UdpSocket;
-    use crate::{discv5::server::DiscoveryServer, peer_table::PeerTable, types::{Node, NodeRecord}};
 
     #[tokio::test]
     async fn test_next_nonce_counter() {
