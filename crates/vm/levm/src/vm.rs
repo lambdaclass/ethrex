@@ -32,6 +32,12 @@ use std::{
 /// Storage mapping from slot key to value.
 pub type Storage = HashMap<U256, H256>;
 
+#[derive(Clone, Copy)]
+pub struct StorageSlotCache {
+    pub current: U256,
+    pub original: U256,
+}
+
 /// Specifies whether the VM operates in L1 or L2 mode.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum VMType {
@@ -380,8 +386,8 @@ pub struct VM<'a> {
     pub tx: Transaction,
     /// Execution hooks for tracing and debugging.
     pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
-    /// Original storage values before transaction (for SSTORE gas calculation).
-    pub storage_original_values: BTreeMap<(Address, H256), U256>,
+    /// Cached storage values (current + original) for SSTORE gas calculation.
+    pub storage_cached_values: BTreeMap<(Address, H256), StorageSlotCache>,
     /// Call tracer for execution tracing.
     pub tracer: LevmCallTracer,
     /// Debug mode for development diagnostics.
@@ -416,7 +422,7 @@ impl<'a> VM<'a> {
             db,
             tx: tx.clone(),
             hooks: get_hooks(&vm_type),
-            storage_original_values: BTreeMap::new(),
+            storage_cached_values: BTreeMap::new(),
             tracer,
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),

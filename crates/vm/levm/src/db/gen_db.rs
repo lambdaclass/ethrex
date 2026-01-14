@@ -15,6 +15,7 @@ use crate::errors::InternalError;
 use crate::errors::VMError;
 use crate::utils::account_to_levm_account;
 use crate::utils::restore_cache_state;
+use crate::vm::StorageSlotCache;
 use crate::vm::VM;
 pub use ethrex_common::types::AccountUpdate;
 use rustc_hash::FxHashMap;
@@ -454,12 +455,18 @@ impl<'a> VM<'a> {
         address: Address,
         key: H256,
     ) -> Result<U256, InternalError> {
-        if let Some(value) = self.storage_original_values.get(&(address, key)) {
-            return Ok(*value);
+        if let Some(cached) = self.storage_cached_values.get(&(address, key)) {
+            return Ok(cached.original);
         }
 
         let value = self.get_storage_value(address, key)?;
-        self.storage_original_values.insert((address, key), value);
+        self.storage_cached_values.insert(
+            (address, key),
+            StorageSlotCache {
+                current: value,
+                original: value,
+            },
+        );
         Ok(value)
     }
 
@@ -475,9 +482,36 @@ impl<'a> VM<'a> {
         // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
         let storage_slot_was_cold = !self.substate.add_accessed_slot(address, key);
 
+        if let Some(cached) = self.storage_cached_values.get(&(address, key)) {
+            return Ok((cached.current, storage_slot_was_cold));
+        }
+
         let storage_slot = self.get_storage_value(address, key)?;
 
         Ok((storage_slot, storage_slot_was_cold))
+    }
+
+    /// Accesses a storage slot and returns the current value, original (pre-tx) value, and coldness.
+    pub fn access_storage_slot_with_original(
+        &mut self,
+        address: Address,
+        key: H256,
+    ) -> Result<(U256, U256, bool), InternalError> {
+        let storage_slot_was_cold = !self.substate.add_accessed_slot(address, key);
+
+        if let Some(cached) = self.storage_cached_values.get(&(address, key)) {
+            return Ok((cached.current, cached.original, storage_slot_was_cold));
+        }
+
+        let current_value = self.get_storage_value(address, key)?;
+        self.storage_cached_values.insert(
+            (address, key),
+            StorageSlotCache {
+                current: current_value,
+                original: current_value,
+            },
+        );
+        Ok((current_value, current_value, storage_slot_was_cold))
     }
 
     /// Gets storage value of an account, caching it if not already cached.
@@ -521,6 +555,10 @@ impl<'a> VM<'a> {
 
         let account = self.get_account_mut(address)?;
         account.storage.insert(key, new_value);
+
+        if let Some(cached) = self.storage_cached_values.get_mut(&(address, key)) {
+            cached.current = new_value;
+        }
         Ok(())
     }
 

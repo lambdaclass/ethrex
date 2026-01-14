@@ -422,7 +422,17 @@ impl<'a> VM<'a> {
     /// Restores the cache state to the state before changes made during a callframe.
     pub fn restore_cache_state(&mut self) -> Result<(), VMError> {
         let callframe_backup = self.current_call_frame.call_frame_backup.clone();
-        restore_cache_state(self.db, callframe_backup)
+        restore_cache_state(self.db, callframe_backup.clone())?;
+
+        for (address, storage) in callframe_backup.original_account_storage_slots {
+            for (key, value) in storage {
+                if let Some(cached) = self.storage_cached_values.get_mut(&(address, key)) {
+                    cached.current = value;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     // The CallFrameBackup of the current callframe has to be merged with the backup of its parent, in the following way:
