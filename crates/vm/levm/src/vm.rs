@@ -379,7 +379,7 @@ pub struct VM<'a> {
     /// The transaction being executed.
     pub tx: Transaction,
     /// Execution hooks for tracing and debugging.
-    pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
+    pub hooks: Rc<RefCell<Vec<Box<dyn Hook>>>>,
     /// Original storage values before transaction (for SSTORE gas calculation).
     pub storage_original_values: BTreeMap<(Address, H256), U256>,
     /// Call tracer for execution tracing.
@@ -415,7 +415,7 @@ impl<'a> VM<'a> {
             substate,
             db,
             tx: tx.clone(),
-            hooks: get_hooks(&vm_type),
+            hooks: Rc::new(RefCell::new(get_hooks(&vm_type))),
             storage_original_values: BTreeMap::new(),
             tracer,
             debug_mode: DebugMode::disabled(),
@@ -466,7 +466,7 @@ impl<'a> VM<'a> {
     }
 
     fn add_hook(&mut self, hook: impl Hook + 'static) {
-        self.hooks.push(Rc::new(RefCell::new(hook)));
+        self.hooks.borrow_mut().push(Box::new(hook));
     }
 
     /// Executes a whole external transaction. Performing validations at the beginning.
@@ -592,8 +592,8 @@ impl<'a> VM<'a> {
     }
 
     fn prepare_execution(&mut self) -> Result<(), VMError> {
-        for hook in self.hooks.clone() {
-            hook.borrow_mut().prepare_execution(self)?;
+        for hook in self.hooks.clone().borrow_mut().iter_mut() {
+            hook.prepare_execution(self)?;
         }
 
         Ok(())
@@ -603,9 +603,8 @@ impl<'a> VM<'a> {
         &mut self,
         mut ctx_result: ContextResult,
     ) -> Result<ExecutionReport, VMError> {
-        for hook in self.hooks.clone() {
-            hook.borrow_mut()
-                .finalize_execution(self, &mut ctx_result)?;
+        for hook in self.hooks.clone().borrow_mut().iter_mut() {
+            hook.finalize_execution(self, &mut ctx_result)?;
         }
 
         self.tracer.exit_context(&ctx_result, true)?;

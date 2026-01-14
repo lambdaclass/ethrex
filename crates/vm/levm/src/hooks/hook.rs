@@ -4,7 +4,6 @@ use crate::{
     vm::{VM, VMType},
 };
 use ethrex_common::types::fee_config::FeeConfig;
-use std::{cell::RefCell, rc::Rc};
 
 pub trait Hook {
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), VMError>;
@@ -16,20 +15,20 @@ pub trait Hook {
     ) -> Result<(), VMError>;
 }
 
-pub fn get_hooks(vm_type: &VMType) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
+pub fn get_hooks(vm_type: &VMType) -> Vec<Box<dyn Hook + 'static>> {
     match vm_type {
         VMType::L1 => l1_hooks(),
         VMType::L2(fee_config) => l2_hooks(*fee_config),
     }
 }
 
-pub fn l1_hooks() -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
-    vec![Rc::new(RefCell::new(DefaultHook))]
+pub fn l1_hooks() -> Vec<Box<dyn Hook + 'static>> {
+    vec![Box::new(DefaultHook)]
 }
 
-pub fn l2_hooks(fee_config: FeeConfig) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
+pub fn l2_hooks(fee_config: FeeConfig) -> Vec<Box<dyn Hook + 'static>> {
     vec![
-        Rc::new(RefCell::new(L2Hook { fee_config })),
-        Rc::new(RefCell::new(BackupHook::default())),
+        Box::new(L2Hook { fee_config }),
+        Box::new(BackupHook::default()),
     ]
 }
