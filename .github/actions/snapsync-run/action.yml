@@ -15,6 +15,14 @@ inputs:
     description: Ethrex Docker image tag.
     required: false
     default: main
+  build_local:
+    description: Build ethrex image locally instead of using a pre-built image.
+    required: false
+    default: "false"
+  build_profile:
+    description: Cargo profile to use when building locally (e.g., release, release-with-debug-assertions).
+    required: false
+    default: release
   cl_type:
     description: Consensus layer type (lighthouse, prysm, etc).
     required: false
@@ -34,12 +42,25 @@ runs:
       shell: bash
       run: docker image rm -f ${{ inputs.ethrex_image }}:${{ inputs.ethrex_tag }} || true
 
+    - name: Build local ethrex image
+      if: inputs.build_local == 'true'
+      shell: bash
+      env:
+        BUILD_PROFILE: ${{ inputs.build_profile }}
+        IMAGE_TAG: ${{ inputs.ethrex_tag }}
+      run: |
+        echo "Building ethrex with profile: ${BUILD_PROFILE}"
+        docker build \
+          --build-arg PROFILE="${BUILD_PROFILE}" \
+          -t ethrex-local:${IMAGE_TAG} \
+          -f Dockerfile .
+
     - name: Generate Kurtosis args
       shell: bash
       env:
         NETWORK_NAME: ${{ inputs.network }}
         TIMEOUT: ${{ inputs.timeout }}
-        ETHREX_IMAGE: ${{ inputs.ethrex_image }}
+        ETHREX_IMAGE: ${{ inputs.build_local == 'true' && 'ethrex-local' || inputs.ethrex_image }}
         ETHREX_TAG: ${{ inputs.ethrex_tag }}
         CL_TYPE: ${{ inputs.cl_type }}
         CL_IMAGE: ${{ inputs.cl_image }}
@@ -91,11 +112,23 @@ runs:
     - name: Summarize ethrex version
       if: ${{ always() }}
       shell: bash
+      env:
+        BUILD_LOCAL: ${{ inputs.build_local }}
+        BUILD_PROFILE: ${{ inputs.build_profile }}
+        ETHREX_IMAGE: ${{ inputs.ethrex_image }}
+        ETHREX_TAG: ${{ inputs.ethrex_tag }}
       run: |
-        image="${{ inputs.ethrex_image }}:${{ inputs.ethrex_tag }}"
+        if [ "$BUILD_LOCAL" = "true" ]; then
+          image="ethrex-local:${ETHREX_TAG}"
+        else
+          image="${ETHREX_IMAGE}:${ETHREX_TAG}"
+        fi
         version="$(docker run --rm "$image" --version 2>/dev/null || true)"
         {
           echo "### Ethrex Version"
           echo ""
           echo "- ${version:-unavailable}"
+          if [ "$BUILD_LOCAL" = "true" ]; then
+            echo "- Build Profile: ${BUILD_PROFILE}"
+          fi
         } >> "${GITHUB_STEP_SUMMARY}"
