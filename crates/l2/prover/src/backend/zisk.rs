@@ -38,7 +38,8 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?;
     std::fs::write(INPUT_PATH, input_bytes.as_slice())?;
 
-    let args = vec!["--elf", elf_path.to_string_lossy().as_ref(), "--inputs", INPUT_PATH];
+    let elf_path_str = elf_path.to_string_lossy();
+    let args = vec!["--elf", elf_path_str.as_ref(), "--inputs", INPUT_PATH];
     let output = Command::new("ziskemu")
         .args(args)
         .stdin(Stdio::inherit())
@@ -70,7 +71,8 @@ pub fn execute_timed(
     std::fs::write(INPUT_PATH, input_bytes.as_slice())?;
 
     let start = std::time::Instant::now();
-    let args = vec!["--elf", elf_path.to_string_lossy().as_ref(), "--inputs", INPUT_PATH];
+    let elf_path_str = elf_path.to_string_lossy();
+    let args = vec!["--elf", elf_path_str.as_ref(), "--inputs", INPUT_PATH];
     let output = Command::new("ziskemu")
         .args(args)
         .stdin(Stdio::inherit())
@@ -103,10 +105,11 @@ pub fn prove(
     let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?;
     std::fs::write(INPUT_PATH, input_bytes.as_slice())?;
 
+    let elf_path_str = elf_path.to_string_lossy();
     let static_args = vec![
         "prove",
         "--elf",
-        elf_path.to_string_lossy().as_ref(),
+        elf_path_str.as_ref(),
         "--input",
         INPUT_PATH,
         "--output-dir",
