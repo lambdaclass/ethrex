@@ -480,13 +480,15 @@ Prover → ProofCoordinator → L1ProofSender → Aligned Batcher
                                           Aligned Aggregation
                                                     │
                                                     ▼
-L1ProofVerifier ← check_proof_verification ← AlignedProofAggregatorService
-        │
-        ▼
-OnChainProposer.verifyBatchesAligned()
-        │
-        ▼
-AlignedProofAggregatorService.verifyProofInclusion()
+                                   AlignedProofAggregatorService
+                                                    │
+                            (L1ProofVerifier polls for aggregation)
+                                                    │
+                                                    ▼
+                              OnChainProposer.verifyBatchesAligned()
+                                                    │
+                                                    ▼
+                        AlignedProofAggregatorService.verifyProofInclusion()
 ```
 
 ---
