@@ -1,3 +1,5 @@
+use std::{cell::RefCell, rc::Rc};
+
 use crate::{
     constants::POST_OSAKA_GAS_LIMIT_CAP,
     db::gen_db::GeneralizedDatabase,
@@ -665,7 +667,7 @@ fn simulate_common_bridge_call(
         LevmCallTracer::disabled(),
         VMType::L2(Default::default()),
     )?;
-    new_vm.hooks = Default::default();
+    new_vm.hooks = Rc::new(RefCell::new(Vec::new()));
     default_hook::set_bytecode_and_code_address(&mut new_vm)?;
     let execution_result = new_vm.execute()?;
 
