@@ -85,8 +85,10 @@
   - [Based sequencing](./l2/fundamentals/based.md)
   - [Transaction fees](./l2/fundamentals/transaction_fees.md)
   - [Exit Window](./l2/fundamentals/exit_window.md)
+  - [Timelock](./l2/fundamentals/timelock.md)
   - [Fee token](./l2/fundamentals/fee_token.md)
   - [Shared Bridge](./l2/fundamentals/shared_bridge.md)
+  - [Aligned Layer Integration](./l2/fundamentals/ethrex_l2_aligned_integration.md)
 
 # Ethrex for developers
 
