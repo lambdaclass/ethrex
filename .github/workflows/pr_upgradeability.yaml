@@ -50,6 +50,7 @@ jobs:
           if [ ! -f ./.tmp/ethrex-main/package.json ]; then
             cp package.json ./.tmp/ethrex-main/
           fi
+          rm -rf ./.tmp/ethrex-main/tooling/hardhat/artifacts ./.tmp/ethrex-main/tooling/hardhat/cache
 
       - name: Install base deps
         working-directory: ./.tmp/ethrex-main

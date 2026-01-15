@@ -40,7 +40,11 @@ async function main() {
 
   const referenceKey = path.basename(referenceDir);
 
-  const exclude = ["crates/l2/contracts/src/example/**"];
+  const exclude = [
+    "crates/l2/contracts/src/example/**",
+    "@openzeppelin/**",
+    "**/node_modules/**"
+  ];
 
   const discoveryReport = await validateUpgradeSafety(
     buildInfoDir,
