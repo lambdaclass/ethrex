@@ -75,6 +75,7 @@
   - [Block vs StateDiff](./l2/fundamentals/block_vs_state_diff_measurements.md)
   - [Data availability](./l2/fundamentals/data_availability.md)
   - [Execution witness](./l2/fundamentals/execution_witness.md)
+  - [Execution witness measurements](./l2/fundamentals/execution_witness_measurements.md)
   - [Deposits](./l2/fundamentals/deposits.md)
   - [Withdrawals](./l2/fundamentals/withdrawals.md)
   - [Smart contracts](./l2/fundamentals/contracts.md)
@@ -84,8 +85,10 @@
   - [Based sequencing](./l2/fundamentals/based.md)
   - [Transaction fees](./l2/fundamentals/transaction_fees.md)
   - [Exit Window](./l2/fundamentals/exit_window.md)
+  - [Timelock](./l2/fundamentals/timelock.md)
   - [Fee token](./l2/fundamentals/fee_token.md)
   - [Shared Bridge](./l2/fundamentals/shared_bridge.md)
+  - [Aligned Layer Integration](./l2/fundamentals/ethrex_l2_aligned_integration.md)
 
 # Ethrex for developers
 

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use bytes::{BufMut, Bytes};
 use ethereum_types::{H256, U256};
@@ -337,7 +337,7 @@ impl RLPDecode for AccountStateSlimCodec {
     }
 }
 
-pub fn compute_storage_root(storage: &HashMap<U256, U256>) -> H256 {
+pub fn compute_storage_root(storage: &BTreeMap<U256, U256>) -> H256 {
     let iter = storage.iter().filter_map(|(k, v)| {
         (!v.is_zero()).then_some((keccak_hash(k.to_big_endian()).to_vec(), v.encode_to_vec()))
     });
