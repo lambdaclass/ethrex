@@ -1023,25 +1023,45 @@ enum CastMessage {
 #[derive(Clone, Debug)]
 enum CallMessage {
     PeerCount,
-    PeerCountByCapabilities { capabilities: Vec<Capability> },
+    PeerCountByCapabilities {
+        capabilities: Vec<Capability>,
+    },
     TargetReached,
     TargetPeersReached,
     TargetPeersCompletion,
     GetContactToInitiate,
     GetContactForLookup,
     GetContactForEnrLookup,
-    GetContact { node_id: H256 },
+    GetContact {
+        node_id: H256,
+    },
     GetContactsToRevalidate(Duration),
-    GetBestPeer { capabilities: Vec<Capability> },
-    GetScore { node_id: H256 },
+    GetBestPeer {
+        capabilities: Vec<Capability>,
+    },
+    GetScore {
+        node_id: H256,
+    },
     GetConnectedNodes,
     GetPeersWithCapabilities,
-    GetPeerConnections { capabilities: Vec<Capability> },
-    InsertIfNew { node: Node },
-    ValidateContact { node_id: H256, sender_ip: IpAddr },
-    GetNodesAtDistances { local_node_id: H256, distances: Vec<u32> },
+    GetPeerConnections {
+        capabilities: Vec<Capability>,
+    },
+    InsertIfNew {
+        node: Node,
+    },
+    ValidateContact {
+        node_id: H256,
+        sender_ip: IpAddr,
+    },
+    GetNodesAtDistances {
+        local_node_id: H256,
+        distances: Vec<u32>,
+    },
     GetPeersData,
-    GetRandomPeer { capabilities: Vec<Capability> },
+    GetRandomPeer {
+        capabilities: Vec<Capability>,
+    },
 }
 
 #[derive(Debug)]
