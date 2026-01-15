@@ -1,0 +1,21 @@
+{
+  "name": "ethrex-hardhat",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Hardhat workspace for ethrex Solidity contracts",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "test:l1": "hardhat test --network ethrexL1",
+    "test:l2": "hardhat test --network ethrexL2"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-chai-matchers": "^2.0.6",
+    "@nomicfoundation/hardhat-ethers": "^3.0.4",
+    "@openzeppelin/contracts": "5.4.0",
+    "@openzeppelin/contracts-upgradeable": "5.4.0",
+    "chai": "^4.4.1",
+    "ethers": "^6.14.0",
+    "hardhat": "^2.24.0"
+  }
+}
