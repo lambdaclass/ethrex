@@ -273,3 +273,8 @@ state-diff-test:
 	docker compose -f docker-compose.yaml -f docker-compose-l2-store.overrides.yaml up --detach --no-deps ethrex_l2
 	docker logs --follow ethrex_l2 & \
 	cargo test state_reconstruct --release
+
+# Fast validation to check if blobs match genesis
+# Use this before state-diff-test to catch stale blobs early
+validate-blobs:
+	cargo test validate_blobs_match_genesis --release
