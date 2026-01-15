@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
@@ -128,7 +128,7 @@ async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
     for address in accounts {
         let account_info = GenesisAccount {
             code: Bytes::new(),
-            storage: HashMap::new(),
+            storage: BTreeMap::new(),
             balance: u64::MAX.into(),
             nonce: 0,
         };
