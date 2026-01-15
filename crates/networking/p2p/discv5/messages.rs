@@ -174,9 +174,10 @@ impl PacketHeader {
     }
 }
 
-trait PacketTrait {
+pub trait PacketTrait {
     fn encode_authdata(&self, buf: &mut dyn BufMut) -> Result<(), PacketCodecError>;
     fn packet_type_flag(&self) -> u8;
+    fn get_encoded_message(&self) -> Vec<u8>;
 
     fn build_header(&self, nonce: &[u8; 12]) -> Result<PacketHeader, PacketCodecError> {
         let mut authdata = Vec::new();
@@ -200,6 +201,35 @@ trait PacketTrait {
             header_end_offset,
         })
     }
+
+    /// Encodes the packet
+    fn encode(
+        &self,
+        nonce: &[u8; 12],
+        masking_iv: [u8; 16],
+        encrypt_key: &[u8],
+    ) -> Result<Packet, PacketCodecError> {
+        if encrypt_key.len() < 16 {
+            return Err(PacketCodecError::InvalidSize);
+        }
+        let header = self.build_header(nonce)?;
+
+        let mut message = self.get_encoded_message();
+        let mut message_ad = masking_iv.to_vec();
+        message_ad.extend_from_slice(&header.static_header);
+        message_ad.extend_from_slice(&header.authdata);
+
+        let mut cipher = Aes128Gcm::new(encrypt_key[..16].into());
+        cipher
+            .encrypt_in_place(&header.nonce.into(), &message_ad, &mut message)
+            .map_err(|e| PacketCodecError::CipherError(e.to_string()))?;
+
+        Ok(Packet {
+            masking_iv,
+            header,
+            encrypted_message: message,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -217,40 +247,15 @@ impl PacketTrait for Ordinary {
     fn packet_type_flag(&self) -> u8 {
         0x00
     }
+
+    fn get_encoded_message(&self) -> Vec<u8> {
+        let mut message = Vec::new();
+        self.message.encode(&mut message);
+        message
+    }
 }
 
 impl Ordinary {
-    /// Encodes the ordinary packet
-    pub fn encode(
-        &self,
-        nonce: &[u8; 12],
-        masking_iv: [u8; 16],
-        encrypt_key: &[u8],
-    ) -> Result<Packet, PacketCodecError> {
-        if encrypt_key.len() < 16 {
-            return Err(PacketCodecError::InvalidSize);
-        }
-
-        let header = self.build_header(nonce)?;
-
-        let mut message = Vec::new();
-        self.message.encode(&mut message);
-
-        let mut message_ad = masking_iv.to_vec();
-        message_ad.extend_from_slice(&header.static_header);
-        message_ad.extend_from_slice(&header.authdata);
-
-        let mut cipher = Aes128Gcm::new(encrypt_key[..16].into());
-        cipher
-            .encrypt_in_place(nonce.into(), &message_ad, &mut message)
-            .map_err(|e| PacketCodecError::CipherError(e.to_string()))?;
-        Ok(Packet {
-            masking_iv,
-            header,
-            encrypted_message: message,
-        })
-    }
-
     pub fn decode(packet: &Packet, decrypt_key: &[u8]) -> Result<Ordinary, PacketCodecError> {
         if packet.header.authdata.len() != 32 {
             return Err(PacketCodecError::InvalidSize);
@@ -305,20 +310,28 @@ impl PacketTrait for WhoAreYou {
     fn packet_type_flag(&self) -> u8 {
         0x01
     }
-}
 
-impl WhoAreYou {
-    /// Encodes the WhoAreYou packet
-    fn encode(&self, nonce: &[u8; 12], masking_iv: [u8; 16]) -> Result<Packet, PacketCodecError> {
-        let header = self.build_header(nonce)?;
+    fn get_encoded_message(&self) -> Vec<u8> {
+        Vec::new()
+    }
 
+    /// Encodes the WhoAreYou packet.
+    /// No encryption needed, just an empty message
+    fn encode(
+        &self,
+        nonce: &[u8; 12],
+        masking_iv: [u8; 16],
+        _encrypt_key: &[u8],
+    ) -> Result<Packet, PacketCodecError> {
         Ok(Packet {
             masking_iv,
-            header,
+            header: self.build_header(nonce)?,
             encrypted_message: Vec::new(),
         })
     }
+}
 
+impl WhoAreYou {
     pub fn decode(packet: &Packet) -> Result<WhoAreYou, PacketCodecError> {
         let authdata = packet.header.authdata.clone();
         let id_nonce = u128::from_be_bytes(authdata[..16].try_into()?);
@@ -367,39 +380,15 @@ impl PacketTrait for Handshake {
     fn packet_type_flag(&self) -> u8 {
         0x02
     }
+
+    fn get_encoded_message(&self) -> Vec<u8> {
+        let mut message = Vec::new();
+        self.message.encode(&mut message);
+        message
+    }
 }
 
 impl Handshake {
-    /// Encodes the Handshake packet
-    pub fn encode(
-        &self,
-        nonce: &[u8; 12],
-        masking_iv: [u8; 16],
-        encrypt_key: &[u8],
-    ) -> Result<Packet, PacketCodecError> {
-        if encrypt_key.len() < 16 {
-            return Err(PacketCodecError::InvalidSize);
-        }
-        let header = self.build_header(nonce)?;
-
-        let mut message = Vec::new();
-        self.message.encode(&mut message);
-
-        let mut message_ad = masking_iv.to_vec();
-        message_ad.extend_from_slice(&header.static_header);
-        message_ad.extend_from_slice(&header.authdata);
-
-        let mut cipher = Aes128Gcm::new(encrypt_key[..16].into());
-        cipher
-            .encrypt_in_place(nonce.into(), &message_ad, &mut message)
-            .map_err(|e| PacketCodecError::CipherError(e.to_string()))?;
-        Ok(Packet {
-            masking_iv,
-            header,
-            encrypted_message: message,
-        })
-    }
-
     pub fn decode(packet: &Packet, decrypt_key: &[u8]) -> Result<Handshake, PacketCodecError> {
         if decrypt_key.len() < 16 {
             return Err(PacketCodecError::InvalidSize);
@@ -1010,7 +999,7 @@ mod tests {
         let masking_iv = [0; 16];
         let nonce = hex!("0102030405060708090a0b0c");
 
-        let packet = who_are_you.encode(&nonce, masking_iv).unwrap();
+        let packet = who_are_you.encode(&nonce, masking_iv, &[]).unwrap();
 
         let expected_encoded = &hex!(
             "00000000000000000000000000000000088b3d434277464933a1ccc59f5967ad1d6035f15e528627dde75cd68292f9e6c27d6b66c8100a873fcbaed4e16b8d"
