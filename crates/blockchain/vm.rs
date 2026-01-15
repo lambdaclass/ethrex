@@ -84,7 +84,10 @@ impl VmDatabase for StoreVmDatabase {
     )]
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
         if let Some(ref tracker) = self.state_tracker
-            && let Ok(mut t) = tracker.lock() { t.record_account_access(address) }
+            && let Ok(mut t) = tracker.lock()
+        {
+            t.record_account_access(address)
+        }
         self.store
             .get_account_state_by_root(self.state_root, address)
             .map_err(|e| EvmError::DB(e.to_string()))
@@ -98,7 +101,10 @@ impl VmDatabase for StoreVmDatabase {
     )]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
         if let Some(ref tracker) = self.state_tracker
-            && let Ok(mut t) = tracker.lock() { t.record_storage_access(address, key) }
+            && let Ok(mut t) = tracker.lock()
+        {
+            t.record_storage_access(address, key)
+        }
         self.store
             .get_storage_at_root(self.state_root, address, key)
             .map_err(|e| EvmError::DB(e.to_string()))
@@ -112,7 +118,10 @@ impl VmDatabase for StoreVmDatabase {
     )]
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
         if let Some(ref tracker) = self.state_tracker
-            && let Ok(mut t) = tracker.lock() { t.record_block_hash_access(block_number) }
+            && let Ok(mut t) = tracker.lock()
+        {
+            t.record_block_hash_access(block_number)
+        }
         let mut block_hash_cache = self
             .block_hash_cache
             .lock()
@@ -179,7 +188,10 @@ impl VmDatabase for StoreVmDatabase {
             return Ok(Code::default());
         }
         if let Some(ref tracker) = self.state_tracker
-            && let Ok(mut t) = tracker.lock() { t.record_code_access(code_hash) }
+            && let Ok(mut t) = tracker.lock()
+        {
+            t.record_code_access(code_hash)
+        }
         match self.store.get_account_code(code_hash) {
             Ok(Some(code)) => Ok(code),
             Ok(None) => Err(EvmError::DB(format!(

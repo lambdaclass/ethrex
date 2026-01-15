@@ -86,9 +86,7 @@ use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
 use rustc_hash::FxHashMap;
-use state_dump::{
-    StateAccessTracker, StateDumpConfig, generate_and_save_dump,
-};
+use state_dump::{StateAccessTracker, StateDumpConfig, generate_and_save_dump};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{
@@ -345,41 +343,38 @@ impl Blockchain {
         Ok((execution_result, account_updates))
     }
 
-    fn handle_validation_error(
-        &self,
-        tracker: &StateTracker,
-        block: &Block,
-        error: &ChainError,
-    ) {
+    fn handle_validation_error(&self, tracker: &StateTracker, block: &Block, error: &ChainError) {
         let error_str = format!("{:?}", error);
         let block_number = block.header.number;
         let block_hash = block.hash();
 
         if let Some(config) = &self.options.state_dump_config
-            && config.enabled && config.auto_save
+            && config.enabled
+            && config.auto_save
             && let Some(path) = generate_and_save_dump(
                 tracker,
                 block_number,
                 block_hash,
                 &error_str,
                 &config.dump_dir,
-            ) {
-                // Log summary statistics
-                if let Ok(t) = tracker.lock() {
-                    warn!(
-                        error_type = %error_str,
-                        block_number = block_number,
-                        block_hash = %format!("{:?}", block_hash),
-                        dump_path = %path.display(),
-                        accounts_accessed = t.accounts_accessed.len(),
-                        storage_slots_accessed = t.storage_accessed.values().map(|s| s.len()).sum::<usize>(),
-                        trie_nodes_accessed = t.trie_nodes_accessed.len(),
-                        code_hashes_accessed = t.code_hashes_accessed.len(),
-                        block_hashes_accessed = t.block_hashes_accessed.len(),
-                        "State dump generated for block validation failure"
-                    );
-                }
+            )
+        {
+            // Log summary statistics
+            if let Ok(t) = tracker.lock() {
+                warn!(
+                    error_type = %error_str,
+                    block_number = block_number,
+                    block_hash = %format!("{:?}", block_hash),
+                    dump_path = %path.display(),
+                    accounts_accessed = t.accounts_accessed.len(),
+                    storage_slots_accessed = t.storage_accessed.values().map(|s| s.len()).sum::<usize>(),
+                    trie_nodes_accessed = t.trie_nodes_accessed.len(),
+                    code_hashes_accessed = t.code_hashes_accessed.len(),
+                    block_hashes_accessed = t.block_hashes_accessed.len(),
+                    "State dump generated for block validation failure"
+                );
             }
+        }
     }
 
     /// Executes a block withing a new vm instance and state

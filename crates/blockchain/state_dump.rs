@@ -57,7 +57,10 @@ impl StateAccessTracker {
     }
 
     pub fn record_storage_access(&mut self, address: Address, key: H256) {
-        self.storage_accessed.entry(address).or_default().insert(key);
+        self.storage_accessed
+            .entry(address)
+            .or_default()
+            .insert(key);
     }
 
     pub fn record_trie_node_access(&mut self, path: Nibbles, data: Vec<u8>) {
@@ -157,8 +160,8 @@ impl StateAccessDump {
             self.timestamp
         );
         let path = dir.join(filename);
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        let json =
+            serde_json::to_string_pretty(self).map_err(|e| std::io::Error::other(e.to_string()))?;
         std::fs::write(&path, json)?;
         Ok(path)
     }
