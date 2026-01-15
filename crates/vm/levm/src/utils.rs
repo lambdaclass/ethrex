@@ -75,7 +75,7 @@ pub fn restore_cache_state(
 ) -> Result<(), VMError> {
     for (address, account) in callframe_backup.original_accounts_info {
         if let Some(current_account) = db.current_accounts_state.get_mut(&address) {
-            current_account.info = account.info;
+            current_account.to_mut().info = account.info;
         }
     }
 
@@ -89,7 +89,7 @@ pub fn restore_cache_state(
             .ok_or(InternalError::AccountNotFound)?;
 
         for (key, value) in storage {
-            account.storage.insert(key, value);
+            account.to_mut().storage.insert(key, value);
         }
     }
 
