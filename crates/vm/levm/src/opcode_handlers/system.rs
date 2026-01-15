@@ -68,15 +68,21 @@ impl<'a> VM<'a> {
             eip7702_get_code(self.db, &mut self.substate, callee)?;
 
         // GAS
-        let (new_memory_size, gas_left, account_is_empty, address_was_cold) = self
-            .get_call_gas_params(
-                args_offset,
-                args_size,
-                return_data_offset,
-                return_data_size,
-                eip7702_gas_consumed,
-                callee,
-            )?;
+        let (new_memory_size, gas_left, address_was_cold) = self.get_call_gas_params(
+            args_offset,
+            args_size,
+            return_data_offset,
+            return_data_size,
+            eip7702_gas_consumed,
+            callee,
+        )?;
+
+        let account_is_empty = if value.is_zero() {
+            // Empty-account surcharge only applies when transferring value
+            false
+        } else {
+            self.db.get_account(callee)?.is_empty()
+        };
 
         let (cost, gas_limit) = gas_cost::call(
             new_memory_size,
@@ -102,6 +108,11 @@ impl<'a> VM<'a> {
         let from = callframe.to; // The new sender will be the current contract.
         let to = callee; // In this case code_address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
         let is_static = callframe.is_static;
+        let is_tracing = self.tracer.active;
+        if !is_tracing && self.precheck_message_call(gas_limit, from, true, value)?.is_none() {
+            return Ok(OpcodeResult::Continue);
+        }
+
         let data = self.get_calldata(args_offset, args_size)?;
 
         self.tracer.enter(CALL, from, to, value, gas_limit, &data);
@@ -119,6 +130,7 @@ impl<'a> VM<'a> {
             return_data_size,
             bytecode,
             is_delegation_7702,
+            !is_tracing,
         )
     }
 
@@ -166,15 +178,14 @@ impl<'a> VM<'a> {
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(self.db, &mut self.substate, address)?;
         // GAS
-        let (new_memory_size, gas_left, _account_is_empty, address_was_cold) = self
-            .get_call_gas_params(
-                args_offset,
-                args_size,
-                return_data_offset,
-                return_data_size,
-                eip7702_gas_consumed,
-                address,
-            )?;
+        let (new_memory_size, gas_left, address_was_cold) = self.get_call_gas_params(
+            args_offset,
+            args_size,
+            return_data_offset,
+            return_data_size,
+            eip7702_gas_consumed,
+            address,
+        )?;
 
         let (cost, gas_limit) = gas_cost::callcode(
             new_memory_size,
@@ -199,6 +210,11 @@ impl<'a> VM<'a> {
         let from = callframe.to;
         let to = callframe.to;
         let is_static = callframe.is_static;
+        let is_tracing = self.tracer.active;
+        if !is_tracing && self.precheck_message_call(gas_limit, from, true, value)?.is_none() {
+            return Ok(OpcodeResult::Continue);
+        }
+
         let data = self.get_calldata(args_offset, args_size)?;
 
         self.tracer
@@ -217,6 +233,7 @@ impl<'a> VM<'a> {
             return_data_size,
             bytecode,
             is_delegation_7702,
+            !is_tracing,
         )
     }
 
@@ -283,15 +300,14 @@ impl<'a> VM<'a> {
             eip7702_get_code(self.db, &mut self.substate, address)?;
 
         // GAS
-        let (new_memory_size, gas_left, _account_is_empty, address_was_cold) = self
-            .get_call_gas_params(
-                args_offset,
-                args_size,
-                return_data_offset,
-                return_data_size,
-                eip7702_gas_consumed,
-                address,
-            )?;
+        let (new_memory_size, gas_left, address_was_cold) = self.get_call_gas_params(
+            args_offset,
+            args_size,
+            return_data_offset,
+            return_data_size,
+            eip7702_gas_consumed,
+            address,
+        )?;
 
         let (cost, gas_limit) = gas_cost::delegatecall(
             new_memory_size,
@@ -316,6 +332,11 @@ impl<'a> VM<'a> {
         let value = callframe.msg_value;
         let to = callframe.to;
         let is_static = callframe.is_static;
+        let is_tracing = self.tracer.active;
+        if !is_tracing && self.precheck_message_call(gas_limit, from, false, value)?.is_none() {
+            return Ok(OpcodeResult::Continue);
+        }
+
         let data = self.get_calldata(args_offset, args_size)?;
 
         // In this trace the `from` is the current contract, we don't want the `from` to be, for example, the EOA that sent the transaction
@@ -335,6 +356,7 @@ impl<'a> VM<'a> {
             return_data_size,
             bytecode,
             is_delegation_7702,
+            !is_tracing,
         )
     }
 
@@ -380,15 +402,14 @@ impl<'a> VM<'a> {
             eip7702_get_code(self.db, &mut self.substate, address)?;
 
         // GAS
-        let (new_memory_size, gas_left, _account_is_empty, address_was_cold) = self
-            .get_call_gas_params(
-                args_offset,
-                args_size,
-                return_data_offset,
-                return_data_size,
-                eip7702_gas_consumed,
-                address,
-            )?;
+        let (new_memory_size, gas_left, address_was_cold) = self.get_call_gas_params(
+            args_offset,
+            args_size,
+            return_data_offset,
+            return_data_size,
+            eip7702_gas_consumed,
+            address,
+        )?;
 
         let (cost, gas_limit) = gas_cost::staticcall(
             new_memory_size,
@@ -412,6 +433,12 @@ impl<'a> VM<'a> {
         let value = U256::zero();
         let from = callframe.to; // The new sender will be the current contract.
         let to = address; // In this case address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
+
+        let is_tracing = self.tracer.active;
+        if !is_tracing && self.precheck_message_call(gas_limit, from, false, value)?.is_none() {
+            return Ok(OpcodeResult::Continue);
+        }
+
         let data = self.get_calldata(args_offset, args_size)?;
 
         self.tracer
@@ -430,6 +457,7 @@ impl<'a> VM<'a> {
             return_data_size,
             bytecode,
             is_delegation_7702,
+            !is_tracing,
         )
     }
 
@@ -730,35 +758,27 @@ impl<'a> VM<'a> {
         ret_size: usize,
         bytecode: Code,
         is_delegation_7702: bool,
+        prechecked: bool,
     ) -> Result<OpcodeResult, VMError> {
-        // Clear callframe subreturn data
-        self.current_call_frame.sub_return_data.clear();
-
-        // Validate sender has enough value
-        if should_transfer_value && !value.is_zero() {
-            let sender_balance = self.db.get_account(msg_sender)?.info.balance;
-            if sender_balance < value {
-                self.early_revert_message_call(gas_limit, "OutOfFund".to_string())?;
+        let new_depth = if prechecked {
+            self.current_call_frame
+                .depth
+                .checked_add(1)
+                .ok_or(InternalError::Overflow)?
+        } else {
+            let Some(new_depth) =
+                self.precheck_message_call(gas_limit, msg_sender, should_transfer_value, value)?
+            else {
                 return Ok(OpcodeResult::Continue);
-            }
-        }
-
-        // Validate max depth has not been reached yet.
-        let new_depth = self
-            .current_call_frame
-            .depth
-            .checked_add(1)
-            .ok_or(InternalError::Overflow)?;
-        if new_depth > 1024 {
-            self.early_revert_message_call(gas_limit, "MaxDepth".to_string())?;
-            return Ok(OpcodeResult::Continue);
-        }
+            };
+            new_depth
+        };
 
         if precompiles::is_precompile(&code_address, self.env.config.fork, self.vm_type)
             && !is_delegation_7702
         {
             let mut gas_remaining = gas_limit;
-            let ctx_result = Self::execute_precompile(
+            let mut ctx_result = Self::execute_precompile(
                 code_address,
                 &calldata,
                 gas_limit,
@@ -767,6 +787,11 @@ impl<'a> VM<'a> {
             )?;
 
             let call_frame = &mut self.current_call_frame;
+            let output = if self.tracer.active {
+                ctx_result.output.clone()
+            } else {
+                std::mem::take(&mut ctx_result.output)
+            };
 
             // Return gas left from subcontext
             #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
@@ -784,16 +809,13 @@ impl<'a> VM<'a> {
             // Store return data of sub-context
             call_frame.memory.store_data(
                 ret_offset,
-                if ctx_result.output.len() >= ret_size {
-                    ctx_result
-                        .output
-                        .get(..ret_size)
-                        .ok_or(ExceptionalHalt::OutOfBounds)?
+                if output.len() >= ret_size {
+                    output.get(..ret_size).ok_or(ExceptionalHalt::OutOfBounds)?
                 } else {
-                    &ctx_result.output
+                    &output
                 },
             )?;
-            call_frame.sub_return_data = ctx_result.output.clone();
+            call_frame.sub_return_data = output;
 
             // What to do, depending on TxResult
             call_frame.stack.push(match &ctx_result.result {
@@ -996,10 +1018,9 @@ impl<'a> VM<'a> {
         return_data_size: usize,
         eip7702_gas_consumed: u64,
         address: Address,
-    ) -> Result<(usize, u64, bool, bool), VMError> {
+    ) -> Result<(usize, u64, bool), VMError> {
         // Creation of previously empty accounts and cold addresses have higher gas cost
         let address_was_cold = !self.substate.add_accessed_address(address);
-        let account_is_empty = self.db.get_account(address)?.is_empty();
 
         // Calculated here for memory expansion gas cost
         let new_memory_size_for_args = calculate_memory_size(args_offset, args_size)?;
@@ -1013,12 +1034,41 @@ impl<'a> VM<'a> {
             .checked_sub(eip7702_gas_consumed as i64)
             .ok_or(ExceptionalHalt::OutOfGas)?;
 
-        Ok((
-            new_memory_size,
-            gas_left as u64,
-            account_is_empty,
-            address_was_cold,
-        ))
+        Ok((new_memory_size, gas_left as u64, address_was_cold))
+    }
+
+    #[inline(always)]
+    fn precheck_message_call(
+        &mut self,
+        gas_limit: u64,
+        msg_sender: Address,
+        should_transfer_value: bool,
+        value: U256,
+    ) -> Result<Option<usize>, VMError> {
+        // Clear callframe subreturn data
+        self.current_call_frame.sub_return_data.clear();
+
+        // Validate sender has enough value
+        if should_transfer_value && !value.is_zero() {
+            let sender_balance = self.db.get_account(msg_sender)?.info.balance;
+            if sender_balance < value {
+                self.early_revert_message_call(gas_limit, "OutOfFund".to_string())?;
+                return Ok(None);
+            }
+        }
+
+        // Validate max depth has not been reached yet.
+        let new_depth = self
+            .current_call_frame
+            .depth
+            .checked_add(1)
+            .ok_or(InternalError::Overflow)?;
+        if new_depth > 1024 {
+            self.early_revert_message_call(gas_limit, "MaxDepth".to_string())?;
+            return Ok(None);
+        }
+
+        Ok(Some(new_depth))
     }
 
     fn get_calldata(&mut self, offset: usize, size: usize) -> Result<Bytes, VMError> {
