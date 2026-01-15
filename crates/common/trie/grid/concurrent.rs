@@ -5,7 +5,6 @@
 
 use ethereum_types::H256;
 use rayon::prelude::*;
-use std::sync::Mutex;
 
 use crate::{db::TrieDB, error::TrieError, EMPTY_TRIE_HASH};
 
@@ -16,9 +15,6 @@ use super::{hex_patricia_grid::HexPatriciaGrid, NIBBLE_COUNT};
 /// Partitions updates by their first nibble (0-15) and processes
 /// each partition in parallel using rayon.
 pub struct ConcurrentPatriciaGrid<DB: TrieDB + Clone + Send + Sync> {
-    /// 16 independent grids, one per first nibble
-    shards: [Mutex<Option<HexPatriciaGrid<DB>>>; NIBBLE_COUNT],
-
     /// Database factory for creating per-shard databases
     db: DB,
 }
@@ -26,10 +22,7 @@ pub struct ConcurrentPatriciaGrid<DB: TrieDB + Clone + Send + Sync> {
 impl<DB: TrieDB + Clone + Send + Sync + 'static> ConcurrentPatriciaGrid<DB> {
     /// Create a new concurrent grid with the given database.
     pub fn new(db: DB) -> Self {
-        Self {
-            shards: std::array::from_fn(|_| Mutex::new(None)),
-            db,
-        }
+        Self { db }
     }
 
     /// Apply sorted updates in parallel across 16 shards.
@@ -66,10 +59,11 @@ impl<DB: TrieDB + Clone + Send + Sync + 'static> ConcurrentPatriciaGrid<DB> {
         }
 
         // Process each partition in parallel
+        // Each shard processes keys that all share the same first nibble
         let results: Vec<Result<Option<H256>, TrieError>> = partitions
             .into_par_iter()
             .enumerate()
-            .map(|(_nibble, partition)| {
+            .map(|(nibble, partition)| {
                 if partition.is_empty() {
                     return Ok(None);
                 }
@@ -78,9 +72,14 @@ impl<DB: TrieDB + Clone + Send + Sync + 'static> ConcurrentPatriciaGrid<DB> {
                 let mut grid = HexPatriciaGrid::new(self.db.clone());
 
                 // Apply updates for this partition
-                let hash = grid.apply_sorted_updates(partition.into_iter())?;
+                grid.apply_sorted_updates(partition.into_iter())?;
 
-                Ok(Some(hash))
+                // Extract the subtrie hash at the first nibble position
+                // Since all keys in this partition share first nibble = `nibble`,
+                // the grid's root has a single child at that position
+                let subtrie_hash = grid.get_child_hash_at_nibble(nibble as u8)?;
+
+                Ok(subtrie_hash)
             })
             .collect();
 
@@ -120,17 +119,20 @@ impl<DB: TrieDB + Clone + Send + Sync + 'static> ConcurrentPatriciaGrid<DB> {
         &self,
         shard_hashes: [Option<H256>; NIBBLE_COUNT],
     ) -> Result<H256, TrieError> {
-        use crate::node::{BranchNode, NodeRef};
+        use crate::nibbles::Nibbles;
+        use crate::node::{BranchNode, ExtensionNode, NodeRef};
         use crate::node_hash::NodeHash;
 
         let mut has_any = false;
         let mut choices = BranchNode::EMPTY_CHOICES;
+        let mut single_nibble: Option<usize> = None;
 
         for (i, hash_opt) in shard_hashes.iter().enumerate() {
             if let Some(hash) = hash_opt {
                 if *hash != *EMPTY_TRIE_HASH {
                     choices[i] = NodeRef::Hash(NodeHash::from(*hash));
                     has_any = true;
+                    single_nibble = Some(i);
                 }
             }
         }
@@ -147,13 +149,13 @@ impl<DB: TrieDB + Clone + Send + Sync + 'static> ConcurrentPatriciaGrid<DB> {
         }
 
         if child_count == 1 {
-            // Single child - should be an extension node, but for now
-            // just return the child's hash
-            for choice in &choices {
-                if choice.is_valid() {
-                    return Ok(choice.compute_hash().finalize());
-                }
-            }
+            // Single child - create extension node with the nibble as prefix
+            let nibble = single_nibble.unwrap();
+            let child_hash = shard_hashes[nibble].unwrap();
+            let prefix = Nibbles::from_hex(vec![nibble as u8]);
+            let child_ref = NodeRef::Hash(NodeHash::from(child_hash));
+            let ext = ExtensionNode::new(prefix, child_ref);
+            return Ok(ext.compute_hash().finalize());
         }
 
         // Multiple children - create branch node
@@ -163,11 +165,13 @@ impl<DB: TrieDB + Clone + Send + Sync + 'static> ConcurrentPatriciaGrid<DB> {
 }
 
 /// Partition updates by first nibble for parallel processing.
+#[allow(dead_code)]
 pub struct UpdatesByNibble {
     /// Updates for each nibble (0-15), sorted by key within each partition
     partitions: [Vec<(H256, Vec<u8>)>; NIBBLE_COUNT],
 }
 
+#[allow(dead_code)]
 impl UpdatesByNibble {
     /// Create a new empty partitioner.
     pub fn new() -> Self {
@@ -224,6 +228,14 @@ impl Default for UpdatesByNibble {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::InMemoryTrieDB;
+    use ethrex_crypto::keccak::keccak_hash;
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+
+    fn create_test_db() -> InMemoryTrieDB {
+        InMemoryTrieDB::new(Arc::new(Mutex::new(BTreeMap::new())))
+    }
 
     #[test]
     fn test_updates_by_nibble_partitioning() {
@@ -277,5 +289,108 @@ mod tests {
 
         assert_eq!(updates.len(), 2);
         assert!(!updates.should_parallelize());
+    }
+
+    #[test]
+    fn test_concurrent_matches_sequential_small() {
+        let db = create_test_db();
+
+        // Generate test data with keys that spread across multiple nibbles
+        let mut updates: Vec<(H256, Vec<u8>)> = (0u32..50)
+            .map(|i| {
+                let key = i.to_be_bytes();
+                let hashed = H256::from_slice(&keccak_hash(&key));
+                (hashed, key.to_vec())
+            })
+            .collect();
+        updates.sort_by_key(|(k, _)| *k);
+
+        // Sequential
+        let mut seq_grid = HexPatriciaGrid::new(db.clone());
+        let seq_root = seq_grid.apply_sorted_updates(updates.clone().into_iter()).unwrap();
+
+        // Concurrent
+        let mut conc_grid = ConcurrentPatriciaGrid::new(db);
+        let conc_root = conc_grid.apply_sorted_updates_parallel(updates.into_iter()).unwrap();
+
+        assert_eq!(seq_root, conc_root, "Sequential and concurrent roots must match");
+    }
+
+    #[test]
+    fn test_concurrent_matches_sequential_medium() {
+        let db = create_test_db();
+
+        // Generate 500 keys
+        let mut updates: Vec<(H256, Vec<u8>)> = (0u32..500)
+            .map(|i| {
+                let key = i.to_be_bytes();
+                let hashed = H256::from_slice(&keccak_hash(&key));
+                (hashed, key.to_vec())
+            })
+            .collect();
+        updates.sort_by_key(|(k, _)| *k);
+
+        // Sequential
+        let mut seq_grid = HexPatriciaGrid::new(db.clone());
+        let seq_root = seq_grid.apply_sorted_updates(updates.clone().into_iter()).unwrap();
+
+        // Concurrent
+        let mut conc_grid = ConcurrentPatriciaGrid::new(db);
+        let conc_root = conc_grid.apply_sorted_updates_parallel(updates.into_iter()).unwrap();
+
+        assert_eq!(seq_root, conc_root, "Sequential and concurrent roots must match for 500 keys");
+    }
+
+    #[test]
+    fn test_concurrent_matches_sequential_large() {
+        let db = create_test_db();
+
+        // Generate 2000 keys
+        let mut updates: Vec<(H256, Vec<u8>)> = (0u32..2000)
+            .map(|i| {
+                let key = i.to_be_bytes();
+                let hashed = H256::from_slice(&keccak_hash(&key));
+                (hashed, key.to_vec())
+            })
+            .collect();
+        updates.sort_by_key(|(k, _)| *k);
+
+        // Sequential
+        let mut seq_grid = HexPatriciaGrid::new(db.clone());
+        let seq_root = seq_grid.apply_sorted_updates(updates.clone().into_iter()).unwrap();
+
+        // Concurrent
+        let mut conc_grid = ConcurrentPatriciaGrid::new(db);
+        let conc_root = conc_grid.apply_sorted_updates_parallel(updates.into_iter()).unwrap();
+
+        assert_eq!(seq_root, conc_root, "Sequential and concurrent roots must match for 2000 keys");
+    }
+
+    #[test]
+    fn test_concurrent_single_partition_fallback() {
+        let db = create_test_db();
+
+        // Create keys that all fall into the same first nibble partition
+        // Keys starting with 0x5X will all have first nibble = 5
+        let mut updates: Vec<(H256, Vec<u8>)> = (0u8..20)
+            .map(|i| {
+                let mut bytes = [0u8; 32];
+                bytes[0] = 0x50 | (i & 0x0F); // First nibble always 5
+                bytes[1] = i;
+                let key = H256::from(bytes);
+                (key, vec![i])
+            })
+            .collect();
+        updates.sort_by_key(|(k, _)| *k);
+
+        // Sequential
+        let mut seq_grid = HexPatriciaGrid::new(db.clone());
+        let seq_root = seq_grid.apply_sorted_updates(updates.clone().into_iter()).unwrap();
+
+        // Concurrent (should fallback to sequential since all in one partition)
+        let mut conc_grid = ConcurrentPatriciaGrid::new(db);
+        let conc_root = conc_grid.apply_sorted_updates_parallel(updates.into_iter()).unwrap();
+
+        assert_eq!(seq_root, conc_root, "Single partition fallback must match");
     }
 }

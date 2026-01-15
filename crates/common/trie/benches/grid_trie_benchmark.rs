@@ -5,7 +5,11 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use ethereum_types::H256;
 use ethrex_crypto::keccak::keccak_hash;
-use ethrex_trie::{db::InMemoryTrieDB, grid::HexPatriciaGrid, Trie};
+use ethrex_trie::{
+    db::InMemoryTrieDB,
+    grid::{ConcurrentPatriciaGrid, HexPatriciaGrid},
+    Trie,
+};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
@@ -32,11 +36,19 @@ fn bench_recursive_trie(data: &[(H256, Vec<u8>)]) -> H256 {
     trie.hash_no_commit()
 }
 
-/// Benchmark grid trie insertion
+/// Benchmark sequential grid trie insertion
 fn bench_grid_trie(data: &[(H256, Vec<u8>)]) -> H256 {
     let db = InMemoryTrieDB::new(Arc::new(Mutex::new(BTreeMap::new())));
     let mut grid = HexPatriciaGrid::new(db);
     grid.apply_sorted_updates(data.iter().cloned()).unwrap()
+}
+
+/// Benchmark parallel grid trie insertion
+fn bench_concurrent_grid_trie(data: &[(H256, Vec<u8>)]) -> H256 {
+    let db = InMemoryTrieDB::new(Arc::new(Mutex::new(BTreeMap::new())));
+    let mut grid = ConcurrentPatriciaGrid::new(db);
+    grid.apply_sorted_updates_parallel(data.iter().cloned())
+        .unwrap()
 }
 
 fn trie_comparison_benchmark(c: &mut Criterion) {
@@ -51,24 +63,61 @@ fn trie_comparison_benchmark(c: &mut Criterion) {
             b.iter(|| bench_recursive_trie(black_box(data)))
         });
 
-        group.bench_with_input(BenchmarkId::new("grid", size), &data, |b, data| {
+        group.bench_with_input(BenchmarkId::new("grid_seq", size), &data, |b, data| {
             b.iter(|| bench_grid_trie(black_box(data)))
+        });
+
+        group.bench_with_input(BenchmarkId::new("grid_parallel", size), &data, |b, data| {
+            b.iter(|| bench_concurrent_grid_trie(black_box(data)))
         });
     }
 
     group.finish();
 }
 
-fn grid_trie_scaling_benchmark(c: &mut Criterion) {
-    let mut group = c.benchmark_group("grid_scaling");
+fn parallel_scaling_benchmark(c: &mut Criterion) {
+    let mut group = c.benchmark_group("parallel_scaling");
 
-    for size in [100, 250, 500, 750, 1000, 1500, 2000] {
+    for size in [500, 1000, 2000, 5000, 10000] {
         let data = generate_test_data(size);
 
         group.throughput(Throughput::Elements(size as u64));
 
-        group.bench_with_input(BenchmarkId::new("grid_trie", size), &data, |b, data| {
+        group.bench_with_input(
+            BenchmarkId::new("grid_sequential", size),
+            &data,
+            |b, data| b.iter(|| bench_grid_trie(black_box(data))),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("grid_parallel", size),
+            &data,
+            |b, data| b.iter(|| bench_concurrent_grid_trie(black_box(data))),
+        );
+    }
+
+    group.finish();
+}
+
+fn large_scale_benchmark(c: &mut Criterion) {
+    let mut group = c.benchmark_group("large_scale");
+    group.sample_size(10); // Reduce sample size for large datasets
+
+    for size in [100000, 500000, 1000000, 4000000] {
+        let data = generate_test_data(size);
+
+        group.throughput(Throughput::Elements(size as u64));
+
+        group.bench_with_input(BenchmarkId::new("recursive", size), &data, |b, data| {
+            b.iter(|| bench_recursive_trie(black_box(data)))
+        });
+
+        group.bench_with_input(BenchmarkId::new("grid_seq", size), &data, |b, data| {
             b.iter(|| bench_grid_trie(black_box(data)))
+        });
+
+        group.bench_with_input(BenchmarkId::new("grid_parallel", size), &data, |b, data| {
+            b.iter(|| bench_concurrent_grid_trie(black_box(data)))
         });
     }
 
@@ -78,6 +127,7 @@ fn grid_trie_scaling_benchmark(c: &mut Criterion) {
 criterion_group!(
     benches,
     trie_comparison_benchmark,
-    grid_trie_scaling_benchmark
+    parallel_scaling_benchmark,
+    large_scale_benchmark
 );
 criterion_main!(benches);

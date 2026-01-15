@@ -38,7 +38,7 @@ pub trait TrieDB: Send + Sync {
 
 // TODO: we should replace this with BackendTrieDB
 /// InMemory implementation for the TrieDB trait, with get and put operations.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct InMemoryTrieDB {
     inner: NodeMap,
     prefix: Option<Nibbles>,

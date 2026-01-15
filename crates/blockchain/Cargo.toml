@@ -40,6 +40,7 @@ metrics = ["ethrex-metrics/transactions"]
 sp1 = ["ethrex-common/sp1", "ethrex-vm/sp1"]
 risc0 = ["ethrex-common/risc0", "ethrex-vm/risc0", "c-kzg"]
 zisk = ["ethrex-common/zisk", "ethrex-vm/zisk"]
+grid-trie = ["ethrex-trie/grid-trie"]
 
 [lints.clippy]
 unwrap_used = "deny"

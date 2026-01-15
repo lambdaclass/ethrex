@@ -80,6 +80,9 @@ use ethrex_storage::{
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
+
+#[cfg(feature = "grid-trie")]
+use ethrex_trie::grid::ConcurrentPatriciaGrid;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
@@ -672,6 +675,16 @@ impl Blockchain {
             .collect();
         let code_updates = code_updates.into_iter().collect();
 
+        // Validate state root using grid trie if enabled
+        #[cfg(feature = "grid-trie")]
+        {
+            let encoded_states: FxHashMap<H256, Vec<u8>> = account_states
+                .iter()
+                .map(|(k, v)| (*k, v.encode_to_vec()))
+                .collect();
+            Self::validate_state_root_with_grid(&encoded_states, state_trie_hash);
+        }
+
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
 
         Ok((
@@ -683,6 +696,64 @@ impl Blockchain {
             },
             accumulated_updates,
         ))
+    }
+
+    /// Debug function to compute state root using grid trie for validation.
+    ///
+    /// This function is enabled via the `grid-trie` feature and the `GRID_TRIE_DEBUG`
+    /// environment variable. When enabled, it computes the state root using the
+    /// grid-based trie algorithm and logs any discrepancies with the recursive trie.
+    ///
+    /// # Arguments
+    /// * `account_states` - Map of hashed addresses to their encoded account states
+    /// * `recursive_hash` - The hash computed by the recursive trie for comparison
+    #[cfg(feature = "grid-trie")]
+    fn validate_state_root_with_grid(
+        account_states: &FxHashMap<H256, Vec<u8>>,
+        recursive_hash: H256,
+    ) {
+        use ethrex_trie::db::InMemoryTrieDB;
+        use std::collections::BTreeMap;
+        use std::sync::{Arc, Mutex};
+
+        // Only run validation if explicitly enabled
+        if std::env::var("GRID_TRIE_DEBUG").is_err() {
+            return;
+        }
+
+        let start = Instant::now();
+
+        // Convert to sorted vector
+        let mut sorted_updates: Vec<(H256, Vec<u8>)> = account_states
+            .iter()
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
+        sorted_updates.sort_by_key(|(k, _)| *k);
+
+        // Compute hash using grid trie
+        let db = InMemoryTrieDB::new(Arc::new(Mutex::new(BTreeMap::new())));
+        let mut grid = ConcurrentPatriciaGrid::new(db);
+
+        match grid.apply_sorted_updates_parallel(sorted_updates.into_iter()) {
+            Ok(grid_hash) => {
+                let elapsed = start.elapsed();
+                if grid_hash != recursive_hash {
+                    debug!(
+                        "GRID_TRIE_DEBUG: Hash mismatch! recursive={:?} grid={:?} ({:?})",
+                        recursive_hash, grid_hash, elapsed
+                    );
+                } else {
+                    trace!(
+                        "GRID_TRIE_DEBUG: Hash match! hash={:?} ({:?})",
+                        grid_hash,
+                        elapsed
+                    );
+                }
+            }
+            Err(e) => {
+                debug!("GRID_TRIE_DEBUG: Grid trie error: {:?}", e);
+            }
+        }
     }
 
     /// Processes a batch of account updates, applying them to the state trie and storage tries,

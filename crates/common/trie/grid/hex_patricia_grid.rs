@@ -312,6 +312,63 @@ impl<DB: TrieDB> HexPatriciaGrid<DB> {
         *EMPTY_TRIE_HASH
     }
 
+    /// Get the hash of the subtrie at a specific nibble position.
+    ///
+    /// This is used by ConcurrentPatriciaGrid to extract the child hash
+    /// after processing a partition where all keys share the same first nibble.
+    ///
+    /// Returns Some(hash) if there's a valid subtrie at that position, None otherwise.
+    pub fn get_child_hash_at_nibble(&self, nibble: u8) -> Result<Option<H256>, TrieError> {
+        use crate::node::{ExtensionNode, LeafNode};
+
+        if !self.root_present {
+            return Ok(None);
+        }
+
+        // Check if root has an extension that starts with the expected nibble
+        if !self.root.extension.is_empty() {
+            let first_nibble = self.root.extension.as_ref()[0];
+            if first_nibble != nibble {
+                // Extension doesn't start with expected nibble - shouldn't happen in concurrent mode
+                return Ok(None);
+            }
+
+            // Remove the first nibble from extension to get the remaining path
+            let remaining_ext = if self.root.extension.len() > 1 {
+                self.root.extension.slice(1, self.root.extension.len())
+            } else {
+                Nibbles::default()
+            };
+
+            // Compute the hash of the subtrie (value or hash with remaining extension)
+            if let Some(ref value) = self.root.value {
+                // It's a leaf - remaining extension + leaf terminator + value
+                let leaf = LeafNode::new(remaining_ext, value.clone());
+                return Ok(Some(leaf.compute_hash().finalize()));
+            }
+
+            if let Some(hash) = self.root.hash {
+                if remaining_ext.is_empty() {
+                    // Just the hash
+                    return Ok(Some(hash.finalize()));
+                } else {
+                    // Extension node with remaining path
+                    let child_ref = crate::NodeRef::Hash(hash);
+                    let ext = ExtensionNode::new(remaining_ext, child_ref);
+                    return Ok(Some(ext.compute_hash().finalize()));
+                }
+            }
+        }
+
+        // Root is a branch node (hash without extension)
+        // This shouldn't happen when all keys share the same first nibble
+        if let Some(hash) = self.root.hash {
+            return Ok(Some(hash.finalize()));
+        }
+
+        Ok(None)
+    }
+
     /// Check how many nibbles we need to unfold to reach the key.
     /// Returns 0 if no unfolding needed.
     fn need_unfolding(&self, key_nibbles: &[u8]) -> u8 {
