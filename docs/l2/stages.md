@@ -202,25 +202,27 @@ Based rollups delegate sequencing to Ethereum L1 validators rather than using a 
 |---------|---------------|-----------|--------------|
 | **ethrex L2** | Stage 0 | Forced inclusion, permissionless proving | Multi-proof (ZK + TEE) |
 | Scroll | Stage 1 | 30-day window, multi-prover | ZK validity proofs |
-| zkSync Era | Stage 0 | Exit window, prover decentralization | ZK validity proofs |
-| Starknet | Stage 1 | 30-day window, permissionless proving | ZK validity proofs (STARK) |
+| zkSync Era | Stage 0* | Evaluation pending, forced inclusion | ZK validity proofs |
+| Starknet | Stage 1 | 30-day window, SC restrictions | ZK validity proofs (STARK) |
 
 **Scroll** became the first ZK rollup to achieve Stage 1 (April 2025) through the Euclid upgrade, which introduced permissionless sequencing fallback and a 12-member Security Council with 75% threshold.
 
-**zkSync Era** is currently experiencing a **proof system pause** due to a vulnerability, causing partial liveness failure. L2BEAT notes this as an ongoing issue. Previously, a critical bug in zk-circuits was discovered that could have led to $1.9B in potential losses if exploited.
+**zkSync Era** is currently experiencing a **proof system pause** due to a vulnerability, causing partial liveness failure. Previously, a critical bug in zk-circuits was discovered that could have led to $1.9B in potential losses if exploited.
 
-**Starknet** reached Stage 1 but shares its SHARP verifier with other StarkEx rollups. The verifier can be changed by a 2/4 multisig with 8-day delay. The Security Council (9/12) retains instant upgrade capability.
+> *L2BEAT states they "haven't finished evaluation" of zkSync Era's Stage 1 elements - not that zkSync fails requirements. The main pending item is a forced inclusion mechanism. With 75% of proving already delegated to external provers and decentralized sequencing (ChonkyBFT) underway, zkSync appears architecturally Stage 1-ready.
+
+**Starknet** reached Stage 1 but shares its SHARP verifier with other StarkEx rollups. The verifier can be changed by a 2/4 multisig with 8-day delay. The Security Council (9/12) retains instant upgrade capability. This shared verifier creates concentration risk across multiple chains.
 
 ### Optimistic Rollups
 
 | Project | Current Stage | Main Gaps | Proof System |
 |---------|---------------|-----------|--------------|
-| Arbitrum One | Stage 1 | 30-day window, permissionless proving | Optimistic (fraud proofs) |
-| Optimism | Stage 1 | 30-day window, permissionless proving | Optimistic (fault proofs) |
+| Arbitrum One | Stage 1 | SC override power, 30-day window | Optimistic (fraud proofs) |
+| Optimism | Stage 1 | Exit window, SC restrictions | Optimistic (fault proofs) |
 
-**Arbitrum One** uses BoLD (Bounded Liquidity Delay) for fraud proofs, enabling permissionless validation. However, L2BEAT warns that "funds can be stolen if a contract receives a malicious code upgrade." The ~6.4 day withdrawal delay is inherent to the optimistic model.
+**Arbitrum One** uses BoLD (Bounded Liquidity Delay) for permissionless fraud proofs - anyone can challenge state assertions. However, Arbitrum remains Stage 1 because the Security Council retains broad override powers. Stage 2 requires restricting SC to "provable bugs only" and extending exit windows to 30 days. The ~6.4 day withdrawal delay is inherent to the optimistic model.
 
-**Optimism** has permissionless fault proofs but L2BEAT notes: "There is no exit window for users to exit in case of unwanted regular upgrades as they are initiated by the Security Council with instant upgrade power." The dispute game also has potential resource exhaustion vulnerabilities.
+**Optimism** has permissionless fault proofs but L2BEAT notes: "There is no exit window for users to exit in case of unwanted regular upgrades as they are initiated by the Security Council with instant upgrade power." Both Arbitrum and Optimism are **technically ready for Stage 2** but held back by **intentional governance constraints**, not technical limitations.
 
 ### L2BEAT Risk Summary
 
@@ -239,9 +241,10 @@ Based rollups delegate sequencing to Ethereum L1 validators rather than using a 
 ### Key Observations
 
 1. **No rollup has achieved Stage 2 yet** - All production rollups remain at Stage 0 or Stage 1
-2. **Based rollups are newer** - Taiko and ethrex are pioneering based sequencing, both at Stage 0
-3. **ZK rollups catching up** - Scroll and Starknet reached Stage 1 in 2025, showing ZK rollups can achieve meaningful decentralization
-4. **Multi-proof is emerging** - ethrex, Taiko, and Scroll are all exploring multi-proof systems for enhanced security
+2. **Classification vs architecture gaps** - Some rollups (Taiko, zkSync Era) are classified lower than their architecture supports due to L2BEAT evaluation timing or minor gaps
+3. **Governance is the bottleneck** - Arbitrum and Optimism have permissionless proofs but are held at Stage 1 by intentional Security Council powers, not technical limitations
+4. **Based rollups are newer** - Taiko and ethrex are pioneering based sequencing, both at Stage 0
+5. **Multi-proof is emerging** - ethrex, Taiko, and Scroll are all exploring multi-proof systems for enhanced security
 
 ## Recommendations
 
