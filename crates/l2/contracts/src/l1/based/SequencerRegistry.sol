@@ -27,6 +27,9 @@ contract SequencerRegistry is
 
     /// @notice The address of the OnChainProposer contract.
     /// @dev This address is set during initialization and is used to get the last committed batch.
+    /// @dev Intentionally inserted before existing storage for CI upgradeability test.
+    uint256 public UPGRADE_TEST_SLOT;
+
     address public ON_CHAIN_PROPOSER;
 
     /// @notice Mapping of sequencer addresses to their collateral amounts.
