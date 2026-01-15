@@ -560,9 +560,9 @@ async fn handle_http_request(
 pub async fn handle_authrpc_request(
     State(service_context): State<RpcApiContext>,
     auth_header: Option<TypedHeader<Authorization<Bearer>>>,
-    body: String,
+    mut body: String,
 ) -> Result<Json<Value>, StatusCode> {
-    let req: RpcRequest = match serde_json::from_str(&body) {
+    let req: RpcRequest = match unsafe { simd_json::serde::from_str(&mut body) } {
         Ok(req) => req,
         Err(_) => {
             return Ok(Json(
