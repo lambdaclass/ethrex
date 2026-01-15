@@ -533,9 +533,11 @@ pub async fn shutdown_signal() {
 
 async fn handle_http_request(
     State(service_context): State<RpcApiContext>,
-    body: String,
+    mut body: String,
 ) -> Result<Json<Value>, StatusCode> {
-    let res = match serde_json::from_str::<RpcRequestWrapper>(&body) {
+    // SAFETY: simd_json::from_str modifies the string in-place for zero-copy parsing.
+    // This is safe because we own the string and don't use it after parsing.
+    let res = match unsafe { simd_json::from_str::<RpcRequestWrapper>(&mut body) } {
         Ok(RpcRequestWrapper::Single(request)) => {
             let res = map_http_requests(&request, service_context).await;
             rpc_response(request.id, res).map_err(|_| StatusCode::BAD_REQUEST)?
@@ -560,9 +562,11 @@ async fn handle_http_request(
 pub async fn handle_authrpc_request(
     State(service_context): State<RpcApiContext>,
     auth_header: Option<TypedHeader<Authorization<Bearer>>>,
-    body: String,
+    mut body: String,
 ) -> Result<Json<Value>, StatusCode> {
-    let req: RpcRequest = match serde_json::from_str(&body) {
+    // SAFETY: simd_json::from_str modifies the string in-place for zero-copy parsing.
+    // This is safe because we own the string and don't use it after parsing.
+    let req: RpcRequest = match unsafe { simd_json::from_str(&mut body) } {
         Ok(req) => req,
         Err(_) => {
             return Ok(Json(

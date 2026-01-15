@@ -12,6 +12,7 @@ axum = { features = ["ws"], workspace = true }
 tower-http.workspace = true
 serde.workspace = true
 serde_json = "1.0.117"
+simd-json = { version = "0.14", features = ["serde_impl"] }
 tokio = { workspace = true, features = ["full"] }
 bytes.workspace = true
 tracing.workspace = true
