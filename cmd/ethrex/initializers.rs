@@ -476,6 +476,7 @@ pub async fn init_l1(
             perf_logs_enabled: true,
             r#type: BlockchainType::L1,
             max_blobs_per_block: opts.max_blobs_per_block,
+            precompute_witnesses: false,
             state_dump_config: None,
         },
     );
