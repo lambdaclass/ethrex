@@ -100,11 +100,15 @@ The `Messenger` is a simple L2 smart contract that enables communication from L2
 #### **State Variables**
 
 - **`lastMessageId`**: Counter that tracks the ID of the last emitted message (incremented before each message is sent)
+- **`BRIDGE`**: Constant address (`0x000000000000000000000000000000000000FFff`) representing the `CommonBridgeL2` contract
 
 #### **Core Functionality**
 
 1. **Message Sending**
-    - **`sendMessageToL1()`**: Sends a message to L1 by emitting an `L1Message` event with the sender, data, and `lastMessageId`
+    - **`sendMessageToL1()`**: Sends a message to L1 by emitting an `L1Message` event with the sender, data, and `lastMessageId`. Only the `CommonBridgeL2` contract can call this function.
+
+2. **Access Control**
+    - **`onlyBridge`**: Modifier ensuring only the `CommonBridgeL2` contract can call messaging functions
 
 ## Upgrade the contracts
 
