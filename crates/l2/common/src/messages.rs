@@ -234,3 +234,125 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
     }
     balance_diffs.into_values().collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_erc20_crosschain_message(
+        dest_chain_id: u64,
+        token_l1: Address,
+        token_src_l2: Address,
+        token_dst_l2: Address,
+        to: Address,
+        amount: U256,
+    ) -> L2Message {
+        // Encode crosschainMintERC20(tokenL1, tokenSrcL2, tokenDstL2, to, amount)
+        let mut data = Vec::new();
+        data.extend_from_slice(&CROSSCHAIN_MINT_ERC20_SELECTOR);
+        data.extend_from_slice(&[0u8; 12]); // padding
+        data.extend_from_slice(token_l1.as_bytes());
+        data.extend_from_slice(&[0u8; 12]);
+        data.extend_from_slice(token_src_l2.as_bytes());
+        data.extend_from_slice(&[0u8; 12]);
+        data.extend_from_slice(token_dst_l2.as_bytes());
+        data.extend_from_slice(&[0u8; 12]);
+        data.extend_from_slice(to.as_bytes());
+        data.extend_from_slice(&amount.to_big_endian());
+
+        L2Message {
+            dest_chain_id: U256::from(dest_chain_id),
+            source_chain_id: 1,
+            from: BRIDGE_ADDRESS,
+            to: BRIDGE_ADDRESS,
+            value: U256::zero(),
+            gas_limit: U256::from(100000),
+            tx_id: U256::zero(),
+            data: Bytes::from(data),
+        }
+    }
+
+    #[test]
+    fn test_first_erc20_transfer_is_lost() {
+        let token_l1 = Address::from_low_u64_be(0xAAA);
+        let token_src_l2 = Address::from_low_u64_be(0xBBB);
+        let token_dst_l2 = Address::from_low_u64_be(0xCCC);
+        let recipient = Address::from_low_u64_be(0xDDD);
+        let amount = U256::from(1000);
+        let dest_chain = 2u64;
+
+        // Single ERC20 crosschain message
+        let messages = vec![make_erc20_crosschain_message(
+            dest_chain,
+            token_l1,
+            token_src_l2,
+            token_dst_l2,
+            recipient,
+            amount,
+        )];
+
+        let balance_diffs = get_balance_diffs(&messages);
+
+        // Should have one entry for dest_chain
+        assert_eq!(balance_diffs.len(), 1, "Should have 1 chain entry");
+
+        let diff = &balance_diffs[0];
+        assert_eq!(diff.chain_id, U256::from(dest_chain));
+
+        // BUG: value_per_token is EMPTY because first token tuple is never added!
+        println!("value_per_token length: {}", diff.value_per_token.len());
+        println!("Expected: 1 entry with value {}", amount);
+
+        // This assertion will FAIL, confirming the bug
+        assert_eq!(
+            diff.value_per_token.len(),
+            1,
+            "BUG CONFIRMED: First ERC20 transfer is silently lost!"
+        );
+    }
+
+    #[test]
+    fn test_second_erc20_transfer_same_token_also_lost() {
+        let token_l1 = Address::from_low_u64_be(0xAAA);
+        let token_src_l2 = Address::from_low_u64_be(0xBBB);
+        let token_dst_l2 = Address::from_low_u64_be(0xCCC);
+        let recipient = Address::from_low_u64_be(0xDDD);
+        let dest_chain = 2u64;
+
+        // Two transfers of same token
+        let messages = vec![
+            make_erc20_crosschain_message(
+                dest_chain,
+                token_l1,
+                token_src_l2,
+                token_dst_l2,
+                recipient,
+                U256::from(1000),
+            ),
+            make_erc20_crosschain_message(
+                dest_chain,
+                token_l1,
+                token_src_l2,
+                token_dst_l2,
+                recipient,
+                U256::from(2000),
+            ),
+        ];
+
+        let balance_diffs = get_balance_diffs(&messages);
+        let diff = &balance_diffs[0];
+
+        println!("value_per_token length: {}", diff.value_per_token.len());
+        if !diff.value_per_token.is_empty() {
+            println!("Total value: {}", diff.value_per_token[0].value);
+        }
+        println!("Expected: 1 entry with value 3000");
+
+        // BUG: First message creates no entry, second message tries to find
+        // a match in empty vec, also adds nothing. BOTH are lost!
+        assert!(
+            diff.value_per_token.is_empty(),
+            "BUG CONFIRMED: ALL ERC20 transfers are lost because first one never creates the entry"
+        );
+    }
+}
