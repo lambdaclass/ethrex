@@ -3,7 +3,7 @@ SHELL := /bin/bash
 OPCODE_BENCH := cargo run --release --bin opcode_bench --
 
 RUNS ?= 10
-ITERS ?= 100000
+ITERS ?= 500000
 CSV ?= bench_results.csv
 CONFIG ?= run_config.json
 
