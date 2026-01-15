@@ -187,10 +187,10 @@ Based rollups delegate sequencing to Ethereum L1 validators rather than using a 
 | Project | Current Stage | Main Gaps | Proof System | Sequencer Model |
 |---------|---------------|-----------|--------------|-----------------|
 | **ethrex L2** | Stage 0 | Forced inclusion, permissionless proving | Multi-proof (ZK + TEE) | Based (round-robin) |
-| Taiko Alethia | Stage 0 | Full ZK coverage, exit window | Multi-proof (SGX + ZK) | Based (permissionless) |
+| Taiko Alethia | Stage 0 | ZK not mandatory, upgrade delays | Multi-proof (SGX mandatory, ZK optional) | Based (permissionless) |
 | Surge | Not deployed | N/A (template) | Based on Taiko stack | Based (L1 validators) |
 
-**Taiko Alethia** is the first based rollup on mainnet. It uses a multi-proof system requiring SGX (mandatory) plus one of SP1/RISC0/SGX(Reth). Blocks can currently be proven without ZK proofs if both SGX verifiers are used. Taiko plans to achieve Stage 1 with the Shasta upgrade (full ZK coverage) by end of 2025.
+**Taiko Alethia** is the first based rollup on mainnet. It requires two proofs per block: SGX (Geth) is mandatory, plus one of SGX (Reth), SP1, or RISC0. **Critically, blocks can be proven with TEE only (no ZK)** if both SGX verifiers are used. As of early 2025, only ~30% of blocks use ZK proofs. L2BEAT warns that "funds can be stolen if a malicious block is proven by compromised SGX instances." Taiko plans to require 100% ZK coverage with the Shasta fork in Q4 2025.
 
 **Surge** is a based rollup template by Nethermind, built on the Taiko stack and designed to target Stage 2 from inception. It removes centralized sequencing entirely, letting Ethereum validators handle transaction ordering. Not yet deployed as a production rollup.
 
