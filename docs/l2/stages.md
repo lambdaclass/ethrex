@@ -205,12 +205,34 @@ Based rollups delegate sequencing to Ethereum L1 validators rather than using a 
 
 **Scroll** became the first ZK rollup to achieve Stage 1 (April 2025) through the Euclid upgrade, which introduced permissionless sequencing fallback and a 12-member Security Council with 75% threshold.
 
+**zkSync Era** is currently experiencing a **proof system pause** due to a vulnerability, causing partial liveness failure. L2BEAT notes this as an ongoing issue. Previously, a critical bug in zk-circuits was discovered that could have led to $1.9B in potential losses if exploited.
+
+**Starknet** reached Stage 1 but shares its SHARP verifier with other StarkEx rollups. The verifier can be changed by a 2/4 multisig with 8-day delay. The Security Council (9/12) retains instant upgrade capability.
+
 ### Optimistic Rollups
 
 | Project | Current Stage | Main Gaps | Proof System |
 |---------|---------------|-----------|--------------|
 | Arbitrum One | Stage 1 | 30-day window, permissionless proving | Optimistic (fraud proofs) |
 | Optimism | Stage 1 | 30-day window, permissionless proving | Optimistic (fault proofs) |
+
+**Arbitrum One** uses BoLD (Bounded Liquidity Delay) for fraud proofs, enabling permissionless validation. However, L2BEAT warns that "funds can be stolen if a contract receives a malicious code upgrade." The ~6.4 day withdrawal delay is inherent to the optimistic model.
+
+**Optimism** has permissionless fault proofs but L2BEAT notes: "There is no exit window for users to exit in case of unwanted regular upgrades as they are initiated by the Security Council with instant upgrade power." The dispute game also has potential resource exhaustion vulnerabilities.
+
+### L2BEAT Risk Summary
+
+| Project | Critical Warnings |
+|---------|-------------------|
+| Taiko Alethia | Funds at risk from compromised SGX; ZK optional; unverified contracts |
+| Scroll | No upgrade delay; emergency verifier upgrade occurred Aug 2025 |
+| zkSync Era | Proof system currently paused; prior $1.9B bug discovered |
+| Starknet | Shared SHARP verifier; SC has instant upgrade power |
+| Arbitrum One | Malicious upgrade risk; optimistic delay (~6.4 days) |
+| Optimism | No exit window for SC upgrades; dispute game vulnerabilities |
+
+> [!WARNING]
+> All rollups carry risks. Even Stage 1 rollups retain Security Council powers that could theoretically be abused. Stage 2 remains unachieved by any production rollup as of early 2025.
 
 ### Key Observations
 
