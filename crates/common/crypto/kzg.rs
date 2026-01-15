@@ -139,13 +139,13 @@ pub fn verify_blob_kzg_proof(
         )
         .map_err(KzgError::from)
     }
-    #[cfg(all(not(feature = "c-kzg"), feature = "openvm-kzg",))]
+    #[cfg(all(not(feature = "c-kzg"), feature = "openvm-kzg"))]
     {
         Err(KzgError::Unimplemented(
             "openvm-kzg doesn't implement verify_blob_kzg_proof".to_string(),
         ))
     }
-    #[cfg(all(feature = "c-kzg", not(feature = "openvm-kzg"),))]
+    #[cfg(all(feature = "c-kzg", not(feature = "openvm-kzg")))]
     {
         let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
         c_kzg_settings
@@ -216,7 +216,7 @@ pub fn verify_kzg_proof(
         )
         .map_err(KzgError::from)
     }
-    #[cfg(all(not(feature = "c-kzg"), feature = "openvm-kzg",))]
+    #[cfg(all(not(feature = "c-kzg"), feature = "openvm-kzg"))]
     {
         openvm_kzg::KzgProof::verify_kzg_proof(
             &openvm_kzg::Bytes48::from_slice(&commitment_bytes)?,
@@ -227,7 +227,7 @@ pub fn verify_kzg_proof(
         )
         .map_err(KzgError::from)
     }
-    #[cfg(all(feature = "c-kzg", not(feature = "openvm-kzg"),))]
+    #[cfg(all(feature = "c-kzg", not(feature = "openvm-kzg")))]
     {
         let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
         c_kzg_settings
