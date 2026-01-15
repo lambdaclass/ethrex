@@ -253,17 +253,15 @@ impl GeneralizedDatabase {
     pub fn get_state_transitions_tx(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in self.current_accounts_state.iter() {
+            let initial_state_account = self
+                .initial_accounts_state
+                .entry(*address)
+                .or_insert_with(|| new_state_account.clone());
+
             if new_state_account.is_unmodified() {
                 // Skip processing account that we know wasn't mutably accessed during execution
                 continue;
             }
-            // [LIE] In case the account is not in immutable_cache (rare) we search for it in the actual database.
-            let initial_state_account =
-                self.initial_accounts_state.get(address).ok_or_else(|| {
-                    VMError::Internal(InternalError::Custom(format!(
-                        "Failed to get account {address} from immutable cache",
-                    )))
-                })?;
 
             let mut acc_info_updated = false;
             let mut storage_updated = false;
@@ -329,6 +327,9 @@ impl GeneralizedDatabase {
                 continue;
             }
 
+            // Replace the initial state account with the new one
+            *initial_state_account = new_state_account.clone();
+
             let account_update = AccountUpdate {
                 address: *address,
                 removed,
@@ -340,11 +341,6 @@ impl GeneralizedDatabase {
 
             account_updates.push(account_update);
         }
-        self.initial_accounts_state.extend(
-            self.current_accounts_state
-                .iter()
-                .map(|(k, v)| (*k, v.clone())),
-        );
         Ok(account_updates)
     }
 }
