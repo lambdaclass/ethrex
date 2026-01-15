@@ -137,7 +137,7 @@ To achieve Stage 1, ethrex would need:
 
 1. **Forced withdrawal inclusion**: Implement an L1 mechanism where users can submit withdrawals directly, with sequencer penalties for non-inclusion
 2. **Security Council multisig**: Deploy owner as an 8+ member multisig with ≥75% threshold
-3. **Exit window enforcement**: Add timelock delays for non-emergency upgrades
+3. **Exit window enforcement**: ethrex has Timelock functionality that gates the `OnChainProposer`, but deployment configuration must enforce ≥7 day delays for non-emergency upgrades
 
 ## Stage 2
 
@@ -182,15 +182,17 @@ To achieve Stage 2, ethrex would need (in addition to Stage 1 requirements):
 
 ### Based Rollups
 
-Based rollups delegate sequencing to Ethereum L1 validators rather than using a centralized sequencer. This is particularly relevant for ethrex as it implements based sequencing.
+Based rollups delegate sequencing to Ethereum L1 validators rather than using a centralized sequencer. This is particularly relevant for ethrex as it implements based sequencing (currently in development).
 
 | Project | Current Stage | Main Gaps | Proof System | Sequencer Model |
 |---------|---------------|-----------|--------------|-----------------|
 | **ethrex L2** | Stage 0 | Forced inclusion, permissionless proving | Multi-proof (ZK + TEE) | Based (round-robin) |
-| Taiko Alethia | Stage 0 | ZK not mandatory, upgrade delays | Multi-proof (SGX mandatory, ZK optional) | Based (permissionless) |
+| Taiko Alethia | Stage 0* | ZK not mandatory, upgrade delays | Multi-proof (SGX mandatory, ZK optional) | Based (permissionless) |
 | Surge | Not deployed | N/A (template) | Based on Taiko stack | Based (L1 validators) |
 
 **Taiko Alethia** is the first based rollup on mainnet. It requires two proofs per block: SGX (Geth) is mandatory, plus one of SGX (Reth), SP1, or RISC0. **Critically, blocks can be proven with TEE only (no ZK)** if both SGX verifiers are used. As of early 2025, only ~30% of blocks use ZK proofs. L2BEAT warns that "funds can be stolen if a malicious block is proven by compromised SGX instances." Taiko plans to require 100% ZK coverage with the Shasta fork in Q4 2025.
+
+> *L2BEAT currently classifies Taiko as "not even Stage 0" because "the proof system is still under development." However, Taiko has been a multi-prover based rollup since the Pacaya fork and the system is architecturally prepared for Stage 0. This appears to be a classification nuance rather than a fundamental gap.
 
 **Surge** is a based rollup template by Nethermind, built on the Taiko stack and designed to target Stage 2 from inception. It removes centralized sequencing entirely, letting Ethereum validators handle transaction ordering. Not yet deployed as a production rollup.
 
