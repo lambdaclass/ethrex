@@ -14,20 +14,10 @@ use ethrex_common::{
 };
 use ethrex_crypto::{blake2f::blake2b_f, kzg::verify_kzg_proof};
 use k256::elliptic_curve::Field;
-use lambdaworks_math::cyclic_group::IsGroup;
-use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bn_254::curve::{
-    BN254FieldElement, BN254TwistCurveFieldElement,
-};
-use lambdaworks_math::elliptic_curve::short_weierstrass::point::ShortWeierstrassProjectivePoint;
 use lambdaworks_math::{
-    elliptic_curve::{
-        short_weierstrass::curves::{
-            bls12_381::{curve::BLS12381TwistCurveFieldElement, twist::BLS12381TwistCurve},
-            bn_254::{curve::BN254Curve, pairing::BN254AtePairing, twist::BN254TwistCurve},
-        },
-        traits::{IsEllipticCurve, IsPairing},
+    elliptic_curve::short_weierstrass::curves::bls12_381::{
+        curve::BLS12381TwistCurveFieldElement, twist::BLS12381TwistCurve,
     },
-    field::extensions::quadratic::QuadraticExtensionFieldElement,
     traits::ByteConversion,
     unsigned_integer::element::UnsignedInteger,
 };
@@ -346,7 +336,19 @@ pub fn execute_precompile(
         .flatten()
         .ok_or(VMError::Internal(InternalError::InvalidPrecompileAddress))?;
 
-    precompile(calldata, gas_remaining, fork)
+    #[cfg(feature = "perf_opcode_timings")]
+    let precompile_time_start = std::time::Instant::now();
+
+    let result = precompile(calldata, gas_remaining, fork);
+
+    #[cfg(feature = "perf_opcode_timings")]
+    {
+        let time = precompile_time_start.elapsed();
+        let mut timings = crate::timings::PRECOMPILES_TIMINGS.lock().expect("poison");
+        timings.update(address, time);
+    }
+
+    result
 }
 
 /// Consumes gas and if it's higher than the gas limit returns an error.
@@ -373,6 +375,23 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
     padded_calldata.into()
 }
 
+#[expect(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+#[cfg(all(
+    not(feature = "sp1"),
+    not(feature = "risc0"),
+    not(feature = "zisk"),
+    feature = "secp256k1"
+))]
+#[inline(always)]
+fn copy_segment(calldata: &Bytes, dst: &mut [u8], start: usize) {
+    if start >= calldata.len() {
+        return;
+    }
+    let end = (start + dst.len()).min(calldata.len());
+    let src = &calldata[start..end];
+    dst[..src.len()].copy_from_slice(src);
+}
+
 #[cfg(all(
     not(feature = "sp1"),
     not(feature = "risc0"),
@@ -384,19 +403,25 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
 
     increase_precompile_consumed_gas(ECRECOVER_COST, gas_remaining)?;
 
-    const INPUT_LEN: usize = 128;
     const WORD: usize = 32;
+    const SIG_LEN: usize = 64;
 
-    let input = fill_with_zeros(calldata, INPUT_LEN);
+    // Total input size = 128
+    let mut raw_hash = [0u8; WORD];
+    let mut raw_v = [0u8; WORD];
+    let mut raw_sig = [0u8; SIG_LEN];
 
-    // len(raw_hash) == 32, len(raw_v) == 32, len(raw_sig) == 64
-    let (raw_hash, tail) = input.split_at(WORD);
-    let (raw_v, raw_sig) = tail.split_at(WORD);
+    copy_segment(calldata, &mut raw_hash, 0);
+    copy_segment(calldata, &mut raw_v, WORD);
+    copy_segment(calldata, &mut raw_sig, WORD * 2);
 
     // EVM expects v ∈ {27, 28}. Anything else is invalid → empty return.
-    let recovery_id_byte = match u8::try_from(u256_from_big_endian(raw_v)) {
-        Ok(27) => 0_i32,
-        Ok(28) => 1_i32,
+    if raw_v[..(WORD - 1)].iter().any(|&b| b != 0) {
+        return Ok(Bytes::new());
+    }
+    let recovery_id_byte = match raw_v[WORD - 1] {
+        27 => 0_i32,
+        28 => 1_i32,
         _ => return Ok(Bytes::new()),
     };
 
@@ -406,16 +431,12 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     };
 
     let Ok(recoverable_signature) =
-        secp256k1::ecdsa::RecoverableSignature::from_compact(raw_sig, recovery_id)
+        secp256k1::ecdsa::RecoverableSignature::from_compact(&raw_sig, recovery_id)
     else {
         return Ok(Bytes::new());
     };
 
-    let message = secp256k1::Message::from_digest(
-        raw_hash
-            .try_into()
-            .map_err(|_err| InternalError::msg("Invalid message length for ecrecover"))?,
-    );
+    let message = secp256k1::Message::from_digest(raw_hash);
 
     let Ok(public_key) = recoverable_signature.recover(&message) else {
         return Ok(Bytes::new());
@@ -675,8 +696,22 @@ fn mod_exp(base: Natural, exponent: Natural, modulus: Natural) -> Natural {
     } else if exponent == Natural::ZERO {
         Natural::from(1_u8) % modulus
     } else {
-        let base_mod = base % &modulus; // malachite requires base to be reduced to modulus first
-        base_mod.mod_pow(&exponent, &modulus)
+        #[cfg(not(feature = "zisk"))]
+        {
+            let base_mod = base % &modulus; // malachite requires base to be reduced to modulus first
+            base_mod.mod_pow(&exponent, &modulus)
+        }
+
+        #[cfg(feature = "zisk")]
+        {
+            use ziskos::zisklib::modexp_u64;
+            let (mut base, mut exponent, mut modulus) = (base, exponent, modulus);
+            let base_limbs = base.to_limbs_asc();
+            let exponent_limbs = exponent.to_limbs_asc();
+            let modulus_limbs = modulus.to_limbs_asc();
+            let result_limbs = modexp_u64(&base_limbs, &exponent_limbs, &modulus_limbs);
+            Natural::from_owned_limbs_asc(result_limbs)
+        }
     }
 }
 
@@ -707,23 +742,23 @@ pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
 
     increase_precompile_consumed_gas(ECADD_COST, gas_remaining)?;
 
-    let first_point_x = calldata.get(0..32).ok_or(InternalError::Slicing)?;
-    let first_point_y = calldata.get(32..64).ok_or(InternalError::Slicing)?;
-    let second_point_x = calldata.get(64..96).ok_or(InternalError::Slicing)?;
-    let second_point_y = calldata.get(96..128).ok_or(InternalError::Slicing)?;
+    let (Some(first_point), Some(second_point)) =
+        (parse_bn254_g1(&calldata, 0), parse_bn254_g1(&calldata, 64))
+    else {
+        return Err(InternalError::Slicing.into());
+    };
+    validate_bn254_g1_coords(&first_point)?;
+    validate_bn254_g1_coords(&second_point)?;
+    bn254_g1_add(first_point, second_point)
+}
 
-    if u256_from_big_endian(first_point_x) >= ALT_BN128_PRIME
-        || u256_from_big_endian(first_point_y) >= ALT_BN128_PRIME
-        || u256_from_big_endian(second_point_x) >= ALT_BN128_PRIME
-        || u256_from_big_endian(second_point_y) >= ALT_BN128_PRIME
-    {
-        return Err(PrecompileError::InvalidPoint.into());
-    }
-
-    let first_point_x = ark_bn254::Fq::from_be_bytes_mod_order(first_point_x);
-    let first_point_y = ark_bn254::Fq::from_be_bytes_mod_order(first_point_y);
-    let second_point_x = ark_bn254::Fq::from_be_bytes_mod_order(second_point_x);
-    let second_point_y = ark_bn254::Fq::from_be_bytes_mod_order(second_point_y);
+#[cfg(not(feature = "zisk"))]
+#[inline]
+pub fn bn254_g1_add(first_point: G1, second_point: G1) -> Result<Bytes, VMError> {
+    let first_point_x = ark_bn254::Fq::from_be_bytes_mod_order(&first_point.0.to_big_endian());
+    let first_point_y = ark_bn254::Fq::from_be_bytes_mod_order(&first_point.1.to_big_endian());
+    let second_point_x = ark_bn254::Fq::from_be_bytes_mod_order(&second_point.0.to_big_endian());
+    let second_point_y = ark_bn254::Fq::from_be_bytes_mod_order(&second_point.1.to_big_endian());
 
     let first_point_is_zero = first_point_x.is_zero() && first_point_y.is_zero();
     let second_point_is_zero = second_point_x.is_zero() && second_point_y.is_zero();
@@ -769,6 +804,88 @@ pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
         result.y.into_bigint().to_bytes_be(),
     ]
     .concat();
+
+    Ok(Bytes::from(out))
+}
+
+#[cfg(feature = "zisk")]
+#[inline]
+pub fn bn254_g1_add(first_point: G1, second_point: G1) -> Result<Bytes, VMError> {
+    // SP1 patches the substrate-bn crate too, but some Ethereum Mainnet blocks fail to execute with it with a GasMismatch error
+    // so for now we will only use it for ZisK.
+    use substrate_bn::{AffineG1, Fq, G1 as SubstrateG1, Group};
+
+    if first_point.is_zero() && second_point.is_zero() {
+        return Ok(Bytes::from([0u8; 64].to_vec()));
+    }
+
+    if first_point.is_zero() {
+        let (g1_x, g1_y) = (
+            Fq::from_slice(&second_point.0.to_big_endian())
+                .map_err(|_| PrecompileError::ParsingInputError)?,
+            Fq::from_slice(&second_point.1.to_big_endian())
+                .map_err(|_| PrecompileError::ParsingInputError)?,
+        );
+        // Validate that the point is on the curve
+        AffineG1::new(g1_x, g1_y).map_err(|_| PrecompileError::InvalidPoint)?;
+
+        let mut x_bytes = [0u8; 32];
+        let mut y_bytes = [0u8; 32];
+        g1_x.to_big_endian(&mut x_bytes);
+        g1_y.to_big_endian(&mut y_bytes);
+        return Ok(Bytes::from([x_bytes, y_bytes].concat()));
+    }
+
+    if second_point.is_zero() {
+        let (g1_x, g1_y) = (
+            Fq::from_slice(&first_point.0.to_big_endian())
+                .map_err(|_| PrecompileError::ParsingInputError)?,
+            Fq::from_slice(&first_point.1.to_big_endian())
+                .map_err(|_| PrecompileError::ParsingInputError)?,
+        );
+        // Validate that the point is on the curve
+        AffineG1::new(g1_x, g1_y).map_err(|_| PrecompileError::InvalidPoint)?;
+
+        let mut x_bytes = [0u8; 32];
+        let mut y_bytes = [0u8; 32];
+        g1_x.to_big_endian(&mut x_bytes);
+        g1_y.to_big_endian(&mut y_bytes);
+        return Ok(Bytes::from([x_bytes, y_bytes].concat()));
+    }
+
+    let (first_x, first_y) = (
+        Fq::from_slice(&first_point.0.to_big_endian())
+            .map_err(|_| PrecompileError::ParsingInputError)?,
+        Fq::from_slice(&first_point.1.to_big_endian())
+            .map_err(|_| PrecompileError::ParsingInputError)?,
+    );
+
+    let (second_x, second_y) = (
+        Fq::from_slice(&second_point.0.to_big_endian())
+            .map_err(|_| PrecompileError::ParsingInputError)?,
+        Fq::from_slice(&second_point.1.to_big_endian())
+            .map_err(|_| PrecompileError::ParsingInputError)?,
+    );
+
+    let first: SubstrateG1 = AffineG1::new(first_x, first_y)
+        .map_err(|_| PrecompileError::InvalidPoint)?
+        .into();
+
+    let second: SubstrateG1 = AffineG1::new(second_x, second_y)
+        .map_err(|_| PrecompileError::InvalidPoint)?
+        .into();
+
+    #[allow(
+        clippy::arithmetic_side_effects,
+        reason = "G1 addition doesn't overflow, intermediate operations that could overflow should be handled correctly by the library"
+    )]
+    let result = first + second;
+
+    let mut x_bytes = [0u8; 32];
+    let mut y_bytes = [0u8; 32];
+    result.x().to_big_endian(&mut x_bytes);
+    result.y().to_big_endian(&mut y_bytes);
+    let out = [x_bytes, y_bytes].concat();
 
     Ok(Bytes::from(out))
 }
@@ -834,9 +951,11 @@ pub fn bn254_g1_mul(g1: G1, scalar: U256) -> Result<Bytes, VMError> {
         Fq::from_slice(&g1.1.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?,
     );
 
-    let g1: G1 = AffineG1::new(g1_x, g1_y)
-        .map_err(|_| PrecompileError::InvalidPoint)?
-        .into();
+    let g1 = AffineG1::new(g1_x, g1_y).map_err(|_| PrecompileError::InvalidPoint)?;
+
+    // Small difference between the patched versions of substrate-bn
+    #[cfg(feature = "zisk")]
+    let g1: G1 = g1.into();
 
     let scalar =
         Fr::from_slice(&scalar.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?;
@@ -1023,59 +1142,52 @@ pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
 #[cfg(all(not(feature = "sp1"), not(feature = "risc0"), not(feature = "zisk")))]
 #[inline]
 pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
-    use lambdaworks_math::errors::PairingError;
+    use ark_bn254::{Bn254, G1Affine, G2Affine};
+    use ark_ec::pairing::Pairing;
+    use ark_ff::{Fp, One, QuadExtField};
 
-    type Fq = BN254FieldElement;
-    type Fq2 = BN254TwistCurveFieldElement;
-    type LambdaworksG1 = BN254Curve;
-    type LambdaworksG2 = BN254TwistCurve;
-    type ProjectiveG1 = ShortWeierstrassProjectivePoint<LambdaworksG1>;
-    type ProjectiveG2 = ShortWeierstrassProjectivePoint<LambdaworksG2>;
+    let mut g1_points = Vec::with_capacity(batch.len());
+    let mut g2_points = Vec::with_capacity(batch.len());
 
-    if batch.is_empty() {
-        return Ok(true);
-    }
-
-    let mut valid_batch = Vec::with_capacity(batch.len());
     for (g1, g2) in batch {
-        let g1 = if g1.is_zero() {
-            ProjectiveG1::neutral_element()
+        g1_points.push(if g1.is_zero() {
+            G1Affine::identity()
         } else {
-            let (g1_x, g1_y) = (
-                Fq::from_bytes_be(&g1.0.to_big_endian())
-                    .map_err(|_| InternalError::msg("failed to parse g1 x"))?,
-                Fq::from_bytes_be(&g1.1.to_big_endian())
-                    .map_err(|_| InternalError::msg("failed to parse g1 y"))?,
+            let p = G1Affine::new_unchecked(
+                Fp::from_le_bytes_mod_order(&g1.0.to_little_endian()),
+                Fp::from_le_bytes_mod_order(&g1.1.to_little_endian()),
             );
-            LambdaworksG1::create_point_from_affine(g1_x, g1_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?
-        };
-        let g2 = if g2.is_zero() {
-            ProjectiveG2::neutral_element()
-        } else {
-            let (g2_x, g2_y) = {
-                let x_bytes = [g2.0.to_big_endian(), g2.1.to_big_endian()].concat();
-                let y_bytes = [g2.2.to_big_endian(), g2.3.to_big_endian()].concat();
-                let (x, y) = (
-                    Fq2::from_bytes_be(&x_bytes)
-                        .map_err(|_| InternalError::msg("failed to parse g2 x"))?,
-                    Fq2::from_bytes_be(&y_bytes)
-                        .map_err(|_| InternalError::msg("failed to parse g2 y"))?,
-                );
-                (x, y)
-            };
-            LambdaworksG2::create_point_from_affine(g2_x, g2_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?
-        };
-        valid_batch.push((g1, g2));
-    }
-    let valid_batch_refs: Vec<_> = valid_batch.iter().map(|(p1, p2)| (p1, p2)).collect();
-    let result = BN254AtePairing::compute_batch(&valid_batch_refs).map_err(|e| match e {
-        PairingError::PointNotInSubgroup => PrecompileError::PointNotInSubgroup,
-        PairingError::DivisionByZero => PrecompileError::InvalidPoint,
-    })?;
 
-    Ok(result == QuadraticExtensionFieldElement::one())
+            if !p.is_on_curve() || !p.is_in_correct_subgroup_assuming_on_curve() {
+                return Err(PrecompileError::InvalidPoint.into());
+            }
+
+            p
+        });
+
+        g2_points.push(if g2.is_zero() {
+            G2Affine::identity()
+        } else {
+            let p = G2Affine::new_unchecked(
+                QuadExtField::new(
+                    Fp::from_le_bytes_mod_order(&g2.0.to_little_endian()),
+                    Fp::from_le_bytes_mod_order(&g2.1.to_little_endian()),
+                ),
+                QuadExtField::new(
+                    Fp::from_le_bytes_mod_order(&g2.2.to_little_endian()),
+                    Fp::from_le_bytes_mod_order(&g2.3.to_little_endian()),
+                ),
+            );
+
+            if !p.is_on_curve() || !p.is_in_correct_subgroup_assuming_on_curve() {
+                return Err(PrecompileError::InvalidPoint.into());
+            }
+
+            p
+        });
+    }
+
+    Ok(Bn254::multi_pairing(g1_points, g2_points).0 == QuadExtField::one())
 }
 
 /// Returns the result of Blake2 hashing algorithm given a certain parameters from the calldata.

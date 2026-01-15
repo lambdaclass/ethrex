@@ -1,9 +1,13 @@
 [package]
 name = "zkvm-sp1-program"
-version = "7.0.0"
+version = "9.0.0"
 edition = "2024"
 
 [workspace]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
 
 [dependencies]
 sp1-zkvm = { version = "=5.0.8" }

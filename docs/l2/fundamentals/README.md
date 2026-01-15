@@ -26,6 +26,7 @@ For general documentation, see:
 - [Smart contracts](./contracts.md) has information on L1 and L2 smart contracts including steps to upgrade and transfer ownserhip.
 - [Based sequencing](./based.md) contains ethrex's roadmap for becoming based.
 - [State diffs](./state_diffs.md) explains the mechanism needed to provide data availability.
-- How asset [deposits](./deposits.md) and [withdrawals](./withdrawals.md) work.  
-- 
-
+- How asset [deposits](./deposits.md) and [withdrawals](./withdrawals.md) work.
+- [Fee token](./fee_token.md)
+- [Exit window](./exit_window.md) and [Timelock](./timelock.md) for upgrade safety mechanisms.
+- [Aligned Layer Integration](./ethrex_l2_aligned_integration.md) details how ethrex L2 integrates with Aligned Layer for proof aggregation and verification.

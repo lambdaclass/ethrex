@@ -34,7 +34,7 @@ use super::{
 };
 
 const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str =
-    "verifyBatchesAligned(uint256,bytes[],bytes32[][],bytes32[][])";
+    "verifyBatchesAligned(uint256,uint256,bytes32[][],bytes32[][])";
 
 pub async fn start_l1_proof_verifier(
     cfg: SequencerConfig,
@@ -59,6 +59,7 @@ struct L1ProofVerifier {
     beacon_urls: Vec<String>,
     l1_signer: Signer,
     on_chain_proposer_address: Address,
+    timelock_address: Option<Address>,
     proof_verify_interval_ms: u64,
     network: Network,
     rollup_store: StoreRollup,
@@ -96,6 +97,7 @@ impl L1ProofVerifier {
             network: aligned_cfg.network.clone(),
             l1_signer: proof_coordinator_cfg.signer,
             on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
+            timelock_address: committer_cfg.timelock_address,
             proof_verify_interval_ms: aligned_cfg.aligned_verifier_interval_ms,
             rollup_store,
             sp1_vk,
@@ -144,7 +146,6 @@ impl L1ProofVerifier {
         &self,
         first_batch_number: u64,
     ) -> Result<Option<H256>, ProofVerifierError> {
-        let mut public_inputs_list = Vec::new();
         let mut sp1_merkle_proofs_list = Vec::new();
         let mut risc0_merkle_proofs_list = Vec::new();
 
@@ -204,13 +205,6 @@ impl L1ProofVerifier {
                 break;
             }
 
-            let public_inputs =
-                current_batch_public_inputs.ok_or(ProofVerifierError::InternalError(format!(
-                    "no proofs for batch {batch_number}, are there any needed proof types?"
-                )))?;
-
-            public_inputs_list.push(Value::Bytes(public_inputs.into()));
-
             let sp1_merkle_proof =
                 self.proof_of_inclusion(&aggregated_proofs_for_batch, ProverType::SP1);
             let risc0_merkle_proof =
@@ -221,30 +215,31 @@ impl L1ProofVerifier {
 
             batch_number += 1;
         }
-        let last_batch_number = batch_number - 1;
 
-        if public_inputs_list.is_empty() {
+        if first_batch_number == batch_number {
             return Ok(None);
         }
+
+        let last_batch_number = batch_number - 1;
 
         info!("Sending verify tx for batches {first_batch_number} to {last_batch_number}",);
 
         let calldata_values = [
             Value::Uint(U256::from(first_batch_number)),
-            Value::Array(public_inputs_list),
+            Value::Uint(U256::from(last_batch_number)),
             Value::Array(sp1_merkle_proofs_list),
             Value::Array(risc0_merkle_proofs_list),
         ];
 
         let calldata = encode_calldata(ALIGNED_VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
-        let send_verify_tx_result = send_verify_tx(
-            calldata,
-            &self.eth_client,
-            self.on_chain_proposer_address,
-            &self.l1_signer,
-        )
-        .await;
+        // Based won't have timelock address until we implement it on it. For the meantime if it's None (only happens in based) we use the OCP
+        let target_address = self
+            .timelock_address
+            .unwrap_or(self.on_chain_proposer_address);
+
+        let send_verify_tx_result =
+            send_verify_tx(calldata, &self.eth_client, target_address, &self.l1_signer).await;
 
         if let Err(EthClientError::EstimateGasError(EstimateGasError::RPCError(error))) =
             send_verify_tx_result.as_ref()

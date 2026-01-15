@@ -25,11 +25,18 @@ pub trait TrieDB: Send + Sync {
     fn put(&self, key: Nibbles, value: Vec<u8>) -> Result<(), TrieError> {
         self.put_batch(vec![(key, value)])
     }
+    /// Commits any pending changes to the underlying storage
+    /// For read-only or in-memory implementations, this is a no-op
+    fn commit(&self) -> Result<(), TrieError> {
+        Ok(())
+    }
+
     fn flatkeyvalue_computed(&self, _key: Nibbles) -> bool {
         false
     }
 }
 
+// TODO: we should replace this with BackendTrieDB
 /// InMemory implementation for the TrieDB trait, with get and put operations.
 #[derive(Default)]
 pub struct InMemoryTrieDB {

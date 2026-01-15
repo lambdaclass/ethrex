@@ -926,7 +926,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "7.0.0"
+version = "9.0.0"
 dependencies = [
  "bytes",
  "ethrex-common",
@@ -946,7 +946,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "7.0.0"
+version = "9.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -955,6 +955,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
+ "hex-literal",
  "k256",
  "kzg-rs",
  "lazy_static",
@@ -976,7 +977,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "7.0.0"
+version = "9.0.0"
 dependencies = [
  "kzg-rs",
  "thiserror",
@@ -985,7 +986,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "7.0.0"
+version = "9.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1004,11 +1005,12 @@ dependencies = [
  "serde_with",
  "sha3",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]
 name = "ethrex-levm"
-version = "7.0.0"
+version = "9.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1041,7 +1043,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "7.0.0"
+version = "9.0.0"
 dependencies = [
  "ethrex-common",
  "serde",
@@ -1052,7 +1054,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "7.0.0"
+version = "9.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1065,11 +1067,10 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "7.0.0"
+version = "9.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "bincode",
  "bytes",
  "ethereum-types",
  "ethrex-common",
@@ -1084,19 +1085,20 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
  "tracing",
 ]
 
 [[package]]
 name = "ethrex-threadpool"
-version = "0.1.0"
+version = "9.0.0"
 dependencies = [
  "crossbeam",
 ]
 
 [[package]]
 name = "ethrex-trie"
-version = "7.0.0"
+version = "9.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1119,7 +1121,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "7.0.0"
+version = "9.0.0"
 dependencies = [
  "bincode",
  "bytes",
@@ -1326,7 +1328,7 @@ dependencies = [
 
 [[package]]
 name = "guest_program"
-version = "7.0.0"
+version = "9.0.0"
 dependencies = [
  "bincode",
  "bytes",
@@ -1393,6 +1395,12 @@ checksum = "5313b072ce3c597065a808dbf612c4c8e8590bdbf8b579508bf7a762c5eae6cd"
 dependencies = [
  "arrayvec",
 ]
+
+[[package]]
+name = "hex-literal"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6fe2267d4ed49bc07b63801559be28c718ea06c4738b7a03c94df7386d2cde46"
 
 [[package]]
 name = "hkdf"
@@ -3550,7 +3558,7 @@ dependencies = [
 
 [[package]]
 name = "zkvm-sp1-program"
-version = "7.0.0"
+version = "9.0.0"
 dependencies = [
  "ethrex-blockchain",
  "ethrex-common",

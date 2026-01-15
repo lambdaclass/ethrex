@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
@@ -122,13 +122,13 @@ async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
     if std::fs::exists(&storage_path).unwrap_or(false) {
         std::fs::remove_dir_all(&storage_path).unwrap();
     }
-    let genesis_file = include_bytes!("../../fixtures/genesis/l1-dev.json");
+    let genesis_file = include_bytes!("../../fixtures/genesis/l1.json");
     let mut genesis: Genesis = serde_json::from_slice(genesis_file).unwrap();
     let mut store = Store::new(storage_path, EngineType::RocksDB).unwrap();
     for address in accounts {
         let account_info = GenesisAccount {
             code: Bytes::new(),
-            storage: HashMap::new(),
+            storage: BTreeMap::new(),
             balance: u64::MAX.into(),
             nonce: 0,
         };
@@ -138,7 +138,7 @@ async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
     (store, genesis)
 }
 
-async fn create_payload_block(genesis_block: &Block, store: &Store) -> (Block, u64) {
+fn create_payload_block(genesis_block: &Block, store: &Store) -> (Block, u64) {
     let payload_args = BuildPayloadArgs {
         parent: genesis_block.hash(),
         timestamp: genesis_block.header.timestamp + 1,
@@ -186,7 +186,7 @@ pub async fn bench_payload(input: &(Arc<Blockchain>, Block, &Store)) -> (Duratio
     // the RPC handling. The payload is then sent to `Blockchain` to initiate the payload building
     // Blockchain::initiate_payload_build eventually calls 'fill_transactions'
     // which should take transactions from the previously filled mempool
-    let (payload_block, payload_id) = create_payload_block(genesis_block, store).await;
+    let (payload_block, payload_id) = create_payload_block(genesis_block, store);
     blockchain
         .clone()
         .initiate_payload_build(payload_block, payload_id)

@@ -19,6 +19,9 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   PROVER_REPRODUCIBLE_BUILD: true
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
 
 jobs:
   build-ethrex:
@@ -114,15 +117,7 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install solc
-        run: |
-          if [[ "${{ matrix.os }}" == "linux" ]]; then
-            sudo curl -L -o /usr/local/bin/solc https://github.com/argotorg/solidity/releases/download/v0.8.29/solc-static-linux
-            sudo chmod +x /usr/local/bin/solc
-          elif [[ "${{ matrix.os }}" == "macos" ]]; then
-            sudo curl -L -o /usr/local/bin/solc https://github.com/argotorg/solidity/releases/download/v0.8.29/solc-macos
-            sudo chmod +x /usr/local/bin/solc
-          fi
-          solc --version
+        uses: ./.github/actions/install-solc
 
       - name: Build ethrex
         run: |
@@ -348,9 +343,12 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
+          dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
           push: ${{ github.event_name != 'workflow_dispatch'}}
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-${{ matrix.arch }}
           platforms: linux/${{ matrix.arch }}
+          variant: l1
 
       - name: Build L2 Docker image
         id: build_l2
@@ -359,10 +357,13 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
+          dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
           push: ${{ github.event_name != 'workflow_dispatch'}}
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-l2-${{ matrix.arch }}
           build_args: BUILD_FLAGS=--features l2,l2-sql
           platforms: linux/${{ matrix.arch }}
+          variant: l2
 
   publish-docker:
     name: "Create and push multi-arch Docker manifests"

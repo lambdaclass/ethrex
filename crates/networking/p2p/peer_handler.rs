@@ -439,48 +439,47 @@ impl PeerHandler {
         start: H256,
         order: BlockRequestOrder,
     ) -> Result<Option<Vec<BlockHeader>>, PeerHandlerError> {
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
-                id: request_id,
-                startblock: start.into(),
-                limit: BLOCK_HEADER_LIMIT,
-                skip: 0,
-                reverse: matches!(order, BlockRequestOrder::NewToOld),
-            });
-            match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
-                None => return Ok(None),
-                Some((peer_id, mut connection)) => {
-                    if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
-                        id: _,
-                        block_headers,
-                    })) = PeerHandler::make_request(
-                        &mut self.peer_table,
-                        peer_id,
-                        &mut connection,
-                        request,
-                        PEER_REPLY_TIMEOUT,
-                    )
-                    .await
+        let request_id = rand::random();
+        let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+            id: request_id,
+            startblock: start.into(),
+            limit: BLOCK_HEADER_LIMIT,
+            skip: 0,
+            reverse: matches!(order, BlockRequestOrder::NewToOld),
+        });
+        match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
+            None => Ok(None),
+            Some((peer_id, mut connection)) => {
+                if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
+                    id: _,
+                    block_headers,
+                })) = PeerHandler::make_request(
+                    &mut self.peer_table,
+                    peer_id,
+                    &mut connection,
+                    request,
+                    PEER_REPLY_TIMEOUT,
+                )
+                .await
+                {
+                    if !block_headers.is_empty()
+                        && are_block_headers_chained(&block_headers, &order)
                     {
-                        if !block_headers.is_empty()
-                            && are_block_headers_chained(&block_headers, &order)
-                        {
-                            return Ok(Some(block_headers));
-                        } else {
-                            warn!(
-                                "[SYNCING] Received empty/invalid headers from peer, penalizing peer {peer_id}"
-                            );
-                        }
+                        return Ok(Some(block_headers));
+                    } else {
+                        warn!(
+                            "[SYNCING] Received empty/invalid headers from peer, penalizing peer {peer_id}"
+                        );
+                        return Ok(None);
                     }
-                    // Timeouted
-                    warn!(
-                        "[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}..."
-                    );
                 }
+                // Timeouted
+                warn!(
+                    "[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}..."
+                );
+                Ok(None)
             }
         }
-        Ok(None)
     }
 
     /// Given a peer id, a chunk start and a chunk limit, requests the block headers from the peer
@@ -733,18 +732,14 @@ impl PeerHandler {
                     peer_id
                 );
                 all_account_hashes.extend(accounts.iter().map(|unit| unit.hash));
-                all_accounts_state.extend(
-                    accounts
-                        .iter()
-                        .map(|unit| AccountState::from(unit.account.clone())),
-                );
+                all_accounts_state.extend(accounts.iter().map(|unit| unit.account));
             }
 
             let Some((peer_id, connection)) = self
                 .peer_table
                 .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await
-                .inspect_err(|err| error!(err= ?err, "Error requesting a peer for account range"))
+                .inspect_err(|err| warn!(%err, "Error requesting a peer for account range"))
                 .unwrap_or(None)
             else {
                 // Log ~ once every 10 seconds
@@ -881,7 +876,7 @@ impl PeerHandler {
             let (account_hashes, account_states): (Vec<_>, Vec<_>) = accounts
                 .clone()
                 .into_iter()
-                .map(|unit| (unit.hash, AccountState::from(unit.account)))
+                .map(|unit| (unit.hash, unit.account))
                 .unzip();
             let encoded_accounts = account_states
                 .iter()
@@ -1030,7 +1025,9 @@ impl PeerHandler {
             let Some((peer_id, mut connection)) = self
                 .peer_table
                 .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
-                .await?
+                .await
+                .inspect_err(|err| warn!(%err, "Error requesting a peer for bytecodes"))
+                .unwrap_or(None)
             else {
                 // Log ~ once every 10 seconds
                 if logged_no_free_peers_count == 0 {
@@ -1554,7 +1551,9 @@ impl PeerHandler {
             let Some((peer_id, connection)) = self
                 .peer_table
                 .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
-                .await?
+                .await
+                .inspect_err(|err| warn!(%err, "Error requesting a peer for storage ranges"))
+                .unwrap_or(None)
             else {
                 // Log ~ once every 10 seconds
                 if logged_no_free_peers_count == 0 {

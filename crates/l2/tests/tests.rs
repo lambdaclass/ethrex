@@ -11,7 +11,6 @@ use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H160, H256, U256};
 use ethrex_l2::monitor::widget::l2_to_l1_messages::{L2ToL1MessageKind, L2ToL1MessageStatus};
 use ethrex_l2::monitor::widget::{L2ToL1MessagesTable, l2_to_l1_messages::L2ToL1MessageRow};
-use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_common::messages::L1MessageProof;
 use ethrex_l2_common::utils::get_address_from_secret_key;
@@ -23,13 +22,15 @@ use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
     COMMON_BRIDGE_L2_ADDRESS, bridge_address, calldata::encode_calldata, claim_erc20withdraw,
     claim_withdraw, compile_contract, create_deploy, deposit_erc20, get_address_alias,
-    get_erc1967_slot, git_clone, l1_to_l2_tx_data::L1ToL2TransactionData,
-    wait_for_transaction_receipt,
+    get_erc1967_slot, git_clone, wait_for_transaction_receipt,
 };
 use ethrex_l2_sdk::{
-    FEE_TOKEN_REGISTRY_ADDRESS, L2_WITHDRAW_SIGNATURE, REGISTER_FEE_TOKEN_SIGNATURE,
-    build_generic_tx, get_last_verified_batch, send_generic_transaction, wait_for_l1_message_proof,
+    FEE_TOKEN_REGISTRY_ADDRESS, L1ToL2TransactionData, L2_WITHDRAW_SIGNATURE,
+    REGISTER_FEE_TOKEN_SIGNATURE, SET_FEE_TOKEN_RATIO_SIGNATURE, build_generic_tx,
+    get_fee_token_ratio, get_last_verified_batch, send_generic_transaction,
+    wait_for_l1_message_proof, wait_for_l2_deposit_receipt,
 };
+
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
     clients::eth::{EthClient, Overrides},
@@ -90,10 +91,10 @@ const DEFAULT_PROPOSER_COINBASE_ADDRESS: Address = H160([
     0xad, 0x62, 0x0c, 0x8d,
 ]);
 
-// 0x84307998a57635ccc4ed1e5dba1e76344dcdfbe6
+// 0xfbec3aae8b688f85ad2d8fc10a118358254ca11d
 const DEFAULT_ON_CHAIN_PROPOSER_ADDRESS: Address = H160([
-    0x84, 0x30, 0x79, 0x98, 0xa5, 0x76, 0x35, 0xcc, 0xc4, 0xed, 0x1e, 0x5d, 0xba, 0x1e, 0x76, 0x34,
-    0x4d, 0xcd, 0xfb, 0xe6,
+    0xfb, 0xec, 0x3a, 0xae, 0x8b, 0x68, 0x8f, 0x85, 0xad, 0x2d, 0x8f, 0xc1, 0x0a, 0x11, 0x83, 0x58,
+    0x25, 0x4c, 0xa1, 0x1d,
 ]);
 
 const DEFAULT_RICH_KEYS_FILE_PATH: &str = "../../fixtures/keys/private_keys_l1.txt";
@@ -311,6 +312,7 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<Fees
         false,
         Some(&remappings),
         &[contracts_path],
+        None,
     )?;
 
     let bridge_code = hex::decode(std::fs::read("contracts/solc_out/CommonBridgeL2.bin")?)?;
@@ -565,6 +567,7 @@ async fn test_erc20_roundtrip(
         false,
         Some(&remappings),
         &[contracts_path],
+        None,
     )?;
     let init_code_l2_inner = hex::decode(String::from_utf8(std::fs::read(
         "contracts/solc_out/TestTokenL2.bin",
@@ -2003,6 +2006,38 @@ async fn test_call_to_contract_with_deposit(
     Ok(())
 }
 
+const OWNER_L1_GAS_LIMIT: u64 = 21000 * 20;
+
+// Sends a bridge owner transaction on L1 and returns the receipt.
+async fn send_owner_bridge_call(
+    l1_client: &EthClient,
+    owner_signer: &Signer,
+    bridge_address: Address,
+    signature: &str,
+    args: &[Value],
+) -> RpcReceipt {
+    let calldata = encode_calldata(signature, args).unwrap();
+    let tx = build_generic_tx(
+        l1_client,
+        TxType::EIP1559,
+        bridge_address,
+        owner_signer.address(),
+        calldata.into(),
+        Overrides {
+            gas_limit: Some(OWNER_L1_GAS_LIMIT),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let tx_hash = send_generic_transaction(l1_client, tx, owner_signer)
+        .await
+        .unwrap();
+    wait_for_transaction_receipt(tx_hash, l1_client, 1000)
+        .await
+        .unwrap()
+}
+
 async fn test_fee_token(
     l2_client: EthClient,
     rich_wallet_private_key: SecretKey,
@@ -2033,6 +2068,7 @@ async fn test_fee_token(
         false,
         Some(&remappings),
         &allow_paths,
+        None,
     )?;
 
     let mut fee_token_contract =
@@ -2048,33 +2084,30 @@ async fn test_fee_token(
 
     let owner_pk = bridge_owner_private_key();
     let owner_signer: Signer = LocalSigner::new(owner_pk).into();
-    let calldata = encode_calldata(
+    let bridge_addr = bridge_address().unwrap();
+
+    // Register fee token contract
+    let register_tx_receipt = send_owner_bridge_call(
+        &l1_client,
+        &owner_signer,
+        bridge_addr,
         REGISTER_FEE_TOKEN_SIGNATURE,
         &[Value::Address(fee_token_address)],
     )
-    .unwrap();
-    let register_tx = build_generic_tx(
-        &l1_client,
-        TxType::EIP1559,
-        bridge_address().unwrap(),
-        owner_signer.address(),
-        calldata.into(),
-        Overrides {
-            gas_limit: Some(21000 * 20),
-            ..Default::default()
-        },
-    )
-    .await
-    .unwrap();
-
-    // Register fee token contract
-    let register_tx_hash = send_generic_transaction(&l1_client, register_tx, &owner_signer)
-        .await
-        .unwrap();
-    let register_tx_receipt = wait_for_transaction_receipt(register_tx_hash, &l1_client, 1000)
-        .await
-        .unwrap();
+    .await;
     let _ = wait_for_l2_deposit_receipt(&register_tx_receipt, &l1_client, &l2_client).await?;
+
+    // Set fee token ratio
+    let ratio_value = U256::from(2u8);
+    let set_ratio_tx_receipt = send_owner_bridge_call(
+        &l1_client,
+        &owner_signer,
+        bridge_addr,
+        SET_FEE_TOKEN_RATIO_SIGNATURE,
+        &[Value::Address(fee_token_address), Value::Uint(ratio_value)],
+    )
+    .await;
+    let _ = wait_for_l2_deposit_receipt(&set_ratio_tx_receipt, &l1_client, &l2_client).await?;
 
     let sender_balance_before_transfer = l2_client
         .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))
@@ -2123,15 +2156,21 @@ async fn test_fee_token(
         "{test}: L1 fee vault address fee token balance before transfer: {l1_fee_vault_token_balance_before_transfer}"
     );
 
+    // Validate registry state on the L2
     let cd = encode_calldata("isFeeToken(address)", &[Value::Address(fee_token_address)]).unwrap();
     let expected = "0x0000000000000000000000000000000000000000000000000000000000000001";
-    let is_registered = l2_client
+    let registry_state = l2_client
         .call(FEE_TOKEN_REGISTRY_ADDRESS, cd.into(), Overrides::default())
         .await
         .unwrap();
+    assert_eq!(registry_state, expected, "{test}: fee token not registered");
+
+    let fee_token_ratio = get_fee_token_ratio(&fee_token_address, &l2_client)
+        .await
+        .unwrap();
     assert_eq!(
-        is_registered, expected,
-        "{test}: fee token registry state unexpected"
+        fee_token_ratio, 2,
+        "{test}: fee token ratio not set in contract"
     );
     let value_to_transfer = 100_000;
     let mut generic_tx = build_generic_tx(
@@ -2196,7 +2235,7 @@ async fn test_fee_token(
         .expect("Sender fee token balance increased unexpectedly");
     assert_eq!(
         sender_fee_token_spent,
-        U256::from(transfer_fees.total()),
+        U256::from(transfer_fees.total()) * fee_token_ratio,
         "{test}: Sender fee token spend mismatch"
     );
 
@@ -2207,7 +2246,7 @@ async fn test_fee_token(
         .expect("Coinbase fee token balance decreased");
     assert_eq!(
         coinbase_delta,
-        U256::from(transfer_fees.priority_fees),
+        U256::from(transfer_fees.priority_fees) * fee_token_ratio,
         "{test}: Priority fee mismatch"
     );
 
@@ -2222,7 +2261,7 @@ async fn test_fee_token(
             .expect("Base fee vault balance decreased");
         assert_eq!(
             base_fee_vault_delta,
-            U256::from(transfer_fees.base_fees),
+            U256::from(transfer_fees.base_fees) * fee_token_ratio,
             "{test}: Base fee vault mismatch"
         );
     }
@@ -2242,7 +2281,7 @@ async fn test_fee_token(
         .expect("Operator fee vault balance decreased");
     assert_eq!(
         operator_fee_vault_delta,
-        U256::from(transfer_fees.operator_fees),
+        U256::from(transfer_fees.operator_fees) * fee_token_ratio,
         "{test}: Operator fee vault mismatch"
     );
 
@@ -2251,7 +2290,7 @@ async fn test_fee_token(
         .expect("L1 fee vault balance decreased");
     assert_eq!(
         l1_fee_vault_delta,
-        U256::from(transfer_fees.l1_fees),
+        U256::from(transfer_fees.l1_fees) * fee_token_ratio,
         "{test}: L1 fee vault mismatch"
     );
 
@@ -2433,37 +2472,6 @@ async fn get_fee_vault_balance(l2_client: &EthClient, vault_address: Option<Addr
         .get_balance(addr, BlockIdentifier::Tag(BlockTag::Latest))
         .await
         .unwrap()
-}
-
-async fn wait_for_l2_deposit_receipt(
-    rpc_receipt: &RpcReceipt,
-    l1_client: &EthClient,
-    l2_client: &EthClient,
-) -> Result<RpcReceipt> {
-    let data = rpc_receipt
-        .logs
-        .iter()
-        .find_map(|log| PrivilegedTransactionData::from_log(log.log.clone()).ok())
-        .ok_or_else(|| {
-            format!(
-                "RpcReceipt for transaction {:?} contains no valid logs",
-                rpc_receipt.tx_info.transaction_hash
-            )
-        })
-        .unwrap();
-
-    let l2_deposit_tx_hash = data
-        .into_tx(
-            l1_client,
-            l2_client.get_chain_id().await?.try_into().unwrap(),
-            0,
-        )
-        .await
-        .unwrap()
-        .get_privileged_hash()
-        .unwrap();
-
-    Ok(ethrex_l2_sdk::wait_for_transaction_receipt(l2_deposit_tx_hash, l2_client, 10000).await?)
 }
 
 pub fn read_env_file_by_config() {

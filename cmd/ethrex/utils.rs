@@ -45,6 +45,12 @@ pub fn read_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
 pub fn write_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
     info!("JWT secret not found in the provided path, generating JWT secret");
     let secret = generate_jwt_secret();
+
+    // Ensure the directory exists
+    if let Some(parent_dir) = Path::new(jwt_secret_path).parent() {
+        std::fs::create_dir_all(parent_dir).expect("Failed to create parent dir");
+    }
+
     std::fs::write(jwt_secret_path, &secret).expect("Unable to write JWT secret file");
     hex::decode(secret)
         .map(Bytes::from)
@@ -107,7 +113,7 @@ pub fn init_datadir(datadir: &Path) {
     }
 }
 
-pub async fn store_node_config_file(config: NodeConfigFile, file_path: PathBuf) {
+pub fn store_node_config_file(config: NodeConfigFile, file_path: PathBuf) {
     let json = match serde_json::to_string(&config) {
         Ok(json) => json,
         Err(e) => {
@@ -185,4 +191,8 @@ pub fn display_chain_initialization(genesis: &Genesis) {
     let hash = genesis.get_block().hash();
     info!("Genesis Block Hash: {hash:x}");
     info!("{border}");
+}
+
+pub fn is_memory_datadir(datadir: &Path) -> bool {
+    datadir.ends_with("memory")
 }
