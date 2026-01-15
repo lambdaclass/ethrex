@@ -11,7 +11,7 @@ path = "./lib.rs"
 [dependencies]
 # TODO(#1102): Move to Lambdaworks in the future
 c-kzg = { version = "2.1.1", default-features = false, optional = true }
-kzg-rs = { version = "0.2.6", optional = true }
+kzg-rs = { workspace = true, optional = true }
 openvm-kzg = { git = "https://github.com/axiom-crypto/openvm-kzg.git", rev = "530a6ed413def5296b7e4967650ba4fc8fd92ea1", optional = true } # v1.4.1
 thiserror.workspace = true
 
