@@ -22,8 +22,9 @@ Run all fixtures in a category:
 cargo run --manifest-path crates/vm/levm/bench/opcode_bench/Cargo.toml --bin opcode_bench -- category:calldata 10 100000
 ```
 
-The runner automatically executes `baseline_loop` and prints an adjusted
-`ns/iter` with loop overhead subtracted.
+The runner automatically executes `baseline_loop` (using the same loop counter
+offset as the fixture) and prints an adjusted `ns/iter` with loop overhead
+subtracted. The output also includes `ns/op` when fixtures use `repeat`.
 
 To write CSV output, set `OPCODE_BENCH_CSV`:
 
@@ -33,6 +34,11 @@ OPCODE_BENCH_CSV=bench_results.csv cargo run --manifest-path crates/vm/levm/benc
 
 There is also a Makefile in `crates/vm/levm/bench/opcode_bench/Makefile` with targets to
 run all fixtures and save CSV output.
+
+Optional environment variables:
+- `OPCODE_BENCH_WARMUP`: number of warmup runs to execute before timing (default: 0).
+- `OPCODE_BENCH_RESET_DB`: if set to `1`/`true`, reinitialize the DB per run to avoid
+  cross-run warm state (default: false).
 
 For per-fixture parameters, edit `crates/vm/levm/bench/opcode_bench/run_config.json`
 and use:
@@ -69,6 +75,11 @@ Fields:
 - `repeat`: optional number of times to repeat `body_hex` inside the loop (default: 1)
 - `counter_offset`: optional memory offset for the loop counter (default: `0x80`)
 - `storage`: optional array of `{ key, value }` 32-byte hex strings
+- `env`: optional overrides for environment fields:
+  - `block_number`, `timestamp`, `difficulty`, `chain_id`, `base_fee_per_gas`, `gas_price`
+    (decimal strings or `0x`-prefixed hex)
+  - `coinbase` (20-byte hex), `prev_randao` (32-byte hex)
+  - `gas_limit`, `block_gas_limit` (u64 JSON numbers)
 
 Notes:
 - For storage opcodes, the first iteration is cold and the remaining iterations are warm.

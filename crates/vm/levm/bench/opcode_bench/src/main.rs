@@ -42,12 +42,33 @@ struct Fixture {
     storage: Option<Vec<StorageSlot>>,
     repeat: Option<u32>,
     counter_offset: Option<u8>,
+    env: Option<FixtureEnv>,
 }
 
 #[derive(Debug, Deserialize)]
 struct StorageSlot {
     key: String,
     value: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FixtureEnv {
+    block_number: Option<String>,
+    timestamp: Option<String>,
+    coinbase: Option<String>,
+    prev_randao: Option<String>,
+    difficulty: Option<String>,
+    chain_id: Option<String>,
+    base_fee_per_gas: Option<String>,
+    gas_price: Option<String>,
+    gas_limit: Option<u64>,
+    block_gas_limit: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BenchConfig {
+    warmup_runs: u64,
+    reset_db: bool,
 }
 
 fn main() {
@@ -79,10 +100,8 @@ fn main() {
             eprintln!("No fixtures found for category: {category}");
             std::process::exit(1);
         }
-        let baseline = load_fixture(BASELINE_NAME).ok();
-        let baseline_ns = baseline.as_ref().map(|fixture| run_fixture(fixture, runs, iterations));
         for fixture in fixtures {
-            run_fixture_with_baseline(&fixture, runs, iterations, baseline_ns);
+            run_fixture_with_baseline(&fixture, runs, iterations);
         }
         return;
     }
@@ -101,13 +120,7 @@ fn main() {
         .expect("Invalid number of iterations: must be an integer");
 
     let fixture = load_fixture(&fixture_arg).unwrap();
-    let baseline = if fixture.name == BASELINE_NAME {
-        None
-    } else {
-        load_fixture(BASELINE_NAME).ok()
-    };
-    let baseline_ns = baseline.as_ref().map(|fixture| run_fixture(fixture, runs, iterations));
-    run_fixture_with_baseline(&fixture, runs, iterations, baseline_ns);
+    run_fixture_with_baseline(&fixture, runs, iterations);
 }
 
 fn list_fixtures() -> Result<(), std::io::Error> {
@@ -163,15 +176,29 @@ fn parse_category_arg(arg: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn run_fixture_with_baseline(
-    fixture: &Fixture,
-    runs: u64,
-    iterations: u32,
-    baseline_ns: Option<f64>,
-) {
-    let ns_per_iter = run_fixture(fixture, runs, iterations);
+fn run_fixture_with_baseline(fixture: &Fixture, runs: u64, iterations: u32) {
+    let baseline_ns = if fixture.name == BASELINE_NAME {
+        None
+    } else {
+        let baseline = baseline_fixture_for(fixture);
+        Some(run_fixture_internal(&baseline, runs, iterations, true))
+    };
+
+    let ns_per_iter = run_fixture_internal(fixture, runs, iterations, false);
+    let repeat = fixture.repeat.unwrap_or(1).max(1) as f64;
+    let ns_per_op = ns_per_iter / repeat;
+
     if fixture.name == BASELINE_NAME {
-        write_csv_row(fixture, runs, iterations, ns_per_iter, None, None);
+        write_csv_row(
+            fixture,
+            runs,
+            iterations,
+            ns_per_iter,
+            ns_per_op,
+            None,
+            None,
+            None,
+        );
         return;
     }
     if let Some(baseline) = baseline_ns {
@@ -180,18 +207,39 @@ fn run_fixture_with_baseline(
         } else {
             0.0
         };
+        let adjusted_per_op = adjusted / repeat;
         println!("time: adjusted={:.2} ns/iter (baseline={:.2})", adjusted, baseline);
-        write_csv_row(fixture, runs, iterations, ns_per_iter, Some(baseline), Some(adjusted));
+        write_csv_row(
+            fixture,
+            runs,
+            iterations,
+            ns_per_iter,
+            ns_per_op,
+            Some(baseline),
+            Some(adjusted),
+            Some(adjusted_per_op),
+        );
     } else {
-        write_csv_row(fixture, runs, iterations, ns_per_iter, None, None);
+        write_csv_row(
+            fixture,
+            runs,
+            iterations,
+            ns_per_iter,
+            ns_per_op,
+            None,
+            None,
+            None,
+        );
     }
 }
 
-fn run_fixture(fixture: &Fixture, runs: u64, iterations: u32) -> f64 {
-    if let Some(desc) = &fixture.description {
-        println!("Fixture: {} ({}) - {}", fixture.name, fixture.category, desc);
-    } else {
-        println!("Fixture: {} ({})", fixture.name, fixture.category);
+fn run_fixture_internal(fixture: &Fixture, runs: u64, iterations: u32, silent: bool) -> f64 {
+    if !silent {
+        if let Some(desc) = &fixture.description {
+            println!("Fixture: {} ({}) - {}", fixture.name, fixture.category, desc);
+        } else {
+            println!("Fixture: {} ({})", fixture.name, fixture.category);
+        }
     }
 
     let body = hex::decode(&fixture.body_hex).expect("Invalid body_hex in fixture");
@@ -206,37 +254,79 @@ fn run_fixture(fixture: &Fixture, runs: u64, iterations: u32) -> f64 {
         .unwrap_or_else(Bytes::new);
     let calldata = black_box(calldata);
 
-    let mut db = init_db(bytecode, fixture);
+    let config = bench_config();
 
     let mut total_elapsed = std::time::Duration::from_secs(0);
-    for _ in 0..runs - 1 {
-        let mut vm = init_vm(&mut db, 0, calldata.clone()).unwrap();
-        let start = Instant::now();
-        let tx_report = black_box(vm.stateless_execute().unwrap());
-        total_elapsed += start.elapsed();
-        assert!(tx_report.is_success());
-    }
-    let mut vm = init_vm(&mut db, 0, calldata.clone()).unwrap();
-    let start = Instant::now();
-    let tx_report = black_box(vm.stateless_execute().unwrap());
-    let elapsed = start.elapsed();
-    total_elapsed += elapsed;
-
-    assert!(tx_report.is_success(), "{:?}", tx_report.result);
-    match tx_report.result {
-        TxResult::Success => {
-            println!("output: \t\t0x{}", hex::encode(tx_report.output));
+    if config.reset_db {
+        for _ in 0..config.warmup_runs {
+            let mut db = init_db(bytecode.clone(), fixture);
+            let mut vm = init_vm(&mut db, 0, calldata.clone(), fixture).unwrap();
+            let tx_report = black_box(vm.stateless_execute().unwrap());
+            assert!(tx_report.is_success());
         }
-        TxResult::Revert(error) => panic!("Execution failed: {error:?}"),
+
+        let mut last_report = None;
+        for _ in 0..runs {
+            let mut db = init_db(bytecode.clone(), fixture);
+            let mut vm = init_vm(&mut db, 0, calldata.clone(), fixture).unwrap();
+            let start = Instant::now();
+            let tx_report = black_box(vm.stateless_execute().unwrap());
+            total_elapsed += start.elapsed();
+            assert!(tx_report.is_success());
+            last_report = Some(tx_report);
+        }
+
+        if let Some(tx_report) = last_report {
+            if !silent {
+                match tx_report.result {
+                    TxResult::Success => {
+                        println!("output: \t\t0x{}", hex::encode(tx_report.output));
+                    }
+                    TxResult::Revert(error) => panic!("Execution failed: {error:?}"),
+                }
+            }
+        }
+    } else {
+        let mut db = init_db(bytecode, fixture);
+        for _ in 0..config.warmup_runs {
+            let mut vm = init_vm(&mut db, 0, calldata.clone(), fixture).unwrap();
+            let tx_report = black_box(vm.stateless_execute().unwrap());
+            assert!(tx_report.is_success());
+        }
+
+        let mut last_report = None;
+        for _ in 0..runs {
+            let mut vm = init_vm(&mut db, 0, calldata.clone(), fixture).unwrap();
+            let start = Instant::now();
+            let tx_report = black_box(vm.stateless_execute().unwrap());
+            total_elapsed += start.elapsed();
+            assert!(tx_report.is_success());
+            last_report = Some(tx_report);
+        }
+
+        if let Some(tx_report) = last_report {
+            if !silent {
+                match tx_report.result {
+                    TxResult::Success => {
+                        println!("output: \t\t0x{}", hex::encode(tx_report.output));
+                    }
+                    TxResult::Revert(error) => panic!("Execution failed: {error:?}"),
+                }
+            }
+        }
     }
 
     let total_iters = (runs as u128) * (iterations as u128);
     if total_iters > 0 {
         let ns_per_iter = total_elapsed.as_nanos() as f64 / total_iters as f64;
-        println!(
-            "time: total={:?}, runs={}, iterations/run={}, avg={:.2} ns/iter",
-            total_elapsed, runs, iterations, ns_per_iter
-        );
+        if !silent {
+            let repeat = fixture.repeat.unwrap_or(1).max(1) as f64;
+            let ns_per_op = ns_per_iter / repeat;
+            println!(
+                "time: total={:?}, runs={}, iterations/run={}, avg={:.2} ns/iter, {:.2} ns/op",
+                total_elapsed, runs, iterations, ns_per_iter, ns_per_op
+            );
+        }
         return ns_per_iter;
     }
     0.0
@@ -247,8 +337,10 @@ fn write_csv_row(
     runs: u64,
     iterations: u32,
     avg_ns_per_iter: f64,
+    avg_ns_per_op: f64,
     baseline_ns: Option<f64>,
     adjusted_ns: Option<f64>,
+    adjusted_ns_per_op: Option<f64>,
 ) {
     let path = match std::env::var("OPCODE_BENCH_CSV") {
         Ok(path) if !path.trim().is_empty() => PathBuf::from(path),
@@ -265,7 +357,7 @@ fn write_csv_row(
     if needs_header {
         writeln!(
             file,
-            "fixture,category,runs,iterations,repeat,counter_offset,avg_ns_per_iter,baseline_ns,adjusted_ns"
+            "fixture,category,runs,iterations,repeat,counter_offset,avg_ns_per_iter,avg_ns_per_op,baseline_ns,adjusted_ns,adjusted_ns_per_op"
         )
         .expect("Failed to write CSV header");
     }
@@ -278,10 +370,13 @@ fn write_csv_row(
     let adjusted_str = adjusted_ns
         .map(|v| format!("{v:.2}"))
         .unwrap_or_default();
+    let adjusted_op_str = adjusted_ns_per_op
+        .map(|v| format!("{v:.2}"))
+        .unwrap_or_default();
 
     writeln!(
         file,
-        "{},{},{},{},{},{},{:.2},{},{}",
+        "{},{},{},{},{},{},{:.2},{:.2},{},{},{}",
         fixture.name,
         fixture.category,
         runs,
@@ -289,8 +384,10 @@ fn write_csv_row(
         repeat,
         counter_offset,
         avg_ns_per_iter,
+        avg_ns_per_op,
         baseline_str,
-        adjusted_str
+        adjusted_str,
+        adjusted_op_str
     )
     .expect("Failed to write CSV row");
 }
@@ -343,14 +440,22 @@ fn init_db(bytecode: Bytes, fixture: &Fixture) -> GeneralizedDatabase {
     GeneralizedDatabase::new_with_account_state(Arc::new(store), cache)
 }
 
-fn init_vm(db: &'_ mut GeneralizedDatabase, nonce: u64, calldata: Bytes) -> Result<VM<'_>, VMError> {
-    let env = Environment {
+fn init_vm<'a>(
+    db: &'a mut GeneralizedDatabase,
+    nonce: u64,
+    calldata: Bytes,
+    fixture: &Fixture,
+) -> Result<VM<'a>, VMError> {
+    let mut env = Environment {
         origin: Address::from_low_u64_be(SENDER_ADDRESS),
         tx_nonce: nonce,
         gas_limit: (i64::MAX - 1) as u64,
         block_gas_limit: (i64::MAX - 1) as u64,
         ..Default::default()
     };
+    if let Some(overrides) = &fixture.env {
+        apply_env_overrides(&mut env, overrides);
+    }
 
     let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
         to: TxKind::Call(Address::from_low_u64_be(CONTRACT_ADDRESS)),
@@ -361,15 +466,109 @@ fn init_vm(db: &'_ mut GeneralizedDatabase, nonce: u64, calldata: Bytes) -> Resu
 }
 
 fn parse_h256(value: &str) -> H256 {
-    let bytes = hex::decode(value).expect("Invalid hex value");
+    let bytes = decode_hex(value);
     assert!(bytes.len() == 32, "Expected 32-byte hex string");
     H256::from_slice(&bytes)
 }
 
 fn parse_u256(value: &str) -> U256 {
-    let bytes = hex::decode(value).expect("Invalid hex value");
+    let bytes = decode_hex(value);
     assert!(bytes.len() == 32, "Expected 32-byte hex string");
     U256::from_big_endian(&bytes)
+}
+
+fn parse_u256_scalar(value: &str) -> U256 {
+    let trimmed = value.trim();
+    if let Some(hex) = trimmed.strip_prefix("0x") {
+        let bytes = hex::decode(hex).expect("Invalid hex value");
+        assert!(bytes.len() <= 32, "Expected <= 32-byte hex string");
+        let mut padded = [0u8; 32];
+        padded[32 - bytes.len()..].copy_from_slice(&bytes);
+        U256::from_big_endian(&padded)
+    } else {
+        U256::from_dec_str(trimmed).expect("Invalid decimal U256 value")
+    }
+}
+
+fn parse_address(value: &str) -> Address {
+    let bytes = decode_hex(value);
+    assert!(bytes.len() == 20, "Expected 20-byte hex string");
+    Address::from_slice(&bytes)
+}
+
+fn decode_hex(value: &str) -> Vec<u8> {
+    let trimmed = value.trim();
+    let trimmed = trimmed.strip_prefix("0x").unwrap_or(trimmed);
+    hex::decode(trimmed).expect("Invalid hex value")
+}
+
+fn baseline_fixture_for(fixture: &Fixture) -> Fixture {
+    Fixture {
+        name: BASELINE_NAME.to_string(),
+        category: "baseline".to_string(),
+        description: Some("Loop overhead only (empty body)".to_string()),
+        body_hex: String::new(),
+        calldata_hex: None,
+        storage: None,
+        repeat: None,
+        counter_offset: fixture.counter_offset,
+        env: None,
+    }
+}
+
+fn bench_config() -> BenchConfig {
+    let warmup_runs = std::env::var("OPCODE_BENCH_WARMUP")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(0);
+    let reset_db = std::env::var("OPCODE_BENCH_RESET_DB")
+        .ok()
+        .map(|value| parse_env_bool(&value))
+        .unwrap_or(false);
+    BenchConfig {
+        warmup_runs,
+        reset_db,
+    }
+}
+
+fn parse_env_bool(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "y"
+    )
+}
+
+fn apply_env_overrides(env: &mut Environment, overrides: &FixtureEnv) {
+    if let Some(value) = overrides.block_number.as_deref() {
+        env.block_number = parse_u256_scalar(value);
+    }
+    if let Some(value) = overrides.timestamp.as_deref() {
+        env.timestamp = parse_u256_scalar(value);
+    }
+    if let Some(value) = overrides.coinbase.as_deref() {
+        env.coinbase = parse_address(value);
+    }
+    if let Some(value) = overrides.prev_randao.as_deref() {
+        env.prev_randao = Some(parse_h256(value));
+    }
+    if let Some(value) = overrides.difficulty.as_deref() {
+        env.difficulty = parse_u256_scalar(value);
+    }
+    if let Some(value) = overrides.chain_id.as_deref() {
+        env.chain_id = parse_u256_scalar(value);
+    }
+    if let Some(value) = overrides.base_fee_per_gas.as_deref() {
+        env.base_fee_per_gas = parse_u256_scalar(value);
+    }
+    if let Some(value) = overrides.gas_price.as_deref() {
+        env.gas_price = parse_u256_scalar(value);
+    }
+    if let Some(value) = overrides.gas_limit {
+        env.gas_limit = value;
+    }
+    if let Some(value) = overrides.block_gas_limit {
+        env.block_gas_limit = value;
+    }
 }
 
 fn build_loop_bytecode(body: &[u8], iterations: u32, counter_offset: u8) -> Bytes {
