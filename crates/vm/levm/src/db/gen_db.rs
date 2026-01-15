@@ -72,6 +72,9 @@ impl GeneralizedDatabase {
         match self.current_accounts_state.entry(address) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
+                if let Some(account) = self.initial_accounts_state.get(&address) {
+                    return Ok(entry.insert(account.clone()));
+                }
                 let state = self.store.get_account_state(address)?;
                 let account = LevmAccount::from(state);
                 self.initial_accounts_state.insert(address, account.clone());
@@ -340,11 +343,7 @@ impl GeneralizedDatabase {
 
             account_updates.push(account_update);
         }
-        self.initial_accounts_state.extend(
-            self.current_accounts_state
-                .iter()
-                .map(|(k, v)| (*k, v.clone())),
-        );
+        self.initial_accounts_state = std::mem::take(&mut self.current_accounts_state);
         Ok(account_updates)
     }
 }
