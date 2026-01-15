@@ -1,6 +1,10 @@
 # Running Ethrex in Aligned Mode
 
-This guide extends the [Deploy an L2 overview](./overview.md) and shows how to run an ethrex L2 with **Aligned mode** enabled. It assumes:
+This guide extends the [Deploy an L2 overview](./overview.md) and shows how to run an ethrex L2 with **Aligned mode** enabled.
+
+> **For a comprehensive technical deep-dive into the Aligned integration architecture, see [Aligned Layer Integration](../fundamentals/ethrex_l2_aligned_integration.md).**
+
+It assumes:
 
 - You already installed the `ethrex` binary to your `$PATH` (for example from the repo root with `cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql --force`).
 - You have the ethrex repository checked out locally for the `make` targets referenced below.
@@ -282,7 +286,7 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 ### Prover
 
 - Generates `Compressed` proofs instead of `Groth16`.
-- Required because Aligned currently only accepts SP1 compressed proofs.
+- Required because Aligned accepts compressed proofs (both SP1 and RISC0).
 
 ### Proof Sender
 
