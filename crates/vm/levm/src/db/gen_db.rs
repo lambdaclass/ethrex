@@ -332,7 +332,8 @@ impl GeneralizedDatabase {
                 continue;
             }
 
-            self.initial_accounts_state.insert(address, new_state_account);
+            self.initial_accounts_state
+                .insert(address, new_state_account);
 
             let account_update = AccountUpdate {
                 address,
