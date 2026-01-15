@@ -30,6 +30,28 @@ npm run test:l1
 npm run test:l2
 ```
 
+Upgrade validation only:
+
+```sh
+npm run test:upgrade
+```
+
+This uses the dummy Box contracts and expects the incompatible upgrade to be rejected.
+
+CI-style upgrade comparison against a reference build-info directory:
+
+```sh
+UPGRADE_REFERENCE_BUILD_INFO_DIR=/path/to/build-info-ref npm run validate:upgrades
+```
+
+## CI
+
+The workflow in `.github/workflows/pr_upgradeability.yaml` runs on PRs and compares
+upgradeable contracts against `main`. It compiles Hardhat in the PR and in a
+`main` worktree, copies the `build-info` from `main`, and runs
+`npm run validate:upgrades` to check storage layout compatibility.
+Dummy examples in `crates/l2/contracts/src/example/**` are excluded.
+
 ## Environment overrides
 
 - `ETHREX_L1_RPC_URL` (default `http://127.0.0.1:8545`)

@@ -1,0 +1,71 @@
+name: Upgradeability
+on:
+  pull_request:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  upgradeability:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install root deps
+        run: npm install
+
+      - name: Install hardhat deps
+        working-directory: tooling/hardhat
+        run: npm install
+
+      - name: Compile head
+        working-directory: tooling/hardhat
+        run: npm run compile
+
+      - name: Add main worktree
+        run: |
+          git fetch origin main
+          git worktree add ./.tmp/ethrex-main origin/main
+
+      - name: Sync hardhat tooling into base
+        run: |
+          if [ ! -d ./.tmp/ethrex-main/tooling/hardhat ]; then
+            mkdir -p ./.tmp/ethrex-main/tooling
+            cp -R tooling/hardhat ./.tmp/ethrex-main/tooling/
+          fi
+          if [ ! -f ./.tmp/ethrex-main/package.json ]; then
+            cp package.json ./.tmp/ethrex-main/
+          fi
+
+      - name: Install base deps
+        working-directory: ./.tmp/ethrex-main
+        run: |
+          npm install
+          cd tooling/hardhat
+          npm install
+
+      - name: Compile base
+        working-directory: ./.tmp/ethrex-main/tooling/hardhat
+        run: npm run compile
+
+      - name: Prepare reference build-info
+        run: |
+          mkdir -p ./.tmp/upgrade-reference/main
+          cp ./.tmp/ethrex-main/tooling/hardhat/artifacts/build-info/*.json ./.tmp/upgrade-reference/main/
+
+      - name: Validate upgrade compatibility
+        run: node tooling/hardhat/scripts/validate-upgrades.js --reference ./.tmp/upgrade-reference/main
