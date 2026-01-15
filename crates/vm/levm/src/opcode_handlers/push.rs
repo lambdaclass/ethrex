@@ -10,6 +10,8 @@ use ethrex_common::{U256, utils::u256_from_big_endian_const};
 
 impl<'a> VM<'a> {
     // Generic PUSH operation, optimized at compile time for the given N.
+    // Tier-1 hot opcode: PUSH accounts for ~20% of typical bytecode
+    #[inline(always)]
     pub fn op_push<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
         let call_frame = &mut self.current_call_frame;
         call_frame.increase_consumed_gas(gas_cost::PUSHN)?;
@@ -41,7 +43,8 @@ impl<'a> VM<'a> {
         Ok(OpcodeResult::Continue)
     }
 
-    // PUSH0
+    // PUSH0 - Tier-1 hot opcode
+    #[inline(always)]
     pub fn op_push0(&mut self) -> Result<OpcodeResult, VMError> {
         self.current_call_frame
             .increase_consumed_gas(gas_cost::PUSH0)?;

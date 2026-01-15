@@ -9,7 +9,8 @@ use ethrex_common::{U256, U512};
 // Opcodes: ADD, SUB, MUL, DIV, SDIV, MOD, SMOD, ADDMOD, MULMOD, EXP, SIGNEXTEND
 
 impl<'a> VM<'a> {
-    // ADD operation
+    // ADD operation - Tier-1 hot opcode
+    #[inline(always)]
     pub fn op_add(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::ADD)?;
@@ -21,7 +22,8 @@ impl<'a> VM<'a> {
         Ok(OpcodeResult::Continue)
     }
 
-    // SUB operation
+    // SUB operation - Tier-1 hot opcode
+    #[inline(always)]
     pub fn op_sub(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::SUB)?;
@@ -33,7 +35,8 @@ impl<'a> VM<'a> {
         Ok(OpcodeResult::Continue)
     }
 
-    // MUL operation
+    // MUL operation - Tier-1 hot opcode
+    #[inline(always)]
     pub fn op_mul(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::MUL)?;
