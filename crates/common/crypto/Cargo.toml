@@ -19,7 +19,7 @@ thiserror.workspace = true
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 
 [features]
-default = []
+default = ["kzg-rs"]
 c-kzg = ["c-kzg/std", "c-kzg/ethereum_kzg_settings"]
 openvm-kzg = ["dep:openvm-kzg"]
 kzg-rs = ["dep:kzg-rs"]
