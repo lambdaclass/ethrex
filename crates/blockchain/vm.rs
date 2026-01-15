@@ -83,9 +83,8 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
-        if let Some(ref tracker) = self.state_tracker {
-            if let Some(mut t) = tracker.lock().ok() { t.record_account_access(address) }
-        }
+        if let Some(ref tracker) = self.state_tracker
+            && let Ok(mut t) = tracker.lock() { t.record_account_access(address) }
         self.store
             .get_account_state_by_root(self.state_root, address)
             .map_err(|e| EvmError::DB(e.to_string()))
@@ -98,9 +97,8 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
-        if let Some(ref tracker) = self.state_tracker {
-            if let Some(mut t) = tracker.lock().ok() { t.record_storage_access(address, key) }
-        }
+        if let Some(ref tracker) = self.state_tracker
+            && let Ok(mut t) = tracker.lock() { t.record_storage_access(address, key) }
         self.store
             .get_storage_at_root(self.state_root, address, key)
             .map_err(|e| EvmError::DB(e.to_string()))
@@ -113,9 +111,8 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
-        if let Some(ref tracker) = self.state_tracker {
-            if let Some(mut t) = tracker.lock().ok() { t.record_block_hash_access(block_number) }
-        }
+        if let Some(ref tracker) = self.state_tracker
+            && let Ok(mut t) = tracker.lock() { t.record_block_hash_access(block_number) }
         let mut block_hash_cache = self
             .block_hash_cache
             .lock()
@@ -181,9 +178,8 @@ impl VmDatabase for StoreVmDatabase {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Code::default());
         }
-        if let Some(ref tracker) = self.state_tracker {
-            if let Some(mut t) = tracker.lock().ok() { t.record_code_access(code_hash) }
-        }
+        if let Some(ref tracker) = self.state_tracker
+            && let Ok(mut t) = tracker.lock() { t.record_code_access(code_hash) }
         match self.store.get_account_code(code_hash) {
             Ok(Some(code)) => Ok(code),
             Ok(None) => Err(EvmError::DB(format!(
