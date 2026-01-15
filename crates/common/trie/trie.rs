@@ -11,6 +11,9 @@ mod test_utils;
 mod trie_iter;
 pub mod trie_sorted;
 mod verify_range;
+
+// Grid-based trie for efficient state root computation
+pub mod grid;
 use ethereum_types::H256;
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::constants::RLP_NULL;
