@@ -1,9 +1,6 @@
 use std::{collections::HashMap, path::Path};
 
-use crate::{
-    fork::Fork,
-    types::{BlockChainExpectedException, BlockExpectedException, BlockWithRLP, TestUnit},
-};
+use crate::types::{BlockChainExpectedException, BlockExpectedException, BlockWithRLP, TestUnit};
 use ethrex_blockchain::{
     Blockchain, BlockchainOptions,
     error::{ChainError, InvalidBlockError},
@@ -34,14 +31,16 @@ pub fn parse_and_execute(
     let mut failures = Vec::new();
 
     for (test_key, test) in tests {
-        let should_skip_test = test.network < Fork::Merge
-            || skipped_tests
-                .map(|skipped| skipped.iter().any(|s| test_key.contains(s)))
-                .unwrap_or(false);
+        // Skip explicitly listed tests
+        let should_skip_test = skipped_tests
+            .map(|skipped| skipped.iter().any(|s| test_key.contains(s)))
+            .unwrap_or(false);
 
         if should_skip_test {
             continue;
         }
+
+        // Pre-merge forks are now supported - no longer skip them
 
         let result = rt.block_on(run_ef_test(&test_key, &test, stateless_backend));
 

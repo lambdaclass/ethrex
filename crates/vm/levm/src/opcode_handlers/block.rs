@@ -72,16 +72,24 @@ impl<'a> VM<'a> {
         Ok(OpcodeResult::Continue)
     }
 
-    // PREVRANDAO operation
+    // PREVRANDAO operation (was DIFFICULTY before Paris)
     pub fn op_prevrandao(&mut self) -> Result<OpcodeResult, VMError> {
+        use ethrex_common::types::Fork;
+
         // https://eips.ethereum.org/EIPS/eip-4399
-        // After Paris the prev randao is the prev_randao (or current_random) field
-        let randao =
-            u256_from_big_endian_const(self.env.prev_randao.unwrap_or_default().to_fixed_bytes());
+        // Before Paris (The Merge): opcode 0x44 was DIFFICULTY, returns block difficulty
+        // After Paris: opcode 0x44 is PREVRANDAO, returns beacon chain randomness
+        let value = if self.env.config.fork >= Fork::Paris {
+            // Post-merge: return prev_randao (EIP-4399)
+            u256_from_big_endian_const(self.env.prev_randao.unwrap_or_default().to_fixed_bytes())
+        } else {
+            // Pre-merge: return difficulty
+            self.env.difficulty
+        };
 
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::PREVRANDAO)?;
-        current_call_frame.stack.push(randao)?;
+        current_call_frame.stack.push(value)?;
 
         Ok(OpcodeResult::Continue)
     }

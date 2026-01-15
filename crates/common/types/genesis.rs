@@ -71,18 +71,20 @@ impl TryFrom<&Path> for Genesis {
         let genesis_reader = BufReader::new(genesis_file);
         let genesis: Genesis = serde_json::from_reader(genesis_reader)?;
 
-        // Try to derive if the genesis file is PoS
-        // Different genesis files have different configurations
-        // TODO: Remove once we have a way to run PoW chains, i.e Snap Sync
-        if genesis.config.terminal_total_difficulty != Some(0)
-            && genesis.config.merge_netsplit_block != Some(0)
-            && genesis.config.shanghai_time != Some(0)
-            && genesis.config.cancun_time != Some(0)
-            && genesis.config.prague_time != Some(0)
-        {
-            // Hive has a minimalistic genesis file, which is not supported
-            // return Err(GenesisError::InvalidFork());
-            warn!("Invalid fork, only post-merge networks are supported.");
+        // Detect if this is a pre-merge (PoW) or post-merge (PoS) genesis
+        // Pre-merge networks are supported for EF tests and historical sync
+        let is_post_merge = genesis.config.terminal_total_difficulty == Some(0)
+            || genesis.config.merge_netsplit_block == Some(0)
+            || genesis.config.shanghai_time == Some(0)
+            || genesis.config.cancun_time == Some(0)
+            || genesis.config.prague_time == Some(0);
+
+        if !is_post_merge {
+            // Pre-merge network detected - this is supported for EF tests
+            tracing::debug!(
+                "Pre-merge (PoW) genesis detected. TTD: {:?}",
+                genesis.config.terminal_total_difficulty
+            );
         }
 
         if genesis.config.bpo3_time.is_some() && genesis.config.blob_schedule.bpo3.is_none()
