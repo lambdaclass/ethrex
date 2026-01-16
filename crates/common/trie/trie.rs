@@ -1,7 +1,7 @@
 pub mod db;
 pub mod error;
 pub mod logger;
-mod nibbles;
+pub mod nibbles;
 pub mod node;
 mod node_hash;
 pub mod rkyv_utils;
@@ -21,7 +21,6 @@ use std::sync::{Arc, Mutex};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
 pub use self::logger::{TrieLogger, TrieWitness};
-pub use self::nibbles::Nibbles;
 pub use self::verify_range::verify_range;
 pub use self::{
     node::{Node, NodeRef},

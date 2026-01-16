@@ -5,7 +5,7 @@ use ethrex_rlp::encode::RLPEncode;
 use crate::{
     ValueRLP,
     error::TrieError,
-    nibbles::Nibbles,
+    nibbles::{NibbleBoxedSlice, NibbleIter, Nibbles},
     node::{BranchNode, NodeRemoveResult},
     node_hash::NodeHash,
 };
@@ -26,19 +26,19 @@ use super::{ExtensionNode, Node, ValueOrHash};
     rkyv::Archive,
 )]
 pub struct LeafNode {
-    pub partial: Nibbles,
+    pub partial: NibbleBoxedSlice,
     pub value: ValueRLP,
 }
 
 impl LeafNode {
     /// Creates a new leaf node and stores the given (path, value) pair
-    pub const fn new(partial: Nibbles, value: ValueRLP) -> Self {
+    pub const fn new(partial: NibbleBoxedSlice, value: ValueRLP) -> Self {
         Self { partial, value }
     }
 
     /// Returns the stored value if the given path matches the stored path
-    pub fn get(&self, path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
-        if self.partial == path {
+    pub fn get(&self, path: NibbleIter<&[u8]>) -> Result<Option<ValueRLP>, TrieError> {
+        if self.partial == path.remaining_slice() {
             Ok(Some(self.value.clone()))
         } else {
             Ok(None)
@@ -46,7 +46,11 @@ impl LeafNode {
     }
 
     /// Stores the received value and returns the new root of the subtrie previously consisting of self
-    pub fn insert(&mut self, path: Nibbles, value: ValueOrHash) -> Result<Option<Node>, TrieError> {
+    pub fn insert(
+        &mut self,
+        path: NibbleIter<&[u8]>,
+        value: ValueOrHash,
+    ) -> Result<Option<Node>, TrieError> {
         /* Possible flow paths:
             Leaf { SelfValue } -> Leaf { Value }
             Leaf { SelfValue } -> Extension { Branch { [Self,...] Value } }
@@ -128,7 +132,7 @@ impl LeafNode {
     /// Removes own value if the path matches own path and returns self and the value if it was removed
     pub fn remove(
         &mut self,
-        path: Nibbles,
+        path: NibbleIter<&[u8]>,
     ) -> Result<(Option<NodeRemoveResult>, Option<ValueRLP>), TrieError> {
         Ok(if self.partial == path {
             (None, Some(mem::take(&mut self.value)))

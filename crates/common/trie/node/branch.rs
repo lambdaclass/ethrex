@@ -1,13 +1,13 @@
-use std::mem;
-
-use ethrex_rlp::encode::RLPEncode;
-
-use crate::{
-    InconsistentTreeError, TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles,
-    node::NodeRemoveResult, node_hash::NodeHash,
-};
-
 use super::{ExtensionNode, LeafNode, Node, NodeRef, ValueOrHash};
+use crate::{
+    InconsistentTreeError, TrieDB, ValueRLP,
+    error::TrieError,
+    nibbles::{Nibble, NibbleIter, Nibbles, NibblesMut},
+    node::NodeRemoveResult,
+    node_hash::NodeHash,
+};
+use ethrex_rlp::encode::RLPEncode;
+use std::mem;
 
 /// Branch Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's value and the hash of its children nodes
@@ -52,22 +52,29 @@ impl BranchNode {
     }
 
     /// Retrieves a value from the subtrie originating from this node given its path
-    pub fn get(&self, db: &dyn TrieDB, mut path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn get(
+        &self,
+        db: &dyn TrieDB,
+        mut path: NibbleIter<&[u8]>,
+    ) -> Result<Option<ValueRLP>, TrieError> {
         // If path is at the end, return to its own value if present.
         // Otherwise, check the corresponding choice and delegate accordingly if present.
-        if let Some(choice) = path.next_choice() {
+        if let Some(choice) = path.next() {
             // Delegate to children if present
-            let child_ref = &self.choices[choice];
+            let child_ref = &self.choices[choice as usize];
             if child_ref.is_valid() {
-                let child_node = child_ref.get_node(db, path.current())?.ok_or_else(|| {
-                    TrieError::InconsistentTree(Box::new(
-                        InconsistentTreeError::NodeNotFoundOnBranchNode(
-                            child_ref.compute_hash().finalize(),
-                            self.compute_hash().finalize(),
-                            path.current(),
-                        ),
-                    ))
-                })?;
+                let child_node =
+                    child_ref
+                        .get_node(db, path.consumed_slice())?
+                        .ok_or_else(|| {
+                            TrieError::InconsistentTree(Box::new(
+                                InconsistentTreeError::NodeNotFoundOnBranchNode(
+                                    child_ref.compute_hash().finalize(),
+                                    self.compute_hash().finalize(),
+                                    path.consumed_slice().map_data(Into::into),
+                                ),
+                            ))
+                        })?;
                 child_node.get(db, path)
             } else {
                 Ok(None)
@@ -82,26 +89,28 @@ impl BranchNode {
     pub fn insert(
         &mut self,
         db: &dyn TrieDB,
-        mut path: Nibbles,
+        mut path: NibbleIter<&[u8]>,
         value: ValueOrHash,
     ) -> Result<(), TrieError> {
         // If path is at the end, insert or replace its own value.
         // Otherwise, check the corresponding choice and insert or delegate accordingly.
-        if let Some(choice) = path.next_choice() {
-            match (&mut self.choices[choice], value) {
+        if let Some(choice) = path.next() {
+            match (&mut self.choices[choice as usize], value) {
                 // Create new child (leaf node)
                 (choice_ref, ValueOrHash::Value(value)) if !choice_ref.is_valid() => {
-                    let new_leaf = LeafNode::new(path, value);
+                    let new_leaf =
+                        LeafNode::new(path.remaining_slice().map_data(Into::into), value);
                     *choice_ref = Node::from(new_leaf).into()
                 }
                 // Insert into existing child and then update it
                 (choice_ref, ValueOrHash::Value(value)) => {
-                    let Some(choice_node) = choice_ref.get_node_mut(db, path.current())? else {
+                    let Some(choice_node) = choice_ref.get_node_mut(db, path.consumed_slice())?
+                    else {
                         return Err(TrieError::InconsistentTree(Box::new(
                             InconsistentTreeError::NodeNotFoundOnBranchNode(
                                 choice_ref.compute_hash().finalize(),
                                 self.compute_hash().finalize(),
-                                path.current(),
+                                path.consumed_slice().map_data(Into::into),
                             ),
                         )));
                     };
@@ -113,17 +122,19 @@ impl BranchNode {
                 (choice_ref, value @ ValueOrHash::Hash(hash)) => {
                     if !choice_ref.is_valid() {
                         *choice_ref = hash.into();
-                    } else if path.is_empty() {
+                    } else if path.len() == 0 {
                         return Err(TrieError::Verify(
                             "attempt to override proof node with external hash".to_string(),
                         ));
                     } else {
-                        let Some(choice_node) = choice_ref.get_node_mut(db, path.current())? else {
+                        let Some(choice_node) =
+                            choice_ref.get_node_mut(db, path.consumed_slice())?
+                        else {
                             return Err(TrieError::InconsistentTree(Box::new(
                                 InconsistentTreeError::NodeNotFoundOnBranchNode(
                                     choice_ref.compute_hash().finalize(),
                                     self.compute_hash().finalize(),
-                                    path.current(),
+                                    path.consumed_slice().map_data(Into::into),
                                 ),
                             )));
                         };
@@ -149,7 +160,7 @@ impl BranchNode {
     pub fn remove(
         &mut self,
         db: &dyn TrieDB,
-        mut path: Nibbles,
+        mut path: NibbleIter<&[u8]>,
     ) -> Result<(Option<NodeRemoveResult>, Option<ValueRLP>), TrieError> {
         /* Possible flow paths:
             Step 1: Removal
@@ -172,16 +183,18 @@ impl BranchNode {
 
         // Step 1: Remove value
         // Check if the value is located in a child subtrie
-        let value = if let Some(choice_index) = path.next_choice() {
-            if self.choices[choice_index].is_valid() {
+        let value = if let Some(choice_index) = path.next() {
+            if self.choices[choice_index as usize].is_valid() {
                 let Some(child_node) =
-                    self.choices[choice_index].get_node_mut(db, path.current())?
+                    self.choices[choice_index as usize].get_node_mut(db, path.consumed_slice())?
                 else {
                     return Err(TrieError::InconsistentTree(Box::new(
                         InconsistentTreeError::NodeNotFoundOnBranchNode(
-                            self.choices[choice_index].compute_hash().finalize(),
+                            self.choices[choice_index as usize]
+                                .compute_hash()
+                                .finalize(),
                             self.compute_hash().finalize(),
-                            path.current(),
+                            path.consumed_slice().map_data(Into::into),
                         ),
                     )));
                 };
@@ -190,9 +203,9 @@ impl BranchNode {
                 let (empty_trie, old_value) = child_node.remove(db, path.clone())?;
                 if empty_trie {
                     // Remove child hash if the child subtrie was removed in the process
-                    self.choices[choice_index] = NodeHash::default().into();
+                    self.choices[choice_index as usize] = NodeHash::default().into();
                 }
-                self.choices[choice_index].clear_hash();
+                self.choices[choice_index as usize].clear_hash();
                 old_value
             } else {
                 None
@@ -216,19 +229,26 @@ impl BranchNode {
         let new_node = match (children.len(), !self.value.is_empty()) {
             // If this node still has a value but no longer has children, convert it into a leaf node
             (0, true) => NodeRemoveResult::New(
-                LeafNode::new(Nibbles::from_hex(vec![16]), mem::take(&mut self.value)).into(),
+                LeafNode::new(
+                    Nibbles::new([]).map_data(Into::into),
+                    mem::take(&mut self.value),
+                )
+                .into(),
             ),
             // If this node doesn't have a value and has only one child, replace it with its child node
             (1, false) => {
                 let (choice_index, child_ref) = children.get_mut(0).unwrap();
-                let Some(child) = child_ref
-                    .get_node_mut(db, base_path.current().append_new(*choice_index as u8))?
+                let Some(child) = child_ref.get_node_mut(db, {
+                    let mut path = base_path.consumed_slice().map_data(Vec::from);
+                    path.push(Nibble::try_from(*choice_index as u8).unwrap());
+                    path
+                })?
                 else {
                     return Err(TrieError::InconsistentTree(Box::new(
                         InconsistentTreeError::NodeNotFoundOnBranchNode(
                             child_ref.compute_hash().finalize(),
                             self.compute_hash().finalize(),
-                            base_path.current(),
+                            base_path.consumed_slice().map_data(Into::into),
                         ),
                     )));
                 };
@@ -280,7 +300,7 @@ impl BranchNode {
     pub fn get_path(
         &self,
         db: &dyn TrieDB,
-        mut path: Nibbles,
+        mut path: NibbleIter<&[u8]>,
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {
         // Add self to node_path (if not inlined in parent)
@@ -289,19 +309,22 @@ impl BranchNode {
             node_path.push(encoded);
         };
         // Check the corresponding choice and delegate accordingly if present.
-        if let Some(choice) = path.next_choice() {
+        if let Some(choice) = path.next() {
             // Continue to child
-            let child_ref = &self.choices[choice];
+            let child_ref = &self.choices[choice as usize];
             if child_ref.is_valid() {
-                let child_node = child_ref.get_node(db, path.current())?.ok_or_else(|| {
-                    TrieError::InconsistentTree(Box::new(
-                        InconsistentTreeError::NodeNotFoundOnBranchNode(
-                            child_ref.compute_hash().finalize(),
-                            self.compute_hash().finalize(),
-                            path.current(),
-                        ),
-                    ))
-                })?;
+                let child_node =
+                    child_ref
+                        .get_node(db, path.consumed_slice())?
+                        .ok_or_else(|| {
+                            TrieError::InconsistentTree(Box::new(
+                                InconsistentTreeError::NodeNotFoundOnBranchNode(
+                                    child_ref.compute_hash().finalize(),
+                                    self.compute_hash().finalize(),
+                                    path.consumed_slice().map_data(Into::into),
+                                ),
+                            ))
+                        })?;
                 child_node.get_path(db, path, node_path)?;
             }
         }
