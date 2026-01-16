@@ -424,6 +424,65 @@ cargo run --release -- --forks Frontier,Homestead,EIP150,EIP158,Byzantium,Consta
 
 ---
 
+## Code Cleanup / Beautification Plan
+
+After the pre-merge implementation is functionally complete, the following improvements should be made:
+
+### 1. Consolidate Gas Cost Functions
+
+**Current State**: Both old (non-fork-aware) and new (fork-aware) functions exist in `gas_cost.rs`.
+
+**Cleanup Tasks**:
+- Remove deprecated non-fork-aware functions once all callers are updated
+- Rename `*_with_fork()` functions to simpler names (e.g., `sload_with_fork` → `sload`)
+- Group related functions together with clear section headers
+
+### 2. Simplify Gas Schedule Access
+
+**Current State**: Each opcode handler fetches fork from `self.env.config.fork`.
+
+**Cleanup Options**:
+- Add `fork` field directly to `VM` struct for easier access
+- Create helper method `VM::gas_schedule()` returning `&GasSchedule`
+- Consider caching the schedule at VM initialization
+
+### 3. Documentation Improvements
+
+**Add documentation**:
+- Add module-level docs to `gas_schedule.rs` explaining the fork progression
+- Document gas cost changes with EIP references inline
+- Add examples to key functions showing usage
+
+### 4. Test Coverage
+
+**Add tests for**:
+- Gas schedule values for each fork
+- Gas cost calculations at fork boundaries
+- Regression tests for specific EF test failures
+
+### 5. Remove Dead Code
+
+**Review and remove**:
+- Unused gas cost constants after migration to `GasSchedule`
+- Any commented-out code from experimentation
+- Duplicate constants between `gas_cost.rs` and `gas_schedule.rs`
+
+### 6. Naming Consistency
+
+**Standardize naming**:
+- Use consistent naming for fork-aware vs non-fork-aware functions
+- Align parameter names across similar functions
+- Use idiomatic Rust naming conventions
+
+### 7. Error Handling
+
+**Improve error handling**:
+- Review error types for gas calculations
+- Ensure errors provide useful diagnostic information
+- Consider using custom error types for gas-specific failures
+
+---
+
 ## References
 
 - [EIP-2: Homestead Hard-fork Changes](https://eips.ethereum.org/EIPS/eip-2)
