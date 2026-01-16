@@ -165,8 +165,6 @@ pub fn prove(
         }
         let proof_bytes = std::fs::read(format!("{OUTPUT_DIR_PATH}/final_snark_proof.bin"))?;
         let publics_bytes = std::fs::read(format!("{OUTPUT_DIR_PATH}/final_snark_publics.bin"))?;
-        let proof_bytes = vec![];
-        let publics_bytes = vec![];
         let vk = std::fs::read(ZISK_VK_PATH)?;
         Ok(ProveOutput {
             proof: proof_bytes,
