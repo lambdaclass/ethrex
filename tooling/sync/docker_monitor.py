@@ -449,38 +449,6 @@ def get_next_run_count() -> int:
         return 1
 
 
-def start_containers(compose_file: str, compose_dir: str, networks: list[str], image_tag: str = ""):
-    """Start docker compose containers.
-
-    Args:
-        compose_file: Docker compose file name
-        compose_dir: Directory containing docker compose file
-        networks: List of network names to start
-        image_tag: Optional image tag override (sets ETHREX_IMAGE env var)
-    """
-    print("🚀 Starting containers...", flush=True)
-    try:
-        env = os.environ.copy()
-        if image_tag:
-            env["ETHREX_IMAGE"] = image_tag
-            env["ETHREX_PULL_POLICY"] = "never"
-
-        # Build service list
-        services = []
-        for n in networks:
-            services.extend([f"setup-jwt-{n}", f"ethrex-{n}", f"consensus-{n}"])
-
-        subprocess.run(
-            ["docker", "compose", "-f", compose_file, "up", "-d"] + services,
-            cwd=compose_dir, check=True, env=env
-        )
-        print("✅ Containers started successfully\n", flush=True)
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Failed to start containers: {e}\n", flush=True)
-        return False
-
-
 def restart_containers(compose_file: str, compose_dir: str, networks: list[str] = None, image_tag: str = ""):
     """Stop and restart docker compose containers, clearing volumes.
 
@@ -622,6 +590,9 @@ def update_instance(inst: Instance, timeout_min: int) -> bool:
         if (now - inst.block_check_start) > BLOCK_PROCESSING_DURATION:
             if inst.last_block > inst.initial_block:
                 inst.status = "success"
+                # If validation was running, mark it as complete
+                if inst.validation_status:
+                    inst.validation_status = "complete"
                 return True
             else:
                 inst.status, inst.error = "failed", "No block progress during monitoring"
