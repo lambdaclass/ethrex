@@ -155,6 +155,7 @@ impl LEVM {
 
             receipts.push(receipt);
         }
+        drop(receipt_tx);
 
         #[cfg(feature = "perf_opcode_timings")]
         {
