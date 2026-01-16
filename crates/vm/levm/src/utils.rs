@@ -469,9 +469,13 @@ impl<'a> VM<'a> {
         // Create Cost
         if self.is_create()? {
             // https://eips.ethereum.org/EIPS/eip-2#specification
-            intrinsic_gas = intrinsic_gas
-                .checked_add(CREATE_BASE_COST)
-                .ok_or(OutOfGas)?;
+            // EIP-2 (Homestead): CREATE transactions cost 53000 (21000 base + 32000 create)
+            // Pre-Homestead: CREATE transactions cost only 21000 (base cost)
+            if self.env.config.fork >= Fork::Homestead {
+                intrinsic_gas = intrinsic_gas
+                    .checked_add(CREATE_BASE_COST)
+                    .ok_or(OutOfGas)?;
+            }
 
             // https://eips.ethereum.org/EIPS/eip-3860
             if self.env.config.fork >= Fork::Shanghai {

@@ -394,6 +394,144 @@ impl ChainConfig {
         self.eip155_block.is_some_and(|num| num <= block_number)
     }
 
+    // Pre-merge fork activation checks (block number based)
+    pub fn is_homestead_activated(&self, block_number: BlockNumber) -> bool {
+        self.homestead_block.is_some_and(|num| num <= block_number)
+    }
+
+    pub fn is_dao_fork_activated(&self, block_number: BlockNumber) -> bool {
+        self.dao_fork_block.is_some_and(|num| num <= block_number) && self.dao_fork_support
+    }
+
+    pub fn is_eip150_activated(&self, block_number: BlockNumber) -> bool {
+        self.eip150_block.is_some_and(|num| num <= block_number)
+    }
+
+    pub fn is_eip158_activated(&self, block_number: BlockNumber) -> bool {
+        self.eip158_block.is_some_and(|num| num <= block_number)
+    }
+
+    pub fn is_byzantium_activated(&self, block_number: BlockNumber) -> bool {
+        self.byzantium_block.is_some_and(|num| num <= block_number)
+    }
+
+    pub fn is_constantinople_activated(&self, block_number: BlockNumber) -> bool {
+        self.constantinople_block
+            .is_some_and(|num| num <= block_number)
+    }
+
+    pub fn is_petersburg_activated(&self, block_number: BlockNumber) -> bool {
+        self.petersburg_block.is_some_and(|num| num <= block_number)
+    }
+
+    pub fn is_muir_glacier_activated(&self, block_number: BlockNumber) -> bool {
+        self.muir_glacier_block
+            .is_some_and(|num| num <= block_number)
+    }
+
+    pub fn is_berlin_activated(&self, block_number: BlockNumber) -> bool {
+        self.berlin_block.is_some_and(|num| num <= block_number)
+    }
+
+    pub fn is_arrow_glacier_activated(&self, block_number: BlockNumber) -> bool {
+        self.arrow_glacier_block
+            .is_some_and(|num| num <= block_number)
+    }
+
+    pub fn is_gray_glacier_activated(&self, block_number: BlockNumber) -> bool {
+        self.gray_glacier_block
+            .is_some_and(|num| num <= block_number)
+    }
+
+    /// Returns true if the network has passed the merge (terminal total difficulty reached)
+    pub fn is_merge_activated(&self, total_difficulty: Option<u128>) -> bool {
+        match (self.terminal_total_difficulty, total_difficulty) {
+            (Some(ttd), Some(td)) => td >= ttd,
+            (Some(0), None) => true, // TTD of 0 means merge is always active
+            _ => self.terminal_total_difficulty_passed,
+        }
+    }
+
+    /// Get the fork at a specific block number and timestamp.
+    /// This handles both pre-merge (block number based) and post-merge (timestamp based) forks.
+    pub fn get_fork_for_block(&self, block_number: BlockNumber, block_timestamp: u64) -> Fork {
+        // First check post-merge forks (timestamp based)
+        if self.is_bpo5_activated(block_timestamp) {
+            return Fork::BPO5;
+        }
+        if self.is_bpo4_activated(block_timestamp) {
+            return Fork::BPO4;
+        }
+        if self.is_bpo3_activated(block_timestamp) {
+            return Fork::BPO3;
+        }
+        if self.is_bpo2_activated(block_timestamp) {
+            return Fork::BPO2;
+        }
+        if self.is_bpo1_activated(block_timestamp) {
+            return Fork::BPO1;
+        }
+        if self.is_osaka_activated(block_timestamp) {
+            return Fork::Osaka;
+        }
+        if self.is_prague_activated(block_timestamp) {
+            return Fork::Prague;
+        }
+        if self.is_cancun_activated(block_timestamp) {
+            return Fork::Cancun;
+        }
+        if self.is_shanghai_activated(block_timestamp) {
+            return Fork::Shanghai;
+        }
+
+        // Check if we're past the merge
+        // For EF tests, terminal_total_difficulty of 0 means we're post-merge from genesis
+        if self.terminal_total_difficulty == Some(0) {
+            return Fork::Paris;
+        }
+
+        // Pre-merge forks (block number based), from newest to oldest
+        if self.is_gray_glacier_activated(block_number) {
+            return Fork::GrayGlacier;
+        }
+        if self.is_arrow_glacier_activated(block_number) {
+            return Fork::ArrowGlacier;
+        }
+        if self.is_london_activated(block_number) {
+            return Fork::London;
+        }
+        if self.is_berlin_activated(block_number) {
+            return Fork::Berlin;
+        }
+        if self.is_muir_glacier_activated(block_number) {
+            return Fork::MuirGlacier;
+        }
+        if self.is_istanbul_activated(block_number) {
+            return Fork::Istanbul;
+        }
+        if self.is_petersburg_activated(block_number) {
+            return Fork::Petersburg;
+        }
+        if self.is_constantinople_activated(block_number) {
+            return Fork::Constantinople;
+        }
+        if self.is_byzantium_activated(block_number) {
+            return Fork::Byzantium;
+        }
+        if self.is_eip158_activated(block_number) {
+            return Fork::SpuriousDragon;
+        }
+        if self.is_eip150_activated(block_number) {
+            return Fork::Tangerine;
+        }
+        if self.is_homestead_activated(block_number) {
+            return Fork::Homestead;
+        }
+
+        // Default to Frontier for pre-Homestead blocks
+        Fork::Frontier
+    }
+
     pub fn display_config(&self) -> String {
         let network = NETWORK_NAMES.get(&self.chain_id).unwrap_or(&"unknown");
         let mut output = format!("Chain ID: {} ({})\n\n", self.chain_id, network);

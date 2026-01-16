@@ -65,7 +65,9 @@ impl EVMConfig {
     }
 
     pub fn new_from_chain_config(chain_config: &ChainConfig, block_header: &BlockHeader) -> Self {
-        let fork = chain_config.fork(block_header.timestamp);
+        // Use get_fork_for_block to properly handle both pre-merge (block-number based)
+        // and post-merge (timestamp-based) forks
+        let fork = chain_config.get_fork_for_block(block_header.number, block_header.timestamp);
 
         let blob_schedule = chain_config
             .get_fork_blob_schedule(block_header.timestamp)

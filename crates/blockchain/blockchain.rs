@@ -64,8 +64,8 @@ use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests
 use ethrex_common::types::{
     AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code,
     EIP4844Transaction, Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root,
-    validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
-    validate_pre_cancun_header_fields,
+    validate_block_body_with_fork, validate_block_header_with_fork, validate_cancun_header_fields,
+    validate_prague_header_fields, validate_pre_cancun_header_fields,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
@@ -2212,9 +2212,18 @@ pub fn validate_block(
     chain_config: &ChainConfig,
     elasticity_multiplier: u64,
 ) -> Result<(), ChainError> {
-    // Verify initial header validity against parent
-    validate_block_header(&block.header, parent_header, elasticity_multiplier)
+    // Determine the fork for this block
+    let fork = chain_config.get_fork_for_block(block.header.number, block.header.timestamp);
+
+    // Verify initial header validity against parent (fork-aware)
+    validate_block_header_with_fork(&block.header, parent_header, elasticity_multiplier, fork)
         .map_err(InvalidBlockError::from)?;
+
+    // Validate block body for pre-merge blocks (ommers validation)
+    if fork < Fork::Paris {
+        validate_block_body_with_fork(&block.header, &block.body, fork)
+            .map_err(InvalidBlockError::from)?;
+    }
 
     if chain_config.is_osaka_activated(block.header.timestamp) {
         let block_rlp_size = block.length();
@@ -2238,9 +2247,11 @@ pub fn validate_block(
         validate_cancun_header_fields(&block.header, parent_header, chain_config)
             .map_err(InvalidBlockError::from)?;
         verify_blob_gas_usage(block, chain_config)?;
-    } else {
+    } else if fork >= Fork::Paris {
+        // Post-merge but pre-Cancun
         validate_pre_cancun_header_fields(&block.header).map_err(InvalidBlockError::from)?
     }
+    // Pre-merge blocks don't need pre_cancun_header_fields validation
 
     Ok(())
 }

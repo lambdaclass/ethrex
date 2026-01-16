@@ -9,7 +9,7 @@ use ethrex_rlp::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::types::TxType;
+use crate::types::{Fork, TxType};
 pub type Index = u64;
 
 /// Result of a transaction
@@ -19,6 +19,10 @@ pub struct Receipt {
     pub succeeded: bool,
     pub cumulative_gas_used: u64,
     pub logs: Vec<Log>,
+    /// State root after transaction execution (used for pre-Byzantium receipts)
+    /// Pre-Byzantium receipts encode state_root instead of status
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state_root: Option<H256>,
 }
 
 impl Receipt {
@@ -28,6 +32,24 @@ impl Receipt {
             succeeded,
             cumulative_gas_used,
             logs,
+            state_root: None,
+        }
+    }
+
+    /// Create a pre-Byzantium receipt with state root
+    pub fn new_pre_byzantium(
+        tx_type: TxType,
+        succeeded: bool,
+        cumulative_gas_used: u64,
+        logs: Vec<Log>,
+        state_root: H256,
+    ) -> Self {
+        Self {
+            tx_type,
+            succeeded,
+            cumulative_gas_used,
+            logs,
+            state_root: Some(state_root),
         }
     }
 
@@ -43,6 +65,9 @@ impl Receipt {
         encoded_data
     }
 
+    /// Encode receipt with bloom for computing receipts root.
+    /// For post-Byzantium (EIP-658): encodes status (bool)
+    /// For pre-Byzantium: encodes state_root (H256)
     pub fn encode_inner_with_bloom(&self) -> Vec<u8> {
         // Bloom is already 256 bytes, so we preallocate at least that much plus some,
         // to avoid multiple small allocations.
@@ -51,13 +76,31 @@ impl Receipt {
             encode_buf.push(self.tx_type as u8);
         }
         let bloom = bloom_from_logs(&self.logs);
-        Encoder::new(&mut encode_buf)
-            .encode_field(&self.succeeded)
-            .encode_field(&self.cumulative_gas_used)
-            .encode_field(&bloom)
-            .encode_field(&self.logs)
-            .finish();
+
+        // Pre-Byzantium receipts encode state_root, post-Byzantium encode status
+        if let Some(state_root) = self.state_root {
+            // Pre-Byzantium receipt format: [state_root, cumulative_gas_used, bloom, logs]
+            Encoder::new(&mut encode_buf)
+                .encode_field(&state_root)
+                .encode_field(&self.cumulative_gas_used)
+                .encode_field(&bloom)
+                .encode_field(&self.logs)
+                .finish();
+        } else {
+            // Post-Byzantium receipt format (EIP-658): [status, cumulative_gas_used, bloom, logs]
+            Encoder::new(&mut encode_buf)
+                .encode_field(&self.succeeded)
+                .encode_field(&self.cumulative_gas_used)
+                .encode_field(&bloom)
+                .encode_field(&self.logs)
+                .finish();
+        }
         encode_buf
+    }
+
+    /// Check if this receipt is for a pre-Byzantium fork
+    pub fn is_pre_byzantium(&self) -> bool {
+        self.state_root.is_some()
     }
 }
 
@@ -101,6 +144,7 @@ impl RLPDecode for Receipt {
                 succeeded,
                 cumulative_gas_used,
                 logs,
+                state_root: None,
             },
             decoder.finish()?,
         ))
@@ -290,6 +334,7 @@ impl From<&ReceiptWithBloom> for Receipt {
             succeeded: receipt.succeeded,
             cumulative_gas_used: receipt.cumulative_gas_used,
             logs: receipt.logs.clone(),
+            state_root: None,
         }
     }
 }
@@ -346,6 +391,7 @@ mod test {
                 topics: vec![],
                 data: Bytes::from_static(b"foo"),
             }],
+            state_root: None,
         };
         let encoded_receipt = receipt.encode_to_vec();
         assert_eq!(receipt, Receipt::decode(&encoded_receipt).unwrap())
@@ -362,6 +408,7 @@ mod test {
                 topics: vec![],
                 data: Bytes::from_static(b"bar"),
             }],
+            state_root: None,
         };
         let encoded_receipt = receipt.encode_to_vec();
         assert_eq!(receipt, Receipt::decode(&encoded_receipt).unwrap())
@@ -433,6 +480,7 @@ mod test {
                 ],
                 data: Bytes::from_static(b"bar"),
             }],
+            state_root: None,
         };
         let encoded_receipt = receipt.encode_inner_with_bloom();
 

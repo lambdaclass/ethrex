@@ -3208,6 +3208,7 @@ mod tests {
             succeeded: true,
             cumulative_gas_used: 1747,
             logs: vec![],
+            state_root: None,
         };
         let block_number = 6;
         let index = 4;
