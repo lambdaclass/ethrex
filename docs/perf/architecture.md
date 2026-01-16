@@ -1,6 +1,6 @@
 # Performance Architecture Notes
 
-This document contains architecture and code notes relevant to the performance improvement ideas in `perf_ideas_tracking.md`. Use this information to estimate potential gains and prioritize optimizations.
+This document contains architecture and code notes relevant to the performance improvement ideas in [ideas.md](ideas.md). Use this information to understand the codebase when implementing optimizations.
 
 ---
 
@@ -10,7 +10,7 @@ This document contains architecture and code notes relevant to the performance i
 2. [Block Execution Pipeline](#block-execution-pipeline)
 3. [Trie Implementation](#trie-implementation)
 4. [Key Performance Bottlenecks](#key-performance-bottlenecks)
-5. [Optimization Mapping](#optimization-mapping)
+5. [Hot Path Summary](#hot-path-summary)
 
 ---
 
@@ -408,62 +408,6 @@ pub fn compute_hash_ref(&self) -> &NodeHash {
 | Pending removal Vec allocs | trie.rs:243 | Per deleted key |
 | RefCell borrow checking | memory.rs | Runtime overhead (minimal) |
 | Gas i64 conversion | call_frame.rs:379 | Already optimized |
-
----
-
-## Optimization Mapping
-
-This section maps each performance idea to relevant architecture considerations.
-
-### Execution Optimizations
-
-| Idea | Architecture Notes | Estimated Complexity |
-|------|-------------------|---------------------|
-| **Nibbles 1-byte 2-nibble** | Currently uses Vec<u8> with 1 nibble per byte. Can pack 2 nibbles per byte to halve memory and improve cache locality. | Low - data structure change |
-| **Use FxHashSet for access lists** | Already using FxHashMap in some places. Access lists use std collections. | Low - swap implementation |
-| **Skip memory zero-init** | Memory does `resize(new_size, 0)`. Could use uninitialized memory with careful tracking. | Low - requires unsafe |
-| **Replace BTreeMap with FxHashMap** | BTreeMap used in some places for ordering. FxHashMap ~2x faster for lookups. | Low - identify locations |
-| **Remove RefCell from Memory** | Memory uses `Rc<RefCell<Vec<u8>>>`. Could use raw pointer with safety invariants. | Low - risky change |
-| **Inline Hot Opcodes** | Already have hybrid dispatch. Could inline more into fast path match. | Low - compiler hints |
-| **Avoid Clone on Account Load** | Account cloning happens in backup system. Could use CoW or persistent data structures. | Low-Mid |
-| **SSTORE double lookup** | Cache has original+current separation. Two hashmap lookups per SSTORE. | Low |
-| **Hook Cloning Per Opcode** | Hooks cloned once per tx. Could clone individual Rcs. | Low |
-| **keccak caching** | No keccak cache exists. Top 10k hashes are often constants. | Low - add LRU cache |
-| **Buffer reuse** | Allocations throughout. Free-list pattern could help. | Low |
-| **Object Pooling** | Stack already pooled. CallFrame, Memory could benefit. | Mid |
-| **SIMD everywhere** | U256 operations use ruint. SIMD could accelerate batch ops. | Mid - platform specific |
-| **Stackalloc for Small Buffers** | Many small Vec allocations. Could use stack for <64 bytes. | Mid |
-| **Arena Allocator for Substate** | Substate has many small allocations for backups. Arena could batch. | Mid |
-| **Arkworks EC Pairing** | Currently using other EC library. Arkworks may be faster. | Mid - dependency change |
-| **Jumptable vs Calltable** | Already have jump table. Verifying optimal. | Mid - investigation |
-| **Mempool Lock Contention** | Uses RwLock. Pruning is O(n²). DashMap could help. | Mid |
-| **Precompile caching** | EC recover is expensive. Per-address LRU could help. | Mid |
-| **Cross-block cache reuse** | Caches reset per block. Could persist hot entries. | Mid |
-| **Hierarchical storage cache** | Separate caches for code, storage, accounts exist but not unified. | Mid |
-| **Parallel proof workers** | Fixed 16 workers. Could be dynamic based on load. | Mid |
-| **LEVM simplify stack/results** | Stack is already optimized. Results could be simplified. | High - major refactor |
-| **Parallel Transaction Execution** | Requires dependency analysis. Complex with state conflicts. | High |
-| **PGO** | Profile-guided optimization. Requires build pipeline changes. | High - tooling |
-| **ruint** | Direct replacement doesn't work. Evaluate for specific ops. | High |
-
-### I/O Optimizations
-
-| Idea | Architecture Notes | Estimated Complexity |
-|------|-------------------|---------------------|
-| **Transaction pre-warming** | No pre-warming exists. Would pre-execute to populate caches. | High - architecture change |
-| **Sparse trie** | Already only recompute changed paths via `dirty` set. Verify. | Low - verification |
-| **Bloom filter revision** | Bloom filter exists in TrieLayerCache. May need tuning. | Low |
-| **LRU cache for states/accounts** | TrieLayerCache exists. Could add account-level LRU. | Mid |
-| **Increase CodeCache Size** | Currently 64MB. Could benchmark larger sizes. | Low - config change |
-| **Cache trie top levels** | Top 2 levels are frequently accessed. Could pin in memory. | Mid |
-| **RocksDB tuning** | Default settings. Block cache, compaction tuning possible. | Mid - experimentation |
-| **Multiget everywhere** | Currently single gets. RocksDB multiget is faster for batches. | Mid |
-| **Increase TrieLayerCache threshold** | Currently 128 on-disk. Higher = more memory, fewer commits. | Low - config change |
-| **State Prefetching** | No prefetching. Could predict next accounts/slots. | High |
-| **State pruning** | No pruning implemented. Would reduce DB size. | High |
-| **Implementing Ethrex-DB** | Custom DB for Ethereum workload. Major undertaking. | High |
-| **Parallel merkelization of storages** | Currently parallel by account shard. Could parallelize within account. | Mid |
-| **Deeper pipeline** | Current: execute → merkleize. Could add more stages. | High |
 
 ---
 
