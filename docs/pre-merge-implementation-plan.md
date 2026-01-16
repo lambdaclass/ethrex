@@ -30,13 +30,30 @@ This document outlines the implementation plan to add pre-merge (Proof of Work) 
 | Fork-aware tx calldata costs | ✅ Complete | Uses `tx_calldata_with_fork()` |
 | Fork-aware header validation | ✅ Complete | Uses `validate_block_header_with_fork()` |
 | Pre-merge EF tests enabled | ✅ Complete | Removed fork skip condition |
+| Fork detection in EVMConfig | ✅ Complete | Uses `get_fork_for_block()` for proper pre/post-merge |
+| Pre-Byzantium receipt struct | ✅ Complete | Receipt now supports `state_root` field for EIP-658 |
+| Fork-aware CREATE transaction cost | ✅ Complete | CREATE_BASE_COST only from Homestead+ (EIP-2) |
+| Fork-aware block validation | ✅ Complete | Uses `validate_block_body_with_fork()` for pre-merge |
+
+### Remaining Work
+
+| Component | Status | Description |
+|-----------|--------|-------------|
+| Pre-Byzantium receipt encoding | 🔄 In Progress | Need to compute intermediate state roots |
+| Fork-aware refund quotient | ❌ Pending | MAX_REFUND_QUOTIENT: 2 pre-London, 5 London+ |
+| SELFDESTRUCT refund removal | ❌ Pending | Refund removed in London (EIP-3529) |
+| Fork-aware SSTORE refunds | ❌ Pending | Various changes across forks |
+| State root computation issues | ❌ Pending | 51016 StateRootMismatch errors |
 
 ### Current EF Test Status
 
 - **Total Tests**: 5957
 - **Passing**: 2998
 - **Failing**: 2959
-- **Primary Errors**: `GasUsedMismatch`, `StateRootMismatch`
+- **Primary Errors**:
+  - `StateRootMismatch`: 51016 occurrences (most common - state computation differs)
+  - `ReceiptsRootMismatch`: 424 occurrences (pre-Byzantium receipt encoding)
+  - `GasUsedMismatch`: Various patterns (fork-specific gas costs)
 
 ### What ethrex Already Has
 
