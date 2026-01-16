@@ -23,6 +23,7 @@ use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
     POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST,
 };
+use ethrex_levm::db::Database;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
 #[cfg(feature = "perf_opcode_timings")]
@@ -35,7 +36,9 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::VM,
 };
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::cmp::min;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 
@@ -191,6 +194,50 @@ impl LEVM {
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
         Ok(BlockExecutionResult { receipts, requests })
+    }
+
+    pub fn warm_block(
+        block: &Block,
+        store: Arc<dyn Database>,
+        vm_type: VMType,
+    ) -> Result<(), EvmError> {
+        let mut db = GeneralizedDatabase::new(store.clone());
+        Self::prepare_block(block, &mut db, vm_type)?;
+
+        block
+            .body
+            .get_transactions_with_sender()
+            .map_err(|error| {
+                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+            })?
+            .into_par_iter()
+            .for_each_with(
+                Vec::with_capacity(STACK_LIMIT),
+                |stack_pool, (tx, tx_sender)| {
+                    let mut db = GeneralizedDatabase::new(store.clone());
+                    let _ = Self::execute_tx_in_block(
+                        tx,
+                        tx_sender,
+                        &block.header,
+                        &mut db,
+                        vm_type,
+                        stack_pool,
+                    );
+                },
+            );
+
+        for (address, _) in block
+            .body
+            .withdrawals
+            .iter()
+            .flatten()
+            .filter(|withdrawal| withdrawal.amount > 0)
+            .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
+        {
+            db.get_account_mut(address)
+                .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
+        }
+        Ok(())
     }
 
     fn send_state_transitions_tx(
