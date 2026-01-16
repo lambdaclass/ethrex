@@ -609,50 +609,71 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<B
         }
     }
 
-    // Because on some cases conversions to usize exploded before the check of the zero value could be done
+    // Convert sizes to usize. On overflow, we'll consume all gas.
     let base_size = usize::try_from(base_size).map_err(|_| PrecompileError::ParsingInputError)?;
     let exponent_size =
         usize::try_from(exponent_size).map_err(|_| PrecompileError::ParsingInputError)?;
     let modulus_size =
         usize::try_from(modulus_size).map_err(|_| PrecompileError::ParsingInputError)?;
 
-    let base_limit = base_size.checked_add(96).ok_or(InternalError::Overflow)?;
+    // IMPORTANT: Calculate and charge gas FIRST, before any operations that might fail.
+    // This ensures OOG tests properly consume all gas even when declared sizes are huge.
+
+    // Get first 32 bytes of exponent for gas calculation (from calldata directly)
+    // The exponent data starts at offset 96 + base_size
+    let exp_start = 96_usize.saturating_add(base_size);
+    let bytes_to_take = 32.min(exponent_size);
+    let exp_first_32_bytes: Vec<u8> = if exp_start < calldata.len() {
+        let end = exp_start.saturating_add(bytes_to_take).min(calldata.len());
+        let mut bytes = calldata[exp_start..end].to_vec();
+        // Pad with zeros if we didn't get enough bytes
+        bytes.resize(bytes_to_take, 0);
+        bytes
+    } else {
+        vec![0u8; bytes_to_take]
+    };
+
+    let exp_first_32 =
+        Natural::from_power_of_2_digits_desc(8u64, exp_first_32_bytes.iter().cloned())
+            .unwrap_or(Natural::ZERO);
+
+    // Calculate gas cost based on declared sizes
+    let gas_cost = gas_cost::modexp(&exp_first_32, base_size, exponent_size, modulus_size, fork)?;
+
+    // Charge gas NOW, before any operations that might overflow
+    increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
+
+    // Now proceed with the actual computation. Any failures after this point
+    // have already consumed the gas.
+
+    if base_size == 0 && modulus_size == 0 {
+        return Ok(Bytes::new());
+    }
+
+    // Calculate data limits - these can overflow for huge declared sizes,
+    // but gas is already charged so OOG error would have triggered above
+    let base_limit = base_size
+        .checked_add(96)
+        .ok_or(PrecompileError::ParsingInputError)?;
 
     let exponent_limit = exponent_size
         .checked_add(base_limit)
-        .ok_or(InternalError::Overflow)?;
+        .ok_or(PrecompileError::ParsingInputError)?;
 
     let modulus_limit = modulus_size
         .checked_add(exponent_limit)
-        .ok_or(InternalError::Overflow)?;
+        .ok_or(PrecompileError::ParsingInputError)?;
 
     let b = get_slice_or_default(&calldata, 96, base_limit, base_size);
     let e = get_slice_or_default(&calldata, base_limit, exponent_limit, exponent_size);
     let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, modulus_size);
 
     let base = Natural::from_power_of_2_digits_desc(8u64, b.iter().cloned())
-        .ok_or(InternalError::TypeConversion)?;
+        .ok_or(PrecompileError::ParsingInputError)?;
     let exponent = Natural::from_power_of_2_digits_desc(8u64, e.iter().cloned())
-        .ok_or(InternalError::TypeConversion)?;
+        .ok_or(PrecompileError::ParsingInputError)?;
     let modulus = Natural::from_power_of_2_digits_desc(8u64, m.iter().cloned())
-        .ok_or(InternalError::TypeConversion)?;
-
-    // First 32 bytes of exponent or exponent if e_size < 32
-    let bytes_to_take = 32.min(exponent_size);
-    // Use of unwrap_or_default because if e == 0 get_slice_or_default returns an empty vec
-    let exp_first_32 = Natural::from_power_of_2_digits_desc(
-        8u64,
-        e.get(0..bytes_to_take).unwrap_or_default().iter().cloned(),
-    )
-    .ok_or(InternalError::TypeConversion)?;
-
-    let gas_cost = gas_cost::modexp(&exp_first_32, base_size, exponent_size, modulus_size, fork)?;
-
-    increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
-
-    if base_size == 0 && modulus_size == 0 {
-        return Ok(Bytes::new());
-    }
+        .ok_or(PrecompileError::ParsingInputError)?;
 
     let result = mod_exp(base, exponent, modulus);
 
