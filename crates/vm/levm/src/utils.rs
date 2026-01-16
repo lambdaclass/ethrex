@@ -454,8 +454,12 @@ impl<'a> VM<'a> {
         let mut intrinsic_gas: u64 = 0;
 
         // Calldata Cost
-        // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-        let calldata_cost = gas_cost::tx_calldata(&self.current_call_frame.calldata)?;
+        // Pre-Istanbul: 68 gas per non-zero byte, 4 gas per zero byte
+        // Istanbul+: 16 gas per non-zero byte, 4 gas per zero byte
+        let calldata_cost = gas_cost::tx_calldata_with_fork(
+            &self.current_call_frame.calldata,
+            self.env.config.fork,
+        )?;
 
         intrinsic_gas = intrinsic_gas.checked_add(calldata_cost).ok_or(OutOfGas)?;
 

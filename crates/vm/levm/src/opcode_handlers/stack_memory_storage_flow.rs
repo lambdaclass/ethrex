@@ -138,11 +138,11 @@ impl<'a> VM<'a> {
 
         let (value, storage_slot_was_cold) = self.access_storage_slot(address, storage_slot_key)?;
 
-        let current_call_frame = &mut self.current_call_frame;
+        let fork = self.env.config.fork;
+        let gas = gas_cost::sload_with_fork(storage_slot_was_cold, fork)?;
+        self.current_call_frame.increase_consumed_gas(gas)?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::sload(storage_slot_was_cold)?)?;
-
-        current_call_frame.stack.push(value)?;
+        self.current_call_frame.stack.push(value)?;
         Ok(OpcodeResult::Continue)
     }
 

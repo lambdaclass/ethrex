@@ -42,10 +42,10 @@
 //!
 //! ## Supported Forks
 //!
-//! LEVM supports post-merge Ethereum forks:
-//! - Paris (The Merge), Shanghai, Cancun, Prague, Osaka
-//!
-//! Note: ethrex is a post-merge client and does not support pre-merge forks.
+//! LEVM supports all Ethereum forks:
+//! - Pre-merge: Frontier, Homestead, Tangerine Whistle, Spurious Dragon,
+//!   Byzantium, Constantinople, Petersburg, Istanbul, Berlin, London
+//! - Post-merge: Paris, Shanghai, Cancun, Prague, Osaka
 //!
 //! ## Usage
 //!
@@ -72,6 +72,7 @@ pub mod environment;
 pub mod errors;
 pub mod execution_handlers;
 pub mod gas_cost;
+pub mod gas_schedule;
 pub mod hooks;
 pub mod memory;
 pub mod opcode_handlers;

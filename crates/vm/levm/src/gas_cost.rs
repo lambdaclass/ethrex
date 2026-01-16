@@ -2,6 +2,7 @@ use crate::{
     call_frame::CallFrame,
     constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_U64},
     errors::{ExceptionalHalt, InternalError, PrecompileError, VMError},
+    gas_schedule::GasSchedule,
     memory,
 };
 use ExceptionalHalt::OutOfGas;
@@ -249,6 +250,28 @@ pub fn exp(exponent: U256) -> Result<u64, VMError> {
         .ok_or(OutOfGas.into())
 }
 
+/// Fork-aware gas cost for EXP operation.
+///
+/// Pre-Spurious Dragon: 10 gas per byte of exponent
+/// Spurious Dragon+: 50 gas per byte of exponent
+pub fn exp_with_fork(exponent: U256, fork: Fork) -> Result<u64, VMError> {
+    let exponent_byte_size = (exponent.bits().checked_add(7).ok_or(OutOfGas)?) / 8;
+
+    let exponent_byte_size: u64 = exponent_byte_size
+        .try_into()
+        .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+
+    let schedule = GasSchedule::for_fork(fork);
+    let exponent_byte_size_cost = schedule
+        .exp_byte
+        .checked_mul(exponent_byte_size)
+        .ok_or(OutOfGas)?;
+
+    EXP_STATIC
+        .checked_add(exponent_byte_size_cost)
+        .ok_or(OutOfGas.into())
+}
+
 pub fn calldatacopy(
     new_memory_size: usize,
     current_memory_size: usize,
@@ -392,6 +415,7 @@ fn mem_expansion_behavior(
         .ok_or(OutOfGas.into())
 }
 
+/// Gas cost for SLOAD operation (Berlin+ with access lists).
 pub fn sload(storage_slot_was_cold: bool) -> Result<u64, VMError> {
     let static_gas = SLOAD_STATIC;
     let dynamic_cost = if storage_slot_was_cold {
@@ -400,6 +424,14 @@ pub fn sload(storage_slot_was_cold: bool) -> Result<u64, VMError> {
         SLOAD_WARM_DYNAMIC
     };
     static_gas.checked_add(dynamic_cost).ok_or(OutOfGas.into())
+}
+
+/// Fork-aware gas cost for SLOAD operation.
+///
+/// Pre-Berlin forks have a flat cost; Berlin+ uses cold/warm access.
+pub fn sload_with_fork(storage_slot_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
+    let schedule = GasSchedule::for_fork(fork);
+    Ok(schedule.sload_cost(storage_slot_was_cold))
 }
 
 pub fn sstore(
@@ -574,6 +606,27 @@ pub fn tx_calldata(calldata: &Bytes) -> Result<u64, VMError> {
     Ok(calldata_cost)
 }
 
+/// Fork-aware transaction calldata cost.
+///
+/// Pre-Istanbul: 68 gas per non-zero byte, 4 gas per zero byte
+/// Istanbul+: 16 gas per non-zero byte, 4 gas per zero byte
+pub fn tx_calldata_with_fork(calldata: &Bytes, fork: Fork) -> Result<u64, VMError> {
+    let schedule = GasSchedule::for_fork(fork);
+    let mut calldata_cost: u64 = 0;
+    for byte in calldata {
+        calldata_cost = if *byte != 0 {
+            calldata_cost
+                .checked_add(schedule.calldata_nonzero)
+                .ok_or(OutOfGas)?
+        } else {
+            calldata_cost
+                .checked_add(schedule.calldata_zero)
+                .ok_or(OutOfGas)?
+        }
+    }
+    Ok(calldata_cost)
+}
+
 fn address_access_cost(
     address_was_cold: bool,
     static_cost: u64,
@@ -639,6 +692,221 @@ pub fn extcodehash(address_was_cold: bool) -> Result<u64, VMError> {
         EXTCODEHASH_COLD_DYNAMIC,
         EXTCODEHASH_WARM_DYNAMIC,
     )
+}
+
+// ============================================================================
+// Fork-aware gas cost functions
+// ============================================================================
+
+/// Fork-aware gas cost for BALANCE operation.
+pub fn balance_with_fork(address_was_cold: bool, fork: Fork) -> u64 {
+    let schedule = GasSchedule::for_fork(fork);
+    schedule.account_access_cost(address_was_cold, schedule.balance)
+}
+
+/// Fork-aware gas cost for EXTCODESIZE operation.
+pub fn extcodesize_with_fork(address_was_cold: bool, fork: Fork) -> u64 {
+    let schedule = GasSchedule::for_fork(fork);
+    schedule.account_access_cost(address_was_cold, schedule.extcodesize)
+}
+
+/// Fork-aware gas cost for EXTCODEHASH operation.
+pub fn extcodehash_with_fork(address_was_cold: bool, fork: Fork) -> u64 {
+    let schedule = GasSchedule::for_fork(fork);
+    schedule.account_access_cost(address_was_cold, schedule.extcodehash)
+}
+
+/// Fork-aware gas cost for EXTCODECOPY operation.
+pub fn extcodecopy_with_fork(
+    size: usize,
+    new_memory_size: usize,
+    current_memory_size: usize,
+    address_was_cold: bool,
+    fork: Fork,
+) -> Result<u64, VMError> {
+    let schedule = GasSchedule::for_fork(fork);
+
+    // Copy cost (memory expansion + per-word cost)
+    let base_access_cost = copy_behavior(
+        new_memory_size,
+        current_memory_size,
+        size,
+        EXTCODECOPY_DYNAMIC_BASE,
+        EXTCODECOPY_STATIC,
+    )?;
+
+    // Account access cost
+    let account_access_cost =
+        schedule.account_access_cost(address_was_cold, schedule.extcodecopy_base);
+
+    base_access_cost
+        .checked_add(account_access_cost)
+        .ok_or(OutOfGas.into())
+}
+
+/// Fork-aware base gas cost for CALL-family operations.
+///
+/// This returns the base account access cost. Additional costs for
+/// value transfer, new account creation, memory expansion, etc.
+/// are handled separately.
+pub fn call_base_with_fork(address_was_cold: bool, fork: Fork) -> u64 {
+    let schedule = GasSchedule::for_fork(fork);
+    schedule.call_cost(address_was_cold)
+}
+
+/// Fork-aware gas cost for CALL operation.
+#[allow(clippy::too_many_arguments)]
+pub fn call_with_fork(
+    new_memory_size: usize,
+    current_memory_size: usize,
+    address_was_cold: bool,
+    address_is_empty: bool,
+    value_to_transfer: U256,
+    gas_from_stack: U256,
+    gas_left: u64,
+    fork: Fork,
+) -> Result<(u64, u64), VMError> {
+    let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
+    let schedule = GasSchedule::for_fork(fork);
+
+    let address_access_cost = schedule.call_cost(address_was_cold);
+    let positive_value_cost = if !value_to_transfer.is_zero() {
+        CALL_POSITIVE_VALUE
+    } else {
+        0
+    };
+
+    let value_to_empty_account = if address_is_empty && !value_to_transfer.is_zero() {
+        CALL_TO_EMPTY_ACCOUNT
+    } else {
+        0
+    };
+
+    let call_gas_costs = memory_expansion_cost
+        .checked_add(address_access_cost)
+        .ok_or(OutOfGas)?
+        .checked_add(positive_value_cost)
+        .ok_or(OutOfGas)?
+        .checked_add(value_to_empty_account)
+        .ok_or(OutOfGas)?;
+
+    calculate_cost_and_gas_limit_call(
+        value_to_transfer.is_zero(),
+        gas_from_stack,
+        gas_left,
+        call_gas_costs,
+        CALL_POSITIVE_VALUE_STIPEND,
+    )
+}
+
+/// Fork-aware gas cost for CALLCODE operation.
+pub fn callcode_with_fork(
+    new_memory_size: usize,
+    current_memory_size: usize,
+    address_was_cold: bool,
+    value_to_transfer: U256,
+    gas_from_stack: U256,
+    gas_left: u64,
+    fork: Fork,
+) -> Result<(u64, u64), VMError> {
+    let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
+    let schedule = GasSchedule::for_fork(fork);
+
+    let address_access_cost = schedule.call_cost(address_was_cold);
+    let positive_value_cost = if !value_to_transfer.is_zero() {
+        CALLCODE_POSITIVE_VALUE
+    } else {
+        0
+    };
+
+    let call_gas_costs = memory_expansion_cost
+        .checked_add(address_access_cost)
+        .ok_or(OutOfGas)?
+        .checked_add(positive_value_cost)
+        .ok_or(OutOfGas)?;
+
+    calculate_cost_and_gas_limit_call(
+        value_to_transfer.is_zero(),
+        gas_from_stack,
+        gas_left,
+        call_gas_costs,
+        CALLCODE_POSITIVE_VALUE_STIPEND,
+    )
+}
+
+/// Fork-aware gas cost for DELEGATECALL operation.
+pub fn delegatecall_with_fork(
+    new_memory_size: usize,
+    current_memory_size: usize,
+    address_was_cold: bool,
+    gas_from_stack: U256,
+    gas_left: u64,
+    fork: Fork,
+) -> Result<(u64, u64), VMError> {
+    let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
+    let schedule = GasSchedule::for_fork(fork);
+
+    let address_access_cost = schedule.call_cost(address_was_cold);
+
+    let call_gas_costs = memory_expansion_cost
+        .checked_add(address_access_cost)
+        .ok_or(OutOfGas)?;
+
+    calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
+}
+
+/// Fork-aware gas cost for STATICCALL operation.
+pub fn staticcall_with_fork(
+    new_memory_size: usize,
+    current_memory_size: usize,
+    address_was_cold: bool,
+    gas_from_stack: U256,
+    gas_left: u64,
+    fork: Fork,
+) -> Result<(u64, u64), VMError> {
+    let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
+    let schedule = GasSchedule::for_fork(fork);
+
+    let address_access_cost = schedule.call_cost(address_was_cold);
+
+    let call_gas_costs = memory_expansion_cost
+        .checked_add(address_access_cost)
+        .ok_or(OutOfGas)?;
+
+    calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
+}
+
+/// Fork-aware gas cost for SELFDESTRUCT operation.
+pub fn selfdestruct_with_fork(
+    address_was_cold: bool,
+    account_is_empty: bool,
+    balance_to_transfer: U256,
+    fork: Fork,
+) -> Result<u64, VMError> {
+    let schedule = GasSchedule::for_fork(fork);
+
+    // Cold address cost only applies from Berlin+
+    let cold_cost = if schedule.has_access_lists && address_was_cold {
+        COLD_ADDRESS_ACCESS_COST
+    } else {
+        0
+    };
+
+    // Base selfdestruct cost
+    let base_cost = schedule.selfdestruct;
+
+    // New account cost if sending value to empty account
+    let new_account_cost = if account_is_empty && balance_to_transfer > U256::zero() {
+        schedule.selfdestruct_new_account
+    } else {
+        0
+    };
+
+    base_cost
+        .checked_add(cold_cost)
+        .ok_or(OutOfGas)?
+        .checked_add(new_account_cost)
+        .ok_or(OutOfGas.into())
 }
 
 #[allow(clippy::too_many_arguments)]

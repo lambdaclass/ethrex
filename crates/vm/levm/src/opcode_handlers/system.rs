@@ -78,7 +78,8 @@ impl<'a> VM<'a> {
                 callee,
             )?;
 
-        let (cost, gas_limit) = gas_cost::call(
+        let fork = self.env.config.fork;
+        let (cost, gas_limit) = gas_cost::call_with_fork(
             new_memory_size,
             current_memory_size,
             address_was_cold,
@@ -86,6 +87,7 @@ impl<'a> VM<'a> {
             value,
             gas,
             gas_left,
+            fork,
         )?;
 
         let callframe = &mut self.current_call_frame;
@@ -176,13 +178,15 @@ impl<'a> VM<'a> {
                 address,
             )?;
 
-        let (cost, gas_limit) = gas_cost::callcode(
+        let fork = self.env.config.fork;
+        let (cost, gas_limit) = gas_cost::callcode_with_fork(
             new_memory_size,
             current_memory_size,
             address_was_cold,
             value,
             gas,
             gas_left,
+            fork,
         )?;
 
         let callframe = &mut self.current_call_frame;
@@ -293,12 +297,14 @@ impl<'a> VM<'a> {
                 address,
             )?;
 
-        let (cost, gas_limit) = gas_cost::delegatecall(
+        let fork = self.env.config.fork;
+        let (cost, gas_limit) = gas_cost::delegatecall_with_fork(
             new_memory_size,
             current_memory_size,
             address_was_cold,
             gas,
             gas_left,
+            fork,
         )?;
 
         let callframe = &mut self.current_call_frame;
@@ -390,12 +396,14 @@ impl<'a> VM<'a> {
                 address,
             )?;
 
-        let (cost, gas_limit) = gas_cost::staticcall(
+        let fork = self.env.config.fork;
+        let (cost, gas_limit) = gas_cost::staticcall_with_fork(
             new_memory_size,
             current_memory_size,
             address_was_cold,
             gas,
             gas_left,
+            fork,
         )?;
 
         let callframe = &mut self.current_call_frame;
@@ -549,11 +557,13 @@ impl<'a> VM<'a> {
         let current_account = self.db.get_account(to)?;
         let balance = current_account.info.balance;
 
+        let fork = self.env.config.fork;
         self.current_call_frame
-            .increase_consumed_gas(gas_cost::selfdestruct(
+            .increase_consumed_gas(gas_cost::selfdestruct_with_fork(
                 target_account_is_cold,
                 target_account_is_empty,
                 balance,
+                fork,
             )?)?;
 
         // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN

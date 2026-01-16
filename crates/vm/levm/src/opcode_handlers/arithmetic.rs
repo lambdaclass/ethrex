@@ -223,15 +223,15 @@ impl<'a> VM<'a> {
 
     // EXP operation
     pub fn op_exp(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        let [base, exponent] = *current_call_frame.stack.pop()?;
+        let [base, exponent] = *self.current_call_frame.stack.pop()?;
 
-        let gas_cost = gas_cost::exp(exponent)?;
+        let fork = self.env.config.fork;
+        let gas_cost = gas_cost::exp_with_fork(exponent, fork)?;
 
-        current_call_frame.increase_consumed_gas(gas_cost)?;
+        self.current_call_frame.increase_consumed_gas(gas_cost)?;
 
         let power = base.overflowing_pow(exponent).0;
-        current_call_frame.stack.push(power)?;
+        self.current_call_frame.stack.push(power)?;
 
         Ok(OpcodeResult::Continue)
     }

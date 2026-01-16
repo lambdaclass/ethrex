@@ -14,6 +14,30 @@ This document outlines the implementation plan to add pre-merge (Proof of Work) 
 
 ## Current State Analysis
 
+### Implementation Progress (January 2025)
+
+| Component | Status | PR/Notes |
+|-----------|--------|----------|
+| Fork-aware gas schedule system | ✅ Complete | `gas_schedule.rs` created with per-fork costs |
+| Fork-aware SLOAD | ✅ Complete | Uses `sload_with_fork()` |
+| Fork-aware BALANCE | ✅ Complete | Uses `balance_with_fork()` |
+| Fork-aware EXTCODESIZE | ✅ Complete | Uses `extcodesize_with_fork()` |
+| Fork-aware EXTCODECOPY | ✅ Complete | Uses `extcodecopy_with_fork()` |
+| Fork-aware EXTCODEHASH | ✅ Complete | Uses `extcodehash_with_fork()` |
+| Fork-aware CALL/CALLCODE/DELEGATECALL/STATICCALL | ✅ Complete | Uses `*_with_fork()` functions |
+| Fork-aware SELFDESTRUCT | ✅ Complete | Uses `selfdestruct_with_fork()` |
+| Fork-aware EXP | ✅ Complete | Uses `exp_with_fork()` |
+| Fork-aware tx calldata costs | ✅ Complete | Uses `tx_calldata_with_fork()` |
+| Fork-aware header validation | ✅ Complete | Uses `validate_block_header_with_fork()` |
+| Pre-merge EF tests enabled | ✅ Complete | Removed fork skip condition |
+
+### Current EF Test Status
+
+- **Total Tests**: 5957
+- **Passing**: 2998
+- **Failing**: 2959
+- **Primary Errors**: `GasUsedMismatch`, `StateRootMismatch`
+
 ### What ethrex Already Has
 
 | Component | Status | Notes |
