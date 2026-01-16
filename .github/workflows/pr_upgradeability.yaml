@@ -60,7 +60,10 @@ jobs:
       - name: Prepare reference build-info
         run: |
           mkdir -p ./.tmp/upgrade-reference/main
-          cp ./.tmp/ethrex-main/tooling/hardhat/artifacts/build-info/*.json ./.tmp/upgrade-reference/main/
+          cp -v ./.tmp/ethrex-main/tooling/hardhat/artifacts/build-info/*.json ./.tmp/upgrade-reference/main/ || {
+            echo "Error: No build-info JSON files found; compilation may have failed or produced no output."
+            exit 1
+          }
 
       - name: Validate upgrade compatibility
         run: node tooling/hardhat/scripts/validate-upgrades.js --reference ./.tmp/upgrade-reference/main
