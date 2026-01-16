@@ -185,14 +185,30 @@ async fn test_transfer_erc_20() -> Result<()> {
     );
 
     // Verify L1 bridge deposits accounting was updated correctly.
-    // Due to the bug in get_balance_diffs (value_per_token is always empty),
-    // the L1 publishL2Messages never updates the deposits mapping for ERC20 transfers.
-    let l1_deposits_after =
-        get_bridge_deposits(&l1_client, bridge_address()?, l1_erc20_contract_address, l2a_erc20_contract_address).await;
+    let bridge = bridge_address()?;
+    let l1_deposits_l2a_after = get_bridge_deposits(
+        &l1_client,
+        bridge,
+        l1_erc20_contract_address,
+        l2a_erc20_contract_address,
+    )
+    .await;
+    let l1_deposits_l2b_after = get_bridge_deposits(
+        &l1_client,
+        bridge,
+        l1_erc20_contract_address,
+        l2b_erc20_contract_address,
+    )
+    .await;
+
     assert_eq!(
-        l1_deposits_after,
+        l1_deposits_l2a_after,
         U256::from(DEPOSIT_VALUE) - transfer_amount,
-        "test_transfer_erc_20: L1 deposits should decrease after L2->L2 transfer"
+        "test_transfer_erc_20: L1 deposits for L2a should decrease after L2->L2 transfer"
+    );
+    assert_eq!(
+        l1_deposits_l2b_after, transfer_amount,
+        "test_transfer_erc_20: L1 deposits for L2b should increase after L2->L2 transfer"
     );
 
     Ok(())
