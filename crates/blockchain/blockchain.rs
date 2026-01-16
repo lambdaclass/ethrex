@@ -378,7 +378,7 @@ impl Blockchain {
         });
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
         let (execution_result, exec_end_instant) = execution_result?;
-        let _ = receipts_result?;
+        receipts_result?;
         let exec_merkle_end_instant = Instant::now();
 
         Ok((
@@ -2191,12 +2191,15 @@ fn validate_receipts_pipelined(
     receipts_rx: Receiver<Receipt>,
 ) -> Result<(), ChainError> {
     let mut last_cummulative_gas = 0;
-    let mut idx: u64 = 0;
     let mut trie = Trie::new_temp();
-    for receipt in receipts_rx {
+    for (receipt, idx) in receipts_rx.into_iter().zip(0u64..) {
         last_cummulative_gas = receipt.cumulative_gas_used;
         trie.insert(idx.encode_to_vec(), receipt.encode_inner_with_bloom())?;
-        idx += 1;
+    }
+    if trie.hash_no_commit() != header.receipts_root {
+        return Err(ChainError::InvalidBlock(
+            InvalidBlockError::ReceiptsRootMismatch,
+        ));
     }
     if last_cummulative_gas != header.gas_used {
         return Err(ChainError::InvalidBlock(
