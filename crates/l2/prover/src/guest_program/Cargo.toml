@@ -41,7 +41,7 @@ methods = ["src/risc0"]
 [features]
 default = ["secp256k1"]
 risc0 = ["dep:risc0-build", "dep:risc0-zkvm"]
-sp1 = ["dep:sp1-build", "dep:sp1-sdk"]
+sp1 = ["dep:sp1-build", "dep:sp1-sdk", "ethrex-crypto/kzg-rs"]
 zisk = [
     "ethrex-common/zisk",
     "ethrex-blockchain/zisk",
