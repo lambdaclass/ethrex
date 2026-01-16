@@ -645,7 +645,7 @@ def main():
                    help="Git branch to track (default: from MULTISYNC_BRANCH env or current branch)")
     p.add_argument("--build-profile", default=os.environ.get("MULTISYNC_BUILD_PROFILE", "release-with-debug-assertions"),
                    help="Cargo build profile for Docker image")
-    p.add_argument("--image-tag", default=os.environ.get("MULTISYNC_LOCAL_IMAGE", "ethrex-local:validate"),
+    p.add_argument("--image-tag", default=os.environ.get("MULTISYNC_LOCAL_IMAGE", "ethrex-local:multisync"),
                    help="Docker image tag to build")
     p.add_argument("--ethrex-dir", default=os.environ.get("ETHREX_DIR", "../.."),
                    help="Path to ethrex repository root")
@@ -759,7 +759,7 @@ def main():
                 # If auto-update is enabled, the loop will pull/build/restart
                 # Otherwise, just restart containers now
                 if not args.auto_update:
-                    image_tag = args.image_tag if args.image_tag != "ethrex-local:validate" else ""
+                    image_tag = args.image_tag if args.image_tag != "ethrex-local:multisync" else ""
                     if restart_containers(args.compose_file, args.compose_dir, names, image_tag):
                         for inst in instances:
                             reset_instance(inst)

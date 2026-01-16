@@ -237,7 +237,7 @@ MULTISYNC_SERVICES := $(foreach n,$(MULTISYNC_NETWORK_LIST),setup-jwt-$(n) ethre
 # Build profile: 'release-with-debug-assertions' enables state trie validation
 MULTISYNC_BUILD_PROFILE ?= release-with-debug-assertions
 # Local image tag for builds
-MULTISYNC_LOCAL_IMAGE ?= ethrex-local:validate
+MULTISYNC_LOCAL_IMAGE ?= ethrex-local:multisync
 # Branch to track for auto-update mode (defaults to current branch if not set)
 MULTISYNC_BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
 
