@@ -15,10 +15,56 @@ const ZISK_VK_PATH: &str = concat!(
     "/src/guest_program/src/zisk/out/riscv64ima-zisk-vk"
 );
 
+const ZISK_HOME_ENV: &str = "ZISK_HOME";
+const ZISK_PROVING_KEY_ENV: &str = "ZISK_PROVING_KEY_PATH";
+const ZISK_PROVING_KEY_SNARK_ENV: &str = "ZISK_PROVING_KEY_SNARK_PATH";
+const ZISK_WITNESS_LIB_ENV: &str = "ZISK_WITNESS_LIB_PATH";
+const ZISK_REPO_ENV: &str = "ZISK_REPO_PATH";
+
 fn resolve_elf_path() -> PathBuf {
     std::env::var_os("ZISK_ELF_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(ELF_PATH))
+}
+
+fn resolve_zisk_home() -> PathBuf {
+    std::env::var_os(ZISK_HOME_ENV)
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".zisk"))
+        })
+        .unwrap_or_else(|| PathBuf::from(".zisk"))
+}
+
+fn resolve_proving_key_path() -> PathBuf {
+    std::env::var_os(ZISK_PROVING_KEY_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| resolve_zisk_home().join("provingKey"))
+}
+
+fn resolve_proving_key_snark_path() -> PathBuf {
+    std::env::var_os(ZISK_PROVING_KEY_SNARK_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| resolve_zisk_home().join("provingKeySnark"))
+}
+
+fn resolve_witness_lib_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Some(path) = std::env::var_os(ZISK_WITNESS_LIB_ENV) {
+        return Ok(PathBuf::from(path));
+    }
+    if let Some(repo) = std::env::var_os(ZISK_REPO_ENV) {
+        return Ok(PathBuf::from(repo).join("target/release/libzisk_witness.so"));
+    }
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")));
+    let fallback = repo_root.join("zisk/target/release/libzisk_witness.so");
+    if fallback.exists() {
+        return Ok(fallback);
+    }
+    Err("Missing ZisK witness library path. Set ZISK_WITNESS_LIB_PATH or ZISK_REPO_PATH."
+        .into())
 }
 
 pub struct ProveOutput {
@@ -105,27 +151,34 @@ pub fn prove(
     let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)?;
     std::fs::write(INPUT_PATH, input_bytes.as_slice())?;
 
+    let output_dir = Path::new(OUTPUT_DIR_PATH);
+    std::fs::create_dir_all(output_dir)?;
+
+    let proving_key_path = resolve_proving_key_path();
+    let witness_lib_path = resolve_witness_lib_path()?;
+
     let elf_path_str = elf_path.to_string_lossy();
-    let static_args = vec![
+    let proving_key_path_str = proving_key_path.to_string_lossy();
+    let witness_lib_path_str = witness_lib_path.to_string_lossy();
+    let args = vec![
         "prove",
-        "--elf",
+        "-e",
         elf_path_str.as_ref(),
-        "--input",
+        "-i",
         INPUT_PATH,
-        "--output-dir",
+        "-a",
+        "-u",
+        "-f",
+        "-k",
+        proving_key_path_str.as_ref(),
+        "-w",
+        witness_lib_path_str.as_ref(),
+        "-o",
         OUTPUT_DIR_PATH,
-        "--aggregation",
-        "--unlock-mapped-memory",
     ];
-    let conditional_groth16_arg = if let ProofFormat::Groth16 = format {
-        vec!["--final-snark"]
-    } else {
-        vec![]
-    };
 
     let output = Command::new("cargo-zisk")
-        .args(static_args)
-        .args(conditional_groth16_arg)
+        .args(args)
         .stdin(Stdio::inherit())
         .stderr(Stdio::inherit())
         .output()?;
@@ -138,15 +191,19 @@ pub fn prove(
         .into());
     }
 
-    let path_to_proof = format!("{OUTPUT_DIR_PATH}/vadcop_final_proof.bin");
+    let path_to_proof = output_dir.join("vadcop_final_proof.bin");
     if let ProofFormat::Groth16 = format {
         // get the final snark wrapping
+        std::fs::create_dir_all(output_dir.join("proofs"))?;
+        let snark_key_path = resolve_proving_key_snark_path();
+        let snark_key_path_str = snark_key_path.to_string_lossy();
+        let path_to_proof_str = path_to_proof.to_string_lossy();
         let args = vec![
             "prove-snark",
             "-k",
-            "PKEY of snark",
+            snark_key_path_str.as_ref(),
             "-p",
-            &path_to_proof,
+            path_to_proof_str.as_ref(),
             "-o",
             OUTPUT_DIR_PATH,
         ];
@@ -163,8 +220,8 @@ pub fn prove(
             )
             .into());
         }
-        let proof_bytes = std::fs::read(format!("{OUTPUT_DIR_PATH}/final_snark_proof.bin"))?;
-        let publics_bytes = std::fs::read(format!("{OUTPUT_DIR_PATH}/final_snark_publics.bin"))?;
+        let proof_bytes = std::fs::read(output_dir.join("final_snark_proof.bin"))?;
+        let publics_bytes = std::fs::read(output_dir.join("final_snark_publics.bin"))?;
         let vk = std::fs::read(ZISK_VK_PATH)?;
         Ok(ProveOutput {
             proof: proof_bytes,
