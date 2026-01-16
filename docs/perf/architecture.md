@@ -8,7 +8,7 @@ This document contains architecture and code notes relevant to the performance i
 
 1. [LEVM Architecture](#levm-architecture)
 2. [Block Execution Pipeline](#block-execution-pipeline)
-3. [Trie Implementation](#trie-implementation)
+3. [Trie and Storage Layer](#trie-and-storage-layer)
 4. [Key Performance Bottlenecks](#key-performance-bottlenecks)
 5. [Hot Path Summary](#hot-path-summary)
 
@@ -149,49 +149,70 @@ pub fn increase_consumed_gas(&mut self, gas: u64) -> Result<(), ExceptionalHalt>
 | `add_block_pipeline()` | 1486 | Parallel merkleization |
 | `add_blocks_in_batch()` | 1690 | Batch execution (sync benchmark) |
 
-### Execution Flow
+### Pipeline Execution Flow
+
+The pipelined execution (`execute_block_pipeline`) spawns two threads within a scope:
 
 ```
-add_block[_pipeline]()
-    ↓
-execute_block[_pipeline]() [lines 263-391]
-    ↓
-StoreVmDatabase::new() [vm.rs:27-44]
-    ↓
-LEVM::execute_block[_pipeline]() [backends/levm/mod.rs:51-194]
-    ├─ prepare_block()
-    ├─ For each tx: execute_tx_in_block()
-    ├─ process_withdrawals()
-    └─ extract_requests() [Prague fork]
-    ↓
-apply_account_updates_batch() [store.rs:1554]
-    ├─ apply_account_updates_from_trie_batch()
-    ├─ Update tries with state changes
-    └─ collect_changes_since_last_hash()
-    ↓
-store_block() [store.rs:1218]
+┌─────────────────────────────────────────────────────────────────────┐
+│                        std::thread::scope                           │
+│                                                                     │
+│  ┌─────────────────────┐         channel         ┌────────────────┐ │
+│  │   Execution Thread  │ ──Vec<AccountUpdate>──► │ Merkleization  │ │
+│  │                     │                         │    Thread      │ │
+│  │  For each tx:       │                         │                │ │
+│  │  1. execute_tx()    │                         │ Spawns 16      │ │
+│  │  2. Every 5 txs or  │                         │ shard workers  │ │
+│  │     when queue=0:   │                         │ (if root is    │ │
+│  │     send updates    │                         │  branch with   │ │
+│  │                     │                         │  ≥3 children)  │ │
+│  └─────────────────────┘                         └────────────────┘ │
+└─────────────────────────────────────────────────────────────────────┘
 ```
+
+**Key coordination mechanism** (`backends/levm/mod.rs:137-142`):
+```rust
+if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
+    LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
+    tx_since_last_flush = 0;
+}
+```
+
+The `queue_length` AtomicUsize provides backpressure - execution only sends updates when the merkleization queue is empty and at least 5 transactions have been processed.
+
+### Parallel Merkleization Detail
+
+**Location:** `crates/blockchain/blockchain.rs:432-603`
+
+**Sharding Strategy:**
+1. Check if state root is a Branch node with ≥3 valid children
+2. If not: fall back to sequential processing (`handle_merkleization_sequential`)
+3. If yes: spawn 16 worker threads, one per high nibble (bits 4-7 of hashed address)
+
+**Worker distribution** (`blockchain.rs:528-534`):
+```rust
+hashed_updates.sort_by_key(|(h, _)| h.0[0]);
+for sharded_update in hashed_updates.chunk_by(|l, r| l.0.0[0] & 0xf0 == r.0.0[0] & 0xf0) {
+    let shard_message = sharded_update.to_vec();
+    workers_tx[(shard_message[0].0.0[0] >> 4) as usize]
+        .send(shard_message)?;
+}
+```
+
+Each worker:
+1. Receives updates for accounts in its shard (addresses where `keccak(address)[0] >> 4 == shard_id`)
+2. Opens its own state trie view
+3. Processes account and storage updates independently
+4. Returns partial results (state updates, storage updates, code updates)
+
+**Result merging** (`blockchain.rs:538-554`):
+- Main thread collects results from all 16 workers
+- Merges the branch node choices from each shard's root
+- Handles edge case where branch collapses to extension/leaf
 
 ### Transaction Execution Model
 
 **SEQUENTIAL within block**, parallelizable across blocks
-
-**Transaction loop** (`payload.rs:515-596`):
-```rust
-loop {
-    // Get highest-tip tx from plain or blob queues
-    let (head_tx, is_blob) = match (plain_txs.peek(), blob_txs.peek()) { ... };
-
-    // Execute single transaction
-    let receipt = match self.apply_transaction(&head_tx, context) {
-        Ok(receipt) => { txs.shift()?; receipt }
-        Err(_) => { txs.pop(); continue; }
-    };
-
-    context.payload.body.transactions.push(head_tx.into());
-    context.receipts.push(receipt);
-}
-```
 
 **Performance Notes:**
 - Each transaction depends on previous state (sequential)
@@ -200,182 +221,196 @@ loop {
 
 ### State Management During Execution
 
-**Account State Access** (`vm.rs:74-78`):
-```rust
-fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
-    self.store.get_account_state_by_root(self.state_root, address)
-}
-```
-
 **Storage Slot Access** (`store.rs:1980-2005`):
-1. Check if FlatKeyValue (FKV) available for account
-2. If computed: use FKV (fast path, avoids trie traversal)
-3. Otherwise: open storage trie → hash slot → lookup
+1. Check if FlatKeyValue (FKV) available for account (background-computed optimization)
+2. If FKV computed: direct lookup avoids trie traversal
+3. Otherwise: open storage trie → hash slot → traverse trie
 
 **Each storage access involves:**
 - Account lookup: hash(address) → state trie → decode AccountState
 - Storage lookup: hash(slot) → storage trie → decode U256
-- Multiple trie traversals (2 for account + storage)
-
-### Merkleization
-
-**Location:** `crates/blockchain/blockchain.rs:432-593`
-
-**Parallel Implementation:**
-- 16 worker threads spawned per block
-- Accounts sharded by first nibble of hashed address (16 shards)
-- Each worker processes accounts in its shard
-- Lock-free via channels (no global state lock)
-
-**Merkleization Queue** (`blockchain.rs:318`):
-- `AtomicUsize queue_length` tracks pending work
-- Flush at lines 137-141 if queue empty and 5+ txs executed
-- Prevents unbounded queue growth
-
-### Lock Contention Points
-
-| Lock | Location | Frequency | Impact |
-|------|----------|-----------|--------|
-| `trie_cache.lock()` | store.rs:2328-2330 | Every trie open | HIGH |
-| `code_cache.lock()` | store.rs:92-114 | Per code read | MEDIUM |
-| `mempool.inner` RwLock | mempool.rs:80 | Per tx add | LOW (write) |
-
-**Trie Cache Lock Pattern:**
-```rust
-.trie_cache
-.lock()
-.map_err(|_| StoreError::LockError)?
-.clone()  // Clones Arc<TrieLayerCache>
-```
-- Held briefly for Arc clone
-- Could use RwLock (read-heavy workload)
-
-### Payload Building
-
-**Location:** `crates/blockchain/payload.rs:396-434`
-
-**Steps:**
-1. Create payload skeleton (gas limit, fees)
-2. Apply system operations (beacon root, block hash history)
-3. Process withdrawals
-4. Fill transactions (main loop)
-5. Extract requests (Prague+)
-6. Compute roots (transaction, receipt, withdrawal)
-
-**Performance Issues:**
-- `payload.clone()` in `build_payload_loop` (lines 373, 375) - clones entire Block
-- Block size calculation does RLP encoding per tx (line 553)
+- Multiple trie traversals (2 for account + storage) unless FKV available
 
 ---
 
-## Trie Implementation
+## Trie and Storage Layer
 
-### Core Structure
+### Trie Layer Cache Architecture
 
-**Location:** `crates/common/trie/`
+**Location:** `crates/storage/layering.rs`
 
-**Trie Struct** (`trie.rs:54-59`):
+The trie layer cache implements a **diff-based caching system** with **Read-Copy-Update (RCU)** semantics for lock-free reads during block execution.
+
 ```rust
-pub struct Trie {
-    db: Box<dyn TrieDB>,
-    root: NodeRef,
-    pending_removal: FxHashSet<Nibbles>,
-    dirty: FxHashSet<Nibbles>,
+pub struct TrieLayerCache {
+    last_id: usize,                          // Monotonic layer ID
+    commit_threshold: usize,                 // When to flush to DB (128 on-disk, 10000 in-memory)
+    layers: FxHashMap<H256, Arc<TrieLayer>>, // state_root -> layer mapping
+    bloom: Option<qfilter::Filter>,          // Global bloom for fast negative lookups
+}
+
+struct TrieLayer {
+    nodes: FxHashMap<Vec<u8>, Vec<u8>>,      // path -> encoded node
+    parent: H256,                             // Parent state root (forms chain)
+    id: usize,                                // For ordering/pruning
 }
 ```
 
-**Node Types** (`node.rs`):
-- `Branch(Box<BranchNode>)`: 16 choices + optional value
-- `Extension(ExtensionNode)`: Compresses common prefixes
-- `Leaf(LeafNode)`: Terminal nodes with values
+**Layer Lookup** (`layering.rs:63-91`):
+1. Check bloom filter - if key definitely not present, return None immediately
+2. Walk the layer chain from current state_root backward via parent links
+3. Return first match found, or None if chain exhausted
 
-**NodeRef Enum** (`node.rs:39-49`):
+**Layer Creation** (`put_batch`):
+- Creates new layer with parent pointing to previous state root
+- Adds all keys to global bloom filter
+- Inserts into layers map keyed by new state root
+
+### TrieWrapper: Layered DB Access
+
+**Location:** `crates/storage/layering.rs:197-235`
+
 ```rust
-pub enum NodeRef {
-    Node(Arc<Node>, OnceLock<NodeHash>),  // Embedded with memoized hash
-    Hash(NodeHash),                        // Reference to DB node
+pub struct TrieWrapper {
+    pub state_root: H256,
+    pub inner: Arc<TrieLayerCache>,  // Shared, immutable reference to layer cache
+    pub db: Box<dyn TrieDB>,         // Backend for cache misses
+    pub prefix: Option<H256>,        // Account hash prefix for storage tries
 }
 ```
-- `OnceLock` for single-assignment hash caching
-- `Arc` enables shared, immutable node references
 
-### Nibbles
+**Get operation** (`layering.rs:223-229`):
+```rust
+fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+    let key = apply_prefix(self.prefix, key);
+    if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
+        return Ok(Some(value));  // Found in layer cache
+    }
+    self.db.get(key)  // Fall back to database
+}
+```
+
+### Background Workers
+
+**Location:** `crates/storage/store.rs:1369-1429`
+
+Two background threads handle persistence:
+
+#### 1. Trie Update Worker (`store.rs:1389-1428`)
+
+Receives `TrieUpdate` messages and performs three phases:
+
+**Phase 1 - Update in-memory layers (fast, blocks execution briefly):**
+```rust
+// Read-Copy-Update pattern
+let trie = trie_cache.lock()?.clone();        // Clone Arc (cheap)
+let mut trie_mut = (*trie).clone();           // Deep copy
+trie_mut.put_batch(parent, child, new_layer); // Mutate copy
+*trie_cache.lock()? = Arc::new(trie_mut);     // Swap pointer
+result_sender.send(Ok(()))?;                  // Unblock execution
+```
+
+**Phase 2 - Persist bottom layer to disk (slow, runs in background):**
+```rust
+let nodes = trie_mut.commit(root);  // Remove bottom layer, get nodes
+for (key, value) in nodes {
+    // Route to correct table based on key length
+    let table = if is_leaf { fkv_table } else { trie_nodes_table };
+    write_tx.put(table, &key, &value)?;
+}
+write_tx.commit()?;
+```
+
+**Phase 3 - Remove committed layer from cache:**
+```rust
+*trie_cache.lock()? = Arc::new(trie_mut);  // trie_mut has layer removed
+```
+
+#### 2. FlatKeyValue Generator (`store.rs:2674-2800`)
+
+Background thread that iterates through the entire trie, pre-computing leaf values for fast direct access:
+
+- Iterates account trie leaves → writes to ACCOUNT_FLATKEYVALUE
+- For each account, iterates storage trie leaves → writes to STORAGE_FLATKEYVALUE
+- Checkpoints progress every 10,000 entries
+- Paused during trie layer commits (to avoid reading inconsistent state)
+
+### Database Backend Interaction
+
+**Location:** `crates/storage/trie.rs`
+
+#### BackendTrieDB (Per-call transactions)
+
+```rust
+impl TrieDB for BackendTrieDB {
+    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+        let tx = self.db.begin_read()?;  // NEW transaction per get()
+        tx.get(table, prefixed_key.as_ref())
+    }
+}
+```
+
+**Performance issue:** Creates new read transaction for every single trie node access.
+
+#### BackendTrieDBLocked (Persistent snapshots)
+
+```rust
+pub struct BackendTrieDBLocked {
+    account_trie_tx: Box<dyn StorageLockedView>,   // Persistent snapshot
+    storage_trie_tx: Box<dyn StorageLockedView>,
+    account_fkv_tx: Box<dyn StorageLockedView>,
+    storage_fkv_tx: Box<dyn StorageLockedView>,
+}
+```
+
+Used for batch reads - holds persistent snapshots of all 4 tables, avoiding per-call transaction overhead.
+
+### Database Tables
+
+| Table | Contents | Key Format |
+|-------|----------|------------|
+| ACCOUNT_TRIE_NODES | Account trie internal nodes | Nibbles path (0-64 nibbles) |
+| STORAGE_TRIE_NODES | Storage trie internal nodes | account_hash + separator(17) + path |
+| ACCOUNT_FLATKEYVALUE | Account trie leaves (pre-computed) | Full 64-nibble path |
+| STORAGE_FLATKEYVALUE | Storage trie leaves (pre-computed) | Full 131-nibble path |
+
+**Key length determines table routing** (`trie.rs:77-84`):
+- 65 nibbles = account leaf (ACCOUNT_FLATKEYVALUE)
+- 131 nibbles = storage leaf (STORAGE_FLATKEYVALUE)
+- Other = internal node (ACCOUNT/STORAGE_TRIE_NODES)
+
+### Nibbles Implementation
 
 **Location:** `crates/common/trie/nibbles.rs:23-28`
 
 ```rust
 pub struct Nibbles {
-    data: Vec<u8>,
-    already_consumed: Vec<u8>,
+    data: Vec<u8>,              // Current path
+    already_consumed: Vec<u8>,  // Consumed during traversal
 }
 ```
 
 **Performance Issues:**
 - TODO at line 11 suggests replacing with stack-allocated array
-- Vec allocations during path operations (line 106, 149):
+- Vec allocations during path operations:
   ```rust
   self.data = self.data[prefix.len()..].to_vec();  // Allocates
   ret.already_consumed = [&self.already_consumed, &self.data[0..offset]].concat();
   ```
 
-### Caching Layers
+### Lock Contention Analysis
 
-**TrieLayerCache** (`crates/storage/layering.rs:14-31`):
-```rust
-pub struct TrieLayerCache {
-    last_id: usize,
-    commit_threshold: usize,          // Default: 128 on-disk, 10000 in-memory
-    layers: FxHashMap<H256, Arc<TrieLayer>>,
-    bloom: Option<qfilter::Filter>,   // Fast negative lookups
-}
-```
+| Lock | Location | Held Duration | Frequency | Impact |
+|------|----------|---------------|-----------|--------|
+| `trie_cache.lock()` | store.rs:2328 | Brief (Arc clone) | Every trie open | HIGH |
+| `trie_cache.lock()` | store.rs:2603 | Longer (RCU swap) | Per block | LOW |
+| `code_cache.lock()` | store.rs:92-114 | LRU lookup | Per code read | MEDIUM |
+| `last_computed_fkv.lock()` | store.rs:2548 | Brief (Vec clone) | Every trie open | MEDIUM |
 
-**Caching Strategy:**
-- Diff-based: each state root creates new layer
-- Bloom filter: returns None quickly if key not in any layer
-- Parent chain: walks back through state history
-- Commit threshold: 128 layers on-disk, 10000 in-memory
-
-**Code Cache** (`store.rs:73-116`):
-- LRU cache, 64MB max
-- Keyed by code hash
-- Only populated post-execution
-
-### Hash Computation (Merkleization)
-
-**Location:** `crates/common/trie/node.rs:368-400`
-
-**Two-Pass Approach:**
-1. `memoize_hashes()`: Post-order traversal, cache hashes bottom-up
-2. `compute_hash()`: Encode and hash each node
-
-**NodeRef Hash Caching** (line 167-179):
-```rust
-pub fn compute_hash_ref(&self) -> &NodeHash {
-    match self {
-        NodeRef::Node(node, hash) =>
-            hash.get_or_init(|| node.compute_hash()),
-        NodeRef::Hash(hash) => hash,
-    }
-}
-```
-
-**Performance Notes:**
-- `NodeHash::Inline` avoids hashing nodes < 32 bytes
-- OnceLock reset on clone loses memoized hashes
-- `commit()` does full tree traversal + DB write
-
-### Storage Backend
-
-**Location:** `crates/storage/trie.rs`
-
-**BackendTrieDB:**
-- `get()`: Begins read transaction per call (line 96-101)
-- `put_batch()`: Single write transaction for N items (line 103-115)
-
-**Tables:**
-- ACCOUNT_TRIE_NODES, STORAGE_TRIE_NODES
-- ACCOUNT_FLATKEYVALUE, STORAGE_FLATKEYVALUE (optimized leaf access)
+**The trie_cache lock is the primary contention point** because:
+1. Every `open_state_trie()` and `open_storage_trie()` acquires it
+2. Multiple storage accesses per transaction
+3. Could be RwLock since reads vastly outnumber writes
 
 ---
 
@@ -387,19 +422,19 @@ pub fn compute_hash_ref(&self) -> &NodeHash {
 |-------|----------|--------|
 | Nibbles Vec allocations | nibbles.rs:106, 149 | Allocation per path operation |
 | Trie cache lock contention | store.rs:2328-2330 | Every state/storage access |
+| Per-node DB transactions | trie.rs:96-101 | New transaction per get() |
 | Sequential tx execution | payload.rs:515-596 | Cannot parallelize within block |
 | OnceLock reset on clone | node.rs:209, 221 | Lose memoized hashes |
-| TransactionQueue Vec::remove(0) | payload.rs:795-819 | O(n) per tx removed |
 
 ### Medium Impact
 
 | Issue | Location | Impact |
 |-------|----------|--------|
 | Repeated hash computations | rlp.rs, error paths | Extra keccak calls |
-| Per-node DB transactions | trie.rs:115 | Many small DB ops |
 | Block cloning in payload loop | payload.rs:373, 375 | Full block copy per retry |
 | Code not cached during execution | store.rs:163-169 | Extra DB lookups |
-| Lock held during Arc clone | store.rs:2328-2330 | Brief but frequent |
+| TransactionQueue Vec::remove(0) | payload.rs:795-819 | O(n) per tx removed |
+| RCU deep copy | store.rs:2600 | Full TrieLayerCache clone per block |
 
 ### Low Impact
 
@@ -420,7 +455,48 @@ pub fn compute_hash_ref(&self) -> &NodeHash {
 3. **Gas metering** (`call_frame.rs:379`) - every instruction
 4. **Memory access** (`memory.rs:147-196`) - MLOAD/MSTORE heavy workloads
 5. **Storage access** (`gen_db.rs:471-526`) - SLOAD/SSTORE
-6. **Trie lookup** (`trie.rs:101-127`) - every state access
+6. **Trie layer lookup** (`layering.rs:63-91`) - every state access not in VM cache
 7. **Hash computation** (`node.rs:167-179`) - merkleization
 
 **Optimization priority should focus on these paths first.**
+
+---
+
+## Appendix: Key Data Flow
+
+### Block Execution to Storage
+
+```
+Transaction Execution
+        │
+        ▼
+   AccountUpdate (address, info, storage changes, code)
+        │
+        ▼
+   Channel to Merkleization Thread
+        │
+        ▼
+   Shard by keccak(address)[0] >> 4
+        │
+        ├──► Worker 0: addresses 0x0*
+        ├──► Worker 1: addresses 0x1*
+        │    ...
+        └──► Worker 15: addresses 0xf*
+        │
+        ▼
+   Merge partial trie updates
+        │
+        ▼
+   TrieUpdate { parent_root, child_root, nodes }
+        │
+        ▼
+   Background Worker
+        │
+        ├──► Phase 1: Update TrieLayerCache (RCU)
+        │              └──► Unblock execution
+        │
+        ├──► Phase 2: Commit bottom layer to DB
+        │              └──► Pause FKV generator
+        │
+        └──► Phase 3: Remove committed layer from cache
+```
