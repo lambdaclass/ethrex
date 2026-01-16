@@ -6,6 +6,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
+use tracing::info;
 
 const INPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_input.bin");
 const OUTPUT_DIR_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output");
@@ -194,6 +195,10 @@ pub fn prove(
     let path_to_proof = output_dir.join("vadcop_final_proof.bin");
     if let ProofFormat::Groth16 = format {
         // get the final snark wrapping
+        info!(
+            output_dir = %output_dir.display(),
+            "ZisK prove complete; starting snark wrapping"
+        );
         std::fs::create_dir_all(output_dir.join("proofs"))?;
         let snark_key_path = resolve_proving_key_snark_path();
         let snark_key_path_str = snark_key_path.to_string_lossy();
