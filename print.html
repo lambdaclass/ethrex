@@ -6722,6 +6722,363 @@ cd ethrex/metrics
 }
 
 </style>
+<h1 id="rollup-stages-and-ethrex"><a class="header" href="#rollup-stages-and-ethrex">Rollup Stages and ethrex</a></h1>
+<p>This document explains how the <a href="https://l2beat.com/stages">L2Beat rollup stage definitions</a> map to the current ethrex L2 stack.</p>
+<h2 id="important-distinctions"><a class="header" href="#important-distinctions">Important Distinctions</a></h2>
+<p>Stages are properties of a <strong>deployed</strong> L2, whereas ethrex is a framework that different projects may configure and govern in their own way. In what follows we make two simplifying assumptions:</p>
+<ul>
+<li>If ethrex provides the functionality required to deploy a Stage X rollup, we consider ethrex capable of achieving Stage X, even if a particular deployment chooses not to enable some features.</li>
+<li>When we talk about <strong>ethrex L2</strong> we are referring to ethrex in <strong>rollup mode</strong>, not Validium. In rollup mode, Ethereum L1 is the data availability layer; in Validium mode it is not.</li>
+</ul>
+<p>The L2Beat framework evaluates <em>decentralization</em> specifically, not security from bugs. A Stage 2 rollup could still have vulnerabilities if the proof system is experimental or unaudited.</p>
+<h2 id="stage-0"><a class="header" href="#stage-0">Stage 0</a></h2>
+<p>Stage 0 ("Full Training Wheels") represents the basic operational requirements for a rollup.</p>
+<h3 id="summary"><a class="header" href="#summary">Summary</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Requirement</th><th>Status</th><th>Details</th></tr></thead><tbody>
+<tr><td>Project calls itself a rollup</td><td>✅ Met</td><td>Docs describe ethrex as a framework to launch an L2 rollup</td></tr>
+<tr><td>L2 state roots posted on L1</td><td>✅ Met</td><td>Each committed batch stores <code>newStateRoot</code> in <code>OnChainProposer</code></td></tr>
+<tr><td>Data availability on L1</td><td>✅ Met</td><td>In rollup mode every batch must publish a non-zero EIP-4844 blob hash</td></tr>
+<tr><td>Software to reconstruct state</td><td>✅ Met</td><td>Node, blobs tooling, and prover docs describe how to rebuild state</td></tr>
+<tr><td>Proper proof system used</td><td>✅ Met</td><td>Batches verified using zkVM validity proofs (SP1/RISC0) or TDX attestations</td></tr>
+</tbody></table>
+</div>
+<h3 id="detailed-analysis"><a class="header" href="#detailed-analysis">Detailed Analysis</a></h3>
+<h4 id="does-the-project-call-itself-a-rollup"><a class="header" href="#does-the-project-call-itself-a-rollup">Does the project call itself a rollup?</a></h4>
+<p>Yes. As stated in <a href="l2/./introduction.html">the introduction</a>:</p>
+<blockquote>
+<p>Ethrex is a framework that lets you launch your own L2 rollup or blockchain.</p>
+</blockquote>
+<h4 id="are-l2-state-roots-posted-on-l1"><a class="header" href="#are-l2-state-roots-posted-on-l1">Are L2 state roots posted on L1?</a></h4>
+<p>Yes. Every time a batch is committed to the <code>OnChainProposer</code> on L1, the new L2 state root is sent and stored in the <code>batchCommitments</code> mapping as <code>newStateRoot</code> for that batch.</p>
+<h4 id="does-the-project-provide-data-availability-on-l1"><a class="header" href="#does-the-project-provide-data-availability-on-l1">Does the project provide data availability on L1?</a></h4>
+<p>Yes. When committing a batch in rollup mode (non-validium), the transaction must include a non-zero blob hash, so a blob MUST be sent to the <code>OnChainProposer</code> on L1.</p>
+<ul>
+<li>The <a href="l2/./architecture/overview.html">architecture docs</a> state that the blob contains the <strong>RLP-encoded L2 blocks and fee configuration</strong></li>
+<li>The blob commitment (<code>blobKZGVersionedHash</code>) is included in the batch commitment and re-checked during proof verification</li>
+</ul>
+<p>This means all data needed to reconstruct the L2 (transactions and state) is published on L1 as blobs.</p>
+<h4 id="is-software-capable-of-reconstructing-the-rollups-state-available"><a class="header" href="#is-software-capable-of-reconstructing-the-rollups-state-available">Is software capable of reconstructing the rollup's state available?</a></h4>
+<p>Yes.</p>
+<ul>
+<li>The L2 node provides the <code>ethrex l2 reconstruct</code> subcommand to follow L1 commitments and reconstruct the state from blobs</li>
+<li>The <a href="l2/../developers/l2/state-reconstruction-blobs.html">state reconstruction blobs</a> doc explains how to generate and use blobs for replaying state</li>
+<li>The <a href="l2/./fundamentals/data_availability.html">data availability</a> and <a href="l2/../prover/prover.html">prover docs</a> describe how published data is used to reconstruct and verify state</li>
+</ul>
+<h4 id="does-the-project-use-a-proper-proof-system"><a class="header" href="#does-the-project-use-a-proper-proof-system">Does the project use a proper proof system?</a></h4>
+<p>Yes, assuming proofs are enabled.</p>
+<p>ethrex supports multiple proving mechanisms:</p>
+<ul>
+<li><strong>zkVM validity proofs</strong>: SP1 and RISC0</li>
+<li><strong>TDX attestations</strong>: TEE-based verification</li>
+<li><strong>Aligned Layer</strong>: Optional proof aggregation for cost efficiency</li>
+</ul>
+<p>The <code>OnChainProposer</code> contract can be configured to require many combinations of these mechanisms. A batch is only verified on L1 if all configured proofs pass and their public inputs match the committed data (state roots, withdrawals, blobs, etc.).</p>
+<h4 id="are-there-at-least-5-external-actors-that-can-submit-a-fraud-proof"><a class="header" href="#are-there-at-least-5-external-actors-that-can-submit-a-fraud-proof">Are there at least 5 external actors that can submit a fraud proof?</a></h4>
+<p>Not applicable. ethrex uses <strong>validity proofs</strong>, not fraud proofs. There is no on-chain "challenge game" where watchers submit alternate traces to invalidate a state root.</p>
+<h3 id="stage-0-assessment"><a class="header" href="#stage-0-assessment">Stage 0 Assessment</a></h3>
+<p><strong>ethrex L2 meets all Stage 0 requirements.</strong></p>
+<h2 id="stage-1"><a class="header" href="#stage-1">Stage 1</a></h2>
+<p>Stage 1 ("Limited Training Wheels") requires that users have trustless exit guarantees, with a Security Council retaining only limited emergency powers.</p>
+<h3 id="core-principle"><a class="header" href="#core-principle">Core Principle</a></h3>
+<blockquote>
+<p>"The only way (other than bugs) for a rollup to indefinitely block an L2→L1 message or push an invalid L2→L1 message is by compromising ≥75% of the Security Council."</p>
+</blockquote>
+<h3 id="summary-1"><a class="header" href="#summary-1">Summary</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Requirement</th><th>Status</th><th>Details</th></tr></thead><tbody>
+<tr><td>Censorship-resistant L2→L1 messages</td><td>❌ Gap</td><td>Sequencer can indefinitely censor withdrawals; no forced-inclusion mechanism</td></tr>
+<tr><td>Sequencer cannot push invalid messages</td><td>✅ Met</td><td>Invalid withdrawals require contract/VK changes controlled by owner</td></tr>
+<tr><td>≥7-day exit window for non-SC upgrades</td><td>✅ Met</td><td>Only owner can upgrade; no non-SC upgrade path exists</td></tr>
+</tbody></table>
+</div>
+<h3 id="detailed-analysis-1"><a class="header" href="#detailed-analysis-1">Detailed Analysis</a></h3>
+<h4 id="can-l2l1-messages-be-censored"><a class="header" href="#can-l2l1-messages-be-censored">Can L2→L1 messages be censored?</a></h4>
+<p><strong>Yes, this is the main Stage 1 gap.</strong></p>
+<p>The sequencer can indefinitely block/censor an L2→L1 message (e.g., a withdrawal) by simply not including the withdrawal transaction in an L2 block. This does not require compromising the owner/Security Council.</p>
+<p><strong>What's missing</strong>: A forced-inclusion mechanism where users can submit their withdrawal directly on L1, and the sequencer must include it in a subsequent batch within a bounded time window or lose sequencing rights.</p>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>This is the primary blocker for Stage 1 compliance. Implementing forced inclusion of withdrawals enforced by L1 contracts would address this gap.</p>
+</div>
+<h4 id="can-the-sequencer-push-invalid-l2l1-messages"><a class="header" href="#can-the-sequencer-push-invalid-l2l1-messages">Can the sequencer push invalid L2→L1 messages?</a></h4>
+<p><strong>No.</strong> The sequencer cannot unilaterally make L1 accept an invalid L2→L1 message. This would require:</p>
+<ul>
+<li>Changing contract code</li>
+<li>Updating the verifying key in <code>OnChainProposer</code></li>
+</ul>
+<p>Only the Security Council (owner) can perform those upgrades.</p>
+<h4 id="what-about-upgrades-from-entities-outside-the-security-council"><a class="header" href="#what-about-upgrades-from-entities-outside-the-security-council">What about upgrades from entities outside the Security Council?</a></h4>
+<p>In ethrex L2 contracts, there are no entities other than the owner that can perform upgrades. Therefore:</p>
+<ul>
+<li>Upgrades initiated by entities outside the Security Council are not possible</li>
+<li>If such an upgrade path were introduced, it would need to provide the required 7-day exit window</li>
+</ul>
+<h4 id="security-council-configuration"><a class="header" href="#security-council-configuration">Security Council Configuration</a></h4>
+<p>Both <code>OnChainProposer</code> and <code>CommonBridge</code> are upgradeable contracts controlled by a single <code>owner</code> address. ethrex itself does not hard-code a Security Council, but a deployment can introduce one by making the <code>owner</code> a multisig.</p>
+<p>According to L2Beat requirements, the Security Council should have:</p>
+<ul>
+<li>At least 8 members</li>
+<li>≥75% threshold for critical actions</li>
+<li>Diverse signers from different organizations/jurisdictions</li>
+</ul>
+<h3 id="stage-1-assessment"><a class="header" href="#stage-1-assessment">Stage 1 Assessment</a></h3>
+<p><strong>ethrex L2 does not meet Stage 1 requirements today.</strong></p>
+<p>The main gap is censorship-resistant L2→L1 messages. The sequencer can ignore withdrawal transactions indefinitely, and there is no forced-inclusion mechanism (unlike the existing forced-inclusion mechanism for deposits).</p>
+<h3 id="path-to-stage-1"><a class="header" href="#path-to-stage-1">Path to Stage 1</a></h3>
+<p>To achieve Stage 1, ethrex would need:</p>
+<ol>
+<li><strong>Forced withdrawal inclusion</strong>: Implement an L1 mechanism where users can submit withdrawals directly, with sequencer penalties for non-inclusion</li>
+<li><strong>Security Council multisig</strong>: Deploy owner as an 8+ member multisig with ≥75% threshold</li>
+<li><strong>Exit window enforcement</strong>: ethrex has Timelock functionality that gates the <code>OnChainProposer</code>, but deployment configuration must enforce ≥7 day delays for non-emergency upgrades</li>
+</ol>
+<h2 id="stage-2"><a class="header" href="#stage-2">Stage 2</a></h2>
+<p>Stage 2 ("No Training Wheels") requires fully permissionless proving and tightly constrained emergency upgrade powers.</p>
+<h3 id="summary-2"><a class="header" href="#summary-2">Summary</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Requirement</th><th>Status</th><th>Details</th></tr></thead><tbody>
+<tr><td>Permissionless validity proofs</td><td>❌ Gap</td><td>Only authorized sequencers can commit and verify batches</td></tr>
+<tr><td>≥30-day exit window</td><td>❌ Gap</td><td>No protocol-level exit window; UUPS upgrades have no mandatory delay</td></tr>
+<tr><td>SC restricted to on-chain errors</td><td>❌ Gap</td><td>Owner can pause/upgrade for any reason</td></tr>
+</tbody></table>
+</div>
+<h3 id="detailed-analysis-2"><a class="header" href="#detailed-analysis-2">Detailed Analysis</a></h3>
+<h4 id="is-the-validity-proof-system-permissionless"><a class="header" href="#is-the-validity-proof-system-permissionless">Is the validity proof system permissionless?</a></h4>
+<p><strong>No.</strong> In the standard <code>OnChainProposer</code> implementation (<code>crates/l2/contracts/src/l1/OnChainProposer.sol</code>), committing and verifying batches are restricted to authorized sequencer addresses only. Submitting proofs is not permissionless.</p>
+<h4 id="do-users-have-at-least-30-days-to-exit-before-unwanted-upgrades"><a class="header" href="#do-users-have-at-least-30-days-to-exit-before-unwanted-upgrades">Do users have at least 30 days to exit before unwanted upgrades?</a></h4>
+<p><strong>No.</strong> There is no protocol-level exit window tied to contract upgrades. UUPS upgrades can be executed by the owner without a mandatory delay.</p>
+<h4 id="is-the-security-council-restricted-to-act-only-due-to-on-chain-errors"><a class="header" href="#is-the-security-council-restricted-to-act-only-due-to-on-chain-errors">Is the Security Council restricted to act only due to on-chain errors?</a></h4>
+<p><strong>No.</strong> There is no built-in restriction that limits the owner to responding only to detected on-chain bugs. The owner can pause or upgrade contracts for any reason.</p>
+<h3 id="stage-2-assessment"><a class="header" href="#stage-2-assessment">Stage 2 Assessment</a></h3>
+<p><strong>ethrex L2 does not meet Stage 2 requirements.</strong></p>
+<h3 id="path-to-stage-2"><a class="header" href="#path-to-stage-2">Path to Stage 2</a></h3>
+<p>To achieve Stage 2, ethrex would need (in addition to Stage 1 requirements):</p>
+<ol>
+<li><strong>Permissionless proving</strong>: Allow anyone to submit validity proofs for batches</li>
+<li><strong>30-day exit window</strong>: Implement mandatory delay for all contract upgrades</li>
+<li><strong>Restricted SC powers</strong>: Limit Security Council actions to adjudicable on-chain bugs only</li>
+<li><strong>Mature proof system</strong>: Battle-tested ZK provers with comprehensive security audits</li>
+</ol>
+<h2 id="comparison-with-other-rollups"><a class="header" href="#comparison-with-other-rollups">Comparison with Other Rollups</a></h2>
+<h3 id="based-rollups"><a class="header" href="#based-rollups">Based Rollups</a></h3>
+<p>Based rollups delegate sequencing to Ethereum L1 validators rather than using a centralized sequencer. This is particularly relevant for ethrex as it implements based sequencing (currently in development).</p>
+<div class="table-wrapper"><table><thead><tr><th>Project</th><th>Current Stage</th><th>Main Gaps</th><th>Proof System</th><th>Sequencer Model</th></tr></thead><tbody>
+<tr><td><strong>ethrex L2</strong></td><td>Stage 0</td><td>Forced inclusion, permissionless proving</td><td>Multi-proof (ZK + TEE)</td><td>Based (round-robin)</td></tr>
+<tr><td>Taiko Alethia</td><td>Stage 0*</td><td>ZK not mandatory, upgrade delays</td><td>Multi-proof (SGX mandatory, ZK optional)</td><td>Based (permissionless)</td></tr>
+<tr><td>Surge</td><td>Not deployed</td><td>N/A (template)</td><td>Based on Taiko stack</td><td>Based (L1 validators)</td></tr>
+</tbody></table>
+</div>
+<p><strong>Taiko Alethia</strong> is the first based rollup on mainnet. It requires two proofs per block: SGX (Geth) is mandatory, plus one of SGX (Reth), SP1, or RISC0. <strong>Critically, blocks can be proven with TEE only (no ZK)</strong> if both SGX verifiers are used. As of early 2025, only ~30% of blocks use ZK proofs. L2BEAT warns that "funds can be stolen if a malicious block is proven by compromised SGX instances." Taiko plans to require 100% ZK coverage with the Shasta fork in Q4 2025.</p>
+<blockquote>
+<p>*L2BEAT currently classifies Taiko as "not even Stage 0" because "the proof system is still under development." However, Taiko has been a multi-prover based rollup since the Pacaya fork and the system is architecturally prepared for Stage 0. This appears to be a classification nuance rather than a fundamental gap.</p>
+</blockquote>
+<p><strong>Surge</strong> is a based rollup template by Nethermind, built on the Taiko stack and designed to target Stage 2 from inception. It removes centralized sequencing entirely, letting Ethereum validators handle transaction ordering. Not yet deployed as a production rollup.</p>
+<h3 id="zk-rollups"><a class="header" href="#zk-rollups">ZK Rollups</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Project</th><th>Current Stage</th><th>Main Gaps</th><th>Proof System</th></tr></thead><tbody>
+<tr><td><strong>ethrex L2</strong></td><td>Stage 0</td><td>Forced inclusion, permissionless proving</td><td>Multi-proof (ZK + TEE)</td></tr>
+<tr><td>Scroll</td><td>Stage 1</td><td>30-day window, multi-prover</td><td>ZK validity proofs</td></tr>
+<tr><td>zkSync Era</td><td>Stage 0*</td><td>Evaluation pending, forced inclusion</td><td>ZK validity proofs</td></tr>
+<tr><td>Starknet</td><td>Stage 1</td><td>30-day window, SC restrictions</td><td>ZK validity proofs (STARK)</td></tr>
+</tbody></table>
+</div>
+<p><strong>Scroll</strong> became the first ZK rollup to achieve Stage 1 (April 2025) through the Euclid upgrade, which introduced permissionless sequencing fallback and a 12-member Security Council with 75% threshold.</p>
+<p><strong>zkSync Era</strong> is currently experiencing a <strong>proof system pause</strong> due to a vulnerability, causing partial liveness failure. Previously, a critical bug in zk-circuits was discovered that could have led to $1.9B in potential losses if exploited.</p>
+<blockquote>
+<p>*L2BEAT states they "haven't finished evaluation" of zkSync Era's Stage 1 elements - not that zkSync fails requirements. The main pending item is a forced inclusion mechanism. With 75% of proving already delegated to external provers and decentralized sequencing (ChonkyBFT) underway, zkSync appears architecturally Stage 1-ready.</p>
+</blockquote>
+<p><strong>Starknet</strong> reached Stage 1 but shares its SHARP verifier with other StarkEx rollups. The verifier can be changed by a 2/4 multisig with 8-day delay. The Security Council (9/12) retains instant upgrade capability. This shared verifier creates concentration risk across multiple chains.</p>
+<h3 id="optimistic-rollups"><a class="header" href="#optimistic-rollups">Optimistic Rollups</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Project</th><th>Current Stage</th><th>Main Gaps</th><th>Proof System</th></tr></thead><tbody>
+<tr><td>Arbitrum One</td><td>Stage 1</td><td>SC override power, 30-day window</td><td>Optimistic (fraud proofs)</td></tr>
+<tr><td>Optimism</td><td>Stage 1</td><td>Exit window, SC restrictions</td><td>Optimistic (fault proofs)</td></tr>
+</tbody></table>
+</div>
+<p><strong>Arbitrum One</strong> uses BoLD (Bounded Liquidity Delay) for permissionless fraud proofs - anyone can challenge state assertions. However, Arbitrum remains Stage 1 because the Security Council retains broad override powers. Stage 2 requires restricting SC to "provable bugs only" and extending exit windows to 30 days. The ~6.4 day withdrawal delay is inherent to the optimistic model.</p>
+<p><strong>Optimism</strong> has permissionless fault proofs but L2BEAT notes: "There is no exit window for users to exit in case of unwanted regular upgrades as they are initiated by the Security Council with instant upgrade power." Both Arbitrum and Optimism are <strong>technically ready for Stage 2</strong> but held back by <strong>intentional governance constraints</strong>, not technical limitations.</p>
+<h3 id="l2beat-risk-summary"><a class="header" href="#l2beat-risk-summary">L2BEAT Risk Summary</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Project</th><th>Critical Warnings</th></tr></thead><tbody>
+<tr><td>Taiko Alethia</td><td>Funds at risk from compromised SGX; ZK optional; unverified contracts</td></tr>
+<tr><td>Scroll</td><td>No upgrade delay; emergency verifier upgrade occurred Aug 2025</td></tr>
+<tr><td>zkSync Era</td><td>Proof system currently paused; prior $1.9B bug discovered</td></tr>
+<tr><td>Starknet</td><td>Shared SHARP verifier; SC has instant upgrade power</td></tr>
+<tr><td>Arbitrum One</td><td>Malicious upgrade risk; optimistic delay (~6.4 days)</td></tr>
+<tr><td>Optimism</td><td>No exit window for SC upgrades; dispute game vulnerabilities</td></tr>
+</tbody></table>
+</div><div class="mdbook-alerts mdbook-alerts-warning">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  warning
+</p>
+<p>All rollups carry risks. Even Stage 1 rollups retain Security Council powers that could theoretically be abused. Stage 2 remains unachieved by any production rollup as of early 2025.</p>
+</div>
+<h3 id="key-observations"><a class="header" href="#key-observations">Key Observations</a></h3>
+<ol>
+<li><strong>No rollup has achieved Stage 2 yet</strong> - All production rollups remain at Stage 0 or Stage 1</li>
+<li><strong>Classification vs architecture gaps</strong> - Some rollups (Taiko, zkSync Era) are classified lower than their architecture supports due to L2BEAT evaluation timing or minor gaps</li>
+<li><strong>Governance is the bottleneck</strong> - Arbitrum and Optimism have permissionless proofs but are held at Stage 1 by intentional Security Council powers, not technical limitations</li>
+<li><strong>Based rollups are newer</strong> - Taiko and ethrex are pioneering based sequencing, both at Stage 0</li>
+<li><strong>Multi-proof is emerging</strong> - ethrex, Taiko, and Scroll are all exploring multi-proof systems for enhanced security</li>
+</ol>
+<h2 id="recommendations"><a class="header" href="#recommendations">Recommendations</a></h2>
+<h3 id="for-stage-1-compliance"><a class="header" href="#for-stage-1-compliance">For Stage 1 Compliance</a></h3>
+<ol>
+<li>
+<p><strong>Implement forced withdrawal inclusion</strong></p>
+<ul>
+<li>Users can submit withdrawal requests directly to L1</li>
+<li>Sequencer must include within N blocks or face penalties</li>
+<li>Fallback mechanism if sequencer fails to include</li>
+</ul>
+</li>
+<li>
+<p><strong>Deploy Security Council as multisig</strong></p>
+<ul>
+<li>8+ diverse signers</li>
+<li>75%+ threshold (e.g., 6/8)</li>
+<li>Document emergency procedures</li>
+</ul>
+</li>
+<li>
+<p><strong>Add upgrade timelock</strong></p>
+<ul>
+<li>Minimum 7-day delay for non-emergency upgrades</li>
+<li>Emergency path requires SC threshold</li>
+</ul>
+</li>
+</ol>
+<h3 id="for-future-stage-2-transition"><a class="header" href="#for-future-stage-2-transition">For Future Stage 2 Transition</a></h3>
+<ol>
+<li>
+<p><strong>Open proof submission</strong></p>
+<ul>
+<li>Remove sequencer-only restriction on <code>verifyBatch()</code></li>
+<li>Anyone can submit valid proofs</li>
+</ul>
+</li>
+<li>
+<p><strong>Extend exit window to 30+ days</strong></p>
+<ul>
+<li>Mandatory delay on all upgrade paths</li>
+<li>Clear user notification mechanism</li>
+</ul>
+</li>
+<li>
+<p><strong>Formalize SC restrictions</strong></p>
+<ul>
+<li>On-chain governance limiting SC powers</li>
+<li>Transparent criteria for emergency actions</li>
+</ul>
+</li>
+<li>
+<p><strong>Proof system maturity</strong></p>
+<ul>
+<li>Comprehensive security audits</li>
+<li>Multiple independent prover implementations</li>
+<li>Operational track record</li>
+</ul>
+</li>
+</ol>
+<h2 id="conclusion"><a class="header" href="#conclusion">Conclusion</a></h2>
+<p>ethrex L2 currently satisfies all <strong>Stage 0</strong> requirements and provides a solid foundation for rollup deployments.</p>
+<p>The path to <strong>Stage 1</strong> is clear but requires implementing censorship-resistant withdrawals through a forced-inclusion mechanism. This is the primary gap preventing Stage 1 compliance.</p>
+<p><strong>Stage 2</strong> requires additional work on permissionless proving, extended exit windows, and formal restrictions on Security Council powers.</p>
+<div class="table-wrapper"><table><thead><tr><th>Stage</th><th>Status</th><th>Primary Blocker</th></tr></thead><tbody>
+<tr><td>Stage 0</td><td>✅ Met</td><td>-</td></tr>
+<tr><td>Stage 1</td><td>❌ Not met</td><td>Forced inclusion for withdrawals</td></tr>
+<tr><td>Stage 2</td><td>❌ Not met</td><td>Permissionless proving, 30-day exit window</td></tr>
+</tbody></table>
+</div>
+<h2 id="references"><a class="header" href="#references">References</a></h2>
+<h3 id="l2beat-resources"><a class="header" href="#l2beat-resources">L2Beat Resources</a></h3>
+<ul>
+<li><a href="https://l2beat.com/stages">L2Beat Stages Framework</a></li>
+<li><a href="https://forum.l2beat.com/t/stages-update-a-high-level-guiding-principle-for-stage-1/338">L2Beat Forum: Stages Update</a></li>
+<li><a href="https://medium.com/l2beat/introducing-stages-a-framework-to-evaluate-rollups-maturity-d290bb22befe">L2Beat: Introducing Stages</a></li>
+</ul>
+<h3 id="rollup-comparisons"><a class="header" href="#rollup-comparisons">Rollup Comparisons</a></h3>
+<ul>
+<li><a href="https://l2beat.com/scaling/projects/taiko">Taiko Alethia on L2Beat</a></li>
+<li><a href="https://l2beat.com/scaling/projects/scroll">Scroll on L2Beat</a></li>
+<li><a href="https://l2beat.com/scaling/projects/zksync-era">zkSync Era on L2Beat</a></li>
+<li><a href="https://l2beat.com/scaling/projects/starknet">Starknet on L2Beat</a></li>
+<li><a href="https://l2beat.com/scaling/projects/arbitrum">Arbitrum One on L2Beat</a></li>
+<li><a href="https://l2beat.com/scaling/projects/optimism">Optimism on L2Beat</a></li>
+<li><a href="https://www.nethermind.io/blog/surge-a-based-rollup-template-designed-for-ethereums-future">Surge: A Based Rollup Template</a></li>
+</ul>
+<h3 id="ethrex-documentation"><a class="header" href="#ethrex-documentation">ethrex Documentation</a></h3>
+<ul>
+<li><a href="l2/./fundamentals/data_availability.html">ethrex Data Availability</a></li>
+<li><a href="l2/./fundamentals/withdrawals.html">ethrex Withdrawals</a></li>
+<li><a href="l2/./fundamentals/based.html">ethrex Based Sequencing</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
 <h1 id="architecture"><a class="header" href="#architecture">Architecture</a></h1>
 <p>This section provides an overview of the architecture of an L2 rollup built with ethrex. Here you'll find:</p>
 <ul>
@@ -8399,13 +8756,13 @@ number_of_privileged_transaction_logs_u16 ||
 <tr><td>Block List</td><td>655</td><td>661</td><td>638</td><td>638</td><td>645</td><td>644</td><td>615</td><td>530</td><td>532</td><td>532</td></tr>
 </tbody></table>
 </div>
-<h3 id="summary"><a class="header" href="#summary">Summary</a></h3>
+<h3 id="summary-3"><a class="header" href="#summary-3">Summary</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Blob Payload</th><th>Avg. ETH Transfers per Batch</th><th>Avg. ERC20 Transfers per Batch</th></tr></thead><tbody>
 <tr><td>State Diff</td><td>2298</td><td>1870</td></tr>
 <tr><td>Block List</td><td>965</td><td>609</td></tr>
 </tbody></table>
 </div>
-<h2 id="conclusion"><a class="header" href="#conclusion">Conclusion</a></h2>
+<h2 id="conclusion-1"><a class="header" href="#conclusion-1">Conclusion</a></h2>
 <p>Sending block lists in blobs instead of state diffs decreases the number of transactions that can fit in a single blob by approximately 2x for ETH transfers and 3x for ERC20 transfers.</p>
 <h2 id="how-this-measurements-were-done"><a class="header" href="#how-this-measurements-were-done">How this measurements were done</a></h2>
 <h3 id="prerequisites-14"><a class="header" href="#prerequisites-14">Prerequisites</a></h3>
@@ -10819,7 +11176,7 @@ TODO: add updated graph with L1 block time distribution
 <li><strong>Front-running and Sandwiching Attacks:</strong> Lead Sequencers have the right to reorder transactions as they like and we expect they'll use this to extract MEV, including front-running and sandwiching attacks, which impact user experience. We don't have plans to address this at the protocol level, but we expect solutions to appear at the application level, same as in L1.</li>
 <li><strong>No Sequencers Scenario:</strong> If a sequencing period has no elected Lead Sequencer, we establish Full Anarchy during that period, so anyone can advance the chain. This is a last resort, and we don't expect this happening in practice.</li>
 </ul>
-<h2 id="conclusion-1"><a class="header" href="#conclusion-1">Conclusion</a></h2>
+<h2 id="conclusion-2"><a class="header" href="#conclusion-2">Conclusion</a></h2>
 <p>To preserve decentralization and permissionlessness, we chose ticket auctions for leader election, at the expense of preconfirmations and composability.</p>
 <p>As mentioned at the beginning, this approach does not fully align with <a href="https://ethresear.ch/t/based-rollups-superpowers-from-l1-sequencing/15016">Justin Drake's definition</a> of "based" rollups but is "based enough" to serve as a starting point. Although the current design cannot guarantee that sequencing rights are assigned exclusively to the L1 proposer for each slot, we're interested in achieving this, and will do so once the conditions are met, namely, that L1 proposer lookahead is available.</p>
 <p>So what about "based" Ethrex tomorrow? Eventually, there will be enough incentives for L1 proposers to either run their own L2 Sequencers or delegate their L1 rights to an external one. At that stage, the auction and assignment of L2 sequencing rights will be linked to the current L1 proposer or their delegated Sequencer. Periods may also adjust as lookahead tables, such as the <a href="https://eips.ethereum.org/EIPS/eip-7917">Deterministic Lookahead Proposal</a> or <a href="https://eth-fabric.github.io/website/research/raid">RAID</a>, become viable.</p>
@@ -11585,7 +11942,7 @@ What should be done is</p>
 A message is considered expired if a certain deadline is reached and it has not yet been included in a batch on the destination chain. The <code>commonBridge</code> then prevents the sequencer from committing batches that contain non-privileged transactions (deposits and received messages) until all expired messages are included.</p>
 <h3 id="rollbacks"><a class="header" href="#rollbacks">Rollbacks</a></h3>
 <p>Once a cross-chain message is settled, there is no rollback mechanism in scenarios where the destination L2 either cannot or chooses not to execute the transaction. <a href="l2/fundamentals/shared_bridge.html#forced-inclusion">Forced Inclusion</a> guarantees that the destination sequencer will eventually have to execute the received message in order to include non-privileged transactions in a batch. Therefore, once a message is settled, the user waits for the destination L2 to include the message, just as when the user performs a deposit to that L2.</p>
-<h2 id="recommendations"><a class="header" href="#recommendations">Recommendations</a></h2>
+<h2 id="recommendations-1"><a class="header" href="#recommendations-1">Recommendations</a></h2>
 <p>We advice not to register more than 100 chains, since this will enquire a high cost when verifying a batch (About 1.6M gas), due to the transfers between bridges.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
@@ -12122,7 +12479,7 @@ INFO ethrex_l2::sequencer::l1_proof_sender: Submitted proof to Aligned prover_ty
 INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainProposer, with transaction hash 0x...
 </code></pre>
 <hr />
-<h2 id="references"><a class="header" href="#references">References</a></h2>
+<h2 id="references-1"><a class="header" href="#references-1">References</a></h2>
 <ul>
 <li><a href="https://docs.alignedlayer.com/">Aligned Layer Documentation</a></li>
 <li><a href="https://docs.alignedlayer.com/guides/1.2_sdk_api_reference">Aligned SDK API Reference</a></li>
@@ -14391,7 +14748,7 @@ You can see a list of available flags by passing <code>--help</code> to the CLI,
 </style>
 <h1 id="generate-blobs-for-the-state-reconstruction-test"><a class="header" href="#generate-blobs-for-the-state-reconstruction-test">Generate blobs for the state reconstruction test</a></h1>
 <p>The test in <code>crates/l2/tests/state_reconstruct.rs</code> replays a fixed set of blobs to reconstruct. The fixtures need to be regenerated whenever the genesis file changes, because a new genesis alters the hash of the very first block and, by extension, all descendant blocks. Our stored blobs encode parent pointers, so stale hashes make the fixtures unusable. If you ever need to regenerate those blobs, you need to change the files <code>payload_builder.rs</code> and <code>l1_committer.rs</code> and run the sequencer to capture fresh blobs.</p>
-<h2 id="summary-1"><a class="header" href="#summary-1">Summary</a></h2>
+<h2 id="summary-4"><a class="header" href="#summary-4">Summary</a></h2>
 <ol>
 <li>Limit every block to ten transactions to make the batches predictable.</li>
 <li>Store each blob locally whenever the committer submits a batch.</li>
