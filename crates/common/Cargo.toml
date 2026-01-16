@@ -34,6 +34,8 @@ rkyv.workspace = true
 rustc-hash.workspace = true
 k256.workspace = true
 
+hex-simd = "0.8.0"
+
 secp256k1 = { workspace = true, optional = true }
 
 [dev-dependencies]
