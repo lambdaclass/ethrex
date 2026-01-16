@@ -175,8 +175,8 @@ impl PacketHeader {
 }
 
 pub trait PacketTrait {
+    const TYPE_FLAG: u8;
     fn encode_authdata(&self, buf: &mut dyn BufMut) -> Result<(), PacketCodecError>;
-    fn packet_type_flag(&self) -> u8;
     fn get_encoded_message(&self) -> Vec<u8>;
 
     fn build_header(&self, nonce: &[u8; 12]) -> Result<PacketHeader, PacketCodecError> {
@@ -189,13 +189,13 @@ pub trait PacketTrait {
         let mut static_header: [u8; 23] = [0; 23];
         static_header[0..6].copy_from_slice(PROTOCOL_ID);
         static_header[6..8].copy_from_slice(&PROTOCOL_VERSION.to_be_bytes());
-        static_header[8] = self.packet_type_flag();
+        static_header[8] = Self::TYPE_FLAG;
         static_header[9..21].copy_from_slice(nonce);
         static_header[21..].copy_from_slice(&authdata_size.to_be_bytes());
         let header_end_offset = 16 + authdata.len() + static_header.len();
         Ok(PacketHeader {
             static_header,
-            flag: self.packet_type_flag(),
+            flag: Self::TYPE_FLAG,
             nonce: *nonce,
             authdata,
             header_end_offset,
@@ -239,13 +239,11 @@ pub struct Ordinary {
 }
 
 impl PacketTrait for Ordinary {
+    const TYPE_FLAG: u8 = 0x00;
+
     fn encode_authdata(&self, buf: &mut dyn BufMut) -> Result<(), PacketCodecError> {
         buf.put_slice(self.src_id.as_bytes());
         Ok(())
-    }
-
-    fn packet_type_flag(&self) -> u8 {
-        0x00
     }
 
     fn get_encoded_message(&self) -> Vec<u8> {
@@ -301,14 +299,12 @@ pub struct WhoAreYou {
 }
 
 impl PacketTrait for WhoAreYou {
+    const TYPE_FLAG: u8 = 0x01;
+
     fn encode_authdata(&self, buf: &mut dyn BufMut) -> Result<(), PacketCodecError> {
         buf.put_slice(&self.id_nonce.to_be_bytes());
         buf.put_slice(&self.enr_seq.to_be_bytes());
         Ok(())
-    }
-
-    fn packet_type_flag(&self) -> u8 {
-        0x01
     }
 
     fn get_encoded_message(&self) -> Vec<u8> {
@@ -353,6 +349,8 @@ pub struct Handshake {
 }
 
 impl PacketTrait for Handshake {
+    const TYPE_FLAG: u8 = 0x02;
+
     fn encode_authdata(&self, buf: &mut dyn BufMut) -> Result<(), PacketCodecError> {
         let sig_size: u8 = self
             .id_signature
@@ -375,10 +373,6 @@ impl PacketTrait for Handshake {
         }
 
         Ok(())
-    }
-
-    fn packet_type_flag(&self) -> u8 {
-        0x02
     }
 
     fn get_encoded_message(&self) -> Vec<u8> {
