@@ -103,6 +103,7 @@ impl LEVM {
         vm_type: VMType,
         merkleizer: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
+        receipt_tx: Sender<Receipt>,
     ) -> Result<BlockExecutionResult, EvmError> {
         Self::prepare_block(block, db, vm_type)?;
 
@@ -148,6 +149,9 @@ impl LEVM {
                 cumulative_gas_used,
                 report.logs,
             );
+            receipt_tx
+                .send(receipt.clone())
+                .map_err(|e| EvmError::Custom(format!("send failed: {e}")))?;
 
             receipts.push(receipt);
         }

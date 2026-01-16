@@ -315,18 +315,17 @@ impl Blockchain {
         let queue_length = AtomicUsize::new(0);
         let queue_length_ref = &queue_length;
         let mut max_queue_length = 0;
-        let (execution_result, merkleization_result) = std::thread::scope(|s| {
+        let (execution_result, merkleization_result, receipts_result) = std::thread::scope(|s| {
             let max_queue_length_ref = &mut max_queue_length;
             let (tx, rx) = channel();
+            let (receipt_tx, receipt_rx) = channel();
             let execution_handle = std::thread::Builder::new()
                 .name("block_executor_execution".to_string())
                 .spawn_scoped(s, move || -> Result<_, ChainError> {
                     let execution_result =
-                        vm.execute_block_pipeline(block, tx, queue_length_ref)?;
+                        vm.execute_block_pipeline(block, tx, queue_length_ref, receipt_tx)?;
 
                     // Validate execution went alright
-                    validate_gas_used(&execution_result.receipts, &block.header)?;
-                    validate_receipts_root(&block.header, &execution_result.receipts)?;
                     validate_requests_hash(
                         &block.header,
                         &chain_config,
@@ -337,6 +336,12 @@ impl Blockchain {
                     Ok((execution_result, exec_end_instant))
                 })
                 .expect("Failed to spawn block_executor exec thread");
+            let receipt_handle = std::thread::Builder::new()
+                .name("block_executor_receipt_validator".to_string())
+                .spawn_scoped(s, move || -> Result<_, ChainError> {
+                    validate_receipts_pipelined(&block.header, receipt_rx)
+                })
+                .expect("Failed to spawn block_executor receipt validator thread");
             let parent_header_ref = &parent_header; // Avoid moving to thread
             let merkleize_handle = std::thread::Builder::new()
                 .name("block_executor_merkleizer".to_string())
@@ -356,6 +361,9 @@ impl Blockchain {
                     ))
                 })
                 .expect("Failed to spawn block_executor merkleizer thread");
+            let receipts_result = receipt_handle.join().unwrap_or_else(|_| {
+                Err(ChainError::Custom("execution thread panicked".to_string()))?
+            });
             (
                 execution_handle.join().unwrap_or_else(|_| {
                     Err(ChainError::Custom("execution thread panicked".to_string()))
@@ -365,10 +373,12 @@ impl Blockchain {
                         "merklization thread panicked".to_string(),
                     ))
                 }),
+                receipts_result,
             )
         });
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
         let (execution_result, exec_end_instant) = execution_result?;
+        let _ = receipts_result?;
         let exec_merkle_end_instant = Instant::now();
 
         Ok((
@@ -2174,6 +2184,26 @@ pub fn validate_receipts_root(
             InvalidBlockError::ReceiptsRootMismatch,
         ))
     }
+}
+
+fn validate_receipts_pipelined(
+    header: &BlockHeader,
+    receipts_rx: Receiver<Receipt>,
+) -> Result<(), ChainError> {
+    let mut last_cummulative_gas = 0;
+    let mut idx: u64 = 0;
+    let mut trie = Trie::new_temp();
+    for receipt in receipts_rx {
+        last_cummulative_gas = receipt.cumulative_gas_used;
+        trie.insert(idx.encode_to_vec(), receipt.encode_inner_with_bloom())?;
+        idx += 1;
+    }
+    if last_cummulative_gas != header.gas_used {
+        return Err(ChainError::InvalidBlock(
+            InvalidBlockError::GasUsedMismatch(last_cummulative_gas, header.gas_used),
+        ));
+    }
+    Ok(())
 }
 
 // Returns the hash of the head of the canonical chain (the latest valid hash).
