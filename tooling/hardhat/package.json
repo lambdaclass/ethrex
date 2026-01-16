@@ -7,8 +7,6 @@
     "compile": "hardhat compile",
     "test": "hardhat test",
     "test:upgrade": "hardhat test test/upgradeability.local.test.js",
-    "test:l1": "hardhat test --network ethrexL1",
-    "test:l2": "hardhat test --network ethrexL2",
     "validate:upgrades": "node scripts/validate-upgrades.js"
   },
   "devDependencies": {
