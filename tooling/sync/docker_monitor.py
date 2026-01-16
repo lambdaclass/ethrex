@@ -3,6 +3,7 @@
 
 import argparse
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -62,6 +63,7 @@ class Instance:
     initial_block: int = 0  # Block when entering block_processing
     error: str = ""
     first_failure_time: float = 0
+    validation_status: str = ""  # Current validation progress (if any)
 
     @property
     def rpc_url(self) -> str:
@@ -99,6 +101,101 @@ def container_start_time(name: str) -> Optional[float]:
         return None
 
 
+def container_exit_info(name: str) -> tuple[Optional[bool], Optional[int]]:
+    """Check if container has exited and get exit code.
+
+    Returns:
+        (is_running, exit_code) - is_running is True if running, False if exited, None on error.
+        exit_code is the exit code if exited, None otherwise.
+    """
+    try:
+        # Get container state
+        status = subprocess.check_output(
+            ["docker", "inspect", "-f", "{{.State.Status}}", name],
+            stderr=subprocess.DEVNULL
+        ).decode().strip()
+
+        if status == "running":
+            return True, None
+        elif status == "exited":
+            exit_code = subprocess.check_output(
+                ["docker", "inspect", "-f", "{{.State.ExitCode}}", name],
+                stderr=subprocess.DEVNULL
+            ).decode().strip()
+            return False, int(exit_code)
+        else:
+            return None, None
+    except Exception:
+        return None, None
+
+
+# Validation error patterns to look for in container logs
+VALIDATION_ERROR_PATTERNS = [
+    "We have failed the validation of the state tree",
+    "validate_storage_root",
+    "Missing code hash",
+    "Node count mismatch",
+    "TrieError::Verify",
+]
+
+# Validation progress patterns - indicate validation is running
+VALIDATION_PROGRESS_PATTERNS = [
+    ("Starting validate_state_root", "validating state root"),
+    ("Starting validate_storage_root", "validating storage roots"),
+    ("Starting validate_bytecodes", "validating bytecodes"),
+    ("Finished validate_storage_root", "storage validation complete"),
+    ("Succesfully validated tree", "state validation complete"),
+]
+
+
+def check_validation_failure(container: str) -> Optional[str]:
+    """Check container logs for validation failure messages.
+
+    Returns a validation error message if found, None otherwise.
+    """
+    try:
+        # Get last 100 lines of logs (validation errors should be near the end)
+        logs = subprocess.check_output(
+            ["docker", "logs", "--tail", "100", container],
+            stderr=subprocess.STDOUT,
+            timeout=10
+        ).decode(errors='replace')
+
+        for pattern in VALIDATION_ERROR_PATTERNS:
+            if pattern in logs:
+                return f"State trie validation failed: found '{pattern}' in logs"
+        return None
+    except Exception:
+        return None
+
+
+def check_validation_progress(container: str) -> Optional[str]:
+    """Check container logs for validation progress.
+
+    Returns the latest validation status if validation is in progress, None otherwise.
+    """
+    try:
+        # Get last 200 lines of logs to catch validation messages
+        logs = subprocess.check_output(
+            ["docker", "logs", "--tail", "200", container],
+            stderr=subprocess.STDOUT,
+            timeout=10
+        ).decode(errors='replace')
+
+        # Find the most recent validation progress message
+        latest_status = None
+        latest_pos = -1
+        for pattern, status in VALIDATION_PROGRESS_PATTERNS:
+            pos = logs.rfind(pattern)
+            if pos > latest_pos:
+                latest_pos = pos
+                latest_status = status
+
+        return latest_status
+    except Exception:
+        return None
+
+
 def rpc_call(url: str, method: str) -> Optional[Any]:
     try:
         return requests.post(url, json={"jsonrpc": "2.0", "method": method, "params": [], "id": 1}, timeout=5).json().get("result")
@@ -106,7 +203,7 @@ def rpc_call(url: str, method: str) -> Optional[Any]:
         return None
 
 
-def slack_notify(run_id: str, run_count: int, instances: list, hostname: str, branch: str, commit: str):
+def slack_notify(run_id: str, run_count: int, instances: list, hostname: str, branch: str, commit: str, validation_enabled: bool = False):
     """Send a single summary Slack message for the run."""
     all_success = all(i.status == "success" for i in instances)
     url = os.environ.get("SLACK_WEBHOOK_URL_SUCCESS" if all_success else "SLACK_WEBHOOK_URL_FAILED")
@@ -117,17 +214,44 @@ def slack_notify(run_id: str, run_count: int, instances: list, hostname: str, br
     run_start = datetime.strptime(run_id, "%Y%m%d_%H%M%S")
     elapsed_secs = (datetime.now() - run_start).total_seconds()
     elapsed_str = fmt_time(elapsed_secs)
-    summary = f"*Host:* `{hostname}`\n*Branch:* `{branch}`\n*Commit:* <https://github.com/lambdaclass/ethrex/commit/{commit}|{commit}>\n*Elapsed:* `{elapsed_str}`\n*Logs:* `tooling/sync/multisync_logs/run_{run_id}`\n*Result:* {'SUCCESS' if all_success else 'FAILED'}"
+
+    # Check if any instance had validation activity
+    any_validation = validation_enabled or any(i.validation_status for i in instances)
+    validation_str = "enabled ✓" if any_validation else "disabled"
+
+    # Check for validation failures
+    validation_failures = [i for i in instances if i.error and "validation" in i.error.lower()]
+
+    summary = (
+        f"*Host:* `{hostname}`\n"
+        f"*Branch:* `{branch}`\n"
+        f"*Commit:* <https://github.com/lambdaclass/ethrex/commit/{commit}|{commit}>\n"
+        f"*Elapsed:* `{elapsed_str}`\n"
+        f"*Validation:* `{validation_str}`\n"
+        f"*Logs:* `tooling/sync/multisync_logs/run_{run_id}`\n"
+        f"*Result:* {'SUCCESS' if all_success else 'FAILED'}"
+    )
     blocks = [
         {"type": "header", "text": {"type": "plain_text", "text": header}},
         {"type": "section", "text": {"type": "mrkdwn", "text": summary}},
         {"type": "divider"}
     ]
+
+    # Add validation failure warning if any
+    if validation_failures:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "⚠️ *State trie validation failed!* Check logs for details."}
+        })
+
     for i in instances:
         icon = "✅" if i.status == "success" else "❌"
         line = f"{icon} *{i.name}*: `{i.status}`"
         if i.sync_time:
             line += f" (sync: {fmt_time(i.sync_time)})"
+        # Show validation status if it was tracked
+        if i.validation_status:
+            line += f" [validation: {i.validation_status}]"
         if i.initial_block:
             line += f" post-sync block: {i.initial_block}"
         if i.initial_block and i.last_block > i.initial_block:
@@ -195,23 +319,37 @@ def log_run_result(run_id: str, run_count: int, instances: list[Instance], hostn
     run_start = datetime.strptime(run_id, "%Y%m%d_%H%M%S")
     elapsed_secs = (datetime.now() - run_start).total_seconds()
     elapsed_str = fmt_time(elapsed_secs)
+
+    # Check validation status
+    any_validation = any(i.validation_status for i in instances)
+    validation_str = "enabled" if any_validation else "disabled"
+    validation_failures = [i for i in instances if i.error and "validation" in i.error.lower()]
+
     # Build log entry as plain text
     lines = [
         f"\n{'='*60}",
         f"{status_icon} Run #{run_count} (ID: {run_id})",
         f"{'='*60}",
-        f"Host:   {hostname}",
-        f"Branch: {branch}",
-        f"Commit: {commit}",
-        f"Elapsed: {elapsed_str}",
-        f"Result: {'SUCCESS' if all_success else 'FAILED'}",
+        f"Host:       {hostname}",
+        f"Branch:     {branch}",
+        f"Commit:     {commit}",
+        f"Elapsed:    {elapsed_str}",
+        f"Validation: {validation_str}",
+        f"Result:     {'SUCCESS' if all_success else 'FAILED'}",
         "",
     ]
+
+    if validation_failures:
+        lines.append("⚠️  VALIDATION FAILED - State trie validation errors detected!")
+        lines.append("")
+
     for inst in instances:
         icon = "✅" if inst.status == "success" else "❌"
         line = f"  {icon} {inst.name}: {inst.status}"
         if inst.sync_time:
             line += f" (sync: {fmt_time(inst.sync_time)})"
+        if inst.validation_status:
+            line += f" [validation: {inst.validation_status}]"
         if inst.initial_block:
             line += f" post-sync block: {inst.initial_block}"
         if inst.initial_block and inst.last_block > inst.initial_block:
@@ -234,6 +372,27 @@ def log_run_result(run_id: str, run_count: int, instances: list[Instance], hostn
 def generate_run_id() -> str:
     """Generate a unique run ID based on timestamp."""
     return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def get_next_run_count() -> int:
+    """Get the next run count by parsing the run history log.
+
+    This provides persistence across restarts - if run #3 failed and we restart,
+    the next run will be #4 instead of starting from #1 again.
+    """
+    if not RUN_LOG_FILE.exists():
+        return 1
+
+    try:
+        content = RUN_LOG_FILE.read_text()
+        # Find all "Run #N" patterns and get the highest number
+        matches = re.findall(r'Run #(\d+)', content)
+        if matches:
+            max_run = max(int(m) for m in matches)
+            return max_run + 1
+        return 1
+    except Exception:
+        return 1
 
 
 def restart_containers(compose_file: str, compose_dir: str):
@@ -261,42 +420,62 @@ def reset_instance(inst: Instance):
     inst.initial_block = 0
     inst.error = ""
     inst.first_failure_time = 0
+    inst.validation_status = ""
 
 
 def print_status(instances: list[Instance]):
     print("\033[2J\033[H", end="")
     print(f"{'='*60}\nStatus at {time.strftime('%H:%M:%S')}\n{'='*60}")
-    
+
     for i in instances:
         elapsed = time.time() - i.start_time if i.start_time else 0
-        extra = {
-            "waiting": " (waiting for node...)",
-            "syncing": f" ({fmt_time(elapsed)} elapsed)",
-            "synced": f" (synced in {fmt_time(i.sync_time)})",
-            "block_processing": f" (block {i.last_block}, +{i.last_block - i.initial_block} blocks, {fmt_time(BLOCK_PROCESSING_DURATION - (time.time() - i.block_check_start))} left)",
-            "success": f" ✓ synced in {fmt_time(i.sync_time)}, processed +{i.last_block - i.initial_block} blocks",
-            "failed": f" - {i.error}"
-        }.get(i.status, "")
+        # Build status-specific extra info
+        if i.status == "syncing":
+            validation_info = f" [{i.validation_status}]" if i.validation_status else ""
+            extra = f" ({fmt_time(elapsed)} elapsed){validation_info}"
+        elif i.status == "waiting":
+            extra = " (waiting for node...)"
+        elif i.status == "synced":
+            extra = f" (synced in {fmt_time(i.sync_time)})"
+        elif i.status == "block_processing":
+            extra = f" (block {i.last_block}, +{i.last_block - i.initial_block} blocks, {fmt_time(BLOCK_PROCESSING_DURATION - (time.time() - i.block_check_start))} left)"
+        elif i.status == "success":
+            extra = f" ✓ synced in {fmt_time(i.sync_time)}, processed +{i.last_block - i.initial_block} blocks"
+        elif i.status == "failed":
+            extra = f" - {i.error}"
+        else:
+            extra = ""
         print(f"  {STATUS_EMOJI.get(i.status, '?')} {i.name} (:{i.port}): {i.status}{extra}")
-    
+
     print(flush=True)
 
 
 def update_instance(inst: Instance, timeout_min: int) -> bool:
     if inst.status in ("success", "failed"):
         return False
-    
+
     now = time.time()
     block = rpc_call(inst.rpc_url, "eth_blockNumber")
     block = int(block, 16) if block else None
-    
+
     if block is None:
         if inst.status != "waiting":
             if inst.first_failure_time == 0:
                 inst.first_failure_time = now
             elif (now - inst.first_failure_time) >= NODE_UNRESPONSIVE_TIMEOUT:
                 first_fail_str = datetime.fromtimestamp(inst.first_failure_time).strftime("%H:%M:%S")
-                inst.status, inst.error = "failed", f"Node stopped responding (first failure at {first_fail_str}, down for {fmt_time(now - inst.first_failure_time)})"
+
+                # Check if container exited (possibly due to validation failure)
+                is_running, exit_code = container_exit_info(inst.container)
+                if is_running is False and exit_code is not None:
+                    # Container exited - check for validation failure
+                    validation_error = check_validation_failure(inst.container)
+                    if validation_error:
+                        inst.status, inst.error = "failed", validation_error
+                    else:
+                        inst.status, inst.error = "failed", f"Container exited with code {exit_code} (first failure at {first_fail_str})"
+                else:
+                    inst.status, inst.error = "failed", f"Node stopped responding (first failure at {first_fail_str}, down for {fmt_time(now - inst.first_failure_time)})"
                 return True
         return False
 
@@ -310,6 +489,11 @@ def update_instance(inst: Instance, timeout_min: int) -> bool:
         if (now - inst.start_time) > timeout_min * 60:
             inst.status, inst.error = "failed", f"Sync timeout after {fmt_time(timeout_min * 60)}"
             return True
+        # Check for validation progress (shows when validation is running)
+        validation_progress = check_validation_progress(inst.container)
+        if validation_progress and validation_progress != inst.validation_status:
+            inst.validation_status = validation_progress
+            return True  # Status changed, refresh display
         if rpc_call(inst.rpc_url, "eth_syncing") is False:
             inst.status, inst.sync_time = "synced", now - inst.start_time
             inst.block_check_start, inst.last_block = now, block
@@ -385,11 +569,14 @@ def main():
     hostname = socket.gethostname()
     branch = git_branch()
     commit = git_commit()
-    run_count = 1
-    run_id = generate_run_id()
-    
-    # Ensure logs directory exists
+
+    # Ensure logs directory exists first (needed for run count)
     ensure_logs_dir()
+
+    # Get run count from existing logs (persists across restarts)
+    run_count = get_next_run_count()
+    run_id = generate_run_id()
+
     print(f"📁 Logs will be saved to {LOGS_DIR.absolute()}")
     print(f"📝 Run history: {RUN_LOG_FILE.absolute()}\n")
     
