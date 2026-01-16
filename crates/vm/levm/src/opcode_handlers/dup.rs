@@ -8,7 +8,8 @@ use crate::{
 // Opcodes: DUP1 ... DUP16
 
 impl<'a> VM<'a> {
-    // DUP operation
+    // DUP operation - Tier-1 hot opcode
+    #[inline(always)]
     pub fn op_dup<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
         // Increase the consumed gas
         self.current_call_frame

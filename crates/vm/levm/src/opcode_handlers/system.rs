@@ -19,7 +19,8 @@ use ethrex_common::{
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
 
 impl<'a> VM<'a> {
-    // CALL operation
+    // CALL operation - Complex system opcode, marked cold for better code layout
+    #[cold]
     pub fn op_call(&mut self) -> Result<OpcodeResult, VMError> {
         let (
             gas,
@@ -122,7 +123,8 @@ impl<'a> VM<'a> {
         )
     }
 
-    // CALLCODE operation
+    // CALLCODE operation - Complex system opcode, marked cold for better code layout
+    #[cold]
     pub fn op_callcode(&mut self) -> Result<OpcodeResult, VMError> {
         // STACK
         let (
@@ -241,7 +243,8 @@ impl<'a> VM<'a> {
         Ok(OpcodeResult::Halt)
     }
 
-    // DELEGATECALL operation
+    // DELEGATECALL operation - Complex system opcode, marked cold for better code layout
+    #[cold]
     pub fn op_delegatecall(&mut self) -> Result<OpcodeResult, VMError> {
         // STACK
         let (
@@ -338,7 +341,8 @@ impl<'a> VM<'a> {
         )
     }
 
-    // STATICCALL operation
+    // STATICCALL operation - Complex system opcode, marked cold for better code layout
+    #[cold]
     pub fn op_staticcall(&mut self) -> Result<OpcodeResult, VMError> {
         // STACK
         let (
@@ -433,7 +437,8 @@ impl<'a> VM<'a> {
         )
     }
 
-    // CREATE operation
+    // CREATE operation - Complex system opcode, marked cold for better code layout
+    #[cold]
     pub fn op_create(&mut self) -> Result<OpcodeResult, VMError> {
         let fork = self.env.config.fork;
         let current_call_frame = &mut self.current_call_frame;
@@ -462,7 +467,8 @@ impl<'a> VM<'a> {
         )
     }
 
-    // CREATE2 operation
+    // CREATE2 operation - Complex system opcode, marked cold for better code layout
+    #[cold]
     pub fn op_create2(&mut self) -> Result<OpcodeResult, VMError> {
         let fork = self.env.config.fork;
         let current_call_frame = &mut self.current_call_frame;
