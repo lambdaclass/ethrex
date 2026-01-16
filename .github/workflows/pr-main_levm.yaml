@@ -70,7 +70,10 @@ jobs:
           cd tooling/ef_tests/state
           if [ "$(awk '/Summary:/ {print $(NF)}' test_result_pr_short.txt)" != "(100.00%)" ]; then
               echo "Percentage is not 100%."
-              # exit 1 # uncomment when we expect 100% pass-rate
+              # TODO: Uncomment the following line to enforce 100% EF test pass rate.
+              # This was planned as part of CI improvements to catch LEVM regressions immediately.
+              # Requires team approval before enabling.
+              # exit 1
           fi
 
   ef-test-main:

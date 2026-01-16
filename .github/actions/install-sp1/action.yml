@@ -1,0 +1,29 @@
+name: "Install SP1"
+description: "Install SP1 toolchain with caching"
+
+inputs:
+  version:
+    description: "SP1 version to install"
+    required: false
+    default: "5.0.8"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Cache SP1 toolchain
+      uses: actions/cache@v4
+      id: sp1-cache
+      with:
+        path: ~/.sp1
+        key: sp1-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Install SP1
+      if: steps.sp1-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        curl -L https://sp1up.succinct.xyz | bash
+        ~/.sp1/bin/sp1up --version ${{ inputs.version }}
+
+    - name: Add SP1 to PATH
+      shell: bash
+      run: echo "$HOME/.sp1/bin" >> $GITHUB_PATH

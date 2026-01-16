@@ -1,0 +1,34 @@
+name: "Setup Prover Environment"
+description: "Unified action to install SP1, RISC0, and/or ZisK toolchains"
+
+inputs:
+  backends:
+    description: "Comma-separated list of backends to install: sp1,risc0,zisk"
+    required: true
+  sp1-version:
+    description: "SP1 version to install (passed to install-sp1 action)"
+    required: false
+    default: "5.0.8"
+  zisk-version:
+    description: "ZisK version to install (passed to install-zisk action)"
+    required: false
+    default: "v0.15.0"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install SP1
+      if: contains(inputs.backends, 'sp1')
+      uses: ./.github/actions/install-sp1
+      with:
+        version: ${{ inputs.sp1-version }}
+
+    - name: Install RISC0
+      if: contains(inputs.backends, 'risc0')
+      uses: ./.github/actions/install-risc0
+
+    - name: Install ZisK
+      if: contains(inputs.backends, 'zisk')
+      uses: ./.github/actions/install-zisk
+      with:
+        version: ${{ inputs.zisk-version }}

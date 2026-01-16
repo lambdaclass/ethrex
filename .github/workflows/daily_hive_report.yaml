@@ -114,7 +114,8 @@ jobs:
           SIMULATION: ${{ matrix.test.simulation }}
           SIM_LIMIT: ${{ matrix.test.limit || '' }}
         run: |
-          FLAGS='--sim.parallelism 4 --sim.loglevel 1'
+          # Reviewer: parallelism 8 should be double checked
+          FLAGS='--sim.parallelism 8 --sim.loglevel 1'
           if [[ "$SIMULATION" == "ethereum/eels/consume-engine" || "$SIMULATION" == "ethereum/eels/consume-rlp" ]]; then
             FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.3.0/fixtures_develop.tar.gz"
             FLAGS+=" --sim.buildarg branch=forks/osaka"
@@ -139,7 +140,6 @@ jobs:
       - name: Run Hive Simulation
         id: run-hive-action
         uses: ethpandaops/hive-github-action@v0.5.0
-        continue-on-error: true
         with:
           simulator: ${{ matrix.test.simulation }}
           client: ethrex

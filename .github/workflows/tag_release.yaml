@@ -84,12 +84,7 @@ jobs:
 
       - name: Install SP1 (only Linux)
         if: ${{ matrix.os == 'linux' }}
-        env:
-          SHELL: /bin/bash
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -L https://sp1up.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 5.0.8
+        uses: ./.github/actions/install-sp1
       - name: Set up QEMU (only Linux ARM)
         if: ${{ matrix.platform == 'ubuntu-22.04-arm' }}
         uses: docker/setup-qemu-action@v3
@@ -168,29 +163,15 @@ jobs:
 
       - name: Install SP1
         if: ${{ matrix.zkvm == 'sp1' }}
-        env:
-          SHELL: /bin/bash
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -L https://sp1up.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 5.0.8
+        uses: ./.github/actions/install-sp1
 
       - name: Install RISC0
         if: ${{ matrix.zkvm == 'risc0' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         uses: ./.github/actions/install-risc0
 
       - name: Install ZisK
         if: ${{ matrix.zkvm == 'zisk' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SETUP_KEY: none
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xz-utils jq curl build-essential qemu-system libomp-dev libgmp-dev nlohmann-json3-dev protobuf-compiler uuid-dev libgrpc++-dev libsecp256k1-dev libsodium-dev libpqxx-dev nasm libopenmpi-dev openmpi-bin openmpi-common libclang-dev clang gcc-riscv64-unknown-elf
-          curl https://raw.githubusercontent.com/0xPolygonHermez/zisk/main/ziskup/install.sh | bash
-          echo "$HOME/.zisk/bin" >> $GITHUB_PATH
+        uses: ./.github/actions/install-zisk
 
       - name: Build ethrex elf - ${{ matrix.zkvm }}
         run: |

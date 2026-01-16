@@ -1,0 +1,58 @@
+name: "Install ZisK"
+description: "Install ZisK toolchain with caching"
+
+inputs:
+  version:
+    description: "ZisK version to install"
+    required: false
+    default: "v0.15.0"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Cache apt packages
+      uses: actions/cache@v4
+      id: apt-cache
+      with:
+        path: ~/apt-cache
+        key: apt-zisk-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Restore apt packages from cache
+      if: steps.apt-cache.outputs.cache-hit == 'true'
+      shell: bash
+      run: |
+        if [ -d ~/apt-cache ]; then
+          sudo cp -r ~/apt-cache/* /var/cache/apt/archives/ 2>/dev/null || true
+        fi
+
+    - name: Install ZisK dependencies
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y xz-utils jq curl build-essential qemu-system libomp-dev libgmp-dev nlohmann-json3-dev protobuf-compiler uuid-dev libgrpc++-dev libsecp256k1-dev libsodium-dev libpqxx-dev nasm libopenmpi-dev openmpi-bin openmpi-common libclang-dev clang gcc-riscv64-unknown-elf
+
+    - name: Save apt packages to cache
+      if: steps.apt-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        mkdir -p ~/apt-cache
+        cp /var/cache/apt/archives/*.deb ~/apt-cache/ 2>/dev/null || true
+
+    - name: Cache ZisK toolchain
+      uses: actions/cache@v4
+      id: zisk-cache
+      with:
+        path: ~/.zisk
+        key: zisk-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Install ZisK
+      if: steps.zisk-cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        SETUP_KEY: none
+      run: |
+        curl https://raw.githubusercontent.com/0xPolygonHermez/zisk/${{ inputs.version }}/ziskup/install.sh | bash
+
+    - name: Add ZisK to PATH
+      shell: bash
+      run: echo "$HOME/.zisk/bin" >> $GITHUB_PATH
