@@ -50,7 +50,7 @@ This means all data needed to reconstruct the L2 (transactions and state) is pub
 
 Yes.
 
-- The L2 node can follow the L1 commitments and blobs to reconstruct the L2 state
+- The L2 node provides the `ethrex l2 reconstruct` subcommand to follow L1 commitments and reconstruct the state from blobs
 - The [state reconstruction blobs](../developers/l2/state-reconstruction-blobs.md) doc explains how to generate and use blobs for replaying state
 - The [data availability](./fundamentals/data_availability.md) and [prover docs](../prover/prover.md) describe how published data is used to reconstruct and verify state
 
@@ -63,7 +63,7 @@ ethrex supports multiple proving mechanisms:
 - **TDX attestations**: TEE-based verification
 - **Aligned Layer**: Optional proof aggregation for cost efficiency
 
-The `OnChainProposer` contract can be configured to require any combination of these mechanisms. A batch is only verified on L1 if all configured proofs pass and their public inputs match the committed data (state roots, withdrawals, blobs, etc.).
+The `OnChainProposer` contract can be configured to require many combinations of these mechanisms. A batch is only verified on L1 if all configured proofs pass and their public inputs match the committed data (state roots, withdrawals, blobs, etc.).
 
 #### Are there at least 5 external actors that can submit a fraud proof?
 
