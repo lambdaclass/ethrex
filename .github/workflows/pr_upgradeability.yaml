@@ -25,22 +25,19 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install root deps
-        run: npm install
-
-      - name: Install hardhat deps
-        working-directory: tooling/hardhat
-        run: npm install
-
-      - name: Compile head
-        working-directory: tooling/hardhat
-        run: npm run compile
+      - name: Install dependencies
+        run: |
+          npm install
+          cd tooling/hardhat
+          npm install
+          npm run compile
 
       - name: Add main worktree
         run: |
           git fetch origin main
           git worktree add ./.tmp/ethrex-main origin/main
 
+      # Here we ensure the main worktree is buildable, main may not have the tooling or package.json
       - name: Sync hardhat tooling into base
         run: |
           if [ ! -d ./.tmp/ethrex-main/tooling/hardhat ]; then
@@ -52,16 +49,13 @@ jobs:
           fi
           rm -rf ./.tmp/ethrex-main/tooling/hardhat/artifacts ./.tmp/ethrex-main/tooling/hardhat/cache
 
-      - name: Install base deps
+      - name: Install base dependencies
         working-directory: ./.tmp/ethrex-main
         run: |
           npm install
           cd tooling/hardhat
           npm install
-
-      - name: Compile base
-        working-directory: ./.tmp/ethrex-main/tooling/hardhat
-        run: npm run compile
+          npm run compile
 
       - name: Prepare reference build-info
         run: |
