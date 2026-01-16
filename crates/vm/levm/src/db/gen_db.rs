@@ -73,6 +73,9 @@ impl GeneralizedDatabase {
         match self.current_accounts_state.entry(address) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
+                if let Some(account) = self.initial_accounts_state.get(&address) {
+                    return Ok(entry.insert(account.clone()));
+                }
                 let state = self.store.get_account_state(address)?;
                 let account = LevmAccount::from(state);
                 self.initial_accounts_state.insert(address, account.clone());
@@ -253,14 +256,14 @@ impl GeneralizedDatabase {
 
     pub fn get_state_transitions_tx(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
-        for (address, new_state_account) in self.current_accounts_state.iter() {
+        for (address, new_state_account) in self.current_accounts_state.drain() {
             if new_state_account.is_unmodified() {
                 // Skip processing account that we know wasn't mutably accessed during execution
                 continue;
             }
             // [LIE] In case the account is not in immutable_cache (rare) we search for it in the actual database.
             let initial_state_account =
-                self.initial_accounts_state.get(address).ok_or_else(|| {
+                self.initial_accounts_state.get(&address).ok_or_else(|| {
                     VMError::Internal(InternalError::Custom(format!(
                         "Failed to get account {address} from immutable cache",
                     )))
@@ -330,8 +333,11 @@ impl GeneralizedDatabase {
                 continue;
             }
 
+            self.initial_accounts_state
+                .insert(address, new_state_account);
+
             let account_update = AccountUpdate {
-                address: *address,
+                address,
                 removed,
                 info,
                 code,
@@ -341,11 +347,6 @@ impl GeneralizedDatabase {
 
             account_updates.push(account_update);
         }
-        self.initial_accounts_state.extend(
-            self.current_accounts_state
-                .iter()
-                .map(|(k, v)| (*k, v.clone())),
-        );
         Ok(account_updates)
     }
 }
