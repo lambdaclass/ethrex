@@ -198,6 +198,9 @@ pub const MODEXP_STATIC_COST: u64 = 200;
 pub const MODEXP_DYNAMIC_QUOTIENT: u64 = 3;
 pub const MODEXP_EXPONENT_FACTOR: u64 = 8;
 
+// Pre-Berlin (EIP-198) modexp constants
+pub const MODEXP_DYNAMIC_QUOTIENT_PRE_BERLIN: u64 = 20;
+
 pub const MODEXP_STATIC_COST_OSAKA: u64 = 500;
 pub const MODEXP_DYNAMIC_QUOTIENT_OSAKA: u64 = 1;
 pub const MODEXP_EXPONENT_FACTOR_OSAKA: u64 = 16;
@@ -1069,11 +1072,13 @@ pub fn modexp(
 
     let max_length = base_size.max(modulus_size);
 
-    //https://eips.ethereum.org/EIPS/eip-2565
-
-    let words = (max_length.checked_add(7).ok_or(OutOfGas)?) / 8;
-
+    // Multiplication complexity calculation depends on fork:
+    // - Pre-Berlin (EIP-198): Complex formula based on max_length value
+    // - Berlin+ (EIP-2565): Simplified ceil(max_length / 8)^2
+    // - Osaka+ (EIP-7883): Special handling for small values
     let multiplication_complexity = if fork >= Fork::Osaka {
+        // https://eips.ethereum.org/EIPS/eip-7883
+        let words = (max_length.checked_add(7).ok_or(OutOfGas)?) / 8;
         if max_length > 32 {
             2_u64
                 .checked_mul(words.checked_pow(2).ok_or(OutOfGas)?)
@@ -1081,8 +1086,39 @@ pub fn modexp(
         } else {
             16
         }
-    } else {
+    } else if fork >= Fork::Berlin {
+        // https://eips.ethereum.org/EIPS/eip-2565
+        let words = (max_length.checked_add(7).ok_or(OutOfGas)?) / 8;
         words.checked_pow(2).ok_or(OutOfGas)?
+    } else {
+        // https://eips.ethereum.org/EIPS/eip-198
+        // Pre-Berlin: mult_complexity(x) =
+        //   x^2 if x <= 64
+        //   x^2 / 4 + 96*x - 3072 if 64 < x <= 1024
+        //   x^2 / 16 + 480*x - 199680 if x > 1024
+        if max_length <= 64 {
+            max_length.checked_pow(2).ok_or(OutOfGas)?
+        } else if max_length <= 1024 {
+            max_length
+                .checked_pow(2)
+                .ok_or(OutOfGas)?
+                .checked_div(4)
+                .ok_or(OutOfGas)?
+                .checked_add(96_u64.checked_mul(max_length).ok_or(OutOfGas)?)
+                .ok_or(OutOfGas)?
+                .checked_sub(3072)
+                .ok_or(InternalError::Underflow)?
+        } else {
+            max_length
+                .checked_pow(2)
+                .ok_or(OutOfGas)?
+                .checked_div(16)
+                .ok_or(OutOfGas)?
+                .checked_add(480_u64.checked_mul(max_length).ok_or(OutOfGas)?)
+                .ok_or(OutOfGas)?
+                .checked_sub(199680)
+                .ok_or(InternalError::Underflow)?
+        }
     };
 
     let modexp_exponent_factor = if fork >= Fork::Osaka {
@@ -1113,25 +1149,36 @@ pub fn modexp(
         }
         .max(1);
 
-    let modexp_static_cost = if fork >= Fork::Osaka {
-        MODEXP_STATIC_COST_OSAKA
-    } else {
-        MODEXP_STATIC_COST
-    };
-
+    // Fork-specific modexp gas calculation:
+    // - Pre-Berlin (EIP-198): cost = floor(mult_complexity * iter_count / 20), no floor cost
+    // - Berlin+ (EIP-2565): cost = max(200, floor(mult_complexity * iter_count / 3))
+    // - Osaka+ (EIP-7883): cost = max(500, floor(mult_complexity * iter_count / 1))
     let modexp_dynamic_quotient = if fork >= Fork::Osaka {
         MODEXP_DYNAMIC_QUOTIENT_OSAKA
-    } else {
+    } else if fork >= Fork::Berlin {
         MODEXP_DYNAMIC_QUOTIENT
+    } else {
+        // Pre-Berlin (EIP-198)
+        MODEXP_DYNAMIC_QUOTIENT_PRE_BERLIN
     };
 
-    let cost = modexp_static_cost.max(
-        multiplication_complexity
-            .checked_mul(calculate_iteration_count)
-            .ok_or(OutOfGas)?
-            .checked_div(modexp_dynamic_quotient)
-            .ok_or(OutOfGas)?,
-    );
+    let dynamic_cost = multiplication_complexity
+        .checked_mul(calculate_iteration_count)
+        .ok_or(OutOfGas)?
+        .checked_div(modexp_dynamic_quotient)
+        .ok_or(OutOfGas)?;
+
+    // Only apply floor cost for Berlin+ (EIP-2565 introduced min cost of 200)
+    // Pre-Berlin (EIP-198) has no minimum cost
+    let cost = if fork >= Fork::Osaka {
+        MODEXP_STATIC_COST_OSAKA.max(dynamic_cost)
+    } else if fork >= Fork::Berlin {
+        MODEXP_STATIC_COST.max(dynamic_cost)
+    } else {
+        // Pre-Berlin: no floor cost
+        dynamic_cost
+    };
+
     Ok(cost)
 }
 

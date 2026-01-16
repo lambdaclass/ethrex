@@ -86,6 +86,12 @@ impl LEVM {
             Self::process_withdrawals(db, withdrawals)?;
         }
 
+        // Apply block rewards for pre-merge forks (PoW)
+        // Post-merge forks don't have block rewards (PoS)
+        if let VMType::L1 = vm_type {
+            Self::apply_block_rewards(block, db)?;
+        }
+
         // TODO: I don't like deciding the behavior based on the VMType here.
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
         // in L2 execution, but its implementation behaves differently based on this.
@@ -179,6 +185,11 @@ impl LEVM {
                 .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
 
             account.info.balance += increment.into();
+        }
+
+        // Apply block rewards for pre-merge forks (PoW)
+        if let VMType::L1 = vm_type {
+            Self::apply_block_rewards(block, db)?;
         }
 
         // TODO: I don't like deciding the behavior based on the VMType here.
@@ -486,7 +497,8 @@ impl LEVM {
     ) -> Result<(), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let block_header = &block.header;
-        let fork = chain_config.fork(block_header.timestamp);
+        // Use get_fork_for_block for correct pre-merge (block number) vs post-merge (timestamp) detection
+        let fork = chain_config.get_fork_for_block(block_header.number, block_header.timestamp);
 
         // TODO: I don't like deciding the behavior based on the VMType here.
         if let VMType::L2(_) = vm_type {
@@ -501,6 +513,87 @@ impl LEVM {
             //eip 2935: stores parent block hash in system contract
             Self::process_block_hash_history(block_header, db, vm_type)?;
         }
+        Ok(())
+    }
+
+    /// Applies block rewards for pre-merge (PoW) forks.
+    ///
+    /// Block rewards vary by fork:
+    /// - Frontier/Homestead: 5 ETH
+    /// - Byzantium: 3 ETH (EIP-649)
+    /// - Constantinople+: 2 ETH (EIP-1234)
+    /// - Paris+: 0 (PoS, no mining rewards)
+    ///
+    /// Uncle rewards:
+    /// - Miner gets: base_reward / 32 per uncle
+    /// - Uncle author gets: (8 + uncle_number - block_number) / 8 * base_reward
+    pub fn apply_block_rewards(
+        block: &Block,
+        db: &mut GeneralizedDatabase,
+    ) -> Result<(), EvmError> {
+        let chain_config = db.store.get_chain_config()?;
+        let fork = chain_config.get_fork_for_block(block.header.number, block.header.timestamp);
+
+        // No block rewards for post-merge (PoS)
+        if fork >= Fork::Paris {
+            return Ok(());
+        }
+
+        // Block reward amounts (in wei)
+        const WEI_PER_ETH: u128 = 1_000_000_000_000_000_000;
+        let base_reward: u128 = if fork >= Fork::Constantinople {
+            2 * WEI_PER_ETH // 2 ETH (EIP-1234)
+        } else if fork >= Fork::Byzantium {
+            3 * WEI_PER_ETH // 3 ETH (EIP-649)
+        } else {
+            5 * WEI_PER_ETH // 5 ETH (Frontier/Homestead)
+        };
+
+        // Apply miner reward
+        let mut miner_reward = base_reward;
+
+        // Add uncle inclusion rewards (1/32 of base reward per uncle)
+        let uncle_count = block.body.ommers.len() as u128;
+        let uncle_inclusion_reward = base_reward
+            .checked_mul(uncle_count)
+            .ok_or(EvmError::Custom("Uncle inclusion reward overflow".to_string()))?
+            .checked_div(32)
+            .unwrap_or(0);
+        miner_reward = miner_reward
+            .checked_add(uncle_inclusion_reward)
+            .ok_or(EvmError::Custom("Miner reward overflow".to_string()))?;
+
+        // Add miner reward to coinbase account
+        let coinbase = db
+            .get_account_mut(block.header.coinbase)
+            .map_err(|_| EvmError::DB(format!("Coinbase account {} not found", block.header.coinbase)))?;
+        coinbase.info.balance += U256::from(miner_reward);
+
+        // Apply uncle rewards to each uncle author
+        for ommer in &block.body.ommers {
+            // Uncle reward: (8 + uncle_number - block_number) / 8 * base_reward
+            // This gives higher rewards for uncles that are closer to the current block
+            let uncle_depth = block
+                .header
+                .number
+                .checked_sub(ommer.number)
+                .unwrap_or(0);
+
+            // Uncle depth must be 1-6 (max 6 generations back)
+            if uncle_depth > 0 && uncle_depth <= 6 {
+                let uncle_reward = base_reward
+                    .checked_mul((8 - uncle_depth) as u128)
+                    .ok_or(EvmError::Custom("Uncle reward overflow".to_string()))?
+                    .checked_div(8)
+                    .unwrap_or(0);
+
+                let uncle_author = db
+                    .get_account_mut(ommer.coinbase)
+                    .map_err(|_| EvmError::DB(format!("Uncle author account {} not found", ommer.coinbase)))?;
+                uncle_author.info.balance += U256::from(uncle_reward);
+            }
+        }
+
         Ok(())
     }
 }
