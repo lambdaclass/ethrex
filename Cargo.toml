@@ -19,6 +19,7 @@ members = [
   "crates/networking/p2p",
   "crates/networking/rpc",
   "crates/storage",
+  "crates/storage/ethrex_db",
   "crates/vm",
   "crates/vm/levm",
   "crates/vm/levm/runner",
@@ -73,6 +74,7 @@ ethrex-storage-rollup = { path = "./crates/l2/storage" }
 ethrex = { path = "./cmd/ethrex" }
 ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
 ethrex-threadpool = { path = "./crates/concurrency" }
+ethrex-db = { path = "./crates/storage/ethrex_db" }
 
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }

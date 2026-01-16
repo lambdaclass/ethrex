@@ -1,0 +1,30 @@
+[package]
+name = "ethrex-db"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+description = "A Paprika-inspired Ethereum state storage engine for ethrex"
+license = "MIT"
+
+[dependencies]
+memmap2 = "0.9"
+tiny-keccak = { version = "2.0", features = ["keccak"] }
+parking_lot = "0.12"
+thiserror.workspace = true
+ethereum-types.workspace = true
+
+[dev-dependencies]
+proptest = "1.4"
+tempfile.workspace = true
+hex.workspace = true
+criterion = { version = "0.5", features = ["html_reports"] }
+rand.workspace = true
+
+[[bench]]
+name = "benchmarks"
+harness = false
+
+[lints.clippy]
+unwrap_used = "deny"
+redundant_clone = "warn"

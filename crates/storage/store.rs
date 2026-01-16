@@ -1,5 +1,7 @@
 #[cfg(feature = "rocksdb")]
 use crate::backend::rocksdb::RocksDBBackend;
+#[cfg(feature = "paged-db")]
+use crate::backend::paged_db::PagedDbBackend;
 use crate::{
     STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION,
     api::{
@@ -211,6 +213,9 @@ pub enum EngineType {
     /// RocksDB storage, persistent. Suitable for production.
     #[cfg(feature = "rocksdb")]
     RocksDB,
+    /// PagedDb storage (Paprika-inspired), persistent. Experimental.
+    #[cfg(feature = "paged-db")]
+    PagedDb,
 }
 
 /// Batch of updates to apply to the store atomically.
@@ -1322,6 +1327,11 @@ impl Store {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
                 let backend = Arc::new(RocksDBBackend::open(path)?);
+                Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
+            }
+            #[cfg(feature = "paged-db")]
+            EngineType::PagedDb => {
+                let backend = Arc::new(PagedDbBackend::open(path)?);
                 Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
             }
             EngineType::InMemory => {

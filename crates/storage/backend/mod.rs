@@ -6,3 +6,6 @@ pub mod in_memory;
 /// RocksDB backend
 #[cfg(feature = "rocksdb")]
 pub mod rocksdb;
+/// PagedDb backend (Paprika-inspired storage)
+#[cfg(feature = "paged-db")]
+pub mod paged_db;
