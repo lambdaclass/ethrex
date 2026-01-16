@@ -221,10 +221,10 @@ ethrex-replay generate-input --block 24245149 \
   --rpc-url http://your-ethrex-or-reth-node:8545 \
   --output-dir ./inputs
 
-# Run ziskemu with statistics
+# Run ziskemu with full profiling (-D: detailed, -X: stats, -S: symbols)
 ziskemu -e path/to/zkvm-zisk-program \
   -i ./inputs/ethrex_mainnet_24245149_input.bin \
-  -X -m
+  -D -X -S
 ```
 
 ### Sample Output Analysis
@@ -248,6 +248,21 @@ ziskemu -e path/to/zkvm-zisk-program \
 | MEMORY | 3.6B | 7.34% |
 | BASE | 294M | 0.60% |
 
+#### Top Cost Functions (from `-D -S` flags)
+
+The `-D` and `-S` flags reveal **which functions** consume the most cycles:
+
+| Function | Steps | Cost | % Cost |
+|----------|-------|------|--------|
+| `ethrex_trie::node::Node::memoize_hashes` | 199.8M | 29.1B | **59.08%** |
+| `ethrex_vm::backends::levm::LEVM::execute_tx` | 187.9M | 18.0B | 36.58% |
+| `ethrex_trie::Trie::hash_no_commit` | 105.9M | 15.4B | 31.35% |
+| `GuestProgramState::try_from` (deserialization) | 87.8M | 13.6B | 27.54% |
+| `BranchNode::compute_hash_no_alloc` | 82.3M | 12.8B | 25.97% |
+| `tiny_keccak::Keccak::update` | 59.2M | 11.5B | 23.36% |
+| `memcpy` | 113.3M | 10.4B | 21.18% |
+| `rkyv deserialization` | 55.5M | 5.2B | 10.59% |
+
 #### Top Cost Opcodes
 
 | Opcode | Count | Cost | % |
@@ -261,36 +276,45 @@ ziskemu -e path/to/zkvm-zisk-program \
 
 ### Interpretation
 
-1. **Keccak dominates (18.19%)** — This is inherent to Ethereum's design (storage keys, address derivation, etc.). ZisK's `tiny-keccak` patch is active, so this is already optimized.
+1. **MPT hashing dominates (59.08%)** — `Node::memoize_hashes` is the single biggest cost center. This computes Merkle Patricia Trie hashes for state verification.
 
-2. **secp256k1 operations** — The ~254K secp256k1 ops indicate ~100-150 transaction signatures verified. Using the `k256` patch.
+2. **Keccak is MPT-driven** — The 69,966 keccak calls are primarily from MPT branch node hashing (`BranchNode::compute_hash_no_alloc` → `tiny_keccak::update`), not EVM execution.
 
-3. **MODEXP minimal** — Only 7,985 `arith256_mod` calls, handled by ZisK's native precompile.
+3. **Deserialization overhead (~10%)** — rkyv deserialization of the execution witness takes significant cycles.
 
-4. **SHA256 negligible** — Only 4 calls (0.00% cost).
+4. **memcpy overhead (21%)** — 774,400 memcpy calls for data movement.
+
+5. **secp256k1 operations** — ~254K ops for transaction signature verification, using the `k256` patch.
 
 ### Optimization Verdict
 
-For this block, ZisK achieves near-optimal performance:
-- All available patches are utilized
-- Keccak cost is irreducible (Ethereum design constraint)
-- 4.4 minute proof time on RTX 3090 for 428M steps is excellent
+For this block, ZisK achieves near-optimal **patch utilization**. However, function profiling reveals significant guest program optimization opportunities.
 
 ### Potential Improvements
 
-Since all patches are active, further optimizations require guest program changes:
+The function-level analysis reveals concrete optimization targets:
 
-| Area | Current Cost | Improvement Strategy |
-|------|--------------|---------------------|
-| **MAIN (59.19%)** | 29.2B | Profile hot functions in block validation; reduce redundant computation |
-| **MEMORY (7.34%)** | 3.6B | Optimize MPT traversal depth; compress state witness structure |
-| **Field ops (13.12%)** | 6.5B | Minimize unnecessary comparisons; batch similar operations |
+| Function | Current Cost | Improvement Strategy |
+|----------|--------------|---------------------|
+| **`Node::memoize_hashes`** (59.08%) | 29.1B | Cache intermediate hashes; reduce re-computation |
+| **`memcpy`** (21.18%) | 10.4B | Reduce data copies; use references where possible |
+| **`Trie::hash_no_commit`** (31.35%) | 15.4B | Lazy hash computation; batch node updates |
+| **rkyv deserialization** (10.59%) | 5.2B | Use zero-copy deserialization; reduce witness size |
+| **`BranchNode::compute_hash_no_alloc`** (25.97%) | 12.8B | Optimize branch encoding; reduce allocations |
 
-**Guest program opportunities:**
-1. **Lazy validation** — Defer checks until necessary
-2. **Witness compression** — Reduce state witness size before proving
-3. **Batch signature verification** — Aggregate secp256k1 operations where possible
-4. **Storage access patterns** — Reorder operations to minimize keccak calls for storage keys
+**Specific Guest Program Opportunities:**
+
+1. **MPT Hash Caching** — The same nodes may be hashed multiple times. Implement memoization at the trie level.
+
+2. **Witness Compression** — Reduce the execution witness size before proving to minimize deserialization overhead.
+
+3. **Zero-Copy Deserialization** — Leverage rkyv's zero-copy capabilities more aggressively.
+
+4. **Reduce memcpy** — Profile the 774K memcpy calls to identify unnecessary data movement.
+
+5. **Lazy State Root Computation** — Defer `hash_no_commit` calls until absolutely necessary.
+
+6. **Batch Signature Verification** — Aggregate secp256k1 operations where possible (currently 271 individual verifications).
 
 ---
 
