@@ -854,7 +854,6 @@ impl PeerTableServer {
                         } else {
                             Some(false)
                         };
-                    tracing::trace!("ENR Fork id valid: {is_fork_id_valid:?}");
                     contact.is_fork_id_valid = is_fork_id_valid;
                     contact.record = Some(node_record);
                     vacant_entry.insert(contact);
