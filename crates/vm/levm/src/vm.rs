@@ -521,6 +521,24 @@ impl<'a> VM<'a> {
             return result;
         }
 
+        // Fast path for empty bytecode (EOA transfers)
+        // When sending ETH to an EOA with no code, we can skip the opcode dispatch loop entirely.
+        // The value transfer already happened in prepare_execution, so we just need to return success.
+        if self.current_call_frame.bytecode.bytecode.is_empty() {
+            #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
+            return Ok(ContextResult {
+                result: crate::errors::TxResult::Success,
+                gas_used: {
+                    let callframe = &self.current_call_frame;
+                    callframe
+                        .gas_limit
+                        .checked_sub(callframe.gas_remaining as u64)
+                        .ok_or(InternalError::Underflow)?
+                },
+                output: Bytes::new(),
+            });
+        }
+
         #[cfg(feature = "perf_opcode_timings")]
         let mut timings = crate::timings::OPCODE_TIMINGS.lock().expect("poison");
 
