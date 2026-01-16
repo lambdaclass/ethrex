@@ -209,6 +209,77 @@ Key files for understanding the conditional compilation:
 | `crates/common/crypto/kzg.rs` | KZG backend selection |
 | `crates/l2/prover/src/guest_program/src/*/Cargo.toml` | Patch declarations |
 
+## Real-World Analysis Example: Ethereum Mainnet Block
+
+This section demonstrates how to analyze a ZisK proof using `ziskemu` to identify optimization opportunities.
+
+### Setup
+
+```bash
+# Generate input for a mainnet block using ethrex-replay
+ethrex-replay generate-input --block 24245149 \
+  --rpc-url http://your-ethrex-or-reth-node:8545 \
+  --output-dir ./inputs
+
+# Run ziskemu with statistics
+ziskemu -e path/to/zkvm-zisk-program \
+  -i ./inputs/ethrex_mainnet_24245149_input.bin \
+  -X -m
+```
+
+### Sample Output Analysis
+
+**Block 24245149** (Ethereum Mainnet, January 2026):
+
+| Metric | Value |
+|--------|-------|
+| Proof time (RTX 3090) | 262 seconds |
+| Execution speed | 28.5 Msteps/s |
+| Total steps | 428,779,328 |
+| Proof instances | 207 |
+
+#### Cost Distribution
+
+| Category | Cost | % |
+|----------|------|---|
+| MAIN | 29.2B | 59.19% |
+| PRECOMPILES | 9.3B | 18.92% |
+| OPCODES | 6.9B | 13.96% |
+| MEMORY | 3.6B | 7.34% |
+| BASE | 294M | 0.60% |
+
+#### Top Cost Opcodes
+
+| Opcode | Count | Cost | % |
+|--------|-------|------|---|
+| **keccak** | 69,966 | 8.96B | 18.19% |
+| add | 57.5M | 1.5B | 3.04% |
+| ltu | 18.6M | 1.4B | 2.84% |
+| or | 14.4M | 1.1B | 2.19% |
+| secp256k1_dbl | 144,674 | 197M | 0.40% |
+| secp256k1_add | 109,020 | 148M | 0.30% |
+
+### Interpretation
+
+1. **Keccak dominates (18.19%)** — This is inherent to Ethereum's design (storage keys, address derivation, etc.). ZisK's `tiny-keccak` patch is active, so this is already optimized.
+
+2. **secp256k1 operations** — The ~254K secp256k1 ops indicate ~100-150 transaction signatures verified. Using the `k256` patch.
+
+3. **MODEXP minimal** — Only 7,985 `arith256_mod` calls, handled by ZisK's native precompile.
+
+4. **SHA256 negligible** — Only 4 calls (0.00% cost).
+
+### Optimization Verdict
+
+For this block, ZisK achieves near-optimal performance:
+- All available patches are utilized
+- Keccak cost is irreducible (Ethereum design constraint)
+- 4.4 minute proof time on RTX 3090 for 428M steps is excellent
+
+**Potential improvements** would require changes to the guest program logic itself (reducing MAIN execution overhead at 59.19%), not additional patches.
+
+---
+
 ## Further Reading
 
 - [Backend Comparison](./backends.md) — Detailed backend comparison
