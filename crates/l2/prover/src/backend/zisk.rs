@@ -154,6 +154,10 @@ pub fn prove(
 
     let output_dir = Path::new(OUTPUT_DIR_PATH);
     std::fs::create_dir_all(output_dir)?;
+    std::fs::create_dir_all(output_dir.join("proofs"))?;
+
+    let cwd = std::env::current_dir()?;
+    std::fs::create_dir_all(cwd.join("tmp"))?;
 
     let proving_key_path = resolve_proving_key_path();
     let witness_lib_path = resolve_witness_lib_path()?;
