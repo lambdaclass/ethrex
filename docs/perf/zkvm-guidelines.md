@@ -4,6 +4,76 @@ When benchmarking zkVM provers (ZisK, SP1, RISC0, etc.), additional consideratio
 
 ---
 
+## Claude Instructions for zkVM Benchmarking
+
+**When the user asks to benchmark zkVM proving (ZisK, SP1, RISC0):**
+
+### Pre-Flight Checks
+
+1. **Verify prover is installed:**
+   ```bash
+   # ZisK
+   cargo-zisk --version
+
+   # SP1
+   cargo prove --version
+
+   # RISC0
+   cargo risczero --version
+   ```
+
+2. **Check GPU availability (for ZisK/RISC0):**
+   ```bash
+   nvidia-smi
+   ```
+
+3. **Check GPU temperature before starting:**
+   ```bash
+   nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader
+   # Should be <50°C before starting
+   ```
+
+### Running zkVM Benchmarks
+
+**IMPORTANT:** zkVM proofs take minutes, not milliseconds. Always use background execution:
+
+```bash
+# Start proving in background
+Bash(
+  command="time cargo-zisk prove -e $ELF -i $INPUT -o /tmp/proof -a -u -y 2>&1 | tee proof_output.log",
+  run_in_background=true
+)
+```
+
+Then check progress:
+```bash
+TaskOutput(task_id="...", block=false)  # Non-blocking check
+# or
+tail -20 proof_output.log  # Read recent output
+```
+
+### Cooldown Between Proofs
+
+**GPU proofs generate significant heat.** Between runs:
+1. Wait for GPU temp to drop below 50°C
+2. Minimum 2 minutes between proof attempts
+3. Check: `nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader`
+
+### Reporting zkVM Results
+
+Report in this format:
+```
+zkVM Experiment NNN: [Name]
+Prover: ZisK v0.15.0 / SP1 / RISC0
+GPU: RTX 3090
+Proof time: 262s (baseline: 310s)
+Change: -15.5%
+Steps: 1.5B
+Verdict: KEEP
+```
+
+---
+
 ## Additional Metrics
 
 Track zkVM-specific metrics beyond time:

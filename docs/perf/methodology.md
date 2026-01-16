@@ -2,8 +2,100 @@
 
 A standardized workflow for running benchmarks, testing optimizations, and tracking results. Designed for reproducibility across sessions and team members.
 
-> **Version:** 1.0.0
+> **Version:** 1.1.0
 > **Last Updated:** 2026-01-16
+
+---
+
+## Claude Instructions
+
+**This section is for Claude (the AI assistant) to follow when commanded to do benchmarking work.**
+
+### When to Use This Workflow
+
+Use this workflow when the user asks to:
+- "Run benchmarks on [feature]"
+- "Optimize [component]"
+- "Profile and improve performance"
+- "Test this optimization"
+- "Start a benchmarking session"
+
+### Invocation Checklist
+
+When starting a benchmarking session:
+
+1. **Read this file first** - Follow the phases in order
+2. **Read [architecture.md](architecture.md)** - Understand the codebase structure
+3. **Read [ideas.md](ideas.md)** - Check existing ideas and their status
+4. **Check for existing TRACKER.md** in `docs/perf/experiments/` - Resume if exists
+5. **Ask user for sources** (Phase 1.1) before planning
+
+### Tool Usage
+
+| Task | Tool to Use |
+|------|-------------|
+| Run benchmarks | `Bash` (with `run_in_background: true` for long runs) |
+| Read benchmark output | `Read` or `TaskOutput` for background tasks |
+| Create experiment directories | `Bash` with `mkdir -p` |
+| Write tracking files | `Write` for TRACKER.md, YAML files |
+| Update ideas.md | `Edit` to modify specific rows |
+| Profile code | `Bash` with samply/perf commands |
+| Check system state | `Bash` with `htop`, `free -h`, `nvidia-smi` |
+
+### File Locations
+
+All benchmarking artifacts go in `docs/perf/`:
+- `docs/perf/experiments/NNN-name/` - Per-experiment data
+- `docs/perf/experiments/TRACKER.md` - Current session tracking
+- `docs/perf/HISTORY.yaml` - Cross-session history
+- `docs/perf/ideas.md` - Update after each experiment
+
+### Session Continuity
+
+**At session start:**
+1. Check if `docs/perf/experiments/TRACKER.md` exists
+2. If yes, read it and ask user: "Found existing session from [date]. Resume or start fresh?"
+3. If resuming, continue from where TRACKER.md left off
+
+**At session end or when interrupted:**
+1. Update TRACKER.md with current state
+2. Update ideas.md with any results
+3. Tell user: "Session state saved to TRACKER.md. Resume anytime."
+
+### Long-Running Benchmarks
+
+For benchmarks that take >2 minutes:
+1. Use `Bash` with `run_in_background: true`
+2. Tell user the benchmark is running
+3. Use `TaskOutput` to check progress periodically
+4. Parse results when complete
+
+Example:
+```
+# Start benchmark in background
+Bash(command="hyperfine --runs 10 '...' --export-json results.json", run_in_background=true)
+
+# Check on it later
+TaskOutput(task_id="...", block=false)
+```
+
+### Reporting to User
+
+After each experiment, report:
+```
+Experiment NNN: [Name]
+Result: [time] (baseline: [baseline_time])
+Change: [percentage]%
+Verdict: KEEP/DISCARD/MAYBE
+Reason: [brief explanation]
+```
+
+### Context Updates
+
+Update the project context file (`~/Personal/contexts/lambdaclass-ethrex_4.md`) with:
+- Current benchmarking focus
+- Key findings
+- Next steps
 
 ---
 
@@ -481,40 +573,84 @@ Generate a summary:
 
 ## Reference Commands
 
-### Benchmarking
+### ethrex Benchmarking
 
 ```bash
-# Hyperfine with all options
+# Quick synthetic benchmark (ETH transfers, ~100 blocks)
+cargo run -p ethrex-benches --bin perf_bench --release
+
+# With hyperfine for statistical rigor
 hyperfine \
   --warmup 3 \
   --runs 10 \
-  --timeout 300 \
   --export-json results.json \
-  --export-markdown results.md \
-  --show-output \
-  'command'
+  'cargo run -p ethrex-benches --bin perf_bench --release'
 
-# Quick synthetic benchmark
-cargo run -p ethrex-benches --bin perf_bench --release
+# Build benchmark binary first (faster iteration)
+cargo build -p ethrex-benches --bin perf_bench --release
+hyperfine --warmup 3 --runs 10 './target/release/perf_bench'
 ```
 
 ### Profiling
 
 ```bash
 # CPU profiling with samply
-samply record --save-only target/release/perf_bench
+cargo build -p ethrex-benches --bin perf_bench --release
+samply record --save-only ./target/release/perf_bench
 
-# View profile
-samply load profile_*.json
+# View profile in browser
+samply load perf.json  # opens browser
 
-# Flamegraph
-cargo flamegraph --bin perf_bench -- [args]
+# Flamegraph (requires cargo-flamegraph)
+cargo flamegraph -p ethrex-benches --bin perf_bench
+
+# perf stat for quick overview
+perf stat ./target/release/perf_bench
+```
+
+### System Checks
+
+```bash
+# Check system load before benchmarking
+uptime
+free -h
+
+# Check for interfering processes
+ps aux --sort=-%cpu | head -10
+
+# For GPU workloads
+nvidia-smi --query-gpu=temperature.gpu,utilization.gpu,memory.used --format=csv
+```
+
+### Creating Experiment Structure
+
+```bash
+# Create new experiment directory
+EXP_ID="001"
+EXP_NAME="skip-zero-init"
+mkdir -p docs/perf/experiments/${EXP_ID}-${EXP_NAME}
+
+# Copy templates
+cp docs/perf/templates/environment.yaml docs/perf/experiments/${EXP_ID}-${EXP_NAME}/
+cp docs/perf/templates/inputs.yaml docs/perf/experiments/${EXP_ID}-${EXP_NAME}/
+```
+
+### Git Branch Strategy
+
+```bash
+# Create experiment branch
+git checkout -b bench/001-skip-zero-init
+
+# After testing - rename based on result
+git branch -m bench/001-skip-zero-init bench/001-skip-zero-init-KEEP
+# or
+git branch -m bench/001-skip-zero-init bench/001-skip-zero-init-DISCARD
 ```
 
 ### Serve Report
 
 ```bash
-# Simple HTTP server
+# Simple HTTP server for dashboard
 python3 -m http.server 8080 --directory docs/perf/report
 ```
 
