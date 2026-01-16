@@ -2,9 +2,13 @@
 
 ## Perf
 
-### 2026-01-14
+### 2026-01-16
 
 - Avoid unnecesary clones in engine_newPayloadV3/V4 [#5836](https://github.com/lambdaclass/ethrex/pull/5836)
+
+### 2026-01-15
+
+- Reduce state iterated when calculating partial state transitions [#5864](https://github.com/lambdaclass/ethrex/pull/5864)
 
 ### 2026-01-13
 
