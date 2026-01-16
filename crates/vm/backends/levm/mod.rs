@@ -226,16 +226,20 @@ impl LEVM {
                 },
             );
 
-        for (address, _) in block
+        for withdrawal in block
             .body
             .withdrawals
             .iter()
             .flatten()
             .filter(|withdrawal| withdrawal.amount > 0)
-            .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
         {
-            db.get_account_mut(address)
-                .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
+            db.get_account_mut(withdrawal.address)
+                .map_err(|_| {
+                    EvmError::DB(format!(
+                        "Withdrawal account {} not found",
+                        withdrawal.address
+                    ))
+                })?;
         }
         Ok(())
     }
