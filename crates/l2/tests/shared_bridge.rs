@@ -184,6 +184,17 @@ async fn test_transfer_erc_20() -> Result<()> {
         "test_transfer_erc_20: Invalid deposit"
     );
 
+    // Verify L1 bridge deposits accounting was updated correctly.
+    // Due to the bug in get_balance_diffs (value_per_token is always empty),
+    // the L1 publishL2Messages never updates the deposits mapping for ERC20 transfers.
+    let l1_deposits_after =
+        get_bridge_deposits(&l1_client, bridge_address()?, l1_erc20_contract_address, l2a_erc20_contract_address).await;
+    assert_eq!(
+        l1_deposits_after,
+        U256::from(DEPOSIT_VALUE) - transfer_amount,
+        "test_transfer_erc_20: L1 deposits should decrease after L2->L2 transfer"
+    );
+
     Ok(())
 }
 
@@ -739,6 +750,29 @@ async fn test_balance_of(client: &EthClient, token: Address, user: Address) -> U
             encode_calldata("balanceOf(address)", &[Value::Address(user)])
                 .unwrap()
                 .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+    U256::from_str_radix(res.trim_start_matches("0x"), 16).unwrap()
+}
+
+/// Reads the `deposits(address,address)` mapping from the L1 CommonBridge contract.
+async fn get_bridge_deposits(
+    client: &EthClient,
+    bridge: Address,
+    token_l1: Address,
+    token_l2: Address,
+) -> U256 {
+    let res = client
+        .call(
+            bridge,
+            encode_calldata(
+                "deposits(address,address)",
+                &[Value::Address(token_l1), Value::Address(token_l2)],
+            )
+            .unwrap()
+            .into(),
             Default::default(),
         )
         .await
