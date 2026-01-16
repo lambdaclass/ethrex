@@ -172,7 +172,7 @@ pub fn get_client_version() -> ethrex_rpc::ClientVersion {
 
 /// Returns a detailed client version string with git info (for clap attributes).
 pub fn get_client_version_string() -> String {
-    get_client_version_string()
+    get_client_version().to_string()
 }
 
 /// Returns a minimal client version string without git info.
