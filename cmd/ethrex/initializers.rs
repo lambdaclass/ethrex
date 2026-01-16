@@ -502,7 +502,7 @@ pub async fn init_l1(
         peer_table.clone(),
         store.clone(),
         blockchain.clone(),
-        get_client_version(),
+        get_client_version_string(),
         None,
         opts.tx_broadcasting_time_interval,
         opts.lookup_interval,

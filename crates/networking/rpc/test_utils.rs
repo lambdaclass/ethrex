@@ -1,6 +1,6 @@
 use crate::{
     eth::gas_tip_estimator::GasTipEstimator,
-    rpc::{NodeData, RpcApiContext, start_api, start_block_executor},
+    rpc::{ClientVersion, NodeData, RpcApiContext, start_api, start_block_executor},
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
@@ -242,7 +242,14 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             local_node_record,
             dummy_sync_manager().await,
             dummy_peer_handler().await,
-            "ethrex/test".to_string(),
+            ClientVersion::new(
+                "ethrex".to_string(),
+                "0.1.0".to_string(),
+                "test".to_string(),
+                "abcd1234".to_string(),
+                "x86_64-unknown-linux".to_string(),
+                "1.70.0".to_string(),
+            ),
             None,
             DEFAULT_BUILDER_GAS_CEIL,
             String::new(),
@@ -266,7 +273,14 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
             jwt_secret: Default::default(),
             local_p2p_node: example_p2p_node(),
             local_node_record,
-            client_version: "ethrex/test".to_string(),
+            client_version: ClientVersion::new(
+                "ethrex".to_string(),
+                "0.1.0".to_string(),
+                "test".to_string(),
+                "abcd1234".to_string(),
+                "x86_64-unknown-linux".to_string(),
+                "1.70.0".to_string(),
+            ),
             extra_data: Bytes::new(),
         },
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),

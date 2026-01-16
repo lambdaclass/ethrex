@@ -3,7 +3,7 @@ use serde_json::Value;
 use tracing::debug;
 
 use crate::{
-    rpc::{RpcApiContext, RpcHandler},
+    rpc::{ClientVersion, RpcApiContext, RpcHandler},
     utils::RpcErr,
 };
 
@@ -27,47 +27,19 @@ pub struct ClientVersionV1 {
 }
 
 impl ClientVersionV1 {
-    /// Creates a new ClientVersionV1 for the ethrex client by parsing the client_version string.
-    ///
-    /// The client_version string has the format:
-    /// `{name}/v{version}-{branch}-{commit}/{triple}/rustc-v{rustc_version}`
-    ///
-    /// For example: `ethrex/v0.1.0-main-abc12345/x86_64-apple-darwin/rustc-v1.70.0`
-    pub fn from_client_version_string(client_version: &str) -> Self {
-        // Default values in case parsing fails
-        let mut name = "ethrex".to_string();
-        let mut version = "unknown".to_string();
-        let mut commit = "00000000".to_string();
-
-        // Parse the client version string
-        // Format: {name}/v{version}-{branch}-{commit}/{triple}/rustc-v{rustc_version}
-        let parts: Vec<&str> = client_version.split('/').collect();
-        if !parts.is_empty() && !parts[0].is_empty() {
-            name = parts[0].to_string();
-        }
-        if parts.len() > 1 {
-            // parts[1] is like "v0.1.0-main-abc12345"
-            let version_parts: Vec<&str> = parts[1].split('-').collect();
-            if !version_parts.is_empty() {
-                version = version_parts[0].to_string();
-            }
-            // The commit hash is the last part after the last hyphen
-            // e.g., "v0.1.0-main-abc12345" -> "abc12345"
-            if version_parts.len() >= 3 {
-                let sha = version_parts.last().unwrap_or(&"00000000");
-                // Take only first 8 characters (4 bytes)
-                commit = if sha.len() >= 8 {
-                    sha[..8].to_string()
-                } else {
-                    sha.to_string()
-                };
-            }
-        }
+    /// Creates a new ClientVersionV1 for the ethrex client from the ClientVersion struct.
+    pub fn from_client_version(cv: &ClientVersion) -> Self {
+        // Take only first 8 characters (4 bytes) of the commit hash
+        let commit = if cv.commit.len() >= 8 {
+            cv.commit[..8].to_string()
+        } else {
+            cv.commit.clone()
+        };
 
         Self {
             code: "EX".to_string(),
-            name,
-            version,
+            name: cv.name.clone(),
+            version: format!("v{}", cv.version),
             commit,
         }
     }
@@ -113,7 +85,7 @@ impl RpcHandler for GetClientVersionV1Request {
         // When connected to multiple execution clients via a multiplexer, the multiplexer
         // would concatenate responses, but ethrex is a single client.
         let client_version =
-            ClientVersionV1::from_client_version_string(&context.node_data.client_version);
+            ClientVersionV1::from_client_version(&context.node_data.client_version);
 
         serde_json::to_value(vec![client_version])
             .map_err(|error| RpcErr::Internal(error.to_string()))
@@ -165,11 +137,13 @@ mod tests {
             "Should return exactly one client version"
         );
 
-        // Verify the client version fields
+        // Verify the client version fields match the test context
+        // Test context uses: name="ethrex", version="0.1.0", commit="abcd1234"
         let client_version = &response_array[0];
         assert_eq!(client_version["code"], "EX");
-        // The test context uses "ethrex/test" as client_version
         assert_eq!(client_version["name"], "ethrex");
+        assert_eq!(client_version["version"], "v0.1.0");
+        assert_eq!(client_version["commit"], "abcd1234");
     }
 
     #[tokio::test]
@@ -224,14 +198,59 @@ mod tests {
     }
 
     #[test]
-    fn test_from_client_version_string() {
-        // Test with a typical version string
-        let version_str = "ethrex/v0.1.0-main-abc12345/x86_64-apple-darwin/rustc-v1.70.0";
-        let client_version = ClientVersionV1::from_client_version_string(version_str);
+    fn test_from_client_version() {
+        let cv = ClientVersion::new(
+            "ethrex".to_string(),
+            "0.1.0".to_string(),
+            "rpc/engine_getClientVersionV1".to_string(), // Branch with slash
+            "abc12345def67890".to_string(),              // Long commit hash
+            "x86_64-apple-darwin".to_string(),
+            "1.70.0".to_string(),
+        );
+
+        let client_version = ClientVersionV1::from_client_version(&cv);
 
         assert_eq!(client_version.code, "EX");
         assert_eq!(client_version.name, "ethrex");
         assert_eq!(client_version.version, "v0.1.0");
+        // Commit should be truncated to 8 characters
         assert_eq!(client_version.commit, "abc12345");
+    }
+
+    #[test]
+    fn test_from_client_version_short_commit() {
+        let cv = ClientVersion::new(
+            "ethrex".to_string(),
+            "0.1.0".to_string(),
+            "main".to_string(),
+            "abc".to_string(), // Short commit hash
+            "x86_64-apple-darwin".to_string(),
+            "1.70.0".to_string(),
+        );
+
+        let client_version = ClientVersionV1::from_client_version(&cv);
+
+        // Short commit should be kept as-is
+        assert_eq!(client_version.commit, "abc");
+    }
+
+    #[test]
+    fn test_client_version_v1_serialization() {
+        let client_version = ClientVersionV1 {
+            code: "EX".to_string(),
+            name: "ethrex".to_string(),
+            version: "v0.1.0".to_string(),
+            commit: "abcd1234".to_string(),
+        };
+
+        let serialized = serde_json::to_value(&client_version).unwrap();
+        assert_eq!(serialized["code"], "EX");
+        assert_eq!(serialized["name"], "ethrex");
+        assert_eq!(serialized["version"], "v0.1.0");
+        assert_eq!(serialized["commit"], "abcd1234");
+
+        // Test deserialization
+        let deserialized: ClientVersionV1 = serde_json::from_value(serialized).unwrap();
+        assert_eq!(deserialized, client_version);
     }
 }

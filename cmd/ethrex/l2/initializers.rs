@@ -246,7 +246,7 @@ pub async fn init_l2(
             peer_table.clone(),
             store.clone(),
             blockchain.clone(),
-            get_client_version(),
+            get_client_version_string(),
             #[cfg(feature = "l2")]
             Some(P2PBasedContext {
                 store_rollup: rollup_store.clone(),
