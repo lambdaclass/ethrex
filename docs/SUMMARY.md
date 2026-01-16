@@ -45,6 +45,7 @@
   - [Deploying a validium ethrex L2](./l2/deployment/validium.md)
   - [Deploying a based ethrex L2](./l2/deployment/based.md)
   - [Ethrex <> Aligned](./l2/deployment/aligned.md)
+  - [Ethrex <> Aligned | Failure Recovery Guide](./l2/deployment/aligned_failure_recovery.md)
   - [Synchronous Composability PoC](./l2/deployment/synchronous_composability_poc.md)
   - [Deploying a shared bridge enabled L2](./l2/deployment/shared_bridge.md)
   - [Deploying a fee token](./l2/deployment/fee_token.md)
