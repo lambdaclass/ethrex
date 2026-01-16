@@ -59,7 +59,7 @@ Before handling failures, understand the proof lifecycle in Aligned mode:
 
 **No manual intervention required.** The system handles this automatically:
 
-1. **L1ProofSender** continuously retries sending proofs at the configured interval (`--proof-coordinator.proof-send-interval-ms`, default 30000ms)
+1. **L1ProofSender** continuously retries sending proofs at the configured interval (`--proof-coordinator.send-interval`, default 30000ms)
 2. Once Aligned recovers, proofs will be submitted in order
 3. **L1ProofVerifier** will resume polling and verification
 
@@ -76,7 +76,7 @@ curl -X GET http://localhost:5555/health | jq '.proof_sender'
 
 ### Configuration Tips
 
-- Consider increasing `--proof-coordinator.proof-send-interval-ms` during known Aligned maintenance windows to reduce log noise
+- Consider increasing `--proof-coordinator.send-interval` during known Aligned maintenance windows to reduce log noise
 
 ---
 
