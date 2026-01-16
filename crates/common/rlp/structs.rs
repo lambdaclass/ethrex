@@ -117,6 +117,10 @@ impl<'a> Decoder<'a> {
     pub const fn finish_unchecked(self) -> &'a [u8] {
         self.remaining
     }
+
+    pub const fn get_payload_len(&self) -> usize {
+        self.payload.len()
+    }
 }
 
 fn field_decode_error<T>(field_name: &str, err: RLPDecodeError) -> RLPDecodeError {

@@ -4,11 +4,9 @@ use crate::rlpx::l2::l2_connection::P2PBasedContext;
 #[derive(Clone, Debug)]
 pub struct P2PBasedContext;
 use crate::{
-    discv4::{
-        peer_table::{PeerData, PeerTable},
-        server::{DiscoveryServer, DiscoveryServerError},
-    },
+    discovery_server::{DiscoveryServer, DiscoveryServerError},
     metrics::METRICS,
+    peer_table::{PeerData, PeerTable},
     rlpx::{
         connection::server::{PeerConnBroadcastSender, PeerConnection},
         message::Message,
@@ -106,17 +104,15 @@ pub enum NetworkError {
 }
 
 pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<(), NetworkError> {
-    let udp_socket = Arc::new(
-        UdpSocket::bind(context.local_node.udp_addr())
-            .await
-            .expect("Failed to bind udp socket"),
-    );
+    let udp_socket = UdpSocket::bind(context.local_node.udp_addr())
+        .await
+        .expect("Failed to bind udp socket");
 
     DiscoveryServer::spawn(
         context.storage.clone(),
         context.local_node.clone(),
         context.signer,
-        udp_socket.clone(),
+        udp_socket,
         context.table.clone(),
         bootnodes,
         context.initial_lookup_interval,

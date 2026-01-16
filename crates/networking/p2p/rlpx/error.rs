@@ -1,5 +1,5 @@
 use super::{message::Message, p2p::DisconnectReason};
-use crate::discv4::peer_table::PeerTableError;
+use crate::peer_table::PeerTableError;
 use aes::cipher::InvalidLength;
 use ethrex_blockchain::error::{ChainError, MempoolError};
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};

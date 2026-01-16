@@ -1,7 +1,7 @@
 use crate::rlpx::initiator::RLPxInitiator;
 use crate::{
-    discv4::peer_table::{PeerData, PeerTable, PeerTableError},
     metrics::{CurrentStepValue, METRICS},
+    peer_table::{PeerData, PeerTable, PeerTableError},
     rlpx::{
         connection::server::PeerConnection,
         error::PeerConnectionError,
