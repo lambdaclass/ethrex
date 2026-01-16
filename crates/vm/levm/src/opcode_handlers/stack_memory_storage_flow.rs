@@ -60,6 +60,7 @@ impl<'a> VM<'a> {
     }
 
     // MLOAD operation
+    #[inline]
     pub fn op_mload(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         let offset = u256_to_usize(current_call_frame.stack.pop1()?)?;
