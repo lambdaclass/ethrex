@@ -4,9 +4,7 @@ flamegraph-hoodi start-lighthouse start-ethrex backup-db start-mainnet-metrics-d
 start-sepolia-metrics-docker start-holesky-metrics-docker start-hoodi-metrics-docker \
 start-metrics-docker tail-syncing-logs tail-metrics-logs copy_flamegraph import-with-metrics \
 multisync-up multisync-down multisync-clean multisync-logs multisync-status \
-multisync-restart multisync-monitor multisync-run multisync-loop \
-multisync-build multisync-run-validate multisync-loop-validate \
-multisync-up-validate multisync-restart-validate
+multisync-restart multisync-monitor multisync-run multisync-loop multisync-loop-auto
 
 ETHREX_DIR ?= "../.."
 EVM ?= levm
@@ -235,13 +233,13 @@ comma := ,
 MULTISYNC_NETWORK_LIST := $(subst $(comma), ,$(MULTISYNC_NETWORKS))
 MULTISYNC_SERVICES := $(foreach n,$(MULTISYNC_NETWORK_LIST),setup-jwt-$(n) ethrex-$(n) consensus-$(n))
 
-# Validation build configuration
-# Build profile for validation builds (enables debug_assert! macros for trie validation)
+# Auto-update configuration (for multisync-loop-auto)
+# Build profile: 'release-with-debug-assertions' enables state trie validation
 MULTISYNC_BUILD_PROFILE ?= release-with-debug-assertions
-# Local image tag for validation builds
+# Local image tag for builds
 MULTISYNC_LOCAL_IMAGE ?= ethrex-local:validate
-# Compose command with local image override
-MULTISYNC_COMPOSE_VALIDATE = ETHREX_IMAGE=$(MULTISYNC_LOCAL_IMAGE) ETHREX_PULL_POLICY=never $(MULTISYNC_COMPOSE)
+# Branch to track for auto-update mode (defaults to current branch if not set)
+MULTISYNC_BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
 
 multisync-up: ## Start all networks specified in MULTISYNC_NETWORKS via Docker Compose.
 	$(MULTISYNC_COMPOSE) up -d $(MULTISYNC_SERVICES)
@@ -307,11 +305,11 @@ multisync-list-logs: ## List all saved run logs.
 	fi
 
 # ==============================================================================
-# Multisync with State Trie Validation
+# Multisync with Auto-Update and Validation
 # ==============================================================================
-# These targets build ethrex locally with debug assertions enabled, which
-# triggers state trie validation after snap sync completes (same as daily
-# snapsync CI checks). The validation verifies:
+# The multisync-loop-auto target pulls latest code and rebuilds before each run.
+# When using 'release-with-debug-assertions' profile, state trie validation is
+# enabled (same as daily snapsync CI checks). The validation verifies:
 #   - State root: traverses entire account trie, validates all node hashes
 #   - Storage roots: validates each account's storage trie (parallelized)
 #   - Bytecodes: verifies code exists for all accounts with code
@@ -319,34 +317,17 @@ multisync-list-logs: ## List all saved run logs.
 # If validation fails, the node exits with code 1 and logs the error.
 # ==============================================================================
 
-multisync-build: ## Build ethrex Docker image locally with debug assertions for trie validation.
-	@echo "Building ethrex with profile: $(MULTISYNC_BUILD_PROFILE)"
+multisync-loop-auto: ## Continuous loop with auto-update: pull latest, build, and validate on each run.
+	@echo "Starting multisync loop with auto-update enabled..."
+	@echo "Branch: $(MULTISYNC_BRANCH)"
+	@echo "Build profile: $(MULTISYNC_BUILD_PROFILE)"
 	@echo "Image tag: $(MULTISYNC_LOCAL_IMAGE)"
-	docker build \
-		--build-arg PROFILE="$(MULTISYNC_BUILD_PROFILE)" \
-		-t $(MULTISYNC_LOCAL_IMAGE) \
-		-f $(ETHREX_DIR)/Dockerfile \
-		$(ETHREX_DIR)
-
-multisync-run-validate: multisync-build ## Single run with validation: build + start + monitor (exits on completion).
-	@echo "Starting multisync with state trie validation enabled..."
-	@echo "Using locally-built image: $(MULTISYNC_LOCAL_IMAGE)"
-	$(MULTISYNC_COMPOSE_VALIDATE) up -d $(MULTISYNC_SERVICES)
-	@echo "Waiting 10s for containers to start..."
-	@sleep 10
-	python3 docker_monitor.py --networks $(MULTISYNC_NETWORKS) --exit-on-success
-
-multisync-loop-validate: multisync-build ## Continuous loop with validation: build + sync + restart on success.
-	@echo "Starting multisync loop with state trie validation enabled..."
-	@echo "Using locally-built image: $(MULTISYNC_LOCAL_IMAGE)"
-	$(MULTISYNC_COMPOSE_VALIDATE) up -d $(MULTISYNC_SERVICES)
-	@echo "Waiting 10s for containers to start..."
-	@sleep 10
-	python3 docker_monitor.py --networks $(MULTISYNC_NETWORKS) --compose-file docker-compose.multisync.yaml --compose-dir $(CURDIR)
-
-multisync-up-validate: multisync-build ## Start all networks with validation-enabled image.
-	$(MULTISYNC_COMPOSE_VALIDATE) up -d $(MULTISYNC_SERVICES)
-
-multisync-restart-validate: multisync-build ## Restart the cycle with validation (clean volumes + start fresh).
-	$(MULTISYNC_COMPOSE_VALIDATE) down -v
-	$(MULTISYNC_COMPOSE_VALIDATE) up -d $(MULTISYNC_SERVICES)
+	python3 docker_monitor.py \
+		--networks $(MULTISYNC_NETWORKS) \
+		--compose-file docker-compose.multisync.yaml \
+		--compose-dir $(CURDIR) \
+		--auto-update \
+		--branch "$(MULTISYNC_BRANCH)" \
+		--build-profile "$(MULTISYNC_BUILD_PROFILE)" \
+		--image-tag "$(MULTISYNC_LOCAL_IMAGE)" \
+		--ethrex-dir "$(ETHREX_DIR)"

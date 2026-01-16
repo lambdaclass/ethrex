@@ -90,6 +90,60 @@ def git_branch() -> str:
         return "unknown"
 
 
+def git_pull_latest(branch: str, ethrex_dir: str) -> tuple[bool, str]:
+    """Fetch and pull latest changes from the specified branch.
+
+    Returns (success, new_commit_hash).
+    """
+    try:
+        print(f"📥 Pulling latest from branch '{branch}'...")
+        # Fetch all remotes
+        subprocess.run(["git", "fetch", "--all"], cwd=ethrex_dir, check=True, capture_output=True)
+        # Checkout the branch
+        subprocess.run(["git", "checkout", branch], cwd=ethrex_dir, check=True, capture_output=True)
+        # Pull latest
+        subprocess.run(["git", "pull"], cwd=ethrex_dir, check=True, capture_output=True)
+        # Get new commit hash
+        new_commit = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=ethrex_dir,
+            stderr=subprocess.DEVNULL
+        ).decode().strip()
+        print(f"✅ Updated to commit {new_commit}")
+        return True, new_commit
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Failed to pull latest: {e}")
+        return False, ""
+
+
+def build_docker_image(profile: str, image_tag: str, ethrex_dir: str) -> bool:
+    """Build the Docker image with the specified profile.
+
+    Args:
+        profile: Cargo build profile (e.g., 'release-with-debug-assertions')
+        image_tag: Docker image tag (e.g., 'ethrex-local:validate')
+        ethrex_dir: Path to ethrex repository root
+    """
+    print(f"🔨 Building Docker image with profile '{profile}'...")
+    print(f"   Image tag: {image_tag}")
+    try:
+        subprocess.run(
+            [
+                "docker", "build",
+                "--build-arg", f"PROFILE={profile}",
+                "-t", image_tag,
+                "-f", f"{ethrex_dir}/Dockerfile",
+                ethrex_dir
+            ],
+            check=True
+        )
+        print("✅ Docker image built successfully")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Failed to build Docker image: {e}")
+        return False
+
+
 def container_start_time(name: str) -> Optional[float]:
     try:
         out = subprocess.check_output(["docker", "inspect", "-f", "{{.State.StartedAt}}", name], stderr=subprocess.DEVNULL).decode().strip()
@@ -203,7 +257,7 @@ def rpc_call(url: str, method: str) -> Optional[Any]:
         return None
 
 
-def slack_notify(run_id: str, run_count: int, instances: list, hostname: str, branch: str, commit: str, validation_enabled: bool = False):
+def slack_notify(run_id: str, run_count: int, instances: list, hostname: str, branch: str, commit: str, build_profile: str = ""):
     """Send a single summary Slack message for the run."""
     all_success = all(i.status == "success" for i in instances)
     url = os.environ.get("SLACK_WEBHOOK_URL_SUCCESS" if all_success else "SLACK_WEBHOOK_URL_FAILED")
@@ -215,9 +269,9 @@ def slack_notify(run_id: str, run_count: int, instances: list, hostname: str, br
     elapsed_secs = (datetime.now() - run_start).total_seconds()
     elapsed_str = fmt_time(elapsed_secs)
 
-    # Check if any instance had validation activity
-    any_validation = validation_enabled or any(i.validation_status for i in instances)
-    validation_str = "enabled ✓" if any_validation else "disabled"
+    # Validation is enabled when using debug-assertions profile
+    validation_enabled = "debug-assertions" in build_profile
+    validation_str = "enabled ✓" if validation_enabled else "disabled"
 
     # Check for validation failures
     validation_failures = [i for i in instances if i.error and "validation" in i.error.lower()]
@@ -311,7 +365,7 @@ def save_all_logs(instances: list[Instance], run_id: str, compose_file: str):
     print(f"📁 Logs saved to {LOGS_DIR}/run_{run_id}/\n")
 
 
-def log_run_result(run_id: str, run_count: int, instances: list[Instance], hostname: str, branch: str, commit: str):
+def log_run_result(run_id: str, run_count: int, instances: list[Instance], hostname: str, branch: str, commit: str, build_profile: str = ""):
     """Append run result to the persistent log file."""
     ensure_logs_dir()
     all_success = all(i.status == "success" for i in instances)
@@ -320,9 +374,9 @@ def log_run_result(run_id: str, run_count: int, instances: list[Instance], hostn
     elapsed_secs = (datetime.now() - run_start).total_seconds()
     elapsed_str = fmt_time(elapsed_secs)
 
-    # Check validation status
-    any_validation = any(i.validation_status for i in instances)
-    validation_str = "enabled" if any_validation else "disabled"
+    # Validation is enabled when using debug-assertions profile
+    validation_enabled = "debug-assertions" in build_profile
+    validation_str = "enabled" if validation_enabled else "disabled"
     validation_failures = [i for i in instances if i.error and "validation" in i.error.lower()]
 
     # Build log entry as plain text
@@ -395,13 +449,64 @@ def get_next_run_count() -> int:
         return 1
 
 
-def restart_containers(compose_file: str, compose_dir: str):
-    """Stop and restart docker compose containers, clearing volumes."""
+def start_containers(compose_file: str, compose_dir: str, networks: list[str], image_tag: str = ""):
+    """Start docker compose containers.
+
+    Args:
+        compose_file: Docker compose file name
+        compose_dir: Directory containing docker compose file
+        networks: List of network names to start
+        image_tag: Optional image tag override (sets ETHREX_IMAGE env var)
+    """
+    print("🚀 Starting containers...", flush=True)
+    try:
+        env = os.environ.copy()
+        if image_tag:
+            env["ETHREX_IMAGE"] = image_tag
+            env["ETHREX_PULL_POLICY"] = "never"
+
+        # Build service list
+        services = []
+        for n in networks:
+            services.extend([f"setup-jwt-{n}", f"ethrex-{n}", f"consensus-{n}"])
+
+        subprocess.run(
+            ["docker", "compose", "-f", compose_file, "up", "-d"] + services,
+            cwd=compose_dir, check=True, env=env
+        )
+        print("✅ Containers started successfully\n", flush=True)
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Failed to start containers: {e}\n", flush=True)
+        return False
+
+
+def restart_containers(compose_file: str, compose_dir: str, networks: list[str] = None, image_tag: str = ""):
+    """Stop and restart docker compose containers, clearing volumes.
+
+    Args:
+        compose_file: Docker compose file name
+        compose_dir: Directory containing docker compose file
+        networks: Optional list of network names (for selective restart)
+        image_tag: Optional image tag override (sets ETHREX_IMAGE env var)
+    """
     print("\n🔄 Restarting containers...\n", flush=True)
     try:
         subprocess.run(["docker", "compose", "-f", compose_file, "down", "-v"], cwd=compose_dir, check=True)
         time.sleep(5)
-        subprocess.run(["docker", "compose", "-f", compose_file, "up", "-d"], cwd=compose_dir, check=True)
+
+        env = os.environ.copy()
+        if image_tag:
+            env["ETHREX_IMAGE"] = image_tag
+            env["ETHREX_PULL_POLICY"] = "never"
+
+        # Build service list if networks specified
+        cmd = ["docker", "compose", "-f", compose_file, "up", "-d"]
+        if networks:
+            for n in networks:
+                cmd.extend([f"setup-jwt-{n}", f"ethrex-{n}", f"consensus-{n}"])
+
+        subprocess.run(cmd, cwd=compose_dir, check=True, env=env)
         print("✅ Containers restarted successfully\n", flush=True)
         return True
     except subprocess.CalledProcessError as e:
@@ -533,7 +638,21 @@ def main():
     p.add_argument("--exit-on-success", action="store_true")
     p.add_argument("--compose-file", default="docker-compose.multisync.yaml", help="Docker compose file name")
     p.add_argument("--compose-dir", default=".", help="Directory containing docker compose file")
+    # Auto-update and build options
+    p.add_argument("--auto-update", action="store_true",
+                   help="Pull latest code and rebuild Docker image before each run")
+    p.add_argument("--branch", default=os.environ.get("MULTISYNC_BRANCH", ""),
+                   help="Git branch to track (default: from MULTISYNC_BRANCH env or current branch)")
+    p.add_argument("--build-profile", default=os.environ.get("MULTISYNC_BUILD_PROFILE", "release-with-debug-assertions"),
+                   help="Cargo build profile for Docker image")
+    p.add_argument("--image-tag", default=os.environ.get("MULTISYNC_LOCAL_IMAGE", "ethrex-local:validate"),
+                   help="Docker image tag to build")
+    p.add_argument("--ethrex-dir", default=os.environ.get("ETHREX_DIR", "../.."),
+                   help="Path to ethrex repository root")
     args = p.parse_args()
+
+    # Resolve ethrex directory to absolute path
+    ethrex_dir = os.path.abspath(args.ethrex_dir)
     
     names = [n.strip() for n in args.networks.split(",")]
     ports = []
@@ -567,7 +686,7 @@ def main():
             # else: node not responding yet, stay in "waiting"
     
     hostname = socket.gethostname()
-    branch = git_branch()
+    branch = args.branch if args.branch else git_branch()
     commit = git_commit()
 
     # Ensure logs directory exists first (needed for run count)
@@ -578,10 +697,39 @@ def main():
     run_id = generate_run_id()
 
     print(f"📁 Logs will be saved to {LOGS_DIR.absolute()}")
-    print(f"📝 Run history: {RUN_LOG_FILE.absolute()}\n")
+    print(f"📝 Run history: {RUN_LOG_FILE.absolute()}")
+    if args.auto_update:
+        print(f"🔄 Auto-update enabled: tracking branch '{branch}'")
+        print(f"   Build profile: {args.build_profile}")
+        print(f"   Image tag: {args.image_tag}")
+    print()
     
     try:
         while True:
+            # Auto-update: pull latest and rebuild before each run
+            if args.auto_update:
+                print(f"\n{'='*60}")
+                print(f"🔄 Auto-update: Preparing run #{run_count}")
+                print(f"{'='*60}")
+                success, new_commit = git_pull_latest(branch, ethrex_dir)
+                if not success:
+                    print("❌ Failed to pull latest code, aborting")
+                    sys.exit(1)
+                commit = new_commit  # Update commit for logging
+                if not build_docker_image(args.build_profile, args.image_tag, ethrex_dir):
+                    print("❌ Failed to build Docker image, aborting")
+                    sys.exit(1)
+
+                # Start/restart containers with the new image
+                if not restart_containers(args.compose_file, args.compose_dir, names, args.image_tag):
+                    print("❌ Failed to start containers", file=sys.stderr)
+                    sys.exit(1)
+                # Reset instances since we restarted
+                for inst in instances:
+                    reset_instance(inst)
+                time.sleep(30)  # Wait for containers to start
+                print(f"{'='*60}\n")
+
             print(f"🔍 Run #{run_count} (ID: {run_id}): Monitoring {len(instances)} instances (timeout: {args.timeout}m)", flush=True)
             last_print = 0
             while True:
@@ -595,25 +743,34 @@ def main():
                 time.sleep(CHECK_INTERVAL)
             # Log the run result and save container logs BEFORE any restart
             save_all_logs(instances, run_id, args.compose_file)
-            log_run_result(run_id, run_count, instances, hostname, branch, commit)
+            log_run_result(run_id, run_count, instances, hostname, branch, commit, args.build_profile)
             # Send a single Slack summary notification for the run
             if not args.no_slack:
-                slack_notify(run_id, run_count, instances, hostname, branch, commit)
+                slack_notify(run_id, run_count, instances, hostname, branch, commit, args.build_profile)
             # Check results
             if all(i.status == "success" for i in instances):
                 print(f"🎉 Run #{run_count}: All instances synced successfully!")
                 if args.exit_on_success:
                     sys.exit(0)
-                # Restart for another run
-                if restart_containers(args.compose_file, args.compose_dir):
+                # Prepare for another run
+                run_count += 1
+                run_id = generate_run_id()  # New run ID for the new cycle
+
+                # If auto-update is enabled, the loop will pull/build/restart
+                # Otherwise, just restart containers now
+                if not args.auto_update:
+                    image_tag = args.image_tag if args.image_tag != "ethrex-local:validate" else ""
+                    if restart_containers(args.compose_file, args.compose_dir, names, image_tag):
+                        for inst in instances:
+                            reset_instance(inst)
+                        time.sleep(30)  # Wait for containers to start
+                    else:
+                        print("❌ Failed to restart containers", file=sys.stderr)
+                        sys.exit(1)
+                else:
+                    # Reset instances - containers will be restarted after pull/build
                     for inst in instances:
                         reset_instance(inst)
-                    run_count += 1
-                    run_id = generate_run_id()  # New run ID for the new cycle
-                    time.sleep(30)  # Wait for containers to start
-                else:
-                    print("❌ Failed to restart containers", file=sys.stderr)
-                    sys.exit(1)
             else:
                 # On failure: containers are NOT stopped, you can inspect the DB
                 print("\n" + "="*60)
