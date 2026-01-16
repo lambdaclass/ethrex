@@ -141,7 +141,7 @@ pub fn prove(
     let path_to_proof = format!("{OUTPUT_DIR_PATH}/vadcop_final_proof.bin");
     if let ProofFormat::Groth16 = format {
         // get the final snark wrapping
-        /* let args = vec![
+        let args = vec![
             "prove-snark",
             "-k",
             "PKEY of snark",
@@ -164,11 +164,10 @@ pub fn prove(
             .into());
         }
         let proof_bytes = std::fs::read(format!("{OUTPUT_DIR_PATH}/final_snark_proof.bin"))?;
-        let publics_bytes = std::fs::read(format!("{OUTPUT_DIR_PATH}/final_snark_publics.bin"))?; */
+        let publics_bytes = std::fs::read(format!("{OUTPUT_DIR_PATH}/final_snark_publics.bin"))?;
         let proof_bytes = vec![];
         let publics_bytes = vec![];
-        // let vk = std::fs::read(ZISK_VK_PATH)?;
-        let vk = vec![];
+        let vk = std::fs::read(ZISK_VK_PATH)?;
         Ok(ProveOutput {
             proof: proof_bytes,
             publics: publics_bytes,
