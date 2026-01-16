@@ -276,7 +276,21 @@ For this block, ZisK achieves near-optimal performance:
 - Keccak cost is irreducible (Ethereum design constraint)
 - 4.4 minute proof time on RTX 3090 for 428M steps is excellent
 
-**Potential improvements** would require changes to the guest program logic itself (reducing MAIN execution overhead at 59.19%), not additional patches.
+### Potential Improvements
+
+Since all patches are active, further optimizations require guest program changes:
+
+| Area | Current Cost | Improvement Strategy |
+|------|--------------|---------------------|
+| **MAIN (59.19%)** | 29.2B | Profile hot functions in block validation; reduce redundant computation |
+| **MEMORY (7.34%)** | 3.6B | Optimize MPT traversal depth; compress state witness structure |
+| **Field ops (13.12%)** | 6.5B | Minimize unnecessary comparisons; batch similar operations |
+
+**Guest program opportunities:**
+1. **Lazy validation** — Defer checks until necessary
+2. **Witness compression** — Reduce state witness size before proving
+3. **Batch signature verification** — Aggregate secp256k1 operations where possible
+4. **Storage access patterns** — Reorder operations to minimize keccak calls for storage keys
 
 ---
 
