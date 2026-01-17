@@ -23,7 +23,7 @@ const MIN_SCORE: i64 = -50;
 /// Score assigned to peers who are acting maliciously (e.g., returning a node with wrong hash)
 const MIN_SCORE_CRITICAL: i64 = MIN_SCORE * 3;
 /// Maximum amount of FindNode messages sent to a single node.
-const MAX_FIND_NODE_PER_PEER: u64 = 20;
+const MAX_FIND_NODE_PER_PEER: u64 = 50;
 /// Score weight for the load balancing function.
 const SCORE_WEIGHT: i64 = 1;
 /// Weight for amount of requests being handled by the peer for the load balancing function.
@@ -31,7 +31,7 @@ const REQUESTS_WEIGHT: i64 = 1;
 /// Max amount of ongoing requests per peer.
 const MAX_CONCURRENT_REQUESTS_PER_PEER: i64 = 150;
 /// The target number of RLPx connections to reach.
-pub const TARGET_PEERS: usize = 200;
+pub const TARGET_PEERS: usize = 400;
 /// The target number of contacts to maintain in peer_table.
 const TARGET_CONTACTS: usize = 100_000;
 
