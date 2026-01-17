@@ -38,13 +38,13 @@ use super::healing_cache::{HealingCache, PathStatus, SharedHealingCache};
 use super::SyncError;
 
 /// Max size of a batch to start a storage fetch request in queues
-pub const STORAGE_BATCH_SIZE: usize = 1000;
+pub const STORAGE_BATCH_SIZE: usize = 2000;
 /// Max size of a batch to start a node fetch request in queues - increased for faster healing
-const NODE_BATCH_SIZE: usize = 2000;
+const NODE_BATCH_SIZE: usize = 4000;
 /// Pace at which progress is shown via info tracing
 pub const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(2);
 /// Maximum number of concurrent in-flight requests
-const MAX_INFLIGHT_REQUESTS: u64 = 100;
+const MAX_INFLIGHT_REQUESTS: u64 = 200;
 /// Channel capacity for task responses
 const TASK_CHANNEL_CAPACITY: usize = 5000;
 /// Batch size threshold for parallel processing
