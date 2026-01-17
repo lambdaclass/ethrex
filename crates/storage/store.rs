@@ -184,7 +184,8 @@ pub struct Store {
     /// ethrex_db state manager for high-performance state storage.
     /// Uses hot/cold separation: hot storage for unfinalized blocks,
     /// cold storage (PagedDb) for finalized state.
-    state_manager: Option<Arc<BlockchainStateManager>>,
+    /// This is the primary storage engine for Ethereum state.
+    state_manager: Arc<BlockchainStateManager>,
 }
 
 #[derive(Debug, Default)]
@@ -1362,13 +1363,9 @@ impl Store {
         // Use file-backed storage if db_path is a real directory, otherwise in-memory
         let state_manager = if db_path.exists() && db_path.is_dir() {
             let state_db_path = db_path.join("ethrex_db_state");
-            BlockchainStateManager::open_with_size(&state_db_path, 100_000)
-                .map(Arc::new)
-                .ok()
+            Arc::new(BlockchainStateManager::open_with_size(&state_db_path, 100_000)?)
         } else {
-            BlockchainStateManager::in_memory(100_000)
-                .map(Arc::new)
-                .ok()
+            Arc::new(BlockchainStateManager::in_memory(100_000)?)
         };
 
         let mut store = Self {
@@ -1484,34 +1481,16 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
-        // Try ethrex_db state_manager first (hot storage for unfinalized blocks)
-        if let Some(ref state_manager) = self.state_manager {
-            // Check hot storage (committed but not finalized blocks)
-            if let Some(info) = state_manager.get_account(&block_hash, &address) {
-                return Ok(Some(info));
-            }
-            // Check cold storage (finalized state)
-            if let Some(info) = state_manager.get_finalized_account(&address) {
-                return Ok(Some(info));
-            }
+        // Use ethrex_db state_manager as primary storage
+        // Check hot storage (committed but not finalized blocks)
+        if let Some(info) = self.state_manager.get_account(&block_hash, &address) {
+            return Ok(Some(info));
         }
-
-        // Fall back to trie-based lookup
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
-        let hashed_address = hash_address_fixed(&address);
-
-        let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
-            return Ok(None);
-        };
-
-        let account_state = AccountState::decode(&encoded_state)?;
-        Ok(Some(AccountInfo {
-            code_hash: account_state.code_hash,
-            balance: account_state.balance,
-            nonce: account_state.nonce,
-        }))
+        // Check cold storage (finalized state)
+        if let Some(info) = self.state_manager.get_finalized_account(&address) {
+            return Ok(Some(info));
+        }
+        Ok(None)
     }
 
     pub fn get_account_state_by_acc_hash(
@@ -1610,12 +1589,8 @@ impl Store {
         block_number: BlockNumber,
         account_updates: &[AccountUpdate],
     ) -> Result<(), StoreError> {
-        let Some(ref state_manager) = self.state_manager else {
-            return Ok(());
-        };
-
         // Start a new block on the state manager
-        let mut block_state = state_manager.start_block(parent_hash, block_hash, block_number)?;
+        let mut block_state = self.state_manager.start_block(parent_hash, block_hash, block_number)?;
 
         // Apply account updates
         for update in account_updates {
@@ -1635,7 +1610,7 @@ impl Store {
         }
 
         // Commit the block to hot storage
-        state_manager.commit_block(block_state)?;
+        self.state_manager.commit_block(block_state)?;
 
         Ok(())
     }
@@ -1644,9 +1619,7 @@ impl Store {
     ///
     /// Should be called when a block is finalized (e.g., after 2 epochs in PoS).
     pub fn finalize_block_in_state_manager(&self, block_hash: BlockHash) -> Result<(), StoreError> {
-        if let Some(ref state_manager) = self.state_manager {
-            state_manager.finalize(block_hash)?;
-        }
+        self.state_manager.finalize(block_hash)?;
         Ok(())
     }
 
@@ -1655,14 +1628,12 @@ impl Store {
     /// This initializes the state manager's finalized state to the genesis block,
     /// allowing subsequent blocks to use genesis as their parent.
     pub fn set_genesis_in_state_manager(&self, genesis_hash: BlockHash, genesis_number: BlockNumber) {
-        if let Some(ref state_manager) = self.state_manager {
-            state_manager.set_genesis(genesis_hash, genesis_number);
-        }
+        self.state_manager.set_genesis(genesis_hash, genesis_number);
     }
 
-    /// Returns a reference to the state manager if available.
-    pub fn state_manager(&self) -> Option<&Arc<BlockchainStateManager>> {
-        self.state_manager.as_ref()
+    /// Returns a reference to the state manager.
+    pub fn state_manager(&self) -> &Arc<BlockchainStateManager> {
+        &self.state_manager
     }
 
     pub fn apply_account_updates_from_trie_batch<'a>(
