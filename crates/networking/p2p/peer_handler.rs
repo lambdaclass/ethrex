@@ -942,34 +942,37 @@ impl PeerHandler {
         &mut self,
         all_bytecode_hashes: &[H256],
     ) -> Result<Option<Vec<Bytes>>, PeerHandlerError> {
+        use crate::rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES;
+
         METRICS
             .current_step
             .set(CurrentStepValue::RequestingBytecodes);
-        const MAX_BYTECODES_REQUEST_SIZE: usize = 100;
-        // 1) split the range in chunks of same length
-        let chunk_count = 800;
-        let chunk_size = all_bytecode_hashes.len() / chunk_count;
 
-        // list of tasks to be executed
-        // Types are (start_index, end_index, starting_hash)
-        // NOTE: end_index is NOT inclusive
-        let mut tasks_queue_not_started = VecDeque::<(usize, usize)>::new();
-        for i in 0..chunk_count {
-            let chunk_start = chunk_size * i;
-            let chunk_end = chunk_start + chunk_size;
-            tasks_queue_not_started.push_back((chunk_start, chunk_end));
+        // Increased batch sizes for faster downloads
+        const MAX_BYTECODES_PER_REQUEST: usize = 500;
+        const MAX_INFLIGHT_REQUESTS: usize = 50;
+
+        if all_bytecode_hashes.is_empty() {
+            return Ok(Some(vec![]));
         }
-        // Modify the last chunk to include the limit
-        let last_task = tasks_queue_not_started
-            .back_mut()
-            .ok_or(PeerHandlerError::NoTasks)?;
-        last_task.1 = all_bytecode_hashes.len();
 
-        // 2) request the chunks from peers
-        let mut downloaded_count = 0_u64;
         let mut all_bytecodes = vec![Bytes::new(); all_bytecode_hashes.len()];
+        let mut downloaded_count = 0_u64;
 
-        // channel to send the tasks to the peers
+        // Task queue: (start_index, end_index)
+        let mut tasks_queue: VecDeque<(usize, usize)> = VecDeque::new();
+
+        // Split into chunks
+        let mut start = 0;
+        while start < all_bytecode_hashes.len() {
+            let end = (start + MAX_BYTECODES_PER_REQUEST).min(all_bytecode_hashes.len());
+            tasks_queue.push_back((start, end));
+            start = end;
+        }
+
+        let total_tasks = tasks_queue.len();
+
+        // Channel for results
         struct TaskResult {
             start_index: usize,
             bytecodes: Vec<Bytes>,
@@ -977,149 +980,152 @@ impl PeerHandler {
             remaining_start: usize,
             remaining_end: usize,
         }
-        let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<TaskResult>(1000);
+        let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<TaskResult>(MAX_INFLIGHT_REQUESTS * 2);
 
-        info!("Starting to download bytecodes from peers");
+        info!("Starting bytecode download: {} hashes in {} chunks", all_bytecode_hashes.len(), total_tasks);
 
         METRICS
             .bytecodes_to_download
             .fetch_add(all_bytecode_hashes.len() as u64, Ordering::Relaxed);
 
-        let mut completed_tasks = 0;
-
-        let mut logged_no_free_peers_count = 0;
+        let mut inflight_requests = 0_usize;
+        let mut completed_tasks = 0_usize;
 
         loop {
-            if let Ok(result) = task_receiver.try_recv() {
-                let TaskResult {
-                    start_index,
-                    bytecodes,
-                    peer_id,
-                    remaining_start,
-                    remaining_end,
-                } = result;
+            // Use tokio::select! for efficient async waiting
+            tokio::select! {
+                biased;
 
-                debug!(
-                    "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
-                    bytecodes.len(),
-                );
+                // Process completed tasks first
+                Some(result) = task_receiver.recv(), if inflight_requests > 0 => {
+                    inflight_requests -= 1;
 
-                if remaining_start < remaining_end {
-                    tasks_queue_not_started.push_back((remaining_start, remaining_end));
-                } else {
-                    completed_tasks += 1;
+                    let TaskResult {
+                        start_index,
+                        bytecodes,
+                        peer_id,
+                        remaining_start,
+                        remaining_end,
+                    } = result;
+
+                    if remaining_start < remaining_end {
+                        // Re-queue remaining work
+                        tasks_queue.push_back((remaining_start, remaining_end));
+                    } else {
+                        completed_tasks += 1;
+                    }
+
+                    if bytecodes.is_empty() {
+                        self.peer_table.record_failure(&peer_id).await?;
+                        continue;
+                    }
+
+                    downloaded_count += bytecodes.len() as u64;
+                    self.peer_table.record_success(&peer_id).await?;
+
+                    for (i, bytecode) in bytecodes.into_iter().enumerate() {
+                        all_bytecodes[start_index + i] = bytecode;
+                    }
+
+                    if completed_tasks % 100 == 0 {
+                        debug!("Bytecode progress: {}/{} tasks, {} codes downloaded",
+                            completed_tasks, total_tasks, downloaded_count);
+                    }
                 }
-                if bytecodes.is_empty() {
-                    self.peer_table.record_failure(&peer_id).await?;
-                    continue;
+
+                // Dispatch new requests when we have capacity
+                _ = tokio::time::sleep(Duration::from_micros(100)), if inflight_requests < MAX_INFLIGHT_REQUESTS && !tasks_queue.is_empty() => {
+                    // Try to dispatch multiple requests at once
+                    while inflight_requests < MAX_INFLIGHT_REQUESTS && !tasks_queue.is_empty() {
+                        let Some((peer_id, mut connection)) = self
+                            .peer_table
+                            .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+                            .await
+                            .unwrap_or(None)
+                        else {
+                            break;
+                        };
+
+                        let Some((chunk_start, chunk_end)) = tasks_queue.pop_front() else {
+                            break;
+                        };
+
+                        let tx = task_sender.clone();
+                        let hashes_to_request: Vec<_> = all_bytecode_hashes[chunk_start..chunk_end].to_vec();
+                        let mut peer_table = self.peer_table.clone();
+
+                        inflight_requests += 1;
+
+                        tokio::spawn(async move {
+                            let empty_result = TaskResult {
+                                start_index: chunk_start,
+                                bytecodes: vec![],
+                                peer_id,
+                                remaining_start: chunk_start,
+                                remaining_end: chunk_end,
+                            };
+
+                            let request_id = rand::random();
+                            let request = RLPxMessage::GetByteCodes(GetByteCodes {
+                                id: request_id,
+                                hashes: hashes_to_request.clone(),
+                                bytes: MAX_RESPONSE_BYTES,
+                            });
+
+                            match PeerHandler::make_request(
+                                &mut peer_table,
+                                peer_id,
+                                &mut connection,
+                                request,
+                                PEER_REPLY_TIMEOUT,
+                            ).await {
+                                Ok(RLPxMessage::ByteCodes(ByteCodes { codes, .. })) => {
+                                    if codes.is_empty() {
+                                        let _ = tx.send(empty_result).await;
+                                        return;
+                                    }
+                                    // Validate by hashing
+                                    let validated_codes: Vec<Bytes> = codes
+                                        .into_iter()
+                                        .zip(&hashes_to_request)
+                                        .take_while(|(b, hash)| ethrex_common::utils::keccak(b) == **hash)
+                                        .map(|(b, _)| b)
+                                        .collect();
+
+                                    let result = TaskResult {
+                                        start_index: chunk_start,
+                                        remaining_start: chunk_start + validated_codes.len(),
+                                        bytecodes: validated_codes,
+                                        peer_id,
+                                        remaining_end: chunk_end,
+                                    };
+                                    let _ = tx.send(result).await;
+                                }
+                                _ => {
+                                    let _ = tx.send(empty_result).await;
+                                }
+                            }
+                        });
+                    }
                 }
 
-                downloaded_count += bytecodes.len() as u64;
-
-                self.peer_table.record_success(&peer_id).await?;
-                for (i, bytecode) in bytecodes.into_iter().enumerate() {
-                    all_bytecodes[start_index + i] = bytecode;
+                else => {
+                    // Check if done
+                    if tasks_queue.is_empty() && inflight_requests == 0 {
+                        break;
+                    }
+                    // Small sleep to avoid busy loop when waiting for peers
+                    tokio::time::sleep(Duration::from_millis(10)).await;
                 }
             }
-
-            let Some((peer_id, mut connection)) = self
-                .peer_table
-                .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
-                .await
-                .inspect_err(|err| warn!(%err, "Error requesting a peer for bytecodes"))
-                .unwrap_or(None)
-            else {
-                // Log ~ once every 10 seconds
-                if logged_no_free_peers_count == 0 {
-                    trace!("We are missing peers in request_bytecodes");
-                    logged_no_free_peers_count = 1000;
-                }
-                logged_no_free_peers_count -= 1;
-                // Sleep a bit to avoid busy polling
-                tokio::time::sleep(Duration::from_millis(10)).await;
-                continue;
-            };
-
-            let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
-                if completed_tasks >= chunk_count {
-                    info!("All bytecodes downloaded successfully");
-                    break;
-                }
-                continue;
-            };
-
-            let tx = task_sender.clone();
-
-            let hashes_to_request: Vec<_> = all_bytecode_hashes
-                .iter()
-                .skip(chunk_start)
-                .take((chunk_end - chunk_start).min(MAX_BYTECODES_REQUEST_SIZE))
-                .copied()
-                .collect();
-
-            let mut peer_table = self.peer_table.clone();
-
-            tokio::spawn(async move {
-                let empty_task_result = TaskResult {
-                    start_index: chunk_start,
-                    bytecodes: vec![],
-                    peer_id,
-                    remaining_start: chunk_start,
-                    remaining_end: chunk_end,
-                };
-                debug!(
-                    "Requesting bytecode from peer {peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
-                );
-                let request_id = rand::random();
-                let request = RLPxMessage::GetByteCodes(GetByteCodes {
-                    id: request_id,
-                    hashes: hashes_to_request.clone(),
-                    bytes: MAX_RESPONSE_BYTES,
-                });
-                if let Ok(RLPxMessage::ByteCodes(ByteCodes { id: _, codes })) =
-                    PeerHandler::make_request(
-                        &mut peer_table,
-                        peer_id,
-                        &mut connection,
-                        request,
-                        PEER_REPLY_TIMEOUT,
-                    )
-                    .await
-                {
-                    if codes.is_empty() {
-                        tx.send(empty_task_result).await.ok();
-                        // Too spammy
-                        // tracing::error!("Received empty account range");
-                        return;
-                    }
-                    // Validate response by hashing bytecodes
-                    let validated_codes: Vec<Bytes> = codes
-                        .into_iter()
-                        .zip(hashes_to_request)
-                        .take_while(|(b, hash)| ethrex_common::utils::keccak(b) == *hash)
-                        .map(|(b, _hash)| b)
-                        .collect();
-                    let result = TaskResult {
-                        start_index: chunk_start,
-                        remaining_start: chunk_start + validated_codes.len(),
-                        bytecodes: validated_codes,
-                        peer_id,
-                        remaining_end: chunk_end,
-                    };
-                    tx.send(result).await.ok();
-                } else {
-                    tracing::debug!("Failed to get bytecode");
-                    tx.send(empty_task_result).await.ok();
-                }
-            });
         }
 
         METRICS
             .downloaded_bytecodes
             .fetch_add(downloaded_count, Ordering::Relaxed);
         info!(
-            "Finished downloading bytecodes, total bytecodes: {}",
-            all_bytecode_hashes.len()
+            "Finished downloading {} bytecodes",
+            downloaded_count
         );
 
         Ok(Some(all_bytecodes))
