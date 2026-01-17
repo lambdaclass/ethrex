@@ -4085,11 +4085,13 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bytes",
+ "criterion",
  "ethereum-types 0.15.1",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
  "ethrex-trie",
+ "ethrex_db",
  "hex",
  "hex-literal 0.4.1",
  "lru 0.16.2",
@@ -4182,6 +4184,25 @@ dependencies = [
  "serde",
  "thiserror 2.0.17",
  "tracing",
+]
+
+[[package]]
+name = "ethrex_db"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "hex",
+ "memmap2",
+ "parking_lot",
+ "primitive-types 0.13.1",
+ "proptest",
+ "rand 0.8.5",
+ "rayon",
+ "rlp 0.5.2",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tiny-keccak",
+ "wide",
 ]
 
 [[package]]

@@ -69,11 +69,13 @@ pub mod backend;
 pub mod error;
 mod layering;
 pub mod rlp;
+pub mod state_manager;
 pub mod store;
 pub mod trie;
 pub mod utils;
 
 pub use layering::apply_prefix;
+pub use state_manager::{BlockchainStateManager, BlockState};
 pub use store::{AccountUpdatesList, EngineType, Store, UpdateBatch, hash_address, hash_key};
 
 /// Store Schema Version, must be updated on any breaking change.

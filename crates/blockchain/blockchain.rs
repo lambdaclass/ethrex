@@ -1454,6 +1454,15 @@ impl Blockchain {
             .apply_account_updates_batch(block.header.parent_hash, &updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
 
+        // Write state to ethrex_db state_manager for fast lookups
+        let block_hash = block.hash();
+        self.storage.write_block_state_to_manager(
+            block.header.parent_hash,
+            block_hash,
+            block.header.number,
+            &updates,
+        )?;
+
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
             block.header.gas_limit,
@@ -1779,6 +1788,17 @@ impl Blockchain {
             .apply_account_updates_batch(first_block_header.parent_hash, &account_updates)
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
+
+        // Write final state to ethrex_db state_manager for fast lookups
+        // Note: For batch execution, we write the combined state for the last block
+        self.storage
+            .write_block_state_to_manager(
+                first_block_header.parent_hash,
+                last_block.hash(),
+                last_block.header.number,
+                &account_updates,
+            )
+            .map_err(|e| (e.into(), None))?;
 
         let new_state_root = account_updates_list.state_trie_hash;
         let state_updates = account_updates_list.state_updates;
