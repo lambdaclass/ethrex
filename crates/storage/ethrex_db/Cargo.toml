@@ -13,6 +13,8 @@ tiny-keccak = { version = "2.0", features = ["keccak"] }
 parking_lot = "0.12"
 thiserror.workspace = true
 ethereum-types.workspace = true
+wide = "0.7"
+rayon.workspace = true
 
 [dev-dependencies]
 proptest = "1.4"
@@ -20,6 +22,7 @@ tempfile.workspace = true
 hex.workspace = true
 criterion = { version = "0.5", features = ["html_reports"] }
 rand.workspace = true
+ethereum-types.workspace = true
 
 [[bench]]
 name = "benchmarks"

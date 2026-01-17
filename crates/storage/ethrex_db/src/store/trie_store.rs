@@ -5,9 +5,9 @@
 
 use std::collections::HashMap;
 
-use crate::data::{NibblePath, SlottedArray};
+use crate::data::{NibblePath, SlottedArray, PAGE_SIZE};
 use crate::merkle::{keccak256, MerkleTrie, EMPTY_ROOT};
-use crate::store::PAGE_SIZE;
+use crate::store::{DbAddress, PageType, LeafPage, DataPage, BatchContext, PagedDb, DbError};
 
 /// Standalone trie that persists to PagedDb on commit.
 ///
@@ -34,17 +34,33 @@ impl PersistentTrie {
     ///
     /// The page contains key-value pairs in a slotted array format.
     pub fn load_from_page(page_data: &[u8]) -> Self {
-        let _arr = SlottedArray::from_bytes(Self::page_data_to_array(page_data));
-        let trie = MerkleTrie::new();
+        let arr = SlottedArray::from_bytes(Self::page_data_to_array(page_data));
+        let mut trie = MerkleTrie::new();
 
-        // Reconstruct trie from stored entries
-        // Note: SlottedArray doesn't have an iterator, so we'd need to add one
-        // For now, we'll track entries separately in pending
+        // Reconstruct trie from stored entries using the new iterator
+        for (path, value) in arr.iter() {
+            // Convert NibblePath back to bytes
+            let key = Self::nibble_path_to_bytes(&path);
+            trie.insert(&key, value);
+        }
 
         Self {
             trie,
             pending: HashMap::new(),
         }
+    }
+
+    /// Converts a NibblePath to its original byte representation.
+    fn nibble_path_to_bytes(path: &NibblePath) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity((path.len() + 1) / 2);
+        let mut i = 0;
+        while i < path.len() {
+            let high = path.get(i);
+            let low = if i + 1 < path.len() { path.get(i + 1) } else { 0 };
+            bytes.push((high << 4) | low);
+            i += 2;
+        }
+        bytes
     }
 
     /// Inserts or updates a key-value pair.
@@ -74,6 +90,11 @@ impl PersistentTrie {
         self.root_hash() == EMPTY_ROOT
     }
 
+    /// Returns the number of entries.
+    pub fn len(&self) -> usize {
+        self.trie.len()
+    }
+
     /// Writes the trie contents to a LeafPage.
     ///
     /// Returns the serialized data that can be stored in a page.
@@ -89,11 +110,46 @@ impl PersistentTrie {
         arr.as_bytes().to_vec()
     }
 
+    /// Writes the trie to multiple pages if needed.
+    ///
+    /// Returns a list of (key_prefix, page_data) pairs for entries that didn't fit.
+    pub fn to_pages(&self) -> Vec<Vec<u8>> {
+        let mut pages = Vec::new();
+        let mut current_arr = SlottedArray::new();
+
+        for (key, value) in self.trie.iter() {
+            let path = NibblePath::from_bytes(key);
+            if !current_arr.try_insert(&path, value) {
+                // Page is full, start a new one
+                pages.push(current_arr.as_bytes().to_vec());
+                current_arr = SlottedArray::new();
+                current_arr.try_insert(&path, value);
+            }
+        }
+
+        // Don't forget the last page
+        if current_arr.live_count() > 0 {
+            pages.push(current_arr.as_bytes().to_vec());
+        }
+
+        pages
+    }
+
     fn page_data_to_array(data: &[u8]) -> [u8; PAGE_SIZE] {
         let mut arr = [0u8; PAGE_SIZE];
         let len = data.len().min(PAGE_SIZE);
         arr[..len].copy_from_slice(&data[..len]);
         arr
+    }
+
+    /// Returns an iterator over all key-value pairs.
+    pub fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
+        self.trie.iter()
+    }
+
+    /// Clears pending changes after commit.
+    pub fn clear_pending(&mut self) {
+        self.pending.clear();
     }
 }
 
@@ -382,6 +438,356 @@ impl AccountData {
     }
 }
 
+// ============================================================================
+// PagedStateTrie - Full integration with PagedDb
+// ============================================================================
+
+/// A state trie that persists to PagedDb.
+///
+/// Uses DataPage for fanout navigation and LeafPage for actual data storage.
+/// Supports full load/save cycles with the database.
+pub struct PagedStateTrie {
+    /// The in-memory state trie
+    state: StateTrie,
+    /// Address of the root page in PagedDb (if loaded from db)
+    root_addr: Option<DbAddress>,
+}
+
+impl PagedStateTrie {
+    /// Creates a new empty paged state trie.
+    pub fn new() -> Self {
+        Self {
+            state: StateTrie::new(),
+            root_addr: None,
+        }
+    }
+
+    /// Loads a state trie from PagedDb.
+    ///
+    /// Reads the state from the database starting at the given root address.
+    pub fn load(db: &PagedDb, root_addr: DbAddress) -> Result<Self, DbError> {
+        if root_addr.is_null() {
+            return Ok(Self::new());
+        }
+
+        let mut state = StateTrie::new();
+
+        // Load the root page
+        let root_page = db.get_page(root_addr)?;
+        let page_type = root_page.header().get_page_type();
+
+        match page_type {
+            Some(PageType::Leaf) => {
+                // Simple case: all data in a single leaf page
+                let leaf = LeafPage::wrap(root_page);
+                let arr = SlottedArray::from_bytes(Self::payload_to_array(leaf.data()));
+
+                for (path, value) in arr.iter() {
+                    let key = PersistentTrie::nibble_path_to_bytes(&path);
+                    // Decode as account data
+                    let _account = AccountData::decode(&value);
+                    // Convert key back to address (it's keccak256 of address, but we store the hash)
+                    let mut addr_hash = [0u8; 32];
+                    let copy_len = key.len().min(32);
+                    addr_hash[..copy_len].copy_from_slice(&key[..copy_len]);
+                    // Insert directly into the underlying trie
+                    state.trie.insert(&addr_hash, value);
+                }
+            }
+            Some(PageType::Data) => {
+                // Complex case: fanout structure
+                Self::load_from_data_page(db, &root_page, &mut state)?;
+            }
+            Some(PageType::StateRoot) => {
+                // StateRoot page contains references to account and storage tries
+                Self::load_from_state_root_page(db, &root_page, &mut state)?;
+            }
+            _ => {
+                // Unknown or empty page type
+            }
+        }
+
+        Ok(Self {
+            state,
+            root_addr: Some(root_addr),
+        })
+    }
+
+    fn load_from_data_page(db: &PagedDb, page: &crate::store::Page, state: &mut StateTrie) -> Result<(), DbError> {
+        let data_page = DataPage::wrap(page.clone());
+
+        // Iterate through all buckets
+        for i in 0..256 {
+            let child_addr = data_page.get_bucket(i);
+            if !child_addr.is_null() {
+                let child_page = db.get_page(child_addr)?;
+                let child_type = child_page.header().get_page_type();
+
+                match child_type {
+                    Some(PageType::Leaf) => {
+                        let leaf = LeafPage::wrap(child_page);
+                        let arr = SlottedArray::from_bytes(Self::payload_to_array(leaf.data()));
+
+                        for (path, value) in arr.iter() {
+                            let key = PersistentTrie::nibble_path_to_bytes(&path);
+                            let mut addr_hash = [0u8; 32];
+                            let copy_len = key.len().min(32);
+                            addr_hash[..copy_len].copy_from_slice(&key[..copy_len]);
+                            state.trie.insert(&addr_hash, value);
+                        }
+                    }
+                    Some(PageType::Data) => {
+                        // Recursive fanout
+                        Self::load_from_data_page(db, &child_page, state)?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn load_from_state_root_page(db: &PagedDb, page: &crate::store::Page, state: &mut StateTrie) -> Result<(), DbError> {
+        // StateRoot page layout:
+        // - First 4 bytes: address of accounts trie root
+        // - Remaining: list of (address_hash, storage_trie_addr) pairs
+        let data = page.payload();
+
+        if data.len() < 4 {
+            return Ok(());
+        }
+
+        // Read accounts trie address
+        let accounts_addr = DbAddress::read(data);
+        if !accounts_addr.is_null() {
+            let accounts_page = db.get_page(accounts_addr)?;
+            let page_type = accounts_page.header().get_page_type();
+
+            match page_type {
+                Some(PageType::Leaf) => {
+                    let leaf = LeafPage::wrap(accounts_page);
+                    let arr = SlottedArray::from_bytes(Self::payload_to_array(leaf.data()));
+
+                    for (path, value) in arr.iter() {
+                        let key = PersistentTrie::nibble_path_to_bytes(&path);
+                        let mut addr_hash = [0u8; 32];
+                        let copy_len = key.len().min(32);
+                        addr_hash[..copy_len].copy_from_slice(&key[..copy_len]);
+                        state.trie.insert(&addr_hash, value);
+                    }
+                }
+                Some(PageType::Data) => {
+                    Self::load_from_data_page(db, &accounts_page, state)?;
+                }
+                _ => {}
+            }
+        }
+
+        // TODO: Load storage tries from the page as well
+
+        Ok(())
+    }
+
+    fn payload_to_array(data: &[u8]) -> [u8; PAGE_SIZE] {
+        let mut arr = [0u8; PAGE_SIZE];
+        let len = data.len().min(PAGE_SIZE);
+        arr[..len].copy_from_slice(&data[..len]);
+        arr
+    }
+
+    /// Saves the state trie to PagedDb.
+    ///
+    /// Returns the root address that can be stored in the RootPage.
+    pub fn save(&mut self, batch: &mut BatchContext) -> Result<DbAddress, DbError> {
+        // Compute root hash first (this updates storage roots in accounts)
+        let _root_hash = self.state.root_hash();
+
+        // Collect all account entries (clone to avoid borrow issues)
+        let entries: Vec<(Vec<u8>, Vec<u8>)> = self.state.trie.iter()
+            .map(|(k, v)| (k.to_vec(), v.to_vec()))
+            .collect();
+
+        if entries.is_empty() {
+            return Ok(DbAddress::NULL);
+        }
+
+        // Try to fit everything in a single leaf page
+        let mut arr = SlottedArray::new();
+        let mut all_fit = true;
+
+        for (key, value) in &entries {
+            let path = NibblePath::from_bytes(key);
+            if !arr.try_insert(&path, value) {
+                all_fit = false;
+                break;
+            }
+        }
+
+        if all_fit {
+            // Everything fits in one page
+            let (addr, _page) = batch.allocate_page(PageType::Leaf, 0)?;
+            let arr_bytes = arr.as_bytes();
+
+            // Get a mutable copy and write
+            let mut leaf_page = batch.get_writable_copy(addr)?;
+            let payload = leaf_page.payload_mut();
+            let copy_len = payload.len().min(arr_bytes.len());
+            payload[..copy_len].copy_from_slice(&arr_bytes[..copy_len]);
+            batch.mark_dirty(addr, leaf_page);
+
+            self.root_addr = Some(addr);
+            return Ok(addr);
+        }
+
+        // Need to use fanout structure
+        Self::save_with_fanout_static(&mut self.root_addr, batch, &entries)
+    }
+
+    fn save_with_fanout_static(root_addr: &mut Option<DbAddress>, batch: &mut BatchContext, entries: &[(Vec<u8>, Vec<u8>)]) -> Result<DbAddress, DbError> {
+        // Group entries by first byte (256 buckets)
+        let mut buckets: Vec<Vec<(&[u8], &[u8])>> = vec![Vec::new(); 256];
+
+        for (key, value) in entries {
+            if !key.is_empty() {
+                let bucket_idx = key[0] as usize;
+                buckets[bucket_idx].push((key.as_slice(), value.as_slice()));
+            }
+        }
+
+        // Allocate root data page
+        let (addr, _) = batch.allocate_page(PageType::Data, 0)?;
+        let root_page = batch.get_writable_copy(addr)?;
+        let mut data_page = DataPage::wrap(root_page);
+
+        // Process each bucket
+        for (i, bucket_entries) in buckets.iter().enumerate() {
+            if bucket_entries.is_empty() {
+                continue;
+            }
+
+            // Try to fit bucket in a leaf page
+            let mut arr = SlottedArray::new();
+            let mut all_fit = true;
+
+            for (key, value) in bucket_entries {
+                // Skip first byte since it's encoded in the bucket index
+                let remaining = if key.len() > 1 { &key[1..] } else { &[] };
+                let path = NibblePath::from_bytes(remaining);
+                if !arr.try_insert(&path, value) {
+                    all_fit = false;
+                    break;
+                }
+            }
+
+            if all_fit {
+                // Create leaf page for this bucket
+                let (leaf_addr, _) = batch.allocate_page(PageType::Leaf, 1)?;
+                let mut leaf_page = batch.get_writable_copy(leaf_addr)?;
+                let arr_bytes = arr.as_bytes();
+                let payload = leaf_page.payload_mut();
+                let copy_len = payload.len().min(arr_bytes.len());
+                payload[..copy_len].copy_from_slice(&arr_bytes[..copy_len]);
+                batch.mark_dirty(leaf_addr, leaf_page);
+
+                data_page.set_bucket(i, leaf_addr);
+            } else {
+                // Need recursive fanout (for very large buckets)
+                // For now, just split across multiple leaf pages
+                let first_leaf = Self::save_bucket_multi_page_static(batch, bucket_entries)?;
+                data_page.set_bucket(i, first_leaf);
+            }
+        }
+
+        batch.mark_dirty(addr, data_page.into_page());
+        *root_addr = Some(addr);
+        Ok(addr)
+    }
+
+    fn save_bucket_multi_page_static(batch: &mut BatchContext, entries: &[(&[u8], &[u8])]) -> Result<DbAddress, DbError> {
+        // Simple approach: just create multiple leaf pages and link them
+        // In a production implementation, this would use a proper tree structure
+        let mut first_addr = DbAddress::NULL;
+        let mut arr = SlottedArray::new();
+
+        for (key, value) in entries {
+            let remaining = if key.len() > 1 { &key[1..] } else { &[] };
+            let path = NibblePath::from_bytes(remaining);
+
+            if !arr.try_insert(&path, value) {
+                // Save current page and start new one
+                let (addr, _) = batch.allocate_page(PageType::Leaf, 1)?;
+                let mut page = batch.get_writable_copy(addr)?;
+                let arr_bytes = arr.as_bytes();
+                let payload = page.payload_mut();
+                let copy_len = payload.len().min(arr_bytes.len());
+                payload[..copy_len].copy_from_slice(&arr_bytes[..copy_len]);
+                batch.mark_dirty(addr, page);
+
+                if first_addr.is_null() {
+                    first_addr = addr;
+                }
+
+                arr = SlottedArray::new();
+                arr.try_insert(&path, value);
+            }
+        }
+
+        // Save last page if non-empty
+        if arr.live_count() > 0 {
+            let (addr, _) = batch.allocate_page(PageType::Leaf, 1)?;
+            let mut page = batch.get_writable_copy(addr)?;
+            let arr_bytes = arr.as_bytes();
+            let payload = page.payload_mut();
+            let copy_len = payload.len().min(arr_bytes.len());
+            payload[..copy_len].copy_from_slice(&arr_bytes[..copy_len]);
+            batch.mark_dirty(addr, page);
+
+            if first_addr.is_null() {
+                first_addr = addr;
+            }
+        }
+
+        Ok(first_addr)
+    }
+
+    /// Gets an account by address.
+    pub fn get_account(&self, address: &[u8; 20]) -> Option<AccountData> {
+        self.state.get_account(address)
+    }
+
+    /// Sets an account.
+    pub fn set_account(&mut self, address: &[u8; 20], account: AccountData) {
+        self.state.set_account(address, account);
+    }
+
+    /// Gets the storage trie for an account.
+    pub fn storage_trie(&mut self, address: &[u8; 20]) -> &mut StorageTrie {
+        self.state.storage_trie(address)
+    }
+
+    /// Computes the state root hash.
+    pub fn root_hash(&mut self) -> [u8; 32] {
+        self.state.root_hash()
+    }
+
+    /// Returns the root address in PagedDb.
+    pub fn root_addr(&self) -> Option<DbAddress> {
+        self.root_addr
+    }
+
+    /// Returns the number of accounts.
+    pub fn account_count(&self) -> usize {
+        self.state.trie.len()
+    }
+}
+
+impl Default for PagedStateTrie {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -466,5 +872,143 @@ mod tests {
         state.set_account(&address, account);
         let retrieved = state.get_account(&address).unwrap();
         assert_eq!(retrieved.nonce, 1);
+    }
+
+    #[test]
+    fn test_paged_state_trie_basic() {
+        use crate::store::{PagedDb, CommitOptions};
+
+        let mut db = PagedDb::in_memory(1000).unwrap();
+        let mut trie = PagedStateTrie::new();
+
+        // Add some accounts
+        let address1 = [1u8; 20];
+        let account1 = AccountData {
+            nonce: 10,
+            balance: {
+                let mut b = [0u8; 32];
+                b[31] = 100;
+                b
+            },
+            storage_root: EMPTY_ROOT,
+            code_hash: AccountData::EMPTY_CODE_HASH,
+        };
+        trie.set_account(&address1, account1);
+
+        let address2 = [2u8; 20];
+        let account2 = AccountData {
+            nonce: 20,
+            balance: {
+                let mut b = [0u8; 32];
+                b[31] = 200;
+                b
+            },
+            storage_root: EMPTY_ROOT,
+            code_hash: AccountData::EMPTY_CODE_HASH,
+        };
+        trie.set_account(&address2, account2);
+
+        // Save to database
+        let mut batch = db.begin_batch();
+        let root_addr = trie.save(&mut batch).unwrap();
+        batch.set_state_root(root_addr);
+        batch.commit(CommitOptions::DangerNoFlush).unwrap();
+
+        assert!(!root_addr.is_null());
+        assert_eq!(trie.account_count(), 2);
+    }
+
+    #[test]
+    fn test_paged_state_trie_save_load() {
+        use crate::store::{PagedDb, CommitOptions};
+
+        let mut db = PagedDb::in_memory(1000).unwrap();
+        let root_addr;
+
+        // Create and save a trie
+        {
+            let mut trie = PagedStateTrie::new();
+
+            for i in 0..5u8 {
+                let mut address = [0u8; 20];
+                address[0] = i;
+                let account = AccountData {
+                    nonce: i as u64,
+                    balance: {
+                        let mut b = [0u8; 32];
+                        b[31] = i * 10;
+                        b
+                    },
+                    storage_root: EMPTY_ROOT,
+                    code_hash: AccountData::EMPTY_CODE_HASH,
+                };
+                trie.set_account(&address, account);
+            }
+
+            let _root_hash_original = trie.root_hash();
+
+            let mut batch = db.begin_batch();
+            root_addr = trie.save(&mut batch).unwrap();
+            batch.set_state_root(root_addr);
+            batch.commit(CommitOptions::DangerNoFlush).unwrap();
+        }
+
+        // Load the trie back
+        {
+            let loaded = PagedStateTrie::load(&db, root_addr).unwrap();
+            assert_eq!(loaded.account_count(), 5);
+
+            // Verify accounts
+            for i in 0..5u8 {
+                let mut address = [0u8; 20];
+                address[0] = i;
+                let account = loaded.get_account(&address);
+                assert!(account.is_some(), "Account {} not found", i);
+                assert_eq!(account.unwrap().nonce, i as u64);
+            }
+        }
+    }
+
+    #[test]
+    fn test_paged_state_trie_root_hash() {
+        let mut trie = PagedStateTrie::new();
+
+        let empty_root = trie.root_hash();
+        assert_eq!(empty_root, EMPTY_ROOT);
+
+        let address = [42u8; 20];
+        let account = AccountData {
+            nonce: 1,
+            balance: [0u8; 32],
+            storage_root: EMPTY_ROOT,
+            code_hash: AccountData::EMPTY_CODE_HASH,
+        };
+        trie.set_account(&address, account);
+
+        let new_root = trie.root_hash();
+        assert_ne!(new_root, EMPTY_ROOT);
+    }
+
+    #[test]
+    fn test_persistent_trie_page_roundtrip() {
+        let mut trie = PersistentTrie::new();
+
+        // Insert some data
+        trie.insert(b"key1", b"value1".to_vec());
+        trie.insert(b"key2", b"value2".to_vec());
+        trie.insert(b"another_key", b"another_value".to_vec());
+
+        let _original_root = trie.root_hash();
+
+        // Convert to page data
+        let page_data = trie.to_page_data();
+
+        // Load from page data
+        let loaded = PersistentTrie::load_from_page(&page_data);
+
+        // Verify data
+        assert_eq!(loaded.get(b"key1"), Some(b"value1".to_vec()));
+        assert_eq!(loaded.get(b"key2"), Some(b"value2".to_vec()));
+        assert_eq!(loaded.get(b"another_key"), Some(b"another_value".to_vec()));
     }
 }

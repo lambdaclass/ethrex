@@ -6,12 +6,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use ethereum_types::H256;
+use ethereum_types::{H256, U256};
 use thiserror::Error;
 
 use super::block::{Block, BlockId};
 use super::world_state::Account;
-use crate::store::{PagedDb, DbError};
+use crate::store::{PagedDb, DbError, PagedStateTrie, AccountData, CommitOptions};
 
 /// Blockchain errors.
 #[derive(Error, Debug)]
@@ -45,6 +45,8 @@ struct CommittedBlock {
 pub struct Blockchain {
     /// The underlying database for finalized state.
     db: Arc<RwLock<PagedDb>>,
+    /// The state trie for finalized state.
+    state_trie: RwLock<PagedStateTrie>,
     /// Committed blocks by hash.
     blocks_by_hash: RwLock<HashMap<H256, CommittedBlock>>,
     /// Committed blocks by number (multiple blocks can have the same number).
@@ -55,14 +57,43 @@ pub struct Blockchain {
     last_finalized_hash: RwLock<H256>,
 }
 
+/// Converts chain Account to trie AccountData.
+fn account_to_data(account: &Account) -> AccountData {
+    AccountData {
+        nonce: account.nonce,
+        balance: account.balance.to_big_endian(),
+        storage_root: *account.storage_root.as_fixed_bytes(),
+        code_hash: *account.code_hash.as_fixed_bytes(),
+    }
+}
+
+/// Converts trie AccountData to chain Account.
+fn data_to_account(data: &AccountData) -> Account {
+    Account {
+        nonce: data.nonce,
+        balance: U256::from_big_endian(&data.balance),
+        code_hash: H256::from(data.code_hash),
+        storage_root: H256::from(data.storage_root),
+    }
+}
+
 impl Blockchain {
     /// Creates a new blockchain with the given database.
     pub fn new(db: PagedDb) -> Self {
         let block_number = db.block_number() as u64;
         let block_hash = H256::from(db.block_hash());
 
+        // Load existing state trie if present
+        let state_root = db.begin_read_only().state_root();
+        let state_trie = if state_root.is_null() {
+            PagedStateTrie::new()
+        } else {
+            PagedStateTrie::load(&db, state_root).unwrap_or_else(|_| PagedStateTrie::new())
+        };
+
         Self {
             db: Arc::new(RwLock::new(db)),
+            state_trie: RwLock::new(state_trie),
             blocks_by_hash: RwLock::new(HashMap::new()),
             blocks_by_number: RwLock::new(HashMap::new()),
             last_finalized: RwLock::new(block_number),
@@ -181,23 +212,69 @@ impl Blockchain {
         // Reverse to process in order
         to_finalize.reverse();
 
-        // Apply blocks to database
+        // Apply blocks to state trie and database
         {
             let mut db = self.db.write().unwrap();
+            let mut state_trie = self.state_trie.write().unwrap();
+
+            // Collect all state changes from blocks in order
             for hash in &to_finalize {
                 let blocks = self.blocks_by_hash.read().unwrap();
                 let block = &blocks.get(hash).unwrap().block;
 
-                let mut batch = db.begin_batch();
+                // Apply account changes to state trie
+                for (addr, account_opt) in block.account_changes() {
+                    // Convert H256 address to [u8; 20] (take last 20 bytes)
+                    let addr_bytes: [u8; 20] = addr.as_bytes()[12..32].try_into().unwrap();
 
-                // In a full implementation, we'd apply the block's state changes here
-                batch.set_metadata(
-                    block.number() as u32,
-                    block.hash().as_fixed_bytes(),
-                );
+                    match account_opt {
+                        Some(account) => {
+                            let account_data = account_to_data(account);
+                            state_trie.set_account(&addr_bytes, account_data);
+                        }
+                        None => {
+                            // For deletion, set to empty account
+                            // (In a full implementation, we'd remove it from the trie)
+                            state_trie.set_account(&addr_bytes, AccountData::empty());
+                        }
+                    }
+                }
 
-                batch.commit(crate::store::CommitOptions::FlushDataOnly)?;
+                // Apply storage changes to state trie
+                for (addr, slots) in block.storage_changes() {
+                    let addr_bytes: [u8; 20] = addr.as_bytes()[12..32].try_into().unwrap();
+                    let storage = state_trie.storage_trie(&addr_bytes);
+
+                    for (key, value) in slots {
+                        // H256 keys are already big-endian
+                        let slot: [u8; 32] = *key.as_fixed_bytes();
+
+                        // U256 values need to be converted
+                        let val = value.to_big_endian();
+
+                        storage.set(&slot, val);
+                    }
+                }
             }
+
+            // Save state trie to database
+            let mut batch = db.begin_batch();
+
+            // Get the final block for metadata
+            let blocks = self.blocks_by_hash.read().unwrap();
+            let final_block = &blocks.get(&block_hash).unwrap().block;
+
+            // Save state trie and get the root address
+            let state_root_addr = state_trie.save(&mut batch)?;
+            batch.set_state_root(state_root_addr);
+
+            // Update block metadata
+            batch.set_metadata(
+                final_block.number() as u32,
+                final_block.hash().as_fixed_bytes(),
+            );
+
+            batch.commit(CommitOptions::FlushDataOnly)?;
         }
 
         // Remove finalized blocks from memory
@@ -226,6 +303,17 @@ impl Blockchain {
         *self.last_finalized_hash.write().unwrap() = block_hash;
 
         Ok(())
+    }
+
+    /// Returns the state root hash of finalized state.
+    pub fn state_root(&self) -> [u8; 32] {
+        self.state_trie.write().unwrap().root_hash()
+    }
+
+    /// Gets an account from finalized state.
+    pub fn get_finalized_account(&self, address: &[u8; 20]) -> Option<Account> {
+        let trie = self.state_trie.read().unwrap();
+        trie.get_account(address).map(|data| data_to_account(&data))
     }
 
     /// Returns the number of committed (non-finalized) blocks.

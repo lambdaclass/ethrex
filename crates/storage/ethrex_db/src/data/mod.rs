@@ -7,4 +7,4 @@ mod slotted_array;
 mod tests;
 
 pub use nibble_path::NibblePath;
-pub use slotted_array::SlottedArray;
+pub use slotted_array::{SlottedArray, SlottedArrayIter, PAGE_SIZE};

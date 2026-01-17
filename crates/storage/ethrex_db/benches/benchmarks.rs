@@ -9,6 +9,7 @@ use ethrex_db::data::{NibblePath, SlottedArray};
 use ethrex_db::merkle::{MerkleTrie, keccak256};
 use ethrex_db::store::{PagedDb, CommitOptions, PageType, StateTrie, StorageTrie, AccountData};
 use ethrex_db::chain::Blockchain;
+use primitive_types::{H160, H256, U256};
 
 /// Generate random bytes
 fn random_bytes(len: usize) -> Vec<u8> {
@@ -46,6 +47,43 @@ fn bench_nibble_path(c: &mut Criterion) {
     group.finish();
 }
 
+/// Non-SIMD prefix comparison for baseline measurement
+fn scalar_starts_with(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.len() > haystack.len() {
+        return false;
+    }
+    haystack[..needle.len()] == needle[..]
+}
+
+/// SIMD prefix comparison (same as in slotted_array.rs)
+fn simd_starts_with(haystack: &[u8], needle: &[u8]) -> bool {
+    use wide::u8x16;
+
+    if needle.len() > haystack.len() {
+        return false;
+    }
+
+    let needle_len = needle.len();
+    let mut offset = 0;
+
+    while offset + 16 <= needle_len {
+        let h_chunk: [u8; 16] = haystack[offset..offset + 16].try_into().unwrap();
+        let n_chunk: [u8; 16] = needle[offset..offset + 16].try_into().unwrap();
+
+        let h_vec = u8x16::from(h_chunk);
+        let n_vec = u8x16::from(n_chunk);
+
+        let cmp = h_vec.cmp_eq(n_vec);
+        if cmp.to_array().iter().any(|&b| b != 0xFF) {
+            return false;
+        }
+
+        offset += 16;
+    }
+
+    haystack[offset..needle_len] == needle[offset..]
+}
+
 /// Benchmark SlottedArray operations
 fn bench_slotted_array(c: &mut Criterion) {
     let mut group = c.benchmark_group("SlottedArray");
@@ -77,6 +115,79 @@ fn bench_slotted_array(c: &mut Criterion) {
     group.bench_function("get_100_entries", |b| {
         b.iter(|| arr.get(black_box(&lookup_key)))
     });
+
+    group.finish();
+}
+
+/// Benchmark SIMD vs scalar prefix comparison
+fn bench_simd_comparison(c: &mut Criterion) {
+    let mut group = c.benchmark_group("SIMD_Comparison");
+
+    // Test with different key sizes
+    for key_size in [4, 16, 32, 64, 128].iter() {
+        let haystack: Vec<u8> = (0..*key_size as u8).collect();
+        let needle: Vec<u8> = (0..*key_size as u8).collect();
+
+        group.bench_with_input(
+            BenchmarkId::new("scalar", key_size),
+            &(haystack.clone(), needle.clone()),
+            |b, (h, n)| {
+                b.iter(|| scalar_starts_with(black_box(h), black_box(n)))
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("simd", key_size),
+            &(haystack, needle),
+            |b, (h, n)| {
+                b.iter(|| simd_starts_with(black_box(h), black_box(n)))
+            },
+        );
+    }
+
+    // Benchmark with worst case - mismatch at the end
+    let haystack: Vec<u8> = (0..64u8).collect();
+    let mut needle: Vec<u8> = (0..64u8).collect();
+    needle[63] = 255; // Mismatch at the last byte
+
+    group.bench_function("scalar_mismatch_end_64", |b| {
+        b.iter(|| scalar_starts_with(black_box(&haystack), black_box(&needle)))
+    });
+
+    group.bench_function("simd_mismatch_end_64", |b| {
+        b.iter(|| simd_starts_with(black_box(&haystack), black_box(&needle)))
+    });
+
+    group.finish();
+}
+
+/// Benchmark SlottedArray lookup with different key sizes
+fn bench_slotted_array_lookup(c: &mut Criterion) {
+    let mut group = c.benchmark_group("SlottedArray_Lookup");
+
+    // Create arrays with different key sizes
+    for key_size in [4, 16, 32].iter() {
+        // Fill array with 100 entries
+        let mut arr = SlottedArray::new();
+        for i in 0..100u32 {
+            let key_bytes: Vec<u8> = (0..*key_size).map(|j| ((i as u8).wrapping_add(j))).collect();
+            let key = NibblePath::from_bytes(&key_bytes);
+            let value = [i as u8; 32];
+            arr.try_insert(&key, &value);
+        }
+
+        // Lookup middle element
+        let lookup_bytes: Vec<u8> = (0..*key_size).map(|j| (50u8.wrapping_add(j))).collect();
+        let lookup_key = NibblePath::from_bytes(&lookup_bytes);
+
+        group.bench_with_input(
+            BenchmarkId::new("get_key_size", key_size),
+            &(arr, lookup_key),
+            |b, (arr, key)| {
+                b.iter(|| arr.get(black_box(key)))
+            },
+        );
+    }
 
     group.finish();
 }
@@ -127,6 +238,43 @@ fn bench_merkle_trie(c: &mut Criterion) {
     group.bench_function("get_from_100", |b| {
         b.iter(|| trie.get(black_box(&lookup_key)))
     });
+
+    group.finish();
+}
+
+/// Benchmark parallel vs sequential Merkle computation
+fn bench_parallel_merkle(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Parallel_Merkle");
+
+    for size in [100, 1000, 10000].iter() {
+        // Create a trie with many entries
+        let keys: Vec<_> = (0..*size).map(|i: u32| keccak256(&i.to_be_bytes())).collect();
+        let values: Vec<_> = (0..*size).map(|i: u32| vec![i as u8; 64]).collect();
+
+        // Sequential root hash
+        group.bench_with_input(BenchmarkId::new("sequential", size), size, |b, _| {
+            let mut trie = MerkleTrie::new();
+            for (key, value) in keys.iter().zip(values.iter()) {
+                trie.insert(key, value.clone());
+            }
+            b.iter(|| {
+                trie.clear_cache();
+                trie.root_hash()
+            })
+        });
+
+        // Parallel root hash
+        group.bench_with_input(BenchmarkId::new("parallel", size), size, |b, _| {
+            let mut trie = MerkleTrie::new();
+            for (key, value) in keys.iter().zip(values.iter()) {
+                trie.insert(key, value.clone());
+            }
+            b.iter(|| {
+                trie.clear_cache();
+                trie.parallel_root_hash()
+            })
+        });
+    }
 
     group.finish();
 }
@@ -237,7 +385,10 @@ criterion_group!(
     benches,
     bench_nibble_path,
     bench_slotted_array,
+    bench_simd_comparison,
+    bench_slotted_array_lookup,
     bench_merkle_trie,
+    bench_parallel_merkle,
     bench_keccak,
     bench_state_trie,
     bench_paged_db,

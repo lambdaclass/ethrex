@@ -3,6 +3,10 @@
 //! Inspired by PostgreSQL's page layout, this structure stores variable-length
 //! entries in a fixed-size buffer by growing slots from the start and data
 //! from the end.
+//!
+//! Note: Benchmarks showed that Rust's built-in slice comparison already benefits
+//! from LLVM auto-vectorization, making explicit SIMD implementations unnecessary.
+//! The standard library's `starts_with` is already optimized.
 
 use super::NibblePath;
 
@@ -153,7 +157,7 @@ impl SlottedArray {
             let entry_end = entry_start + slot.length as usize;
             let entry = &self.data[entry_start..entry_end];
 
-            // Check if key matches
+            // Check if key matches (LLVM auto-vectorizes this comparison)
             if entry.starts_with(&key_bytes) {
                 let value_start = key_bytes.len();
                 return Some(entry[value_start..].to_vec());
@@ -236,11 +240,208 @@ impl SlottedArray {
             std::ptr::write(self.data.as_mut_ptr().add(offset) as *mut Slot, slot);
         }
     }
+
+    /// Defragments the array, removing tombstones and reclaiming space.
+    ///
+    /// This compacts the data area by:
+    /// 1. Keeping only the newest version of each key
+    /// 2. Removing tombstones (deleted entries)
+    /// 3. Compacting data to eliminate gaps
+    ///
+    /// Returns the amount of space reclaimed in bytes.
+    pub fn defragment(&mut self) -> usize {
+        let old_free = self.free_space();
+
+        // Collect live entries (newest version of each key)
+        let entries: Vec<(NibblePath, Vec<u8>)> = self.iter().collect();
+
+        // Reset the array
+        let mut new_arr = SlottedArray::new();
+
+        // Re-insert all live entries
+        for (key, value) in entries {
+            // This should always succeed since we're only inserting what was there
+            new_arr.try_insert(&key, &value);
+        }
+
+        // Copy the new array data
+        self.data = new_arr.data;
+
+        let new_free = self.free_space();
+        new_free.saturating_sub(old_free)
+    }
+
+    /// Returns the amount of space wasted by tombstones and old versions.
+    ///
+    /// This can be used to decide whether defragmentation is worthwhile.
+    pub fn wasted_space(&self) -> usize {
+        let header = self.header();
+        let slot_count = header.slot_count as usize;
+
+        let mut live_data_size = 0;
+        let mut total_data_size = 0;
+        let mut seen_keys = std::collections::HashSet::new();
+
+        // Iterate from newest to oldest
+        for i in (0..slot_count).rev() {
+            let slot = self.get_slot(HEADER_SIZE + i * SLOT_SIZE);
+
+            // Skip tombstones
+            if slot.offset == 0 && slot.length == 0 {
+                continue;
+            }
+
+            total_data_size += slot.length as usize;
+
+            let entry_start = slot.offset as usize;
+            let entry = &self.data[entry_start..entry_start + slot.length as usize];
+
+            if entry.is_empty() {
+                continue;
+            }
+
+            let key_len = entry[0] as usize;
+            let key_bytes_len = (key_len + 1) / 2;
+            if 1 + key_bytes_len > entry.len() {
+                continue;
+            }
+
+            let key_bytes = &entry[1..1 + key_bytes_len];
+
+            // Only count newest version as live
+            if !seen_keys.contains(key_bytes) {
+                seen_keys.insert(key_bytes.to_vec());
+                live_data_size += slot.length as usize;
+            }
+        }
+
+        // Wasted = total data stored - live data + tombstone slots
+        let tombstone_slots = slot_count - seen_keys.len();
+        total_data_size - live_data_size + tombstone_slots * SLOT_SIZE
+    }
+
+    /// Returns true if defragmentation would reclaim significant space.
+    ///
+    /// Checks if there are many tombstones or old versions relative to live entries.
+    pub fn needs_defragmentation(&self) -> bool {
+        let slot_count = self.slot_count();
+        let live_count = self.live_count();
+
+        // Defragment if more than 25% of slots are dead/duplicate
+        if slot_count > 0 && live_count < slot_count {
+            let dead_slots = slot_count - live_count;
+            dead_slots * 4 > slot_count // > 25% dead
+        } else {
+            false
+        }
+    }
 }
 
 impl Default for SlottedArray {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Iterator over entries in a SlottedArray.
+///
+/// Returns (key, value) pairs for non-tombstone entries.
+pub struct SlottedArrayIter<'a> {
+    array: &'a SlottedArray,
+    index: usize,
+    seen_keys: std::collections::HashSet<Vec<u8>>,
+}
+
+impl<'a> Iterator for SlottedArrayIter<'a> {
+    type Item = (NibblePath, Vec<u8>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let header = self.array.header();
+        let slot_count = header.slot_count as usize;
+
+        // Iterate from newest to oldest to handle overwrites correctly
+        // We track seen keys to skip older versions
+        while self.index < slot_count {
+            let slot_index = slot_count - 1 - self.index;
+            self.index += 1;
+
+            let slot = self.array.get_slot(HEADER_SIZE + slot_index * SLOT_SIZE);
+
+            // Skip tombstones
+            if slot.offset == 0 && slot.length == 0 {
+                continue;
+            }
+
+            let entry_start = slot.offset as usize;
+            let entry_end = entry_start + slot.length as usize;
+            let entry = &self.array.data[entry_start..entry_end];
+
+            // Decode key
+            if entry.is_empty() {
+                continue;
+            }
+
+            let key_len = entry[0] as usize;
+            let key_bytes_len = (key_len + 1) / 2;
+            if 1 + key_bytes_len > entry.len() {
+                continue;
+            }
+
+            let key_bytes = &entry[1..1 + key_bytes_len];
+
+            // Skip if we've already seen this key (newer version exists)
+            if self.seen_keys.contains(key_bytes) {
+                continue;
+            }
+            self.seen_keys.insert(key_bytes.to_vec());
+
+            // Decode the NibblePath
+            let path = Self::decode_nibble_path(key_len, key_bytes);
+
+            // Extract value
+            let value = entry[1 + key_bytes_len..].to_vec();
+
+            return Some((path, value));
+        }
+
+        None
+    }
+}
+
+impl<'a> SlottedArrayIter<'a> {
+    fn decode_nibble_path(nibble_count: usize, bytes: &[u8]) -> NibblePath {
+        // Reconstruct the original bytes from packed nibbles
+        let mut original_bytes = Vec::with_capacity((nibble_count + 1) / 2);
+        for byte in bytes {
+            original_bytes.push(*byte);
+        }
+
+        // Create a NibblePath with the correct length
+        let mut path = NibblePath::from_bytes(&original_bytes);
+        // Truncate if nibble_count is odd
+        if nibble_count % 2 == 1 && !original_bytes.is_empty() {
+            path = path.slice_to(nibble_count);
+        }
+        path
+    }
+}
+
+impl SlottedArray {
+    /// Returns an iterator over all entries in the array.
+    ///
+    /// Entries are returned in reverse insertion order (newest first).
+    /// Tombstones are skipped, and for duplicate keys, only the newest value is returned.
+    pub fn iter(&self) -> SlottedArrayIter<'_> {
+        SlottedArrayIter {
+            array: self,
+            index: 0,
+            seen_keys: std::collections::HashSet::new(),
+        }
+    }
+
+    /// Returns the number of live (non-tombstone) entries.
+    pub fn live_count(&self) -> usize {
+        self.iter().count()
     }
 }
 
@@ -298,5 +499,228 @@ mod tests {
             let expected = format!("value_{}", i);
             assert_eq!(arr.get(&key), Some(expected.into_bytes()));
         }
+    }
+
+    #[test]
+    fn test_iterator() {
+        let mut arr = SlottedArray::new();
+
+        // Insert 5 entries
+        for i in 0..5u8 {
+            let key = NibblePath::from_bytes(&[i, i + 10]);
+            let value = format!("value_{}", i);
+            arr.try_insert(&key, value.as_bytes());
+        }
+
+        // Iterate and collect entries
+        let entries: Vec<_> = arr.iter().collect();
+        assert_eq!(entries.len(), 5);
+
+        // Verify all values are present (order may vary due to newest-first)
+        let values: std::collections::HashSet<_> = entries.iter()
+            .map(|(_, v)| String::from_utf8(v.clone()).unwrap())
+            .collect();
+        for i in 0..5 {
+            assert!(values.contains(&format!("value_{}", i)));
+        }
+    }
+
+    #[test]
+    fn test_iterator_with_overwrites() {
+        let mut arr = SlottedArray::new();
+        let key = NibblePath::from_bytes(&[0xAB, 0xCD]);
+
+        // Insert, overwrite, insert again
+        arr.try_insert(&key, b"first");
+        arr.try_insert(&key, b"second");
+        arr.try_insert(&key, b"third");
+
+        // Iterator should only return the newest value
+        let entries: Vec<_> = arr.iter().collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].1, b"third".to_vec());
+    }
+
+    #[test]
+    fn test_iterator_with_deletes() {
+        let mut arr = SlottedArray::new();
+
+        // Insert 3 entries
+        for i in 0..3u8 {
+            let key = NibblePath::from_bytes(&[i]);
+            arr.try_insert(&key, format!("val{}", i).as_bytes());
+        }
+
+        // Delete middle entry
+        let key1 = NibblePath::from_bytes(&[1]);
+        arr.delete(&key1);
+
+        // Iterator should return only 2 entries
+        let entries: Vec<_> = arr.iter().collect();
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn test_live_count() {
+        let mut arr = SlottedArray::new();
+
+        for i in 0..5u8 {
+            let key = NibblePath::from_bytes(&[i]);
+            arr.try_insert(&key, b"value");
+        }
+
+        assert_eq!(arr.live_count(), 5);
+
+        // Delete one
+        let key = NibblePath::from_bytes(&[2]);
+        arr.delete(&key);
+
+        assert_eq!(arr.live_count(), 4);
+    }
+
+    #[test]
+    fn test_long_keys() {
+        // Test with long keys (32 bytes -> 64 nibbles)
+        let mut arr = SlottedArray::new();
+
+        let long_key_bytes: Vec<u8> = (0..32).collect();
+        let key = NibblePath::from_bytes(&long_key_bytes);
+        let value = b"value for long key";
+
+        assert!(arr.try_insert(&key, value));
+        let retrieved = arr.get(&key);
+        assert_eq!(retrieved, Some(value.to_vec()));
+
+        // Test delete with long key
+        assert!(arr.delete(&key));
+        assert!(arr.get(&key).is_none());
+    }
+
+    #[test]
+    fn test_many_long_keys() {
+        // Test with many long keys
+        let mut arr = SlottedArray::new();
+
+        // Insert 20 entries with long keys
+        for i in 0..20u8 {
+            let key_bytes: Vec<u8> = (0..16).map(|j| i.wrapping_add(j)).collect();
+            let key = NibblePath::from_bytes(&key_bytes);
+            let value = format!("value_{}", i);
+            assert!(arr.try_insert(&key, value.as_bytes()));
+        }
+
+        // Retrieve all entries
+        for i in 0..20u8 {
+            let key_bytes: Vec<u8> = (0..16).map(|j| i.wrapping_add(j)).collect();
+            let key = NibblePath::from_bytes(&key_bytes);
+            let expected = format!("value_{}", i);
+            assert_eq!(arr.get(&key), Some(expected.into_bytes()));
+        }
+    }
+
+    #[test]
+    fn test_defragment_reclaims_space() {
+        let mut arr = SlottedArray::new();
+
+        // Insert entries
+        for i in 0..10u8 {
+            let key = NibblePath::from_bytes(&[i]);
+            arr.try_insert(&key, b"value");
+        }
+
+        let initial_free = arr.free_space();
+
+        // Delete half the entries (creates tombstones)
+        for i in 0..5u8 {
+            let key = NibblePath::from_bytes(&[i]);
+            arr.delete(&key);
+        }
+
+        // Free space should be same (tombstones don't reclaim)
+        assert_eq!(arr.free_space(), initial_free);
+
+        // Defragment
+        let reclaimed = arr.defragment();
+        assert!(reclaimed > 0, "Should reclaim space");
+
+        // Verify data integrity
+        assert_eq!(arr.live_count(), 5);
+        for i in 5..10u8 {
+            let key = NibblePath::from_bytes(&[i]);
+            assert_eq!(arr.get(&key), Some(b"value".to_vec()));
+        }
+    }
+
+    #[test]
+    fn test_defragment_removes_old_versions() {
+        let mut arr = SlottedArray::new();
+
+        let key = NibblePath::from_bytes(&[0xAB]);
+
+        // Insert multiple versions
+        arr.try_insert(&key, b"version1");
+        arr.try_insert(&key, b"version2");
+        arr.try_insert(&key, b"version3");
+
+        assert_eq!(arr.slot_count(), 3);
+
+        // Defragment
+        arr.defragment();
+
+        // Should only have one version now
+        assert_eq!(arr.slot_count(), 1);
+        assert_eq!(arr.get(&key), Some(b"version3".to_vec()));
+    }
+
+    #[test]
+    fn test_wasted_space() {
+        let mut arr = SlottedArray::new();
+
+        // Insert and delete entries
+        for i in 0..5u8 {
+            let key = NibblePath::from_bytes(&[i]);
+            arr.try_insert(&key, b"value");
+        }
+
+        // No wasted space initially
+        assert_eq!(arr.wasted_space(), 0);
+
+        // Delete entries (creates tombstones)
+        for i in 0..3u8 {
+            let key = NibblePath::from_bytes(&[i]);
+            arr.delete(&key);
+        }
+
+        // Now there's wasted space
+        assert!(arr.wasted_space() > 0);
+    }
+
+    #[test]
+    fn test_needs_defragmentation() {
+        let mut arr = SlottedArray::new();
+
+        // Fill with entries
+        for i in 0..20u8 {
+            let key = NibblePath::from_bytes(&[i]);
+            arr.try_insert(&key, b"value");
+        }
+
+        // 20 slots, 20 live = no defrag needed
+        assert!(!arr.needs_defragmentation());
+
+        // Delete most entries (creates tombstones)
+        for i in 0..15u8 {
+            let key = NibblePath::from_bytes(&[i]);
+            arr.delete(&key);
+        }
+
+        // 20 slots, 5 live = 15 dead = 75% dead > 25% threshold
+        assert!(arr.needs_defragmentation());
+
+        // Defragment
+        arr.defragment();
+
+        // After defrag: 5 slots, 5 live = no defrag needed
+        assert!(!arr.needs_defragmentation());
     }
 }

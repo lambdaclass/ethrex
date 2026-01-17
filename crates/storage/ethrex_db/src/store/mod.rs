@@ -15,4 +15,4 @@ pub use page::{Page, PAGE_SIZE};
 pub use page_header::{PageHeader, PageType};
 pub use page_types::{DataPage, RootPage, LeafPage, AbandonedPage};
 pub use paged_db::{PagedDb, DbError, BatchContext, ReadOnlyBatch, CommitOptions};
-pub use trie_store::{PersistentTrie, StateTrie, StorageTrie, AccountData};
+pub use trie_store::{PersistentTrie, StateTrie, StorageTrie, AccountData, PagedStateTrie};

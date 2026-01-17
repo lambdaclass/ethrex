@@ -35,11 +35,24 @@ impl RootPage {
     const BLOCK_NUMBER_OFFSET: usize = Self::STATE_ROOT_OFFSET + DbAddress::SIZE;
     /// Offset for block_hash field.
     const BLOCK_HASH_OFFSET: usize = Self::BLOCK_NUMBER_OFFSET + 4;
-    /// Offset where abandoned page list starts.
-    const ABANDONED_LIST_OFFSET: usize = Self::BLOCK_HASH_OFFSET + 32;
+    /// Offset for abandoned page list head (linked list of AbandonedPages).
+    const ABANDONED_HEAD_OFFSET: usize = Self::BLOCK_HASH_OFFSET + 32;
+    /// Offset for reorg depth (number of batches before pages can be reused).
+    const REORG_DEPTH_OFFSET: usize = Self::ABANDONED_HEAD_OFFSET + DbAddress::SIZE;
+    /// Offset where inline abandoned page list starts (for small numbers of pages).
+    const ABANDONED_LIST_OFFSET: usize = Self::REORG_DEPTH_OFFSET + 4;
+    /// Offset for inline abandoned batch ID (when pages were abandoned).
+    const ABANDONED_BATCH_OFFSET: usize = Self::ABANDONED_LIST_OFFSET;
+    /// Offset for inline abandoned count.
+    const ABANDONED_COUNT_OFFSET: usize = Self::ABANDONED_BATCH_OFFSET + 4;
+    /// Offset where inline abandoned addresses start.
+    const ABANDONED_ADDRESSES_OFFSET: usize = Self::ABANDONED_COUNT_OFFSET + 2;
 
-    /// Maximum number of abandoned page addresses that can be stored.
-    pub const MAX_ABANDONED: usize = (PAGE_SIZE - Self::ABANDONED_LIST_OFFSET) / DbAddress::SIZE;
+    /// Maximum number of abandoned page addresses that can be stored inline.
+    pub const MAX_ABANDONED: usize = (PAGE_SIZE - Self::ABANDONED_ADDRESSES_OFFSET) / DbAddress::SIZE;
+
+    /// Default reorg depth (64 batches).
+    pub const DEFAULT_REORG_DEPTH: u32 = 64;
 
     /// Creates a new root page.
     pub fn new(batch_id: u32) -> Self {
@@ -48,6 +61,7 @@ impl RootPage {
         // Start allocating from page 1 (page 0 is the root)
         let mut root = Self { page };
         root.set_next_free_page(DbAddress::page(1));
+        root.set_reorg_depth(Self::DEFAULT_REORG_DEPTH);
         root
     }
 
@@ -154,6 +168,128 @@ impl RootPage {
     pub fn set_block_hash(&mut self, hash: &[u8; 32]) {
         let data = self.page.as_bytes_mut();
         data[Self::BLOCK_HASH_OFFSET..Self::BLOCK_HASH_OFFSET + 32].copy_from_slice(hash);
+    }
+
+    /// Gets the head of the abandoned page linked list.
+    pub fn abandoned_head(&self) -> DbAddress {
+        let data = self.page.as_bytes();
+        DbAddress::read(&data[Self::ABANDONED_HEAD_OFFSET..])
+    }
+
+    /// Sets the head of the abandoned page linked list.
+    pub fn set_abandoned_head(&mut self, addr: DbAddress) {
+        let data = self.page.as_bytes_mut();
+        addr.write(&mut data[Self::ABANDONED_HEAD_OFFSET..]);
+    }
+
+    /// Gets the reorg depth (number of batches before pages can be reused).
+    pub fn reorg_depth(&self) -> u32 {
+        let data = self.page.as_bytes();
+        u32::from_le_bytes([
+            data[Self::REORG_DEPTH_OFFSET],
+            data[Self::REORG_DEPTH_OFFSET + 1],
+            data[Self::REORG_DEPTH_OFFSET + 2],
+            data[Self::REORG_DEPTH_OFFSET + 3],
+        ])
+    }
+
+    /// Sets the reorg depth.
+    pub fn set_reorg_depth(&mut self, depth: u32) {
+        let data = self.page.as_bytes_mut();
+        data[Self::REORG_DEPTH_OFFSET..Self::REORG_DEPTH_OFFSET + 4]
+            .copy_from_slice(&depth.to_le_bytes());
+    }
+
+    /// Gets the batch ID when inline abandoned pages were abandoned.
+    fn abandoned_batch(&self) -> u32 {
+        let data = self.page.as_bytes();
+        u32::from_le_bytes([
+            data[Self::ABANDONED_BATCH_OFFSET],
+            data[Self::ABANDONED_BATCH_OFFSET + 1],
+            data[Self::ABANDONED_BATCH_OFFSET + 2],
+            data[Self::ABANDONED_BATCH_OFFSET + 3],
+        ])
+    }
+
+    /// Sets the batch ID when inline abandoned pages were abandoned.
+    fn set_abandoned_batch(&mut self, batch: u32) {
+        let data = self.page.as_bytes_mut();
+        data[Self::ABANDONED_BATCH_OFFSET..Self::ABANDONED_BATCH_OFFSET + 4]
+            .copy_from_slice(&batch.to_le_bytes());
+    }
+
+    /// Gets the inline abandoned page count.
+    fn abandoned_count(&self) -> usize {
+        let data = self.page.as_bytes();
+        u16::from_le_bytes([
+            data[Self::ABANDONED_COUNT_OFFSET],
+            data[Self::ABANDONED_COUNT_OFFSET + 1],
+        ]) as usize
+    }
+
+    /// Sets the inline abandoned page count.
+    fn set_abandoned_count(&mut self, count: usize) {
+        let data = self.page.as_bytes_mut();
+        let count16 = count as u16;
+        data[Self::ABANDONED_COUNT_OFFSET..Self::ABANDONED_COUNT_OFFSET + 2]
+            .copy_from_slice(&count16.to_le_bytes());
+    }
+
+    /// Tries to add an abandoned page address inline (fast path).
+    /// Returns false if inline storage is full or batch mismatch.
+    pub fn try_add_abandoned_inline(&mut self, addr: DbAddress, batch_id: u32) -> bool {
+        let count = self.abandoned_count();
+
+        // If first entry, set the batch
+        if count == 0 {
+            self.set_abandoned_batch(batch_id);
+        } else if self.abandoned_batch() != batch_id {
+            // Different batch - would need to use AbandonedPage linked list
+            return false;
+        }
+
+        if count >= Self::MAX_ABANDONED {
+            return false;
+        }
+
+        let offset = Self::ABANDONED_ADDRESSES_OFFSET + count * DbAddress::SIZE;
+        addr.write(&mut self.page.as_bytes_mut()[offset..]);
+        self.set_abandoned_count(count + 1);
+        true
+    }
+
+    /// Pops an abandoned page address from inline storage (fast path).
+    /// Only returns pages that are safe to reuse (past reorg depth).
+    pub fn pop_abandoned_inline(&mut self, current_batch: u32) -> Option<DbAddress> {
+        let count = self.abandoned_count();
+        if count == 0 {
+            return None;
+        }
+
+        // Check if enough batches have passed
+        let abandoned_at = self.abandoned_batch();
+        let reorg_depth = self.reorg_depth();
+        if current_batch < abandoned_at + reorg_depth {
+            // Not old enough to reuse
+            return None;
+        }
+
+        let offset = Self::ABANDONED_ADDRESSES_OFFSET + (count - 1) * DbAddress::SIZE;
+        let addr = DbAddress::read(&self.page.as_bytes()[offset..]);
+        self.set_abandoned_count(count - 1);
+        Some(addr)
+    }
+
+    /// Returns true if there are inline abandoned pages that can be reused.
+    pub fn has_reusable_abandoned_inline(&self, current_batch: u32) -> bool {
+        let count = self.abandoned_count();
+        if count == 0 {
+            return false;
+        }
+
+        let abandoned_at = self.abandoned_batch();
+        let reorg_depth = self.reorg_depth();
+        current_batch >= abandoned_at + reorg_depth
     }
 }
 

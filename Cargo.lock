@@ -3732,9 +3732,11 @@ dependencies = [
  "parking_lot",
  "proptest",
  "rand 0.8.5",
+ "rayon",
  "tempfile",
  "thiserror 2.0.17",
  "tiny-keccak",
+ "wide",
 ]
 
 [[package]]
