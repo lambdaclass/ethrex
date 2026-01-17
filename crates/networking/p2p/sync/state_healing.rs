@@ -313,39 +313,105 @@ async fn heal_state_trie(
                     .unwrap_or(0)
                     .max(longest_path_seen);
 
-                let Some((peer_id, connection)) = peers
-                    .peer_table
-                    .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
-                    .await
-                    .unwrap_or(None)
-                else {
-                    paths.extend(batch);
+                // Check local DB first before requesting from peers
+                let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+                let batch_paths: Vec<Nibbles> = batch.iter().map(|m| m.path.clone()).collect();
+                let local_nodes = trie.db().get_batch(&batch_paths)?;
 
-                    if logged_no_free_peers_count == 0 {
-                        trace!("No peers available for state healing");
-                        logged_no_free_peers_count = 500;
+                let mut missing_from_local: Vec<RequestMetadata> = Vec::new();
+                let mut found_locally: Vec<(RequestMetadata, Node)> = Vec::new();
+
+                for (meta, local_node) in batch.into_iter().zip(local_nodes.into_iter()) {
+                    if let Some(node_bytes) = local_node {
+                        if !node_bytes.is_empty() {
+                            if let Ok(node) = Node::decode(&node_bytes) {
+                                found_locally.push((meta, node));
+                                continue;
+                            }
+                        }
                     }
-                    logged_no_free_peers_count -= 1;
+                    missing_from_local.push(meta);
+                }
 
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                    continue;
-                };
+                // Process locally found nodes immediately (no peer request needed)
+                if !found_locally.is_empty() {
+                    let local_count = found_locally.len();
+                    for (meta, node) in found_locally {
+                        let (_, missing_children) = node_missing_children_optimized(
+                            &node,
+                            &meta.path,
+                            trie.db(),
+                            &healing_cache,
+                        )?;
+                        paths.extend(missing_children);
 
-                let tx = task_sender.clone();
-                inflight_tasks += 1;
-                let peer_table = peers.peer_table.clone();
+                        // Track leaf nodes for account processing
+                        if let Node::Leaf(leaf_node) = &node {
+                            if let Ok(account) = AccountState::decode(&leaf_node.value) {
+                                let account_hash =
+                                    H256::from_slice(&meta.path.concat(&leaf_node.partial).to_bytes());
 
-                tokio::spawn(async move {
-                    let response = PeerHandler::request_state_trienodes(
-                        peer_id,
-                        connection,
-                        peer_table,
-                        state_root,
-                        batch.clone(),
-                    )
-                    .await;
-                    let _ = tx.send((peer_id, response, batch)).await;
-                });
+                                if account.code_hash != *EMPTY_KECCACK_HASH {
+                                    code_hash_collector.add(account.code_hash);
+                                    code_hash_collector.flush_if_needed().await?;
+                                }
+
+                                storage_accounts.healed_accounts.insert(account_hash);
+                                if let Some((old_root, _)) = storage_accounts
+                                    .accounts_with_storage_root
+                                    .get_mut(&account_hash)
+                                {
+                                    *old_root = None;
+                                }
+                            }
+                            stats.leafs_healed += 1;
+                            *global_leafs_healed += 1;
+                        }
+
+                        nodes_to_write.push((meta.path, node));
+                    }
+                    trace!(
+                        local_count,
+                        "Found nodes locally, skipping peer requests"
+                    );
+                }
+
+                // Only request missing nodes from peers
+                if !missing_from_local.is_empty() {
+                    let Some((peer_id, connection)) = peers
+                        .peer_table
+                        .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+                        .await
+                        .unwrap_or(None)
+                    else {
+                        paths.extend(missing_from_local);
+
+                        if logged_no_free_peers_count == 0 {
+                            trace!("No peers available for state healing");
+                            logged_no_free_peers_count = 500;
+                        }
+                        logged_no_free_peers_count -= 1;
+
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        continue;
+                    };
+
+                    let tx = task_sender.clone();
+                    inflight_tasks += 1;
+                    let peer_table = peers.peer_table.clone();
+
+                    tokio::spawn(async move {
+                        let response = PeerHandler::request_state_trienodes(
+                            peer_id,
+                            connection,
+                            peer_table,
+                            state_root,
+                            missing_from_local.clone(),
+                        )
+                        .await;
+                        let _ = tx.send((peer_id, response, missing_from_local)).await;
+                    });
+                }
             }
         }
 
