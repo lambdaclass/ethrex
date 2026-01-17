@@ -20,6 +20,65 @@ use ethrex_p2p::{
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
+use ethrex_storage::EngineType;
+
+/// Storage backend type for CLI selection.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum StorageBackend {
+    /// In-memory storage (for testing).
+    InMemory,
+    /// RocksDB storage (default).
+    #[default]
+    #[cfg(feature = "rocksdb")]
+    RocksDB,
+    /// PagedDb storage (Paprika-inspired).
+    #[cfg(feature = "paged-db")]
+    PagedDb,
+}
+
+impl Display for StorageBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StorageBackend::InMemory => write!(f, "memory"),
+            #[cfg(feature = "rocksdb")]
+            StorageBackend::RocksDB => write!(f, "rocksdb"),
+            #[cfg(feature = "paged-db")]
+            StorageBackend::PagedDb => write!(f, "paged-db"),
+        }
+    }
+}
+
+impl FromStr for StorageBackend {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "memory" | "inmemory" | "in-memory" => Ok(StorageBackend::InMemory),
+            #[cfg(feature = "rocksdb")]
+            "rocksdb" | "rocks" => Ok(StorageBackend::RocksDB),
+            #[cfg(feature = "paged-db")]
+            "paged-db" | "pageddb" | "paged" => Ok(StorageBackend::PagedDb),
+            _ => Err(format!(
+                "Invalid storage backend '{}'. Available: memory, rocksdb{}",
+                s,
+                if cfg!(feature = "paged-db") { ", paged-db" } else { "" }
+            )),
+        }
+    }
+}
+
+impl StorageBackend {
+    /// Converts the CLI storage backend to the internal EngineType.
+    pub fn to_engine_type(&self) -> EngineType {
+        match self {
+            StorageBackend::InMemory => EngineType::InMemory,
+            #[cfg(feature = "rocksdb")]
+            StorageBackend::RocksDB => EngineType::RocksDB,
+            #[cfg(feature = "paged-db")]
+            StorageBackend::PagedDb => EngineType::PagedDb,
+        }
+    }
+}
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, error, info, warn};
 
@@ -294,6 +353,16 @@ pub struct Options {
         help_heading = "Node options"
     )]
     pub precompute_witnesses: bool,
+    #[arg(
+        long = "storage-backend",
+        default_value_t = StorageBackend::default(),
+        value_name = "BACKEND",
+        help = "Storage backend to use.",
+        long_help = "Possible values: memory, rocksdb, paged-db (if compiled with paged-db feature). Default: rocksdb.",
+        help_heading = "Node options",
+        env = "ETHREX_STORAGE_BACKEND"
+    )]
+    pub storage_backend: StorageBackend,
 }
 
 impl Options {
@@ -371,6 +440,7 @@ impl Default for Options {
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
             max_blobs_per_block: None,
             precompute_witnesses: false,
+            storage_backend: Default::default(),
         }
     }
 }
@@ -493,6 +563,7 @@ impl Subcommand {
                         r#type: blockchain_type,
                         ..Default::default()
                     },
+                    opts.storage_backend.to_engine_type(),
                 )
                 .await?;
             }
@@ -518,6 +589,7 @@ impl Subcommand {
                         perf_logs_enabled: true,
                         ..Default::default()
                     },
+                    opts.storage_backend.to_engine_type(),
                 )
                 .await?;
             }
@@ -602,6 +674,7 @@ pub async fn import_blocks(
     datadir: &Path,
     genesis: Genesis,
     blockchain_opts: BlockchainOptions,
+    engine_type: EngineType,
 ) -> Result<(), ChainError> {
     const IMPORT_BATCH_SIZE: usize = 1024;
     // This value is higher than the spec (128) as the latter block's state nodes will be kept in memory and not committed when using rocksdb
@@ -609,7 +682,7 @@ pub async fn import_blocks(
     const MIN_FULL_BLOCKS: usize = 132;
     let start_time = Instant::now();
     init_datadir(datadir);
-    let store = init_store(datadir, genesis).await?;
+    let store = init_store(datadir, genesis, Some(engine_type)).await?;
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
     let path_metadata = metadata(path).expect("Failed to read path");
 
@@ -724,10 +797,11 @@ pub async fn import_blocks_bench(
     datadir: &Path,
     genesis: Genesis,
     blockchain_opts: BlockchainOptions,
+    engine_type: EngineType,
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
     init_datadir(datadir);
-    let store = init_store(datadir, genesis).await?;
+    let store = init_store(datadir, genesis, Some(engine_type)).await?;
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
     regenerate_head_state(&store, &blockchain).await.unwrap();
     let path_metadata = metadata(path).expect("Failed to read path");

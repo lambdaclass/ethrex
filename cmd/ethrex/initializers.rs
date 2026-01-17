@@ -142,26 +142,40 @@ pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
 }
 
 /// Opens a new or pre-existing Store and loads the initial state provided by the network
-pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Result<Store, StoreError> {
-    let mut store = open_store(datadir.as_ref())?;
+pub async fn init_store(
+    datadir: impl AsRef<Path>,
+    genesis: Genesis,
+    engine_type: Option<EngineType>,
+) -> Result<Store, StoreError> {
+    let mut store = open_store(datadir.as_ref(), engine_type)?;
     store.add_initial_state(genesis).await?;
     Ok(store)
 }
 
 /// Initializes a pre-existing Store
 pub async fn load_store(datadir: &Path) -> Result<Store, StoreError> {
-    let store = open_store(datadir)?;
+    let store = open_store(datadir, None)?;
     store.load_initial_state().await?;
     Ok(store)
 }
 
 /// Opens a pre-existing Store or creates a new one
-pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
+///
+/// If `engine_type` is `None`, defaults to RocksDB (or InMemory if datadir is "memory").
+pub fn open_store(datadir: &Path, engine_type: Option<EngineType>) -> Result<Store, StoreError> {
     if is_memory_datadir(datadir) {
         Store::new(datadir, EngineType::InMemory)
     } else {
-        #[cfg(feature = "rocksdb")]
-        let engine_type = EngineType::RocksDB;
+        let engine_type = engine_type.unwrap_or({
+            #[cfg(feature = "rocksdb")]
+            {
+                EngineType::RocksDB
+            }
+            #[cfg(not(feature = "rocksdb"))]
+            {
+                compile_error!("At least one database feature must be enabled")
+            }
+        });
         #[cfg(feature = "metrics")]
         ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
         Store::new(datadir, engine_type)
@@ -451,7 +465,8 @@ pub async fn init_l1(
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
-    let store = match init_store(datadir, genesis).await {
+    let engine_type = opts.storage_backend.to_engine_type();
+    let store = match init_store(datadir, genesis, Some(engine_type)).await {
         Ok(store) => store,
         Err(err @ StoreError::IncompatibleDBVersion { .. })
         | Err(err @ StoreError::NotFoundDBVersion { .. }) => {

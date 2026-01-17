@@ -15,6 +15,12 @@ mod proptest_tests {
                 1..20
             )
         ) {
+            use std::collections::HashMap;
+
+            // Deduplicate entries by key (last value wins) to avoid insertion order issues
+            let unique_entries: HashMap<_, _> = entries.into_iter().collect();
+            let entries: Vec<_> = unique_entries.into_iter().collect();
+
             let mut trie1 = MerkleTrie::new();
             let mut trie2 = MerkleTrie::new();
 
@@ -28,7 +34,7 @@ mod proptest_tests {
                 trie2.insert(key, value.clone());
             }
 
-            // Root hashes should be the same
+            // Root hashes should be the same (insertion order shouldn't matter for unique keys)
             assert_eq!(trie1.root_hash(), trie2.root_hash());
         }
 
