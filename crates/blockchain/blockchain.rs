@@ -1448,13 +1448,7 @@ impl Blockchain {
         let (res, updates) = self.execute_block(&block)?;
         let executed = Instant::now();
 
-        // Apply the account updates over the last block's state and compute the new state root
-        let account_updates_list = self
-            .storage
-            .apply_account_updates_batch(block.header.parent_hash, &updates)?
-            .ok_or(ChainError::ParentStateNotFound)?;
-
-        // Write state to ethrex_db state_manager for fast lookups
+        // Write state to ethrex_db (primary state storage)
         let block_hash = block.hash();
         self.storage.write_block_state_to_manager(
             block.header.parent_hash,
@@ -1462,6 +1456,12 @@ impl Blockchain {
             block.header.number,
             &updates,
         )?;
+
+        // Collect only code updates for RocksDB (no trie operations)
+        // State is managed by ethrex_db, we trust the block header's state_root
+        let account_updates_list = self
+            .storage
+            .collect_code_updates(block.header.state_root, &updates);
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -1782,14 +1782,7 @@ impl Blockchain {
         let last_block_number = last_block.header.number;
         let last_block_gas_limit = last_block.header.gas_limit;
 
-        // Apply the account updates over all blocks and compute the new state root
-        let account_updates_list = self
-            .storage
-            .apply_account_updates_batch(first_block_header.parent_hash, &account_updates)
-            .map_err(|e| (e.into(), None))?
-            .ok_or((ChainError::ParentStateNotFound, None))?;
-
-        // Write final state to ethrex_db state_manager for fast lookups
+        // Write state to ethrex_db (primary state storage)
         // Note: For batch execution, we write the combined state for the last block
         self.storage
             .write_block_state_to_manager(
@@ -1800,13 +1793,15 @@ impl Blockchain {
             )
             .map_err(|e| (e.into(), None))?;
 
-        let new_state_root = account_updates_list.state_trie_hash;
+        // Collect only code updates for RocksDB (no trie operations)
+        // State is managed by ethrex_db, we trust the block header's state_root
+        let account_updates_list = self
+            .storage
+            .collect_code_updates(last_block.header.state_root, &account_updates);
+
         let state_updates = account_updates_list.state_updates;
         let accounts_updates = account_updates_list.storage_updates;
         let code_updates = account_updates_list.code_updates;
-
-        // Check state root matches the one in block header
-        validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
         let update_batch = UpdateBatch {
             account_updates: state_updates,

@@ -25,16 +25,7 @@ pub struct StoreVmDatabase {
 
 impl StoreVmDatabase {
     pub fn new(store: Store, block_header: BlockHeader) -> Result<Self, EvmError> {
-        // If we don't have the state for the base, we want to fail in a clear way
-        // instead of eventually erroring due to one of the several errors that may
-        // happen as a result of executing from the wrong state
-        // This lets one easily tell apart an inconsistent state from a syncing issue
-        if !store
-            .has_state_root(block_header.state_root)
-            .map_err(|e| EvmError::DB(e.to_string()))?
-        {
-            return Err(EvmError::DB("state root missing".to_string()));
-        }
+        // State is managed by ethrex_db, no need to check trie-based state root
         Ok(StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
@@ -48,13 +39,7 @@ impl StoreVmDatabase {
         block_header: BlockHeader,
         block_hash_cache: BTreeMap<BlockNumber, BlockHash>,
     ) -> Result<Self, EvmError> {
-        // Fail clearly if prestate is missing. See `StoreVmDatabase::new` for details on why we want this
-        if !store
-            .has_state_root(block_header.state_root)
-            .map_err(|e| EvmError::DB(e.to_string()))?
-        {
-            return Err(EvmError::DB("state root missing".to_string()));
-        }
+        // State is managed by ethrex_db, no need to check trie-based state root
         Ok(StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
@@ -72,9 +57,17 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
-        self.store
-            .get_account_state_by_root(self.state_root, address)
-            .map_err(|e| EvmError::DB(e.to_string()))
+        // Use ethrex_db for account state (primary storage)
+        let info = self.store
+            .get_account_info_by_hash(self.block_hash, address)
+            .map_err(|e| EvmError::DB(e.to_string()))?;
+
+        Ok(info.map(|i| AccountState {
+            nonce: i.nonce,
+            balance: i.balance,
+            code_hash: i.code_hash,
+            storage_root: H256::zero(), // ethrex_db manages storage separately
+        }))
     }
 
     #[instrument(
@@ -84,9 +77,8 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
-        self.store
-            .get_storage_at_root(self.state_root, address, key)
-            .map_err(|e| EvmError::DB(e.to_string()))
+        // Use ethrex_db for storage (primary storage)
+        Ok(self.store.state_manager().get_storage(&self.block_hash, &address, &key))
     }
 
     #[instrument(

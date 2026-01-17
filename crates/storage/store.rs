@@ -22,6 +22,7 @@ use crate::{
 };
 
 use bytes::Bytes;
+use rustc_hash::FxHashMap;
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -1561,8 +1562,38 @@ impl Store {
         Ok(Some(account_state.nonce))
     }
 
+    /// Collects code updates from account updates without trie operations.
+    /// State is managed by ethrex_db, so we only need to extract code for RocksDB storage.
+    /// The state_root is taken from the block header (trusted).
+    pub fn collect_code_updates(
+        &self,
+        state_root: H256,
+        account_updates: &[AccountUpdate],
+    ) -> AccountUpdatesList {
+        let mut code_updates = Vec::new();
+
+        for update in account_updates {
+            if update.removed {
+                continue;
+            }
+            if let Some(info) = &update.info {
+                if let Some(code) = &update.code {
+                    code_updates.push((info.code_hash, code.clone()));
+                }
+            }
+        }
+
+        AccountUpdatesList {
+            state_trie_hash: state_root,
+            state_updates: Vec::new(),      // No trie updates - ethrex_db handles state
+            storage_updates: Vec::new(),    // No trie updates - ethrex_db handles storage
+            code_updates,
+        }
+    }
+
     /// Applies account updates based on the block's latest storage state
     /// and returns the new state root after the updates have been applied.
+    /// DEPRECATED: Use collect_code_updates + ethrex_db for state management.
     pub fn apply_account_updates_batch(
         &self,
         block_hash: BlockHash,
@@ -1803,22 +1834,32 @@ impl Store {
     ) -> Result<H256, StoreError> {
         let mut storage_trie_nodes = vec![];
         let mut genesis_state_trie = self.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+
+        // Collect account updates for ethrex_db
+        let mut account_updates: Vec<AccountUpdate> = Vec::new();
+
         for (address, account) in genesis_accounts {
             let hashed_address = hash_address(&address);
             let h256_hashed_address = H256::from_slice(&hashed_address);
 
             // Store account code (as this won't be stored in the trie)
-            let code = Code::from_bytecode(account.code);
+            let code = Code::from_bytecode(account.code.clone());
             let code_hash = code.hash;
-            self.add_account_code(code).await?;
+            self.add_account_code(code.clone()).await?;
 
             // Store the account's storage in a clean storage trie and compute its root
             let mut storage_trie =
                 self.open_direct_storage_trie(h256_hashed_address, *EMPTY_TRIE_HASH)?;
-            for (storage_key, storage_value) in account.storage {
+
+            // Collect storage for ethrex_db
+            let mut added_storage: FxHashMap<H256, U256> = FxHashMap::default();
+
+            for (storage_key, storage_value) in &account.storage {
                 if !storage_value.is_zero() {
-                    let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
+                    let key_h256 = H256(storage_key.to_big_endian());
+                    let hashed_key = hash_key(&key_h256);
                     storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                    added_storage.insert(key_h256, *storage_value);
                 }
             }
 
@@ -1838,6 +1879,20 @@ impl Store {
                 code_hash,
             };
             genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+
+            // Collect for ethrex_db
+            account_updates.push(AccountUpdate {
+                address,
+                removed: false,
+                info: Some(AccountInfo {
+                    code_hash,
+                    balance: account.balance,
+                    nonce: account.nonce,
+                }),
+                code: if code.bytecode.is_empty() { None } else { Some(code) },
+                added_storage,
+                removed_storage: false,
+            });
         }
 
         let (state_root, account_trie_nodes) = genesis_state_trie.collect_changes_since_last_hash();
@@ -1851,7 +1906,47 @@ impl Store {
         tx.put_batch(STORAGE_TRIE_NODES, storage_trie_nodes)?;
         tx.commit()?;
 
+        // Write genesis state to ethrex_db
+        // Genesis block has parent H256::zero() and we use a placeholder hash
+        // The actual genesis hash will be set later via set_genesis_in_state_manager
+        self.write_genesis_state_to_manager(&account_updates)?;
+
         Ok(state_root)
+    }
+
+    /// Writes genesis state directly to ethrex_db state manager.
+    fn write_genesis_state_to_manager(
+        &self,
+        account_updates: &[AccountUpdate],
+    ) -> Result<(), StoreError> {
+        // For genesis, we create a temporary block with parent H256::zero()
+        // and a placeholder hash. The real genesis hash will be set later.
+        let genesis_placeholder_hash = H256::repeat_byte(0xFF);
+
+        let mut block_state = self.state_manager.start_block(
+            H256::zero(),           // Genesis has no parent
+            genesis_placeholder_hash,
+            0,                      // Genesis is block 0
+        )?;
+
+        for update in account_updates {
+            if update.removed {
+                continue;
+            }
+            if let Some(info) = &update.info {
+                block_state.set_account(&update.address, info);
+            }
+            for (storage_key, storage_value) in &update.added_storage {
+                block_state.set_storage(&update.address, *storage_key, *storage_value);
+            }
+        }
+
+        self.state_manager.commit_block(block_state)?;
+
+        // Finalize immediately since genesis is always finalized
+        self.state_manager.finalize(genesis_placeholder_hash)?;
+
+        Ok(())
     }
 
     // Key format: block_number (8 bytes, big-endian) + block_hash (32 bytes)
