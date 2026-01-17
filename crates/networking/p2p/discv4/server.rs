@@ -282,8 +282,17 @@ impl DiscoveryServer {
             .target_peers_completion()
             .await
             .unwrap_or_default();
+        // Also check snap peer completion - discovery should stay aggressive
+        // until we have enough snap-capable peers for healing
+        let snap_completion = self
+            .peer_table
+            .snap_peer_completion()
+            .await
+            .unwrap_or_default();
+        // Use the minimum of both - discovery only slows when BOTH targets are met
+        let effective_completion = peer_completion.min(snap_completion);
         lookup_interval_function(
-            peer_completion,
+            effective_completion,
             self.initial_lookup_interval,
             LOOKUP_INTERVAL_MS,
         )
