@@ -29,10 +29,10 @@ use crate::{
     utils::current_unix_time,
 };
 
-/// Max size of a bach to start a storage fetch request in queues
-pub const STORAGE_BATCH_SIZE: usize = 300;
-/// Max size of a bach to start a node fetch request in queues
-pub const NODE_BATCH_SIZE: usize = 500;
+/// Max size of a batch to start a storage fetch request in queues
+pub const STORAGE_BATCH_SIZE: usize = 2000;
+/// Max size of a batch to start a node fetch request in queues - increased for faster healing
+pub const NODE_BATCH_SIZE: usize = 4000;
 /// Pace at which progress is shown via info tracing
 pub const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(2);
 

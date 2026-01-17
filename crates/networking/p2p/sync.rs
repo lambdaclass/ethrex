@@ -54,8 +54,8 @@ const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
 /// Amount of seconds between blocks
 const SECONDS_PER_BLOCK: u64 = 12;
 
-/// Bytecodes to downloader per batch
-const BYTECODE_CHUNK_SIZE: usize = 50_000;
+/// Bytecodes to download per batch - increased for faster downloads
+const BYTECODE_CHUNK_SIZE: usize = 25_000;
 
 /// We assume this amount of slots are missing a block to adjust our timestamp
 /// based update pivot algorithm. This is also used to try to find "safe" blocks in the chain
