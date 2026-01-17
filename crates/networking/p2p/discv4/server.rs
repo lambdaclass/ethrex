@@ -40,8 +40,8 @@ const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12
 /// The initial interval between peer lookups, until the number of peers reaches
 /// [target_peers](DiscoverySideCarState::target_peers), or the number of
 /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
-pub const INITIAL_LOOKUP_INTERVAL_MS: f64 = 100.0; // 10 per second
-pub const LOOKUP_INTERVAL_MS: f64 = 600.0; // 100 per minute
+pub const INITIAL_LOOKUP_INTERVAL_MS: f64 = 50.0; // 20 per second (more aggressive)
+pub const LOOKUP_INTERVAL_MS: f64 = 200.0; // 300 per minute (more aggressive)
 const CHANGE_FIND_NODE_MESSAGE_INTERVAL: Duration = Duration::from_secs(5);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 
