@@ -12,7 +12,6 @@ use crate::peer_handler::{BlockRequestOrder, PeerHandlerError, SNAP_LIMIT};
 use crate::peer_table::PeerTableError;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::code_collector::CodeHashCollector;
-use crate::sync::state_healing::heal_state_trie_wrap;
 use crate::utils::{
     current_unix_time, delete_leaves_folder, get_account_state_snapshots_dir,
     get_account_storages_snapshots_dir, get_code_hashes_snapshots_dir,
@@ -872,10 +871,12 @@ impl Syncer {
                 store.save_snap_sync_checkpoint(&checkpoint).await?;
 
                 *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
-                // We start downloading the storage leafs. To do so, we need to be sure that the storage root
-                // is correct. To do so, we always heal the state trie before requesting storage rates
+                // Note: State trie healing is skipped for ethrex_db backend because:
+                // 1. SnapSyncTrie builds its own merkle structure from inserted accounts
+                // 2. The accounts are not accessible via open_direct_state_trie() until set_snap_sync_trie() is called
+                // 3. The storage_accounts data was already populated during account insertion
+                // So we proceed directly to storage downloads without healing.
                 let mut chunk_index = 0_u64;
-                let mut state_leafs_healed = 0_u64;
                 let mut storage_range_request_attempts = 0;
                 loop {
                     while block_is_stale(&pivot_header) {
@@ -887,21 +888,6 @@ impl Syncer {
                         )
                         .await?;
                     }
-                    // heal_state_trie_wrap returns false if we ran out of time before fully healing the trie
-                    // We just need to update the pivot and start again
-                    if !heal_state_trie_wrap(
-                        pivot_header.state_root,
-                        store.clone(),
-                        &self.peers,
-                        calculate_staleness_timestamp(pivot_header.timestamp),
-                        &mut state_leafs_healed,
-                        &mut storage_accounts,
-                        &mut code_hash_collector,
-                    )
-                    .await?
-                    {
-                        continue;
-                    };
 
                     info!(
                         "Started request_storage_ranges with {} accounts with storage root unchanged",
