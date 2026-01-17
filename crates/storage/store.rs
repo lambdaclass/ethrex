@@ -1491,6 +1491,21 @@ impl Store {
         if let Some(info) = self.state_manager.get_finalized_account(&address) {
             return Ok(Some(info));
         }
+
+        // Fallback to trie-based lookup for snap sync compatibility.
+        // After snap sync, state is stored in tries but not in ethrex_db.
+        if let Some(state_trie) = self.state_trie(block_hash)? {
+            let hashed_address = hash_address_fixed(&address);
+            if let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? {
+                let account_state = AccountState::decode(&encoded_state)?;
+                return Ok(Some(AccountInfo {
+                    nonce: account_state.nonce,
+                    balance: account_state.balance,
+                    code_hash: account_state.code_hash,
+                }));
+            }
+        }
+
         Ok(None)
     }
 

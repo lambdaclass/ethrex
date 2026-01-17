@@ -7,9 +7,10 @@ use std::path::Path;
 
 use ethrex_common::{Address, H256, U256};
 use ethrex_common::types::AccountInfo;
+use ethrex_common::utils::keccak;
 
 use ethrex_db::chain::{Account as EthrexDbAccount, Blockchain, BlockchainError, ReadOnlyWorldState, WorldState};
-use ethrex_db::store::PagedDb;
+use ethrex_db::store::{PagedDb, PagedStateTrie, AccountData, StorageTrie};
 
 use crate::error::StoreError;
 
@@ -114,15 +115,28 @@ impl BlockchainStateManager {
 
     /// Gets an account from a committed (hot) block.
     pub fn get_account(&self, block_hash: &H256, address: &Address) -> Option<AccountInfo> {
-        // Convert Address to H256 (pad with zeros on the left)
         let addr_h256 = address_to_h256(address);
-        self.blockchain.get_account(block_hash, &addr_h256)
+        self.get_account_by_hash(block_hash, &addr_h256)
+    }
+
+    /// Gets an account from a committed (hot) block using a pre-hashed address.
+    /// Used by snap sync which already has hashed addresses.
+    pub fn get_account_by_hash(&self, block_hash: &H256, hashed_address: &H256) -> Option<AccountInfo> {
+        self.blockchain.get_account(block_hash, hashed_address)
             .map(ethrex_db_account_to_info)
     }
 
     /// Gets an account from finalized (cold) state.
     pub fn get_finalized_account(&self, address: &Address) -> Option<AccountInfo> {
-        let addr_bytes: [u8; 20] = address.0;
+        let addr_h256 = address_to_h256(address);
+        self.get_finalized_account_by_hash(&addr_h256)
+    }
+
+    /// Gets an account from finalized (cold) state using a pre-hashed address.
+    /// Used by snap sync which already has hashed addresses.
+    pub fn get_finalized_account_by_hash(&self, hashed_address: &H256) -> Option<AccountInfo> {
+        // Take the last 20 bytes of the hash for the lookup
+        let addr_bytes: [u8; 20] = hashed_address.as_bytes()[12..32].try_into().unwrap();
         self.blockchain.get_finalized_account(&addr_bytes)
             .map(ethrex_db_account_to_info)
     }
@@ -130,7 +144,13 @@ impl BlockchainStateManager {
     /// Gets a storage value from a committed (hot) block.
     pub fn get_storage(&self, block_hash: &H256, address: &Address, slot: &H256) -> Option<U256> {
         let addr_h256 = address_to_h256(address);
-        self.blockchain.get_storage(block_hash, &addr_h256, slot)
+        self.get_storage_by_hash(block_hash, &addr_h256, slot)
+    }
+
+    /// Gets a storage value from a committed (hot) block using a pre-hashed address.
+    /// Used by snap sync which already has hashed addresses.
+    pub fn get_storage_by_hash(&self, block_hash: &H256, hashed_address: &H256, slot: &H256) -> Option<U256> {
+        self.blockchain.get_storage(block_hash, hashed_address, slot)
     }
 
     /// Gets the state root hash of finalized state.
@@ -161,27 +181,49 @@ impl BlockState {
     /// Sets an account in this block's state.
     pub fn set_account(&mut self, address: &Address, info: &AccountInfo) {
         let addr_h256 = address_to_h256(address);
+        self.set_account_by_hash(addr_h256, info);
+    }
+
+    /// Sets an account in this block's state using a pre-hashed address.
+    /// Used by snap sync which already has hashed addresses.
+    pub fn set_account_by_hash(&mut self, hashed_address: H256, info: &AccountInfo) {
         let account = info_to_ethrex_db_account(info);
-        self.block.set_account(addr_h256, account);
+        self.block.set_account(hashed_address, account);
     }
 
     /// Sets a storage slot in this block's state.
     pub fn set_storage(&mut self, address: &Address, slot: H256, value: U256) {
         let addr_h256 = address_to_h256(address);
-        self.block.set_storage(addr_h256, slot, value);
+        self.set_storage_by_hash(addr_h256, slot, value);
+    }
+
+    /// Sets a storage slot in this block's state using a pre-hashed address.
+    /// Used by snap sync which already has hashed addresses.
+    pub fn set_storage_by_hash(&mut self, hashed_address: H256, slot: H256, value: U256) {
+        self.block.set_storage(hashed_address, slot, value);
     }
 
     /// Gets an account from this block's state (includes uncommitted changes).
     pub fn get_account(&self, address: &Address) -> Option<AccountInfo> {
         let addr_h256 = address_to_h256(address);
-        self.block.get_account(&addr_h256)
+        self.get_account_by_hash(&addr_h256)
+    }
+
+    /// Gets an account from this block's state using a pre-hashed address.
+    pub fn get_account_by_hash(&self, hashed_address: &H256) -> Option<AccountInfo> {
+        self.block.get_account(hashed_address)
             .map(ethrex_db_account_to_info)
     }
 
     /// Gets a storage value from this block's state.
     pub fn get_storage(&self, address: &Address, slot: &H256) -> Option<U256> {
         let addr_h256 = address_to_h256(address);
-        self.block.get_storage(&addr_h256, slot)
+        self.get_storage_by_hash(&addr_h256, slot)
+    }
+
+    /// Gets a storage value from this block's state using a pre-hashed address.
+    pub fn get_storage_by_hash(&self, hashed_address: &H256, slot: &H256) -> Option<U256> {
+        self.block.get_storage(hashed_address, slot)
     }
 
     /// Returns the block hash.
@@ -197,10 +239,11 @@ impl BlockState {
 
 // Conversion helpers
 
+/// Converts an Address to H256 using keccak hash.
+/// This matches the addressing scheme used by Ethereum state tries,
+/// making ethrex_db compatible with snap sync and trie-based operations.
 fn address_to_h256(address: &Address) -> H256 {
-    let mut bytes = [0u8; 32];
-    bytes[12..32].copy_from_slice(&address.0);
-    H256::from(bytes)
+    keccak(address.as_bytes())
 }
 
 fn ethrex_db_account_to_info(account: EthrexDbAccount) -> AccountInfo {
@@ -222,6 +265,102 @@ fn info_to_ethrex_db_account(info: &AccountInfo) -> EthrexDbAccount {
 
 fn blockchain_error_to_store(e: BlockchainError) -> StoreError {
     StoreError::Custom(format!("Blockchain error: {}", e))
+}
+
+// ============================================================================
+// Snap Sync Support
+// ============================================================================
+
+/// A trie interface for snap sync operations.
+///
+/// This provides direct access to ethrex_db's PagedStateTrie for bulk
+/// account and storage insertion during snap sync. Unlike normal block
+/// execution which uses the hot/cold Blockchain layer, snap sync writes
+/// directly to the trie structure.
+pub struct SnapSyncTrie {
+    trie: PagedStateTrie,
+}
+
+impl SnapSyncTrie {
+    /// Creates a new empty snap sync trie.
+    pub fn new() -> Self {
+        Self {
+            trie: PagedStateTrie::new(),
+        }
+    }
+
+    /// Inserts an account using a pre-hashed address.
+    ///
+    /// The `address_hash` should be keccak256(address), which is what
+    /// snap sync receives from the protocol.
+    pub fn insert_account(
+        &mut self,
+        address_hash: H256,
+        nonce: u64,
+        balance: U256,
+        storage_root: H256,
+        code_hash: H256,
+    ) {
+        let account = AccountData {
+            nonce,
+            balance: balance.to_big_endian(),
+            storage_root: *storage_root.as_fixed_bytes(),
+            code_hash: *code_hash.as_fixed_bytes(),
+        };
+        self.trie.set_account_by_hash(address_hash.as_fixed_bytes(), account);
+    }
+
+    /// Inserts an account using raw RLP-encoded data (as received from snap protocol).
+    pub fn insert_account_raw(&mut self, address_hash: H256, rlp_encoded: Vec<u8>) {
+        self.trie.set_account_raw(address_hash.as_fixed_bytes(), rlp_encoded);
+    }
+
+    /// Gets the storage trie for an account using a pre-hashed address.
+    pub fn storage_trie(&mut self, address_hash: H256) -> &mut StorageTrie {
+        self.trie.storage_trie_by_hash(address_hash.as_fixed_bytes())
+    }
+
+    /// Inserts a storage value using pre-hashed keys.
+    ///
+    /// Both `address_hash` and `slot_hash` should be keccak256 hashes.
+    pub fn insert_storage(&mut self, address_hash: H256, slot_hash: H256, value: U256) {
+        let storage = self.trie.storage_trie_by_hash(address_hash.as_fixed_bytes());
+        let value_bytes: [u8; 32] = value.to_big_endian();
+        storage.set_by_hash(slot_hash.as_fixed_bytes(), value_bytes);
+    }
+
+    /// Inserts a storage value using raw RLP-encoded data.
+    pub fn insert_storage_raw(&mut self, address_hash: H256, slot_hash: H256, rlp_encoded: Vec<u8>) {
+        let storage = self.trie.storage_trie_by_hash(address_hash.as_fixed_bytes());
+        storage.set_raw(slot_hash.as_fixed_bytes(), rlp_encoded);
+    }
+
+    /// Computes and returns the state root hash.
+    ///
+    /// This should be called after all accounts and storage have been inserted
+    /// to verify the computed root matches the expected root from the pivot block.
+    pub fn compute_state_root(&mut self) -> H256 {
+        H256::from(self.trie.root_hash())
+    }
+
+    /// Returns the number of accounts in the trie.
+    pub fn account_count(&self) -> usize {
+        self.trie.account_count()
+    }
+
+    /// Consumes the snap sync trie and returns the underlying PagedStateTrie.
+    ///
+    /// This is used to integrate the trie with the Blockchain layer after
+    /// snap sync is complete.
+    pub fn into_paged_trie(self) -> PagedStateTrie {
+        self.trie
+    }
+}
+
+impl Default for SnapSyncTrie {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
