@@ -77,6 +77,7 @@ pub mod utils;
 pub use layering::apply_prefix;
 pub use state_manager::{BlockchainStateManager, BlockState, SnapSyncTrie};
 pub use store::{AccountUpdatesList, EngineType, Store, UpdateBatch, hash_address, hash_key};
+pub use utils::{SnapSyncCheckpoint, SnapSyncPhase};
 
 /// Store Schema Version, must be updated on any breaking change.
 ///

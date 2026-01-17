@@ -77,16 +77,16 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
-        // Use ethrex_db for storage (primary storage)
+        // Use ethrex_db for storage
+        // Check hot storage (committed but not finalized blocks)
         if let Some(value) = self.store.state_manager().get_storage(&self.block_hash, &address, &key) {
             return Ok(Some(value));
         }
-
-        // Fallback to trie-based lookup for snap sync compatibility.
-        // After snap sync, storage is stored in tries but not in ethrex_db.
-        self.store
-            .get_storage_at_root(self.state_root, address, key)
-            .map_err(|e| EvmError::DB(e.to_string()))
+        // Check cold storage (finalized state)
+        if let Some(value) = self.store.state_manager().get_finalized_storage(&address, &key) {
+            return Ok(Some(value));
+        }
+        Ok(None)
     }
 
     #[instrument(

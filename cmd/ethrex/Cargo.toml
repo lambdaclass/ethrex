@@ -93,7 +93,7 @@ c-kzg = [
   "ethrex-crypto/c-kzg",
 ]
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics", "ethrex-p2p/metrics"]
-rocksdb = ["ethrex-storage/rocksdb", "ethrex-p2p/rocksdb", "ethrex-l2?/rocksdb"]
+rocksdb = ["ethrex-storage/rocksdb", "ethrex-l2?/rocksdb"]  # Note: ethrex-p2p uses ethrex_db for trie, not rocksdb
 jemalloc = ["dep:tikv-jemallocator"]
 jemalloc_profiling = [
   "jemalloc",

@@ -29,9 +29,9 @@ const SCORE_WEIGHT: i64 = 1;
 /// Weight for amount of requests being handled by the peer for the load balancing function.
 const REQUESTS_WEIGHT: i64 = 1;
 /// Max amount of ongoing requests per peer.
-const MAX_CONCURRENT_REQUESTS_PER_PEER: i64 = 100;
+const MAX_CONCURRENT_REQUESTS_PER_PEER: i64 = 150;
 /// The target number of RLPx connections to reach.
-pub const TARGET_PEERS: usize = 100;
+pub const TARGET_PEERS: usize = 200;
 /// The target number of contacts to maintain in peer_table.
 const TARGET_CONTACTS: usize = 100_000;
 

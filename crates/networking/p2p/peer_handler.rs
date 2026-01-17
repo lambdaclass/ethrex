@@ -44,7 +44,7 @@ use tracing::{debug, error, info, trace, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
 pub const PEER_SELECT_RETRY_ATTEMPTS: u32 = 3;
 pub const REQUEST_RETRY_ATTEMPTS: u32 = 5;
-pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
+pub const MAX_RESPONSE_BYTES: u64 = 1024 * 1024 * 2; // 2MB - increased for faster downloads
 pub const HASH_MAX: H256 = H256([0xFF; 32]);
 
 pub const MAX_HEADER_CHUNK: u64 = 500_000;
@@ -52,7 +52,7 @@ pub const MAX_HEADER_CHUNK: u64 = 500_000;
 // How much we store in memory of request_account_range and request_storage_ranges
 // before we dump it into the file. This tunes how much memory ethrex uses during
 // the first steps of snap sync
-pub const RANGE_FILE_CHUNK_SIZE: usize = 1024 * 1024 * 64; // 64MB
+pub const RANGE_FILE_CHUNK_SIZE: usize = 1024 * 1024 * 128; // 128MB
 pub const SNAP_LIMIT: usize = 128;
 
 // Request as many as 128 block bodies per request
@@ -249,7 +249,7 @@ impl PeerHandler {
         *METRICS.sync_head_hash.lock().await = sync_head;
 
         let block_count = sync_head_number + 1 - start;
-        let chunk_count = if block_count < 800_u64 { 1 } else { 800_u64 };
+        let chunk_count = if block_count < 1200_u64 { 1 } else { 1200_u64 }; // Increased from 800
 
         // 2) partition the amount of headers in `K` tasks
         let chunk_limit = block_count / chunk_count;
@@ -271,7 +271,7 @@ impl PeerHandler {
 
         // channel to send the tasks to the peers
         let (task_sender, mut task_receiver) =
-            tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, PeerConnection, u64, u64)>(1000);
+            tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, PeerConnection, u64, u64)>(2000);
 
         let mut current_show = 0;
 
@@ -626,7 +626,7 @@ impl PeerHandler {
         let start_u256 = U256::from_big_endian(&start.0);
         let limit_u256 = U256::from_big_endian(&limit.0);
 
-        let chunk_count = 800;
+        let chunk_count = 1200; // Increased from 800 for more parallel downloads
         let chunk_size = (limit_u256 - start_u256) / chunk_count;
 
         // list of tasks to be executed
@@ -653,7 +653,7 @@ impl PeerHandler {
 
         // channel to send the tasks to the peers
         let (task_sender, mut task_receiver) =
-            tokio::sync::mpsc::channel::<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>(1000);
+            tokio::sync::mpsc::channel::<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>(2000);
 
         info!("Starting to download account ranges from peers");
 
@@ -945,9 +945,9 @@ impl PeerHandler {
         METRICS
             .current_step
             .set(CurrentStepValue::RequestingBytecodes);
-        const MAX_BYTECODES_REQUEST_SIZE: usize = 100;
+        const MAX_BYTECODES_REQUEST_SIZE: usize = 200; // Increased from 100
         // 1) split the range in chunks of same length
-        let chunk_count = 800;
+        let chunk_count = 1200; // Increased from 800 for faster downloads
         let chunk_size = all_bytecode_hashes.len() / chunk_count;
 
         // list of tasks to be executed
@@ -977,7 +977,7 @@ impl PeerHandler {
             remaining_start: usize,
             remaining_end: usize,
         }
-        let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<TaskResult>(1000);
+        let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<TaskResult>(2000);
 
         info!("Starting to download bytecodes from peers");
 
@@ -1170,7 +1170,7 @@ impl PeerHandler {
         let mut accounts_by_root_hash = Vec::from_iter(accounts_by_root_hash);
         // TODO: Turn this into a stable sort for binary search.
         accounts_by_root_hash.sort_unstable_by_key(|(_, accounts)| !accounts.len());
-        let chunk_size = 300;
+        let chunk_size = 500; // Increased from 300 for larger batches
         let chunk_count = (accounts_by_root_hash.len() / chunk_size) + 1;
 
         // list of tasks to be executed
@@ -1191,7 +1191,7 @@ impl PeerHandler {
 
         // channel to send the tasks to the peers
         let (task_sender, mut task_receiver) =
-            tokio::sync::mpsc::channel::<StorageTaskResult>(1000);
+            tokio::sync::mpsc::channel::<StorageTaskResult>(2000);
 
         // channel to send the result of dumping storages
         let mut disk_joinset: tokio::task::JoinSet<Result<(), DumpError>> =

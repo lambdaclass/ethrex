@@ -30,9 +30,9 @@ use crate::{
 };
 
 /// Max size of a bach to start a storage fetch request in queues
-pub const STORAGE_BATCH_SIZE: usize = 300;
-/// Max size of a bach to start a node fetch request in queues
-pub const NODE_BATCH_SIZE: usize = 500;
+pub const STORAGE_BATCH_SIZE: usize = 1000;
+/// Max size of a bach to start a node fetch request in queues - increased for faster healing
+pub const NODE_BATCH_SIZE: usize = 1500;
 /// Pace at which progress is shown via info tracing
 pub const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(2);
 
@@ -111,12 +111,12 @@ async fn heal_state_trie(
     let mut nodes_to_write: Vec<(Nibbles, Node)> = Vec::new();
     let mut db_joinset = tokio::task::JoinSet::new();
 
-    // channel to send the tasks to the peers
+    // channel to send the tasks to the peers - increased for more parallelism
     let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
         H256,
         Result<Vec<Node>, RequestStateTrieNodesError>,
         Vec<RequestMetadata>,
-    )>(1000);
+    )>(3000);
     // Contains both nodes and their corresponding paths to heal
     let mut nodes_to_heal = Vec::new();
 
@@ -289,7 +289,8 @@ async fn heal_state_trie(
 
         let is_done = paths.is_empty() && nodes_to_heal.is_empty() && inflight_tasks == 0;
 
-        if nodes_to_write.len() > 100_000 || is_done || is_stale {
+        // Write to DB when batch is large enough - increased threshold to reduce I/O overhead
+        if nodes_to_write.len() > 250_000 || is_done || is_stale {
             // PERF: reuse buffers?
             let to_write = std::mem::take(&mut nodes_to_write);
             let store = store.clone();

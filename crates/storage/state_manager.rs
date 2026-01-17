@@ -151,6 +151,18 @@ impl BlockchainStateManager {
         self.blockchain.get_storage(block_hash, hashed_address, slot)
     }
 
+    /// Gets a storage value from finalized (cold) state.
+    pub fn get_finalized_storage(&self, address: &Address, slot: &H256) -> Option<U256> {
+        let addr_h256 = address_to_h256(address);
+        let slot_hash = ethrex_common::utils::keccak(slot.as_bytes());
+        self.get_finalized_storage_by_hash(&addr_h256, &slot_hash)
+    }
+
+    /// Gets a storage value from finalized (cold) state using pre-hashed keys.
+    pub fn get_finalized_storage_by_hash(&self, hashed_address: &H256, slot_hash: &H256) -> Option<U256> {
+        self.blockchain.get_finalized_storage_by_hash(hashed_address.as_fixed_bytes(), slot_hash.as_fixed_bytes())
+    }
+
     /// Gets the state root hash of finalized state.
     pub fn state_root(&self) -> H256 {
         H256::from(self.blockchain.state_root())
@@ -167,6 +179,32 @@ impl BlockchainStateManager {
     /// the state_manager knows the genesis hash for subsequent blocks.
     pub fn set_genesis(&self, genesis_hash: H256, genesis_number: u64) {
         self.blockchain.set_genesis(genesis_hash, genesis_number);
+    }
+
+    /// Integrates a snap sync trie into the blockchain state.
+    ///
+    /// This replaces the current state trie with the one built during snap sync.
+    /// Should be called after snap sync completes and the state root is verified.
+    pub fn set_snap_sync_trie(&self, snap_trie: SnapSyncTrie) {
+        self.blockchain.set_state_trie(snap_trie.into_paged_trie());
+    }
+
+    /// Persists the current state trie to the database.
+    ///
+    /// Used by snap sync after populating the state trie to persist it to disk.
+    pub fn persist_state_trie(&self, block_number: u64, block_hash: H256) -> Result<(), String> {
+        self.blockchain.persist_state_trie(block_number, block_hash)
+            .map_err(|e| e.to_string())
+    }
+
+    /// Persists the current state trie as a checkpoint without updating finalized block metadata.
+    ///
+    /// Used during snap sync to save incremental progress. Unlike `persist_state_trie`,
+    /// this does not update the finalized block number/hash, allowing the sync to resume
+    /// from the checkpoint even if interrupted.
+    pub fn persist_state_trie_checkpoint(&self, block_number: u64, block_hash: H256) -> Result<(), String> {
+        self.blockchain.persist_state_trie_checkpoint(block_number, block_hash)
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -313,6 +351,24 @@ impl SnapSyncTrie {
         self.trie.set_account_raw(address_hash.as_fixed_bytes(), rlp_encoded);
     }
 
+    /// Batch insert accounts using pre-hashed addresses.
+    /// More efficient than individual inserts for bulk operations like snap sync.
+    pub fn insert_accounts_batch(
+        &mut self,
+        accounts: impl IntoIterator<Item = (H256, u64, U256, H256, H256)>,
+    ) {
+        let account_data = accounts.into_iter().map(|(hash, nonce, balance, storage_root, code_hash)| {
+            let account = AccountData {
+                nonce,
+                balance: balance.to_big_endian(),
+                storage_root: *storage_root.as_fixed_bytes(),
+                code_hash: *code_hash.as_fixed_bytes(),
+            };
+            (*hash.as_fixed_bytes(), account)
+        });
+        self.trie.set_accounts_batch(account_data);
+    }
+
     /// Gets the storage trie for an account using a pre-hashed address.
     pub fn storage_trie(&mut self, address_hash: H256) -> &mut StorageTrie {
         self.trie.storage_trie_by_hash(address_hash.as_fixed_bytes())
@@ -325,6 +381,20 @@ impl SnapSyncTrie {
         let storage = self.trie.storage_trie_by_hash(address_hash.as_fixed_bytes());
         let value_bytes: [u8; 32] = value.to_big_endian();
         storage.set_by_hash(slot_hash.as_fixed_bytes(), value_bytes);
+    }
+
+    /// Batch insert storage values for a single account.
+    /// More efficient than individual inserts for bulk operations like snap sync.
+    pub fn insert_storage_batch(
+        &mut self,
+        address_hash: H256,
+        slots: impl IntoIterator<Item = (H256, U256)>,
+    ) {
+        let storage = self.trie.storage_trie_by_hash(address_hash.as_fixed_bytes());
+        let entries = slots.into_iter().map(|(slot_hash, value)| {
+            (*slot_hash.as_fixed_bytes(), value.to_big_endian())
+        });
+        storage.set_batch_by_hash(entries);
     }
 
     /// Inserts a storage value using raw RLP-encoded data.

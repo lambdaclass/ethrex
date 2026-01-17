@@ -989,6 +989,36 @@ impl Store {
             .map_err(StoreError::from)
     }
 
+    /// Saves the current snap sync checkpoint to the database.
+    pub async fn save_snap_sync_checkpoint(
+        &self,
+        checkpoint: &crate::SnapSyncCheckpoint,
+    ) -> Result<(), StoreError> {
+        let key = snap_state_key(SnapStateIndex::FullCheckpoint);
+        let value = checkpoint.encode_to_vec();
+        self.write_async(SNAP_STATE, key, value).await
+    }
+
+    /// Loads the snap sync checkpoint from the database.
+    pub async fn load_snap_sync_checkpoint(
+        &self,
+    ) -> Result<Option<crate::SnapSyncCheckpoint>, StoreError> {
+        let key = snap_state_key(SnapStateIndex::FullCheckpoint);
+        self.backend
+            .begin_read()?
+            .get(SNAP_STATE, &key)?
+            .map(|bytes| crate::SnapSyncCheckpoint::decode(bytes.as_slice()))
+            .transpose()
+            .map_err(StoreError::from)
+    }
+
+    /// Saves an incremental state trie checkpoint without updating finalized block metadata.
+    /// Used during snap sync to persist progress without committing the full state.
+    pub fn save_incremental_state_trie(&self, block_number: u64, block_hash: H256) -> Result<(), StoreError> {
+        self.state_manager.persist_state_trie_checkpoint(block_number, block_hash)
+            .map_err(|e| StoreError::Custom(e))
+    }
+
     /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
     /// when processing an invalid payload. To provide this, we must track invalid chains.
     ///
@@ -1492,20 +1522,6 @@ impl Store {
             return Ok(Some(info));
         }
 
-        // Fallback to trie-based lookup for snap sync compatibility.
-        // After snap sync, state is stored in tries but not in ethrex_db.
-        if let Some(state_trie) = self.state_trie(block_hash)? {
-            let hashed_address = hash_address_fixed(&address);
-            if let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? {
-                let account_state = AccountState::decode(&encoded_state)?;
-                return Ok(Some(AccountInfo {
-                    nonce: account_state.nonce,
-                    balance: account_state.balance,
-                    code_hash: account_state.code_hash,
-                }));
-            }
-        }
-
         Ok(None)
     }
 
@@ -1680,6 +1696,30 @@ impl Store {
     /// Returns a reference to the state manager.
     pub fn state_manager(&self) -> &Arc<BlockchainStateManager> {
         &self.state_manager
+    }
+
+    /// Creates a new SnapSyncTrie for bulk state insertion during snap sync.
+    ///
+    /// The returned trie should be populated with accounts and storage,
+    /// then integrated using `set_snap_sync_trie()`.
+    pub fn create_snap_sync_trie(&self) -> crate::state_manager::SnapSyncTrie {
+        crate::state_manager::SnapSyncTrie::new()
+    }
+
+    /// Integrates a completed snap sync trie into the state manager.
+    ///
+    /// This replaces the current state trie with the one built during snap sync.
+    /// Should be called after snap sync completes and the state root is verified.
+    pub fn set_snap_sync_trie(&self, snap_trie: crate::state_manager::SnapSyncTrie) {
+        self.state_manager.set_snap_sync_trie(snap_trie);
+    }
+
+    /// Persists the snap sync state trie to the database.
+    ///
+    /// This should be called after `set_snap_sync_trie` to persist the trie to disk.
+    pub fn persist_snap_sync_state(&self, block_number: u64, block_hash: H256) -> Result<(), StoreError> {
+        self.state_manager.persist_state_trie(block_number, block_hash)
+            .map_err(|e| StoreError::Custom(e))
     }
 
     pub fn apply_account_updates_from_trie_batch<'a>(
@@ -2134,37 +2174,33 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        match self.get_block_header(block_number)? {
-            Some(header) => self.get_storage_at_root(header.state_root, address, storage_key),
-            None => Ok(None),
+        // Get block hash for hot storage lookup
+        if let Some(header) = self.get_block_header(block_number)? {
+            let block_hash = header.hash();
+            // Check hot storage (committed but not finalized blocks)
+            if let Some(value) = self.state_manager.get_storage(&block_hash, &address, &storage_key) {
+                return Ok(Some(value));
+            }
         }
+        // Check cold storage (finalized state)
+        if let Some(value) = self.state_manager.get_finalized_storage(&address, &storage_key) {
+            return Ok(Some(value));
+        }
+        Ok(None)
     }
 
     pub fn get_storage_at_root(
         &self,
-        state_root: H256,
+        _state_root: H256,
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        let account_hash = hash_address_fixed(&address);
-        let storage_root = if self.flatkeyvalue_computed(account_hash)? {
-            // We will use FKVs, we don't need the root
-            *EMPTY_TRIE_HASH
-        } else {
-            let state_trie = self.open_state_trie(state_root)?;
-            let Some(encoded_account) = state_trie.get(account_hash.as_bytes())? else {
-                return Ok(None);
-            };
-            let account = AccountState::decode(&encoded_account)?;
-            account.storage_root
-        };
-        let storage_trie = self.open_storage_trie(account_hash, state_root, storage_root)?;
-
-        let hashed_key = hash_key_fixed(&storage_key);
-        storage_trie
-            .get(&hashed_key)?
-            .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
-            .transpose()
+        // For ethrex_db, we don't use state_root - we query finalized storage directly
+        // Check cold storage (finalized state)
+        if let Some(value) = self.state_manager.get_finalized_storage(&address, &storage_key) {
+            return Ok(Some(value));
+        }
+        Ok(None)
     }
 
     pub fn get_chain_config(&self) -> ChainConfig {
