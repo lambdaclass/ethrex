@@ -135,9 +135,7 @@ impl BlockchainStateManager {
     /// Gets an account from finalized (cold) state using a pre-hashed address.
     /// Used by snap sync which already has hashed addresses.
     pub fn get_finalized_account_by_hash(&self, hashed_address: &H256) -> Option<AccountInfo> {
-        // Take the last 20 bytes of the hash for the lookup
-        let addr_bytes: [u8; 20] = hashed_address.as_bytes()[12..32].try_into().unwrap();
-        self.blockchain.get_finalized_account(&addr_bytes)
+        self.blockchain.get_finalized_account_by_hash(hashed_address.as_fixed_bytes())
             .map(ethrex_db_account_to_info)
     }
 
