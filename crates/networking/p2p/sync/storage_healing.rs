@@ -645,18 +645,15 @@ pub fn determine_missing_children_optimized(
                 .collect();
 
             // Identify paths needing DB verification
+            // Both ProbablyExists and DefinitelyMissing need DB check
+            // (DefinitelyMissing means cache hasn't seen it, but DB might have it)
             let mut paths_to_check: Vec<Nibbles> = Vec::new();
-            let mut check_indices: Vec<usize> = Vec::new();
 
             for (i, status) in cache_statuses.iter().enumerate() {
                 match status {
                     PathStatus::ConfirmedExists => {}
-                    PathStatus::ProbablyExists => {
+                    PathStatus::ProbablyExists | PathStatus::DefinitelyMissing => {
                         paths_to_check.push(child_info[i].1.clone());
-                        check_indices.push(i);
-                    }
-                    PathStatus::DefinitelyMissing => {
-                        check_indices.push(i);
                     }
                 }
             }
@@ -671,13 +668,17 @@ pub fn determine_missing_children_optimized(
             };
 
             // Update cache with confirmed existences
-            let confirmed_keys: Vec<_> = paths_to_check
-                .iter()
-                .zip(db_exists.iter())
-                .enumerate()
-                .filter(|(_, (_, exists))| **exists)
-                .map(|(i, _)| cache_keys[check_indices[i]].clone())
-                .collect();
+            // Build list of cache keys that correspond to paths that exist in DB
+            let mut confirmed_keys: Vec<Nibbles> = Vec::new();
+            let mut db_idx = 0;
+            for (i, status) in cache_statuses.iter().enumerate() {
+                if !matches!(status, PathStatus::ConfirmedExists) {
+                    if db_exists[db_idx] {
+                        confirmed_keys.push(cache_keys[i].clone());
+                    }
+                    db_idx += 1;
+                }
+            }
 
             if !confirmed_keys.is_empty() {
                 healing_cache.mark_exists_batch(&confirmed_keys);
@@ -690,12 +691,11 @@ pub fn determine_missing_children_optimized(
 
                 let exists = match status {
                     PathStatus::ConfirmedExists => true,
-                    PathStatus::ProbablyExists => {
+                    PathStatus::ProbablyExists | PathStatus::DefinitelyMissing => {
                         let exists = db_exists[db_check_idx];
                         db_check_idx += 1;
                         exists
                     }
-                    PathStatus::DefinitelyMissing => false,
                 };
 
                 if !exists {
@@ -727,7 +727,8 @@ pub fn determine_missing_children_optimized(
 
             match healing_cache.check_path(&cache_key) {
                 PathStatus::ConfirmedExists => {}
-                PathStatus::ProbablyExists => {
+                PathStatus::ProbablyExists | PathStatus::DefinitelyMissing => {
+                    // Both cases need DB verification
                     if trie_state
                         .exists(child_path.clone())
                         .map_err(|e| StoreError::Custom(format!("Trie error: {e}")))?
@@ -742,15 +743,6 @@ pub fn determine_missing_children_optimized(
                             hash: ext_node.child.compute_hash().finalize(),
                         });
                     }
-                }
-                PathStatus::DefinitelyMissing => {
-                    count = 1;
-                    paths.push(NodeRequest {
-                        acc_path: node_response.node_request.acc_path.clone(),
-                        storage_path: child_path,
-                        parent: node_response.node_request.storage_path.clone(),
-                        hash: ext_node.child.compute_hash().finalize(),
-                    });
                 }
             }
         }
