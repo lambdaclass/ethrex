@@ -1,5 +1,11 @@
 mod code_collector;
+pub mod healing_cache;
+#[cfg(test)]
+mod healing_bench;
+#[cfg(test)]
+mod healing_tests;
 mod state_healing;
+#[allow(dead_code)]
 mod storage_healing;
 
 use crate::peer_handler::{BlockRequestOrder, PeerHandlerError, SNAP_LIMIT};
@@ -13,7 +19,7 @@ use crate::utils::{
 };
 use crate::{
     metrics::METRICS,
-    peer_handler::{MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
+    peer_handler::PeerHandler,
 };
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::U256;
@@ -21,7 +27,7 @@ use ethrex_common::types::Code;
 use ethrex_common::{
     H256,
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
-    types::{AccountState, Block, BlockHeader},
+    types::{AccountState, Block, BlockBody, BlockHeader},
 };
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
 use ethrex_storage::{Store, SnapSyncTrie, SnapSyncCheckpoint, SnapSyncPhase, error::StoreError};
@@ -31,12 +37,9 @@ use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
-use std::{
-    cmp::min,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use tokio::{sync::mpsc::error::SendError, time::Instant};
 use tokio_util::sync::CancellationToken;
@@ -431,38 +434,85 @@ impl Syncer {
         end_block_number += 1;
         start_block_number = start_block_number.max(1);
 
-        // Download block bodies and execute full blocks in batches
-        for start in (start_block_number..end_block_number).step_by(*EXECUTE_BATCH_SIZE) {
+        // Download block bodies and execute full blocks in batches with pipelining
+        // We prefetch the next batch's bodies while executing the current batch
+        let batch_starts: Vec<u64> = (start_block_number..end_block_number)
+            .step_by(*EXECUTE_BATCH_SIZE)
+            .collect();
+
+        // Handle for prefetched bodies (None initially)
+        let mut prefetch_handle: Option<
+            tokio::task::JoinHandle<Result<Vec<BlockBody>, PeerHandlerError>>,
+        > = None;
+        let mut prefetched_headers: Option<Vec<BlockHeader>> = None;
+
+        for (batch_idx, &start) in batch_starts.iter().enumerate() {
             let batch_size = EXECUTE_BATCH_SIZE.min((end_block_number - start) as usize);
-            let final_batch = end_block_number == start + batch_size as u64;
-            // Retrieve batch from DB
-            if !single_batch {
-                headers = store
+            let final_batch = batch_idx == batch_starts.len() - 1;
+
+            // Get current batch headers
+            let current_headers = if let Some(prefetched) = prefetched_headers.take() {
+                prefetched
+            } else if !single_batch {
+                store
                     .read_fullsync_batch(start, batch_size as u64)
                     .await?
                     .into_iter()
                     .map(|opt| opt.ok_or(SyncError::MissingFullsyncBatch))
-                    .collect::<Result<Vec<_>, SyncError>>()?;
-            }
-            let mut blocks = Vec::new();
-            // Request block bodies
-            // Download block bodies
-            while !headers.is_empty() {
-                let header_batch = &headers[..min(MAX_BLOCK_BODIES_TO_REQUEST, headers.len())];
-                let bodies = self
-                    .peers
-                    .request_block_bodies(header_batch)
+                    .collect::<Result<Vec<_>, SyncError>>()?
+            } else {
+                std::mem::take(&mut headers)
+            };
+
+            // Get current batch bodies (either from prefetch or download now)
+            let current_bodies = if let Some(handle) = prefetch_handle.take() {
+                handle.await.map_err(|_| SyncError::BodiesNotFound)??
+            } else {
+                self.peers
+                    .request_block_bodies_parallel(&current_headers)
                     .await?
-                    .ok_or(SyncError::BodiesNotFound)?;
-                debug!("Obtained: {} block bodies", bodies.len());
-                let block_batch = headers
-                    .drain(..bodies.len())
-                    .zip(bodies)
-                    .map(|(header, body)| Block { header, body });
-                blocks.extend(block_batch);
+            };
+
+            debug!("Obtained: {} block bodies in parallel", current_bodies.len());
+
+            // Start prefetching next batch if there is one
+            if !final_batch {
+                let next_start = batch_starts[batch_idx + 1];
+                let next_batch_size =
+                    EXECUTE_BATCH_SIZE.min((end_block_number - next_start) as usize);
+
+                // Load next batch headers
+                let next_headers = if !single_batch {
+                    store
+                        .read_fullsync_batch(next_start, next_batch_size as u64)
+                        .await?
+                        .into_iter()
+                        .map(|opt| opt.ok_or(SyncError::MissingFullsyncBatch))
+                        .collect::<Result<Vec<_>, SyncError>>()?
+                } else {
+                    Vec::new() // Single batch means we won't need more
+                };
+
+                if !next_headers.is_empty() {
+                    let mut peers_clone = self.peers.clone();
+                    let headers_for_prefetch = next_headers.clone();
+                    prefetch_handle = Some(tokio::spawn(async move {
+                        peers_clone
+                            .request_block_bodies_parallel(&headers_for_prefetch)
+                            .await
+                    }));
+                    prefetched_headers = Some(next_headers);
+                }
             }
+
+            // Build and execute blocks
+            let blocks: Vec<Block> = current_headers
+                .into_iter()
+                .zip(current_bodies)
+                .map(|(header, body)| Block { header, body })
+                .collect();
+
             if !blocks.is_empty() {
-                // Execute blocks
                 info!(
                     "Executing {} blocks for full sync. First block hash: {:#?} Last block hash: {:#?}",
                     blocks.len(),

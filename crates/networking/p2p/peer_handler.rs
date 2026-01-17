@@ -601,6 +601,187 @@ impl PeerHandler {
         Ok(None)
     }
 
+    /// Requests block bodies in parallel from multiple peers
+    /// This is similar to how headers are downloaded in parallel
+    /// Returns the requested block bodies in the same order as the input headers
+    pub async fn request_block_bodies_parallel(
+        &mut self,
+        headers: &[BlockHeader],
+    ) -> Result<Vec<BlockBody>, PeerHandlerError> {
+        if headers.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let total_bodies = headers.len();
+        let chunk_size = MAX_BLOCK_BODIES_TO_REQUEST;
+
+        // Split headers into chunks with their original indices
+        let mut tasks_queue: VecDeque<(usize, Vec<BlockHeader>)> = VecDeque::new();
+        for (chunk_idx, chunk) in headers.chunks(chunk_size).enumerate() {
+            tasks_queue.push_back((chunk_idx * chunk_size, chunk.to_vec()));
+        }
+
+        // Results storage - indexed by position
+        let mut results: Vec<Option<BlockBody>> = vec![None; total_bodies];
+        let mut completed_count = 0;
+
+        // Channel for receiving results
+        type TaskResult = (
+            usize,                    // start index
+            Vec<BlockHeader>,         // original headers (for retry)
+            Result<Vec<BlockBody>, (H256, bool)>, // bodies or (peer_id, is_critical)
+            H256,                     // peer_id
+        );
+        let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<TaskResult>(500);
+
+        // Exponential backoff state
+        let mut backoff_ms: u64 = 10;
+        const MAX_BACKOFF_MS: u64 = 500;
+
+        loop {
+            // Check if we're done
+            if completed_count >= total_bodies {
+                break;
+            }
+
+            // Use select! to either process completed tasks or wait for peers
+            tokio::select! {
+                // Try to receive completed task results
+                Some((start_idx, chunk_headers, result, peer_id)) = task_receiver.recv() => {
+                    // Reset backoff on successful receive
+                    backoff_ms = 10;
+
+                    match result {
+                        Ok(bodies) => {
+                            // Validate bodies against headers
+                            let mut valid = true;
+                            let mut validated_bodies = Vec::with_capacity(bodies.len());
+
+                            for (i, (header, body)) in chunk_headers[..bodies.len()]
+                                .iter()
+                                .zip(bodies.into_iter())
+                                .enumerate()
+                            {
+                                if let Err(e) = validate_block_body(header, &body) {
+                                    warn!(
+                                        "Invalid block body at index {}: {e}, peer {peer_id}",
+                                        start_idx + i
+                                    );
+                                    valid = false;
+                                    self.peer_table.record_critical_failure(&peer_id).await?;
+                                    break;
+                                }
+                                validated_bodies.push(body);
+                            }
+
+                            if valid && !validated_bodies.is_empty() {
+                                // Store results
+                                for (i, body) in validated_bodies.into_iter().enumerate() {
+                                    results[start_idx + i] = Some(body);
+                                    completed_count += 1;
+                                }
+                                self.peer_table.record_success(&peer_id).await?;
+
+                                // If we got fewer bodies than requested, re-queue the remainder
+                                let received = chunk_headers.len().min(
+                                    results.iter()
+                                        .skip(start_idx)
+                                        .take(chunk_headers.len())
+                                        .filter(|b| b.is_some())
+                                        .count()
+                                );
+                                if received < chunk_headers.len() {
+                                    let remaining_headers = chunk_headers[received..].to_vec();
+                                    tasks_queue.push_back((start_idx + received, remaining_headers));
+                                }
+                            } else {
+                                // Re-queue failed task
+                                tasks_queue.push_back((start_idx, chunk_headers));
+                            }
+                        }
+                        Err((failed_peer_id, is_critical)) => {
+                            if is_critical {
+                                self.peer_table.record_critical_failure(&failed_peer_id).await?;
+                            } else {
+                                self.peer_table.record_failure(&failed_peer_id).await?;
+                            }
+                            // Re-queue the task
+                            tasks_queue.push_back((start_idx, chunk_headers));
+                        }
+                    }
+                }
+
+                // Also try to dispatch new tasks if we have peers available
+                _ = tokio::time::sleep(Duration::from_millis(1)), if !tasks_queue.is_empty() => {
+                    // Try to get a peer and dispatch a task
+                    if let Some((peer_id, mut connection)) = self
+                        .peer_table
+                        .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+                        .await?
+                    {
+                        backoff_ms = 10; // Reset backoff on peer found
+
+                        if let Some((start_idx, chunk_headers)) = tasks_queue.pop_front() {
+                            let tx = task_sender.clone();
+                            let block_hashes: Vec<H256> = chunk_headers.iter().map(|h| h.hash()).collect();
+                            let mut peer_table = self.peer_table.clone();
+
+                            // Spawn download task
+                            tokio::spawn(async move {
+                                let request_id = rand::random();
+                                let request = RLPxMessage::GetBlockBodies(GetBlockBodies {
+                                    id: request_id,
+                                    block_hashes: block_hashes.clone(),
+                                });
+
+                                let result = match PeerHandler::make_request(
+                                    &mut peer_table,
+                                    peer_id,
+                                    &mut connection,
+                                    request,
+                                    PEER_REPLY_TIMEOUT,
+                                )
+                                .await
+                                {
+                                    Ok(RLPxMessage::BlockBodies(BlockBodies { block_bodies, .. })) => {
+                                        if block_bodies.is_empty() {
+                                            Err((peer_id, false))
+                                        } else {
+                                            Ok(block_bodies)
+                                        }
+                                    }
+                                    _ => Err((peer_id, false)),
+                                };
+
+                                if let Err(e) = tx.send((start_idx, chunk_headers, result, peer_id)).await {
+                                    error!("Failed to send body result: {e}");
+                                }
+                            });
+                        }
+                    } else {
+                        // No peer available - use exponential backoff
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        backoff_ms = (backoff_ms * 2).min(MAX_BACKOFF_MS);
+                    }
+                }
+
+                // If no tasks in queue, just wait for results
+                else => {
+                    // Just wait a bit for results to come in
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            }
+        }
+
+        // Collect results in order
+        let bodies: Vec<BlockBody> = results
+            .into_iter()
+            .map(|opt| opt.expect("All bodies should be present"))
+            .collect();
+
+        Ok(bodies)
+    }
+
     /// Requests an account range from any suitable peer given the state trie's root and the starting hash and the limit hash.
     /// Will also return a boolean indicating if there is more state to be fetched towards the right of the trie
     /// (Note that the boolean will be true even if the remaining state is ouside the boundary set by the limit hash)
