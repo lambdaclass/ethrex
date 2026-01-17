@@ -233,7 +233,13 @@ async fn heal_state_trie(
                         stats.downloads_success += 1;
                         peers.peer_table.record_success(&peer_id).await?;
                     }
-                    Err(_) => {
+                    Err(err) => {
+                        debug!(
+                            ?err,
+                            peer = ?peer_id,
+                            batch_size = batch.len(),
+                            "GetTrieNodes request failed for state healing"
+                        );
                         paths.extend(batch);
                         stats.downloads_fail += 1;
                         peers.peer_table.record_failure(&peer_id).await?;

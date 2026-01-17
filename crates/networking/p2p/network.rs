@@ -337,6 +337,9 @@ pub async fn periodically_show_peer_stats_during_syncing(
                 } else {
                     "Peers"
                 };
+            let empty_peer_responses = METRICS
+                .healing_empty_peer_responses
+                .load(Ordering::Relaxed);
 
             // Bytecode metrics
             let bytecodes_download_time = format_duration({
@@ -366,7 +369,7 @@ P2P Snap Sync | elapsed {elapsed} | peers {peer_number} | step {current_step} | 
   headers : {headers_downloaded}/{headers_to_download} ({headers_download_progress}), remaining {headers_remaining}
   accounts: downloaded {account_leaves_downloaded} @ {account_leaves_time} | inserted {account_leaves_inserted} ({account_leaves_inserted_percentage:.1}%) in {account_leaves_inserted_time} | pending {account_leaves_pending}
   storage : downloaded {storage_leaves_downloaded} @ {storage_leaves_time} | inserted {storage_leaves_inserted} ({storage_leaves_inserted_percentage:.1}%) in {storage_leaves_inserted_time}
-  healing : accounts {healed_accounts}, storages {healed_storages}, elapsed {heal_time}, throttle {heal_current_throttle}
+  healing : accounts {healed_accounts}, storages {healed_storages}, elapsed {heal_time}, throttle {heal_current_throttle}, empty_responses {empty_peer_responses}
   bytecodes: downloaded {bytecodes_downloaded} in {bytecodes_download_time}"#
             );
         }

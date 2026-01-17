@@ -2029,6 +2029,11 @@ impl PeerHandler {
         }?;
 
         if nodes.is_empty() || nodes.len() > expected_nodes {
+            if nodes.is_empty() {
+                METRICS
+                    .healing_empty_peer_responses
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             return Err(RequestStateTrieNodesError::InvalidData);
         }
 

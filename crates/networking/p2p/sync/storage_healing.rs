@@ -319,8 +319,14 @@ pub async fn heal_storage_trie(
                 )
                 .expect("Store error during processing");
             }
-            Err(RequestStorageTrieNodes::RequestError(id, _err)) => {
+            Err(RequestStorageTrieNodes::RequestError(id, err)) => {
                 let inflight_request = state.requests.remove(&id).expect("request disappeared");
+                debug!(
+                    ?err,
+                    peer = ?inflight_request.peer_id,
+                    request_count = inflight_request.requests.len(),
+                    "GetTrieNodes request failed for storage healing"
+                );
                 state.failed_downloads += 1;
                 state
                     .download_queue
@@ -448,6 +454,14 @@ async fn zip_requeue_node_responses_score_peer(
 
     let nodes_size = trie_nodes.nodes.len();
     if nodes_size == 0 {
+        debug!(
+            peer = ?request.peer_id,
+            requested_nodes = request.requests.len(),
+            "Peer returned empty TrieNodes response - peer may not have requested state"
+        );
+        METRICS
+            .healing_empty_peer_responses
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         *failed_downloads += 1;
         peer_handler
             .peer_table

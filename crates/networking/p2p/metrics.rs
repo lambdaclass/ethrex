@@ -85,6 +85,7 @@ pub struct Metrics {
 
     // Healing
     pub healing_empty_try_recv: AtomicU64,
+    pub healing_empty_peer_responses: AtomicU64,
     pub global_state_trie_leafs_healed: AtomicU64,
     pub global_storage_tries_leafs_healed: AtomicU64,
     pub heal_end_time: Arc<Mutex<Option<SystemTime>>>,
@@ -738,6 +739,7 @@ impl Default for Metrics {
 
             // Healing
             healing_empty_try_recv: AtomicU64::new(1),
+            healing_empty_peer_responses: AtomicU64::new(0),
             global_state_trie_leafs_healed: AtomicU64::new(0),
             global_storage_tries_leafs_healed: AtomicU64::new(0),
             heal_end_time: Arc::new(Mutex::new(None)),
