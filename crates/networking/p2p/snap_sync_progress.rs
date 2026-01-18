@@ -15,18 +15,18 @@ use tracing::info;
 /// Total number of phases in snap sync (excluding NotStarted and Completed)
 pub const TOTAL_PHASES: u8 = 8;
 
-/// Phase names for display
+/// Phase names for display (indexed by SnapSyncPhase enum value)
 const PHASE_NAMES: [&str; 10] = [
-    "Not Started",
-    "Downloading Headers",
-    "Downloading Accounts",
-    "Inserting Accounts",
-    "Downloading Storage",
-    "Inserting Storage",
-    "Healing State",
-    "Healing Storage",
-    "Downloading Bytecodes",
-    "Completed",
+    "Not Started",        // 0
+    "Header Download",    // 1
+    "Account Download",   // 2
+    "Account Insertion",  // 3
+    "Storage Download",   // 4
+    "Storage Insertion",  // 5
+    "State Healing",      // 6
+    "Storage Healing",    // 7
+    "Bytecode Download",  // 8
+    "Completed",          // 9
 ];
 
 /// Get the display phase number (1-8 for active phases)
@@ -39,9 +39,9 @@ fn get_phase_number(phase: u8) -> u8 {
         4 => 4,  // StorageDownload
         5 => 5,  // StorageInsertion
         6 => 6,  // StateHealing
-        7 => 7,  // StorageHealing (shown as part of healing)
+        7 => 7,  // StorageHealing
         8 => 8,  // BytecodeDownload
-        9 => 8,  // Completed (same as last phase)
+        9 => 8,  // Completed (display as phase 8)
         _ => 0,
     }
 }
@@ -370,30 +370,34 @@ impl SnapSyncProgress {
     pub async fn print_progress_table(&self) {
         let current_phase = self.current_phase.load(Ordering::Relaxed) as u8;
 
-        // Collect phase data
-        let phases: [(u8, &str, &PhaseProgress); 5] = [
-            (1, "Headers", &self.headers),
-            (2, "Accounts", &self.accounts),
-            (4, "Storage", &self.storage),
-            (6, "Healing", &self.healing),
-            (8, "Bytecodes", &self.bytecodes),
+        // All 8 phases with their progress trackers
+        // Note: some phases share trackers (download/insertion use same counter)
+        let phases: [(u8, &str, &PhaseProgress); 8] = [
+            (1, "Header Download", &self.headers),
+            (2, "Account Download", &self.accounts),
+            (3, "Account Insertion", &self.accounts),
+            (4, "Storage Download", &self.storage),
+            (5, "Storage Insertion", &self.storage),
+            (6, "State Healing", &self.healing),
+            (7, "Storage Healing", &self.healing),
+            (8, "Bytecode Download", &self.bytecodes),
         ];
 
         let mut table = String::new();
         table.push_str("\n┌────────────────────────────────────────────────────────────────────────────┐\n");
         table.push_str("│                        SNAP SYNC PROGRESS SUMMARY                          │\n");
-        table.push_str("├─────────┬──────────────────┬────────────┬─────────────┬───────────────────┤\n");
-        table.push_str("│ Phase   │ Description      │ Processed  │ Rate        │ Duration          │\n");
-        table.push_str("├─────────┼──────────────────┼────────────┼─────────────┼───────────────────┤\n");
+        table.push_str("├─────────┬────────────────────┬────────────┬───────────┬───────────────────┤\n");
+        table.push_str("│ Phase   │ Description        │ Processed  │ Rate      │ Duration          │\n");
+        table.push_str("├─────────┼────────────────────┼────────────┼───────────┼───────────────────┤\n");
 
         for (phase_num, name, progress) in phases {
             let processed = progress.get_current();
             let elapsed = progress.elapsed().await;
             let rate = progress.rate().await;
 
-            let status = if current_phase > phase_num + 1 || (current_phase == 9 && phase_num == 8) {
+            let status = if current_phase > phase_num || current_phase == 9 {
                 "✓"
-            } else if current_phase >= phase_num && current_phase <= phase_num + 1 {
+            } else if current_phase == phase_num {
                 "→"
             } else {
                 " "
@@ -418,12 +422,12 @@ impl SnapSyncProgress {
             };
 
             table.push_str(&format!(
-                "│ {} {}/8   │ {:16} │ {:>10} │ {:>11} │ {:>17} │\n",
+                "│ {} {}/8   │ {:18} │ {:>10} │ {:>9} │ {:>17} │\n",
                 status, phase_num, name, processed_str, rate_str, duration_str
             ));
         }
 
-        table.push_str("└─────────┴──────────────────┴────────────┴─────────────┴───────────────────┘");
+        table.push_str("└─────────┴────────────────────┴────────────┴───────────┴───────────────────┘");
 
         info!("{}", table);
     }
