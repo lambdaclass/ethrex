@@ -1,0 +1,3 @@
+[submodule "crates/storage/ethrex_db"]
+	path = crates/storage/ethrex_db
+	url = https://github.com/unbalancedparentheses/ethrex_db.git
