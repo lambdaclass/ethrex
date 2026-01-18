@@ -2295,6 +2295,8 @@ pub enum PeerHandlerError {
     UnrecoverableError(String),
     #[error("Error in Peer Table: {0}")]
     PeerTableError(#[from] PeerTableError),
+    #[error("Peer connection error: {0}")]
+    PeerConnection(#[from] PeerConnectionError),
 }
 
 #[derive(Debug, Clone)]

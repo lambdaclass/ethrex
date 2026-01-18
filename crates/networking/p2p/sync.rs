@@ -1954,8 +1954,8 @@ async fn insert_storages_with_checkpoint(
     let storage_insert_start = std::time::Instant::now();
 
     // Flush storage tries periodically to keep memory bounded
-    // With ~160 bytes per slot, 500K slots = ~80MB in storage tries
-    const STORAGE_FLUSH_THRESHOLD: usize = 500_000;
+    // Threshold is calculated dynamically based on available memory
+    let storage_flush_threshold = calculate_flush_threshold();
     let mut slots_since_flush = 0usize;
     let mut total_flushes = 0usize;
 
@@ -2001,7 +2001,7 @@ async fn insert_storages_with_checkpoint(
 
         // Flush storage tries periodically to free memory
         // This computes storage roots and clears the in-memory tries
-        if slots_since_flush >= STORAGE_FLUSH_THRESHOLD {
+        if slots_since_flush >= storage_flush_threshold {
             let flushed = snap_trie.flush_storage_tries();
             total_flushes += 1;
             debug!(
