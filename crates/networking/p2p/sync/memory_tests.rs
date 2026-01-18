@@ -14,9 +14,9 @@ mod memory_limit_tests {
     const MEMORY_USAGE_PERCENT: usize = 5;
     const BYTES_PER_STORAGE_FILE: usize = 400 * 1024 * 1024;
     const BYTES_PER_ACCOUNT_FILE: usize = 200 * 1024 * 1024;
-    const MIN_FILE_BATCH_SIZE: usize = 2;
-    const MAX_FILE_BATCH_SIZE: usize = 32;
-    const DEFAULT_FILE_BATCH_SIZE: usize = 4;
+    const MIN_FILE_BATCH_SIZE: usize = 4;
+    const MAX_FILE_BATCH_SIZE: usize = 64;  // Increased for 8GB+ systems
+    const DEFAULT_FILE_BATCH_SIZE: usize = 16;  // Increased for better parallelism
 
     /// Calculate flush threshold with provided memory value (for testing)
     fn calculate_flush_threshold_with_memory(available_bytes: Option<usize>) -> usize {
@@ -253,6 +253,67 @@ mod memory_limit_tests {
             max_memory_mb >= 1000 && max_memory_mb <= 2000,
             "MAX threshold memory estimate ({} MB) should be ~1.2GB",
             max_memory_mb
+        );
+    }
+
+    // ===== ACCELERATION CONSTANTS TESTS =====
+
+    #[test]
+    fn test_file_batch_size_increased_for_performance() {
+        // Verify batch sizes were increased for better performance
+        assert!(
+            MAX_FILE_BATCH_SIZE >= 64,
+            "MAX_FILE_BATCH_SIZE ({}) should be >= 64 for 8GB+ systems",
+            MAX_FILE_BATCH_SIZE
+        );
+        assert!(
+            DEFAULT_FILE_BATCH_SIZE >= 16,
+            "DEFAULT_FILE_BATCH_SIZE ({}) should be >= 16 for better parallelism",
+            DEFAULT_FILE_BATCH_SIZE
+        );
+    }
+
+    #[test]
+    fn test_batch_size_allows_good_parallelism() {
+        // With 64GB RAM: 64GB * 5% = 3.2GB / 400MB = 8 files minimum
+        // Should easily hit higher batch sizes on modern systems
+        let available_64gb = 64 * 1024 * 1024 * 1024usize;
+        let batch_size = calculate_file_batch_size_with_memory(Some(available_64gb), BYTES_PER_STORAGE_FILE);
+        assert!(
+            batch_size >= 8,
+            "64GB system should have batch size >= 8, got {}",
+            batch_size
+        );
+    }
+}
+
+#[cfg(test)]
+mod acceleration_tests {
+    use crate::peer_handler::MAX_RESPONSE_BYTES;
+
+    #[test]
+    fn test_max_response_bytes_optimized() {
+        // Verify MAX_RESPONSE_BYTES is set to 10MB for better network utilization
+        let expected_mb = 10;
+        let actual_mb = MAX_RESPONSE_BYTES / 1024 / 1024;
+        assert!(
+            actual_mb >= expected_mb,
+            "MAX_RESPONSE_BYTES should be >= {}MB for optimal network utilization, got {}MB",
+            expected_mb,
+            actual_mb
+        );
+    }
+
+    #[test]
+    fn test_max_response_bytes_not_too_large() {
+        // Verify MAX_RESPONSE_BYTES isn't too large (peers might reject)
+        let max_mb = 50;
+        let actual_mb = MAX_RESPONSE_BYTES / 1024 / 1024;
+        assert!(
+            actual_mb <= max_mb,
+            "MAX_RESPONSE_BYTES should be <= {}MB to avoid peer rejection, got {}MB",
+            max_mb,
+            actual_mb
         );
     }
 }

@@ -45,7 +45,7 @@ use tracing::{debug, error, info, trace, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
 pub const PEER_SELECT_RETRY_ATTEMPTS: u32 = 3;
 pub const REQUEST_RETRY_ATTEMPTS: u32 = 5;
-pub const MAX_RESPONSE_BYTES: u64 = 1024 * 1024 * 2; // 2MB - increased for faster downloads
+pub const MAX_RESPONSE_BYTES: u64 = 1024 * 1024 * 10; // 10MB - optimized for modern networks
 pub const HASH_MAX: H256 = H256([0xFF; 32]);
 
 pub const MAX_HEADER_CHUNK: u64 = 500_000;

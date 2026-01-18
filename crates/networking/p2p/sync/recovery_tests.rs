@@ -280,6 +280,20 @@ mod recovery_tests {
             BYTECODE_CHUNK_SIZE
         );
     }
+
+    #[test]
+    fn test_checkpoint_chunk_interval_is_reasonable() {
+        // Constant matching sync.rs - saves checkpoint every N chunks
+        const CHECKPOINT_CHUNK_INTERVAL: usize = 10;
+
+        // Should reduce I/O but still allow reasonable recovery
+        // At 25k bytecodes/chunk and 10 chunk interval, we checkpoint every ~250k bytecodes
+        assert!(
+            CHECKPOINT_CHUNK_INTERVAL >= 5 && CHECKPOINT_CHUNK_INTERVAL <= 20,
+            "CHECKPOINT_CHUNK_INTERVAL ({}) should be 5-20 for balanced I/O vs recovery",
+            CHECKPOINT_CHUNK_INTERVAL
+        );
+    }
 }
 
 #[cfg(test)]

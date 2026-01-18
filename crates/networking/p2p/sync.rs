@@ -70,6 +70,11 @@ const MAX_HEADER_FETCH_ATTEMPTS: u64 = 100;
 /// If a checkpoint is older than this, snap sync will start fresh.
 const CHECKPOINT_MAX_AGE_SECS: u64 = 30 * 60; // 30 minutes
 
+/// Checkpoint save interval for bytecode downloads.
+/// Saves checkpoint every N chunks to reduce I/O overhead while maintaining
+/// reasonable recovery granularity (~30 sec of progress between saves).
+const CHECKPOINT_CHUNK_INTERVAL: usize = 10;
+
 /// Default storage flush threshold (slots) when memory info unavailable (~200MB)
 const DEFAULT_FLUSH_THRESHOLD: usize = 500_000;
 /// Minimum storage flush threshold (slots) - ~100MB
@@ -141,10 +146,10 @@ const BYTES_PER_ACCOUNT_FILE: usize = 200 * 1024 * 1024; // ~200MB per file when
 
 /// Minimum batch size for parallel file decoding (always some parallelism).
 const MIN_FILE_BATCH_SIZE: usize = 4;
-/// Maximum batch size (diminishing returns beyond this).
-const MAX_FILE_BATCH_SIZE: usize = 32;
-/// Default batch size when memory info unavailable.
-const DEFAULT_FILE_BATCH_SIZE: usize = 8;
+/// Maximum batch size - increased for systems with 8GB+ RAM.
+const MAX_FILE_BATCH_SIZE: usize = 64;
+/// Default batch size when memory info unavailable - increased for better parallelism.
+const DEFAULT_FILE_BATCH_SIZE: usize = 16;
 
 /// Calculate file batch size based on available memory.
 /// Uses MEMORY_USAGE_PERCENT of available memory, bounded between MIN and MAX.
@@ -1450,7 +1455,8 @@ impl Syncer {
 
             // Download bytecodes in chunks
             let mut bytecodes_downloaded = bytecodes_to_skip;
-            for chunk in remaining_code_hashes.chunks(BYTECODE_CHUNK_SIZE) {
+            let total_chunks = remaining_code_hashes.chunks(BYTECODE_CHUNK_SIZE).len();
+            for (chunk_idx, chunk) in remaining_code_hashes.chunks(BYTECODE_CHUNK_SIZE).enumerate() {
                 let bytecodes = self
                     .peers
                     .request_bytecodes(chunk)
@@ -1470,11 +1476,16 @@ impl Syncer {
                     )
                     .await?;
 
-                // Update checkpoint and progress after each chunk
+                // Update progress counter
                 bytecodes_downloaded += chunk.len();
                 checkpoint.bytecodes_downloaded = bytecodes_downloaded;
-                checkpoint.touch();
-                store.save_snap_sync_checkpoint(&checkpoint).await?;
+
+                // Save checkpoint every N chunks to reduce I/O overhead
+                let is_last_chunk = chunk_idx + 1 == total_chunks;
+                if (chunk_idx + 1) % CHECKPOINT_CHUNK_INTERVAL == 0 || is_last_chunk {
+                    checkpoint.touch();
+                    store.save_snap_sync_checkpoint(&checkpoint).await?;
+                }
 
                 // Log progress with ETA
                 SNAP_PROGRESS.bytecodes.set_current(bytecodes_downloaded as u64);
