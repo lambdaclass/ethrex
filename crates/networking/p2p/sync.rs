@@ -66,16 +66,19 @@ const MAX_HEADER_FETCH_ATTEMPTS: u64 = 100;
 /// If a checkpoint is older than this, snap sync will start fresh.
 const CHECKPOINT_MAX_AGE_SECS: u64 = 30 * 60; // 30 minutes
 
-/// Default storage flush threshold (slots) when memory info unavailable (~160MB)
-const DEFAULT_FLUSH_THRESHOLD: usize = 1_000_000;
-/// Minimum storage flush threshold (slots) - ~80MB
-const MIN_FLUSH_THRESHOLD: usize = 500_000;
-/// Maximum storage flush threshold (slots) - ~1.6GB
-const MAX_FLUSH_THRESHOLD: usize = 10_000_000;
+/// Default storage flush threshold (slots) when memory info unavailable (~200MB)
+const DEFAULT_FLUSH_THRESHOLD: usize = 500_000;
+/// Minimum storage flush threshold (slots) - ~100MB
+const MIN_FLUSH_THRESHOLD: usize = 250_000;
+/// Maximum storage flush threshold (slots) - ~1.2GB
+/// Capped to prevent OOM on systems with large RAM
+const MAX_FLUSH_THRESHOLD: usize = 3_000_000;
 /// Approximate memory bytes per storage slot in trie
-const BYTES_PER_STORAGE_SLOT: usize = 160;
-/// Percentage of available memory to use for storage tries (10%)
-const MEMORY_USAGE_PERCENT: usize = 10;
+/// Includes HashMap overhead, MerkleTrie nodes, and allocations
+const BYTES_PER_STORAGE_SLOT: usize = 400;
+/// Percentage of available memory to use for storage tries (5%)
+/// Conservative to leave room for healing and other operations
+const MEMORY_USAGE_PERCENT: usize = 5;
 
 /// Get available memory in bytes from /proc/meminfo (Linux only)
 /// Returns None on non-Linux systems or if reading fails
@@ -121,6 +124,45 @@ fn calculate_flush_threshold() -> usize {
             DEFAULT_FLUSH_THRESHOLD * BYTES_PER_STORAGE_SLOT / 1024 / 1024
         );
         DEFAULT_FLUSH_THRESHOLD
+    }
+}
+
+/// Approximate memory per decoded storage snapshot file (bytes).
+/// Each file contains many accounts with storage slots, decoded into Vec<AccountsWithStorage>.
+const BYTES_PER_STORAGE_FILE: usize = 400 * 1024 * 1024; // ~400MB per file when decoded
+
+/// Approximate memory per decoded account snapshot file (bytes).
+/// Smaller than storage files since accounts are simpler.
+const BYTES_PER_ACCOUNT_FILE: usize = 200 * 1024 * 1024; // ~200MB per file when decoded
+
+/// Minimum batch size for parallel file decoding (always some parallelism).
+const MIN_FILE_BATCH_SIZE: usize = 2;
+/// Maximum batch size (diminishing returns beyond this).
+const MAX_FILE_BATCH_SIZE: usize = 32;
+/// Default batch size when memory info unavailable.
+const DEFAULT_FILE_BATCH_SIZE: usize = 4;
+
+/// Calculate file batch size based on available memory.
+/// Uses MEMORY_USAGE_PERCENT of available memory, bounded between MIN and MAX.
+fn calculate_file_batch_size(bytes_per_file: usize) -> usize {
+    if let Some(available_bytes) = get_available_memory_bytes() {
+        // Use same percentage as flush threshold for consistency
+        let target_bytes = available_bytes * MEMORY_USAGE_PERCENT / 100;
+        let batch_size = target_bytes / bytes_per_file;
+        let clamped = batch_size.clamp(MIN_FILE_BATCH_SIZE, MAX_FILE_BATCH_SIZE);
+        debug!(
+            "[SNAP SYNC] Dynamic file batch size: {} files (~{}MB) based on {}MB available",
+            clamped,
+            clamped * bytes_per_file / 1024 / 1024,
+            available_bytes / 1024 / 1024
+        );
+        clamped
+    } else {
+        debug!(
+            "[SNAP SYNC] Using default file batch size: {} files",
+            DEFAULT_FILE_BATCH_SIZE
+        );
+        DEFAULT_FILE_BATCH_SIZE
     }
 }
 
@@ -901,6 +943,10 @@ impl Syncer {
         // If true, state is already in the store and we should use persisted state root
         let resuming_with_persisted_state = should_skip_phase(SnapSyncPhase::StorageInsertion, checkpoint.phase);
 
+        // Track if we need to redo healing (resuming from StateHealing means healing didn't complete)
+        // In this case, we have persisted state but need to re-heal it
+        let needs_healing_redo = checkpoint.phase == SnapSyncPhase::StateHealing;
+
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
             // Phase: Account Download
             if !should_skip_phase(SnapSyncPhase::AccountDownload, checkpoint.phase) {
@@ -1204,7 +1250,8 @@ impl Syncer {
                     );
 
                     // Try to heal by re-downloading accounts via ranges
-                    let healed = storage_healing::heal_accounts_snap(
+                    // This returns the set of accounts that have non-empty storage_root
+                    let (healed, accounts_with_storage) = storage_healing::heal_accounts_snap(
                         pivot_header.state_root,
                         &mut self.peers,
                         &mut snap_trie,
@@ -1217,19 +1264,13 @@ impl Syncer {
                     }
 
                     // After account healing, we need to heal storage for accounts with non-empty storage
-                    // The account healing updated accounts but didn't re-download storage data
-                    // Re-use the original storage accounts list since those are the accounts with storage
-                    let storage_accounts_set: HashSet<H256> = storage_accounts
-                        .accounts_with_storage_root
-                        .keys()
-                        .copied()
-                        .collect();
-
-                    if !storage_accounts_set.is_empty() {
-                        info!("[SNAP SYNC] Re-healing storage for {} accounts after account healing", storage_accounts_set.len());
+                    // The account healing updated accounts with their storage_roots from the network
+                    // but didn't re-download storage data to match those roots
+                    if !accounts_with_storage.is_empty() {
+                        info!("[SNAP SYNC] Re-healing storage for {} accounts after account healing", accounts_with_storage.len());
                         let storage_accounts_for_healing = AccountStorageRoots {
                             accounts_with_storage_root: BTreeMap::new(),
-                            healed_accounts: storage_accounts_set,
+                            healed_accounts: accounts_with_storage,
                         };
 
                         let healed = storage_healing::heal_storage_trie_snap(
@@ -1705,6 +1746,7 @@ pub fn validate_bytecodes(store: Store, state_root: H256) -> Result<(), SyncErro
 
 /// Checkpoint-aware version of insert_accounts.
 /// Tracks progress and saves checkpoint after each file processed.
+/// Uses batched parallel decoding for speed while limiting memory.
 async fn insert_accounts_with_checkpoint(
     store: Store,
     storage_accounts: &mut AccountStorageRoots,
@@ -1714,6 +1756,8 @@ async fn insert_accounts_with_checkpoint(
     snap_trie: &mut SnapSyncTrie,
     checkpoint: &mut SnapSyncCheckpoint,
 ) -> Result<(H256, BTreeSet<H256>), SyncError> {
+    use rayon::prelude::*;
+
     // Collect all file paths first
     let mut file_paths: Vec<PathBuf> = std::fs::read_dir(account_state_snapshots_dir)
         .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
@@ -1725,62 +1769,96 @@ async fn insert_accounts_with_checkpoint(
 
     let file_count = file_paths.len();
     let files_to_skip = checkpoint.account_files_processed;
+
+    // Calculate batch size based on available memory
+    let batch_size = calculate_file_batch_size(BYTES_PER_ACCOUNT_FILE);
+
     info!(
-        "[SNAP SYNC] Phase 3/{}: Inserting accounts from {} files{}",
+        "[SNAP SYNC] Phase 3/{}: Inserting accounts from {} files (batch size: {}){}",
         crate::snap_sync_progress::TOTAL_PHASES,
         file_count,
+        batch_size,
         if files_to_skip > 0 { format!(" (skipping {} from checkpoint)", files_to_skip) } else { String::new() }
     );
 
-    // Process files sequentially to avoid loading all into memory at once
-    let mut files_processed = 0usize;
-    for snapshot_path in file_paths {
-        // Skip already processed files based on checkpoint
-        if files_processed < files_to_skip {
-            files_processed += 1;
-            continue;
-        }
+    // Skip already processed files
+    let remaining_files: Vec<PathBuf> = file_paths
+        .into_iter()
+        .skip(files_to_skip)
+        .collect();
 
-        // Read and decode one file at a time
-        let snapshot_contents = std::fs::read(&snapshot_path)
-            .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
-        let account_states_snapshot: Vec<(H256, AccountState)> =
-            RLPDecode::decode(&snapshot_contents)
-                .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+    let mut files_processed = files_to_skip;
+    let account_insert_start = std::time::Instant::now();
+    let mut total_accounts = 0usize;
 
-        // Drop the raw file contents immediately to free memory
-        drop(snapshot_contents);
-
-        storage_accounts.accounts_with_storage_root.extend(
-            account_states_snapshot.iter().filter_map(|(hash, state)| {
-                (state.storage_root != *EMPTY_TRIE_HASH)
-                    .then_some((*hash, (Some(state.storage_root), Vec::new())))
-            }),
-        );
-
-        // Collect valid code hashes from current account snapshot
-        let code_hashes_from_snapshot: Vec<H256> = account_states_snapshot
-            .iter()
-            .filter_map(|(_, state)| {
-                (state.code_hash != *EMPTY_KECCACK_HASH).then_some(state.code_hash)
+    // Process files in batches - decode in parallel, insert sequentially
+    for batch in remaining_files.chunks(batch_size) {
+        // Parallel decode batch of files using rayon
+        let decoded_batch: Vec<Result<(PathBuf, Vec<(H256, AccountState)>), SyncError>> = batch
+            .par_iter()
+            .map(|snapshot_path| {
+                let snapshot_contents = std::fs::read(snapshot_path)
+                    .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
+                let account_states_snapshot: Vec<(H256, AccountState)> =
+                    RLPDecode::decode(&snapshot_contents)
+                        .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+                Ok((snapshot_path.clone(), account_states_snapshot))
             })
             .collect();
 
-        code_hash_collector.extend(code_hashes_from_snapshot);
-        code_hash_collector.flush_if_needed().await?;
+        // Process decoded data sequentially (storage_accounts, code_hash_collector, snap_trie need &mut)
+        for result in decoded_batch {
+            let (_snapshot_path, account_states_snapshot) = result?;
 
-        // Insert accounts into ethrex_db's SnapSyncTrie using batch API for better performance
-        snap_trie.insert_accounts_batch(
-            account_states_snapshot.into_iter().map(|(hash, account)| {
-                (hash, account.nonce, account.balance, account.storage_root, account.code_hash)
-            })
+            total_accounts += account_states_snapshot.len();
+
+            storage_accounts.accounts_with_storage_root.extend(
+                account_states_snapshot.iter().filter_map(|(hash, state)| {
+                    (state.storage_root != *EMPTY_TRIE_HASH)
+                        .then_some((*hash, (Some(state.storage_root), Vec::new())))
+                }),
+            );
+
+            // Collect valid code hashes from current account snapshot
+            let code_hashes_from_snapshot: Vec<H256> = account_states_snapshot
+                .iter()
+                .filter_map(|(_, state)| {
+                    (state.code_hash != *EMPTY_KECCACK_HASH).then_some(state.code_hash)
+                })
+                .collect();
+
+            code_hash_collector.extend(code_hashes_from_snapshot);
+            code_hash_collector.flush_if_needed().await?;
+
+            // Insert accounts into ethrex_db's SnapSyncTrie using batch API for better performance
+            snap_trie.insert_accounts_batch(
+                account_states_snapshot.into_iter().map(|(hash, account)| {
+                    (hash, account.nonce, account.balance, account.storage_root, account.code_hash)
+                })
+            );
+
+            // Update checkpoint after each file
+            files_processed += 1;
+            checkpoint.account_files_processed = files_processed;
+            checkpoint.touch();
+            store.save_snap_sync_checkpoint(checkpoint).await?;
+        }
+
+        // Log progress after each batch
+        let elapsed = account_insert_start.elapsed();
+        let rate = if elapsed.as_secs_f64() > 0.0 {
+            total_accounts as f64 / elapsed.as_secs_f64()
+        } else {
+            0.0
+        };
+        info!(
+            "[SNAP SYNC] Phase 3/{}: File {}/{} | Total: {} accounts | Rate: {}/s",
+            crate::snap_sync_progress::TOTAL_PHASES,
+            files_processed,
+            file_count,
+            crate::snap_sync_progress::format_count(total_accounts as u64),
+            crate::snap_sync_progress::format_count(rate as u64)
         );
-
-        // Update checkpoint after each file
-        files_processed += 1;
-        checkpoint.account_files_processed = files_processed;
-        checkpoint.touch();
-        store.save_snap_sync_checkpoint(checkpoint).await?;
     }
 
     std::fs::remove_dir_all(account_state_snapshots_dir)
@@ -1792,6 +1870,7 @@ async fn insert_accounts_with_checkpoint(
 
 /// Checkpoint-aware version of insert_storages.
 /// Tracks progress and saves checkpoint after each file processed.
+/// Uses batched parallel decoding for speed while limiting memory.
 async fn insert_storages_with_checkpoint(
     store: Store,
     _: BTreeSet<H256>,
@@ -1801,6 +1880,7 @@ async fn insert_storages_with_checkpoint(
     checkpoint: &mut SnapSyncCheckpoint,
 ) -> Result<(), SyncError> {
     use crate::utils::AccountsWithStorage;
+    use rayon::prelude::*;
 
     // Collect all file paths first
     let mut file_paths: Vec<PathBuf> = std::fs::read_dir(account_storages_snapshots_dir)
@@ -1813,17 +1893,26 @@ async fn insert_storages_with_checkpoint(
 
     let file_count = file_paths.len();
     let files_to_skip = checkpoint.storage_files_processed;
+
+    // Calculate batch size based on available memory
+    let batch_size = calculate_file_batch_size(BYTES_PER_STORAGE_FILE);
+
     info!(
-        "[SNAP SYNC] Phase 5/{}: Inserting storage from {} files{}",
+        "[SNAP SYNC] Phase 5/{}: Inserting storage from {} files (batch size: {}){}",
         crate::snap_sync_progress::TOTAL_PHASES,
         file_count,
+        batch_size,
         if files_to_skip > 0 { format!(" (skipping {} from checkpoint)", files_to_skip) } else { String::new() }
     );
 
-    // Process files sequentially to avoid loading all into memory at once
-    // This is critical for memory efficiency with large state
+    // Skip already processed files
+    let remaining_files: Vec<PathBuf> = file_paths
+        .into_iter()
+        .skip(files_to_skip)
+        .collect();
+
     let mut total_storage_count = 0usize;
-    let mut files_processed = 0usize;
+    let mut files_processed = files_to_skip;
     let storage_insert_start = std::time::Instant::now();
 
     // Flush storage tries periodically to keep memory bounded
@@ -1832,80 +1921,86 @@ async fn insert_storages_with_checkpoint(
     let mut slots_since_flush = 0usize;
     let mut total_flushes = 0usize;
 
-    for snapshot_path in file_paths {
-        // Skip already processed files based on checkpoint
-        if files_processed < files_to_skip {
-            files_processed += 1;
-            continue;
-        }
+    // Process files in batches - decode in parallel, insert sequentially
+    for batch in remaining_files.chunks(batch_size) {
+        // Parallel decode batch of files using rayon
+        let decoded_batch: Vec<Result<(PathBuf, Vec<AccountsWithStorage>), SyncError>> = batch
+            .par_iter()
+            .map(|snapshot_path| {
+                let snapshot_contents = std::fs::read(snapshot_path)
+                    .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
 
-        // Read and decode one file at a time
-        let snapshot_contents = std::fs::read(&snapshot_path)
-            .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
+                #[expect(clippy::type_complexity)]
+                let account_storages_snapshot: Vec<AccountsWithStorage> =
+                    RLPDecode::decode(&snapshot_contents)
+                        .map(|all_accounts: Vec<(Vec<H256>, Vec<(H256, U256)>)>| {
+                            all_accounts
+                                .into_iter()
+                                .map(|(accounts, storages)| AccountsWithStorage { accounts, storages })
+                                .collect()
+                        })
+                        .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
 
-        #[expect(clippy::type_complexity)]
-        let account_storages_snapshot: Vec<AccountsWithStorage> =
-            RLPDecode::decode(&snapshot_contents)
-                .map(|all_accounts: Vec<(Vec<H256>, Vec<(H256, U256)>)>| {
-                    all_accounts
-                        .into_iter()
-                        .map(|(accounts, storages)| AccountsWithStorage { accounts, storages })
-                        .collect()
-                })
-                .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+                Ok((snapshot_path.clone(), account_storages_snapshot))
+            })
+            .collect();
 
-        // Drop the raw file contents immediately to free memory
-        drop(snapshot_contents);
+        // Insert decoded data sequentially (snap_trie needs &mut self)
+        for result in decoded_batch {
+            let (snapshot_path, account_storages_snapshot) = result?;
 
-        let mut storage_count = 0usize;
-        for account_storages in account_storages_snapshot {
-            let slot_count = account_storages.storages.len();
-            // Batch insert storage slots for each account
-            for account_hash in account_storages.accounts {
-                snap_trie.insert_storage_batch(
-                    account_hash,
-                    account_storages.storages.iter().map(|(k, v)| (*k, *v))
-                );
-                storage_count += slot_count;
+            let mut storage_count = 0usize;
+            for account_storages in account_storages_snapshot {
+                let slot_count = account_storages.storages.len();
+                // Batch insert storage slots for each account
+                for account_hash in account_storages.accounts {
+                    snap_trie.insert_storage_batch(
+                        account_hash,
+                        account_storages.storages.iter().map(|(k, v)| (*k, *v))
+                    );
+                    storage_count += slot_count;
+                }
             }
+            total_storage_count += storage_count;
+            slots_since_flush += storage_count;
+
+            // Flush storage tries periodically to free memory
+            // This computes storage roots and clears the in-memory tries
+            if slots_since_flush >= storage_flush_threshold {
+                let flushed = snap_trie.flush_storage_tries();
+                total_flushes += 1;
+                debug!(
+                    "[SNAP SYNC] Flushed {} storage tries (flush #{}, {} slots since last)",
+                    flushed, total_flushes, slots_since_flush
+                );
+                slots_since_flush = 0;
+            }
+
+            // Update checkpoint after each file
+            files_processed += 1;
+            checkpoint.storage_files_processed = files_processed;
+            checkpoint.touch();
+            store.save_snap_sync_checkpoint(checkpoint).await?;
+
+            // Log progress periodically (every batch)
+            if files_processed % batch_size == 0 || files_processed == file_count {
+                let elapsed = storage_insert_start.elapsed();
+                let rate = if elapsed.as_secs_f64() > 0.0 {
+                    total_storage_count as f64 / elapsed.as_secs_f64()
+                } else {
+                    0.0
+                };
+                info!(
+                    "[SNAP SYNC] Phase 5/{}: File {}/{} | Total: {} slots | Rate: {}/s",
+                    crate::snap_sync_progress::TOTAL_PHASES,
+                    files_processed,
+                    file_count,
+                    crate::snap_sync_progress::format_count(total_storage_count as u64),
+                    crate::snap_sync_progress::format_count(rate as u64)
+                );
+            }
+            drop(snapshot_path); // Explicit drop for clarity
         }
-        total_storage_count += storage_count;
-        slots_since_flush += storage_count;
-
-        // Flush storage tries periodically to free memory
-        // This computes storage roots and clears the in-memory tries
-        if slots_since_flush >= storage_flush_threshold {
-            let flushed = snap_trie.flush_storage_tries();
-            total_flushes += 1;
-            debug!(
-                "[SNAP SYNC] Flushed {} storage tries (flush #{}, {} slots since last)",
-                flushed, total_flushes, slots_since_flush
-            );
-            slots_since_flush = 0;
-        }
-
-        // Update checkpoint after each file
-        files_processed += 1;
-        checkpoint.storage_files_processed = files_processed;
-        checkpoint.touch();
-        store.save_snap_sync_checkpoint(checkpoint).await?;
-
-        // Log progress periodically
-        let elapsed = storage_insert_start.elapsed();
-        let rate = if elapsed.as_secs_f64() > 0.0 {
-            total_storage_count as f64 / elapsed.as_secs_f64()
-        } else {
-            0.0
-        };
-        info!(
-            "[SNAP SYNC] Phase 5/{}: Inserted {} slots from file {}/{} | Total: {} | Rate: {}/s",
-            crate::snap_sync_progress::TOTAL_PHASES,
-            crate::snap_sync_progress::format_count(storage_count as u64),
-            files_processed,
-            file_count,
-            crate::snap_sync_progress::format_count(total_storage_count as u64),
-            crate::snap_sync_progress::format_count(rate as u64)
-        );
     }
 
     // Final flush for any remaining storage tries

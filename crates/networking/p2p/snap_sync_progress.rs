@@ -321,6 +321,9 @@ impl SnapSyncProgress {
             format_rate(rate),
             format_duration(elapsed)
         );
+
+        // Print progress table after each phase
+        self.print_progress_table().await;
     }
 
     /// Log overall sync completion
@@ -358,6 +361,71 @@ impl SnapSyncProgress {
             format_count(storage),
             format_count(bytecodes),
         );
+
+        // Print final progress table
+        self.print_progress_table().await;
+    }
+
+    /// Print a progress summary table showing all phases
+    pub async fn print_progress_table(&self) {
+        let current_phase = self.current_phase.load(Ordering::Relaxed) as u8;
+
+        // Collect phase data
+        let phases: [(u8, &str, &PhaseProgress); 5] = [
+            (1, "Headers", &self.headers),
+            (2, "Accounts", &self.accounts),
+            (4, "Storage", &self.storage),
+            (6, "Healing", &self.healing),
+            (8, "Bytecodes", &self.bytecodes),
+        ];
+
+        let mut table = String::new();
+        table.push_str("\n┌────────────────────────────────────────────────────────────────────────────┐\n");
+        table.push_str("│                        SNAP SYNC PROGRESS SUMMARY                          │\n");
+        table.push_str("├─────────┬──────────────────┬────────────┬─────────────┬───────────────────┤\n");
+        table.push_str("│ Phase   │ Description      │ Processed  │ Rate        │ Duration          │\n");
+        table.push_str("├─────────┼──────────────────┼────────────┼─────────────┼───────────────────┤\n");
+
+        for (phase_num, name, progress) in phases {
+            let processed = progress.get_current();
+            let elapsed = progress.elapsed().await;
+            let rate = progress.rate().await;
+
+            let status = if current_phase > phase_num + 1 || (current_phase == 9 && phase_num == 8) {
+                "✓"
+            } else if current_phase >= phase_num && current_phase <= phase_num + 1 {
+                "→"
+            } else {
+                " "
+            };
+
+            let processed_str = if processed > 0 {
+                format_count(processed)
+            } else {
+                "-".to_string()
+            };
+
+            let rate_str = if rate > 0.0 {
+                format_rate(rate)
+            } else {
+                "-".to_string()
+            };
+
+            let duration_str = if elapsed.as_secs() > 0 {
+                format_duration(elapsed)
+            } else {
+                "-".to_string()
+            };
+
+            table.push_str(&format!(
+                "│ {} {}/8   │ {:16} │ {:>10} │ {:>11} │ {:>17} │\n",
+                status, phase_num, name, processed_str, rate_str, duration_str
+            ));
+        }
+
+        table.push_str("└─────────┴──────────────────┴────────────┴─────────────┴───────────────────┘");
+
+        info!("{}", table);
     }
 
     /// Log progress for headers download
