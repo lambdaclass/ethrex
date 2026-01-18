@@ -13,6 +13,45 @@ use ethrex_rlp::{
 use super::node::{BranchNode, ExtensionNode, LeafNode, Node};
 use crate::{Nibbles, NodeHash};
 
+impl BranchNode {
+    /// Specialized encode method that writes directly to a Vec<u8> without trait object dispatch.
+    /// This is used by compute_hash_no_alloc for better performance.
+    #[inline]
+    pub fn encode_to_buf(&self, buf: &mut Vec<u8>) {
+        let value_len = <[u8] as RLPEncode>::length(&self.value);
+        let choices_len = self.choices.iter().fold(0, |acc, child| {
+            acc + RLPEncode::length(child.compute_hash_ref())
+        });
+        let payload_len = choices_len + value_len;
+
+        buf.reserve(payload_len + 3); // 3 byte prefix headroom
+
+        encode_length(payload_len, buf);
+        for child in self.choices.iter() {
+            match child.compute_hash_ref() {
+                NodeHash::Hashed(hash) => {
+                    // Inline H256 encoding: prefix (0xa0) + 32 bytes
+                    buf.push(RLP_NULL + 32);
+                    buf.extend_from_slice(&hash.0);
+                }
+                NodeHash::Inline((_, 0)) => buf.push(RLP_NULL),
+                NodeHash::Inline((encoded, len)) => {
+                    buf.extend_from_slice(&encoded[..*len as usize])
+                }
+            }
+        }
+        // Inline value encoding
+        if self.value.is_empty() {
+            buf.push(RLP_NULL);
+        } else if self.value.len() == 1 && self.value[0] < RLP_NULL {
+            buf.push(self.value[0]);
+        } else {
+            buf.push(RLP_NULL + self.value.len() as u8);
+            buf.extend_from_slice(&self.value);
+        }
+    }
+}
+
 impl RLPEncode for BranchNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         let value_len = <[u8] as RLPEncode>::length(&self.value);

@@ -268,7 +268,7 @@ impl BranchNode {
     /// Computes the node's hash, using the provided buffer
     pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>) -> NodeHash {
         buf.clear();
-        self.encode(buf);
+        self.encode_to_buf(buf);
         let hash = NodeHash::from_encoded(buf);
         buf.clear();
         hash
