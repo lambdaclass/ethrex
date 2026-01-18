@@ -1221,14 +1221,35 @@ impl Syncer {
                         return Err(SyncError::StorageHealingFailed);
                     }
 
+                    // CRITICAL FIX: For accounts that were marked for healing but had 0 slots returned,
+                    // their storage is empty at the pivot state_root. We must update their storage_root
+                    // to EMPTY_TRIE_HASH. Otherwise they keep their original (wrong) storage_root
+                    // from when they were first downloaded, causing state root mismatch.
+                    let mut accounts_fixed_to_empty = 0usize;
+                    for account_hash in &storage_accounts.healed_accounts {
+                        // If no storage was inserted for this account during healing,
+                        // it means the account has empty storage at the pivot
+                        if !snap_trie.has_storage_trie(account_hash) {
+                            snap_trie.update_account_storage_root(account_hash, (*EMPTY_TRIE_HASH).into());
+                            accounts_fixed_to_empty += 1;
+                        }
+                    }
+                    if accounts_fixed_to_empty > 0 {
+                        debug!(
+                            "[SNAP SYNC] Fixed {} accounts with empty storage (set to EMPTY_TRIE_HASH)",
+                            accounts_fixed_to_empty
+                        );
+                    }
+
                     // Flush storage tries to compute storage roots and update accounts
                     // This is critical - without this, accounts have wrong storage roots
                     let flushed = snap_trie.flush_storage_tries();
                     info!(
-                        "[SNAP SYNC] Storage healing complete: {} accounts, {} slots healed, {} tries flushed",
+                        "[SNAP SYNC] Storage healing complete: {} accounts, {} slots healed, {} tries flushed, {} set to empty",
                         storage_accounts.healed_accounts.len(),
                         global_slots_healed,
-                        flushed
+                        flushed,
+                        accounts_fixed_to_empty
                     );
                 }
 
@@ -1306,12 +1327,21 @@ impl Syncer {
                                 return Err(SyncError::StorageHealingFailed);
                             }
 
+                            // Fix accounts with 0 slots to have EMPTY_TRIE_HASH
+                            let mut batch_fixed_to_empty = 0usize;
+                            for account_hash in batch {
+                                if !snap_trie.has_storage_trie(account_hash) {
+                                    snap_trie.update_account_storage_root(account_hash, (*EMPTY_TRIE_HASH).into());
+                                    batch_fixed_to_empty += 1;
+                                }
+                            }
+
                             accounts_processed += batch.len();
 
                             // Flush storage tries to free memory between batches
                             let flushed = snap_trie.flush_storage_tries();
-                            info!("[SNAP SYNC] Storage healing batch complete: {}/{} accounts, flushed {} tries",
-                                  accounts_processed, total_accounts, flushed);
+                            info!("[SNAP SYNC] Storage healing batch complete: {}/{} accounts, flushed {} tries, {} set to empty",
+                                  accounts_processed, total_accounts, flushed, batch_fixed_to_empty);
                         }
                     }
 

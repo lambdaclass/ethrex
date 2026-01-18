@@ -459,6 +459,24 @@ impl SnapSyncTrie {
         self.trie.get_account_by_hash(hashed_address.as_fixed_bytes()).is_some()
     }
 
+    /// Checks if a storage trie exists for an account.
+    ///
+    /// Returns true if storage has been inserted for this account.
+    pub fn has_storage_trie(&self, hashed_address: &H256) -> bool {
+        self.trie.has_storage_trie(hashed_address.as_fixed_bytes())
+    }
+
+    /// Updates an account's storage_root field.
+    ///
+    /// Used after storage healing to set EMPTY_TRIE_HASH for accounts
+    /// that had no storage returned during healing.
+    pub fn update_account_storage_root(&mut self, hashed_address: &H256, storage_root: H256) {
+        self.trie.update_account_storage_root(
+            hashed_address.as_fixed_bytes(),
+            *storage_root.as_fixed_bytes(),
+        );
+    }
+
     /// Consumes the snap sync trie and returns the underlying PagedStateTrie.
     ///
     /// This is used to integrate the trie with the Blockchain layer after

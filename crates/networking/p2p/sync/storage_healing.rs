@@ -928,6 +928,7 @@ pub async fn heal_storage_trie_snap(
                     Ok(Some(response)) => {
                         // Collect all slots with their account hashes
                         let mut all_slots = Vec::new();
+                        let response_accounts = response.slots.len();
                         for (i, account_slots) in response.slots.into_iter().enumerate() {
                             if let Some(account_hash) = account_hashes.get(i) {
                                 for slot in account_slots {
@@ -935,15 +936,20 @@ pub async fn heal_storage_trie_snap(
                                 }
                             }
                         }
+                        debug!(
+                            "Storage healing response: requested {} accounts, got {} accounts, {} total slots",
+                            account_hashes.len(), response_accounts, all_slots.len()
+                        );
                         peer_table.record_success(&peer_id).await.ok();
                         Ok((account_hashes, all_slots, peer_id, true))
                     }
                     Ok(None) => {
+                        debug!("Storage healing: peer returned None for {} accounts", account_hashes.len());
                         peer_table.record_failure(&peer_id).await.ok();
                         Ok((account_hashes, Vec::new(), peer_id, false))
                     }
                     Err(e) => {
-                        debug!("Failed to request storage for batch: {:?}", e);
+                        debug!("Failed to request storage for batch of {} accounts: {:?}", account_hashes.len(), e);
                         peer_table.record_failure(&peer_id).await.ok();
                         Ok((account_hashes, Vec::new(), peer_id, false))
                     }
