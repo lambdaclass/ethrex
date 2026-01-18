@@ -4196,6 +4196,7 @@ name = "ethrex_db"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "hashbrown 0.15.5",
  "hex",
  "hex-literal 0.4.1",
  "lru 0.12.5",
@@ -4206,6 +4207,7 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "rlp 0.5.2",
+ "rustc-hash 2.1.1",
  "serde",
  "serde_json",
  "tempfile",
@@ -5110,6 +5112,7 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash 0.1.5",
+ "rayon",
 ]
 
 [[package]]

@@ -151,6 +151,13 @@ const MAX_FILE_BATCH_SIZE: usize = 64;
 /// Default batch size when memory info unavailable - increased for better parallelism.
 const DEFAULT_FILE_BATCH_SIZE: usize = 16;
 
+/// Minimum number of accounts to accumulate before batch insertion.
+/// Larger batches are more efficient due to better cache utilization
+/// and reduced per-call overhead in hashbrown/bloom filter.
+const MIN_ACCOUNT_BATCH_SIZE: usize = 100_000;
+/// Minimum number of storage slots to accumulate before batch insertion.
+const MIN_STORAGE_BATCH_SIZE: usize = 200_000;
+
 /// Calculate file batch size based on available memory.
 /// Uses MEMORY_USAGE_PERCENT of available memory, bounded between MIN and MAX.
 fn calculate_file_batch_size(bytes_per_file: usize) -> usize {
@@ -1885,6 +1892,9 @@ async fn insert_accounts_with_checkpoint(
     let mut total_accounts = 0usize;
 
     // Process files in batches - decode in parallel, insert sequentially
+    // Accumulator for batching inserts - larger batches = better performance
+    let mut pending_accounts: Vec<(H256, u64, U256, H256, H256)> = Vec::with_capacity(MIN_ACCOUNT_BATCH_SIZE);
+
     for batch in remaining_files.chunks(batch_size) {
         // Parallel decode batch of files using rayon
         let decoded_batch: Vec<Result<(PathBuf, Vec<(H256, AccountState)>), SyncError>> = batch
@@ -1899,7 +1909,7 @@ async fn insert_accounts_with_checkpoint(
             })
             .collect();
 
-        // Process decoded data sequentially (storage_accounts, code_hash_collector, snap_trie need &mut)
+        // Process decoded data sequentially (storage_accounts, code_hash_collector need &mut)
         for result in decoded_batch {
             let (_snapshot_path, account_states_snapshot) = result?;
 
@@ -1923,8 +1933,8 @@ async fn insert_accounts_with_checkpoint(
             code_hash_collector.extend(code_hashes_from_snapshot);
             code_hash_collector.flush_if_needed().await?;
 
-            // Insert accounts into ethrex_db's SnapSyncTrie using batch API for better performance
-            snap_trie.insert_accounts_batch(
+            // Accumulate accounts for batch insertion
+            pending_accounts.extend(
                 account_states_snapshot.into_iter().map(|(hash, account)| {
                     (hash, account.nonce, account.balance, account.storage_root, account.code_hash)
                 })
@@ -1935,7 +1945,12 @@ async fn insert_accounts_with_checkpoint(
             checkpoint.account_files_processed = files_processed;
         }
 
-        // Save checkpoint and log progress after each batch (not every file) to reduce I/O
+        // Flush accumulated accounts when batch is large enough
+        if pending_accounts.len() >= MIN_ACCOUNT_BATCH_SIZE {
+            snap_trie.insert_accounts_batch(pending_accounts.drain(..));
+        }
+
+        // Save checkpoint and log progress after each file batch
         checkpoint.touch();
         store.save_snap_sync_checkpoint(checkpoint).await?;
 
@@ -1953,6 +1968,11 @@ async fn insert_accounts_with_checkpoint(
             crate::snap_sync_progress::format_count(total_accounts as u64),
             crate::snap_sync_progress::format_count(rate as u64)
         );
+    }
+
+    // Flush any remaining accounts
+    if !pending_accounts.is_empty() {
+        snap_trie.insert_accounts_batch(pending_accounts);
     }
 
     std::fs::remove_dir_all(account_state_snapshots_dir)
