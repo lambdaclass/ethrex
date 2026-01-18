@@ -27,5 +27,11 @@ kzg-rs = ["dep:kzg-rs"]
 risc0 = ["c-kzg/std", "c-kzg/ethereum_kzg_settings", "c-kzg/portable"]
 openvm = ["openvm-kzg"]
 
+[dev-dependencies]
+
+[[test]]
+name = "crypto_tests"
+path = "tests/tests.rs"
+
 [lints]
 workspace = true

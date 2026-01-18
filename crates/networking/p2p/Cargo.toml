@@ -60,6 +60,11 @@ crossbeam.workspace = true
 
 [dev-dependencies]
 hex-literal = "0.4.1"
+rand.workspace = true
+
+[[test]]
+name = "p2p_tests"
+path = "tests/tests.rs"
 
 [lib]
 path = "./p2p.rs"
