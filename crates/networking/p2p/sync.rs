@@ -1844,6 +1844,12 @@ async fn insert_storages_with_checkpoint(
     let mut files_processed = 0usize;
     let storage_insert_start = std::time::Instant::now();
 
+    // Flush storage tries periodically to keep memory bounded
+    // With ~160 bytes per slot, 500K slots = ~80MB in storage tries
+    const STORAGE_FLUSH_THRESHOLD: usize = 500_000;
+    let mut slots_since_flush = 0usize;
+    let mut total_flushes = 0usize;
+
     for snapshot_path in file_paths {
         // Skip already processed files based on checkpoint
         if files_processed < files_to_skip {
@@ -1882,6 +1888,19 @@ async fn insert_storages_with_checkpoint(
             }
         }
         total_storage_count += storage_count;
+        slots_since_flush += storage_count;
+
+        // Flush storage tries periodically to free memory
+        // This computes storage roots and clears the in-memory tries
+        if slots_since_flush >= STORAGE_FLUSH_THRESHOLD {
+            let flushed = snap_trie.flush_storage_tries();
+            total_flushes += 1;
+            debug!(
+                "[SNAP SYNC] Flushed {} storage tries (flush #{}, {} slots since last)",
+                flushed, total_flushes, slots_since_flush
+            );
+            slots_since_flush = 0;
+        }
 
         // Update checkpoint after each file
         files_processed += 1;
@@ -1907,10 +1926,21 @@ async fn insert_storages_with_checkpoint(
         );
     }
 
+    // Final flush for any remaining storage tries
+    if snap_trie.storage_trie_count() > 0 {
+        let flushed = snap_trie.flush_storage_tries();
+        total_flushes += 1;
+        debug!(
+            "[SNAP SYNC] Final flush: {} storage tries (total flushes: {})",
+            flushed, total_flushes
+        );
+    }
+
     info!(
-        "[SNAP SYNC] Phase 5/{} complete: Inserted {} total storage slots",
+        "[SNAP SYNC] Phase 5/{} complete: Inserted {} total storage slots ({} flushes)",
         crate::snap_sync_progress::TOTAL_PHASES,
-        crate::snap_sync_progress::format_count(total_storage_count as u64)
+        crate::snap_sync_progress::format_count(total_storage_count as u64),
+        total_flushes
     );
 
     std::fs::remove_dir_all(account_storages_snapshots_dir)

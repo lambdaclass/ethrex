@@ -416,6 +416,26 @@ impl SnapSyncTrie {
         self.trie.account_count()
     }
 
+    /// Flushes all storage tries to free memory.
+    ///
+    /// This computes the storage root for each account's storage trie,
+    /// updates the account's storage_root field, and then clears the
+    /// storage tries from memory. This is essential for memory-efficient
+    /// snap sync with large state (e.g., 239M+ storage slots).
+    ///
+    /// Call this periodically during storage insertion to keep memory bounded.
+    /// For example, every 100K-500K storage slots inserted.
+    ///
+    /// Returns the number of storage tries that were flushed.
+    pub fn flush_storage_tries(&mut self) -> usize {
+        self.trie.flush_storage_tries()
+    }
+
+    /// Returns the number of storage tries currently in memory.
+    pub fn storage_trie_count(&self) -> usize {
+        self.trie.storage_trie_count()
+    }
+
     /// Consumes the snap sync trie and returns the underlying PagedStateTrie.
     ///
     /// This is used to integrate the trie with the Blockchain layer after
