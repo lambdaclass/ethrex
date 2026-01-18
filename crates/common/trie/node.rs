@@ -2,28 +2,48 @@ mod branch;
 mod extension;
 mod leaf;
 
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
+
+#[cfg(not(feature = "zkvm"))]
+use std::sync::Arc;
 
 pub use branch::BranchNode;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
+#[cfg(not(feature = "zkvm"))]
+use rkyv::de::Pooling;
 use rkyv::{
-    de::Pooling,
     rancor::Source,
-    ser::{Allocator, Sharing, Writer},
-    validation::{ArchiveContext, SharedContext},
+    ser::{Allocator, Writer},
     with::Skip,
+};
+#[cfg(not(feature = "zkvm"))]
+use rkyv::{
+    ser::Sharing,
+    validation::{ArchiveContext, SharedContext},
 };
 
 use crate::{NodeRLP, TrieDB, error::TrieError, nibbles::Nibbles};
 
 use super::{ValueRLP, node_hash::NodeHash};
 
+// Type alias for the smart pointer used to wrap Node.
+// For zkVM builds, we use Box for faster deserialization (no shared pointer overhead).
+// For regular builds, we use Arc for thread-safe sharing.
+#[cfg(feature = "zkvm")]
+pub type NodePtr = Box<Node>;
+#[cfg(not(feature = "zkvm"))]
+pub type NodePtr = Arc<Node>;
+
 /// A reference to a node.
 ///
 /// Explicit rkyv bounds are needed because this is a recursive type, whose
 /// bounds can't be automatically resolved.
+///
+/// When the `zkvm` feature is enabled, uses `Box<Node>` instead of `Arc<Node>`
+/// for faster deserialization in single-threaded zkVM execution.
+#[cfg(not(feature = "zkvm"))]
 #[derive(
     Clone,
     Debug,
@@ -48,20 +68,46 @@ pub enum NodeRef {
     Hash(NodeHash),
 }
 
+/// A reference to a node (zkVM-optimized version using Box instead of Arc).
+#[cfg(feature = "zkvm")]
+#[derive(
+    Clone,
+    Debug,
+    serde::Serialize,
+    serde::Deserialize,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    rkyv::Archive,
+)]
+#[rkyv(serialize_bounds(__S: Writer + Allocator, __S::Error: Source))]
+#[rkyv(deserialize_bounds(__D::Error: Source))]
+#[rkyv(bytecheck(bounds(__C: rkyv::validation::ArchiveContext)))]
+pub enum NodeRef {
+    /// The node is embedded within the reference.
+    Node(
+        #[rkyv(omit_bounds)] Box<Node>,
+        #[rkyv(with = Skip)]
+        #[serde(skip)]
+        OnceLock<NodeHash>,
+    ),
+    /// The node is in the database, referenced by its hash.
+    Hash(NodeHash),
+}
+
 impl NodeRef {
     /// Gets a shared reference to the inner node.
     /// Requires that the trie is in a consistent state, ie that all leaves being pointed are in the database.
     /// Outside of snapsync this should always be the case.
-    pub fn get_node(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<Arc<Node>>, TrieError> {
+    pub fn get_node(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<NodePtr>, TrieError> {
         match self {
             NodeRef::Node(node, _) => Ok(Some(node.clone())),
             NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
-                Ok(Some(Arc::new(Node::decode(hash.as_ref())?)))
+                Ok(Some(NodePtr::new(Node::decode(hash.as_ref())?)))
             }
             NodeRef::Hash(_) => db
                 .get(path)?
                 .filter(|rlp| !rlp.is_empty())
-                .map(|rlp| Ok(Arc::new(Node::decode(&rlp)?)))
+                .map(|rlp| Ok(NodePtr::new(Node::decode(&rlp)?)))
                 .transpose(),
         }
     }
@@ -72,29 +118,30 @@ impl NodeRef {
         &self,
         db: &dyn TrieDB,
         path: Nibbles,
-    ) -> Result<Option<Arc<Node>>, TrieError> {
+    ) -> Result<Option<NodePtr>, TrieError> {
         match self {
             NodeRef::Node(node, _) => Ok(Some(node.clone())),
             NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
-                Ok(Some(Arc::new(Node::decode(hash.as_ref())?)))
+                Ok(Some(NodePtr::new(Node::decode(hash.as_ref())?)))
             }
             NodeRef::Hash(hash @ NodeHash::Hashed(_)) => db
                 .get(path)?
                 .filter(|rlp| !rlp.is_empty())
                 .and_then(|rlp| match Node::decode(&rlp) {
-                    Ok(node) => (node.compute_hash() == *hash).then_some(Ok(Arc::new(node))),
+                    Ok(node) => (node.compute_hash() == *hash).then_some(Ok(NodePtr::new(node))),
                     Err(err) => Some(Err(TrieError::RLPDecode(err))),
                 })
                 .transpose(),
         }
     }
 
-    /// Gets a mutable shared reference to the inner node.
+    /// Gets a mutable reference to the inner node.
     ///
     /// # Caution
     ///
-    /// 1. If more than one strong reference exists to this node, it will be cloned (see `Arc::make_mut`).
+    /// 1. For Arc builds: If more than one strong reference exists to this node, it will be cloned (see `Arc::make_mut`).
     /// 2. Mutating the inner node without updating parents can lead to trie inconsistencies.
+    #[cfg(not(feature = "zkvm"))]
     pub(crate) fn get_node_mut(
         &mut self,
         db: &dyn TrieDB,
@@ -122,6 +169,35 @@ impl NodeRef {
         }
     }
 
+    /// Gets a mutable reference to the inner node (zkVM version - Box gives direct ownership).
+    #[cfg(feature = "zkvm")]
+    pub(crate) fn get_node_mut(
+        &mut self,
+        db: &dyn TrieDB,
+        path: Nibbles,
+    ) -> Result<Option<&mut Node>, TrieError> {
+        match self {
+            NodeRef::Node(node, _) => Ok(Some(node.as_mut())),
+            NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
+                let node = Node::decode(hash.as_ref())?;
+                *self = NodeRef::Node(Box::new(node), OnceLock::from(*hash));
+                self.get_node_mut(db, path)
+            }
+            NodeRef::Hash(hash @ NodeHash::Hashed(_)) => {
+                let Some(node) = db
+                    .get(path.clone())?
+                    .filter(|rlp| !rlp.is_empty())
+                    .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
+                    .transpose()?
+                else {
+                    return Ok(None);
+                };
+                *self = NodeRef::Node(Box::new(node), OnceLock::from(*hash));
+                self.get_node_mut(db, path)
+            }
+        }
+    }
+
     pub fn is_valid(&self) -> bool {
         match self {
             NodeRef::Node(_, _) => true,
@@ -129,6 +205,7 @@ impl NodeRef {
         }
     }
 
+    #[cfg(not(feature = "zkvm"))]
     pub fn commit(&mut self, path: Nibbles, acc: &mut Vec<(Nibbles, Vec<u8>)>) -> NodeHash {
         match *self {
             NodeRef::Node(ref mut node, ref mut hash) => {
@@ -136,6 +213,38 @@ impl NodeRef {
                     return *hash;
                 }
                 match Arc::make_mut(node) {
+                    Node::Branch(node) => {
+                        for (choice, node) in &mut node.choices.iter_mut().enumerate() {
+                            node.commit(path.append_new(choice as u8), acc);
+                        }
+                    }
+                    Node::Extension(node) => {
+                        node.child.commit(path.concat(&node.prefix), acc);
+                    }
+                    Node::Leaf(_) => {}
+                }
+                let mut buf = Vec::new();
+                node.encode(&mut buf);
+                let hash = *hash.get_or_init(|| NodeHash::from_encoded(&buf));
+                if let Node::Leaf(leaf) = node.as_ref() {
+                    acc.push((path.concat(&leaf.partial), leaf.value.clone()));
+                }
+                acc.push((path, buf));
+
+                hash
+            }
+            NodeRef::Hash(hash) => hash,
+        }
+    }
+
+    #[cfg(feature = "zkvm")]
+    pub fn commit(&mut self, path: Nibbles, acc: &mut Vec<(Nibbles, Vec<u8>)>) -> NodeHash {
+        match *self {
+            NodeRef::Node(ref mut node, ref mut hash) => {
+                if let Some(hash) = hash.get() {
+                    return *hash;
+                }
+                match node.as_mut() {
                     Node::Branch(node) => {
                         for (choice, node) in &mut node.choices.iter_mut().enumerate() {
                             node.commit(path.append_new(choice as u8), acc);
@@ -206,7 +315,7 @@ impl Default for NodeRef {
 
 impl From<Node> for NodeRef {
     fn from(value: Node) -> Self {
-        Self::Node(Arc::new(value), OnceLock::new())
+        Self::Node(NodePtr::new(value), OnceLock::new())
     }
 }
 
@@ -216,8 +325,8 @@ impl From<NodeHash> for NodeRef {
     }
 }
 
-impl From<Arc<Node>> for NodeRef {
-    fn from(value: Arc<Node>) -> Self {
+impl From<NodePtr> for NodeRef {
+    fn from(value: NodePtr) -> Self {
         Self::Node(value, OnceLock::new())
     }
 }

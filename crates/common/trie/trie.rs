@@ -24,7 +24,7 @@ pub use self::logger::{TrieLogger, TrieWitness};
 pub use self::nibbles::Nibbles;
 pub use self::verify_range::verify_range;
 pub use self::{
-    node::{Node, NodeRef},
+    node::{Node, NodePtr, NodeRef},
     node_hash::NodeHash,
 };
 
@@ -195,7 +195,7 @@ impl Trie {
         }
     }
 
-    pub fn get_root_node(&self, path: Nibbles) -> Result<Arc<Node>, TrieError> {
+    pub fn get_root_node(&self, path: Nibbles) -> Result<NodePtr, TrieError> {
         self.root
             .get_node_checked(self.db.as_ref(), path)?
             .ok_or_else(|| {
@@ -505,7 +505,7 @@ impl Trie {
         }
     }
 
-    pub fn root_node(&self) -> Result<Option<Arc<Node>>, TrieError> {
+    pub fn root_node(&self) -> Result<Option<NodePtr>, TrieError> {
         if self.hash_no_commit() == *EMPTY_TRIE_HASH {
             return Ok(None);
         }

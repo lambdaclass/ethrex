@@ -27,6 +27,8 @@ rkyv.workspace = true
 
 [features]
 default = []
+# Optimize for zkVM execution: uses Box instead of Arc for single-threaded performance
+zkvm = []
 
 
 [dev-dependencies]

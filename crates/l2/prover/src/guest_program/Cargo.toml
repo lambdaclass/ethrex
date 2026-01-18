@@ -47,6 +47,7 @@ zisk = [
     "ethrex-blockchain/zisk",
     "ethrex-vm/zisk",
     "ethrex-l2-common/zisk",
+    "ethrex-trie/zkvm",
 ]
 openvm = ["dep:openvm-sdk"]
 l2 = []
