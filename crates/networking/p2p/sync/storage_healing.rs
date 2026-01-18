@@ -946,3 +946,139 @@ pub async fn heal_storage_trie_snap(
 
     Ok(true)
 }
+
+/// Heals the account trie by requesting missing accounts from peers.
+///
+/// This function is called when the computed state root doesn't match the expected root.
+/// It requests account ranges from peers and inserts any missing accounts into the snap trie.
+///
+/// # Arguments
+/// * `expected_state_root` - The expected state root from the pivot block
+/// * `peers` - Peer handler for making network requests
+/// * `snap_trie` - The snap sync trie to heal
+/// * `staleness_timestamp` - Unix timestamp when the pivot becomes stale
+///
+/// # Returns
+/// * `Ok(true)` if healing completed successfully
+/// * `Ok(false)` if the pivot became stale during healing
+/// * `Err(SyncError)` if healing failed
+pub async fn heal_accounts_snap(
+    expected_state_root: H256,
+    peers: &mut PeerHandler,
+    snap_trie: &mut SnapSyncTrie,
+    staleness_timestamp: u64,
+) -> Result<bool, SyncError> {
+    use crate::rlpx::snap::GetAccountRange;
+    use tracing::info;
+
+    info!("[SNAP SYNC] Starting account healing to fix state root mismatch");
+    METRICS.current_step.set(CurrentStepValue::HealingState);
+
+    let mut accounts_healed = 0u64;
+    let mut last_progress_log = tokio::time::Instant::now();
+
+    // Request accounts in ranges, starting from zero
+    let mut current_start = H256::zero();
+    let range_end = H256::repeat_byte(0xff);
+
+    while current_start < range_end {
+        // Check for staleness
+        if current_unix_time() > staleness_timestamp {
+            info!(
+                "[SNAP SYNC] Account healing interrupted due to stale pivot (healed {} accounts)",
+                accounts_healed
+            );
+            return Ok(false);
+        }
+
+        // Get peer connection
+        let Some((peer_id, mut connection)) = peers
+            .peer_table
+            .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+            .await?
+        else {
+            debug!("No peers available for account healing, retrying...");
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            continue;
+        };
+
+        // Request account range
+        let request = GetAccountRange {
+            id: random(),
+            root_hash: expected_state_root,
+            starting_hash: current_start,
+            limit_hash: range_end,
+            response_bytes: MAX_RESPONSE_BYTES,
+        };
+
+        match peers
+            .request_account_ranges_raw(&peer_id, &mut connection, request)
+            .await
+        {
+            Ok(Some(response)) => {
+                if response.accounts.is_empty() {
+                    // No more accounts in this range
+                    debug!("Received empty account range, healing complete");
+                    break;
+                }
+
+                // Insert accounts into snap_trie
+                for account in &response.accounts {
+                    snap_trie.insert_account(
+                        account.hash,
+                        account.account.nonce,
+                        account.account.balance,
+                        account.account.storage_root,
+                        account.account.code_hash,
+                    );
+                    accounts_healed += 1;
+                }
+
+                // Update start for next range (after last received account)
+                if let Some(last) = response.accounts.last() {
+                    // Increment by 1 to start after this account
+                    let mut bytes = last.hash.to_fixed_bytes();
+                    // Simple increment (handles overflow by wrapping, which is fine for healing)
+                    for i in (0..32).rev() {
+                        if bytes[i] < 255 {
+                            bytes[i] += 1;
+                            break;
+                        }
+                        bytes[i] = 0;
+                    }
+                    current_start = H256::from(bytes);
+                } else {
+                    break;
+                }
+
+                peers.peer_table.record_success(&peer_id).await?;
+            }
+            Ok(None) => {
+                debug!("Empty or invalid response for account range request");
+                peers.peer_table.record_failure(&peer_id).await?;
+            }
+            Err(e) => {
+                debug!("Failed to request account range: {:?}", e);
+                peers.peer_table.record_failure(&peer_id).await?;
+                // Retry with different peer
+                continue;
+            }
+        }
+
+        // Log progress periodically
+        if last_progress_log.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
+            info!(
+                "[SNAP SYNC] Account healing progress: {} accounts processed",
+                accounts_healed
+            );
+            last_progress_log = tokio::time::Instant::now();
+        }
+    }
+
+    info!(
+        "[SNAP SYNC] Account healing complete: {} accounts processed",
+        accounts_healed
+    );
+
+    Ok(true)
+}

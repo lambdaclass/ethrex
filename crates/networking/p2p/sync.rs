@@ -1148,15 +1148,41 @@ impl Syncer {
                     }
                 }
 
-                // Compute state root from snap_trie
-                snap_trie.compute_state_root()
+                // Compute initial state root from snap_trie
+                let mut computed_root = snap_trie.compute_state_root();
+
+                // If state root doesn't match, try account healing
+                if computed_root != pivot_header.state_root {
+                    warn!(
+                        "[SNAP SYNC] State root mismatch detected. Expected: {:?}, Got: {:?}. Attempting account healing...",
+                        pivot_header.state_root, computed_root
+                    );
+
+                    // Try to heal by re-downloading accounts
+                    let healed = storage_healing::heal_accounts_snap(
+                        pivot_header.state_root,
+                        &mut self.peers,
+                        &mut snap_trie,
+                        staleness_timestamp,
+                    ).await?;
+
+                    if !healed {
+                        // Pivot became stale during healing
+                        return Err(SyncError::StorageHealingFailed);
+                    }
+
+                    // Recompute state root after account healing
+                    computed_root = snap_trie.compute_state_root();
+                }
+
+                computed_root
             };
 
             // Verify state root
             info!("[SNAP SYNC] Phase 6/{}: Verifying state root...", crate::snap_sync_progress::TOTAL_PHASES);
             if computed_root != pivot_header.state_root {
                 warn!(
-                    "[SNAP SYNC] State root mismatch! Expected: {:?}, Got: {:?}",
+                    "[SNAP SYNC] State root mismatch after healing! Expected: {:?}, Got: {:?}",
                     pivot_header.state_root, computed_root
                 );
                 return Err(SyncError::StateRootMismatch {
@@ -1181,8 +1207,9 @@ impl Syncer {
 
         store.generate_flatkeyvalue()?;
 
-        debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
-        debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
+        // Validate state and storage roots (run in all builds, not just debug)
+        validate_state_root(store.clone(), pivot_header.state_root).await?;
+        validate_storage_root(store.clone(), pivot_header.state_root).await?;
 
         // Phase: Bytecode Download
         if !should_skip_phase(SnapSyncPhase::BytecodeDownload, checkpoint.phase) {
@@ -1282,7 +1309,8 @@ impl Syncer {
             *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
             SNAP_PROGRESS.complete_phase(SnapSyncPhase::BytecodeDownload as u8).await;
 
-            debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root));
+            // Validate bytecodes (run in all builds, not just debug)
+            validate_bytecodes(store.clone(), pivot_header.state_root)?;
         } else {
             info!("[SNAP SYNC] Skipping bytecode download phase (already completed in checkpoint)");
             // Still need to finish code hash collector
@@ -1481,6 +1509,8 @@ pub enum SyncError {
     StorageHealingFailed,
     #[error("State root mismatch: expected {expected}, got {computed}")]
     StateRootMismatch { expected: H256, computed: H256 },
+    #[error("State validation failed: {0}")]
+    StateValidationFailed(String),
 }
 
 impl SyncError {
@@ -1507,7 +1537,8 @@ impl SyncError {
             | SyncError::PeerTableError(_)
             | SyncError::MissingFullsyncBatch
             | SyncError::StorageHealingFailed
-            | SyncError::StateRootMismatch { .. } => false,
+            | SyncError::StateRootMismatch { .. }
+            | SyncError::StateValidationFailed(_) => false,
             SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)
@@ -1529,28 +1560,25 @@ impl<T> From<SendError<T>> for SyncError {
     }
 }
 
-pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
+pub async fn validate_state_root(store: Store, state_root: H256) -> Result<(), SyncError> {
     let validated = tokio::task::spawn_blocking(move || {
         store
             .open_locked_state_trie(state_root)
-            .expect("couldn't open trie")
+            .map_err(|e| SyncError::StateValidationFailed(format!("couldn't open trie: {e}")))?
             .validate()
+            .map_err(|e| SyncError::StateValidationFailed(format!("state tree validation failed: {e}")))
     })
     .await
-    .expect("We should be able to create threads");
+    .map_err(|e| SyncError::StateValidationFailed(format!("thread spawn failed: {e}")))?;
 
-    if validated.is_err() {
-        error!("State tree validation failed");
-        std::process::exit(1);
-    }
-    validated.is_ok()
+    validated
 }
 
-pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
-    let is_valid = tokio::task::spawn_blocking(move || {
+pub async fn validate_storage_root(store: Store, state_root: H256) -> Result<(), SyncError> {
+    tokio::task::spawn_blocking(move || {
         store
             .iter_accounts(state_root)
-            .expect("couldn't iterate accounts")
+            .map_err(|e| SyncError::StateValidationFailed(format!("couldn't iterate accounts: {e}")))?
             .par_bridge()
             .try_for_each(|(hashed_address, account_state)| {
                 let store_clone = store.clone();
@@ -1560,24 +1588,20 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
                         state_root,
                         account_state.storage_root,
                     )
-                    .expect("couldn't open storage trie")
+                    .map_err(|e| SyncError::StateValidationFailed(format!("couldn't open storage trie: {e}")))?
                     .validate()
+                    .map_err(|e| SyncError::StateValidationFailed(format!("storage root validation failed: {e}")))
             })
     })
     .await
-    .expect("We should be able to create threads");
-    if is_valid.is_err() {
-        error!("Storage root validation failed");
-        std::process::exit(1);
-    }
-    is_valid.is_ok()
+    .map_err(|e| SyncError::StateValidationFailed(format!("thread spawn failed: {e}")))?
 }
 
-pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
-    let mut is_valid = true;
+pub fn validate_bytecodes(store: Store, state_root: H256) -> Result<(), SyncError> {
+    let mut missing_hashes = Vec::new();
     for (account_hash, account_state) in store
         .iter_accounts(state_root)
-        .expect("we couldn't iterate over accounts")
+        .map_err(|e| SyncError::StateValidationFailed(format!("couldn't iterate accounts: {e}")))?
     {
         if account_state.code_hash != *EMPTY_KECCACK_HASH
             && !store
@@ -1588,13 +1612,16 @@ pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
                 "Missing code hash {:x} for account {:x}",
                 account_state.code_hash, account_hash
             );
-            is_valid = false
+            missing_hashes.push(account_state.code_hash);
         }
     }
-    if !is_valid {
-        std::process::exit(1);
+    if !missing_hashes.is_empty() {
+        return Err(SyncError::StateValidationFailed(format!(
+            "missing {} bytecodes",
+            missing_hashes.len()
+        )));
     }
-    is_valid
+    Ok(())
 }
 
 /// Checkpoint-aware version of insert_accounts.
