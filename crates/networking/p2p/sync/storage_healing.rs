@@ -1069,19 +1069,24 @@ pub async fn heal_storage_trie_snap(
 /// * `Ok(true)` if healing completed successfully
 /// * `Ok(false)` if the pivot became stale during healing
 /// * `Err(SyncError)` if healing failed
+/// Returns (success: bool, accounts_with_storage: HashSet<H256>)
+/// The accounts_with_storage set contains hashes of accounts that have non-empty storage
+/// and need their storage to be re-healed.
 pub async fn heal_accounts_snap(
     expected_state_root: H256,
     peers: &mut PeerHandler,
     snap_trie: &mut SnapSyncTrie,
     staleness_timestamp: u64,
-) -> Result<bool, SyncError> {
+) -> Result<(bool, std::collections::HashSet<H256>), SyncError> {
     use crate::rlpx::snap::GetAccountRange;
+    use std::collections::HashSet;
     use tracing::info;
 
     info!("[SNAP SYNC] Starting account healing to fix state root mismatch");
     METRICS.current_step.set(CurrentStepValue::HealingState);
 
     let mut accounts_healed = 0u64;
+    let mut accounts_with_storage: HashSet<H256> = HashSet::new();
     let mut last_progress_log = tokio::time::Instant::now();
 
     // Request accounts in ranges, starting from zero
@@ -1095,7 +1100,7 @@ pub async fn heal_accounts_snap(
                 "[SNAP SYNC] Account healing interrupted due to stale pivot (healed {} accounts)",
                 accounts_healed
             );
-            return Ok(false);
+            return Ok((false, accounts_with_storage));
         }
 
         // Get peer connection
@@ -1139,6 +1144,11 @@ pub async fn heal_accounts_snap(
                         account.account.code_hash,
                     );
                     accounts_healed += 1;
+
+                    // Track accounts with non-empty storage for subsequent storage healing
+                    if account.account.storage_root != *EMPTY_TRIE_HASH {
+                        accounts_with_storage.insert(account.hash);
+                    }
                 }
 
                 // Update start for next range (after last received account)
@@ -1183,11 +1193,11 @@ pub async fn heal_accounts_snap(
     }
 
     info!(
-        "[SNAP SYNC] Account healing complete: {} accounts processed",
-        accounts_healed
+        "[SNAP SYNC] Account healing complete: {} accounts processed, {} with non-empty storage",
+        accounts_healed, accounts_with_storage.len()
     );
 
-    Ok(true)
+    Ok((true, accounts_with_storage))
 }
 
 /// Heals the state trie by traversing from the root and downloading missing nodes.
@@ -1320,7 +1330,7 @@ pub async fn heal_state_trie_snap(
 
             while batch.len() < 256 && !paths_to_fetch.is_empty() {
                 if let Some((path, hash)) = paths_to_fetch.pop_front() {
-                    paths_for_request.push(Bytes::from(path.to_bytes()));
+                    paths_for_request.push(Bytes::from(path.encode_compact()));
                     batch.push((path, hash));
                 }
             }
