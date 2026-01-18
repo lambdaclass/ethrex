@@ -75,19 +75,19 @@ const CHECKPOINT_MAX_AGE_SECS: u64 = 30 * 60; // 30 minutes
 /// reasonable recovery granularity (~30 sec of progress between saves).
 const CHECKPOINT_CHUNK_INTERVAL: usize = 10;
 
-/// Default storage flush threshold (slots) when memory info unavailable (~200MB)
-const DEFAULT_FLUSH_THRESHOLD: usize = 500_000;
-/// Minimum storage flush threshold (slots) - ~100MB
-const MIN_FLUSH_THRESHOLD: usize = 250_000;
-/// Maximum storage flush threshold (slots) - ~4GB
+/// Default storage flush threshold (slots) when memory info unavailable (~400MB)
+const DEFAULT_FLUSH_THRESHOLD: usize = 1_000_000;
+/// Minimum storage flush threshold (slots) - ~200MB
+const MIN_FLUSH_THRESHOLD: usize = 500_000;
+/// Maximum storage flush threshold (slots) - ~8GB
 /// Capped to prevent OOM on systems with large RAM
-const MAX_FLUSH_THRESHOLD: usize = 10_000_000;
+const MAX_FLUSH_THRESHOLD: usize = 20_000_000;
 /// Approximate memory bytes per storage slot in trie
 /// Includes HashMap overhead, MerkleTrie nodes, and allocations
 const BYTES_PER_STORAGE_SLOT: usize = 400;
-/// Percentage of available memory to use for storage tries (25%)
+/// Percentage of available memory to use for storage tries (40%)
 /// Higher values speed up insertion by reducing flush frequency
-const MEMORY_USAGE_PERCENT: usize = 25;
+const MEMORY_USAGE_PERCENT: usize = 40;
 
 /// Get available memory in bytes from /proc/meminfo (Linux only)
 /// Returns None on non-Linux systems or if reading fails
@@ -154,9 +154,9 @@ const DEFAULT_FILE_BATCH_SIZE: usize = 16;
 /// Minimum number of accounts to accumulate before batch insertion.
 /// Larger batches are more efficient due to better cache utilization
 /// and reduced per-call overhead in hashbrown/bloom filter.
-const MIN_ACCOUNT_BATCH_SIZE: usize = 100_000;
+const MIN_ACCOUNT_BATCH_SIZE: usize = 250_000;
 /// Minimum number of storage slots to accumulate before batch insertion.
-const MIN_STORAGE_BATCH_SIZE: usize = 200_000;
+const MIN_STORAGE_BATCH_SIZE: usize = 500_000;
 
 /// Calculate file batch size based on available memory.
 /// Uses MEMORY_USAGE_PERCENT of available memory, bounded between MIN and MAX.

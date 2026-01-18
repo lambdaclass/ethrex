@@ -7,11 +7,11 @@
 #[cfg(test)]
 mod memory_limit_tests {
     // Constants matching sync.rs (duplicated here for test isolation)
-    const DEFAULT_FLUSH_THRESHOLD: usize = 500_000;
-    const MIN_FLUSH_THRESHOLD: usize = 250_000;
-    const MAX_FLUSH_THRESHOLD: usize = 3_000_000;
+    const DEFAULT_FLUSH_THRESHOLD: usize = 1_000_000;
+    const MIN_FLUSH_THRESHOLD: usize = 500_000;
+    const MAX_FLUSH_THRESHOLD: usize = 20_000_000;
     const BYTES_PER_STORAGE_SLOT: usize = 400;
-    const MEMORY_USAGE_PERCENT: usize = 5;
+    const MEMORY_USAGE_PERCENT: usize = 40;
     const BYTES_PER_STORAGE_FILE: usize = 400 * 1024 * 1024;
     const BYTES_PER_ACCOUNT_FILE: usize = 200 * 1024 * 1024;
     const MIN_FILE_BATCH_SIZE: usize = 4;
@@ -47,9 +47,11 @@ mod memory_limit_tests {
 
     #[test]
     fn test_flush_threshold_low_memory_hits_minimum() {
-        // 500MB available - should hit MIN_FLUSH_THRESHOLD
-        // 500MB * 5% = 25MB / 400 bytes = 62,500 slots < MIN (250,000)
-        let available = 500 * 1024 * 1024; // 500MB
+        // 1GB available - should hit MIN_FLUSH_THRESHOLD
+        // 1GB * 40% = 400MB / 400 bytes = 1M slots = MIN (500,000) clamped
+        // Actually need less memory to hit minimum
+        let available = 200 * 1024 * 1024; // 200MB
+        // 200MB * 40% = 80MB / 400 = 200K < MIN
         let threshold = calculate_flush_threshold_with_memory(Some(available));
         assert_eq!(
             threshold, MIN_FLUSH_THRESHOLD,
@@ -223,11 +225,12 @@ mod memory_limit_tests {
     // ===== CONSISTENCY TESTS =====
 
     #[test]
-    fn test_memory_percentage_is_conservative() {
-        // Verify MEMORY_USAGE_PERCENT is reasonably conservative (<=10%)
+    fn test_memory_percentage_is_reasonable() {
+        // Verify MEMORY_USAGE_PERCENT is reasonable for performance (<=50%)
+        // Higher values allow more aggressive batching but risk OOM
         assert!(
-            MEMORY_USAGE_PERCENT <= 10,
-            "MEMORY_USAGE_PERCENT ({}) should be conservative (<=10%)",
+            MEMORY_USAGE_PERCENT <= 50,
+            "MEMORY_USAGE_PERCENT ({}) should be reasonable (<=50%)",
             MEMORY_USAGE_PERCENT
         );
     }
@@ -245,13 +248,13 @@ mod memory_limit_tests {
     #[test]
     fn test_threshold_memory_estimate_accuracy() {
         // Verify that the memory estimate at MAX_FLUSH_THRESHOLD is reasonable
-        // MAX_FLUSH_THRESHOLD * BYTES_PER_STORAGE_SLOT should be ~1.2GB
+        // MAX_FLUSH_THRESHOLD (20M) * BYTES_PER_STORAGE_SLOT (400) = ~8GB
         let max_memory_estimate = MAX_FLUSH_THRESHOLD * BYTES_PER_STORAGE_SLOT;
         let max_memory_mb = max_memory_estimate / 1024 / 1024;
 
         assert!(
-            max_memory_mb >= 1000 && max_memory_mb <= 2000,
-            "MAX threshold memory estimate ({} MB) should be ~1.2GB",
+            max_memory_mb >= 5000 && max_memory_mb <= 10000,
+            "MAX threshold memory estimate ({} MB) should be ~8GB",
             max_memory_mb
         );
     }
