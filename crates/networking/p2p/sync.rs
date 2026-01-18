@@ -1216,7 +1216,7 @@ impl Syncer {
                         storage_accounts.healed_accounts.len()
                     );
 
-                    let healed = storage_healing::heal_storage_trie_snap(
+                    let (healed, successfully_queried) = storage_healing::heal_storage_trie_snap(
                         pivot_header.state_root,
                         &storage_accounts,
                         &mut self.peers,
@@ -1230,23 +1230,28 @@ impl Syncer {
                         return Err(SyncError::StorageHealingFailed);
                     }
 
-                    // CRITICAL FIX: For accounts that were marked for healing but had 0 slots returned,
+                    // CRITICAL FIX: For accounts that were SUCCESSFULLY queried but had 0 slots returned,
                     // their storage is empty at the pivot state_root. We must update their storage_root
-                    // to EMPTY_TRIE_HASH. Otherwise they keep their original (wrong) storage_root
-                    // from when they were first downloaded, causing state root mismatch.
+                    // to EMPTY_TRIE_HASH. We only do this for accounts where the query succeeded -
+                    // if the query failed, we can't assume the storage is empty.
                     let mut accounts_fixed_to_empty = 0usize;
+                    let mut accounts_query_failed = 0usize;
                     for account_hash in &storage_accounts.healed_accounts {
-                        // If no storage was inserted for this account during healing,
-                        // it means the account has empty storage at the pivot
-                        if !snap_trie.has_storage_trie(account_hash) {
-                            snap_trie.update_account_storage_root(account_hash, (*EMPTY_TRIE_HASH).into());
-                            accounts_fixed_to_empty += 1;
+                        if successfully_queried.contains(account_hash) {
+                            // Query succeeded - if no storage was inserted, storage is empty
+                            if !snap_trie.has_storage_trie(account_hash) {
+                                snap_trie.update_account_storage_root(account_hash, (*EMPTY_TRIE_HASH).into());
+                                accounts_fixed_to_empty += 1;
+                            }
+                        } else {
+                            // Query failed - don't assume storage is empty
+                            accounts_query_failed += 1;
                         }
                     }
-                    if accounts_fixed_to_empty > 0 {
-                        debug!(
-                            "[SNAP SYNC] Fixed {} accounts with empty storage (set to EMPTY_TRIE_HASH)",
-                            accounts_fixed_to_empty
+                    if accounts_fixed_to_empty > 0 || accounts_query_failed > 0 {
+                        info!(
+                            "[SNAP SYNC] Storage healing: {} set to empty, {} query failed (kept original storage_root)",
+                            accounts_fixed_to_empty, accounts_query_failed
                         );
                     }
 
@@ -1254,12 +1259,22 @@ impl Syncer {
                     // This is critical - without this, accounts have wrong storage roots
                     let flushed = snap_trie.flush_storage_tries();
                     info!(
-                        "[SNAP SYNC] Storage healing complete: {} accounts, {} slots healed, {} tries flushed, {} set to empty",
+                        "[SNAP SYNC] Storage healing complete: {} accounts, {} slots healed, {} tries flushed, {} set to empty, {} failed",
                         storage_accounts.healed_accounts.len(),
                         global_slots_healed,
                         flushed,
-                        accounts_fixed_to_empty
+                        accounts_fixed_to_empty,
+                        accounts_query_failed
                     );
+
+                    // If any accounts failed to be queried, warn but continue
+                    // The state root might still not match, but we can't fix those accounts without peer responses
+                    if accounts_query_failed > 0 {
+                        warn!(
+                            "[SNAP SYNC] {} accounts could not be healed (no peer response). State root may not match.",
+                            accounts_query_failed
+                        );
+                    }
                 }
 
                 // Heal state trie by traversing from root and finding missing accounts
@@ -1323,7 +1338,7 @@ impl Syncer {
                                 healed_accounts: batch_set,
                             };
 
-                            let healed = storage_healing::heal_storage_trie_snap(
+                            let (healed, successfully_queried) = storage_healing::heal_storage_trie_snap(
                                 pivot_header.state_root,
                                 &storage_accounts_for_healing,
                                 &mut self.peers,
@@ -1336,12 +1351,17 @@ impl Syncer {
                                 return Err(SyncError::StorageHealingFailed);
                             }
 
-                            // Fix accounts with 0 slots to have EMPTY_TRIE_HASH
+                            // Fix accounts with 0 slots to have EMPTY_TRIE_HASH (only if query succeeded)
                             let mut batch_fixed_to_empty = 0usize;
+                            let mut batch_query_failed = 0usize;
                             for account_hash in batch {
-                                if !snap_trie.has_storage_trie(account_hash) {
-                                    snap_trie.update_account_storage_root(account_hash, (*EMPTY_TRIE_HASH).into());
-                                    batch_fixed_to_empty += 1;
+                                if successfully_queried.contains(account_hash) {
+                                    if !snap_trie.has_storage_trie(account_hash) {
+                                        snap_trie.update_account_storage_root(account_hash, (*EMPTY_TRIE_HASH).into());
+                                        batch_fixed_to_empty += 1;
+                                    }
+                                } else {
+                                    batch_query_failed += 1;
                                 }
                             }
 
@@ -1349,8 +1369,8 @@ impl Syncer {
 
                             // Flush storage tries to free memory between batches
                             let flushed = snap_trie.flush_storage_tries();
-                            info!("[SNAP SYNC] Storage healing batch complete: {}/{} accounts, flushed {} tries, {} set to empty",
-                                  accounts_processed, total_accounts, flushed, batch_fixed_to_empty);
+                            info!("[SNAP SYNC] Storage healing batch complete: {}/{} accounts, flushed {} tries, {} set to empty, {} failed",
+                                  accounts_processed, total_accounts, flushed, batch_fixed_to_empty, batch_query_failed);
                         }
                     }
 

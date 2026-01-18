@@ -32,7 +32,7 @@ use ethrex_trie::{Nibbles, Node, EMPTY_TRIE_HASH, TrieDB};
 use rand::random;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{atomic::Ordering, Arc},
     time::Duration,
 };
@@ -827,8 +827,11 @@ fn commit_node(
 ///
 /// # Returns
 /// * `Ok(true)` if healing completed successfully
-/// * `Ok(false)` if the pivot became stale during healing
+/// * `Ok((false, _))` if the pivot became stale during healing
 /// * `Err(SyncError)` if healing failed
+///
+/// The returned HashSet contains accounts that were successfully queried (even if they had 0 slots).
+/// Only these accounts should have their storage_root set to EMPTY_TRIE_HASH if they have no storage trie.
 pub async fn heal_storage_trie_snap(
     state_root: H256,
     storage_accounts: &AccountStorageRoots,
@@ -836,14 +839,14 @@ pub async fn heal_storage_trie_snap(
     snap_trie: &mut SnapSyncTrie,
     staleness_timestamp: u64,
     global_slots_healed: &mut u64,
-) -> Result<bool, SyncError> {
+) -> Result<(bool, HashSet<H256>), SyncError> {
     use tracing::info;
 
     let healed_accounts: Vec<H256> = storage_accounts.healed_accounts.iter().copied().collect();
 
     if healed_accounts.is_empty() {
         debug!("No accounts need storage healing");
-        return Ok(true);
+        return Ok((true, HashSet::new()));
     }
 
     info!(
@@ -856,6 +859,8 @@ pub async fn heal_storage_trie_snap(
     let mut accounts_healed = 0usize;
     let mut slots_healed = 0u64;
     let mut last_progress_log = tokio::time::Instant::now();
+    // Track accounts that were successfully queried (even if they had 0 slots)
+    let mut successfully_queried: HashSet<H256> = HashSet::new();
 
     // Batch multiple accounts per request (protocol supports this)
     // Using 100 accounts per request to balance response size and efficiency
@@ -873,7 +878,7 @@ pub async fn heal_storage_trie_snap(
                 accounts_healed,
                 healed_accounts.len()
             );
-            return Ok(false);
+            return Ok((false, successfully_queried));
         }
 
         // Split into sub-batches for parallel requests
@@ -962,6 +967,10 @@ pub async fn heal_storage_trie_snap(
             match result {
                 Ok(Ok((account_hashes, slots, _peer_id, success))) => {
                     if success {
+                        // Track all accounts in this batch as successfully queried
+                        for account_hash in &account_hashes {
+                            successfully_queried.insert(*account_hash);
+                        }
                         // Insert all slots into the snap trie
                         for (account_hash, slot_hash, slot_data) in slots {
                             snap_trie.insert_storage(account_hash, slot_hash, slot_data);
@@ -970,7 +979,7 @@ pub async fn heal_storage_trie_snap(
                         accounts_healed += account_hashes.len();
                     } else {
                         debug!(
-                            "Storage healing failed for batch of {} accounts",
+                            "Storage healing failed for batch of {} accounts (will NOT set to empty)",
                             account_hashes.len()
                         );
                     }
@@ -1016,6 +1025,10 @@ pub async fn heal_storage_trie_snap(
             .await
             {
                 Ok(Some(response)) => {
+                    // Track all accounts in this batch as successfully queried
+                    for account_hash in &pending_batch {
+                        successfully_queried.insert(*account_hash);
+                    }
                     for (i, account_slots) in response.slots.into_iter().enumerate() {
                         if let Some(account_hash) = pending_batch.get(i) {
                             for slot in account_slots {
@@ -1028,11 +1041,11 @@ pub async fn heal_storage_trie_snap(
                     peers.peer_table.record_success(&peer_id).await?;
                 }
                 Ok(None) => {
-                    debug!("Retry failed for batch of {} accounts", pending_batch.len());
+                    debug!("Retry failed for batch of {} accounts (will NOT set to empty)", pending_batch.len());
                     peers.peer_table.record_failure(&peer_id).await?;
                 }
                 Err(e) => {
-                    debug!("Retry error for batch: {:?}", e);
+                    debug!("Retry error for batch: {:?} (will NOT set to empty)", e);
                     peers.peer_table.record_failure(&peer_id).await?;
                 }
             }
@@ -1053,11 +1066,11 @@ pub async fn heal_storage_trie_snap(
     *global_slots_healed += slots_healed;
 
     info!(
-        "[SNAP SYNC] Storage healing complete: {} accounts, {} slots healed",
-        accounts_healed, slots_healed
+        "[SNAP SYNC] Storage healing complete: {} accounts, {} slots healed, {} successfully queried",
+        accounts_healed, slots_healed, successfully_queried.len()
     );
 
-    Ok(true)
+    Ok((true, successfully_queried))
 }
 
 /// Heals the account trie by requesting missing accounts from peers.
