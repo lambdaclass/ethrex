@@ -78,4 +78,3 @@ pub fn truncate_array<const N: usize, const M: usize>(data: [u8; N]) -> [u8; M] 
     res.copy_from_slice(&data[..M]);
     res
 }
-

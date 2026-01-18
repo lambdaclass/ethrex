@@ -323,4 +323,3 @@ fn keybytes_to_hex(keybytes: &[u8]) -> Vec<u8> {
     nibbles[l - 1] = 16;
     nibbles
 }
-

@@ -604,4 +604,3 @@ pub trait PayloadRLPEncode {
         buf
     }
 }
-

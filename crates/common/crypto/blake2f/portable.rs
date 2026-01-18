@@ -97,4 +97,3 @@ pub fn blake2b_f(
         *value ^= a ^ b;
     }
 }
-

@@ -538,4 +538,3 @@ pub fn static_left_pad<const N: usize>(data: &[u8]) -> Result<[u8; N], RLPDecode
         .copy_from_slice(data);
     Ok(result)
 }
-

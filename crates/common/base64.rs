@@ -112,4 +112,3 @@ pub fn decode(bytes: &[u8]) -> Vec<u8> {
 
     result
 }
-

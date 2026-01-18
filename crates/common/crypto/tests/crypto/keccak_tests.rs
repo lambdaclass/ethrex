@@ -1,4 +1,4 @@
-use ethrex_crypto::keccak::{keccak_hash, Keccak256};
+use ethrex_crypto::keccak::{Keccak256, keccak_hash};
 use std::array;
 
 const BLOCK_SIZE: usize = 136;
@@ -30,8 +30,7 @@ fn keccak_half_block() {
 
 #[test]
 fn keccak_full_block() {
-    let buf: [u8; BLOCK_SIZE] =
-        array::from_fn(|i| (i << 5 & 0xF0 | ((i << 1) + 1) & 0x0F) as u8);
+    let buf: [u8; BLOCK_SIZE] = array::from_fn(|i| (i << 5 & 0xF0 | ((i << 1) + 1) & 0x0F) as u8);
 
     assert_eq!(
         keccak_hash(buf)
@@ -89,8 +88,7 @@ fn keccak_asm_half_block() {
 #[test]
 fn keccak_asm_full_block() {
     let mut keccak = Keccak256::new();
-    let buf: [u8; BLOCK_SIZE] =
-        array::from_fn(|i| (i << 5 & 0xF0 | ((i << 1) + 1) & 0x0F) as u8);
+    let buf: [u8; BLOCK_SIZE] = array::from_fn(|i| (i << 5 & 0xF0 | ((i << 1) + 1) & 0x0F) as u8);
     keccak.update(buf);
 
     assert_eq!(
@@ -124,8 +122,7 @@ fn keccak_asm_almost_full_block() {
 fn keccak_asm_two_half_updates() {
     let mut keccak = Keccak256::new();
 
-    let full: [u8; BLOCK_SIZE] =
-        array::from_fn(|i| (i << 5 & 0xF0 | ((i << 1) + 1) & 0x0F) as u8);
+    let full: [u8; BLOCK_SIZE] = array::from_fn(|i| (i << 5 & 0xF0 | ((i << 1) + 1) & 0x0F) as u8);
 
     let half = BLOCK_SIZE / 2;
 

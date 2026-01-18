@@ -234,4 +234,3 @@ impl<'a> Encoder<'a> {
         self
     }
 }
-

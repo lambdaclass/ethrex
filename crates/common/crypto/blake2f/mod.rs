@@ -27,4 +27,3 @@ static BLAKE2_FUNC: LazyLock<Blake2Func> = LazyLock::new(|| {
 pub fn blake2b_f(rounds: usize, h: &mut [u64; 8], m: &[u64; 16], t: &[u64; 2], f: bool) {
     BLAKE2_FUNC(rounds, h, m, t, f)
 }
-

@@ -185,4 +185,3 @@ impl TrieIterator {
         })
     }
 }
-
