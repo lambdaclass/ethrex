@@ -1,4 +1,9 @@
 mod code_collector;
+pub mod healing_cache;
+#[cfg(test)]
+mod healing_bench;
+#[cfg(test)]
+mod healing_tests;
 mod state_healing;
 mod storage_healing;
 
