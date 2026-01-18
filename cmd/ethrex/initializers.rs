@@ -495,8 +495,14 @@ pub async fn init_l1(
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
+    let p2p_bind_addr: IpAddr = opts
+        .p2p_bind_addr
+        .parse()
+        .expect("Failed to parse p2p bind address");
+
     let p2p_context = P2PContext::new(
         local_p2p_node.clone(),
+        p2p_bind_addr,
         tracker.clone(),
         signer,
         peer_table.clone(),
