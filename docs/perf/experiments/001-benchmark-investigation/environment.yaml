@@ -1,0 +1,12 @@
+machine:
+  hostname: ivanlitteri-macbook
+  cpu: Apple M3 Max
+  cores: 16
+  memory: 36GB
+  os: macOS Darwin 25.1.0
+
+toolchain:
+  rust: 1.90.0
+
+commit: 48dbf0b81
+date: 2026-01-17
