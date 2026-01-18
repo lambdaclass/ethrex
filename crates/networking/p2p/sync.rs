@@ -66,16 +66,16 @@ const MAX_HEADER_FETCH_ATTEMPTS: u64 = 100;
 /// If a checkpoint is older than this, snap sync will start fresh.
 const CHECKPOINT_MAX_AGE_SECS: u64 = 30 * 60; // 30 minutes
 
-/// Default storage flush threshold (slots) when memory info unavailable
-const DEFAULT_FLUSH_THRESHOLD: usize = 100_000;
-/// Minimum storage flush threshold (slots) - ~8MB
-const MIN_FLUSH_THRESHOLD: usize = 50_000;
-/// Maximum storage flush threshold (slots) - ~80MB
-const MAX_FLUSH_THRESHOLD: usize = 500_000;
+/// Default storage flush threshold (slots) when memory info unavailable (~160MB)
+const DEFAULT_FLUSH_THRESHOLD: usize = 1_000_000;
+/// Minimum storage flush threshold (slots) - ~80MB
+const MIN_FLUSH_THRESHOLD: usize = 500_000;
+/// Maximum storage flush threshold (slots) - ~1.6GB
+const MAX_FLUSH_THRESHOLD: usize = 10_000_000;
 /// Approximate memory bytes per storage slot in trie
 const BYTES_PER_STORAGE_SLOT: usize = 160;
-/// Percentage of available memory to use for storage tries (2%)
-const MEMORY_USAGE_PERCENT: usize = 2;
+/// Percentage of available memory to use for storage tries (10%)
+const MEMORY_USAGE_PERCENT: usize = 10;
 
 /// Get available memory in bytes from /proc/meminfo (Linux only)
 /// Returns None on non-Linux systems or if reading fails
