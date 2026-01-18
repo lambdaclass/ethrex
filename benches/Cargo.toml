@@ -11,6 +11,8 @@ ethrex-blockchain.workspace = true
 ethrex-common.workspace = true
 ethrex-config.workspace = true
 ethrex-storage.workspace = true
+ethrex-p2p.workspace = true
+ethrex-trie.workspace = true
 
 bytes.workspace = true
 tokio.workspace = true
@@ -28,6 +30,10 @@ ethrex-l2-rpc.workspace = true
 
 [[bench]]
 name = "build_block_benchmark"
+harness = false
+
+[[bench]]
+name = "healing_benchmark"
 harness = false
 
 [lints]

@@ -150,3 +150,70 @@ jobs:
           START_TIME: ${{ steps.start.outputs.timestamp }}
         run: |
           bash .github/scripts/notify_snapsync_run.sh
+
+  # Fast unit tests for healing, recovery, and memory validation
+  healing-unit-tests:
+    name: Healing Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-healing-tests-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-healing-tests-
+
+      - name: Run healing cache tests
+        run: cargo test -p ethrex-p2p healing_tests -- --nocapture
+
+      - name: Run memory validation tests
+        run: cargo test -p ethrex-p2p memory_tests -- --nocapture
+
+      - name: Run recovery tests
+        run: cargo test -p ethrex-p2p recovery_tests -- --nocapture
+
+      - name: Run healing benchmarks (validation only)
+        run: cargo test -p ethrex-p2p healing_bench -- --nocapture
+
+  # Criterion benchmarks with PR comparison
+  healing-benchmarks:
+    name: Healing Performance Benchmarks
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-healing-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-healing-bench-
+
+      - name: Run Criterion benchmarks
+        run: cargo bench --bench healing_benchmark -- --noplot
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: healing-benchmark-results
+          path: target/criterion
+          retention-days: 7

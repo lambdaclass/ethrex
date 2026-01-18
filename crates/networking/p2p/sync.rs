@@ -4,6 +4,10 @@ pub mod healing_cache;
 mod healing_bench;
 #[cfg(test)]
 mod healing_tests;
+#[cfg(test)]
+mod memory_tests;
+#[cfg(test)]
+mod recovery_tests;
 mod state_healing;
 mod storage_healing;
 
