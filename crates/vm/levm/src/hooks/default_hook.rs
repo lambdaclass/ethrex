@@ -2,7 +2,7 @@ use crate::{
     account::LevmAccount,
     constants::*,
     errors::{ContextResult, InternalError, TxValidationError, VMError},
-    gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
+    gas_cost::{self, BLOB_GAS_PER_BLOB, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::hook::Hook,
     utils::*,
     vm::VM,
@@ -457,11 +457,21 @@ pub fn deduct_caller(
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
     let value = vm.current_call_frame.msg_value;
 
-    let blob_gas_cost = calculate_blob_gas_cost(
-        &vm.env.tx_blob_hashes,
-        vm.env.block_excess_blob_gas,
-        &vm.env.config,
-    )?;
+    // Use pre-computed base_blob_fee_per_gas from Environment instead of recomputing via fake_exponential
+    let blob_gas_cost = {
+        let blob_count: u64 = vm
+            .env
+            .tx_blob_hashes
+            .len()
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?;
+        let blob_gas_used = blob_count
+            .checked_mul(BLOB_GAS_PER_BLOB)
+            .unwrap_or_default();
+        U256::from(blob_gas_used)
+            .checked_mul(vm.env.base_blob_fee_per_gas)
+            .ok_or(InternalError::Overflow)?
+    };
 
     // The real cost to deduct is calculated as effective_gas_price * gas_limit + value + blob_gas_cost
     let up_front_cost = gas_limit_price_product
