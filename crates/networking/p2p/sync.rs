@@ -862,8 +862,10 @@ impl SnapBlockSyncState {
         &mut self,
         block_headers: impl Iterator<Item = BlockHeader>,
     ) -> Result<(), SyncError> {
-        let mut block_headers_vec = Vec::with_capacity(block_headers.size_hint().1.unwrap_or(0));
-        let mut block_hashes = Vec::with_capacity(block_headers.size_hint().1.unwrap_or(0));
+        let (lower, upper) = block_headers.size_hint();
+        let capacity = upper.unwrap_or(lower.max(1));
+        let mut block_headers_vec = Vec::with_capacity(capacity);
+        let mut block_hashes = Vec::with_capacity(capacity);
         for header in block_headers {
             block_hashes.push(header.hash());
             block_headers_vec.push(header);
@@ -1154,9 +1156,7 @@ impl Syncer {
 
                 insert_storages_with_checkpoint(
                     store.clone(),
-                    accounts_with_storage,
                     &account_storages_snapshots_dir,
-                    &self.datadir,
                     &mut snap_trie,
                     &mut checkpoint,
                 )
@@ -1874,9 +1874,7 @@ async fn insert_accounts_with_checkpoint(
 /// Uses batched parallel decoding for speed while limiting memory.
 async fn insert_storages_with_checkpoint(
     store: Store,
-    _: BTreeSet<H256>,
     account_storages_snapshots_dir: &Path,
-    _: &Path,
     snap_trie: &mut SnapSyncTrie,
     checkpoint: &mut SnapSyncCheckpoint,
 ) -> Result<(), SyncError> {
