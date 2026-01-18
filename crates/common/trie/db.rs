@@ -13,6 +13,27 @@ pub type NodeMap = Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>;
 pub trait TrieDB: Send + Sync {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError>;
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError>;
+
+    /// Batch get multiple keys at once.
+    /// More efficient than calling `get` repeatedly for some backends.
+    fn get_batch(&self, keys: &[Nibbles]) -> Result<Vec<Option<Vec<u8>>>, TrieError> {
+        keys.iter().map(|key| self.get(key.clone())).collect()
+    }
+
+    /// Check if multiple keys exist without fetching their values.
+    fn exists_batch(&self, keys: &[Nibbles]) -> Result<Vec<bool>, TrieError> {
+        Ok(self
+            .get_batch(keys)?
+            .into_iter()
+            .map(|opt| opt.map(|v| !v.is_empty()).unwrap_or(false))
+            .collect())
+    }
+
+    /// Check if a single key exists without fetching its value.
+    fn exists(&self, key: Nibbles) -> Result<bool, TrieError> {
+        Ok(self.get(key)?.map(|v| !v.is_empty()).unwrap_or(false))
+    }
+
     // TODO: replace putbatch with this function.
     fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {
         self.put_batch(

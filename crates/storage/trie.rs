@@ -100,6 +100,43 @@ impl TrieDB for BackendTrieDB {
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
     }
 
+    fn get_batch(&self, keys: &[Nibbles]) -> Result<Vec<Option<Vec<u8>>>, TrieError> {
+        if keys.is_empty() {
+            return Ok(vec![]);
+        }
+        let tx = self.db.begin_read().map_err(|e| {
+            TrieError::DbError(anyhow::anyhow!("Failed to begin read transaction: {}", e))
+        })?;
+        keys.iter()
+            .map(|key| {
+                let prefixed_key = self.make_key(key.clone());
+                let table = self.table_for_key(&prefixed_key);
+                tx.get(table, prefixed_key.as_ref())
+                    .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get: {}", e)))
+            })
+            .collect()
+    }
+
+    fn exists_batch(&self, keys: &[Nibbles]) -> Result<Vec<bool>, TrieError> {
+        if keys.is_empty() {
+            return Ok(vec![]);
+        }
+        let tx = self.db.begin_read().map_err(|e| {
+            TrieError::DbError(anyhow::anyhow!("Failed to begin read transaction: {}", e))
+        })?;
+        keys.iter()
+            .map(|key| {
+                let prefixed_key = self.make_key(key.clone());
+                let table = self.table_for_key(&prefixed_key);
+                Ok(tx
+                    .get(table, prefixed_key.as_ref())
+                    .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get: {}", e)))?
+                    .map(|v| !v.is_empty())
+                    .unwrap_or(false))
+            })
+            .collect()
+    }
+
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         let mut tx = self.db.begin_write().map_err(|e| {
             TrieError::DbError(anyhow::anyhow!("Failed to begin write transaction: {}", e))
@@ -168,6 +205,29 @@ impl TrieDB for BackendTrieDBLocked {
         let tx = self.tx_for_key(&key);
         tx.get(key.as_ref())
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
+    }
+
+    fn get_batch(&self, keys: &[Nibbles]) -> Result<Vec<Option<Vec<u8>>>, TrieError> {
+        keys.iter()
+            .map(|key| {
+                let tx = self.tx_for_key(key);
+                tx.get(key.as_ref())
+                    .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get: {}", e)))
+            })
+            .collect()
+    }
+
+    fn exists_batch(&self, keys: &[Nibbles]) -> Result<Vec<bool>, TrieError> {
+        keys.iter()
+            .map(|key| {
+                let tx = self.tx_for_key(key);
+                Ok(tx
+                    .get(key.as_ref())
+                    .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get: {}", e)))?
+                    .map(|v| !v.is_empty())
+                    .unwrap_or(false))
+            })
+            .collect()
     }
 
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
