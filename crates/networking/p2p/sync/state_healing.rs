@@ -103,9 +103,6 @@ pub async fn heal_state_trie_wrap(
     // Log cache statistics
     let cache_stats = healing_cache.stats();
     debug!(
-        filter_hits = cache_stats.filter_hits,
-        filter_misses = cache_stats.filter_misses,
-        lru_hits = cache_stats.lru_hits,
         paths_cached = cache_stats.paths_added,
         "State healing cache statistics"
     );
@@ -187,8 +184,7 @@ async fn heal_state_trie(
                 downloads_rate,
                 paths_to_go = paths.len(),
                 pending_nodes = membatch.len(),
-                cache_filter_hits = cache_stats.filter_hits,
-                cache_lru_hits = cache_stats.lru_hits,
+                cache_paths = cache_stats.paths_added,
                 "State Healing",
             );
             stats.downloads_success = 0;

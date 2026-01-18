@@ -1755,11 +1755,13 @@ impl SyncError {
             | SyncError::PeerTableError(_)
             | SyncError::MissingFullsyncBatch
             | SyncError::StateValidationFailed(_) => false,
-            // State/healing failures are recoverable - sync will restart with fresh pivot
+            // State/healing failures - make unrecoverable for debugging
+            // so we can fix code and resume from checkpoint
             SyncError::StateRootMismatch { .. }
             | SyncError::StorageHealingFailed
-            | SyncError::StateHealingFailed
-            | SyncError::Chain(_)
+            | SyncError::StateHealingFailed => false,
+            // Network/transient errors are recoverable
+            SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)
             | SyncError::Trie(_)

@@ -183,8 +183,7 @@ pub async fn heal_storage_trie(
                 global_leaves_healed = global_leafs_healed,
                 roots_healed = state.roots_healed,
                 succesful_downloads = state.succesful_downloads,
-                cache_filter_hits = cache_stats.filter_hits,
-                cache_lru_hits = cache_stats.lru_hits,
+                cache_paths = cache_stats.paths_added,
                 "Storage Healing",
             );
             state.succesful_downloads = 0;
@@ -240,8 +239,6 @@ pub async fn heal_storage_trie(
             db_joinset.join_all().await;
             let cache_stats = state.healing_cache.stats();
             debug!(
-                filter_hits = cache_stats.filter_hits,
-                lru_hits = cache_stats.lru_hits,
                 paths_cached = cache_stats.paths_added,
                 "Storage healing complete - cache statistics"
             );

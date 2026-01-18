@@ -97,48 +97,29 @@ mod cache_tests {
     fn test_stats_tracking() {
         let cache = HealingCache::new();
         let path1 = Nibbles::from_hex(vec![1]);
-        let path2 = Nibbles::from_hex(vec![2]);
 
         // Initial stats should be zero
         let stats = cache.stats();
         assert_eq!(stats.paths_added, 0);
-        assert_eq!(stats.lru_hits, 0);
 
         // Add a path
         cache.mark_exists(&path1);
         let stats = cache.stats();
         assert_eq!(stats.paths_added, 1);
-
-        // Check the added path (should be LRU hit)
-        cache.check_path(&path1);
-        let stats = cache.stats();
-        assert_eq!(stats.lru_hits, 1);
-
-        // Check an unknown path (should be filter miss)
-        cache.check_path(&path2);
-        let stats = cache.stats();
-        assert!(stats.filter_misses >= 1);
     }
 
     #[test]
-    fn test_reset_stats() {
+    fn test_clear_stats() {
         let cache = HealingCache::new();
         let path = Nibbles::from_hex(vec![1, 2, 3]);
 
         cache.mark_exists(&path);
-        cache.check_path(&path);
-
         let stats = cache.stats();
-        assert!(stats.paths_added > 0 || stats.lru_hits > 0);
+        assert!(stats.paths_added > 0);
 
-        cache.reset_stats();
-
+        cache.clear();
         let stats = cache.stats();
         assert_eq!(stats.paths_added, 0);
-        assert_eq!(stats.lru_hits, 0);
-        assert_eq!(stats.lru_misses, 0);
-        assert_eq!(stats.filter_hits, 0);
-        assert_eq!(stats.filter_misses, 0);
     }
 
     #[test]
