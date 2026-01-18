@@ -1837,14 +1837,15 @@ async fn insert_accounts_with_checkpoint(
                 })
             );
 
-            // Update checkpoint after each file
+            // Update checkpoint counter
             files_processed += 1;
             checkpoint.account_files_processed = files_processed;
-            checkpoint.touch();
-            store.save_snap_sync_checkpoint(checkpoint).await?;
         }
 
-        // Log progress after each batch
+        // Save checkpoint and log progress after each batch (not every file) to reduce I/O
+        checkpoint.touch();
+        store.save_snap_sync_checkpoint(checkpoint).await?;
+
         let elapsed = account_insert_start.elapsed();
         let rate = if elapsed.as_secs_f64() > 0.0 {
             total_accounts as f64 / elapsed.as_secs_f64()
@@ -1976,14 +1977,14 @@ async fn insert_storages_with_checkpoint(
                 slots_since_flush = 0;
             }
 
-            // Update checkpoint after each file
+            // Update checkpoint counter
             files_processed += 1;
             checkpoint.storage_files_processed = files_processed;
-            checkpoint.touch();
-            store.save_snap_sync_checkpoint(checkpoint).await?;
 
-            // Log progress periodically (every batch)
+            // Save checkpoint and log progress every batch (not every file) to reduce I/O
             if files_processed % batch_size == 0 || files_processed == file_count {
+                checkpoint.touch();
+                store.save_snap_sync_checkpoint(checkpoint).await?;
                 let elapsed = storage_insert_start.elapsed();
                 let rate = if elapsed.as_secs_f64() > 0.0 {
                     total_storage_count as f64 / elapsed.as_secs_f64()
