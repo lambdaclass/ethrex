@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::monitor::EthrexMonitor;
 use crate::sequencer::admin_server::start_api;
 use crate::sequencer::errors::SequencerError;
 use crate::sequencer::sequencer_state::{SequencerState, SequencerStatus};
 use crate::sequencer::state_updater::StateUpdater;
 use crate::{BlockFetcher, SequencerConfig};
 use block_producer::BlockProducer;
+use ethrex_monitor::{EthrexMonitor, MonitorConfig as ExternalMonitorConfig};
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Genesis;
 use ethrex_l2_common::prover::ProverType;
@@ -206,11 +206,35 @@ pub async fn start_l2(
     }
 
     if cfg.monitor.enabled {
+        let monitor_cfg = ExternalMonitorConfig {
+            enabled: cfg.monitor.enabled,
+            tick_rate: cfg.monitor.tick_rate,
+            batch_widget_height: cfg.monitor.batch_widget_height,
+            l1_rpc_url: cfg
+                .eth
+                .rpc_url
+                .first()
+                .cloned()
+                .ok_or(errors::SequencerError::MonitorError(
+                    ethrex_monitor::MonitorError::RPCListEmpty,
+                ))?,
+            on_chain_proposer_address: cfg.l1_committer.on_chain_proposer_address,
+            bridge_address: cfg.l1_watcher.bridge_address,
+            is_based: cfg.based.enabled,
+            sequencer_registry: if cfg.state_updater.sequencer_registry
+                == ethrex_common::Address::default()
+            {
+                None
+            } else {
+                Some(cfg.state_updater.sequencer_registry)
+            },
+            osaka_activation_time: cfg.eth.osaka_activation_time,
+        };
         EthrexMonitor::spawn(
             shared_state.clone(),
             store.clone(),
             rollup_store.clone(),
-            &cfg,
+            monitor_cfg,
             cancellation_token.clone(),
         )
         .await?;

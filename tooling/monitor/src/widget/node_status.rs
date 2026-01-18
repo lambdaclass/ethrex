@@ -8,18 +8,21 @@ use ratatui::{
     widgets::{Block, Row, StatefulWidget, Table, TableState},
 };
 
-use crate::sequencer::{errors::MonitorError, sequencer_state::SequencerState};
+use crate::{
+    config::{SequencerStatus, SequencerStatusProvider},
+    error::MonitorError,
+};
 
 #[derive(Clone)]
-pub struct NodeStatusTable {
+pub struct NodeStatusTable<S: SequencerStatusProvider> {
     pub state: TableState,
     pub items: [(String, String); 5],
-    sequencer_state: SequencerState,
+    sequencer_state: S,
     is_based: bool,
 }
 
-impl NodeStatusTable {
-    pub fn new(sequencer_state: SequencerState, is_based: bool) -> Self {
+impl<S: SequencerStatusProvider> NodeStatusTable<S> {
+    pub fn new(sequencer_state: S, is_based: bool) -> Self {
         Self {
             state: TableState::default(),
             items: Default::default(),
@@ -39,13 +42,13 @@ impl NodeStatusTable {
     }
 
     async fn refresh_items(
-        sequencer_state: &SequencerState,
+        sequencer_state: &S,
         store: &Store,
         l2_client: &EthClient,
         is_based: bool,
     ) -> Result<[(String, String); 5], MonitorError> {
         let last_update = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        let status = sequencer_state.status().await;
+        let status: SequencerStatus = sequencer_state.status().await;
         let last_known_batch = "NaN"; // TODO: Implement last known batch retrieval
         let last_known_block = store
             .get_latest_block_number()
@@ -76,7 +79,7 @@ impl NodeStatusTable {
     }
 }
 
-impl StatefulWidget for &mut NodeStatusTable {
+impl<S: SequencerStatusProvider> StatefulWidget for &mut NodeStatusTable<S> {
     type State = TableState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {

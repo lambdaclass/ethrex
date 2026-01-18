@@ -1,10 +1,21 @@
 use std::sync::Arc;
 
+use ethrex_monitor::config::{SequencerStatus as MonitorSequencerStatus, SequencerStatusProvider};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 #[derive(Debug, Clone)]
 pub struct SequencerState(Arc<Mutex<SequencerStatus>>);
+
+impl SequencerStatusProvider for SequencerState {
+    async fn status(&self) -> MonitorSequencerStatus {
+        match self.status().await {
+            SequencerStatus::Sequencing => MonitorSequencerStatus::Running,
+            SequencerStatus::Syncing => MonitorSequencerStatus::Starting,
+            SequencerStatus::Following => MonitorSequencerStatus::Running,
+        }
+    }
+}
 
 impl SequencerState {
     pub async fn status(&self) -> SequencerStatus {
