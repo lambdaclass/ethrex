@@ -318,12 +318,6 @@ impl Syncer {
                 continue;
             };
 
-            debug!("Sync Log 1: In snap sync");
-            debug!(
-                "Sync Log 2: State block hashes len {}",
-                block_sync_state.block_hashes.len()
-            );
-
             let (first_block_hash, first_block_number, first_block_parent_hash) =
                 match block_headers.first() {
                     Some(header) => (header.hash(), header.number, header.parent_hash),
@@ -497,7 +491,6 @@ impl Syncer {
                     .await;
                 continue;
             };
-            debug!("Sync Log 9: Received {} block headers", block_headers.len());
 
             let first_header = block_headers.first().ok_or(SyncError::NoBlocks)?;
             let last_header = block_headers.last().ok_or(SyncError::NoBlocks)?;
@@ -985,9 +978,6 @@ impl Syncer {
                 (H256::zero(), BTreeSet::new())
             };
 
-            debug!("Original state root: {state_root:?}");
-            debug!("Computed state root after request_account_rages: {computed_state_root:?}");
-
             // Phase: Storage Download
             if !should_skip_phase(SnapSyncPhase::StorageDownload, checkpoint.phase) {
                 checkpoint.phase = SnapSyncPhase::StorageDownload;
@@ -1185,15 +1175,9 @@ impl Syncer {
 
         // Integrate the SnapSyncTrie into the state manager (only if we built a new trie)
         if !resuming_with_persisted_state {
-            debug!("Integrating SnapSyncTrie with ethrex_db state manager (accounts: {})", snap_trie.account_count());
             store.set_snap_sync_trie(snap_trie);
-
-            // Persist the state trie to disk
             let pivot_hash = pivot_header.compute_block_hash();
-            debug!("Persisting snap sync state to disk (block: {}, hash: {:?})", pivot_header.number, pivot_hash);
             store.persist_snap_sync_state(pivot_header.number, pivot_hash)?;
-        } else {
-            debug!("Skipping SnapSyncTrie integration (state already persisted)");
         }
 
         store.generate_flatkeyvalue()?;
@@ -1224,7 +1208,6 @@ impl Syncer {
                 .collect();
 
             let file_count = file_paths.len();
-            debug!("Reading and decoding {} code hash files in parallel", file_count);
 
             // Parallel file reading and RLP decoding using rayon
             let decoded_results: Vec<Result<Vec<H256>, SyncError>> = file_paths
@@ -1588,7 +1571,6 @@ impl<T> From<SendError<T>> for SyncError {
 }
 
 pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
-    info!("Starting validate_state_root");
     let validated = tokio::task::spawn_blocking(move || {
         store
             .open_locked_state_trie(state_root)
@@ -1598,17 +1580,14 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
     .await
     .expect("We should be able to create threads");
 
-    if validated.is_ok() {
-        info!("Succesfully validated tree, {state_root} found");
-    } else {
-        error!("We have failed the validation of the state tree");
+    if validated.is_err() {
+        error!("State tree validation failed");
         std::process::exit(1);
     }
     validated.is_ok()
 }
 
 pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
-    info!("Starting validate_storage_root");
     let is_valid = tokio::task::spawn_blocking(move || {
         store
             .iter_accounts(state_root)
@@ -1628,15 +1607,14 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     })
     .await
     .expect("We should be able to create threads");
-    info!("Finished validate_storage_root");
     if is_valid.is_err() {
+        error!("Storage root validation failed");
         std::process::exit(1);
     }
     is_valid.is_ok()
 }
 
 pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
-    info!("Starting validate_bytecodes");
     let mut is_valid = true;
     for (account_hash, account_state) in store
         .iter_accounts(state_root)
@@ -1680,7 +1658,6 @@ async fn insert_accounts(
         .collect();
 
     let file_count = file_paths.len();
-    info!("Reading and decoding {} account snapshot files in parallel", file_count);
 
     // Parallel file reading and RLP decoding using rayon
     let decoded_results: Vec<Result<(PathBuf, Vec<(H256, AccountState)>), SyncError>> = file_paths
@@ -1694,8 +1671,6 @@ async fn insert_accounts(
             Ok((snapshot_path, account_states_snapshot))
         })
         .collect();
-
-    info!("Decoded all {} account snapshot files, now inserting", file_count);
 
     // Process decoded results sequentially (snap_trie requires &mut self)
     for result in decoded_results {
@@ -1719,26 +1694,18 @@ async fn insert_accounts(
         code_hash_collector.extend(code_hashes_from_snapshot);
         code_hash_collector.flush_if_needed().await?;
 
-        let count_before = snap_trie.account_count();
-        info!("Inserting {} accounts from {:?} (trie count before: {})",
-            account_states_snapshot.len(), snapshot_path.file_name(), count_before);
-
         // Insert accounts into ethrex_db's SnapSyncTrie using batch API for better performance
         snap_trie.insert_accounts_batch(
             account_states_snapshot.into_iter().map(|(hash, account)| {
                 (hash, account.nonce, account.balance, account.storage_root, account.code_hash)
             })
         );
-
-        let count_after = snap_trie.account_count();
-        info!("Inserted accounts (trie count after: {})", count_after);
     }
 
     std::fs::remove_dir_all(account_state_snapshots_dir)
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
 
     let computed_state_root = snap_trie.compute_state_root();
-    info!("computed_state_root from ethrex_db: {computed_state_root}");
     Ok((computed_state_root, BTreeSet::new()))
 }
 
@@ -1763,7 +1730,6 @@ async fn insert_storages(
         .collect();
 
     let file_count = file_paths.len();
-    info!("Reading and decoding {} storage snapshot files in parallel", file_count);
 
     // Parallel file reading and RLP decoding using rayon
     let decoded_results: Vec<Result<(PathBuf, Vec<AccountsWithStorage>), SyncError>> = file_paths
@@ -1786,30 +1752,20 @@ async fn insert_storages(
         })
         .collect();
 
-    info!("Decoded all {} storage snapshot files, now inserting", file_count);
-
     // Process decoded results sequentially (snap_trie requires &mut self)
-    let mut total_storage_count = 0usize;
     for result in decoded_results {
-        let (snapshot_path, account_storages_snapshot): (PathBuf, Vec<AccountsWithStorage>) = result?;
+        let (_snapshot_path, account_storages_snapshot): (PathBuf, Vec<AccountsWithStorage>) = result?;
 
-        let mut storage_count = 0usize;
         for account_storages in account_storages_snapshot {
-            let slot_count = account_storages.storages.len();
             // Batch insert storage slots for each account
             for account_hash in account_storages.accounts {
                 snap_trie.insert_storage_batch(
                     account_hash,
                     account_storages.storages.iter().map(|(k, v)| (*k, *v))
                 );
-                storage_count += slot_count;
             }
         }
-        total_storage_count += storage_count;
-        info!("Inserted {} storage slots from {:?}", storage_count, snapshot_path.file_name());
     }
-
-    info!("Inserted {} total storage slots into ethrex_db SnapSyncTrie", total_storage_count);
 
     std::fs::remove_dir_all(account_storages_snapshots_dir)
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
@@ -1857,8 +1813,6 @@ async fn insert_accounts_with_checkpoint(
         })
         .collect();
 
-    info!("Decoded all {} account snapshot files, now inserting", file_count);
-
     // Process decoded results sequentially (snap_trie requires &mut self)
     let mut files_processed = 0usize;
     for result in decoded_results {
@@ -1888,19 +1842,12 @@ async fn insert_accounts_with_checkpoint(
         code_hash_collector.extend(code_hashes_from_snapshot);
         code_hash_collector.flush_if_needed().await?;
 
-        let count_before = snap_trie.account_count();
-        info!("Inserting {} accounts from {:?} (trie count before: {})",
-            account_states_snapshot.len(), snapshot_path.file_name(), count_before);
-
         // Insert accounts into ethrex_db's SnapSyncTrie using batch API for better performance
         snap_trie.insert_accounts_batch(
             account_states_snapshot.into_iter().map(|(hash, account)| {
                 (hash, account.nonce, account.balance, account.storage_root, account.code_hash)
             })
         );
-
-        let count_after = snap_trie.account_count();
-        info!("Inserted accounts (trie count after: {})", count_after);
 
         // Update checkpoint after each file
         files_processed += 1;
@@ -1913,7 +1860,6 @@ async fn insert_accounts_with_checkpoint(
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
 
     let computed_state_root = snap_trie.compute_state_root();
-    info!("computed_state_root from ethrex_db: {computed_state_root}");
     Ok((computed_state_root, BTreeSet::new()))
 }
 
