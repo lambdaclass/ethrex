@@ -24,7 +24,7 @@ use ethrex_storage::SnapSyncTrie;
 use super::healing_cache::{HealingCache, PathStatus, SharedHealingCache};
 
 use bytes::Bytes;
-use ethrex_common::{types::AccountState, H256};
+use ethrex_common::{types::AccountState, H256, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{error::StoreError, Store};
 #[allow(unused_imports)]
@@ -857,11 +857,16 @@ pub async fn heal_storage_trie_snap(
     let mut slots_healed = 0u64;
     let mut last_progress_log = tokio::time::Instant::now();
 
-    // Process accounts in batches to avoid overwhelming peers
-    const ACCOUNTS_PER_BATCH: usize = 100;
+    // Batch multiple accounts per request (protocol supports this)
+    // Using 100 accounts per request to balance response size and efficiency
+    const ACCOUNTS_PER_REQUEST: usize = 100;
 
-    for batch in healed_accounts.chunks(ACCOUNTS_PER_BATCH) {
-        // Check for staleness
+    // Number of parallel requests to send at once
+    const PARALLEL_REQUESTS: usize = 8;
+
+    // Process accounts in parallel batches
+    for parallel_batch in healed_accounts.chunks(ACCOUNTS_PER_REQUEST * PARALLEL_REQUESTS) {
+        // Check for staleness before each parallel batch
         if current_unix_time() > staleness_timestamp {
             info!(
                 "[SNAP SYNC] Storage healing interrupted due to stale pivot (healed {}/{} accounts)",
@@ -871,56 +876,89 @@ pub async fn heal_storage_trie_snap(
             return Ok(false);
         }
 
-        // Request storage ranges for this batch of accounts
-        for account_hash in batch {
-            // Get peer connection
-            let Some((peer_id, mut connection)) = peers
+        // Split into sub-batches for parallel requests
+        let sub_batches: Vec<&[H256]> = parallel_batch.chunks(ACCOUNTS_PER_REQUEST).collect();
+
+        // Create a JoinSet for parallel requests
+        let mut join_set: JoinSet<Result<(Vec<H256>, Vec<(H256, H256, U256)>, H256), SyncError>> = JoinSet::new();
+
+        for sub_batch in sub_batches {
+            let account_hashes: Vec<H256> = sub_batch.to_vec();
+
+            // Get peer connection for this request
+            let Some((peer_id, connection)) = peers
                 .peer_table
                 .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
                 .await?
             else {
                 debug!("No peers available for storage healing, retrying...");
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
             };
 
-            // Request full storage range for this account
-            let request = GetStorageRanges {
-                id: rand::random(),
-                root_hash: state_root,
-                account_hashes: vec![*account_hash],
-                starting_hash: H256::zero(),
-                limit_hash: H256::repeat_byte(0xff),
-                response_bytes: MAX_RESPONSE_BYTES,
-            };
+            let peer_table = peers.peer_table.clone();
+            let request_state_root = state_root;
 
-            match peers
-                .request_storage_ranges_raw(&peer_id, &mut connection, request)
-                .await
-            {
-                Ok(Some(response)) => {
-                    // Process the storage slots
-                    // response.slots is Vec<Vec<StorageSlot>> - one Vec<StorageSlot> per account
-                    for slot in response.slots.into_iter().flatten() {
-                        snap_trie.insert_storage(*account_hash, slot.hash, slot.data);
+            // Spawn parallel request
+            join_set.spawn(async move {
+                let mut peer_table = peer_table; // Make mutable for record_success/record_failure
+                let request = GetStorageRanges {
+                    id: rand::random(),
+                    root_hash: request_state_root,
+                    account_hashes: account_hashes.clone(),
+                    starting_hash: H256::zero(),
+                    limit_hash: H256::repeat_byte(0xff),
+                    response_bytes: MAX_RESPONSE_BYTES,
+                };
+
+                let result = PeerHandler::request_storage_ranges_static(
+                    peer_id, connection, peer_table.clone(), request,
+                )
+                .await;
+
+                match result {
+                    Ok(Some(response)) => {
+                        // Collect all slots with their account hashes
+                        let mut all_slots = Vec::new();
+                        for (i, account_slots) in response.slots.into_iter().enumerate() {
+                            if let Some(account_hash) = account_hashes.get(i) {
+                                for slot in account_slots {
+                                    all_slots.push((*account_hash, slot.hash, slot.data));
+                                }
+                            }
+                        }
+                        peer_table.record_success(&peer_id).await.ok();
+                        Ok((account_hashes, all_slots, peer_id))
+                    }
+                    Ok(None) => {
+                        peer_table.record_failure(&peer_id).await.ok();
+                        Ok((account_hashes, Vec::new(), peer_id))
+                    }
+                    Err(e) => {
+                        debug!("Failed to request storage for batch: {:?}", e);
+                        peer_table.record_failure(&peer_id).await.ok();
+                        Ok((account_hashes, Vec::new(), peer_id))
+                    }
+                }
+            });
+        }
+
+        // Collect results from all parallel requests
+        while let Some(result) = join_set.join_next().await {
+            match result {
+                Ok(Ok((account_hashes, slots, _peer_id))) => {
+                    // Insert all slots into the snap trie
+                    for (account_hash, slot_hash, slot_data) in slots {
+                        snap_trie.insert_storage(account_hash, slot_hash, slot_data);
                         slots_healed += 1;
                     }
-                    accounts_healed += 1;
-                    peers.peer_table.record_success(&peer_id).await?;
+                    accounts_healed += account_hashes.len();
                 }
-                Ok(None) => {
-                    debug!(
-                        "Empty response for account {:?}, peer may not have this data",
-                        account_hash
-                    );
-                    peers.peer_table.record_failure(&peer_id).await?;
+                Ok(Err(e)) => {
+                    debug!("Storage healing request failed: {:?}", e);
                 }
                 Err(e) => {
-                    debug!(
-                        "Failed to request storage for account {:?}: {:?}",
-                        account_hash, e
-                    );
-                    peers.peer_table.record_failure(&peer_id).await?;
+                    debug!("Storage healing task panicked: {:?}", e);
                 }
             }
         }

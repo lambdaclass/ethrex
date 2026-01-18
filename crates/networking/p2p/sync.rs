@@ -971,9 +971,36 @@ impl Syncer {
                 store.save_snap_sync_checkpoint(&checkpoint).await?;
 
                 result
+            } else if !resuming_with_persisted_state {
+                // Account insertion was completed but storage insertion is still pending.
+                // The snap_trie is fresh and empty, so we need to reload accounts from snapshot files.
+                // Without this, storage tries will be "orphaned" (accounts don't exist in the trie).
+                info!("[SNAP SYNC] Reloading accounts into snap_trie (resuming from checkpoint)");
+
+                // Reset account files processed to reload all accounts
+                let mut reload_checkpoint = checkpoint.clone();
+                reload_checkpoint.account_files_processed = 0;
+
+                let result = insert_accounts_with_checkpoint(
+                    store.clone(),
+                    &mut storage_accounts,
+                    &account_state_snapshots_dir,
+                    &self.datadir,
+                    &mut code_hash_collector,
+                    &mut snap_trie,
+                    &mut reload_checkpoint,
+                )
+                .await?;
+
+                info!(
+                    "[SNAP SYNC] Reloaded {} accounts into snap_trie",
+                    snap_trie.account_count()
+                );
+
+                result
             } else {
                 info!("[SNAP SYNC] Skipping account insertion phase (already completed in checkpoint)");
-                // When resuming, we need default values; the accounts were already inserted
+                // When fully resuming with persisted state, we don't need to reload
                 (H256::zero(), BTreeSet::new())
             };
 

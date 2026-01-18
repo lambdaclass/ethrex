@@ -2187,6 +2187,45 @@ impl PeerHandler {
         }
     }
 
+    /// Requests storage ranges from a peer using owned values for use in parallel tasks.
+    ///
+    /// This is a static method that takes ownership of the connection and peer_table,
+    /// allowing it to be used in spawned async tasks for parallel storage healing.
+    ///
+    /// Returns the StorageRanges response or None if the request failed.
+    pub async fn request_storage_ranges_static(
+        peer_id: H256,
+        mut connection: PeerConnection,
+        mut peer_table: PeerTable,
+        request: GetStorageRanges,
+    ) -> Result<Option<StorageRanges>, PeerConnectionError> {
+        let request_msg = RLPxMessage::GetStorageRanges(request);
+
+        match PeerHandler::make_request(
+            &mut peer_table,
+            peer_id,
+            &mut connection,
+            request_msg,
+            PEER_REPLY_TIMEOUT,
+        )
+        .await
+        {
+            Ok(RLPxMessage::StorageRanges(response)) => Ok(Some(response)),
+            Ok(_other_msg) => {
+                debug!("Received unexpected message from peer during storage ranges request");
+                Ok(None)
+            }
+            Err(PeerConnectionError::Timeout) => {
+                debug!("Timeout while waiting for storage ranges from peer");
+                Ok(None)
+            }
+            Err(e) => {
+                debug!("Error requesting storage ranges: {:?}", e);
+                Err(e)
+            }
+        }
+    }
+
     /// Returns the PeerData for each connected Peer
     pub async fn read_connected_peers(&mut self) -> Vec<PeerData> {
         self.peer_table
