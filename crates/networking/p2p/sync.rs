@@ -1148,17 +1148,34 @@ impl Syncer {
                     }
                 }
 
+                // Heal state trie by traversing from root and finding missing accounts
+                info!(
+                    "[SNAP SYNC] Phase 6/{}: Healing state trie via GetTrieNodes",
+                    crate::snap_sync_progress::TOTAL_PHASES
+                );
+                let healed = storage_healing::heal_state_trie_snap(
+                    pivot_header.state_root,
+                    &mut self.peers,
+                    &mut snap_trie,
+                    staleness_timestamp,
+                ).await?;
+
+                if !healed {
+                    // Pivot became stale during healing
+                    return Err(SyncError::StateHealingFailed);
+                }
+
                 // Compute initial state root from snap_trie
                 let mut computed_root = snap_trie.compute_state_root();
 
-                // If state root doesn't match, try account healing
+                // If state root doesn't match, try account range healing as fallback
                 if computed_root != pivot_header.state_root {
                     warn!(
-                        "[SNAP SYNC] State root mismatch detected. Expected: {:?}, Got: {:?}. Attempting account healing...",
+                        "[SNAP SYNC] State root mismatch detected after trie healing. Expected: {:?}, Got: {:?}. Attempting account range healing...",
                         pivot_header.state_root, computed_root
                     );
 
-                    // Try to heal by re-downloading accounts
+                    // Try to heal by re-downloading accounts via ranges
                     let healed = storage_healing::heal_accounts_snap(
                         pivot_header.state_root,
                         &mut self.peers,
@@ -1507,6 +1524,8 @@ pub enum SyncError {
     MissingFullsyncBatch,
     #[error("Storage healing failed")]
     StorageHealingFailed,
+    #[error("State healing failed")]
+    StateHealingFailed,
     #[error("State root mismatch: expected {expected}, got {computed}")]
     StateRootMismatch { expected: H256, computed: H256 },
     #[error("State validation failed: {0}")]
@@ -1537,6 +1556,7 @@ impl SyncError {
             | SyncError::PeerTableError(_)
             | SyncError::MissingFullsyncBatch
             | SyncError::StorageHealingFailed
+            | SyncError::StateHealingFailed
             | SyncError::StateRootMismatch { .. }
             | SyncError::StateValidationFailed(_) => false,
             SyncError::Chain(_)

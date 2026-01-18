@@ -1082,3 +1082,207 @@ pub async fn heal_accounts_snap(
 
     Ok(true)
 }
+
+/// Heals the state trie by traversing from the root and downloading missing nodes.
+///
+/// This function uses GetTrieNodes to walk the expected state trie from peers,
+/// extracting account data from leaf nodes and inserting them into the SnapSyncTrie.
+/// Unlike heal_accounts_snap which re-downloads all accounts via ranges, this
+/// function only downloads the trie structure to find and fix specific missing accounts.
+///
+/// # Arguments
+/// * `expected_state_root` - The state root we're trying to match
+/// * `peers` - Peer handler for network requests
+/// * `snap_trie` - The SnapSyncTrie to insert accounts into
+/// * `staleness_timestamp` - Timestamp after which the pivot is considered stale
+///
+/// # Returns
+/// * `Ok(true)` if healing completed successfully
+/// * `Ok(false)` if the pivot became stale during healing
+/// * `Err(SyncError)` if healing failed
+pub async fn heal_state_trie_snap(
+    expected_state_root: H256,
+    peers: &mut PeerHandler,
+    snap_trie: &mut SnapSyncTrie,
+    staleness_timestamp: u64,
+) -> Result<bool, SyncError> {
+    use tracing::info;
+
+    info!("[SNAP SYNC] Starting state trie healing via GetTrieNodes");
+    METRICS.current_step.set(CurrentStepValue::HealingState);
+
+    let mut accounts_healed = 0u64;
+    let mut nodes_processed = 0u64;
+    let mut last_progress_log = tokio::time::Instant::now();
+
+    // Queue of (path, hash) pairs to fetch - start with root
+    let mut paths_to_fetch: VecDeque<(Nibbles, H256)> = VecDeque::new();
+    paths_to_fetch.push_back((Nibbles::default(), expected_state_root));
+
+    // Track in-flight requests
+    let mut inflight_requests = 0u32;
+    let (response_tx, mut response_rx) = tokio::sync::mpsc::channel::<(
+        H256, // peer_id
+        Result<TrieNodes, String>,
+        Vec<(Nibbles, H256)>, // batch that was requested
+    )>(TASK_CHANNEL_CAPACITY);
+
+    while !paths_to_fetch.is_empty() || inflight_requests > 0 {
+        // Check for staleness
+        if current_unix_time() > staleness_timestamp {
+            info!(
+                "[SNAP SYNC] State trie healing interrupted due to stale pivot (healed {} accounts, {} nodes)",
+                accounts_healed, nodes_processed
+            );
+            return Ok(false);
+        }
+
+        // Process responses
+        while let Ok((peer_id, result, batch)) = response_rx.try_recv() {
+            inflight_requests -= 1;
+            match result {
+                Ok(trie_nodes) => {
+                    peers.peer_table.record_success(&peer_id).await?;
+
+                    // Process each node in the response
+                    for (i, node_bytes) in trie_nodes.nodes.iter().enumerate() {
+                        if i >= batch.len() {
+                            break;
+                        }
+                        let (path, _hash) = &batch[i];
+                        nodes_processed += 1;
+
+                        // Decode the node
+                        if let Ok(node) = Node::decode(node_bytes) {
+                            match node {
+                                Node::Leaf(leaf_node) => {
+                                    // This is an account - decode and insert
+                                    if let Ok(account) = AccountState::decode(&leaf_node.value) {
+                                        // Compute full account hash from path + partial
+                                        let full_path = path.concat(&leaf_node.partial);
+                                        let account_hash = H256::from_slice(&full_path.to_bytes());
+
+                                        // Insert into snap_trie
+                                        snap_trie.insert_account(
+                                            account_hash,
+                                            account.nonce,
+                                            account.balance,
+                                            account.storage_root,
+                                            account.code_hash,
+                                        );
+                                        accounts_healed += 1;
+                                    }
+                                }
+                                Node::Branch(branch_node) => {
+                                    // Add children to fetch queue
+                                    for (i, choice) in branch_node.choices.iter().enumerate() {
+                                        // Only fetch children that are hash references (not inline or embedded)
+                                        if let ethrex_trie::NodeRef::Hash(ethrex_trie::NodeHash::Hashed(child_hash)) = choice {
+                                            let child_path = path.append_new(i as u8);
+                                            paths_to_fetch.push_back((child_path, *child_hash));
+                                        }
+                                    }
+                                }
+                                Node::Extension(ext_node) => {
+                                    // Add child to fetch queue
+                                    if let ethrex_trie::NodeRef::Hash(ethrex_trie::NodeHash::Hashed(child_hash)) = &ext_node.child {
+                                        let child_path = path.concat(&ext_node.prefix);
+                                        paths_to_fetch.push_back((child_path, *child_hash));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    debug!("GetTrieNodes request failed: {}", e);
+                    peers.peer_table.record_failure(&peer_id).await?;
+                    // Re-queue the failed batch
+                    for item in batch {
+                        paths_to_fetch.push_back(item);
+                    }
+                }
+            }
+        }
+
+        // Send new requests if we have capacity
+        while inflight_requests < MAX_IN_FLIGHT_REQUESTS && !paths_to_fetch.is_empty() {
+            // Build batch of paths to request
+            let mut batch: Vec<(Nibbles, H256)> = Vec::new();
+            let mut paths_for_request: Vec<Bytes> = Vec::new();
+
+            while batch.len() < 256 && !paths_to_fetch.is_empty() {
+                if let Some((path, hash)) = paths_to_fetch.pop_front() {
+                    paths_for_request.push(Bytes::from(path.to_bytes()));
+                    batch.push((path, hash));
+                }
+            }
+
+            if batch.is_empty() {
+                break;
+            }
+
+            // Get a peer
+            let Some((peer_id, mut connection)) = peers
+                .peer_table
+                .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+                .await?
+            else {
+                // No peers available, re-queue and wait
+                for item in batch {
+                    paths_to_fetch.push_front(item);
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                break;
+            };
+
+            // Send request
+            let request = GetTrieNodes {
+                id: random(),
+                root_hash: expected_state_root,
+                paths: vec![paths_for_request], // Account trie paths (no storage prefix)
+                bytes: MAX_RESPONSE_BYTES,
+            };
+
+            let response_tx_clone = response_tx.clone();
+            let batch_clone = batch.clone();
+            let peer_id_clone = peer_id;
+
+            tokio::spawn(async move {
+                use crate::rlpx::message::Message as RLPxMessage;
+                let result = match connection
+                    .outgoing_request(RLPxMessage::GetTrieNodes(request), Duration::from_secs(10))
+                    .await
+                {
+                    Ok(RLPxMessage::TrieNodes(nodes)) => Ok(nodes),
+                    Ok(_) => Err("Unexpected response type".to_string()),
+                    Err(e) => Err(format!("{:?}", e)),
+                };
+                let _ = response_tx_clone.send((peer_id_clone, result, batch_clone)).await;
+            });
+
+            inflight_requests += 1;
+        }
+
+        // Log progress
+        if last_progress_log.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
+            info!(
+                "[SNAP SYNC] State trie healing progress: {} accounts found, {} nodes processed, {} paths pending",
+                accounts_healed, nodes_processed, paths_to_fetch.len()
+            );
+            last_progress_log = tokio::time::Instant::now();
+        }
+
+        // Small sleep to avoid busy loop
+        if paths_to_fetch.is_empty() && inflight_requests > 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    info!(
+        "[SNAP SYNC] State trie healing complete: {} accounts found, {} nodes processed",
+        accounts_healed, nodes_processed
+    );
+
+    Ok(true)
+}
