@@ -1149,7 +1149,8 @@ impl Syncer {
                 store.get_persisted_state_root()
             } else {
                 // Calculate staleness timestamp for healing
-                let staleness_timestamp = calculate_staleness_timestamp(pivot_header.timestamp);
+                // Use extended window for healing (3x normal) since download may have taken a while
+                let staleness_timestamp = pivot_header.timestamp + (SNAP_LIMIT as u64 * 12 * 3);
                 let mut global_slots_healed = 0u64;
 
                 // Heal storage tries for accounts that failed during initial download
@@ -1582,11 +1583,12 @@ impl SyncError {
             | SyncError::NoLatestCanonical
             | SyncError::PeerTableError(_)
             | SyncError::MissingFullsyncBatch
-            | SyncError::StorageHealingFailed
-            | SyncError::StateHealingFailed
             | SyncError::StateRootMismatch { .. }
             | SyncError::StateValidationFailed(_) => false,
-            SyncError::Chain(_)
+            // Healing failures are recoverable - sync will restart with fresh pivot
+            SyncError::StorageHealingFailed
+            | SyncError::StateHealingFailed
+            | SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)
             | SyncError::Trie(_)
