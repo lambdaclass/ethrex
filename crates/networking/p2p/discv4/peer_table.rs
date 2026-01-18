@@ -23,15 +23,17 @@ const MIN_SCORE: i64 = -50;
 /// Score assigned to peers who are acting maliciously (e.g., returning a node with wrong hash)
 const MIN_SCORE_CRITICAL: i64 = MIN_SCORE * 3;
 /// Maximum amount of FindNode messages sent to a single node.
-const MAX_FIND_NODE_PER_PEER: u64 = 20;
+const MAX_FIND_NODE_PER_PEER: u64 = 50;
 /// Score weight for the load balancing function.
 const SCORE_WEIGHT: i64 = 1;
 /// Weight for amount of requests being handled by the peer for the load balancing function.
 const REQUESTS_WEIGHT: i64 = 1;
 /// Max amount of ongoing requests per peer.
-const MAX_CONCURRENT_REQUESTS_PER_PEER: i64 = 100;
+const MAX_CONCURRENT_REQUESTS_PER_PEER: i64 = 150;
 /// The target number of RLPx connections to reach.
-pub const TARGET_PEERS: usize = 100;
+pub const TARGET_PEERS: usize = 400;
+/// The target number of snap-capable peers to reach before slowing discovery.
+pub const TARGET_SNAP_PEERS: usize = 50;
 /// The target number of contacts to maintain in peer_table.
 const TARGET_CONTACTS: usize = 100_000;
 
@@ -399,6 +401,15 @@ impl PeerTable {
     /// Return rate of target peers completion
     pub async fn target_peers_completion(&mut self) -> Result<f64, PeerTableError> {
         match self.handle.call(CallMessage::TargetPeersCompletion).await? {
+            OutMessage::TargetCompletion(result) => Ok(result),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Return rate of snap-capable peer completion (snap peers / TARGET_SNAP_PEERS)
+    /// Discovery should stay aggressive until this reaches 1.0
+    pub async fn snap_peer_completion(&mut self) -> Result<f64, PeerTableError> {
+        match self.handle.call(CallMessage::SnapPeerCompletion).await? {
             OutMessage::TargetCompletion(result) => Ok(result),
             _ => unreachable!(),
         }
@@ -803,6 +814,19 @@ impl PeerTableServer {
             .len()
     }
 
+    /// Count peers that support the snap protocol (any version)
+    fn snap_peer_count(&self) -> usize {
+        self.peers
+            .values()
+            .filter(|peer_data| {
+                peer_data
+                    .supported_capabilities
+                    .iter()
+                    .any(|cap| cap.protocol() == "snap")
+            })
+            .count()
+    }
+
     fn get_peer_connections(&self, capabilities: Vec<Capability>) -> Vec<(H256, PeerConnection)> {
         self.peers
             .iter()
@@ -940,6 +964,7 @@ enum CallMessage {
     TargetReached,
     TargetPeersReached,
     TargetPeersCompletion,
+    SnapPeerCompletion,
     GetContactToInitiate,
     GetContactForLookup,
     GetContactForEnrLookup,
@@ -1021,6 +1046,9 @@ impl GenServer for PeerTableServer {
             )),
             CallMessage::TargetPeersCompletion => CallResponse::Reply(
                 Self::OutMsg::TargetCompletion(self.peers.len() as f64 / self.target_peers as f64),
+            ),
+            CallMessage::SnapPeerCompletion => CallResponse::Reply(
+                Self::OutMsg::TargetCompletion(self.snap_peer_count() as f64 / TARGET_SNAP_PEERS as f64),
             ),
             CallMessage::GetContactToInitiate => CallResponse::Reply(
                 self.get_contact_to_initiate()

@@ -40,8 +40,8 @@ const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12
 /// The initial interval between peer lookups, until the number of peers reaches
 /// [target_peers](DiscoverySideCarState::target_peers), or the number of
 /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
-pub const INITIAL_LOOKUP_INTERVAL_MS: f64 = 100.0; // 10 per second
-pub const LOOKUP_INTERVAL_MS: f64 = 600.0; // 100 per minute
+pub const INITIAL_LOOKUP_INTERVAL_MS: f64 = 50.0; // 20 per second (more aggressive)
+pub const LOOKUP_INTERVAL_MS: f64 = 200.0; // 300 per minute (more aggressive)
 const CHANGE_FIND_NODE_MESSAGE_INTERVAL: Duration = Duration::from_secs(5);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -282,8 +282,17 @@ impl DiscoveryServer {
             .target_peers_completion()
             .await
             .unwrap_or_default();
+        // Also check snap peer completion - discovery should stay aggressive
+        // until we have enough snap-capable peers for healing
+        let snap_completion = self
+            .peer_table
+            .snap_peer_completion()
+            .await
+            .unwrap_or_default();
+        // Use the minimum of both - discovery only slows when BOTH targets are met
+        let effective_completion = peer_completion.min(snap_completion);
         lookup_interval_function(
-            peer_completion,
+            effective_completion,
             self.initial_lookup_interval,
             LOOKUP_INTERVAL_MS,
         )
