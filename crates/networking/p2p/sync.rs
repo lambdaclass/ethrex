@@ -1583,10 +1583,10 @@ impl SyncError {
             | SyncError::NoLatestCanonical
             | SyncError::PeerTableError(_)
             | SyncError::MissingFullsyncBatch
-            | SyncError::StateRootMismatch { .. }
             | SyncError::StateValidationFailed(_) => false,
-            // Healing failures are recoverable - sync will restart with fresh pivot
-            SyncError::StorageHealingFailed
+            // State/healing failures are recoverable - sync will restart with fresh pivot
+            SyncError::StateRootMismatch { .. }
+            | SyncError::StorageHealingFailed
             | SyncError::StateHealingFailed
             | SyncError::Chain(_)
             | SyncError::Store(_)
