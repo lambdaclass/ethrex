@@ -1216,6 +1216,36 @@ impl Syncer {
                         return Err(SyncError::StorageHealingFailed);
                     }
 
+                    // After account healing, we need to heal storage for accounts with non-empty storage
+                    // The account healing updated accounts but didn't re-download storage data
+                    // Re-use the original storage accounts list since those are the accounts with storage
+                    let storage_accounts_set: HashSet<H256> = storage_accounts
+                        .accounts_with_storage_root
+                        .keys()
+                        .copied()
+                        .collect();
+
+                    if !storage_accounts_set.is_empty() {
+                        info!("[SNAP SYNC] Re-healing storage for {} accounts after account healing", storage_accounts_set.len());
+                        let storage_accounts_for_healing = AccountStorageRoots {
+                            accounts_with_storage_root: BTreeMap::new(),
+                            healed_accounts: storage_accounts_set,
+                        };
+
+                        let healed = storage_healing::heal_storage_trie_snap(
+                            pivot_header.state_root,
+                            &storage_accounts_for_healing,
+                            &mut self.peers,
+                            &mut snap_trie,
+                            staleness_timestamp,
+                            &mut global_slots_healed,
+                        ).await?;
+
+                        if !healed {
+                            return Err(SyncError::StorageHealingFailed);
+                        }
+                    }
+
                     // Recompute state root after account healing
                     computed_root = snap_trie.compute_state_root();
                 }
