@@ -877,13 +877,20 @@ pub async fn heal_storage_trie_snap(
         }
 
         // Split into sub-batches for parallel requests
-        let sub_batches: Vec<&[H256]> = parallel_batch.chunks(ACCOUNTS_PER_REQUEST).collect();
+        let sub_batches: Vec<Vec<H256>> = parallel_batch
+            .chunks(ACCOUNTS_PER_REQUEST)
+            .map(|c| c.to_vec())
+            .collect();
 
         // Create a JoinSet for parallel requests
-        let mut join_set: JoinSet<Result<(Vec<H256>, Vec<(H256, H256, U256)>, H256), SyncError>> = JoinSet::new();
+        // Returns: (accounts requested, slots received, peer_id, success flag)
+        let mut join_set: JoinSet<Result<(Vec<H256>, Vec<(H256, H256, U256)>, H256, bool), SyncError>> = JoinSet::new();
+
+        // Track accounts that couldn't be queued due to no peers
+        let mut pending_accounts: Vec<Vec<H256>> = Vec::new();
 
         for sub_batch in sub_batches {
-            let account_hashes: Vec<H256> = sub_batch.to_vec();
+            let account_hashes = sub_batch;
 
             // Get peer connection for this request
             let Some((peer_id, connection)) = peers
@@ -891,7 +898,8 @@ pub async fn heal_storage_trie_snap(
                 .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
                 .await?
             else {
-                debug!("No peers available for storage healing, retrying...");
+                debug!("No peers available for storage healing, will retry batch later");
+                pending_accounts.push(account_hashes);
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
             };
@@ -928,16 +936,16 @@ pub async fn heal_storage_trie_snap(
                             }
                         }
                         peer_table.record_success(&peer_id).await.ok();
-                        Ok((account_hashes, all_slots, peer_id))
+                        Ok((account_hashes, all_slots, peer_id, true))
                     }
                     Ok(None) => {
                         peer_table.record_failure(&peer_id).await.ok();
-                        Ok((account_hashes, Vec::new(), peer_id))
+                        Ok((account_hashes, Vec::new(), peer_id, false))
                     }
                     Err(e) => {
                         debug!("Failed to request storage for batch: {:?}", e);
                         peer_table.record_failure(&peer_id).await.ok();
-                        Ok((account_hashes, Vec::new(), peer_id))
+                        Ok((account_hashes, Vec::new(), peer_id, false))
                     }
                 }
             });
@@ -946,19 +954,80 @@ pub async fn heal_storage_trie_snap(
         // Collect results from all parallel requests
         while let Some(result) = join_set.join_next().await {
             match result {
-                Ok(Ok((account_hashes, slots, _peer_id))) => {
-                    // Insert all slots into the snap trie
-                    for (account_hash, slot_hash, slot_data) in slots {
-                        snap_trie.insert_storage(account_hash, slot_hash, slot_data);
-                        slots_healed += 1;
+                Ok(Ok((account_hashes, slots, _peer_id, success))) => {
+                    if success {
+                        // Insert all slots into the snap trie
+                        for (account_hash, slot_hash, slot_data) in slots {
+                            snap_trie.insert_storage(account_hash, slot_hash, slot_data);
+                            slots_healed += 1;
+                        }
+                        accounts_healed += account_hashes.len();
+                    } else {
+                        debug!(
+                            "Storage healing failed for batch of {} accounts",
+                            account_hashes.len()
+                        );
                     }
-                    accounts_healed += account_hashes.len();
                 }
                 Ok(Err(e)) => {
                     debug!("Storage healing request failed: {:?}", e);
                 }
                 Err(e) => {
                     debug!("Storage healing task panicked: {:?}", e);
+                }
+            }
+        }
+
+        // Retry pending accounts that couldn't be queued due to no peers
+        for pending_batch in pending_accounts {
+            // Check staleness before retry
+            if current_unix_time() > staleness_timestamp {
+                debug!("Skipping pending account retry due to stale pivot");
+                break;
+            }
+
+            let Some((peer_id, connection)) = peers
+                .peer_table
+                .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+                .await?
+            else {
+                debug!("Still no peers for pending batch retry, skipping {} accounts", pending_batch.len());
+                continue;
+            };
+
+            let request = GetStorageRanges {
+                id: rand::random(),
+                root_hash: state_root,
+                account_hashes: pending_batch.clone(),
+                starting_hash: H256::zero(),
+                limit_hash: H256::repeat_byte(0xff),
+                response_bytes: MAX_RESPONSE_BYTES,
+            };
+
+            match PeerHandler::request_storage_ranges_static(
+                peer_id, connection, peers.peer_table.clone(), request,
+            )
+            .await
+            {
+                Ok(Some(response)) => {
+                    for (i, account_slots) in response.slots.into_iter().enumerate() {
+                        if let Some(account_hash) = pending_batch.get(i) {
+                            for slot in account_slots {
+                                snap_trie.insert_storage(*account_hash, slot.hash, slot.data);
+                                slots_healed += 1;
+                            }
+                        }
+                    }
+                    accounts_healed += pending_batch.len();
+                    peers.peer_table.record_success(&peer_id).await?;
+                }
+                Ok(None) => {
+                    debug!("Retry failed for batch of {} accounts", pending_batch.len());
+                    peers.peer_table.record_failure(&peer_id).await?;
+                }
+                Err(e) => {
+                    debug!("Retry error for batch: {:?}", e);
+                    peers.peer_table.record_failure(&peer_id).await?;
                 }
             }
         }
