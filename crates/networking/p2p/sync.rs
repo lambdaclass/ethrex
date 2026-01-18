@@ -70,15 +70,15 @@ const CHECKPOINT_MAX_AGE_SECS: u64 = 30 * 60; // 30 minutes
 const DEFAULT_FLUSH_THRESHOLD: usize = 500_000;
 /// Minimum storage flush threshold (slots) - ~100MB
 const MIN_FLUSH_THRESHOLD: usize = 250_000;
-/// Maximum storage flush threshold (slots) - ~1.2GB
+/// Maximum storage flush threshold (slots) - ~4GB
 /// Capped to prevent OOM on systems with large RAM
-const MAX_FLUSH_THRESHOLD: usize = 3_000_000;
+const MAX_FLUSH_THRESHOLD: usize = 10_000_000;
 /// Approximate memory bytes per storage slot in trie
 /// Includes HashMap overhead, MerkleTrie nodes, and allocations
 const BYTES_PER_STORAGE_SLOT: usize = 400;
-/// Percentage of available memory to use for storage tries (5%)
-/// Conservative to leave room for healing and other operations
-const MEMORY_USAGE_PERCENT: usize = 5;
+/// Percentage of available memory to use for storage tries (25%)
+/// Higher values speed up insertion by reducing flush frequency
+const MEMORY_USAGE_PERCENT: usize = 25;
 
 /// Get available memory in bytes from /proc/meminfo (Linux only)
 /// Returns None on non-Linux systems or if reading fails
@@ -136,11 +136,11 @@ const BYTES_PER_STORAGE_FILE: usize = 400 * 1024 * 1024; // ~400MB per file when
 const BYTES_PER_ACCOUNT_FILE: usize = 200 * 1024 * 1024; // ~200MB per file when decoded
 
 /// Minimum batch size for parallel file decoding (always some parallelism).
-const MIN_FILE_BATCH_SIZE: usize = 2;
+const MIN_FILE_BATCH_SIZE: usize = 4;
 /// Maximum batch size (diminishing returns beyond this).
 const MAX_FILE_BATCH_SIZE: usize = 32;
 /// Default batch size when memory info unavailable.
-const DEFAULT_FILE_BATCH_SIZE: usize = 4;
+const DEFAULT_FILE_BATCH_SIZE: usize = 8;
 
 /// Calculate file batch size based on available memory.
 /// Uses MEMORY_USAGE_PERCENT of available memory, bounded between MIN and MAX.
@@ -1220,6 +1220,16 @@ impl Syncer {
                         // Pivot became stale during healing
                         return Err(SyncError::StorageHealingFailed);
                     }
+
+                    // Flush storage tries to compute storage roots and update accounts
+                    // This is critical - without this, accounts have wrong storage roots
+                    let flushed = snap_trie.flush_storage_tries();
+                    info!(
+                        "[SNAP SYNC] Storage healing complete: {} accounts, {} slots healed, {} tries flushed",
+                        storage_accounts.healed_accounts.len(),
+                        global_slots_healed,
+                        flushed
+                    );
                 }
 
                 // Heal state trie by traversing from root and finding missing accounts
@@ -1266,24 +1276,42 @@ impl Syncer {
                     // After account healing, we need to heal storage for accounts with non-empty storage
                     // The account healing updated accounts with their storage_roots from the network
                     // but didn't re-download storage data to match those roots
+                    // Process in batches to avoid OOM with large account sets
                     if !accounts_with_storage.is_empty() {
-                        info!("[SNAP SYNC] Re-healing storage for {} accounts after account healing", accounts_with_storage.len());
-                        let storage_accounts_for_healing = AccountStorageRoots {
-                            accounts_with_storage_root: BTreeMap::new(),
-                            healed_accounts: accounts_with_storage,
-                        };
+                        const STORAGE_HEALING_BATCH_SIZE: usize = 50_000;
+                        let total_accounts = accounts_with_storage.len();
+                        info!("[SNAP SYNC] Re-healing storage for {} accounts after account healing (batch size: {})",
+                              total_accounts, STORAGE_HEALING_BATCH_SIZE);
 
-                        let healed = storage_healing::heal_storage_trie_snap(
-                            pivot_header.state_root,
-                            &storage_accounts_for_healing,
-                            &mut self.peers,
-                            &mut snap_trie,
-                            staleness_timestamp,
-                            &mut global_slots_healed,
-                        ).await?;
+                        let accounts_vec: Vec<H256> = accounts_with_storage.into_iter().collect();
+                        let mut accounts_processed = 0usize;
 
-                        if !healed {
-                            return Err(SyncError::StorageHealingFailed);
+                        for batch in accounts_vec.chunks(STORAGE_HEALING_BATCH_SIZE) {
+                            let batch_set: std::collections::HashSet<H256> = batch.iter().copied().collect();
+                            let storage_accounts_for_healing = AccountStorageRoots {
+                                accounts_with_storage_root: BTreeMap::new(),
+                                healed_accounts: batch_set,
+                            };
+
+                            let healed = storage_healing::heal_storage_trie_snap(
+                                pivot_header.state_root,
+                                &storage_accounts_for_healing,
+                                &mut self.peers,
+                                &mut snap_trie,
+                                staleness_timestamp,
+                                &mut global_slots_healed,
+                            ).await?;
+
+                            if !healed {
+                                return Err(SyncError::StorageHealingFailed);
+                            }
+
+                            accounts_processed += batch.len();
+
+                            // Flush storage tries to free memory between batches
+                            let flushed = snap_trie.flush_storage_tries();
+                            info!("[SNAP SYNC] Storage healing batch complete: {}/{} accounts, flushed {} tries",
+                                  accounts_processed, total_accounts, flushed);
                         }
                     }
 

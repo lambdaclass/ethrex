@@ -1330,7 +1330,14 @@ pub async fn heal_state_trie_snap(
 
             while batch.len() < 256 && !paths_to_fetch.is_empty() {
                 if let Some((path, hash)) = paths_to_fetch.pop_front() {
-                    paths_for_request.push(Bytes::from(path.encode_compact()));
+                    // For the root path (empty), use empty bytes
+                    // For other paths, use compact encoding
+                    let encoded = if path.is_empty() {
+                        Bytes::new()
+                    } else {
+                        Bytes::from(path.encode_compact())
+                    };
+                    paths_for_request.push(encoded);
                     batch.push((path, hash));
                 }
             }
