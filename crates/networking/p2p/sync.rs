@@ -1832,44 +1832,42 @@ async fn insert_storages_with_checkpoint(
     let file_count = file_paths.len();
     let files_to_skip = checkpoint.storage_files_processed;
     info!(
-        "Reading and decoding {} storage snapshot files (skipping {} from checkpoint)",
-        file_count, files_to_skip
+        "[SNAP SYNC] Phase 5/{}: Inserting storage from {} files{}",
+        crate::snap_sync_progress::TOTAL_PHASES,
+        file_count,
+        if files_to_skip > 0 { format!(" (skipping {} from checkpoint)", files_to_skip) } else { String::new() }
     );
 
-    // Parallel file reading and RLP decoding using rayon
-    let decoded_results: Vec<Result<(PathBuf, Vec<AccountsWithStorage>), SyncError>> = file_paths
-        .into_par_iter()
-        .map(|snapshot_path: PathBuf| {
-            let snapshot_contents = std::fs::read(&snapshot_path)
-                .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
-
-            #[expect(clippy::type_complexity)]
-            let account_storages_snapshot: Vec<AccountsWithStorage> =
-                RLPDecode::decode(&snapshot_contents)
-                    .map(|all_accounts: Vec<(Vec<H256>, Vec<(H256, U256)>)>| {
-                        all_accounts
-                            .into_iter()
-                            .map(|(accounts, storages)| AccountsWithStorage { accounts, storages })
-                            .collect()
-                    })
-                    .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
-            Ok((snapshot_path, account_storages_snapshot))
-        })
-        .collect();
-
-    info!("Decoded all {} storage snapshot files, now inserting", file_count);
-
-    // Process decoded results sequentially (snap_trie requires &mut self)
+    // Process files sequentially to avoid loading all into memory at once
+    // This is critical for memory efficiency with large state
     let mut total_storage_count = 0usize;
     let mut files_processed = 0usize;
-    for result in decoded_results {
+    let storage_insert_start = std::time::Instant::now();
+
+    for snapshot_path in file_paths {
         // Skip already processed files based on checkpoint
         if files_processed < files_to_skip {
             files_processed += 1;
             continue;
         }
 
-        let (snapshot_path, account_storages_snapshot): (PathBuf, Vec<AccountsWithStorage>) = result?;
+        // Read and decode one file at a time
+        let snapshot_contents = std::fs::read(&snapshot_path)
+            .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
+
+        #[expect(clippy::type_complexity)]
+        let account_storages_snapshot: Vec<AccountsWithStorage> =
+            RLPDecode::decode(&snapshot_contents)
+                .map(|all_accounts: Vec<(Vec<H256>, Vec<(H256, U256)>)>| {
+                    all_accounts
+                        .into_iter()
+                        .map(|(accounts, storages)| AccountsWithStorage { accounts, storages })
+                        .collect()
+                })
+                .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+
+        // Drop the raw file contents immediately to free memory
+        drop(snapshot_contents);
 
         let mut storage_count = 0usize;
         for account_storages in account_storages_snapshot {
@@ -1884,16 +1882,36 @@ async fn insert_storages_with_checkpoint(
             }
         }
         total_storage_count += storage_count;
-        info!("Inserted {} storage slots from {:?}", storage_count, snapshot_path.file_name());
 
         // Update checkpoint after each file
         files_processed += 1;
         checkpoint.storage_files_processed = files_processed;
         checkpoint.touch();
         store.save_snap_sync_checkpoint(checkpoint).await?;
+
+        // Log progress periodically
+        let elapsed = storage_insert_start.elapsed();
+        let rate = if elapsed.as_secs_f64() > 0.0 {
+            total_storage_count as f64 / elapsed.as_secs_f64()
+        } else {
+            0.0
+        };
+        info!(
+            "[SNAP SYNC] Phase 5/{}: Inserted {} slots from file {}/{} | Total: {} | Rate: {}/s",
+            crate::snap_sync_progress::TOTAL_PHASES,
+            crate::snap_sync_progress::format_count(storage_count as u64),
+            files_processed,
+            file_count,
+            crate::snap_sync_progress::format_count(total_storage_count as u64),
+            crate::snap_sync_progress::format_count(rate as u64)
+        );
     }
 
-    info!("Inserted {} total storage slots into ethrex_db SnapSyncTrie", total_storage_count);
+    info!(
+        "[SNAP SYNC] Phase 5/{} complete: Inserted {} total storage slots",
+        crate::snap_sync_progress::TOTAL_PHASES,
+        crate::snap_sync_progress::format_count(total_storage_count as u64)
+    );
 
     std::fs::remove_dir_all(account_storages_snapshots_dir)
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
