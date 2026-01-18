@@ -32,7 +32,7 @@ use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
 use ethrex_storage::{Store, SnapSyncTrie, SnapSyncCheckpoint, SnapSyncPhase, error::StoreError};
 use ethrex_trie::TrieError;
 use ethrex_trie::trie_sorted::TrieGenerationError;
-use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
+use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -67,15 +67,15 @@ const MAX_HEADER_FETCH_ATTEMPTS: u64 = 100;
 const CHECKPOINT_MAX_AGE_SECS: u64 = 30 * 60; // 30 minutes
 
 /// Default storage flush threshold (slots) when memory info unavailable
-const DEFAULT_FLUSH_THRESHOLD: usize = 500_000;
-/// Minimum storage flush threshold (slots) - ~16MB
-const MIN_FLUSH_THRESHOLD: usize = 100_000;
-/// Maximum storage flush threshold (slots) - ~320MB
-const MAX_FLUSH_THRESHOLD: usize = 2_000_000;
+const DEFAULT_FLUSH_THRESHOLD: usize = 100_000;
+/// Minimum storage flush threshold (slots) - ~8MB
+const MIN_FLUSH_THRESHOLD: usize = 50_000;
+/// Maximum storage flush threshold (slots) - ~80MB
+const MAX_FLUSH_THRESHOLD: usize = 500_000;
 /// Approximate memory bytes per storage slot in trie
 const BYTES_PER_STORAGE_SLOT: usize = 160;
-/// Percentage of available memory to use for storage tries (5%)
-const MEMORY_USAGE_PERCENT: usize = 5;
+/// Percentage of available memory to use for storage tries (2%)
+const MEMORY_USAGE_PERCENT: usize = 2;
 
 /// Get available memory in bytes from /proc/meminfo (Linux only)
 /// Returns None on non-Linux systems or if reading fails
@@ -878,7 +878,6 @@ impl Syncer {
         checkpoint.pivot_block_hash = pivot_header.compute_block_hash();
         checkpoint.pivot_state_root = pivot_header.state_root;
 
-        let state_root = pivot_header.state_root;
         let account_state_snapshots_dir = get_account_state_snapshots_dir(&self.datadir);
         let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
 
@@ -1207,25 +1206,18 @@ impl Syncer {
                 .filter_map(|entry| entry.ok().map(|e| e.path()))
                 .collect();
 
-            let file_count = file_paths.len();
-
-            // Parallel file reading and RLP decoding using rayon
-            let decoded_results: Vec<Result<Vec<H256>, SyncError>> = file_paths
-                .into_par_iter()
-                .map(|path: PathBuf| {
-                    let snapshot_contents = std::fs::read(&path)
-                        .map_err(|err| SyncError::SnapshotReadError(path.clone(), err))?;
-                    let code_hashes: Vec<H256> = RLPDecode::decode(&snapshot_contents)
-                        .map_err(|_| SyncError::CodeHashesSnapshotDecodeError(path))?;
-                    Ok(code_hashes)
-                })
-                .collect();
-
-            // Collect all unique code hashes
+            // Process files sequentially to avoid loading all into memory at once
             let mut seen_code_hashes = HashSet::new();
             let mut all_code_hashes = Vec::new();
-            for result in decoded_results {
-                let code_hashes = result?;
+            for path in file_paths {
+                let snapshot_contents = std::fs::read(&path)
+                    .map_err(|err| SyncError::SnapshotReadError(path.clone(), err))?;
+                let code_hashes: Vec<H256> = RLPDecode::decode(&snapshot_contents)
+                    .map_err(|_| SyncError::CodeHashesSnapshotDecodeError(path))?;
+
+                // Drop file contents immediately
+                drop(snapshot_contents);
+
                 for hash in code_hashes {
                     if seen_code_hashes.insert(hash) {
                         all_code_hashes.push(hash);
@@ -1339,39 +1331,6 @@ impl Syncer {
 
         Ok(())
     }
-}
-
-use ethrex_rlp::encode::RLPEncode;
-
-type StorageRoots = (H256, Vec<(ethrex_trie::Nibbles, Vec<u8>)>);
-
-#[allow(dead_code)] // Used for storage trie computation
-fn compute_storage_roots(
-    store: Store,
-    account_hash: H256,
-    key_value_pairs: &[(H256, U256)],
-) -> Result<StorageRoots, SyncError> {
-    use ethrex_trie::{Nibbles, Node};
-
-    let storage_trie = store.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
-    let trie_hash = match storage_trie.db().get(Nibbles::default())? {
-        Some(noderlp) => Node::decode(&noderlp)?.compute_hash().finalize(),
-        None => *EMPTY_TRIE_HASH,
-    };
-    let mut storage_trie = store.open_direct_storage_trie(account_hash, trie_hash)?;
-
-    for (hashed_key, value) in key_value_pairs {
-        if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec()) {
-            warn!(
-                "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
-            );
-        };
-        METRICS.storage_leaves_inserted.inc();
-    }
-
-    let (_, changes) = storage_trie.collect_changes_since_last_hash();
-
-    Ok((account_hash, changes))
 }
 
 pub async fn update_pivot(
@@ -1638,141 +1597,6 @@ pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
     is_valid
 }
 
-/// Inserts accounts into ethrex_db's SnapSyncTrie.
-///
-/// This is the primary path for snap sync - accounts are inserted directly
-/// into ethrex_db's PagedStateTrie for high-performance state storage.
-#[allow(dead_code)] // Replaced by insert_accounts_with_checkpoint
-async fn insert_accounts(
-    _store: Store,
-    storage_accounts: &mut AccountStorageRoots,
-    account_state_snapshots_dir: &Path,
-    _: &Path,
-    code_hash_collector: &mut CodeHashCollector,
-    snap_trie: &mut SnapSyncTrie,
-) -> Result<(H256, BTreeSet<H256>), SyncError> {
-    // Collect all file paths first
-    let file_paths: Vec<PathBuf> = std::fs::read_dir(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .collect();
-
-    let file_count = file_paths.len();
-
-    // Parallel file reading and RLP decoding using rayon
-    let decoded_results: Vec<Result<(PathBuf, Vec<(H256, AccountState)>), SyncError>> = file_paths
-        .into_par_iter()
-        .map(|snapshot_path: PathBuf| {
-            let snapshot_contents = std::fs::read(&snapshot_path)
-                .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
-            let account_states_snapshot: Vec<(H256, AccountState)> =
-                RLPDecode::decode(&snapshot_contents)
-                    .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
-            Ok((snapshot_path, account_states_snapshot))
-        })
-        .collect();
-
-    // Process decoded results sequentially (snap_trie requires &mut self)
-    for result in decoded_results {
-        let (snapshot_path, account_states_snapshot): (PathBuf, Vec<(H256, AccountState)>) = result?;
-
-        storage_accounts.accounts_with_storage_root.extend(
-            account_states_snapshot.iter().filter_map(|(hash, state)| {
-                (state.storage_root != *EMPTY_TRIE_HASH)
-                    .then_some((*hash, (Some(state.storage_root), Vec::new())))
-            }),
-        );
-
-        // Collect valid code hashes from current account snapshot
-        let code_hashes_from_snapshot: Vec<H256> = account_states_snapshot
-            .iter()
-            .filter_map(|(_, state)| {
-                (state.code_hash != *EMPTY_KECCACK_HASH).then_some(state.code_hash)
-            })
-            .collect();
-
-        code_hash_collector.extend(code_hashes_from_snapshot);
-        code_hash_collector.flush_if_needed().await?;
-
-        // Insert accounts into ethrex_db's SnapSyncTrie using batch API for better performance
-        snap_trie.insert_accounts_batch(
-            account_states_snapshot.into_iter().map(|(hash, account)| {
-                (hash, account.nonce, account.balance, account.storage_root, account.code_hash)
-            })
-        );
-    }
-
-    std::fs::remove_dir_all(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
-
-    let computed_state_root = snap_trie.compute_state_root();
-    Ok((computed_state_root, BTreeSet::new()))
-}
-
-/// Inserts storage slots into ethrex_db's SnapSyncTrie.
-///
-/// This is the primary path for snap sync - storage is inserted directly
-/// into ethrex_db's PagedStateTrie for high-performance state storage.
-#[allow(dead_code)] // Replaced by insert_storages_with_checkpoint
-async fn insert_storages(
-    _store: Store,
-    _: BTreeSet<H256>,
-    account_storages_snapshots_dir: &Path,
-    _: &Path,
-    snap_trie: &mut SnapSyncTrie,
-) -> Result<(), SyncError> {
-    use crate::utils::AccountsWithStorage;
-
-    // Collect all file paths first
-    let file_paths: Vec<PathBuf> = std::fs::read_dir(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .collect();
-
-    let file_count = file_paths.len();
-
-    // Parallel file reading and RLP decoding using rayon
-    let decoded_results: Vec<Result<(PathBuf, Vec<AccountsWithStorage>), SyncError>> = file_paths
-        .into_par_iter()
-        .map(|snapshot_path: PathBuf| {
-            let snapshot_contents = std::fs::read(&snapshot_path)
-                .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
-
-            #[expect(clippy::type_complexity)]
-            let account_storages_snapshot: Vec<AccountsWithStorage> =
-                RLPDecode::decode(&snapshot_contents)
-                    .map(|all_accounts: Vec<(Vec<H256>, Vec<(H256, U256)>)>| {
-                        all_accounts
-                            .into_iter()
-                            .map(|(accounts, storages)| AccountsWithStorage { accounts, storages })
-                            .collect()
-                    })
-                    .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
-            Ok((snapshot_path, account_storages_snapshot))
-        })
-        .collect();
-
-    // Process decoded results sequentially (snap_trie requires &mut self)
-    for result in decoded_results {
-        let (_snapshot_path, account_storages_snapshot): (PathBuf, Vec<AccountsWithStorage>) = result?;
-
-        for account_storages in account_storages_snapshot {
-            // Batch insert storage slots for each account
-            for account_hash in account_storages.accounts {
-                snap_trie.insert_storage_batch(
-                    account_hash,
-                    account_storages.storages.iter().map(|(k, v)| (*k, *v))
-                );
-            }
-        }
-    }
-
-    std::fs::remove_dir_all(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
-
-    Ok(())
-}
-
 /// Checkpoint-aware version of insert_accounts.
 /// Tracks progress and saves checkpoint after each file processed.
 async fn insert_accounts_with_checkpoint(
@@ -1796,33 +1620,30 @@ async fn insert_accounts_with_checkpoint(
     let file_count = file_paths.len();
     let files_to_skip = checkpoint.account_files_processed;
     info!(
-        "Reading and decoding {} account snapshot files (skipping {} from checkpoint)",
-        file_count, files_to_skip
+        "[SNAP SYNC] Phase 3/{}: Inserting accounts from {} files{}",
+        crate::snap_sync_progress::TOTAL_PHASES,
+        file_count,
+        if files_to_skip > 0 { format!(" (skipping {} from checkpoint)", files_to_skip) } else { String::new() }
     );
 
-    // Parallel file reading and RLP decoding using rayon
-    let decoded_results: Vec<Result<(PathBuf, Vec<(H256, AccountState)>), SyncError>> = file_paths
-        .into_par_iter()
-        .map(|snapshot_path: PathBuf| {
-            let snapshot_contents = std::fs::read(&snapshot_path)
-                .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
-            let account_states_snapshot: Vec<(H256, AccountState)> =
-                RLPDecode::decode(&snapshot_contents)
-                    .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
-            Ok((snapshot_path, account_states_snapshot))
-        })
-        .collect();
-
-    // Process decoded results sequentially (snap_trie requires &mut self)
+    // Process files sequentially to avoid loading all into memory at once
     let mut files_processed = 0usize;
-    for result in decoded_results {
+    for snapshot_path in file_paths {
         // Skip already processed files based on checkpoint
         if files_processed < files_to_skip {
             files_processed += 1;
             continue;
         }
 
-        let (snapshot_path, account_states_snapshot): (PathBuf, Vec<(H256, AccountState)>) = result?;
+        // Read and decode one file at a time
+        let snapshot_contents = std::fs::read(&snapshot_path)
+            .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
+        let account_states_snapshot: Vec<(H256, AccountState)> =
+            RLPDecode::decode(&snapshot_contents)
+                .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+
+        // Drop the raw file contents immediately to free memory
+        drop(snapshot_contents);
 
         storage_accounts.accounts_with_storage_root.extend(
             account_states_snapshot.iter().filter_map(|(hash, state)| {
