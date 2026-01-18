@@ -71,6 +71,7 @@ pub mod discv4;
 pub mod discv5;
 pub(crate) mod metrics;
 pub mod network;
+pub mod snap_sync_progress;
 pub mod peer_handler;
 pub mod rlpx;
 pub(crate) mod snap;

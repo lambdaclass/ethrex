@@ -1,4 +1,5 @@
 use crate::rlpx::initiator::RLPxInitiator;
+use crate::snap_sync_progress::SNAP_PROGRESS;
 use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_table::{PeerData, PeerTable, PeerTableError},
@@ -836,8 +837,6 @@ impl PeerHandler {
         let (task_sender, mut task_receiver) =
             tokio::sync::mpsc::channel::<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>(2000);
 
-        info!("Starting to download account ranges from peers");
-
         *METRICS.account_tries_download_start_time.lock().await = Some(SystemTime::now());
 
         let mut completed_tasks = 0;
@@ -886,6 +885,10 @@ impl PeerHandler {
                     .downloaded_account_tries
                     .store(downloaded_count, Ordering::Relaxed);
                 last_update = SystemTime::now();
+
+                // Log progress with rate
+                SNAP_PROGRESS.accounts.set_current(downloaded_count);
+                SNAP_PROGRESS.log_accounts_download_progress(downloaded_count, None).await;
             }
 
             if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
@@ -936,7 +939,6 @@ impl PeerHandler {
 
             let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
                 if completed_tasks >= chunk_count {
-                    info!("All account ranges downloaded successfully");
                     break;
                 }
                 continue;
@@ -1394,6 +1396,8 @@ impl PeerHandler {
         let mut current_account_storages: BTreeMap<H256, AccountsWithStorage> = BTreeMap::new();
 
         let mut logged_no_free_peers_count = 0;
+        let mut last_progress_log = SystemTime::now();
+        let mut total_slots_downloaded: u64 = 0;
 
         debug!("Starting request_storage_ranges loop");
         loop {
@@ -1697,6 +1701,19 @@ impl PeerHandler {
                 METRICS
                     .storage_leaves_downloaded
                     .inc_by(effective_slots as u64);
+                total_slots_downloaded += effective_slots as u64;
+
+                // Log progress periodically
+                if last_progress_log
+                    .elapsed()
+                    .expect("Time shouldn't be in the past")
+                    >= Duration::from_secs(5)
+                {
+                    let accounts_remaining = account_storage_roots.accounts_with_storage_root.len() as u64;
+                    SNAP_PROGRESS.storage.set_current(total_slots_downloaded);
+                    SNAP_PROGRESS.log_storage_download_progress(total_slots_downloaded, accounts_remaining).await;
+                    last_progress_log = SystemTime::now();
+                }
 
                 debug!("Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id}");
                 debug!(

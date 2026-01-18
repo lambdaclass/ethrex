@@ -19,6 +19,7 @@ use crate::utils::{
 use crate::{
     metrics::METRICS,
     peer_handler::PeerHandler,
+    snap_sync_progress::SNAP_PROGRESS,
 };
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::U256;
@@ -210,10 +211,6 @@ impl Syncer {
             .get_block_number(current_head)
             .await?
             .ok_or(SyncError::BlockNumber(current_head))?;
-        info!(
-            "Syncing from current head {:?} to sync_head {:?}",
-            current_head, sync_head
-        );
         let pending_block = match store.get_pending_block(sync_head).await {
             Ok(res) => res,
             Err(e) => return Err(e.into()),
@@ -233,6 +230,19 @@ impl Syncer {
         if checkpoint.phase == SnapSyncPhase::HeaderDownload || checkpoint.phase == SnapSyncPhase::NotStarted {
             delete_leaves_folder(&self.datadir);
         }
+
+        // Log phase entry for header download
+        SNAP_PROGRESS.enter_phase(SnapSyncPhase::HeaderDownload as u8).await;
+        SNAP_PROGRESS.headers.start(0).await; // Total unknown initially
+        let header_download_start = Instant::now();
+        let mut last_header_log = Instant::now();
+
+        info!(
+            "[SNAP SYNC] Phase 1/{}: Starting header download from block #{}",
+            crate::snap_sync_progress::TOTAL_PHASES,
+            current_head_number
+        );
+
         loop {
             debug!("Requesting Block Headers from {current_head}");
 
@@ -328,10 +338,50 @@ impl Syncer {
                     .await?;
             }
 
+            // Log progress periodically (every 2 seconds)
+            if last_header_log.elapsed() >= Duration::from_secs(2) {
+                let headers_downloaded = block_sync_state.block_hashes.len() as u64;
+                let elapsed = header_download_start.elapsed();
+                let rate = if elapsed.as_secs_f64() > 0.0 {
+                    headers_downloaded as f64 / elapsed.as_secs_f64()
+                } else {
+                    0.0
+                };
+
+                SNAP_PROGRESS.headers.set_current(headers_downloaded);
+
+                info!(
+                    "[SNAP SYNC] Phase 1/{}: Headers: {} downloaded | Block #{} | Rate: {}/s | Elapsed: {}",
+                    crate::snap_sync_progress::TOTAL_PHASES,
+                    crate::snap_sync_progress::format_count(headers_downloaded),
+                    current_head_number,
+                    crate::snap_sync_progress::format_count(rate as u64),
+                    crate::snap_sync_progress::format_duration(elapsed)
+                );
+                last_header_log = Instant::now();
+            }
+
             if sync_head_found {
                 break;
             };
         }
+
+        // Log header download completion
+        let total_headers = block_sync_state.block_hashes.len() as u64;
+        let elapsed = header_download_start.elapsed();
+        let rate = if elapsed.as_secs_f64() > 0.0 {
+            total_headers as f64 / elapsed.as_secs_f64()
+        } else {
+            0.0
+        };
+        SNAP_PROGRESS.headers.set_current(total_headers);
+        info!(
+            "[SNAP SYNC] Phase 1/{} complete: Header Download | Downloaded: {} | Rate: {}/s | Duration: {}",
+            crate::snap_sync_progress::TOTAL_PHASES,
+            crate::snap_sync_progress::format_count(total_headers),
+            crate::snap_sync_progress::format_count(rate as u64),
+            crate::snap_sync_progress::format_duration(elapsed)
+        );
 
         self.snap_sync(&store, &mut block_sync_state, checkpoint).await?;
 
@@ -770,6 +820,9 @@ impl Syncer {
             pivot_header.number
         );
 
+        // Initialize the progress tracker
+        SNAP_PROGRESS.start_sync(pivot_header.number).await;
+
         // Update checkpoint with pivot info
         checkpoint.pivot_block_number = pivot_header.number;
         checkpoint.pivot_block_hash = pivot_header.compute_block_hash();
@@ -802,11 +855,13 @@ impl Syncer {
                 checkpoint.touch();
                 store.save_snap_sync_checkpoint(&checkpoint).await?;
 
+                // Log phase entry
+                SNAP_PROGRESS.enter_phase(SnapSyncPhase::AccountDownload as u8).await;
+                SNAP_PROGRESS.accounts.start(0).await; // Total unknown until download completes
+
                 // We start by downloading all of the leafs of the trie of accounts
                 // The function request_account_range writes the leafs into files in
                 // account_state_snapshots_dir
-
-                info!("Starting to download account ranges from peers");
                 self.peers
                     .request_account_range(
                         H256::zero(),
@@ -816,9 +871,9 @@ impl Syncer {
                         block_sync_state,
                     )
                     .await?;
-                info!("Finish downloading account ranges from peers");
+                SNAP_PROGRESS.complete_phase(SnapSyncPhase::AccountDownload as u8).await;
             } else {
-                info!("Skipping account download phase (already completed in checkpoint)");
+                info!("[SNAP SYNC] Skipping account download phase (already completed in checkpoint)");
             }
 
             // Phase: Account Insertion
@@ -827,6 +882,10 @@ impl Syncer {
                 checkpoint.phase = SnapSyncPhase::AccountInsertion;
                 checkpoint.touch();
                 store.save_snap_sync_checkpoint(&checkpoint).await?;
+
+                // Log phase entry
+                SNAP_PROGRESS.enter_phase(SnapSyncPhase::AccountInsertion as u8).await;
+                SNAP_PROGRESS.accounts.start(0).await;
 
                 *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
                 // We read the account leafs from the files in account_state_snapshots_dir, write it into
@@ -843,8 +902,12 @@ impl Syncer {
                 )
                 .await?;
 
+                // Update progress with final count
+                SNAP_PROGRESS.accounts.set_current(snap_trie.account_count() as u64);
+                SNAP_PROGRESS.complete_phase(SnapSyncPhase::AccountInsertion as u8).await;
+
                 info!(
-                    "Finished inserting account ranges, total storage accounts: {}",
+                    "[SNAP SYNC] Total storage accounts to process: {}",
                     storage_accounts.accounts_with_storage_root.len()
                 );
                 *METRICS.account_tries_insert_end_time.lock().await = Some(SystemTime::now());
@@ -856,19 +919,23 @@ impl Syncer {
 
                 result
             } else {
-                info!("Skipping account insertion phase (already completed in checkpoint)");
+                info!("[SNAP SYNC] Skipping account insertion phase (already completed in checkpoint)");
                 // When resuming, we need default values; the accounts were already inserted
                 (H256::zero(), BTreeSet::new())
             };
 
-            info!("Original state root: {state_root:?}");
-            info!("Computed state root after request_account_rages: {computed_state_root:?}");
+            debug!("Original state root: {state_root:?}");
+            debug!("Computed state root after request_account_rages: {computed_state_root:?}");
 
             // Phase: Storage Download
             if !should_skip_phase(SnapSyncPhase::StorageDownload, checkpoint.phase) {
                 checkpoint.phase = SnapSyncPhase::StorageDownload;
                 checkpoint.touch();
                 store.save_snap_sync_checkpoint(&checkpoint).await?;
+
+                // Log phase entry
+                SNAP_PROGRESS.enter_phase(SnapSyncPhase::StorageDownload as u8).await;
+                SNAP_PROGRESS.storage.start(0).await;
 
                 *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
                 // Note: State trie healing is skipped for ethrex_db backend because:
@@ -889,7 +956,7 @@ impl Syncer {
                         .await?;
                     }
 
-                    info!(
+                    debug!(
                         "Started request_storage_ranges with {} accounts with storage root unchanged",
                         storage_accounts.accounts_with_storage_root.len()
                     );
@@ -930,11 +997,9 @@ impl Syncer {
                         storage_accounts.accounts_with_storage_root.clear();
                     }
 
-                    info!(
-                        "Ended request_storage_ranges with {} accounts with storage root unchanged and not downloaded yet and with {} big/healed accounts",
+                    debug!(
+                        "Ended request_storage_ranges with {} accounts remaining, {} big/healed accounts",
                         storage_accounts.accounts_with_storage_root.len(),
-                        // These accounts are marked as heals if they're a big account. This is
-                        // because we don't know if the storage root is still valid
                         storage_accounts.healed_accounts.len(),
                     );
                     if !block_is_stale(&pivot_header) {
@@ -942,10 +1007,10 @@ impl Syncer {
                     }
                     info!("We stopped because of staleness, restarting loop");
                 }
-                info!("Finished request_storage_ranges");
+                SNAP_PROGRESS.complete_phase(SnapSyncPhase::StorageDownload as u8).await;
                 *METRICS.storage_tries_download_end_time.lock().await = Some(SystemTime::now());
             } else {
-                info!("Skipping storage download phase (already completed in checkpoint)");
+                info!("[SNAP SYNC] Skipping storage download phase (already completed in checkpoint)");
             }
 
             // Phase: Storage Insertion
@@ -953,6 +1018,10 @@ impl Syncer {
                 checkpoint.phase = SnapSyncPhase::StorageInsertion;
                 checkpoint.touch();
                 store.save_snap_sync_checkpoint(&checkpoint).await?;
+
+                // Log phase entry
+                SNAP_PROGRESS.enter_phase(SnapSyncPhase::StorageInsertion as u8).await;
+                SNAP_PROGRESS.storage.start(0).await;
 
                 *METRICS.storage_tries_insert_start_time.lock().await = Some(SystemTime::now());
                 METRICS
@@ -977,9 +1046,9 @@ impl Syncer {
                 checkpoint.touch();
                 store.save_snap_sync_checkpoint(&checkpoint).await?;
 
-                info!("Finished storing storage tries");
+                SNAP_PROGRESS.complete_phase(SnapSyncPhase::StorageInsertion as u8).await;
             } else {
-                info!("Skipping storage insertion phase (already completed in checkpoint)");
+                info!("[SNAP SYNC] Skipping storage insertion phase (already completed in checkpoint)");
             }
         }
 
@@ -989,44 +1058,45 @@ impl Syncer {
             checkpoint.touch();
             store.save_snap_sync_checkpoint(&checkpoint).await?;
 
+            // Log phase entry
+            SNAP_PROGRESS.enter_phase(SnapSyncPhase::StateHealing as u8).await;
+            SNAP_PROGRESS.healing.start(0).await;
+
             *METRICS.heal_start_time.lock().await = Some(SystemTime::now());
 
             // ethrex_db path: Skip trie-level healing and verify state root directly.
             // SnapSyncTrie computes its own merkle trie from inserted accounts/storage.
             // If state root matches, the data is complete. If not, we'd need account-level healing.
-            info!("Verifying state root from SnapSyncTrie");
+            info!("[SNAP SYNC] Phase 6/{}: Verifying state root...", crate::snap_sync_progress::TOTAL_PHASES);
             let computed_root = snap_trie.compute_state_root();
             if computed_root != pivot_header.state_root {
                 warn!(
-                    "State root mismatch! Expected: {:?}, Got: {:?}. \
-                     Data may be incomplete. Account-level healing not yet implemented.",
+                    "[SNAP SYNC] State root mismatch! Expected: {:?}, Got: {:?}",
                     pivot_header.state_root, computed_root
                 );
-                // For now, continue anyway - the node can still function but state queries may be incomplete
             } else {
-                info!("State root verified successfully: {:?}", computed_root);
+                info!("[SNAP SYNC] State root verified successfully: {:?}", computed_root);
             }
 
             *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
+            SNAP_PROGRESS.complete_phase(SnapSyncPhase::StateHealing as u8).await;
         } else {
-            info!("Skipping healing phase (already completed in checkpoint)");
+            info!("[SNAP SYNC] Skipping healing phase (already completed in checkpoint)");
         }
 
         // Integrate the SnapSyncTrie into the state manager
-        info!("Integrating SnapSyncTrie with ethrex_db state manager (accounts: {})", snap_trie.account_count());
+        debug!("Integrating SnapSyncTrie with ethrex_db state manager (accounts: {})", snap_trie.account_count());
         store.set_snap_sync_trie(snap_trie);
 
         // Persist the state trie to disk
         let pivot_hash = pivot_header.compute_block_hash();
-        info!("Persisting snap sync state to disk (block: {}, hash: {:?})", pivot_header.number, pivot_hash);
+        debug!("Persisting snap sync state to disk (block: {}, hash: {:?})", pivot_header.number, pivot_hash);
         store.persist_snap_sync_state(pivot_header.number, pivot_hash)?;
 
         store.generate_flatkeyvalue()?;
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
-
-        info!("Finished healing");
 
         // Phase: Bytecode Download
         if !should_skip_phase(SnapSyncPhase::BytecodeDownload, checkpoint.phase) {
@@ -1036,6 +1106,9 @@ impl Syncer {
 
             // Finish code hash collection
             code_hash_collector.finish().await?;
+
+            // Log phase entry
+            SNAP_PROGRESS.enter_phase(SnapSyncPhase::BytecodeDownload as u8).await;
 
             *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
 
@@ -1048,7 +1121,7 @@ impl Syncer {
                 .collect();
 
             let file_count = file_paths.len();
-            info!("Reading and decoding {} code hash files in parallel", file_count);
+            debug!("Reading and decoding {} code hash files in parallel", file_count);
 
             // Parallel file reading and RLP decoding using rayon
             let decoded_results: Vec<Result<Vec<H256>, SyncError>> = file_paths
@@ -1081,16 +1154,20 @@ impl Syncer {
                 .skip(bytecodes_to_skip)
                 .collect();
 
+            let total_bytecodes = remaining_code_hashes.len() + bytecodes_to_skip;
+            SNAP_PROGRESS.bytecodes.start(total_bytecodes as u64).await;
+            SNAP_PROGRESS.bytecodes.set_current(bytecodes_to_skip as u64);
+
             info!(
-                "Starting download of {} unique bytecodes from peers (skipped {} from checkpoint)",
+                "[SNAP SYNC] Phase 8/{}: Downloading {} unique bytecodes{}",
+                crate::snap_sync_progress::TOTAL_PHASES,
                 remaining_code_hashes.len(),
-                bytecodes_to_skip
+                if bytecodes_to_skip > 0 { format!(" (skipped {} from checkpoint)", bytecodes_to_skip) } else { String::new() }
             );
 
             // Download bytecodes in chunks
             let mut bytecodes_downloaded = bytecodes_to_skip;
             for chunk in remaining_code_hashes.chunks(BYTECODE_CHUNK_SIZE) {
-                info!("Starting bytecode download of {} hashes", chunk.len());
                 let bytecodes = self
                     .peers
                     .request_bytecodes(chunk)
@@ -1110,21 +1187,26 @@ impl Syncer {
                     )
                     .await?;
 
-                // Update checkpoint after each chunk
+                // Update checkpoint and progress after each chunk
                 bytecodes_downloaded += chunk.len();
                 checkpoint.bytecodes_downloaded = bytecodes_downloaded;
                 checkpoint.touch();
                 store.save_snap_sync_checkpoint(&checkpoint).await?;
+
+                // Log progress with ETA
+                SNAP_PROGRESS.bytecodes.set_current(bytecodes_downloaded as u64);
+                SNAP_PROGRESS.log_bytecodes_progress(bytecodes_downloaded as u64, total_bytecodes as u64).await;
             }
 
             std::fs::remove_dir_all(code_hashes_dir)
                 .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?;
 
             *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
+            SNAP_PROGRESS.complete_phase(SnapSyncPhase::BytecodeDownload as u8).await;
 
             debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root));
         } else {
-            info!("Skipping bytecode download phase (already completed in checkpoint)");
+            info!("[SNAP SYNC] Skipping bytecode download phase (already completed in checkpoint)");
             // Still need to finish code hash collector
             code_hash_collector.finish().await?;
         }
@@ -1165,7 +1247,9 @@ impl Syncer {
         checkpoint.phase = SnapSyncPhase::Completed;
         checkpoint.touch();
         store.save_snap_sync_checkpoint(&checkpoint).await?;
-        info!("Snap sync completed successfully. Checkpoint saved.");
+
+        // Log final summary
+        SNAP_PROGRESS.complete_sync().await;
 
         Ok(())
     }
