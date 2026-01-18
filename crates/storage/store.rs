@@ -1019,6 +1019,14 @@ impl Store {
             .map_err(|e| StoreError::Custom(e))
     }
 
+    /// Returns the state root from the persisted state trie.
+    ///
+    /// Used when resuming snap sync to verify the state root without
+    /// needing to reconstruct the SnapSyncTrie.
+    pub fn get_persisted_state_root(&self) -> H256 {
+        self.state_manager.state_root()
+    }
+
     /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
     /// when processing an invalid payload. To provide this, we must track invalid chains.
     ///

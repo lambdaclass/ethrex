@@ -2073,6 +2073,45 @@ impl PeerHandler {
         Ok(nodes)
     }
 
+    /// Requests storage ranges directly from a peer.
+    ///
+    /// This is a lower-level method used by storage healing to re-request
+    /// storage for accounts that failed during initial download.
+    ///
+    /// Returns the StorageRanges response or None if the request failed.
+    pub async fn request_storage_ranges_raw(
+        &mut self,
+        peer_id: &H256,
+        connection: &mut PeerConnection,
+        request: GetStorageRanges,
+    ) -> Result<Option<StorageRanges>, PeerHandlerError> {
+        let request_msg = RLPxMessage::GetStorageRanges(request);
+
+        match PeerHandler::make_request(
+            &mut self.peer_table,
+            *peer_id,
+            connection,
+            request_msg,
+            PEER_REPLY_TIMEOUT,
+        )
+        .await
+        {
+            Ok(RLPxMessage::StorageRanges(response)) => Ok(Some(response)),
+            Ok(_other_msg) => {
+                debug!("Received unexpected message from peer during storage ranges request");
+                Ok(None)
+            }
+            Err(PeerConnectionError::Timeout) => {
+                debug!("Timeout while waiting for storage ranges from peer");
+                Ok(None)
+            }
+            Err(e) => {
+                debug!("Error requesting storage ranges: {:?}", e);
+                Err(PeerHandlerError::PeerConnection(e))
+            }
+        }
+    }
+
     /// Requests storage trie nodes given the root of the state trie where they are contained and
     /// a hashmap mapping the path to the account in the state trie (aka hashed address) to the paths to the nodes in its storage trie (can be full or partial)
     /// Returns the nodes or None if:

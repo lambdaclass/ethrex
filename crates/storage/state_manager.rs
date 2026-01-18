@@ -436,6 +436,29 @@ impl SnapSyncTrie {
         self.trie.storage_trie_count()
     }
 
+    /// Gets an account's storage root by hashed address.
+    ///
+    /// Returns the storage root for the account, or None if the account doesn't exist.
+    /// Used by storage healing to determine which accounts need healing.
+    pub fn get_account_storage_root(&self, hashed_address: &H256) -> Option<H256> {
+        self.trie.get_account_by_hash(hashed_address.as_fixed_bytes())
+            .map(|account| H256::from(account.storage_root))
+    }
+
+    /// Gets a storage value by hashed address and slot hash.
+    ///
+    /// Returns the storage value, or None if it doesn't exist.
+    /// Used by storage healing to verify storage integrity.
+    pub fn get_storage_value(&self, hashed_address: &H256, slot_hash: &H256) -> Option<U256> {
+        self.trie.get_storage_by_hash(hashed_address.as_fixed_bytes(), slot_hash.as_fixed_bytes())
+            .map(|bytes| U256::from_big_endian(&bytes))
+    }
+
+    /// Checks if an account exists in the trie.
+    pub fn account_exists(&self, hashed_address: &H256) -> bool {
+        self.trie.get_account_by_hash(hashed_address.as_fixed_bytes()).is_some()
+    }
+
     /// Consumes the snap sync trie and returns the underlying PagedStateTrie.
     ///
     /// This is used to integrate the trie with the Blockchain layer after

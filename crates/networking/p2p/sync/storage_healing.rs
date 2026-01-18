@@ -11,7 +11,7 @@ use crate::{
     peer_handler::{PeerHandler, RequestStorageTrieNodes, MAX_RESPONSE_BYTES},
     rlpx::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
-        snap::{GetTrieNodes, TrieNodes},
+        snap::{GetStorageRanges, GetTrieNodes, TrieNodes},
     },
     sync::{
         state_healing::{SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE},
@@ -19,6 +19,7 @@ use crate::{
     },
     utils::current_unix_time,
 };
+use ethrex_storage::SnapSyncTrie;
 
 use super::healing_cache::{HealingCache, PathStatus, SharedHealingCache};
 
@@ -804,4 +805,144 @@ fn commit_node(
         membatch.insert(parent_key, parent_entry);
         Ok(())
     }
+}
+
+// ============================================================================
+// SnapSyncTrie Storage Healing
+// ============================================================================
+
+/// Heals storage tries directly on SnapSyncTrie (for snap sync with ethrex_db backend).
+///
+/// Unlike the trie-node-based healing for the standard trie backend, this function
+/// re-requests storage ranges for accounts that failed during initial download and
+/// inserts them directly into the SnapSyncTrie.
+///
+/// # Arguments
+/// * `state_root` - The expected state root from the pivot block
+/// * `storage_accounts` - Contains the set of accounts that need healing
+/// * `peers` - Peer handler for making snap protocol requests
+/// * `snap_trie` - The SnapSyncTrie to insert healed storage into
+/// * `staleness_timestamp` - Timestamp after which the pivot is considered stale
+/// * `global_slots_healed` - Counter for tracking healed storage slots
+///
+/// # Returns
+/// * `Ok(true)` if healing completed successfully
+/// * `Ok(false)` if the pivot became stale during healing
+/// * `Err(SyncError)` if healing failed
+pub async fn heal_storage_trie_snap(
+    state_root: H256,
+    storage_accounts: &AccountStorageRoots,
+    peers: &mut PeerHandler,
+    snap_trie: &mut SnapSyncTrie,
+    staleness_timestamp: u64,
+    global_slots_healed: &mut u64,
+) -> Result<bool, SyncError> {
+    use tracing::info;
+
+    let healed_accounts: Vec<H256> = storage_accounts.healed_accounts.iter().copied().collect();
+
+    if healed_accounts.is_empty() {
+        debug!("No accounts need storage healing");
+        return Ok(true);
+    }
+
+    info!(
+        "[SNAP SYNC] Starting storage healing for {} accounts",
+        healed_accounts.len()
+    );
+
+    METRICS.current_step.set(CurrentStepValue::HealingStorage);
+
+    let mut accounts_healed = 0usize;
+    let mut slots_healed = 0u64;
+    let mut last_progress_log = tokio::time::Instant::now();
+
+    // Process accounts in batches to avoid overwhelming peers
+    const ACCOUNTS_PER_BATCH: usize = 100;
+
+    for batch in healed_accounts.chunks(ACCOUNTS_PER_BATCH) {
+        // Check for staleness
+        if current_unix_time() > staleness_timestamp {
+            info!(
+                "[SNAP SYNC] Storage healing interrupted due to stale pivot (healed {}/{} accounts)",
+                accounts_healed,
+                healed_accounts.len()
+            );
+            return Ok(false);
+        }
+
+        // Request storage ranges for this batch of accounts
+        for account_hash in batch {
+            // Get peer connection
+            let Some((peer_id, mut connection)) = peers
+                .peer_table
+                .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+                .await?
+            else {
+                debug!("No peers available for storage healing, retrying...");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            };
+
+            // Request full storage range for this account
+            let request = GetStorageRanges {
+                id: rand::random(),
+                root_hash: state_root,
+                account_hashes: vec![*account_hash],
+                starting_hash: H256::zero(),
+                limit_hash: H256::repeat_byte(0xff),
+                response_bytes: MAX_RESPONSE_BYTES,
+            };
+
+            match peers
+                .request_storage_ranges_raw(&peer_id, &mut connection, request)
+                .await
+            {
+                Ok(Some(response)) => {
+                    // Process the storage slots
+                    // response.slots is Vec<Vec<StorageSlot>> - one Vec<StorageSlot> per account
+                    for slot in response.slots.into_iter().flatten() {
+                        snap_trie.insert_storage(*account_hash, slot.hash, slot.data);
+                        slots_healed += 1;
+                    }
+                    accounts_healed += 1;
+                    peers.peer_table.record_success(&peer_id).await?;
+                }
+                Ok(None) => {
+                    debug!(
+                        "Empty response for account {:?}, peer may not have this data",
+                        account_hash
+                    );
+                    peers.peer_table.record_failure(&peer_id).await?;
+                }
+                Err(e) => {
+                    debug!(
+                        "Failed to request storage for account {:?}: {:?}",
+                        account_hash, e
+                    );
+                    peers.peer_table.record_failure(&peer_id).await?;
+                }
+            }
+        }
+
+        // Log progress periodically
+        if last_progress_log.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
+            info!(
+                "[SNAP SYNC] Storage healing progress: {}/{} accounts, {} slots healed",
+                accounts_healed,
+                healed_accounts.len(),
+                slots_healed
+            );
+            last_progress_log = tokio::time::Instant::now();
+        }
+    }
+
+    *global_slots_healed += slots_healed;
+
+    info!(
+        "[SNAP SYNC] Storage healing complete: {} accounts, {} slots healed",
+        accounts_healed, slots_healed
+    );
+
+    Ok(true)
 }

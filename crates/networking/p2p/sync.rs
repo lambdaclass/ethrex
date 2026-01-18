@@ -5,7 +5,6 @@ mod healing_bench;
 #[cfg(test)]
 mod healing_tests;
 mod state_healing;
-#[allow(dead_code)]
 mod storage_healing;
 
 use crate::peer_handler::{BlockRequestOrder, PeerHandlerError, SNAP_LIMIT};
@@ -66,6 +65,64 @@ const MAX_HEADER_FETCH_ATTEMPTS: u64 = 100;
 /// Maximum age in seconds for a checkpoint to be considered valid for resume.
 /// If a checkpoint is older than this, snap sync will start fresh.
 const CHECKPOINT_MAX_AGE_SECS: u64 = 30 * 60; // 30 minutes
+
+/// Default storage flush threshold (slots) when memory info unavailable
+const DEFAULT_FLUSH_THRESHOLD: usize = 500_000;
+/// Minimum storage flush threshold (slots) - ~16MB
+const MIN_FLUSH_THRESHOLD: usize = 100_000;
+/// Maximum storage flush threshold (slots) - ~320MB
+const MAX_FLUSH_THRESHOLD: usize = 2_000_000;
+/// Approximate memory bytes per storage slot in trie
+const BYTES_PER_STORAGE_SLOT: usize = 160;
+/// Percentage of available memory to use for storage tries (5%)
+const MEMORY_USAGE_PERCENT: usize = 5;
+
+/// Get available memory in bytes from /proc/meminfo (Linux only)
+/// Returns None on non-Linux systems or if reading fails
+#[cfg(target_os = "linux")]
+fn get_available_memory_bytes() -> Option<usize> {
+    let contents = std::fs::read_to_string("/proc/meminfo").ok()?;
+    for line in contents.lines() {
+        if line.starts_with("MemAvailable:") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                // Value is in kB
+                let kb: usize = parts[1].parse().ok()?;
+                return Some(kb * 1024);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+fn get_available_memory_bytes() -> Option<usize> {
+    None
+}
+
+/// Calculate storage flush threshold based on available memory.
+/// Uses MEMORY_USAGE_PERCENT of available memory, bounded between MIN and MAX thresholds.
+fn calculate_flush_threshold() -> usize {
+    if let Some(available_bytes) = get_available_memory_bytes() {
+        let target_bytes = available_bytes * MEMORY_USAGE_PERCENT / 100;
+        let threshold = target_bytes / BYTES_PER_STORAGE_SLOT;
+        let clamped = threshold.clamp(MIN_FLUSH_THRESHOLD, MAX_FLUSH_THRESHOLD);
+        debug!(
+            "[SNAP SYNC] Dynamic flush threshold: {} slots (~{}MB) based on {}MB available",
+            clamped,
+            clamped * BYTES_PER_STORAGE_SLOT / 1024 / 1024,
+            available_bytes / 1024 / 1024
+        );
+        clamped
+    } else {
+        debug!(
+            "[SNAP SYNC] Using default flush threshold: {} slots (~{}MB)",
+            DEFAULT_FLUSH_THRESHOLD,
+            DEFAULT_FLUSH_THRESHOLD * BYTES_PER_STORAGE_SLOT / 1024 / 1024
+        );
+        DEFAULT_FLUSH_THRESHOLD
+    }
+}
 
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
@@ -848,6 +905,10 @@ impl Syncer {
             (checkpoint_phase as u8) > (phase as u8)
         };
 
+        // Track if we're resuming with persisted state (skipped storage insertion)
+        // If true, state is already in the store and we should use persisted state root
+        let resuming_with_persisted_state = should_skip_phase(SnapSyncPhase::StorageInsertion, checkpoint.phase);
+
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
             // Phase: Account Download
             if !should_skip_phase(SnapSyncPhase::AccountDownload, checkpoint.phase) {
@@ -1064,19 +1125,57 @@ impl Syncer {
 
             *METRICS.heal_start_time.lock().await = Some(SystemTime::now());
 
-            // ethrex_db path: Skip trie-level healing and verify state root directly.
-            // SnapSyncTrie computes its own merkle trie from inserted accounts/storage.
-            // If state root matches, the data is complete. If not, we'd need account-level healing.
+            // Get the state root to verify against
+            // If resuming with persisted state, use the already-computed root from the store
+            // Otherwise compute from the snap_trie we just built
+            let computed_root = if resuming_with_persisted_state {
+                info!("[SNAP SYNC] Using persisted state root (resuming from checkpoint)");
+                store.get_persisted_state_root()
+            } else {
+                // Calculate staleness timestamp for healing
+                let staleness_timestamp = calculate_staleness_timestamp(pivot_header.timestamp);
+                let mut global_slots_healed = 0u64;
+
+                // Heal storage tries for accounts that failed during initial download
+                if !storage_accounts.healed_accounts.is_empty() {
+                    info!(
+                        "[SNAP SYNC] Phase 6/{}: Healing storage for {} accounts",
+                        crate::snap_sync_progress::TOTAL_PHASES,
+                        storage_accounts.healed_accounts.len()
+                    );
+
+                    let healed = storage_healing::heal_storage_trie_snap(
+                        pivot_header.state_root,
+                        &storage_accounts,
+                        &mut self.peers,
+                        &mut snap_trie,
+                        staleness_timestamp,
+                        &mut global_slots_healed,
+                    ).await?;
+
+                    if !healed {
+                        // Pivot became stale during healing
+                        return Err(SyncError::StorageHealingFailed);
+                    }
+                }
+
+                // Compute state root from snap_trie
+                snap_trie.compute_state_root()
+            };
+
+            // Verify state root
             info!("[SNAP SYNC] Phase 6/{}: Verifying state root...", crate::snap_sync_progress::TOTAL_PHASES);
-            let computed_root = snap_trie.compute_state_root();
             if computed_root != pivot_header.state_root {
                 warn!(
                     "[SNAP SYNC] State root mismatch! Expected: {:?}, Got: {:?}",
                     pivot_header.state_root, computed_root
                 );
-            } else {
-                info!("[SNAP SYNC] State root verified successfully: {:?}", computed_root);
+                return Err(SyncError::StateRootMismatch {
+                    expected: pivot_header.state_root,
+                    computed: computed_root,
+                });
             }
+            info!("[SNAP SYNC] State root verified successfully: {:?}", computed_root);
 
             *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
             SNAP_PROGRESS.complete_phase(SnapSyncPhase::StateHealing as u8).await;
@@ -1084,14 +1183,18 @@ impl Syncer {
             info!("[SNAP SYNC] Skipping healing phase (already completed in checkpoint)");
         }
 
-        // Integrate the SnapSyncTrie into the state manager
-        debug!("Integrating SnapSyncTrie with ethrex_db state manager (accounts: {})", snap_trie.account_count());
-        store.set_snap_sync_trie(snap_trie);
+        // Integrate the SnapSyncTrie into the state manager (only if we built a new trie)
+        if !resuming_with_persisted_state {
+            debug!("Integrating SnapSyncTrie with ethrex_db state manager (accounts: {})", snap_trie.account_count());
+            store.set_snap_sync_trie(snap_trie);
 
-        // Persist the state trie to disk
-        let pivot_hash = pivot_header.compute_block_hash();
-        debug!("Persisting snap sync state to disk (block: {}, hash: {:?})", pivot_header.number, pivot_hash);
-        store.persist_snap_sync_state(pivot_header.number, pivot_hash)?;
+            // Persist the state trie to disk
+            let pivot_hash = pivot_header.compute_block_hash();
+            debug!("Persisting snap sync state to disk (block: {}, hash: {:?})", pivot_header.number, pivot_hash);
+            store.persist_snap_sync_state(pivot_header.number, pivot_hash)?;
+        } else {
+            debug!("Skipping SnapSyncTrie integration (state already persisted)");
+        }
 
         store.generate_flatkeyvalue()?;
 
@@ -1432,6 +1535,10 @@ pub enum SyncError {
     PeerTableError(#[from] PeerTableError),
     #[error("Missing fullsync batch")]
     MissingFullsyncBatch,
+    #[error("Storage healing failed")]
+    StorageHealingFailed,
+    #[error("State root mismatch: expected {expected}, got {computed}")]
+    StateRootMismatch { expected: H256, computed: H256 },
 }
 
 impl SyncError {
@@ -1456,7 +1563,9 @@ impl SyncError {
             | SyncError::BytecodeFileError
             | SyncError::NoLatestCanonical
             | SyncError::PeerTableError(_)
-            | SyncError::MissingFullsyncBatch => false,
+            | SyncError::MissingFullsyncBatch
+            | SyncError::StorageHealingFailed
+            | SyncError::StateRootMismatch { .. } => false,
             SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)
