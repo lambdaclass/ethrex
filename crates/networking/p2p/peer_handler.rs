@@ -17,7 +17,16 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
-    sync::{AccountStorageRoots, SnapBlockSyncState, block_is_stale, update_pivot},
+    sync::{
+        AccountStorageRoots, SnapBlockSyncState, block_is_stale,
+        constants::{
+            ACCOUNT_RANGE_CHUNKS, BIG_ACCOUNT_CHUNK_SLOTS, BYTECODE_DOWNLOAD_CHUNKS,
+            HEADER_DOWNLOAD_CONCURRENCY, MAX_BYTECODES_PER_REQUEST, MAX_HEADER_CHUNK,
+            MAX_RESPONSE_BYTES, PEER_REPLY_TIMEOUT, RANGE_FILE_CHUNK_SIZE, REQUEST_RETRY_ATTEMPTS,
+            STORAGE_ACCOUNTS_BATCH_SIZE,
+        },
+        update_pivot,
+    },
     utils::{
         AccountsWithStorage, dump_accounts_to_file, dump_storages_to_file,
         get_account_state_snapshot_file, get_account_storages_snapshot_file,
@@ -41,27 +50,9 @@ use std::{
     time::{Duration, SystemTime},
 };
 use tracing::{debug, error, info, trace, warn};
-pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
-pub const PEER_SELECT_RETRY_ATTEMPTS: u32 = 3;
-pub const REQUEST_RETRY_ATTEMPTS: u32 = 5;
-pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
+
+/// Maximum hash value (all 0xFF bytes).
 pub const HASH_MAX: H256 = H256([0xFF; 32]);
-
-pub const MAX_HEADER_CHUNK: u64 = 500_000;
-
-// How much we store in memory of request_account_range and request_storage_ranges
-// before we dump it into the file. This tunes how much memory ethrex uses during
-// the first steps of snap sync
-pub const RANGE_FILE_CHUNK_SIZE: usize = 1024 * 1024 * 64; // 64MB
-pub const SNAP_LIMIT: usize = 128;
-
-// Request as many as 128 block bodies per request
-// this magic number is not part of the protocol and is taken from geth, see:
-// https://github.com/ethereum/go-ethereum/blob/2585776aabbd4ae9b00050403b42afb0cee968ec/eth/downloader/downloader.go#L42-L43
-//
-// Note: We noticed that while bigger values are supported
-// increasing them may be the cause of peers disconnection
-pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 
 /// An abstraction over the [Kademlia] containing logic to make requests to peers
 #[derive(Debug, Clone)]
@@ -249,7 +240,11 @@ impl PeerHandler {
         *METRICS.sync_head_hash.lock().await = sync_head;
 
         let block_count = sync_head_number + 1 - start;
-        let chunk_count = if block_count < 800_u64 { 1 } else { 800_u64 };
+        let chunk_count = if block_count < HEADER_DOWNLOAD_CONCURRENCY {
+            1
+        } else {
+            HEADER_DOWNLOAD_CONCURRENCY
+        };
 
         // 2) partition the amount of headers in `K` tasks
         let chunk_limit = block_count / chunk_count;
@@ -626,12 +621,12 @@ impl PeerHandler {
         let start_u256 = U256::from_big_endian(&start.0);
         let limit_u256 = U256::from_big_endian(&limit.0);
 
-        let chunk_count = 800;
+        let chunk_count = ACCOUNT_RANGE_CHUNKS;
         let chunk_size = (limit_u256 - start_u256) / chunk_count;
 
         // list of tasks to be executed
         let mut tasks_queue_not_started = VecDeque::<(H256, H256)>::new();
-        for i in 0..(chunk_count as u64) {
+        for i in 0..chunk_count {
             let chunk_start_u256 = chunk_size * i + start_u256;
             // We subtract one because ranges are inclusive
             let chunk_end_u256 = chunk_start_u256 + chunk_size - 1u64;
@@ -945,9 +940,8 @@ impl PeerHandler {
         METRICS
             .current_step
             .set(CurrentStepValue::RequestingBytecodes);
-        const MAX_BYTECODES_REQUEST_SIZE: usize = 100;
         // 1) split the range in chunks of same length
-        let chunk_count = 800;
+        let chunk_count = BYTECODE_DOWNLOAD_CHUNKS;
         let chunk_size = all_bytecode_hashes.len() / chunk_count;
 
         // list of tasks to be executed
@@ -1053,7 +1047,7 @@ impl PeerHandler {
             let hashes_to_request: Vec<_> = all_bytecode_hashes
                 .iter()
                 .skip(chunk_start)
-                .take((chunk_end - chunk_start).min(MAX_BYTECODES_REQUEST_SIZE))
+                .take((chunk_end - chunk_start).min(MAX_BYTECODES_PER_REQUEST))
                 .copied()
                 .collect();
 
@@ -1170,7 +1164,7 @@ impl PeerHandler {
         let mut accounts_by_root_hash = Vec::from_iter(accounts_by_root_hash);
         // TODO: Turn this into a stable sort for binary search.
         accounts_by_root_hash.sort_unstable_by_key(|(_, accounts)| !accounts.len());
-        let chunk_size = 300;
+        let chunk_size = STORAGE_ACCOUNTS_BATCH_SIZE;
         let chunk_count = (accounts_by_root_hash.len() / chunk_size) + 1;
 
         // list of tasks to be executed
@@ -1379,7 +1373,7 @@ impl PeerHandler {
                             .max(1);
                         let storage_density = start_hash_u256 / slot_count;
 
-                        let slots_per_chunk = U256::from(10000);
+                        let slots_per_chunk = U256::from(BIG_ACCOUNT_CHUNK_SLOTS);
                         let chunk_size = storage_density
                             .checked_mul(slots_per_chunk)
                             .unwrap_or(U256::MAX);

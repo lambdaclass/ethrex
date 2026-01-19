@@ -1,13 +1,16 @@
 use crate::{
     metrics::{CurrentStepValue, METRICS},
-    peer_handler::{MAX_RESPONSE_BYTES, PeerHandler, RequestStorageTrieNodes},
+    peer_handler::{PeerHandler, RequestStorageTrieNodes},
     rlpx::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
         snap::{GetTrieNodes, TrieNodes},
     },
     sync::{
         AccountStorageRoots, SyncError,
-        state_healing::{SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE},
+        constants::{
+            HEALING_FLUSH_THRESHOLD, HEALING_PROGRESS_INTERVAL, MAX_HEALING_IN_FLIGHT,
+            MAX_RESPONSE_BYTES, STORAGE_NODE_BATCH_SIZE,
+        },
     },
     utils::current_unix_time,
 };
@@ -30,8 +33,6 @@ use tokio::{
     task::yield_now,
 };
 use tracing::{debug, trace};
-
-const MAX_IN_FLIGHT_REQUESTS: u32 = 77;
 
 /// This struct stores the metadata we need when we request a node
 #[derive(Debug, Clone)]
@@ -168,7 +169,7 @@ pub async fn heal_storage_trie(
 
     loop {
         yield_now().await;
-        if state.last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
+        if state.last_update.elapsed() >= HEALING_PROGRESS_INTERVAL {
             METRICS
                 .global_storage_tries_leafs_healed
                 .store(*global_leafs_healed, Ordering::Relaxed);
@@ -206,7 +207,10 @@ pub async fn heal_storage_trie(
         let is_done = state.requests.is_empty() && state.download_queue.is_empty();
         let is_stale = current_unix_time() > state.staleness_timestamp;
 
-        if nodes_to_write.values().map(Vec::len).sum::<usize>() > 100_000 || is_done || is_stale {
+        if nodes_to_write.values().map(Vec::len).sum::<usize>() > HEALING_FLUSH_THRESHOLD
+            || is_done
+            || is_stale
+        {
             let to_write: Vec<_> = nodes_to_write.drain().collect();
             let store = state.store.clone();
             // NOTE: we keep only a single task in the background to avoid out of order deletes
@@ -322,7 +326,7 @@ async fn ask_peers_for_nodes(
     task_sender: &Sender<Result<TrieNodes, RequestStorageTrieNodes>>,
     logged_no_free_peers_count: &mut u32,
 ) {
-    if (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
+    if (requests.len() as u32) < MAX_HEALING_IN_FLIGHT && !download_queue.is_empty() {
         let Some((peer_id, connection)) = peers
             .peer_table
             .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
@@ -340,7 +344,7 @@ async fn ask_peers_for_nodes(
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
             return;
         };
-        let at = download_queue.len().saturating_sub(STORAGE_BATCH_SIZE);
+        let at = download_queue.len().saturating_sub(STORAGE_NODE_BATCH_SIZE);
         let download_chunk = download_queue.split_off(at);
         let req_id: u64 = random();
         let (paths, inflight_requests_data) = create_node_requests(download_chunk);

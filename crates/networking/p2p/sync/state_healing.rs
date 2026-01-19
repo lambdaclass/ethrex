@@ -25,16 +25,13 @@ use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_handler::{PeerHandler, RequestMetadata, RequestStateTrieNodesError},
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
-    sync::{AccountStorageRoots, code_collector::CodeHashCollector},
+    sync::{
+        AccountStorageRoots,
+        code_collector::CodeHashCollector,
+        constants::{HEALING_FLUSH_THRESHOLD, HEALING_PROGRESS_INTERVAL, STATE_NODE_BATCH_SIZE},
+    },
     utils::current_unix_time,
 };
-
-/// Max size of a bach to start a storage fetch request in queues
-pub const STORAGE_BATCH_SIZE: usize = 300;
-/// Max size of a bach to start a node fetch request in queues
-pub const NODE_BATCH_SIZE: usize = 500;
-/// Pace at which progress is shown via info tracing
-pub const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(2);
 
 use super::SyncError;
 
@@ -123,7 +120,7 @@ async fn heal_state_trie(
     let mut logged_no_free_peers_count = 0;
 
     loop {
-        if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
+        if last_update.elapsed() >= HEALING_PROGRESS_INTERVAL {
             let num_peers = peers
                 .peer_table
                 .peer_count_by_capabilities(&SUPPORTED_SNAP_CAPABILITIES)
@@ -213,8 +210,9 @@ async fn heal_state_trie(
         }
 
         if !is_stale {
-            let batch: Vec<RequestMetadata> =
-                paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
+            let batch: Vec<RequestMetadata> = paths
+                .drain(0..min(paths.len(), STATE_NODE_BATCH_SIZE))
+                .collect();
             if !batch.is_empty() {
                 longest_path_seen = usize::max(
                     batch
@@ -289,7 +287,7 @@ async fn heal_state_trie(
 
         let is_done = paths.is_empty() && nodes_to_heal.is_empty() && inflight_tasks == 0;
 
-        if nodes_to_write.len() > 100_000 || is_done || is_stale {
+        if nodes_to_write.len() > HEALING_FLUSH_THRESHOLD || is_done || is_stale {
             // PERF: reuse buffers?
             let to_write = std::mem::take(&mut nodes_to_write);
             let store = store.clone();
