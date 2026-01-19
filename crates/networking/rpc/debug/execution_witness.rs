@@ -139,9 +139,7 @@ pub fn execution_witness_from_rpc_chain_config(
         };
         let storage_root_hash = AccountState::decode(&encoded_account)?.storage_root;
         if storage_root_hash == *EMPTY_TRIE_HASH {
-            return Err(GuestProgramStateError::Custom(
-                "execution witness does not contain non-empty storage trie".to_string(),
-            ));
+            continue; // empty storage trie
         }
         if !nodes.contains_key(&storage_root_hash) {
             continue; // storage trie isn't relevant to this execution
