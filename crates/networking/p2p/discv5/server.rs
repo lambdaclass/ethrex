@@ -21,7 +21,7 @@ use ethrex_common::H256;
 use ethrex_storage::{Store, error::StoreError};
 use futures::StreamExt;
 use rand::{Rng, RngCore, rngs::OsRng};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use secp256k1::{PublicKey, SecretKey, ecdsa::Signature};
 use spawned_concurrency::{
     messages::Unused,
@@ -122,8 +122,12 @@ pub struct DiscoveryServer {
     /// Tracks last WHOAREYOU send time per source IP to prevent amplification attacks.
     whoareyou_rate_limit: FxHashMap<IpAddr, Instant>,
     /// Collects recipient_addr IPs from PONGs for external IP detection via majority voting.
-    /// Key: reported IP, Value: map of voter node_id -> timestamp (each peer votes once).
-    ip_votes: FxHashMap<IpAddr, FxHashMap<H256, Instant>>,
+    /// Key: reported IP, Value: set of voter node_ids (each peer votes once per round).
+    ip_votes: FxHashMap<IpAddr, FxHashSet<H256>>,
+    /// When the current IP voting period started. None if no votes received yet.
+    ip_vote_period_start: Option<Instant>,
+    /// Whether the first (fast) voting round has completed.
+    first_ip_vote_round_completed: bool,
 }
 
 impl DiscoveryServer {
@@ -159,6 +163,8 @@ impl DiscoveryServer {
             pending_challenges: Default::default(),
             whoareyou_rate_limit: Default::default(),
             ip_votes: Default::default(),
+            ip_vote_period_start: None,
+            first_ip_vote_round_completed: false,
         };
 
         info!(count = bootnodes.len(), "Adding bootnodes");
@@ -739,11 +745,13 @@ impl DiscoveryServer {
             .retain(|_ip, timestamp| now.duration_since(*timestamp) < WHOAREYOU_RATE_LIMIT);
         let removed_rate_limits = before_rate_limits - self.whoareyou_rate_limit.len();
 
-        // Clean stale IP votes
-        for voters in self.ip_votes.values_mut() {
-            voters.retain(|_, timestamp| now.duration_since(*timestamp) < IP_VOTE_WINDOW);
+        // Check if IP voting round should end (in case no new votes triggered it)
+        if let Some(start) = self.ip_vote_period_start
+            && self.first_ip_vote_round_completed
+            && now.duration_since(start) >= IP_VOTE_WINDOW
+        {
+            self.finalize_ip_vote_round();
         }
-        self.ip_votes.retain(|_, voters| !voters.is_empty());
 
         let total_removed = removed_messages + removed_challenges + removed_rate_limits;
         if total_removed > 0 {
@@ -754,9 +762,9 @@ impl DiscoveryServer {
         }
     }
 
-    /// Records an IP vote from a PONG recipient_addr and checks for majority.
-    /// Each peer can only vote once per IP (prevents single-node manipulation).
-    /// Private IPs are ignored (we only care about external IP detection).
+    /// Records an IP vote from a PONG recipient_addr.
+    /// Uses voting rounds: first round ends after 3 votes, subsequent rounds after 5 minutes.
+    /// At round end, the IP with most votes wins (if it has at least 3 votes).
     fn record_ip_vote(&mut self, reported_ip: IpAddr, voter_id: H256) {
         // Ignore private IPs - we only care about external IP detection
         if Self::is_private_ip(reported_ip) {
@@ -765,32 +773,59 @@ impl DiscoveryServer {
 
         let now = Instant::now();
 
-        // Add/update vote for this IP from this peer
+        // Start voting period on first vote
+        if self.ip_vote_period_start.is_none() {
+            self.ip_vote_period_start = Some(now);
+        }
+
+        // Record the vote
         self.ip_votes
             .entry(reported_ip)
             .or_default()
-            .insert(voter_id, now);
+            .insert(voter_id);
 
-        // Check if this IP has reached majority threshold
-        if let Some(voters) = self.ip_votes.get(&reported_ip) {
-            let recent_votes = voters
-                .values()
-                .filter(|t| now.duration_since(**t) < IP_VOTE_WINDOW)
-                .count();
+        // Check if voting round should end
+        let total_votes: usize = self.ip_votes.values().map(|v| v.len()).sum();
+        let round_ended = if !self.first_ip_vote_round_completed {
+            // First round: end when we have enough votes
+            total_votes >= IP_VOTE_THRESHOLD
+        } else {
+            // Subsequent rounds: end after time window
+            self.ip_vote_period_start
+                .is_some_and(|start| now.duration_since(start) >= IP_VOTE_WINDOW)
+        };
 
-            if recent_votes >= IP_VOTE_THRESHOLD {
-                // Check if this differs from our current IP
-                if reported_ip != self.local_node.ip {
-                    info!(
-                        old_ip = %self.local_node.ip,
-                        new_ip = %reported_ip,
-                        votes = recent_votes,
-                        "External IP detected via PONG voting, updating local ENR"
-                    );
-                    self.update_local_ip(reported_ip);
-                }
+        if round_ended {
+            self.finalize_ip_vote_round();
+        }
+    }
+
+    /// Finalizes the current voting round: picks the IP with most votes and updates if needed.
+    fn finalize_ip_vote_round(&mut self) {
+        // Find the IP with the most votes
+        let winner = self
+            .ip_votes
+            .iter()
+            .map(|(ip, voters)| (*ip, voters.len()))
+            .max_by_key(|(_, count)| *count);
+
+        if let Some((winning_ip, vote_count)) = winner {
+            // Only update if we have minimum votes and IP differs
+            if vote_count >= IP_VOTE_THRESHOLD && winning_ip != self.local_node.ip {
+                info!(
+                    old_ip = %self.local_node.ip,
+                    new_ip = %winning_ip,
+                    votes = vote_count,
+                    "External IP detected via PONG voting, updating local ENR"
+                );
+                self.update_local_ip(winning_ip);
             }
         }
+
+        // Reset for next round
+        self.ip_votes.clear();
+        self.ip_vote_period_start = Some(Instant::now());
+        self.first_ip_vote_round_completed = true;
     }
 
     /// Returns true if the IP is private/local (not useful for external connectivity).
@@ -976,9 +1011,13 @@ mod tests {
     use ethrex_common::H256;
     use ethrex_storage::{EngineType, Store};
     use rand::{SeedableRng, rngs::StdRng};
-    use rustc_hash::FxHashMap;
+    use rustc_hash::FxHashSet;
     use secp256k1::SecretKey;
-    use std::{net::{IpAddr, SocketAddr}, sync::Arc, time::Instant};
+    use std::{
+        net::{IpAddr, SocketAddr},
+        sync::Arc,
+        time::Instant,
+    };
     use tokio::net::UdpSocket;
 
     #[tokio::test]
@@ -1004,6 +1043,8 @@ mod tests {
             pending_challenges: Default::default(),
             whoareyou_rate_limit: Default::default(),
             ip_votes: Default::default(),
+            ip_vote_period_start: None,
+            first_ip_vote_round_completed: false,
         };
 
         let n1 = server.next_nonce(&mut rng);
@@ -1037,6 +1078,8 @@ mod tests {
             pending_challenges: Default::default(),
             whoareyou_rate_limit: Default::default(),
             ip_votes: Default::default(),
+            ip_vote_period_start: None,
+            first_ip_vote_round_completed: false,
         };
 
         let nonce = [0u8; 12];
@@ -1127,6 +1170,8 @@ mod tests {
             pending_challenges: Default::default(),
             whoareyou_rate_limit: Default::default(),
             ip_votes: Default::default(),
+            ip_vote_period_start: None,
+            first_ip_vote_round_completed: false,
         };
 
         // Verify the contact was added
@@ -1189,6 +1234,8 @@ mod tests {
             pending_challenges: Default::default(),
             whoareyou_rate_limit: Default::default(),
             ip_votes: Default::default(),
+            ip_vote_period_start: None,
+            first_ip_vote_round_completed: false,
         };
 
         let new_ip: IpAddr = "203.0.113.50".parse().unwrap();
@@ -1238,6 +1285,8 @@ mod tests {
             pending_challenges: Default::default(),
             whoareyou_rate_limit: Default::default(),
             ip_votes: Default::default(),
+            ip_vote_period_start: None,
+            first_ip_vote_round_completed: false,
         };
 
         let new_ip: IpAddr = "203.0.113.50".parse().unwrap();
@@ -1279,6 +1328,8 @@ mod tests {
             pending_challenges: Default::default(),
             whoareyou_rate_limit: Default::default(),
             ip_votes: Default::default(),
+            ip_vote_period_start: None,
+            first_ip_vote_round_completed: false,
         };
 
         let voter1 = H256::from_low_u64_be(1);
@@ -1286,19 +1337,23 @@ mod tests {
         let voter3 = H256::from_low_u64_be(3);
 
         // Vote 3 times for the same IP we already have (from different peers)
+        // This triggers the first round to end after 3 votes
         server.record_ip_vote(original_ip, voter1);
         server.record_ip_vote(original_ip, voter2);
         server.record_ip_vote(original_ip, voter3);
 
-        // IP and seq should remain unchanged
+        // IP and seq should remain unchanged (winner is our current IP)
         assert_eq!(server.local_node.ip, original_ip);
         assert_eq!(server.local_node_record.seq, original_seq);
-        // Votes should NOT be cleared (no update happened)
-        assert_eq!(server.ip_votes.get(&original_ip).map(|v| v.len()), Some(3));
+        // Votes cleared because round ended (even though no IP change)
+        assert!(server.ip_votes.is_empty());
+        // First round should now be completed
+        assert!(server.first_ip_vote_round_completed);
     }
 
     #[tokio::test]
-    async fn test_ip_voting_multiple_ips() {
+    async fn test_ip_voting_split_votes_no_update() {
+        // Tests that when votes are split and no IP reaches threshold, IP is not updated
         let local_node = Node::from_enode_url(
             "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
         ).expect("Bad enode url");
@@ -1321,6 +1376,8 @@ mod tests {
             pending_challenges: Default::default(),
             whoareyou_rate_limit: Default::default(),
             ip_votes: Default::default(),
+            ip_vote_period_start: None,
+            first_ip_vote_round_completed: false,
         };
 
         let ip1: IpAddr = "203.0.113.50".parse().unwrap();
@@ -1328,25 +1385,24 @@ mod tests {
         let voter1 = H256::from_low_u64_be(1);
         let voter2 = H256::from_low_u64_be(2);
         let voter3 = H256::from_low_u64_be(3);
-        let voter4 = H256::from_low_u64_be(4);
-        let voter5 = H256::from_low_u64_be(5);
 
-        // Vote for different IPs - neither should reach threshold
+        // First round: votes are split between two IPs
+        // Vote 1: ip1
         server.record_ip_vote(ip1, voter1);
+        assert_eq!(server.local_node.ip, original_ip); // No change yet
+
+        // Vote 2: ip2
         server.record_ip_vote(ip2, voter2);
+        assert_eq!(server.local_node.ip, original_ip); // No change yet
+
+        // Vote 3: ip1 - triggers first round end (3 total votes)
+        // ip1 has 2 votes, ip2 has 1 vote, but ip1 doesn't reach threshold of 3
         server.record_ip_vote(ip1, voter3);
-        server.record_ip_vote(ip2, voter4);
-
-        // IP should not change yet
+        // IP should NOT change because no IP reached threshold
         assert_eq!(server.local_node.ip, original_ip);
-        assert_eq!(server.ip_votes.get(&ip1).map(|v| v.len()), Some(2));
-        assert_eq!(server.ip_votes.get(&ip2).map(|v| v.len()), Some(2));
-
-        // Third vote for ip1 should trigger update
-        server.record_ip_vote(ip1, voter5);
-        assert_eq!(server.local_node.ip, ip1);
-        // Votes cleared after update
+        // Round still ends and votes are cleared
         assert!(server.ip_votes.is_empty());
+        assert!(server.first_ip_vote_round_completed);
     }
 
     #[tokio::test]
@@ -1372,32 +1428,26 @@ mod tests {
             pending_challenges: Default::default(),
             whoareyou_rate_limit: Default::default(),
             ip_votes: Default::default(),
+            ip_vote_period_start: None,
+            first_ip_vote_round_completed: false,
         };
 
         let ip: IpAddr = "203.0.113.50".parse().unwrap();
         let voter1 = H256::from_low_u64_be(1);
 
-        // Manually insert an old vote (simulating a stale entry)
-        // We use Instant::now() since we can't easily create old Instants,
-        // but we can verify the cleanup logic works on the structure
-        let mut voters = FxHashMap::default();
-        voters.insert(voter1, Instant::now());
+        // Manually insert a vote and set period start
+        let mut voters = FxHashSet::default();
+        voters.insert(voter1);
         server.ip_votes.insert(ip, voters);
+        server.ip_vote_period_start = Some(Instant::now());
         assert_eq!(server.ip_votes.len(), 1);
 
-        // Cleanup should retain recent votes
+        // Cleanup should retain votes (round hasn't timed out yet)
         server.cleanup_stale_entries();
         assert_eq!(server.ip_votes.len(), 1);
 
-        // Insert an empty map and verify cleanup removes it
-        let ip2: IpAddr = "203.0.113.51".parse().unwrap();
-        server.ip_votes.insert(ip2, FxHashMap::default());
-        assert_eq!(server.ip_votes.len(), 2);
-
-        server.cleanup_stale_entries();
-        // Empty map should be removed
-        assert_eq!(server.ip_votes.len(), 1);
-        assert!(!server.ip_votes.contains_key(&ip2));
+        // First round not completed, so cleanup doesn't trigger finalization based on timeout
+        assert!(!server.first_ip_vote_round_completed);
     }
 
     #[tokio::test]
@@ -1423,6 +1473,8 @@ mod tests {
             pending_challenges: Default::default(),
             whoareyou_rate_limit: Default::default(),
             ip_votes: Default::default(),
+            ip_vote_period_start: None,
+            first_ip_vote_round_completed: false,
         };
 
         let voter1 = H256::from_low_u64_be(1);
