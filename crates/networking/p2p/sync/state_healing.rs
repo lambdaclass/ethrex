@@ -289,9 +289,15 @@ async fn heal_state_trie(
 
         let is_done = paths.is_empty() && nodes_to_heal.is_empty() && inflight_tasks == 0;
 
-        if nodes_to_write.len() > 100_000 || is_done || is_stale {
-            // PERF: reuse buffers?
-            let to_write = std::mem::take(&mut nodes_to_write);
+        // Pre-allocate batch write threshold
+        const BATCH_WRITE_THRESHOLD: usize = 100_000;
+
+        if nodes_to_write.len() > BATCH_WRITE_THRESHOLD || is_done || is_stale {
+            // Replace with a pre-allocated buffer to avoid repeated allocations
+            let to_write = std::mem::replace(
+                &mut nodes_to_write,
+                Vec::with_capacity(BATCH_WRITE_THRESHOLD),
+            );
             let store = store.clone();
             // NOTE: we keep only a single task in the background to avoid out of order deletes
             if !db_joinset.is_empty() {
