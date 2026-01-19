@@ -3820,6 +3820,7 @@ dependencies = [
  "serde_with",
  "sha3",
  "thiserror 2.0.17",
+ "tokio",
  "tracing",
 ]
 

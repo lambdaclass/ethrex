@@ -1,5 +1,4 @@
 use ethrex_common::Address;
-use std::fmt::Display;
 
 /// Configuration for the monitor.
 /// This contains all the configuration the monitor needs from the sequencer config.
@@ -23,32 +22,4 @@ pub struct MonitorConfig {
     pub sequencer_registry: Option<Address>,
     /// Osaka activation time
     pub osaka_activation_time: Option<u64>,
-}
-
-/// Trait for providing sequencer status to the monitor.
-/// This allows the monitor to be decoupled from the sequencer state implementation.
-pub trait SequencerStatusProvider: Clone + Send + Sync + 'static {
-    /// Get the current status of the sequencer
-    fn status(&self) -> impl std::future::Future<Output = SequencerStatus> + Send;
-}
-
-/// Status of the sequencer
-#[derive(Clone, Debug, Default)]
-pub enum SequencerStatus {
-    #[default]
-    Starting,
-    Running,
-    Stopping,
-    Stopped,
-}
-
-impl Display for SequencerStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SequencerStatus::Starting => write!(f, "Starting"),
-            SequencerStatus::Running => write!(f, "Running"),
-            SequencerStatus::Stopping => write!(f, "Stopping"),
-            SequencerStatus::Stopped => write!(f, "Stopped"),
-        }
-    }
 }

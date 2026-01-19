@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
-use crate::config::{MonitorConfig, SequencerStatusProvider};
+use crate::config::MonitorConfig;
 use crate::error::MonitorError;
 use crate::utils::SelectableScroller;
 use crate::widget::rich_accounts::RichAccountsTable;
@@ -39,6 +39,7 @@ use crate::widget::{
     MempoolTable, NodeStatusTable, tabs::TabsState,
 };
 use crate::widget::{ETHREX_LOGO, LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS};
+use ethrex_l2_common::sequencer_state::SequencerState;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
@@ -46,14 +47,14 @@ const SCROLL_DEBOUNCE_DURATION: Duration = Duration::from_millis(700); // 700ms
 
 const SCROLLABLE_WIDGETS: usize = 5;
 
-pub struct EthrexMonitorWidget<S: SequencerStatusProvider> {
+pub struct EthrexMonitorWidget {
     pub title: String,
     pub should_quit: bool,
     pub tabs: TabsState,
     pub cfg: MonitorConfig,
 
     pub logger: TuiWidgetState,
-    pub node_status: NodeStatusTable<S>,
+    pub node_status: NodeStatusTable,
     pub global_chain_status: GlobalChainStatusTable,
     pub mempool: MempoolTable,
     pub batches_table: BatchesTable,
@@ -83,20 +84,20 @@ pub enum OutMessage {
     Done,
 }
 
-pub struct EthrexMonitor<S: SequencerStatusProvider> {
-    widget: EthrexMonitorWidget<S>,
+pub struct EthrexMonitor {
+    widget: EthrexMonitorWidget,
     terminal: Arc<Mutex<Terminal<CrosstermBackend<io::Stdout>>>>,
     cancellation_token: CancellationToken,
 }
 
-impl<S: SequencerStatusProvider> EthrexMonitor<S> {
+impl EthrexMonitor {
     pub async fn spawn(
-        sequencer_state: S,
+        sequencer_state: SequencerState,
         store: Store,
         rollup_store: StoreRollup,
         cfg: MonitorConfig,
         cancellation_token: CancellationToken,
-    ) -> Result<GenServerHandle<EthrexMonitor<S>>, MonitorError> {
+    ) -> Result<GenServerHandle<EthrexMonitor>, MonitorError> {
         let widget = EthrexMonitorWidget::new(sequencer_state, store, rollup_store, cfg).await?;
         let ethrex_monitor = EthrexMonitor {
             widget,
@@ -107,7 +108,7 @@ impl<S: SequencerStatusProvider> EthrexMonitor<S> {
     }
 }
 
-impl<S: SequencerStatusProvider> GenServer for EthrexMonitor<S> {
+impl GenServer for EthrexMonitor {
     type CallMsg = Unused;
     type CastMsg = CastInMessage;
     type OutMsg = OutMessage;
@@ -177,9 +178,9 @@ impl<S: SequencerStatusProvider> GenServer for EthrexMonitor<S> {
     }
 }
 
-impl<S: SequencerStatusProvider> EthrexMonitorWidget<S> {
+impl EthrexMonitorWidget {
     pub async fn new(
-        sequencer_state: S,
+        sequencer_state: SequencerState,
         store: Store,
         rollup_store: StoreRollup,
         cfg: MonitorConfig,
@@ -529,7 +530,7 @@ fn restore_terminal(
     Ok(())
 }
 
-impl<S: SequencerStatusProvider> Widget for &mut EthrexMonitorWidget<S> {
+impl Widget for &mut EthrexMonitorWidget {
     fn render(self, area: Rect, buf: &mut Buffer)
     where
         Self: Sized,

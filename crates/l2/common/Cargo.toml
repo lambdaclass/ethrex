@@ -27,6 +27,7 @@ serde_with.workspace = true
 rkyv.workspace = true
 k256.workspace = true
 tracing.workspace = true
+tokio.workspace = true
 
 secp256k1 = { workspace = true, optional = true }
 

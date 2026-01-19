@@ -1,3 +1,4 @@
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_rpc::EthClient;
 use ethrex_storage::Store;
 use ratatui::{
@@ -8,21 +9,18 @@ use ratatui::{
     widgets::{Block, Row, StatefulWidget, Table, TableState},
 };
 
-use crate::{
-    config::{SequencerStatus, SequencerStatusProvider},
-    error::MonitorError,
-};
+use crate::error::MonitorError;
 
 #[derive(Clone)]
-pub struct NodeStatusTable<S: SequencerStatusProvider> {
+pub struct NodeStatusTable {
     pub state: TableState,
     pub items: [(String, String); 5],
-    sequencer_state: S,
+    sequencer_state: SequencerState,
     is_based: bool,
 }
 
-impl<S: SequencerStatusProvider> NodeStatusTable<S> {
-    pub fn new(sequencer_state: S, is_based: bool) -> Self {
+impl NodeStatusTable {
+    pub fn new(sequencer_state: SequencerState, is_based: bool) -> Self {
         Self {
             state: TableState::default(),
             items: Default::default(),
@@ -42,7 +40,7 @@ impl<S: SequencerStatusProvider> NodeStatusTable<S> {
     }
 
     async fn refresh_items(
-        sequencer_state: &S,
+        sequencer_state: &SequencerState,
         store: &Store,
         l2_client: &EthClient,
         is_based: bool,
@@ -79,7 +77,7 @@ impl<S: SequencerStatusProvider> NodeStatusTable<S> {
     }
 }
 
-impl<S: SequencerStatusProvider> StatefulWidget for &mut NodeStatusTable<S> {
+impl StatefulWidget for &mut NodeStatusTable {
     type State = TableState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
