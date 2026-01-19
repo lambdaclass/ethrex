@@ -973,7 +973,7 @@ impl Syncer {
 
         *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
 
-        debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root).await);
+        debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root));
 
         store_block_bodies(
             vec![pivot_header.clone()],
@@ -1283,7 +1283,7 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     is_valid.is_ok()
 }
 
-pub async fn validate_bytecodes(store: Store, state_root: H256) -> bool {
+pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
     info!("Starting validate_bytecodes");
     let mut is_valid = true;
     for (account_hash, account_state) in store

@@ -981,113 +981,6 @@ impl Store {
             .map_err(StoreError::from)
     }
 
-    /// Sets the last key fetched from the state trie being fetched during snap sync
-    pub async fn set_state_trie_key_checkpoint(
-        &self,
-        last_keys: [H256; STATE_TRIE_SEGMENTS],
-    ) -> Result<(), StoreError> {
-        let key = snap_state_key(SnapStateIndex::StateTrieKeyCheckpoint);
-        let value = last_keys.to_vec().encode_to_vec();
-        self.write_async(SNAP_STATE, key, value).await
-    }
-
-    /// Gets the last key fetched from the state trie being fetched during snap sync
-    pub async fn get_state_trie_key_checkpoint(
-        &self,
-    ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
-        let key = snap_state_key(SnapStateIndex::StateTrieKeyCheckpoint);
-        let txn = self.backend.begin_read()?;
-        match txn.get(SNAP_STATE, &key)? {
-            Some(keys_bytes) => {
-                let keys_vec: Vec<H256> = Vec::<H256>::decode(keys_bytes.as_slice())?;
-                if keys_vec.len() == STATE_TRIE_SEGMENTS {
-                    let mut keys_array = [H256::zero(); STATE_TRIE_SEGMENTS];
-                    keys_array.copy_from_slice(&keys_vec);
-                    Ok(Some(keys_array))
-                } else {
-                    Err(StoreError::Custom("Invalid array size".to_string()))
-                }
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// Sets the state trie paths in need of healing
-    pub async fn set_state_heal_paths(
-        &self,
-        paths: Vec<(Nibbles, H256)>,
-    ) -> Result<(), StoreError> {
-        let key = snap_state_key(SnapStateIndex::StateHealPaths);
-        let value = paths.encode_to_vec();
-        self.write_async(SNAP_STATE, key, value).await
-    }
-
-    /// Gets the state trie paths in need of healing
-    pub async fn get_state_heal_paths(&self) -> Result<Option<Vec<(Nibbles, H256)>>, StoreError> {
-        let key = snap_state_key(SnapStateIndex::StateHealPaths);
-
-        self.backend
-            .begin_read()?
-            .get(SNAP_STATE, &key)?
-            .map(|bytes| Vec::<(Nibbles, H256)>::decode(bytes.as_slice()))
-            .transpose()
-            .map_err(StoreError::from)
-    }
-
-    /// Set the latest root of the rebuilt state trie and the last downloaded hashes from each segment
-    pub async fn set_state_trie_rebuild_checkpoint(
-        &self,
-        checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
-    ) -> Result<(), StoreError> {
-        let key = snap_state_key(SnapStateIndex::StateTrieRebuildCheckpoint);
-        let value = (checkpoint.0, checkpoint.1.to_vec()).encode_to_vec();
-        self.write_async(SNAP_STATE, key, value).await
-    }
-
-    /// Get the latest root of the rebuilt state trie and the last downloaded hashes from each segment
-    pub async fn get_state_trie_rebuild_checkpoint(
-        &self,
-    ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
-        let key = snap_state_key(SnapStateIndex::StateTrieRebuildCheckpoint);
-        let txn = self.backend.begin_read()?;
-        match txn.get(SNAP_STATE, &key)? {
-            Some(bytes) => {
-                let (root, keys_vec): (H256, Vec<H256>) =
-                    <(H256, Vec<H256>)>::decode(bytes.as_slice())?;
-                if keys_vec.len() == STATE_TRIE_SEGMENTS {
-                    let mut keys_array = [H256::zero(); STATE_TRIE_SEGMENTS];
-                    keys_array.copy_from_slice(&keys_vec);
-                    Ok(Some((root, keys_array)))
-                } else {
-                    Err(StoreError::Custom("Invalid array size".to_string()))
-                }
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// Get the accont hashes and roots of the storage tries awaiting rebuild
-    pub async fn set_storage_trie_rebuild_pending(
-        &self,
-        pending: Vec<(H256, H256)>,
-    ) -> Result<(), StoreError> {
-        let key = snap_state_key(SnapStateIndex::StorageTrieRebuildPending);
-        let value = pending.encode_to_vec();
-        self.write_async(SNAP_STATE, key, value).await
-    }
-
-    /// Get the accont hashes and roots of the storage tries awaiting rebuild
-    pub async fn get_storage_trie_rebuild_pending(
-        &self,
-    ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
-        let key = snap_state_key(SnapStateIndex::StorageTrieRebuildPending);
-        self.read_async(SNAP_STATE, key)
-            .await?
-            .map(|bytes| Vec::<(H256, H256)>::decode(bytes.as_slice()))
-            .transpose()
-            .map_err(StoreError::from)
-    }
-
     /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
     /// when processing an invalid payload. To provide this, we must track invalid chains.
     ///
@@ -2172,7 +2065,7 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        get_account_state_from_trie(&state_trie, address)
+        self.get_account_state_from_trie(&state_trie, address)
     }
 
     pub fn get_account_state_by_root(
@@ -2927,17 +2820,6 @@ pub struct StorageSlotProof {
     pub proof: Vec<NodeRLP>,
     pub key: H256,
     pub value: U256,
-}
-
-fn get_account_state_from_trie(
-    state_trie: &Trie,
-    address: Address,
-) -> Result<Option<AccountState>, StoreError> {
-    let hashed_address = hash_address(&address);
-    let Some(encoded_state) = state_trie.get(&hashed_address)? else {
-        return Ok(None);
-    };
-    Ok(Some(AccountState::decode(&encoded_state)?))
 }
 
 pub struct AncestorIterator {

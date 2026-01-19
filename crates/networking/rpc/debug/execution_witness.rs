@@ -11,8 +11,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
 use ethrex_storage::hash_address;
-use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeRef, Trie, TrieError, encodedtrie::EncodedTrie};
-use ethrex_vm::system_contracts::SYSTEM_ADDRESS;
+use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeRef, Trie, TrieError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::debug;
@@ -46,24 +45,23 @@ pub struct RpcExecutionWitness {
 impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
     type Error = TrieError;
     fn try_from(value: ExecutionWitness) -> Result<Self, Self::Error> {
-        panic!();
-        // let mut nodes = Vec::new();
-        // if let Some(state_trie_root) = value.state_trie_root {
-        //     state_trie_root.encode_subtrie(&mut nodes)?;
-        // }
-        // for node in value.storage_trie_roots.values() {
-        //     node.encode_subtrie(&mut nodes)?;
-        // }
-        // Ok(Self {
-        //     state: nodes.into_iter().map(Bytes::from).collect(),
-        //     keys: value.keys.into_iter().map(Bytes::from).collect(),
-        //     codes: value.codes.into_iter().map(Bytes::from).collect(),
-        //     headers: value
-        //         .block_headers_bytes
-        //         .into_iter()
-        //         .map(Bytes::from)
-        //         .collect(),
-        // })
+        let mut nodes = Vec::new();
+        if let Some(state_trie_root) = value.state_trie_root {
+            state_trie_root.encode_subtrie(&mut nodes)?;
+        }
+        for node in value.storage_trie_roots.values() {
+            node.encode_subtrie(&mut nodes)?;
+        }
+        Ok(Self {
+            state: nodes.into_iter().map(Bytes::from).collect(),
+            keys: value.keys.into_iter().map(Bytes::from).collect(),
+            codes: value.codes.into_iter().map(Bytes::from).collect(),
+            headers: value
+                .block_headers_bytes
+                .into_iter()
+                .map(Bytes::from)
+                .collect(),
+        })
     }
 }
 
@@ -120,7 +118,7 @@ pub fn execution_witness_from_rpc_chain_config(
     } else {
         Trie::new_temp()
     };
-    let mut storage_tries = BTreeMap::new();
+    let mut storage_trie_roots = BTreeMap::new();
     for key in &rpc_witness.keys {
         if key.len() != 20 {
             continue; // not an address
@@ -143,13 +141,8 @@ pub fn execution_witness_from_rpc_chain_config(
                 "execution witness does not contain non-empty storage trie".to_string(),
             ));
         };
-        let trie = EncodedTrie::try_from(&(*node))?;
-        storage_tries.insert(address, trie.clone());
+        storage_trie_roots.insert(address, (*node).clone());
     }
-
-    let state_trie = state_trie_root
-        .map(|n| EncodedTrie::try_from(&n))
-        .transpose()?;
 
     let witness = ExecutionWitness {
         codes: rpc_witness.codes.into_iter().map(|b| b.to_vec()).collect(),
@@ -160,8 +153,8 @@ pub fn execution_witness_from_rpc_chain_config(
             .into_iter()
             .map(|b| b.to_vec())
             .collect(),
-        state_trie,
-        storage_tries,
+        state_trie_root,
+        storage_trie_roots,
         keys: rpc_witness.keys.into_iter().map(|b| b.to_vec()).collect(),
     };
 

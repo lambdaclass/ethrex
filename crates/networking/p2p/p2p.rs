@@ -67,6 +67,8 @@
 //! - `experimental-discv5`: Enable discv5 node discovery (experimental)
 
 pub mod discv4;
+#[cfg(feature = "experimental-discv5")]
+pub mod discv5;
 pub(crate) mod metrics;
 pub mod network;
 pub mod peer_handler;

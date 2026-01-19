@@ -63,6 +63,9 @@ Node options:
 
           [default: auto]
 
+      --log.dir <LOG_DIR>
+          Directory to store log files.
+
       --mempool.maxsize <MEMPOOL_MAX_SIZE>
           Maximum size of the mempool in number of transactions
 
@@ -237,7 +240,7 @@ Node options:
 
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
-
+          
           [env: ETHREX_LOG_LEVEL=]
           [default: INFO]
 
