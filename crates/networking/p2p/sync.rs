@@ -902,7 +902,10 @@ impl Syncer {
 
         let code_hashes_dir = get_code_hashes_snapshots_dir(&self.datadir);
         let mut seen_code_hashes = HashSet::new();
+        // Cache for code hashes that already exist in the DB to avoid redundant downloads
+        let mut existing_code_cache: HashSet<H256> = HashSet::new();
         let mut code_hashes_to_download = Vec::new();
+        let mut skipped_existing = 0u64;
 
         info!("Starting download code hashes from peers");
         for entry in std::fs::read_dir(&code_hashes_dir)
@@ -915,8 +918,19 @@ impl Syncer {
                 .map_err(|_| SyncError::CodeHashesSnapshotDecodeError(entry.path()))?;
 
             for hash in code_hashes {
-                // If we haven't seen the code hash yet, add it to the list of hashes to download
+                // If we haven't seen the code hash yet, check if we need to download it
                 if seen_code_hashes.insert(hash) {
+                    // Check if code already exists in cache or DB
+                    if existing_code_cache.contains(&hash) {
+                        skipped_existing += 1;
+                        continue;
+                    }
+                    // Check DB for existing code
+                    if store.get_account_code(hash)?.is_some() {
+                        existing_code_cache.insert(hash);
+                        skipped_existing += 1;
+                        continue;
+                    }
                     code_hashes_to_download.push(hash);
 
                     if code_hashes_to_download.len() >= BYTECODE_CHUNK_SIZE {
@@ -966,6 +980,13 @@ impl Syncer {
                         .collect(),
                 )
                 .await?;
+        }
+
+        if skipped_existing > 0 {
+            info!(
+                "Skipped {} bytecodes that already existed in DB",
+                skipped_existing
+            );
         }
 
         std::fs::remove_dir_all(code_hashes_dir)
