@@ -942,7 +942,7 @@ mod tests {
                 "enr": enr_url,
                 "id": hex::encode(keccak_hash(local_p2p_node.public_key)),
                 "ip": "127.0.0.1",
-                "name": "ethrex/test",
+                "name": "ethrex/v0.1.0-test-abcd1234/x86_64-unknown-linux/rustc-v1.70.0",
                 "ports": {
                     "discovery": 30303,
                     "listener": 30303
