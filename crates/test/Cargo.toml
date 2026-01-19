@@ -1,0 +1,33 @@
+[package]
+name = "ethrex-test"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+ethrex-common.workspace = true
+ethrex-crypto.workspace = true
+ethrex-rlp.workspace = true
+ethrex-trie.workspace = true
+ethrex-p2p.workspace = true
+
+[dev-dependencies]
+hex.workspace = true
+hex-literal.workspace = true
+ethereum-types.workspace = true
+rkyv.workspace = true
+rand.workspace = true
+tempfile.workspace = true
+secp256k1.workspace = true
+proptest = "1.0.0"
+cita_trie = "4.0.0"
+hasher = "0.1.4"
+
+[[test]]
+name = "ethrex_tests"
+path = "tests/tests.rs"
+
+[lints]
+workspace = true

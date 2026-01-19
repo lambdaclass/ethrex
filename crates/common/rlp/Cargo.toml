@@ -14,14 +14,6 @@ lazy_static.workspace = true
 ethereum-types.workspace = true
 snap.workspace = true
 
-[dev-dependencies]
-hex-literal.workspace = true
-ethereum-types.workspace = true
-
-[[test]]
-name = "rlp_tests"
-path = "tests/tests.rs"
-
 [lib]
 path = "./rlp.rs"
 
