@@ -202,22 +202,16 @@ Then you should wait until Aligned aggregates your proof. Note that proofs are t
 
     If you need to stop it run `make ethereum_package_rm`
 
-4. Start the PostgreSQL database for the Aligned services:
+4. Start the payments poller (in a new terminal):
 
     ```bash
     cd aligned_layer
-    make agg_mode_docker_up
+    make agg_mode_payments_poller_start_ethereum_package
     ```
 
-    This starts PostgreSQL on port 5435 and Adminer (database UI) on port 8090.
+    This starts PostgreSQL, runs migrations, and starts the payments poller.
 
-5. Run the database migrations:
-
-    ```bash
-    make agg_mode_run_migrations
-    ```
-
-6. Start the Aligned gateway (in a new terminal):
+5. Start the Aligned gateway (in a new terminal):
 
     ```bash
     cd aligned_layer
@@ -226,14 +220,7 @@ Then you should wait until Aligned aggregates your proof. Note that proofs are t
 
     The gateway will listen on `http://127.0.0.1:8089`.
 
-7. Start the payments poller (in a new terminal):
-
-    ```bash
-    cd aligned_layer
-    make agg_mode_payments_poller_start_ethereum_package
-    ```
-
-8. Build and start the proof aggregator in dev mode (in a new terminal):
+6. Build and start the proof aggregator in dev mode (in a new terminal):
 
     ```bash
     cd aligned_layer
