@@ -19,12 +19,12 @@ members = [
   "crates/networking/p2p",
   "crates/networking/rpc",
   "crates/storage",
-  "crates/test",
   "crates/vm",
   "crates/vm/levm",
   "crates/vm/levm/runner",
   "crates/common/config",
   "crates/concurrency",
+  "test",
 ]
 exclude = ["crates/vm/levm/bench/revm_comparison"]
 resolver = "2"
