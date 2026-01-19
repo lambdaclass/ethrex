@@ -1,6 +1,6 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
 		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
-		load-test-fibonacci load-test-io run-hive-eels-blobs
+		load-test-fibonacci load-test-io run-hive-eels-blobs bench-rlp
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -177,6 +177,9 @@ fixtures/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
 
 sort-genesis-files:
 	cd ./tooling/genesis && cargo run
+
+bench-rlp: ## ⚡ Bench the RLP decoder/encoder
+	cd ./crates/common/rlp && cargo bench
 
 # Using & so make calls this recipe only once per run
 mermaid-init.js mermaid.min.js &:
