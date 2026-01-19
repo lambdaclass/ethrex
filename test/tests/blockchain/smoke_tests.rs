@@ -2,11 +2,11 @@ use std::{fs::File, io::BufReader, path::PathBuf};
 
 use bytes::Bytes;
 use ethrex_blockchain::{
+    Blockchain,
     error::{ChainError, InvalidForkChoice},
     fork_choice::apply_fork_choice,
     is_canonical, latest_canonical_block_hash,
-    payload::{create_payload, BuildPayloadArgs},
-    Blockchain,
+    payload::{BuildPayloadArgs, create_payload},
 };
 use ethrex_common::{
     H160, H256,

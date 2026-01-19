@@ -1,16 +1,16 @@
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::{
+    Address, Bloom, H160,
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     types::{
         AccountState, BlockBody, BlockHeader, ChainConfig, Code, Genesis, Receipt, Transaction,
         TxType,
     },
     utils::keccak,
-    Address, Bloom, H160,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_storage::{error::StoreError, EngineType, Store};
+use ethrex_storage::{EngineType, Store, error::StoreError};
 use std::{fs, str::FromStr};
 
 #[tokio::test]
@@ -130,8 +130,7 @@ async fn test_genesis_block(mut store: Store) {
     assert_ne!(GENESIS_KURTOSIS, GENESIS_HIVE);
     let genesis_kurtosis: Genesis =
         serde_json::from_str(GENESIS_KURTOSIS).expect("deserialize kurtosis.json");
-    let genesis_hive: Genesis =
-        serde_json::from_str(GENESIS_HIVE).expect("deserialize hive.json");
+    let genesis_hive: Genesis = serde_json::from_str(GENESIS_HIVE).expect("deserialize hive.json");
     store
         .add_initial_state(genesis_kurtosis.clone())
         .await
@@ -214,10 +213,8 @@ fn create_block_for_testing() -> (BlockHeader, BlockBody) {
         nonce: 0x0000000000000000,
         base_fee_per_gas: Some(0x07),
         withdrawals_root: Some(
-            H256::from_str(
-                "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
-            )
-            .unwrap(),
+            H256::from_str("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
+                .unwrap(),
         ),
         blob_gas_used: Some(0x00),
         excess_blob_gas: Some(0x00),
@@ -334,8 +331,7 @@ async fn test_store_block_tags(store: Store) {
         .unwrap();
 
     let stored_earliest_block_number = store.get_earliest_block_number().await.unwrap();
-    let stored_finalized_block_number =
-        store.get_finalized_block_number().await.unwrap().unwrap();
+    let stored_finalized_block_number = store.get_finalized_block_number().await.unwrap().unwrap();
     let stored_latest_block_number = store.get_latest_block_number().await.unwrap();
     let stored_safe_block_number = store.get_safe_block_number().await.unwrap().unwrap();
     let stored_pending_block_number = store.get_pending_block_number().await.unwrap().unwrap();

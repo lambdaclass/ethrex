@@ -109,8 +109,7 @@ fn verify_range_regular_case() {
 #[test]
 fn test_inlined_outside_right_bound() {
     let storage_root =
-        H256::from_str("7e56f63c9dd8c6b1708d26079ff5c538a729a11d3398a0c24fe679b2bd5609b5")
-            .unwrap();
+        H256::from_str("7e56f63c9dd8c6b1708d26079ff5c538a729a11d3398a0c24fe679b2bd5609b5").unwrap();
 
     let hashed_keys = vec![
         "2000000000000000000000000000000000000000000000000000000000000000",
@@ -130,8 +129,7 @@ fn test_inlined_outside_right_bound() {
         hex::decode("e2a0300000000000000000000000000000000000000000000000000000000000000001").unwrap()
     ];
     let start_hash =
-        H256::from_str("2000000000000000000000000000000000000000000000000000000000000000")
-            .unwrap();
+        H256::from_str("2000000000000000000000000000000000000000000000000000000000000000").unwrap();
     let encoded_values: Vec<Vec<u8>> = vec![vec![1], vec![1]];
 
     verify_range(

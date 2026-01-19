@@ -1,17 +1,17 @@
+use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::constants::MAX_INITCODE_SIZE;
 use ethrex_blockchain::constants::{
     TX_ACCESS_LIST_ADDRESS_GAS, TX_ACCESS_LIST_STORAGE_KEY_GAS, TX_CREATE_GAS_COST,
     TX_DATA_NON_ZERO_GAS, TX_DATA_NON_ZERO_GAS_EIP2028, TX_DATA_ZERO_GAS_COST, TX_GAS_COST,
     TX_INIT_CODE_WORD_GAS_COST,
 };
-use ethrex_blockchain::constants::MAX_INITCODE_SIZE;
 use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::mempool::{Mempool, transaction_intrinsic_gas};
-use ethrex_blockchain::Blockchain;
 use std::collections::HashMap;
 
 use ethrex_common::types::{
-    BlobsBundle, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
-    MempoolTransaction, Transaction, TxKind, BYTES_PER_BLOB,
+    BYTES_PER_BLOB, BlobsBundle, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
+    MempoolTransaction, Transaction, TxKind,
 };
 use ethrex_common::{Address, Bytes, H256, U256};
 use ethrex_storage::error::StoreError;
@@ -70,8 +70,7 @@ fn normal_transaction_intrinsic_gas() {
 
     let tx = Transaction::EIP1559Transaction(tx);
     let expected_gas_cost = TX_GAS_COST;
-    let intrinsic_gas =
-        transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
 
@@ -93,8 +92,7 @@ fn create_transaction_intrinsic_gas() {
 
     let tx = Transaction::EIP1559Transaction(tx);
     let expected_gas_cost = TX_CREATE_GAS_COST;
-    let intrinsic_gas =
-        transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
 
@@ -116,8 +114,7 @@ fn transaction_intrinsic_data_gas_pre_istanbul() {
 
     let tx = Transaction::EIP1559Transaction(tx);
     let expected_gas_cost = TX_GAS_COST + 2 * TX_DATA_ZERO_GAS_COST + 4 * TX_DATA_NON_ZERO_GAS;
-    let intrinsic_gas =
-        transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
 
@@ -140,8 +137,7 @@ fn transaction_intrinsic_data_gas_post_istanbul() {
     let tx = Transaction::EIP1559Transaction(tx);
     let expected_gas_cost =
         TX_GAS_COST + 2 * TX_DATA_ZERO_GAS_COST + 4 * TX_DATA_NON_ZERO_GAS_EIP2028;
-    let intrinsic_gas =
-        transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
 
@@ -166,8 +162,7 @@ fn transaction_create_intrinsic_gas_pre_shanghai() {
 
     let tx = Transaction::EIP1559Transaction(tx);
     let expected_gas_cost = TX_CREATE_GAS_COST + n_bytes * TX_DATA_NON_ZERO_GAS;
-    let intrinsic_gas =
-        transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
 
@@ -191,11 +186,9 @@ fn transaction_create_intrinsic_gas_post_shanghai() {
     };
 
     let tx = Transaction::EIP1559Transaction(tx);
-    let expected_gas_cost = TX_CREATE_GAS_COST
-        + n_bytes * TX_DATA_NON_ZERO_GAS
-        + n_words * TX_INIT_CODE_WORD_GAS_COST;
-    let intrinsic_gas =
-        transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
+    let expected_gas_cost =
+        TX_CREATE_GAS_COST + n_bytes * TX_DATA_NON_ZERO_GAS + n_words * TX_INIT_CODE_WORD_GAS_COST;
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
 
@@ -224,8 +217,7 @@ fn transaction_intrinsic_gas_access_list() {
     let tx = Transaction::EIP1559Transaction(tx);
     let expected_gas_cost =
         TX_GAS_COST + 3 * TX_ACCESS_LIST_ADDRESS_GAS + 15 * TX_ACCESS_LIST_STORAGE_KEY_GAS;
-    let intrinsic_gas =
-        transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
 
@@ -241,10 +233,10 @@ async fn transaction_with_big_init_code_in_shanghai_fails() {
         max_priority_fee_per_gas: 0,
         max_fee_per_gas: 0,
         gas_limit: 99_000_000,
-        to: TxKind::Create,  // Create tx
-        value: U256::zero(), // Value zero
+        to: TxKind::Create,                                           // Create tx
+        value: U256::zero(),                                          // Value zero
         data: Bytes::from(vec![0x1; MAX_INITCODE_SIZE as usize + 1]), // Large init code
-        access_list: Default::default(), // No access list
+        access_list: Default::default(),                              // No access list
         ..Default::default()
     };
 
@@ -375,8 +367,7 @@ fn test_filter_mempool_transactions() {
     let plain_tx_hash = plain_tx.hash();
     let blob_tx_hash = blob_tx.hash();
     let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
-    let filter =
-        |tx: &Transaction| -> bool { matches!(tx, Transaction::EIP4844Transaction(_)) };
+    let filter = |tx: &Transaction| -> bool { matches!(tx, Transaction::EIP4844Transaction(_)) };
     mempool
         .add_transaction(blob_tx_hash, blob_tx_sender, blob_tx.clone())
         .unwrap();
