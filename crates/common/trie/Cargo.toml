@@ -24,9 +24,11 @@ lazy_static.workspace = true
 crossbeam.workspace = true
 rustc-hash.workspace = true
 rkyv.workspace = true
+rayon = { version = "1.10", optional = true }
 
 [features]
 default = []
+grid-trie = ["rayon"]
 
 
 [dev-dependencies]
@@ -41,6 +43,11 @@ rand.workspace = true
 
 [lib]
 path = "./trie.rs"
+
+[[bench]]
+name = "grid_trie_benchmark"
+harness = false
+required-features = ["grid-trie"]
 
 [lints]
 workspace = true
