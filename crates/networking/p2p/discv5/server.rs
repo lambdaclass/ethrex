@@ -707,9 +707,8 @@ impl DiscoveryServer {
 
         // Clean stale WHOAREYOU rate limit entries
         let before_rate_limits = self.whoareyou_rate_limit.len();
-        self.whoareyou_rate_limit.retain(|_ip, timestamp| {
-            now.duration_since(*timestamp) < WHOAREYOU_RATE_LIMIT
-        });
+        self.whoareyou_rate_limit
+            .retain(|_ip, timestamp| now.duration_since(*timestamp) < WHOAREYOU_RATE_LIMIT);
         let removed_rate_limits = before_rate_limits - self.whoareyou_rate_limit.len();
 
         let total_removed = removed_messages + removed_challenges + removed_rate_limits;
