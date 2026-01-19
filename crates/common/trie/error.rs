@@ -1,8 +1,7 @@
+use crate::nibbles::NibbleBoxedSlice;
 use ethereum_types::H256;
 use ethrex_rlp::error::RLPDecodeError;
 use thiserror::Error;
-
-use crate::Nibbles;
 
 #[derive(Debug, Error)]
 pub enum TrieError {
@@ -28,7 +27,7 @@ pub enum InconsistentTreeError {
     #[error("No Child Node found of {0}")]
     ExtensionNodeChildNotFound(ExtensionNodeErrorData),
     #[error("Node with hash {0:#x} not found in Branch Node with hash {1:#x} using path {2:?}")]
-    NodeNotFoundOnBranchNode(H256, H256, Nibbles),
+    NodeNotFoundOnBranchNode(H256, H256, NibbleBoxedSlice),
     #[error("Root node with hash {0:#x} not found")]
     RootNotFound(H256),
     #[error("Root node not found")]
@@ -39,8 +38,8 @@ pub enum InconsistentTreeError {
 pub struct ExtensionNodeErrorData {
     pub node_hash: H256,
     pub extension_node_hash: H256,
-    pub extension_node_prefix: Nibbles,
-    pub node_path: Nibbles,
+    pub extension_node_prefix: NibbleBoxedSlice,
+    pub node_path: NibbleBoxedSlice,
 }
 
 impl std::fmt::Display for ExtensionNodeErrorData {

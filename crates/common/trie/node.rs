@@ -1,9 +1,9 @@
-mod branch;
-mod extension;
-mod leaf;
-
-use std::sync::{Arc, OnceLock};
-
+use super::{ValueRLP, node_hash::NodeHash};
+use crate::{
+    NodeRLP, TrieDB,
+    error::TrieError,
+    nibbles::{NibbleSlice, Nibbles},
+};
 pub use branch::BranchNode;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 pub use extension::ExtensionNode;
@@ -15,10 +15,11 @@ use rkyv::{
     validation::{ArchiveContext, SharedContext},
     with::Skip,
 };
+use std::sync::{Arc, OnceLock};
 
-use crate::{NodeRLP, TrieDB, error::TrieError, nibbles::Nibbles};
-
-use super::{ValueRLP, node_hash::NodeHash};
+mod branch;
+mod extension;
+mod leaf;
 
 /// A reference to a node.
 ///
@@ -52,7 +53,11 @@ impl NodeRef {
     /// Gets a shared reference to the inner node.
     /// Requires that the trie is in a consistent state, ie that all leaves being pointed are in the database.
     /// Outside of snapsync this should always be the case.
-    pub fn get_node(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<Arc<Node>>, TrieError> {
+    pub fn get_node(
+        &self,
+        db: &dyn TrieDB,
+        path: NibbleSlice,
+    ) -> Result<Option<Arc<Node>>, TrieError> {
         match self {
             NodeRef::Node(node, _) => Ok(Some(node.clone())),
             NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
@@ -98,7 +103,7 @@ impl NodeRef {
     pub(crate) fn get_node_mut(
         &mut self,
         db: &dyn TrieDB,
-        path: Nibbles,
+        path: NibbleSlice,
     ) -> Result<Option<&mut Node>, TrieError> {
         match self {
             NodeRef::Node(node, _) => Ok(Some(Arc::make_mut(node))),
@@ -267,7 +272,7 @@ impl Default for Node {
     fn default() -> Self {
         // empty leaf node as a placeholder
         Self::Leaf(LeafNode {
-            partial: Nibbles::from_bytes(&[]),
+            partial: Nibbles::new(&[]),
             value: Vec::new(),
         })
     }
@@ -299,7 +304,7 @@ impl From<LeafNode> for Node {
 
 impl Node {
     /// Retrieves a value from the subtrie originating from this node given its path
-    pub fn get(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn get(&self, db: &dyn TrieDB, path: NibblesIter) -> Result<Option<ValueRLP>, TrieError> {
         match self {
             Node::Branch(n) => n.get(db, path),
             Node::Extension(n) => n.get(db, path),
@@ -311,7 +316,7 @@ impl Node {
     pub fn insert(
         &mut self,
         db: &dyn TrieDB,
-        path: Nibbles,
+        path: NibblesIter,
         value: impl Into<ValueOrHash>,
     ) -> Result<(), TrieError> {
         let new_node = match self {
@@ -333,7 +338,7 @@ impl Node {
     pub fn remove(
         &mut self,
         db: &dyn TrieDB,
-        path: Nibbles,
+        path: NibblesIter,
     ) -> Result<(bool, Option<ValueRLP>), TrieError> {
         let (new_root, value) = match self {
             Node::Branch(n) => n.remove(db, path),
@@ -354,7 +359,7 @@ impl Node {
     pub fn get_path(
         &self,
         db: &dyn TrieDB,
-        path: Nibbles,
+        path: NibblesIter,
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {
         match self {

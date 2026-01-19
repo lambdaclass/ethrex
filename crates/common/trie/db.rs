@@ -1,20 +1,23 @@
+use crate::{
+    Nibbles, Node, Trie,
+    error::TrieError,
+    nibbles::{NibbleBoxedSlice, NibbleSlice, NibbleVec},
+};
 use ethereum_types::H256;
 use ethrex_rlp::encode::RLPEncode;
-
-use crate::{Nibbles, Node, Trie, error::TrieError};
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
 };
 
 // Nibbles -> encoded node
-pub type NodeMap = Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>;
+pub type NodeMap = Arc<Mutex<BTreeMap<NibbleBoxedSlice, Vec<u8>>>>;
 
 pub trait TrieDB: Send + Sync {
-    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError>;
-    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError>;
+    fn get(&self, key: NibbleSlice) -> Result<Option<Vec<u8>>, TrieError>;
+    fn put_batch(&self, key_values: Vec<(NibbleVec, Vec<u8>)>) -> Result<(), TrieError>;
     // TODO: replace putbatch with this function.
-    fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {
+    fn put_batch_no_alloc(&self, key_values: &[(NibbleVec, Node)]) -> Result<(), TrieError> {
         self.put_batch(
             key_values
                 .iter()
@@ -22,7 +25,7 @@ pub trait TrieDB: Send + Sync {
                 .collect(),
         )
     }
-    fn put(&self, key: Nibbles, value: Vec<u8>) -> Result<(), TrieError> {
+    fn put(&self, key: NibbleVec, value: Vec<u8>) -> Result<(), TrieError> {
         self.put_batch(vec![(key, value)])
     }
     /// Commits any pending changes to the underlying storage
@@ -31,7 +34,7 @@ pub trait TrieDB: Send + Sync {
         Ok(())
     }
 
-    fn flatkeyvalue_computed(&self, _key: Nibbles) -> bool {
+    fn flatkeyvalue_computed(&self, _key: NibbleSlice) -> bool {
         false
     }
 }
@@ -41,7 +44,7 @@ pub trait TrieDB: Send + Sync {
 #[derive(Default)]
 pub struct InMemoryTrieDB {
     inner: NodeMap,
-    prefix: Option<Nibbles>,
+    prefix: Option<NibbleBoxedSlice>,
 }
 
 impl InMemoryTrieDB {
@@ -52,7 +55,7 @@ impl InMemoryTrieDB {
         }
     }
 
-    pub const fn new_with_prefix(map: NodeMap, prefix: Nibbles) -> Self {
+    pub const fn new_with_prefix(map: NodeMap, prefix: NibbleBoxedSlice) -> Self {
         Self {
             inner: map,
             prefix: Some(prefix),
@@ -84,7 +87,7 @@ impl InMemoryTrieDB {
         Ok(Self::new(in_memory_trie))
     }
 
-    fn apply_prefix(&self, path: Nibbles) -> Nibbles {
+    fn apply_prefix(&self, path: NibbleSlice) -> NibbleBoxedSlice {
         match &self.prefix {
             Some(prefix) => prefix.concat(&path),
             None => path,
@@ -98,7 +101,7 @@ impl InMemoryTrieDB {
 }
 
 impl TrieDB for InMemoryTrieDB {
-    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, key: NibbleSlice) -> Result<Option<Vec<u8>>, TrieError> {
         Ok(self
             .inner
             .lock()
@@ -107,7 +110,7 @@ impl TrieDB for InMemoryTrieDB {
             .cloned())
     }
 
-    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, key_values: Vec<(NibbleVec, Vec<u8>)>) -> Result<(), TrieError> {
         let mut db = self.inner.lock().map_err(|_| TrieError::LockError)?;
 
         for (key, value) in key_values {

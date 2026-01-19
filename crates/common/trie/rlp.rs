@@ -1,7 +1,8 @@
-use std::array;
+//! Contains RLP encoding and decoding implementations for Trie Nodes
+//! This encoding is only used to store the nodes in the DB, it is not the encoding used for hash computation
 
-// Contains RLP encoding and decoding implementations for Trie Nodes
-// This encoding is only used to store the nodes in the DB, it is not the encoding used for hash computation
+use super::node::{BranchNode, ExtensionNode, LeafNode, Node};
+use crate::{NodeHash, nibbles::NibblesPath};
 use ethrex_rlp::{
     constants::RLP_NULL,
     decode::{RLPDecode, decode_bytes},
@@ -9,9 +10,7 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
-
-use super::node::{BranchNode, ExtensionNode, LeafNode, Node};
-use crate::{Nibbles, NodeHash};
+use std::array;
 
 impl RLPEncode for BranchNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
@@ -108,7 +107,7 @@ impl RLPDecode for Node {
             // Leaf or Extension Node
             2 => {
                 let (path, _) = decode_bytes(rlp_items[0].expect("we already checked the length"))?;
-                let path = Nibbles::decode_compact(path);
+                let path = NibblesPath::decode_compact(path);
                 if path.is_leaf() {
                     // Decode as Leaf
                     let (value, _) =

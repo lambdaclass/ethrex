@@ -1,10 +1,9 @@
-use std::{cmp::Ordering, sync::Arc};
-
 use crate::{
     PathRLP, Trie, TrieDB, TrieError, ValueRLP,
-    nibbles::Nibbles,
+    nibbles::{NibbleVec, Nibbles},
     node::{Node, NodeRef},
 };
+use std::{cmp::Ordering, sync::Arc};
 
 pub struct TrieIterator {
     db: Box<dyn TrieDB>,
@@ -12,7 +11,7 @@ pub struct TrieIterator {
     // It proactively stacks all children of a branch after consuming it to reduce accesses to the database.
     // The stack is really used as a convoluted FIFO, so elements are added in the reverse order they will be popped.
     // This avoids extra copies caused by taking elements from the front.
-    stack: Vec<(Nibbles, NodeRef)>,
+    stack: Vec<(NibbleVec, NodeRef)>,
 }
 
 impl TrieIterator {
@@ -37,10 +36,10 @@ impl TrieIterator {
         // right children of traversed branches.
         fn first_ge(
             db: &dyn TrieDB,
-            prefix_nibbles: Nibbles,
-            mut target_nibbles: Nibbles,
+            prefix_nibbles: NibbleVec,
+            mut target_nibbles: NibbleVec,
             node: NodeRef,
-            new_stack: &mut Vec<(Nibbles, NodeRef)>,
+            new_stack: &mut Vec<(NibbleVec, NodeRef)>,
         ) -> Result<(), TrieError> {
             let Some(mut next_node) = node
                 .get_node_checked(db, prefix_nibbles.clone())
@@ -52,7 +51,7 @@ impl TrieIterator {
             match Arc::make_mut(&mut next_node) {
                 Node::Branch(branch_node) => {
                     // Add all children to the stack (in reverse order so we process first child frist)
-                    let Some(choice) = target_nibbles.next_choice() else {
+                    let Some(choice) = target_nibbles.next() else {
                         return Ok(());
                     };
                     let child = &branch_node.choices[choice];

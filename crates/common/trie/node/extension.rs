@@ -1,7 +1,7 @@
 use ethrex_rlp::encode::RLPEncode;
 
 use crate::ValueRLP;
-use crate::nibbles::Nibbles;
+use crate::nibbles::{NibbleIter, Nibbles};
 use crate::node::NodeRemoveResult;
 use crate::node_hash::NodeHash;
 use crate::{
@@ -35,7 +35,11 @@ impl ExtensionNode {
     }
 
     /// Retrieves a value from the subtrie originating from this node given its path
-    pub fn get(&self, db: &dyn TrieDB, mut path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn get(
+        &self,
+        db: &dyn TrieDB,
+        mut path: NibbleIter<&[u8]>,
+    ) -> Result<Option<ValueRLP>, TrieError> {
         // If the path is prefixed by this node's prefix, delegate to its child.
         // Otherwise, no value is present.
         if path.skip_prefix(&self.prefix) {
@@ -45,7 +49,7 @@ impl ExtensionNode {
                         node_hash: self.child.compute_hash().finalize(),
                         extension_node_hash: self.compute_hash().finalize(),
                         extension_node_prefix: self.prefix.clone(),
-                        node_path: path.current(),
+                        node_path: path.consumed_slice().map_data(Into::into),
                     }),
                 ))
             })?;
@@ -61,7 +65,7 @@ impl ExtensionNode {
     pub fn insert(
         &mut self,
         db: &dyn TrieDB,
-        path: Nibbles,
+        path: NibbleIter<&[u8]>,
         value: ValueOrHash,
     ) -> Result<Option<Node>, TrieError> {
         /* Possible flow paths:
@@ -84,7 +88,7 @@ impl ExtensionNode {
                         node_hash: self.child.compute_hash().finalize(),
                         extension_node_hash: self.compute_hash().finalize(),
                         extension_node_prefix: self.prefix.clone(),
-                        node_path: path.current(),
+                        node_path: path.consumed_slice().map_data(Into::into),
                     }),
                 )));
             };
@@ -114,7 +118,7 @@ impl ExtensionNode {
                                     node_hash: new_node.compute_hash().finalize(),
                                     extension_node_hash: self.compute_hash().finalize(),
                                     extension_node_prefix: self.prefix.clone(),
-                                    node_path: path.current(),
+                                    node_path: path.consumed_slice().map_data(Into::into),
                                 },
                             ),
                         )));
@@ -126,7 +130,7 @@ impl ExtensionNode {
                                     node_hash: new_node.compute_hash().finalize(),
                                     extension_node_hash: self.compute_hash().finalize(),
                                     extension_node_prefix: self.prefix.clone(),
-                                    node_path: path.current(),
+                                    node_path: path.consumed_slice().map_data(Into::into),
                                 },
                             ),
                         )));
@@ -153,7 +157,7 @@ impl ExtensionNode {
     pub fn remove(
         &mut self,
         db: &dyn TrieDB,
-        mut path: Nibbles,
+        mut path: NibbleIter<&[u8]>,
     ) -> Result<(Option<NodeRemoveResult>, Option<ValueRLP>), TrieError> {
         /* Possible flow paths:
             Extension { prefix, child } -> Extension { prefix, child } (no removal)
@@ -171,7 +175,7 @@ impl ExtensionNode {
                         node_hash: self.child.compute_hash().finalize(),
                         extension_node_hash: self.compute_hash().finalize(),
                         extension_node_prefix: self.prefix.clone(),
-                        node_path: path.current(),
+                        node_path: path.consumed_slice().map_data(Into::into),
                     }),
                 )));
             };
@@ -233,7 +237,7 @@ impl ExtensionNode {
     pub fn get_path(
         &self,
         db: &dyn TrieDB,
-        mut path: Nibbles,
+        mut path: NibbleIter<&[u8]>,
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {
         // Add self to node_path (if not inlined in parent)
@@ -249,7 +253,7 @@ impl ExtensionNode {
                         node_hash: self.child.clone().compute_hash().finalize(),
                         extension_node_hash: self.compute_hash().finalize(),
                         extension_node_prefix: self.prefix.clone(),
-                        node_path: path.current(),
+                        node_path: path.consumed_slice().map_data(Into::into),
                     }),
                 ))
             })?;

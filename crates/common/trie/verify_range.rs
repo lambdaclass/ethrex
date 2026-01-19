@@ -1,15 +1,13 @@
-use std::collections::{BTreeMap, VecDeque};
-
-use ethereum_types::H256;
-use ethrex_crypto::keccak::keccak_hash;
-use ethrex_rlp::decode::RLPDecode;
-
 use crate::{
     ProofTrie, Trie, TrieError, ValueRLP,
-    nibbles::Nibbles,
+    nibbles::{NibbleVec, Nibbles},
     node::{Node, NodeRef},
     node_hash::NodeHash,
 };
+use ethereum_types::H256;
+use ethrex_crypto::keccak::keccak_hash;
+use ethrex_rlp::decode::RLPDecode;
+use std::collections::{BTreeMap, VecDeque};
 
 /// Verifies that the key value range belongs to the trie with the given root given the edge proofs for the range
 /// Also returns true if there is more state to be fetched (aka if there are more keys to the right of the given range)
@@ -175,7 +173,7 @@ impl RangeProof<'_> {
 /// is unbounded (aka. not provided), all nodes to the right (inclusive) of the left bound will
 /// be counted. Leaf nodes are not counted (the leaf nodes within the proof do not count).
 struct ProofProcessingResult {
-    external_references: Vec<(Nibbles, NodeHash)>,
+    external_references: Vec<(NibbleVec, NodeHash)>,
     left_value: Vec<u8>,
     num_right_references: usize,
 }
@@ -188,11 +186,11 @@ fn process_proof_nodes(
 ) -> Result<ProofProcessingResult, TrieError> {
     // Convert `H256` bounds into `Nibble` bounds for convenience.
     let bounds = (
-        Nibbles::from_bytes(&bounds.0.0),
+        Nibbles::new(&bounds.0.0).map_data(Into::into),
         // In case there's no right bound, we use the left bound as the right bound.
-        Nibbles::from_bytes(&bounds.1.unwrap_or(bounds.0).0),
+        Nibbles::new(&bounds.1.unwrap_or(bounds.0).0).map_data(Into::into),
     );
-    let first_key = first_key.map(|first_key| Nibbles::from_bytes(&first_key.0));
+    let first_key = first_key.map(|first_key| Nibbles::new(&first_key.0).map_data(Into::into));
 
     // Generate a map of node hashes to node data for obtaining proof nodes given their hashes.
     let proof = RangeProof::from(raw_proof);
@@ -263,12 +261,12 @@ fn process_proof_nodes(
 }
 
 fn visit_child_node(
-    stack: &mut VecDeque<(Nibbles, Node)>,
-    external_refs: &mut Vec<(Nibbles, NodeHash)>,
+    stack: &mut VecDeque<(NibbleVec, Node)>,
+    external_refs: &mut Vec<(NibbleVec, NodeHash)>,
     proof: &RangeProof,
-    (left_bound, right_bound): &(Nibbles, Nibbles),
-    first_key: Option<&Nibbles>,
-    mut partial_path: Nibbles,
+    (left_bound, right_bound): &(NibbleVec, NibbleVec),
+    first_key: Option<&NibbleVec>,
+    mut partial_path: NibbleVec,
     child: NodeRef,
 ) -> Result<usize, TrieError> {
     let cmp_l = left_bound.compare_prefix(&partial_path);
