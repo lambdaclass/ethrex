@@ -156,8 +156,7 @@ async fn test_transfer_erc_20() -> Result<()> {
     )
     .await?;
 
-    let bridge_balance =
-        test_balance_of(&l1_client, l1_erc20_contract_address, l2a_bridge).await;
+    let bridge_balance = test_balance_of(&l1_client, l1_erc20_contract_address, l2a_bridge).await;
     assert_eq!(bridge_balance, U256::from(DEPOSIT_VALUE), "invalid deposit");
 
     // send ERC20 from L2a to L2b
