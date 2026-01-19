@@ -7,7 +7,9 @@ use crate::{
     },
     sync::{
         AccountStorageRoots, SyncError,
-        state_healing::{SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE},
+        state_healing::{
+            MAX_PARALLEL_DB_WRITERS, SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE,
+        },
     },
     utils::current_unix_time,
 };
@@ -206,11 +208,18 @@ pub async fn heal_storage_trie(
         let is_done = state.requests.is_empty() && state.download_queue.is_empty();
         let is_stale = current_unix_time() > state.staleness_timestamp;
 
-        if nodes_to_write.values().map(Vec::len).sum::<usize>() > 100_000 || is_done || is_stale {
+        // Threshold for batching DB writes
+        const BATCH_WRITE_THRESHOLD: usize = 100_000;
+
+        if nodes_to_write.values().map(Vec::len).sum::<usize>() > BATCH_WRITE_THRESHOLD
+            || is_done
+            || is_stale
+        {
             let to_write: Vec<_> = nodes_to_write.drain().collect();
             let store = state.store.clone();
-            // NOTE: we keep only a single task in the background to avoid out of order deletes
-            if !db_joinset.is_empty() {
+            // Allow up to MAX_PARALLEL_DB_WRITERS concurrent tasks to improve throughput
+            // while limiting parallelism to avoid memory pressure and ordering issues
+            while db_joinset.len() >= MAX_PARALLEL_DB_WRITERS {
                 db_joinset.join_next().await;
             }
             db_joinset.spawn_blocking(move || {

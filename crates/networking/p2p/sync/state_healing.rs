@@ -35,6 +35,9 @@ pub const STORAGE_BATCH_SIZE: usize = 300;
 pub const NODE_BATCH_SIZE: usize = 500;
 /// Pace at which progress is shown via info tracing
 pub const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(2);
+/// Maximum number of parallel DB write tasks
+/// Keep this small to avoid out-of-order writes causing issues
+pub const MAX_PARALLEL_DB_WRITERS: usize = 2;
 
 use super::SyncError;
 
@@ -289,16 +292,23 @@ async fn heal_state_trie(
 
         let is_done = paths.is_empty() && nodes_to_heal.is_empty() && inflight_tasks == 0;
 
-        if nodes_to_write.len() > 100_000 || is_done || is_stale {
-            // PERF: reuse buffers?
-            let to_write = std::mem::take(&mut nodes_to_write);
+        // Pre-allocate batch write threshold
+        const BATCH_WRITE_THRESHOLD: usize = 100_000;
+
+        if nodes_to_write.len() > BATCH_WRITE_THRESHOLD || is_done || is_stale {
+            // Replace with a pre-allocated buffer to avoid repeated allocations
+            let to_write = std::mem::replace(
+                &mut nodes_to_write,
+                Vec::with_capacity(BATCH_WRITE_THRESHOLD),
+            );
             let store = store.clone();
-            // NOTE: we keep only a single task in the background to avoid out of order deletes
-            if !db_joinset.is_empty() {
+            // Allow up to MAX_PARALLEL_DB_WRITERS concurrent tasks to improve throughput
+            // while limiting parallelism to avoid memory pressure and ordering issues
+            while db_joinset.len() >= MAX_PARALLEL_DB_WRITERS {
                 db_joinset
                     .join_next()
                     .await
-                    .expect("we just checked joinset is not empty")?;
+                    .expect("joinset is not empty")?;
             }
             db_joinset.spawn_blocking(move || {
                 let mut encoded_to_write = BTreeMap::new();
