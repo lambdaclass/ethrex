@@ -59,6 +59,11 @@ const MESSAGE_CACHE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Minimum interval between WHOAREYOU packets to the same IP address.
 /// Prevents amplification attacks where attackers spoof source IPs.
 const WHOAREYOU_RATE_LIMIT: Duration = Duration::from_secs(1);
+/// Time window for collecting IP votes from PONG recipient_addr.
+/// Votes older than this are discarded. Reference: nim-eth uses 5 minutes.
+const IP_VOTE_WINDOW: Duration = Duration::from_secs(300);
+/// Minimum number of agreeing votes required to update external IP.
+const IP_VOTE_THRESHOLD: usize = 3;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DiscoveryServerError {
@@ -116,6 +121,9 @@ pub struct DiscoveryServer {
     pending_challenges: FxHashMap<H256, (Vec<u8>, Instant)>,
     /// Tracks last WHOAREYOU send time per source IP to prevent amplification attacks.
     whoareyou_rate_limit: FxHashMap<IpAddr, Instant>,
+    /// Collects recipient_addr IPs from PONGs for external IP detection via majority voting.
+    /// Key: IP address, Value: list of timestamps when this IP was reported.
+    ip_votes: FxHashMap<IpAddr, Vec<Instant>>,
 }
 
 impl DiscoveryServer {
@@ -150,6 +158,7 @@ impl DiscoveryServer {
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
             whoareyou_rate_limit: Default::default(),
+            ip_votes: Default::default(),
         };
 
         info!(count = bootnodes.len(), "Adding bootnodes");
@@ -478,6 +487,9 @@ impl DiscoveryServer {
             }
         }
 
+        // Collect recipient_addr for external IP detection
+        self.record_ip_vote(pong_message.recipient_addr.ip());
+
         Ok(())
     }
 
@@ -727,12 +739,66 @@ impl DiscoveryServer {
             .retain(|_ip, timestamp| now.duration_since(*timestamp) < WHOAREYOU_RATE_LIMIT);
         let removed_rate_limits = before_rate_limits - self.whoareyou_rate_limit.len();
 
+        // Clean stale IP votes
+        for timestamps in self.ip_votes.values_mut() {
+            timestamps.retain(|t| now.duration_since(*t) < IP_VOTE_WINDOW);
+        }
+        self.ip_votes.retain(|_, timestamps| !timestamps.is_empty());
+
         let total_removed = removed_messages + removed_challenges + removed_rate_limits;
         if total_removed > 0 {
             trace!(
                 "Cleaned up {} stale entries ({} messages, {} challenges, {} rate limits)",
                 total_removed, removed_messages, removed_challenges, removed_rate_limits
             );
+        }
+    }
+
+    /// Records an IP vote from a PONG recipient_addr and checks for majority.
+    fn record_ip_vote(&mut self, reported_ip: IpAddr) {
+        let now = Instant::now();
+
+        // Add vote for this IP
+        self.ip_votes.entry(reported_ip).or_default().push(now);
+
+        // Check if this IP has reached majority threshold
+        if let Some(timestamps) = self.ip_votes.get(&reported_ip) {
+            let recent_votes = timestamps
+                .iter()
+                .filter(|t| now.duration_since(**t) < IP_VOTE_WINDOW)
+                .count();
+
+            if recent_votes >= IP_VOTE_THRESHOLD {
+                // Check if this differs from our current IP
+                if reported_ip != self.local_node.ip {
+                    info!(
+                        old_ip = %self.local_node.ip,
+                        new_ip = %reported_ip,
+                        votes = recent_votes,
+                        "External IP detected via PONG voting, updating local ENR"
+                    );
+                    self.update_local_ip(reported_ip);
+                }
+            }
+        }
+    }
+
+    /// Updates local node IP and re-signs the ENR with incremented seq.
+    fn update_local_ip(&mut self, new_ip: IpAddr) {
+        // Update runtime node
+        self.local_node.ip = new_ip;
+
+        // Update ENR - increment seq and re-create with new IP
+        let new_seq = self.local_node_record.seq + 1;
+        if let Ok(mut new_record) = NodeRecord::from_node(&self.local_node, new_seq, &self.signer) {
+            // Preserve fork_id if present
+            if let Some(fork_id) = self.local_node_record.decode_pairs().eth {
+                let _ = new_record.set_fork_id(fork_id, &self.signer);
+            }
+            self.local_node_record = new_record;
+
+            // Clear IP votes after successful update
+            self.ip_votes.clear();
         }
     }
 
@@ -893,7 +959,7 @@ mod tests {
     use ethrex_storage::{EngineType, Store};
     use rand::{SeedableRng, rngs::StdRng};
     use secp256k1::SecretKey;
-    use std::{net::SocketAddr, sync::Arc};
+    use std::{net::{IpAddr, SocketAddr}, sync::Arc, time::Instant};
     use tokio::net::UdpSocket;
 
     #[tokio::test]
@@ -918,6 +984,7 @@ mod tests {
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
             whoareyou_rate_limit: Default::default(),
+            ip_votes: Default::default(),
         };
 
         let n1 = server.next_nonce(&mut rng);
@@ -950,6 +1017,7 @@ mod tests {
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
             whoareyou_rate_limit: Default::default(),
+            ip_votes: Default::default(),
         };
 
         let nonce = [0u8; 12];
@@ -1039,6 +1107,7 @@ mod tests {
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
             whoareyou_rate_limit: Default::default(),
+            ip_votes: Default::default(),
         };
 
         // Verify the contact was added
@@ -1074,5 +1143,186 @@ mod tests {
         let _ = server.handle_pong(pong_different_seq, remote_node_id).await;
         // A new message should be pending (FINDNODE sent)
         assert_eq!(server.pending_by_nonce.len(), initial_pending_count + 1);
+    }
+
+    #[tokio::test]
+    async fn test_ip_voting_updates_ip_on_threshold() {
+        let local_node = Node::from_enode_url(
+            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+        ).expect("Bad enode url");
+        let original_ip = local_node.ip;
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+        let original_seq = local_node_record.seq;
+
+        let mut server = DiscoveryServer {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
+            peer_table: PeerTable::spawn(
+                10,
+                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+            ),
+            initial_lookup_interval: 1000.0,
+            counter: 0,
+            pending_by_nonce: Default::default(),
+            pending_challenges: Default::default(),
+            whoareyou_rate_limit: Default::default(),
+            ip_votes: Default::default(),
+        };
+
+        let new_ip: IpAddr = "203.0.113.50".parse().unwrap();
+
+        // Vote 1 - should not update yet
+        server.record_ip_vote(new_ip);
+        assert_eq!(server.local_node.ip, original_ip);
+        assert_eq!(server.ip_votes.get(&new_ip).map(|v| v.len()), Some(1));
+
+        // Vote 2 - should not update yet
+        server.record_ip_vote(new_ip);
+        assert_eq!(server.local_node.ip, original_ip);
+        assert_eq!(server.ip_votes.get(&new_ip).map(|v| v.len()), Some(2));
+
+        // Vote 3 - should trigger update (threshold reached)
+        server.record_ip_vote(new_ip);
+        assert_eq!(server.local_node.ip, new_ip);
+        assert_eq!(server.local_node_record.seq, original_seq + 1);
+        // Votes should be cleared after update
+        assert!(server.ip_votes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_ip_voting_no_update_if_same_ip() {
+        let local_node = Node::from_enode_url(
+            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+        ).expect("Bad enode url");
+        let original_ip = local_node.ip;
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+        let original_seq = local_node_record.seq;
+
+        let mut server = DiscoveryServer {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
+            peer_table: PeerTable::spawn(
+                10,
+                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+            ),
+            initial_lookup_interval: 1000.0,
+            counter: 0,
+            pending_by_nonce: Default::default(),
+            pending_challenges: Default::default(),
+            whoareyou_rate_limit: Default::default(),
+            ip_votes: Default::default(),
+        };
+
+        // Vote 3 times for the same IP we already have
+        server.record_ip_vote(original_ip);
+        server.record_ip_vote(original_ip);
+        server.record_ip_vote(original_ip);
+
+        // IP and seq should remain unchanged
+        assert_eq!(server.local_node.ip, original_ip);
+        assert_eq!(server.local_node_record.seq, original_seq);
+        // Votes should NOT be cleared (no update happened)
+        assert_eq!(server.ip_votes.get(&original_ip).map(|v| v.len()), Some(3));
+    }
+
+    #[tokio::test]
+    async fn test_ip_voting_multiple_ips() {
+        let local_node = Node::from_enode_url(
+            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+        ).expect("Bad enode url");
+        let original_ip = local_node.ip;
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+
+        let mut server = DiscoveryServer {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
+            peer_table: PeerTable::spawn(
+                10,
+                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+            ),
+            initial_lookup_interval: 1000.0,
+            counter: 0,
+            pending_by_nonce: Default::default(),
+            pending_challenges: Default::default(),
+            whoareyou_rate_limit: Default::default(),
+            ip_votes: Default::default(),
+        };
+
+        let ip1: IpAddr = "203.0.113.50".parse().unwrap();
+        let ip2: IpAddr = "203.0.113.51".parse().unwrap();
+
+        // Vote for different IPs - neither should reach threshold
+        server.record_ip_vote(ip1);
+        server.record_ip_vote(ip2);
+        server.record_ip_vote(ip1);
+        server.record_ip_vote(ip2);
+
+        // IP should not change yet
+        assert_eq!(server.local_node.ip, original_ip);
+        assert_eq!(server.ip_votes.get(&ip1).map(|v| v.len()), Some(2));
+        assert_eq!(server.ip_votes.get(&ip2).map(|v| v.len()), Some(2));
+
+        // Third vote for ip1 should trigger update
+        server.record_ip_vote(ip1);
+        assert_eq!(server.local_node.ip, ip1);
+        // Votes cleared after update
+        assert!(server.ip_votes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_ip_vote_cleanup() {
+        let local_node = Node::from_enode_url(
+            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+        ).expect("Bad enode url");
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+
+        let mut server = DiscoveryServer {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
+            peer_table: PeerTable::spawn(
+                10,
+                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+            ),
+            initial_lookup_interval: 1000.0,
+            counter: 0,
+            pending_by_nonce: Default::default(),
+            pending_challenges: Default::default(),
+            whoareyou_rate_limit: Default::default(),
+            ip_votes: Default::default(),
+        };
+
+        let ip: IpAddr = "203.0.113.50".parse().unwrap();
+
+        // Manually insert an old vote (simulating a stale entry)
+        // We use Instant::now() since we can't easily create old Instants,
+        // but we can verify the cleanup logic works on the structure
+        server.ip_votes.insert(ip, vec![Instant::now()]);
+        assert_eq!(server.ip_votes.len(), 1);
+
+        // Cleanup should retain recent votes
+        server.cleanup_stale_entries();
+        assert_eq!(server.ip_votes.len(), 1);
+
+        // Insert an empty vec and verify cleanup removes it
+        let ip2: IpAddr = "203.0.113.51".parse().unwrap();
+        server.ip_votes.insert(ip2, vec![]);
+        assert_eq!(server.ip_votes.len(), 2);
+
+        server.cleanup_stale_entries();
+        // Empty vec should be removed
+        assert_eq!(server.ip_votes.len(), 1);
+        assert!(!server.ip_votes.contains_key(&ip2));
     }
 }
