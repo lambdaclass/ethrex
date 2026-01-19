@@ -108,8 +108,10 @@ async function main() {
     return;
   }
 
+  const validatedCount = upgradeable.length - skipped.length;
+
   console.log(
-    `Upgrade compatibility check passed for ${upgradeable.length} contract(s).`
+    `Upgrade compatibility check passed for ${validatedCount} contract(s).`
   );
 }
 
