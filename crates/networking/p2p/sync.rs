@@ -577,6 +577,98 @@ impl Syncer {
     }
 }
 
+/// Downloads bytecodes for code hashes from snapshot files up to the given file index.
+/// Returns the set of code hashes that were successfully downloaded.
+async fn download_bytecodes_from_files(
+    code_hashes_dir: &Path,
+    max_file_index: u64,
+    peers: &mut PeerHandler,
+    store: &Store,
+) -> Result<HashSet<H256>, SyncError> {
+    let mut downloaded_hashes = HashSet::new();
+    let mut code_hashes_to_download = Vec::new();
+
+    // Collect entries and sort by file index to process in order
+    let mut entries: Vec<_> = std::fs::read_dir(code_hashes_dir)
+        .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
+        .filter_map(|e| e.ok())
+        .collect();
+
+    entries.sort_by_key(|e| e.path());
+
+    for entry in entries {
+        // Parse file index from filename to check if we should process it
+        let file_name = entry.file_name();
+        let file_name_str = file_name.to_string_lossy();
+        if let Some(index_str) = file_name_str.strip_prefix("code_hashes_")
+            && let Ok(file_index) = index_str.parse::<u64>()
+            && file_index >= max_file_index
+        {
+            continue; // Skip files created after our snapshot
+        }
+
+        let snapshot_contents = std::fs::read(entry.path())
+            .map_err(|err| SyncError::SnapshotReadError(entry.path(), err))?;
+        let code_hashes: Vec<H256> = RLPDecode::decode(&snapshot_contents)
+            .map_err(|_| SyncError::CodeHashesSnapshotDecodeError(entry.path()))?;
+
+        for hash in code_hashes {
+            if downloaded_hashes.insert(hash) {
+                code_hashes_to_download.push(hash);
+
+                if code_hashes_to_download.len() >= BYTECODE_CHUNK_SIZE {
+                    info!(
+                        "[Background] Downloading {} bytecodes",
+                        code_hashes_to_download.len()
+                    );
+                    let bytecodes = peers
+                        .request_bytecodes(&code_hashes_to_download)
+                        .await
+                        .map_err(SyncError::PeerHandler)?
+                        .ok_or(SyncError::BytecodesNotFound)?;
+
+                    store
+                        .write_account_code_batch(
+                            code_hashes_to_download
+                                .drain(..)
+                                .zip(bytecodes)
+                                .map(|(hash, code)| {
+                                    (hash, Code::from_bytecode_unchecked(code, hash))
+                                })
+                                .collect(),
+                        )
+                        .await?;
+                }
+            }
+        }
+    }
+
+    // Download remaining bytecodes
+    if !code_hashes_to_download.is_empty() {
+        info!(
+            "[Background] Downloading remaining {} bytecodes",
+            code_hashes_to_download.len()
+        );
+        let bytecodes = peers
+            .request_bytecodes(&code_hashes_to_download)
+            .await
+            .map_err(SyncError::PeerHandler)?
+            .ok_or(SyncError::BytecodesNotFound)?;
+
+        store
+            .write_account_code_batch(
+                code_hashes_to_download
+                    .drain(..)
+                    .zip(bytecodes)
+                    .map(|(hash, code)| (hash, Code::from_bytecode_unchecked(code, hash)))
+                    .collect(),
+            )
+            .await?;
+    }
+
+    Ok(downloaded_hashes)
+}
+
 /// Fetches all block bodies for the given block headers via p2p and stores them
 async fn store_block_bodies(
     mut block_headers: Vec<BlockHeader>,
@@ -699,6 +791,11 @@ impl Syncer {
             CodeHashCollector::new(code_hashes_snapshot_dir.clone());
 
         let mut storage_accounts = AccountStorageRoots::default();
+        // Handle for background bytecode download task
+        let mut bytecode_download_handle: Option<
+            tokio::task::JoinHandle<Result<HashSet<H256>, SyncError>>,
+        > = None;
+
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
             // We start by downloading all of the leafs of the trie of accounts
             // The function request_account_range writes the leafs into files in
@@ -738,6 +835,31 @@ impl Syncer {
 
             info!("Original state root: {state_root:?}");
             info!("Computed state root after request_account_rages: {computed_state_root:?}");
+
+            // Flush current code hashes and spawn background bytecode download
+            // This runs in parallel with storage download/insertion/healing
+            let initial_file_count = code_hash_collector.force_flush().await?;
+            info!(
+                "Spawning background bytecode download for {} code hash files",
+                initial_file_count
+            );
+
+            bytecode_download_handle = if initial_file_count > 0 {
+                let code_hashes_dir = code_hashes_snapshot_dir.clone();
+                let mut peers_clone = self.peers.clone();
+                let store_clone = store.clone();
+                Some(tokio::spawn(async move {
+                    download_bytecodes_from_files(
+                        &code_hashes_dir,
+                        initial_file_count,
+                        &mut peers_clone,
+                        &store_clone,
+                    )
+                    .await
+                }))
+            } else {
+                None
+            };
 
             *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
             // We start downloading the storage leafs. To do so, we need to be sure that the storage root
@@ -900,11 +1022,34 @@ impl Syncer {
 
         *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
 
+        // Wait for background bytecode download to complete and get already-downloaded hashes
+        let mut already_downloaded = if let Some(handle) = bytecode_download_handle {
+            info!("Waiting for background bytecode download to complete");
+            match handle.await {
+                Ok(Ok(downloaded)) => {
+                    info!(
+                        "Background bytecode download completed: {} hashes downloaded",
+                        downloaded.len()
+                    );
+                    downloaded
+                }
+                Ok(Err(e)) => {
+                    warn!("Background bytecode download failed: {e}, will retry all hashes");
+                    HashSet::new()
+                }
+                Err(e) => {
+                    warn!("Background bytecode download task panicked: {e}, will retry all hashes");
+                    HashSet::new()
+                }
+            }
+        } else {
+            HashSet::new()
+        };
+
         let code_hashes_dir = get_code_hashes_snapshots_dir(&self.datadir);
-        let mut seen_code_hashes = HashSet::new();
         let mut code_hashes_to_download = Vec::new();
 
-        info!("Starting download code hashes from peers");
+        info!("Downloading remaining bytecodes from peers");
         for entry in std::fs::read_dir(&code_hashes_dir)
             .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
         {
@@ -915,13 +1060,13 @@ impl Syncer {
                 .map_err(|_| SyncError::CodeHashesSnapshotDecodeError(entry.path()))?;
 
             for hash in code_hashes {
-                // If we haven't seen the code hash yet, add it to the list of hashes to download
-                if seen_code_hashes.insert(hash) {
+                // Skip hashes that were already downloaded by background task
+                if already_downloaded.insert(hash) {
                     code_hashes_to_download.push(hash);
 
                     if code_hashes_to_download.len() >= BYTECODE_CHUNK_SIZE {
                         info!(
-                            "Starting bytecode download of {} hashes",
+                            "Downloading remaining {} bytecodes",
                             code_hashes_to_download.len()
                         );
                         let bytecodes = self
@@ -950,6 +1095,10 @@ impl Syncer {
 
         // Download remaining bytecodes if any
         if !code_hashes_to_download.is_empty() {
+            info!(
+                "Downloading final {} bytecodes",
+                code_hashes_to_download.len()
+            );
             let bytecodes = self
                 .peers
                 .request_bytecodes(&code_hashes_to_download)

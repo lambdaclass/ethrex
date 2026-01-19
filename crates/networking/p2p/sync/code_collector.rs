@@ -57,6 +57,33 @@ impl CodeHashCollector {
         Ok(())
     }
 
+    /// Force flushes the current buffer and returns the current file count.
+    /// This allows bytecode download to start for already-collected hashes
+    /// while more hashes are still being collected.
+    pub async fn force_flush(&mut self) -> Result<u64, SyncError> {
+        // Wait for any pending writes
+        while let Some(task) = self.disk_tasks.join_next().await {
+            task?
+                .inspect_err(|err| error!("Error when dumping code hashes to file: {err:?}"))
+                .map_err(|_| SyncError::BytecodeFileError)?;
+        }
+
+        // Flush current buffer if not empty
+        if !self.buffer.is_empty() {
+            let buffer = std::mem::take(&mut self.buffer);
+            self.flush_buffer(buffer);
+
+            // Wait for this flush to complete
+            if let Some(task) = self.disk_tasks.join_next().await {
+                task?
+                    .inspect_err(|err| error!("Error when dumping code hashes to file: {err:?}"))
+                    .map_err(|_| SyncError::BytecodeFileError)?;
+            }
+        }
+
+        Ok(self.file_index)
+    }
+
     /// Finishes the code collector and returns the final index of file
     pub async fn finish(mut self) -> Result<(), SyncError> {
         // Final flush if needed
