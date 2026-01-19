@@ -155,29 +155,20 @@ impl<'a> VM<'a> {
 
         // offset is out of bounds, so fill zeroes
         if calldata_offset >= calldata_len {
-            current_call_frame.memory.store_zeros(dest_offset, size)?;
+            current_call_frame
+                .memory
+                .store_data_zero_padded(dest_offset, &[], size)?;
             return Ok(OpcodeResult::Continue);
         }
 
         // We already verified calldata_len >= calldata_offset.
         let available_data = calldata_len - calldata_offset;
         let copy_size = size.min(available_data);
-        let zero_fill_size = size - copy_size;
-
-        if copy_size > 0 {
-            #[expect(clippy::indexing_slicing, reason = "bounds checked")]
-            let src_slice =
-                &current_call_frame.calldata[calldata_offset..calldata_offset + copy_size];
-            current_call_frame
-                .memory
-                .store_data(dest_offset, src_slice)?;
-        }
-
-        if zero_fill_size > 0 {
-            current_call_frame
-                .memory
-                .store_zeros(dest_offset + copy_size, zero_fill_size)?;
-        }
+        #[expect(clippy::indexing_slicing, reason = "bounds checked")]
+        let src_slice = &current_call_frame.calldata[calldata_offset..calldata_offset + copy_size];
+        current_call_frame
+            .memory
+            .store_data_zero_padded(dest_offset, src_slice, size)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -245,16 +236,13 @@ impl<'a> VM<'a> {
                     .bytecode
                     .get_unchecked(code_offset..end)
             };
-            current_call_frame.memory.store_data(dest_offset, slice)?;
-
-            #[expect(clippy::arithmetic_side_effects)]
-            if copy_size < size {
-                current_call_frame
-                    .memory
-                    .store_zeros(dest_offset + copy_size, size - copy_size)?;
-            }
+            current_call_frame
+                .memory
+                .store_data_zero_padded(dest_offset, slice, size)?;
         } else {
-            current_call_frame.memory.store_zeros(dest_offset, size)?;
+            current_call_frame
+                .memory
+                .store_data_zero_padded(dest_offset, &[], size)?;
         }
 
         Ok(OpcodeResult::Continue)
@@ -341,17 +329,11 @@ impl<'a> VM<'a> {
             let slice = unsafe { bytecode.bytecode.get_unchecked(offset..end) };
             self.current_call_frame
                 .memory
-                .store_data(dest_offset, slice)?;
-
-            if copy_size < size {
-                self.current_call_frame
-                    .memory
-                    .store_zeros(dest_offset + copy_size, size - copy_size)?;
-            }
+                .store_data_zero_padded(dest_offset, slice, size)?;
         } else {
             self.current_call_frame
                 .memory
-                .store_zeros(dest_offset, size)?;
+                .store_data_zero_padded(dest_offset, &[], size)?;
         }
 
         Ok(OpcodeResult::Continue)

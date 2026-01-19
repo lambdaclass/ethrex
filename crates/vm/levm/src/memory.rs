@@ -191,6 +191,44 @@ impl Memory {
         self.store(data, offset, data.len())
     }
 
+    /// Stores data and zero-pads up to total_size at the given offset.
+    #[inline(always)]
+    pub fn store_data_zero_padded(
+        &mut self,
+        offset: usize,
+        data: &[u8],
+        total_size: usize,
+    ) -> Result<(), VMError> {
+        if total_size == 0 {
+            return Ok(());
+        }
+
+        let new_size = offset.checked_add(total_size).ok_or(OutOfBounds)?;
+        self.resize(new_size)?;
+
+        let copy_size = data.len().min(total_size);
+        if copy_size > 0 {
+            self.store(data, offset, copy_size)?;
+        }
+
+        if copy_size < total_size {
+            let zero_offset = offset.checked_add(copy_size).ok_or(OutOfBounds)?;
+            let zero_size = total_size - copy_size;
+            let real_offset = self.current_base.wrapping_add(zero_offset);
+            let mut buffer = self.buffer.borrow_mut();
+
+            // resize ensures bounds are correct
+            #[expect(unsafe_code)]
+            unsafe {
+                buffer
+                    .get_unchecked_mut(real_offset..real_offset.wrapping_add(zero_size))
+                    .fill(0);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Stores a word at the given offset, resizing memory if needed.
     #[inline(always)]
     pub fn store_word(&mut self, offset: usize, word: U256) -> Result<(), VMError> {
