@@ -1379,7 +1379,23 @@ impl PeerHandler {
                             .max(1);
                         let storage_density = start_hash_u256 / slot_count;
 
-                        let slots_per_chunk = U256::from(10000);
+                        // Adaptive slots per chunk based on response completeness
+                        // If we got fewer slots than expected, reduce chunk size for better success rate
+                        // Base: 10000 slots, adjust down if response was incomplete
+                        let base_slots_per_chunk = 10000_u64;
+                        // Estimate expected slots based on requested range vs received
+                        // If we got significantly less than expected, reduce future chunk sizes
+                        let slots_per_chunk = if slot_count < 100 {
+                            // Very sparse response - use smaller chunks
+                            U256::from(base_slots_per_chunk / 4)
+                        } else if slot_count < 500 {
+                            // Partially complete - use moderately smaller chunks
+                            U256::from(base_slots_per_chunk / 2)
+                        } else {
+                            // Good response - use normal chunk size
+                            U256::from(base_slots_per_chunk)
+                        };
+
                         let chunk_size = storage_density
                             .checked_mul(slots_per_chunk)
                             .unwrap_or(U256::MAX);
