@@ -37,6 +37,10 @@ impl GuestProgramStateWrapper {
         self.lock_mutex()?.state_trie_root()
     }
 
+    pub fn auth_state(&mut self) -> Result<H256, GuestProgramStateError> {
+        self.lock_mutex()?.auth_state()
+    }
+
     pub fn get_first_invalid_block_hash(&self) -> Result<Option<u64>, GuestProgramStateError> {
         self.lock_mutex()?.get_first_invalid_block_hash()
     }

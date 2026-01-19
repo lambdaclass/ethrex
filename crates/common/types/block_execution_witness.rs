@@ -142,14 +142,14 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
         )?;
 
         // hash state trie nodes
-        let state_trie = if let Some(mut state_trie) = state_trie {
+        let state_trie = if let Some(state_trie) = state_trie {
             state_trie
         } else {
             EncodedTrie::default()
         };
 
         let mut storage_tries = BTreeMap::new();
-        for (address, mut storage_trie) in original_storage_tries {
+        for (address, storage_trie) in original_storage_tries {
             storage_tries.insert(address, storage_trie);
         }
 
