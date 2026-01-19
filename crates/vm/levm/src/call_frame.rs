@@ -145,6 +145,7 @@ impl Stack {
         let index = self.offset + N;
 
         if index >= self.values.len() {
+            cold();
             return Err(ExceptionalHalt::StackUnderflow);
         }
 
@@ -172,6 +173,7 @@ impl Stack {
         #[expect(clippy::arithmetic_side_effects)]
         let index = self.offset + N;
         if index >= self.values.len() {
+            cold();
             return Err(ExceptionalHalt::StackUnderflow);
         }
 
@@ -380,6 +382,7 @@ impl CallFrame {
         self.gas_remaining -= gas as i64;
 
         if self.gas_remaining < 0 {
+            cold();
             return Err(ExceptionalHalt::OutOfGas);
         }
 
@@ -472,3 +475,7 @@ impl<'a> VM<'a> {
         Ok(())
     }
 }
+
+
+#[cold]
+pub fn cold() {}
