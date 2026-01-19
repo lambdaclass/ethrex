@@ -39,6 +39,12 @@ use std::cmp::min;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 
+/// Configuration for adaptive state transition flushing.
+/// Higher gas transactions tend to have more state changes, so we flush them sooner.
+const GAS_THRESHOLD_FOR_EARLY_FLUSH: u64 = 500_000; // Flush sooner for high-gas txs
+const BASE_TX_COUNT_THRESHOLD: usize = 5; // Base number of txs before flush
+const MIN_TX_COUNT_THRESHOLD: usize = 2; // Minimum txs before flush for high-gas txs
+
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
 /// [LEVM::execute_tx]
@@ -114,6 +120,8 @@ impl LEVM {
         // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
+        // Track cumulative gas since last flush for adaptive batching
+        let mut gas_since_last_flush: u64 = 0;
 
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
@@ -134,11 +142,29 @@ impl LEVM {
                 vm_type,
                 &mut shared_stack_pool,
             )?;
-            if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
+
+            // Adaptive flush decision: flush sooner for high-gas transactions
+            // High gas usually means more state changes, so we want to overlap
+            // merkleization with execution earlier.
+            let should_flush = if queue_length.load(Ordering::Relaxed) == 0 {
+                // Adaptive threshold: reduce required tx count for high-gas batches
+                let effective_threshold = if gas_since_last_flush >= GAS_THRESHOLD_FOR_EARLY_FLUSH {
+                    MIN_TX_COUNT_THRESHOLD
+                } else {
+                    BASE_TX_COUNT_THRESHOLD
+                };
+                tx_since_last_flush > effective_threshold
+            } else {
+                false
+            };
+
+            if should_flush {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
                 tx_since_last_flush = 0;
+                gas_since_last_flush = 0;
             } else {
                 tx_since_last_flush += 1;
+                gas_since_last_flush = gas_since_last_flush.saturating_add(report.gas_used);
             }
 
             cumulative_gas_used += report.gas_used;
