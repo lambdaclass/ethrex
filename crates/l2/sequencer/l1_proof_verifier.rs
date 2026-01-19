@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use aligned_sdk::{
-    aggregation_layer::{
-        AggregationModeVerificationData, ProofStatus, ProofVerificationAggModeError,
-        check_proof_verification as aligned_check_proof_verification,
+    blockchain::{
+        AggregationModeVerificationData, ProofAggregationServiceProvider, ProofStatus,
+        ProofVerificationAggModeError,
     },
-    common::types::Network,
+    types::Network,
 };
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_common::{
@@ -361,14 +361,16 @@ impl L1ProofVerifier {
     ) -> Result<ProofStatus, ProofVerifierError> {
         for rpc_url in &self.eth_client.urls {
             for beacon_url in &self.beacon_urls {
-                match aligned_check_proof_verification(
-                    verification_data,
+                // Create a provider for each RPC/beacon combination
+                let provider = ProofAggregationServiceProvider::new(
                     self.network.clone(),
-                    rpc_url.as_str().into(),
+                    rpc_url.to_string(),
                     beacon_url.clone(),
-                    None,
-                )
-                .await
+                );
+
+                match provider
+                    .check_proof_verification(None, verification_data.clone())
+                    .await
                 {
                     Ok(proof_status) => return Ok(proof_status),
                     Err(ProofVerificationAggModeError::BeaconClient(_)) => continue,

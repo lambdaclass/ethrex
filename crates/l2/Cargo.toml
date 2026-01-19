@@ -46,7 +46,9 @@ bincode = "1.3.3"
 serde_with.workspace = true
 lazy_static.workspace = true
 aligned-sdk.workspace = true
-ethers = "2.0"
+alloy = { version = "0.12", features = ["signer-local"] }
+sp1-sdk = { version = "=5.0.8", optional = true }
+bincode = "1.3.3"
 chrono = "0.4.41"
 clap.workspace = true
 crossterm = { version = "0.29.0", features = ["event-stream"] }
@@ -82,7 +84,7 @@ redundant_clone = "warn"
 [features]
 default = ["l2"]
 
-sp1 = ["ethrex-guest-program/sp1"]
+sp1 = ["ethrex-guest-program/sp1", "dep:sp1-sdk"]
 risc0 = ["ethrex-guest-program/risc0"]
 
 rocksdb = []

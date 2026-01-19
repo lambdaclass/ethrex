@@ -232,7 +232,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 network: resolve_aligned_network(
                     &opts.aligned_opts.aligned_network.unwrap_or_default(),
                 ),
-                fee_estimate: opts.aligned_opts.fee_estimate,
             },
             monitor: MonitorConfig {
                 enabled: !opts.no_monitor,
@@ -862,16 +861,6 @@ pub struct AlignedOptions {
         help_heading = "Aligned options"
     )]
     pub aligned_network: Option<String>,
-
-    #[arg(
-        long = "aligned.fee-estimate",
-        default_value = "instant",
-        value_name = "FEE_ESTIMATE",
-        env = "ETHREX_ALIGNED_FEE_ESTIMATE",
-        help = "Fee estimate for Aligned sdk",
-        help_heading = "Aligned options"
-    )]
-    pub fee_estimate: String,
 }
 
 impl Default for AlignedOptions {
@@ -881,7 +870,6 @@ impl Default for AlignedOptions {
             aligned_verifier_interval_ms: 5000,
             beacon_url: None,
             aligned_network: Some("devnet".to_string()),
-            fee_estimate: "instant".to_string(),
         }
     }
 }

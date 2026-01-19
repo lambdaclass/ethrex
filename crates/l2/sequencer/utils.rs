@@ -1,4 +1,4 @@
-use aligned_sdk::common::types::Network;
+use aligned_sdk::types::Network;
 use ethrex_common::types::Block;
 use ethrex_common::types::batch::Batch;
 use ethrex_common::types::fee_config::FeeConfig;
@@ -117,11 +117,9 @@ pub async fn get_needed_proof_types(
 pub fn resolve_aligned_network(network: &str) -> Network {
     match network {
         "devnet" => Network::Devnet,
-        "holesky" => Network::Holesky,
-        "holesky-stage" => Network::HoleskyStage,
-        "mainnet" => Network::Mainnet,
         "hoodi" => Network::Hoodi,
-        _ => Network::Devnet, // TODO: Implement custom networks
+        "mainnet" => Network::Mainnet,
+        _ => Network::Devnet, // Default to devnet for unknown networks
     }
 }
 

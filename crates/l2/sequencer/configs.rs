@@ -1,4 +1,4 @@
-use aligned_sdk::common::types::Network;
+use aligned_sdk::types::Network;
 use ethrex_common::{Address, U256};
 use ethrex_l2_rpc::signer::Signer;
 use reqwest::Url;
@@ -103,7 +103,6 @@ pub struct AlignedConfig {
     pub aligned_verifier_interval_ms: u64,
     pub beacon_urls: Vec<Url>,
     pub network: Network,
-    pub fee_estimate: String,
 }
 
 #[derive(Clone, Debug)]
