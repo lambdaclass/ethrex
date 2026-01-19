@@ -4,7 +4,7 @@ use ethrex_common::utils::keccak;
 use ethrex_common::{Address, U256};
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 
-use crate::sequencer::errors::MonitorError;
+use crate::error::MonitorError;
 
 pub async fn get_logs(
     last_block_fetched: &mut U256,

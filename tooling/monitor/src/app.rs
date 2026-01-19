@@ -30,24 +30,23 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
-use crate::monitor::widget::rich_accounts::RichAccountsTable;
-use crate::monitor::widget::{ETHREX_LOGO, LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS};
-use crate::sequencer::configs::MonitorConfig;
-use crate::{
-    SequencerConfig,
-    monitor::widget::{
-        BatchesTable, BlocksTable, GlobalChainStatusTable, L1ToL2MessagesTable,
-        L2ToL1MessagesTable, MempoolTable, NodeStatusTable, tabs::TabsState,
-    },
-    sequencer::errors::MonitorError,
+use crate::config::MonitorConfig;
+use crate::error::MonitorError;
+use crate::utils::SelectableScroller;
+use crate::widget::rich_accounts::RichAccountsTable;
+use crate::widget::{
+    BatchesTable, BlocksTable, GlobalChainStatusTable, L1ToL2MessagesTable, L2ToL1MessagesTable,
+    MempoolTable, NodeStatusTable, tabs::TabsState,
 };
-use crate::{monitor::utils::SelectableScroller, sequencer::sequencer_state::SequencerState};
+use crate::widget::{ETHREX_LOGO, LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS};
+use ethrex_l2_common::sequencer_state::SequencerState;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 const SCROLL_DEBOUNCE_DURATION: Duration = Duration::from_millis(700); // 700ms
 
 const SCROLLABLE_WIDGETS: usize = 5;
+
 pub struct EthrexMonitorWidget {
     pub title: String,
     pub should_quit: bool,
@@ -96,7 +95,7 @@ impl EthrexMonitor {
         sequencer_state: SequencerState,
         store: Store,
         rollup_store: StoreRollup,
-        cfg: &SequencerConfig,
+        cfg: MonitorConfig,
         cancellation_token: CancellationToken,
     ) -> Result<GenServerHandle<EthrexMonitor>, MonitorError> {
         let widget = EthrexMonitorWidget::new(sequencer_state, store, rollup_store, cfg).await?;
@@ -184,16 +183,10 @@ impl EthrexMonitorWidget {
         sequencer_state: SequencerState,
         store: Store,
         rollup_store: StoreRollup,
-        cfg: &SequencerConfig,
+        cfg: MonitorConfig,
     ) -> Result<Self, MonitorError> {
-        let eth_client = EthClient::new(
-            cfg.eth
-                .rpc_url
-                .first()
-                .ok_or(MonitorError::RPCListEmpty)?
-                .clone(),
-        )
-        .map_err(MonitorError::EthClientError)?;
+        let eth_client =
+            EthClient::new(cfg.l1_rpc_url.clone()).map_err(MonitorError::EthClientError)?;
         // TODO: De-hardcode the rollup client URL
         #[allow(clippy::expect_used)]
         let rollup_client = EthClient::new(
@@ -201,23 +194,24 @@ impl EthrexMonitorWidget {
         )
         .map_err(MonitorError::EthClientError)?;
 
+        let title = if cfg.is_based {
+            "Based Ethrex Monitor".to_string()
+        } else {
+            "Ethrex Monitor".to_string()
+        };
+
         let mut monitor_widget = EthrexMonitorWidget {
-            title: if cfg.based.enabled {
-                "Based Ethrex Monitor".to_string()
-            } else {
-                "Ethrex Monitor".to_string()
-            },
+            title,
             should_quit: false,
             tabs: TabsState::default(),
-            cfg: cfg.monitor.clone(),
-            global_chain_status: GlobalChainStatusTable::new(cfg),
+            global_chain_status: GlobalChainStatusTable::new(&cfg),
             logger: TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
-            node_status: NodeStatusTable::new(sequencer_state.clone(), cfg.based.enabled),
+            node_status: NodeStatusTable::new(sequencer_state, cfg.is_based),
             mempool: MempoolTable::new(),
-            batches_table: BatchesTable::new(cfg.l1_committer.on_chain_proposer_address),
+            batches_table: BatchesTable::new(cfg.on_chain_proposer_address),
             blocks_table: BlocksTable::new(),
-            l1_to_l2_messages: L1ToL2MessagesTable::new(cfg.l1_watcher.bridge_address),
-            l2_to_l1_messages: L2ToL1MessagesTable::new(cfg.l1_watcher.bridge_address),
+            l1_to_l2_messages: L1ToL2MessagesTable::new(cfg.bridge_address),
+            l2_to_l1_messages: L2ToL1MessagesTable::new(cfg.bridge_address),
             rich_accounts: RichAccountsTable::new(&rollup_client).await?,
             eth_client,
             rollup_client,
@@ -225,7 +219,8 @@ impl EthrexMonitorWidget {
             rollup_store,
             last_scroll: Instant::now(),
             overview_selected_widget: 0,
-            osaka_activation_time: cfg.eth.osaka_activation_time,
+            osaka_activation_time: cfg.osaka_activation_time,
+            cfg,
         };
         monitor_widget.selected_table().selected(true);
         monitor_widget.on_tick().await?;

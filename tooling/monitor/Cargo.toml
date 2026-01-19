@@ -1,0 +1,44 @@
+[package]
+name = "ethrex-monitor"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+
+[dependencies]
+ethrex-common = { path = "../../crates/common" }
+ethrex-config = { path = "../../crates/common/config" }
+ethrex-rlp = { path = "../../crates/common/rlp" }
+ethrex-rpc = { path = "../../crates/networking/rpc" }
+ethrex-storage = { path = "../../crates/storage" }
+ethrex-storage-rollup = { path = "../../crates/l2/storage" }
+ethrex-l2-common = { path = "../../crates/l2/common" }
+ethrex-sdk = { path = "../../crates/l2/sdk" }
+
+crossterm = { version = "0.29.0", features = ["event-stream"] }
+ratatui = "0.29.0"
+tui-big-text = "0.7.1"
+tui-scrollview = "0.5.1"
+tui-logger.workspace = true
+reqwest.workspace = true
+spawned-concurrency.workspace = true
+futures.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+hex.workspace = true
+ethereum-types.workspace = true
+bytes = "1.6.0"
+secp256k1.workspace = true
+chrono = "0.4.41"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+as_conversions = "deny"
+unnecessary_cast = "warn"
+panic = "deny"
+redundant_clone = "warn"

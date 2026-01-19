@@ -15,8 +15,9 @@ use ratatui::{
 };
 
 use crate::{
-    monitor::{self, utils::SelectableScroller, widget::HASH_LENGTH_IN_DIGITS},
-    sequencer::errors::MonitorError,
+    error::MonitorError,
+    utils::{self, SelectableScroller},
+    widget::HASH_LENGTH_IN_DIGITS,
 };
 
 // kind | status | L1 tx hash | L2 tx hash | amount
@@ -151,7 +152,7 @@ impl L1ToL2MessagesTable {
         eth_client: &EthClient,
         store: &Store,
     ) -> Result<Vec<L1ToL2MessagesRow>, MonitorError> {
-        let logs = monitor::utils::get_logs(
+        let logs = utils::get_logs(
             last_l1_block_fetched,
             common_bridge_address,
             vec!["PrivilegedTxSent(address,address,uint256,uint256,uint256,bytes)"],

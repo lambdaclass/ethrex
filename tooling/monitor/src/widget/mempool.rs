@@ -8,11 +8,9 @@ use ratatui::{
 };
 
 use crate::{
-    monitor::{
-        utils::SelectableScroller,
-        widget::{ADDRESS_LENGTH_IN_DIGITS, HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS},
-    },
-    sequencer::errors::MonitorError,
+    error::MonitorError,
+    utils::SelectableScroller,
+    widget::{ADDRESS_LENGTH_IN_DIGITS, HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS},
 };
 
 #[derive(Clone, Default)]

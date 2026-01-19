@@ -12,14 +12,12 @@ use ratatui::{
 };
 
 use crate::{
-    monitor::{
-        utils::SelectableScroller,
-        widget::{
-            ADDRESS_LENGTH_IN_DIGITS, BLOCK_SIZE_LENGTH_IN_DIGITS, GAS_USED_LENGTH_IN_DIGITS,
-            HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS, TX_NUMBER_LENGTH_IN_DIGITS,
-        },
+    error::MonitorError,
+    utils::SelectableScroller,
+    widget::{
+        ADDRESS_LENGTH_IN_DIGITS, BLOCK_SIZE_LENGTH_IN_DIGITS, GAS_USED_LENGTH_IN_DIGITS,
+        HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS, TX_NUMBER_LENGTH_IN_DIGITS,
     },
-    sequencer::errors::MonitorError,
 };
 
 struct BlockEntry {
