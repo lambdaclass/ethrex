@@ -86,7 +86,7 @@ use mempool::Mempool;
 use payload::PayloadOrTask;
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{
     Arc, Mutex, RwLock,
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -934,10 +934,10 @@ impl Blockchain {
                 })?
                 .clone();
 
-            // Deduplicate storage keys to avoid redundant witness keys and storage trie accesses
+            // Deduplicate storage keys while preserving access order
             for keys in state_accessed.values_mut() {
-                keys.sort();
-                keys.dedup();
+                let mut seen = HashSet::new();
+                keys.retain(|k| seen.insert(*k));
             }
 
             for (account, acc_keys) in state_accessed.iter() {
