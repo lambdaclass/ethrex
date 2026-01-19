@@ -222,7 +222,8 @@ impl TrieDB for TrieWrapper {
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);
-        if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
+        let db_key = key.to_db_key();
+        if let Some(value) = self.inner.get(self.state_root, &db_key) {
             return Ok(Some(value));
         }
         self.db.get(key)

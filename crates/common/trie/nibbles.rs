@@ -12,8 +12,6 @@ use ethrex_rlp::{
 #[derive(
     Debug,
     Clone,
-    serde::Serialize,
-    serde::Deserialize,
     rkyv::Deserialize,
     rkyv::Serialize,
     rkyv::Archive,
@@ -75,6 +73,7 @@ impl PartialOrd for Nibbles {
 impl Ord for Nibbles {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         // Compare nibble by nibble
+        // Note: is_leaf is not compared (it's metadata, not part of the nibble sequence)
         let min_len = self.len.min(other.len);
 
         for i in 0..min_len {
@@ -85,21 +84,17 @@ impl Ord for Nibbles {
         }
 
         // If all nibbles match up to min_len, compare lengths
-        match self.len.cmp(&other.len) {
-            cmp::Ordering::Equal => {
-                // If lengths are equal, compare leaf flags
-                self.is_leaf.cmp(&other.is_leaf)
-            }
-            other => other,
-        }
+        self.len.cmp(&other.len)
     }
 }
 
 impl std::hash::Hash for Nibbles {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.data.hash(state);
-        self.len.hash(state);
-        self.is_leaf.hash(state);
+        // Note: Only hash the actual nibble data, not is_leaf (it's metadata)
+        // This must match the PartialEq implementation
+        for i in 0..self.len {
+            Self::get_nibble(&self.data, i).hash(state);
+        }
     }
 }
 
@@ -210,6 +205,16 @@ impl Nibbles {
 
     /// Convert to unpacked nibble vector (for backward compatibility)
     pub fn into_vec(self) -> Vec<u8> {
+        let mut nibbles = Self::unpack_nibbles(&self.data, self.len);
+        if self.is_leaf {
+            nibbles.push(16);
+        }
+        nibbles
+    }
+
+    /// Convert to unpacked nibble vector for use as database key
+    /// Same as into_vec() but works on borrowed self
+    pub fn to_db_key(&self) -> Vec<u8> {
         let mut nibbles = Self::unpack_nibbles(&self.data, self.len);
         if self.is_leaf {
             nibbles.push(16);
@@ -557,6 +562,7 @@ impl Nibbles {
 impl AsRef<[u8]> for Nibbles {
     /// Returns a reference to the packed nibble data
     /// Note: This returns packed data (2 nibbles per byte), not unpacked nibbles
+    /// For database keys, use `to_db_key()` instead to get unpacked format
     fn as_ref(&self) -> &[u8] {
         &self.data
     }
@@ -564,30 +570,41 @@ impl AsRef<[u8]> for Nibbles {
 
 impl RLPEncode for Nibbles {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.data)
-            .encode_field(&self.len)
-            .encode_field(&self.is_leaf)
-            .finish();
+        // Encode as unpacked nibbles for compatibility
+        let unpacked = self.clone().into_vec();
+        Encoder::new(buf).encode_field(&unpacked).finish();
     }
 }
 
 impl RLPDecode for Nibbles {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
-        let (data, decoder) = decoder.decode_field("data")?;
-        let (len, decoder) = decoder.decode_field("len")?;
-        let (is_leaf, decoder) = decoder.decode_field("is_leaf")?;
+        let (unpacked_data, decoder) = decoder.decode_field("data")?;
         Ok((
-            Self {
-                data,
-                len,
-                is_leaf,
-                already_consumed: Vec::new(),
-                consumed_len: 0,
-            },
+            Self::from_hex(unpacked_data),
             decoder.finish()?,
         ))
+    }
+}
+
+// Custom serde implementations for compatibility
+impl serde::Serialize for Nibbles {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // Serialize as unpacked nibbles for compatibility
+        self.clone().into_vec().serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Nibbles {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let unpacked = Vec::<u8>::deserialize(deserializer)?;
+        Ok(Self::from_hex(unpacked))
     }
 }
 
@@ -709,5 +726,60 @@ mod test {
         let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
         let b = Nibbles::from_hex(vec![1, 2, 3]);
         assert_eq!(a.compare_prefix(&b), Ordering::Equal);
+    }
+
+    #[test]
+    fn test_from_bytes_to_bytes_roundtrip() {
+        let bytes = vec![0xAB, 0xCD, 0xEF, 0x12, 0x34];
+        let nibbles = Nibbles::from_bytes(&bytes);
+        let result = nibbles.to_bytes();
+        // from_bytes adds leaf flag, to_bytes removes it
+        assert_eq!(result, bytes);
+    }
+
+    #[test]
+    fn test_from_raw_to_bytes_roundtrip() {
+        let bytes = vec![0xAB, 0xCD, 0xEF, 0x12, 0x34];
+        let nibbles = Nibbles::from_raw(&bytes, false);
+        let result = nibbles.to_bytes();
+        assert_eq!(result, bytes);
+    }
+
+    #[test]
+    fn test_h256_roundtrip() {
+        // Test that a full H256 (32 bytes) can roundtrip correctly
+        let bytes = vec![
+            0x00, 0x5e, 0x94, 0xbf, 0x63, 0x2e, 0x80, 0xcd,
+            0xe1, 0x1a, 0xdd, 0x7d, 0x34, 0x47, 0xcd, 0x4c,
+            0xa9, 0x3a, 0x5f, 0x22, 0x05, 0xd9, 0x87, 0x42,
+            0x61, 0x48, 0x4a, 0xe1, 0x80, 0x71, 0x8b, 0xd6,
+        ];
+        let nibbles = Nibbles::from_bytes(&bytes);
+        assert_eq!(nibbles.len(), 65); // 32 bytes * 2 + 1 leaf flag
+        let result = nibbles.to_bytes();
+        assert_eq!(result, bytes);
+    }
+
+    #[test]
+    fn test_advance_with_h256() {
+        use crate::Trie;
+
+        // Create a trie and insert a few H256-sized entries
+        let mut trie = Trie::new_temp();
+        let key1 = vec![0x00; 32]; // All zeros
+        let key2 = vec![0x01; 32]; // All ones
+        let key3 = vec![0x02; 32]; // All twos
+
+        trie.insert(key1.clone(), vec![1, 2, 3]).unwrap();
+        trie.insert(key2.clone(), vec![4, 5, 6]).unwrap();
+        trie.insert(key3.clone(), vec![7, 8, 9]).unwrap();
+
+        // Try to iterate from the beginning
+        let mut iter = trie.into_iter();
+        iter.advance(vec![0x00; 32]).unwrap();
+        let content: Vec<_> = iter.content().collect();
+
+        // We should get all 3 entries
+        assert!(content.len() >= 3, "Expected at least 3 entries, got {}", content.len());
     }
 }
