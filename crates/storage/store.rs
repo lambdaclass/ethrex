@@ -38,6 +38,7 @@ use ethrex_rlp::{
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
 use ethrex_trie::{Node, NodeRLP};
 use lru::LruCache;
+use rayon::prelude::*;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -1259,42 +1260,94 @@ impl Store {
         trie_upd_worker_tx.send(trie_update).map_err(|e| {
             StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
         })?;
+
+        // Parallel preparation phase: encode all data before DB writes
+        // This allows CPU-bound encoding to overlap with trie updates
+
+        // Prepare block data in parallel
+        let block_data: Vec<_> = update_batch
+            .blocks
+            .par_iter()
+            .map(|block| {
+                let block_number = block.header.number;
+                let block_hash = block.hash();
+                let hash_key = block_hash.encode_to_vec();
+
+                let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
+                let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
+
+                // Prepare transaction locations
+                let tx_locations: Vec<_> = block
+                    .body
+                    .transactions
+                    .iter()
+                    .enumerate()
+                    .map(|(index, transaction)| {
+                        let tx_hash = transaction.hash();
+                        let mut composite_key = Vec::with_capacity(64);
+                        composite_key.extend_from_slice(tx_hash.as_bytes());
+                        composite_key.extend_from_slice(block_hash.as_bytes());
+                        let location_value =
+                            (block_number, block_hash, index as u64).encode_to_vec();
+                        (composite_key, location_value)
+                    })
+                    .collect();
+
+                (
+                    hash_key,
+                    block_number,
+                    header_value_rlp,
+                    body_value,
+                    tx_locations,
+                )
+            })
+            .collect();
+
+        // Prepare receipt data in parallel
+        let receipt_data: Vec<_> = update_batch
+            .receipts
+            .par_iter()
+            .flat_map(|(block_hash, receipts)| {
+                receipts
+                    .par_iter()
+                    .enumerate()
+                    .map(|(index, receipt)| {
+                        let key = (*block_hash, index as u64).encode_to_vec();
+                        let value = receipt.encode_to_vec();
+                        (key, value)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
+        // Prepare code data in parallel
+        let code_data: Vec<_> = update_batch
+            .code_updates
+            .par_iter()
+            .map(|(code_hash, code)| {
+                let buf = encode_code(code);
+                (*code_hash, buf)
+            })
+            .collect();
+
+        // Sequential write phase: apply all prepared data to DB
         let mut tx = db.begin_write()?;
 
-        for block in update_batch.blocks {
-            let block_number = block.header.number;
-            let block_hash = block.hash();
-            let hash_key = block_hash.encode_to_vec();
-
-            let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
+        for (hash_key, block_number, header_value_rlp, body_value, tx_locations) in block_data {
             tx.put(HEADERS, &hash_key, header_value_rlp.bytes())?;
-
-            let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
             tx.put(BODIES, &hash_key, body_value.bytes())?;
-
             tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
 
-            for (index, transaction) in block.body.transactions.iter().enumerate() {
-                let tx_hash = transaction.hash();
-                // Key: tx_hash + block_hash
-                let mut composite_key = Vec::with_capacity(64);
-                composite_key.extend_from_slice(tx_hash.as_bytes());
-                composite_key.extend_from_slice(block_hash.as_bytes());
-                let location_value = (block_number, block_hash, index as u64).encode_to_vec();
+            for (composite_key, location_value) in tx_locations {
                 tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
             }
         }
 
-        for (block_hash, receipts) in update_batch.receipts {
-            for (index, receipt) in receipts.into_iter().enumerate() {
-                let key = (block_hash, index as u64).encode_to_vec();
-                let value = receipt.encode_to_vec();
-                tx.put(RECEIPTS, &key, &value)?;
-            }
+        for (key, value) in receipt_data {
+            tx.put(RECEIPTS, &key, &value)?;
         }
 
-        for (code_hash, code) in update_batch.code_updates {
-            let buf = encode_code(&code);
+        for (code_hash, buf) in code_data {
             tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
         }
 
