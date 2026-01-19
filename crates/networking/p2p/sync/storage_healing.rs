@@ -1409,11 +1409,12 @@ pub async fn heal_state_trie_snap(
 
             while batch.len() < 256 && !paths_to_fetch.is_empty() {
                 if let Some((path, hash)) = paths_to_fetch.pop_front() {
-                    // For the root path (empty), use empty bytes
-                    // For other paths, use raw nibble values (not compact encoding, not packed bytes!)
-                    // The snap protocol expects paths as individual nibble values (0-15) as separate bytes
-                    // Example: nibbles [0, 1, 2] should be encoded as bytes [0x00, 0x01, 0x02]
-                    let encoded = Bytes::from(path.as_ref().to_vec());
+                    // Snap protocol expects compact (HP) encoded paths for partial paths (<32 bytes)
+                    // and plain binary for full paths (32 bytes).
+                    // Compact encoding packs nibbles and adds a prefix byte for odd/even length.
+                    // Example: nibbles [1, 2, 3, 4] → [0x00, 0x12, 0x34] (even, extension)
+                    // Example: nibbles [1, 2, 3] → [0x11, 0x23] (odd, extension)
+                    let encoded = Bytes::from(path.encode_compact());
                     paths_for_request.push(encoded);
                     batch.push((path, hash));
                 }
