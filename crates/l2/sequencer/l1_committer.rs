@@ -819,6 +819,7 @@ impl L1Committer {
                     BlockExecutionResult {
                         receipts,
                         requests: vec![],
+                        receipts_root: None,
                     },
                 )?;
             } else {

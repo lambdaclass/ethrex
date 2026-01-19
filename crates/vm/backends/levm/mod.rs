@@ -14,8 +14,8 @@ use ethrex_common::{
     Address, U256,
     types::{
         AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, GWEI_TO_WEI,
-        GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind, Withdrawal,
-        requests::Requests,
+        GenericTransaction, INITIAL_BASE_FEE, IncrementalReceiptsRoot, Receipt, Transaction,
+        TxKind, Withdrawal, requests::Requests,
     },
 };
 use ethrex_levm::EVMConfig;
@@ -94,7 +94,11 @@ impl LEVM {
             VMType::L2(_) => Default::default(),
         };
 
-        Ok(BlockExecutionResult { receipts, requests })
+        Ok(BlockExecutionResult {
+            receipts,
+            requests,
+            receipts_root: None,
+        })
     }
 
     pub fn execute_block_pipeline(
@@ -110,6 +114,9 @@ impl LEVM {
 
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
+
+        // Build receipts trie incrementally during execution to spread out the work
+        let mut receipts_root_builder = IncrementalReceiptsRoot::new();
 
         // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
         // The value itself can be safely changed.
@@ -149,6 +156,8 @@ impl LEVM {
                 report.logs,
             );
 
+            // Insert receipt into trie incrementally
+            receipts_root_builder.insert(&receipt);
             receipts.push(receipt);
         }
 
@@ -190,7 +199,14 @@ impl LEVM {
         };
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
-        Ok(BlockExecutionResult { receipts, requests })
+        // Compute the final receipts root from the incrementally built trie
+        let receipts_root = receipts_root_builder.root();
+
+        Ok(BlockExecutionResult {
+            receipts,
+            requests,
+            receipts_root: Some(receipts_root),
+        })
     }
 
     fn send_state_transitions_tx(

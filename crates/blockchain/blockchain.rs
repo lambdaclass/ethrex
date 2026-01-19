@@ -326,7 +326,12 @@ impl Blockchain {
 
                     // Validate execution went alright
                     validate_gas_used(&execution_result.receipts, &block.header)?;
-                    validate_receipts_root(&block.header, &execution_result.receipts)?;
+                    // Use pre-computed receipts root if available, otherwise compute from scratch
+                    if let Some(receipts_root) = execution_result.receipts_root {
+                        validate_receipts_root_precomputed(&block.header, receipts_root)?;
+                    } else {
+                        validate_receipts_root(&block.header, &execution_result.receipts)?;
+                    }
                     validate_requests_hash(
                         &block.header,
                         &chain_config,
@@ -2167,6 +2172,22 @@ pub fn validate_receipts_root(
 ) -> Result<(), ChainError> {
     let receipts_root = compute_receipts_root(receipts);
 
+    if receipts_root == block_header.receipts_root {
+        Ok(())
+    } else {
+        Err(ChainError::InvalidBlock(
+            InvalidBlockError::ReceiptsRootMismatch,
+        ))
+    }
+}
+
+/// Validate the receipts root using a pre-computed root hash.
+/// This is more efficient when the root has been computed incrementally
+/// during execution rather than rebuilt from scratch.
+pub fn validate_receipts_root_precomputed(
+    block_header: &BlockHeader,
+    receipts_root: H256,
+) -> Result<(), ChainError> {
     if receipts_root == block_header.receipts_root {
         Ok(())
     } else {

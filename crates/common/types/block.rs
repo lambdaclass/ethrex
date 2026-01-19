@@ -329,6 +329,58 @@ pub fn compute_receipts_root(receipts: &[Receipt]) -> H256 {
     Trie::compute_hash_from_unsorted_iter(iter)
 }
 
+/// Builder for computing receipts root incrementally during block execution.
+/// Instead of waiting until all receipts are ready, this allows inserting
+/// receipts one at a time as they are produced, reducing the final computation
+/// time at block validation.
+pub struct IncrementalReceiptsRoot {
+    trie: Trie,
+    count: usize,
+}
+
+impl Default for IncrementalReceiptsRoot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl IncrementalReceiptsRoot {
+    /// Create a new incremental receipts root builder.
+    pub fn new() -> Self {
+        Self {
+            trie: Trie::new_temp(),
+            count: 0,
+        }
+    }
+
+    /// Insert a receipt at the next index.
+    /// Receipts must be inserted in order.
+    pub fn insert(&mut self, receipt: &Receipt) {
+        let key = self.count.encode_to_vec();
+        let value = receipt.encode_inner_with_bloom();
+        // Unwrapping here won't panic as our in_memory trie DB won't fail
+        self.trie
+            .insert(key, value)
+            .expect("in-memory trie insert should not fail");
+        self.count += 1;
+    }
+
+    /// Get the current receipts count.
+    pub fn len(&self) -> usize {
+        self.count
+    }
+
+    /// Check if no receipts have been inserted.
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    /// Compute and return the final receipts root hash.
+    pub fn root(self) -> H256 {
+        self.trie.hash_no_commit()
+    }
+}
+
 // See [EIP-4895](https://eips.ethereum.org/EIPS/eip-4895)
 pub fn compute_withdrawals_root(withdrawals: &[Withdrawal]) -> H256 {
     let iter = withdrawals
