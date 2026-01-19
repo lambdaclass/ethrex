@@ -626,7 +626,9 @@ impl PeerHandler {
         let start_u256 = U256::from_big_endian(&start.0);
         let limit_u256 = U256::from_big_endian(&limit.0);
 
-        let chunk_count = 800;
+        // Use fewer, larger chunks to reduce coordination overhead and proof verifications
+        // per byte of data. Geth uses 16 concurrent tasks for this reason.
+        let chunk_count = 16;
         let chunk_size = (limit_u256 - start_u256) / chunk_count;
 
         // list of tasks to be executed
