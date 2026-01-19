@@ -232,13 +232,12 @@ impl LEVM {
             .flatten()
             .filter(|withdrawal| withdrawal.amount > 0)
         {
-            db.get_account_mut(withdrawal.address)
-                .map_err(|_| {
-                    EvmError::DB(format!(
-                        "Withdrawal account {} not found",
-                        withdrawal.address
-                    ))
-                })?;
+            db.get_account_mut(withdrawal.address).map_err(|_| {
+                EvmError::DB(format!(
+                    "Withdrawal account {} not found",
+                    withdrawal.address
+                ))
+            })?;
         }
         Ok(())
     }
