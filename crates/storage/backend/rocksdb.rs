@@ -27,6 +27,58 @@ pub struct RocksDBBackend {
 }
 
 impl RocksDBBackend {
+    /// Disable auto compaction for faster bulk writes during snap sync.
+    /// Call `enable_compaction()` and `compact_all()` after sync completes.
+    pub fn disable_compaction(&self) -> Result<(), StoreError> {
+        // Disable auto compaction for all column families
+        let opts = [("disable_auto_compactions", "true")];
+
+        for table in TABLES.iter() {
+            if let Some(cf) = self.db.cf_handle(table) {
+                self.db
+                    .set_options_cf(&cf, &opts)
+                    .map_err(|e| StoreError::Custom(format!(
+                        "Failed to disable compaction for {}: {}", table, e
+                    )))?;
+            }
+        }
+
+        info!("Disabled auto compaction for snap sync");
+        Ok(())
+    }
+
+    /// Re-enable auto compaction after snap sync completes.
+    pub fn enable_compaction(&self) -> Result<(), StoreError> {
+        let opts = [("disable_auto_compactions", "false")];
+
+        for table in TABLES.iter() {
+            if let Some(cf) = self.db.cf_handle(table) {
+                self.db
+                    .set_options_cf(&cf, &opts)
+                    .map_err(|e| StoreError::Custom(format!(
+                        "Failed to enable compaction for {}: {}", table, e
+                    )))?;
+            }
+        }
+
+        info!("Re-enabled auto compaction");
+        Ok(())
+    }
+
+    /// Run manual compaction on all column families.
+    /// Call this after snap sync to optimize the database.
+    pub fn compact_all(&self) {
+        info!("Starting full database compaction (this may take a while)...");
+
+        for table in TABLES.iter() {
+            if let Some(cf) = self.db.cf_handle(table) {
+                self.db.compact_range_cf(&cf, None::<&[u8]>, None::<&[u8]>);
+            }
+        }
+
+        info!("Full database compaction completed");
+    }
+
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
         // Rocksdb optimizations options
         let mut opts = Options::default();
@@ -271,6 +323,18 @@ impl StorageBackend for RocksDBBackend {
         })?;
 
         Ok(())
+    }
+
+    fn disable_compaction(&self) -> Result<(), StoreError> {
+        RocksDBBackend::disable_compaction(self)
+    }
+
+    fn enable_compaction(&self) -> Result<(), StoreError> {
+        RocksDBBackend::enable_compaction(self)
+    }
+
+    fn compact_all(&self) {
+        RocksDBBackend::compact_all(self)
     }
 }
 

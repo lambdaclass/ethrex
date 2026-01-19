@@ -51,6 +51,22 @@ pub trait StorageBackend: Debug + Send + Sync {
     // TODO: remove this and provide historic data via diff-layers
     /// Creates a checkpoint of the current database state at the specified path.
     fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
+
+    /// Disable auto compaction for faster bulk writes during snap sync.
+    /// Default implementation is a no-op for backends that don't support this.
+    fn disable_compaction(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    /// Re-enable auto compaction after snap sync completes.
+    /// Default implementation is a no-op for backends that don't support this.
+    fn enable_compaction(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    /// Run manual compaction on all tables.
+    /// Default implementation is a no-op for backends that don't support this.
+    fn compact_all(&self) {}
 }
 
 /// Read-only transaction interface.

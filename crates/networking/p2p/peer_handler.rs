@@ -1,3 +1,4 @@
+use crate::peer_metrics::PEER_METRICS;
 use crate::rlpx::initiator::RLPxInitiator;
 use crate::{
     metrics::{CurrentStepValue, METRICS},
@@ -159,9 +160,138 @@ impl PeerHandler {
         timeout: Duration,
     ) -> Result<RLPxMessage, PeerConnectionError> {
         peer_table.inc_requests(peer_id).await?;
+        let start_time = std::time::Instant::now();
         let result = connection.outgoing_request(message, timeout).await;
+        let elapsed = start_time.elapsed();
         peer_table.dec_requests(peer_id).await?;
+
+        // Track peer performance metrics
+        match &result {
+            Ok(response) => {
+                // Estimate response size from the message
+                let response_bytes = estimate_message_size(response);
+                PEER_METRICS.record_success(peer_id, elapsed, response_bytes);
+            }
+            Err(_) => {
+                PEER_METRICS.record_failure(peer_id);
+            }
+        }
+
         result
+    }
+
+    /// Get the adaptive request bytes for a peer based on their performance
+    pub fn get_adaptive_request_bytes(peer_id: H256) -> u64 {
+        PEER_METRICS.get_request_bytes(peer_id)
+    }
+
+    /// Make parallel requests to multiple peers and return the first successful response.
+    /// This reduces latency by racing requests and uses the fastest responding peer.
+    /// The `max_parallel` parameter controls how many peers to request from simultaneously.
+    pub async fn make_parallel_request(
+        peer_table: &mut PeerTable,
+        peers: Vec<(H256, PeerConnection)>,
+        message_factory: impl Fn() -> RLPxMessage,
+        timeout: Duration,
+        max_parallel: usize,
+    ) -> Result<(H256, RLPxMessage), PeerConnectionError> {
+        if peers.is_empty() {
+            return Err(PeerConnectionError::NotFound("No peers available".to_string()));
+        }
+
+        // Limit to max_parallel peers
+        let peers_to_use: Vec<_> = peers.into_iter().take(max_parallel).collect();
+        let _peer_count = peers_to_use.len();
+
+        // Create tasks for each peer
+        let mut tasks = tokio::task::JoinSet::new();
+
+        for (peer_id, mut connection) in peers_to_use {
+            let message = message_factory();
+            let peer_table_clone = peer_table.clone();
+
+            tasks.spawn(async move {
+                let mut pt = peer_table_clone;
+                let start_time = std::time::Instant::now();
+                pt.inc_requests(peer_id).await.ok();
+                let result = connection.outgoing_request(message, timeout).await;
+                let elapsed = start_time.elapsed();
+                pt.dec_requests(peer_id).await.ok();
+
+                // Track metrics
+                match &result {
+                    Ok(response) => {
+                        let response_bytes = estimate_message_size(response);
+                        PEER_METRICS.record_success(peer_id, elapsed, response_bytes);
+                    }
+                    Err(_) => {
+                        PEER_METRICS.record_failure(peer_id);
+                    }
+                }
+
+                (peer_id, result)
+            });
+        }
+
+        // Wait for the first successful response
+        let mut last_error = None;
+        while let Some(result) = tasks.join_next().await {
+            match result {
+                Ok((peer_id, Ok(response))) => {
+                    // Cancel remaining tasks (they will be dropped)
+                    tasks.abort_all();
+                    return Ok((peer_id, response));
+                }
+                Ok((_, Err(e))) => {
+                    last_error = Some(e);
+                }
+                Err(e) => {
+                    last_error = Some(PeerConnectionError::NotFound(format!("Task error: {}", e)));
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| {
+            PeerConnectionError::NotFound("All parallel requests failed".to_string())
+        }))
+    }
+
+    /// Get multiple peers sorted by performance (best first)
+    pub async fn get_ranked_peers(
+        &mut self,
+        capabilities: &[Capability],
+        count: usize,
+    ) -> Result<Vec<(H256, PeerConnection)>, PeerHandlerError> {
+        let all_peers = self.peer_table.get_peer_connections(capabilities).await?;
+
+        if all_peers.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Get ranked peer IDs from metrics
+        let ranked_ids = PEER_METRICS.get_ranked_peers();
+        let _ranked_set: std::collections::HashSet<_> = ranked_ids.iter().map(|(id, _)| *id).collect();
+
+        // Sort peers: known peers by rank, then unknown peers
+        let mut sorted_peers: Vec<_> = all_peers
+            .into_iter()
+            .map(|(id, conn)| {
+                let score = ranked_ids
+                    .iter()
+                    .find(|(pid, _)| *pid == id)
+                    .map(|(_, score)| *score)
+                    .unwrap_or(0.5); // Default score for unknown peers
+                (id, conn, score)
+            })
+            .collect();
+
+        sorted_peers.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+
+        Ok(sorted_peers
+            .into_iter()
+            .take(count)
+            .map(|(id, conn, _)| (id, conn))
+            .collect())
     }
 
     /// Returns a random node id and the channel ends to an active peer connection that supports the given capability
@@ -1983,6 +2113,40 @@ fn format_duration(duration: Duration) -> String {
     let seconds = total_seconds % 60;
 
     format!("{hours:02}h {minutes:02}m {seconds:02}s")
+}
+
+/// Estimate the size of an RLPx message for metrics tracking
+fn estimate_message_size(message: &crate::rlpx::message::Message) -> u64 {
+    use crate::rlpx::message::Message;
+
+    match message {
+        Message::AccountRange(range) => {
+            // Estimate: ~80 bytes per account (hash + state)
+            (range.accounts.len() * 80) as u64
+        }
+        Message::StorageRanges(ranges) => {
+            // Estimate: ~64 bytes per slot (key + value)
+            let total_slots: usize = ranges.slots.iter().map(|s| s.len()).sum();
+            (total_slots * 64) as u64
+        }
+        Message::ByteCodes(codes) => {
+            // Sum of actual code sizes
+            codes.codes.iter().map(|c| c.len() as u64).sum()
+        }
+        Message::TrieNodes(nodes) => {
+            // Sum of actual node sizes
+            nodes.nodes.iter().map(|n| n.len() as u64).sum()
+        }
+        Message::BlockHeaders(headers) => {
+            // Estimate: ~500 bytes per header
+            (headers.block_headers.len() * 500) as u64
+        }
+        Message::BlockBodies(bodies) => {
+            // Estimate: ~1KB base + transactions
+            (bodies.block_bodies.len() * 1024) as u64
+        }
+        _ => 1024, // Default estimate for other message types
+    }
 }
 
 pub struct DumpError {

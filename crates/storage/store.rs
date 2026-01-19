@@ -1046,20 +1046,32 @@ impl Store {
 
     /// CAUTION: This method writes directly to the underlying database, bypassing any caching layer.
     /// For updating the state after block execution, use [`Self::store_block_updates`].
+    /// Keys are pre-sorted for better RocksDB/LSM-tree write performance.
     pub async fn write_storage_trie_nodes_batch(
         &self,
         storage_trie_nodes: StorageUpdates,
     ) -> Result<(), StoreError> {
         let mut txn = self.backend.begin_write()?;
         tokio::task::spawn_blocking(move || {
+            // Collect all operations with their full keys for sorting
+            let mut all_ops: Vec<(Vec<u8>, Vec<u8>, bool)> = Vec::new();
             for (address_hash, nodes) in storage_trie_nodes {
                 for (node_path, node_data) in nodes {
                     let key = apply_prefix(Some(address_hash), node_path);
-                    if node_data.is_empty() {
-                        txn.delete(STORAGE_TRIE_NODES, key.as_ref())?;
-                    } else {
-                        txn.put(STORAGE_TRIE_NODES, key.as_ref(), &node_data)?;
-                    }
+                    let is_delete = node_data.is_empty();
+                    all_ops.push((key.into_vec(), node_data, is_delete));
+                }
+            }
+
+            // Sort by key for better LSM-tree write performance (sequential I/O)
+            all_ops.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+
+            // Execute operations in sorted order
+            for (key, node_data, is_delete) in all_ops {
+                if is_delete {
+                    txn.delete(STORAGE_TRIE_NODES, &key)?;
+                } else {
+                    txn.put(STORAGE_TRIE_NODES, &key, &node_data)?;
                 }
             }
             txn.commit()
@@ -1147,14 +1159,17 @@ impl Store {
     /// Helper method for batch writes
     /// Spawns blocking task to avoid blocking tokio runtime
     /// This is the most important optimization for healing performance
+    /// Keys are pre-sorted for better RocksDB/LSM-tree write performance
     pub async fn write_batch_async(
         &self,
         table: &'static str,
-        batch_ops: Vec<(Vec<u8>, Vec<u8>)>,
+        mut batch_ops: Vec<(Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
         let backend = self.backend.clone();
 
         tokio::task::spawn_blocking(move || {
+            // Sort by key for better LSM-tree write performance (sequential I/O)
+            batch_ops.sort_unstable_by(|a, b| a.0.cmp(&b.0));
             let mut txn = backend.begin_write()?;
             txn.put_batch(table, batch_ops)?;
             txn.commit()
@@ -1164,11 +1179,14 @@ impl Store {
     }
 
     /// Helper method for batch writes
+    /// Keys are pre-sorted for better RocksDB/LSM-tree write performance
     pub fn write_batch(
         &self,
         table: &'static str,
-        batch_ops: Vec<(Vec<u8>, Vec<u8>)>,
+        mut batch_ops: Vec<(Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
+        // Sort by key for better LSM-tree write performance (sequential I/O)
+        batch_ops.sort_unstable_by(|a, b| a.0.cmp(&b.0));
         let backend = self.backend.clone();
         let mut txn = backend.begin_write()?;
         txn.put_batch(table, batch_ops)?;
@@ -2456,6 +2474,23 @@ impl Store {
         self.backend.create_checkpoint(path.as_ref())?;
         init_metadata_file(path.as_ref())?;
         Ok(())
+    }
+
+    /// Disable auto compaction for faster bulk writes during snap sync.
+    /// Call `enable_compaction()` and `compact_all()` after sync completes.
+    pub fn disable_compaction(&self) -> Result<(), StoreError> {
+        self.backend.disable_compaction()
+    }
+
+    /// Re-enable auto compaction after snap sync completes.
+    pub fn enable_compaction(&self) -> Result<(), StoreError> {
+        self.backend.enable_compaction()
+    }
+
+    /// Run manual compaction on all tables.
+    /// Call this after snap sync to optimize the database.
+    pub fn compact_all(&self) {
+        self.backend.compact_all()
     }
 
     pub fn get_store_directory(&self) -> Result<PathBuf, StoreError> {

@@ -65,6 +65,51 @@ const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
 /// Maximum attempts before giving up on header downloads during syncing
 const MAX_HEADER_FETCH_ATTEMPTS: u64 = 100;
 
+// ===== Dynamic Flush Thresholds =====
+// These constants control when in-memory data is flushed to disk during snap sync.
+// The threshold is calculated dynamically based on available system memory.
+
+/// Default flush threshold (number of slots) if memory detection fails
+const DEFAULT_FLUSH_THRESHOLD: usize = 5_000_000;
+/// Minimum flush threshold to prevent too-frequent flushing
+const MIN_FLUSH_THRESHOLD: usize = 2_000_000;
+/// Maximum flush threshold to prevent excessive memory usage
+const MAX_FLUSH_THRESHOLD: usize = 50_000_000;
+/// Percentage of available memory to use for flush threshold calculation
+const MEMORY_USAGE_PERCENT: usize = 60;
+/// Estimated bytes per storage slot (key + value + overhead)
+const BYTES_PER_SLOT: usize = 100;
+
+/// Calculate dynamic flush threshold based on available system memory.
+/// Returns the number of slots that can be held in memory before flushing.
+pub fn calculate_flush_threshold() -> usize {
+    use sysinfo::System;
+
+    let sys = System::new_all();
+    let available_memory = sys.available_memory() as usize;
+
+    if available_memory == 0 {
+        info!("Could not detect available memory, using default flush threshold: {}", DEFAULT_FLUSH_THRESHOLD);
+        return DEFAULT_FLUSH_THRESHOLD;
+    }
+
+    // Calculate threshold: (available_memory * MEMORY_USAGE_PERCENT / 100) / BYTES_PER_SLOT
+    let usable_memory = available_memory * MEMORY_USAGE_PERCENT / 100;
+    let threshold = usable_memory / BYTES_PER_SLOT;
+
+    // Clamp to min/max bounds
+    let threshold = threshold.clamp(MIN_FLUSH_THRESHOLD, MAX_FLUSH_THRESHOLD);
+
+    info!(
+        available_memory_gb = available_memory / (1024 * 1024 * 1024),
+        usable_memory_gb = usable_memory / (1024 * 1024 * 1024),
+        flush_threshold = threshold,
+        "Calculated dynamic flush threshold"
+    );
+
+    threshold
+}
+
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
     static ref EXECUTE_BATCH_SIZE: usize = std::env::var("EXECUTE_BATCH_SIZE").map(|var| var.parse().expect("Execute batch size environmental variable is not a number")).unwrap_or(EXECUTE_BATCH_SIZE_DEFAULT);
@@ -657,6 +702,32 @@ impl SnapBlockSyncState {
 
 impl Syncer {
     async fn snap_sync(
+        &mut self,
+        store: &Store,
+        block_sync_state: &mut SnapBlockSyncState,
+    ) -> Result<(), SyncError> {
+        // Disable auto compaction for faster bulk writes during snap sync
+        // This significantly reduces write amplification and speeds up insertion
+        if let Err(e) = store.disable_compaction() {
+            warn!("Failed to disable compaction (non-fatal): {}", e);
+        }
+
+        // Run snap sync with compaction re-enabled on completion or error
+        let result = self.snap_sync_inner(store, block_sync_state).await;
+
+        // Re-enable compaction and run full compaction
+        if let Err(e) = store.enable_compaction() {
+            warn!("Failed to re-enable compaction (non-fatal): {}", e);
+        }
+
+        // Run manual compaction to optimize the database after bulk writes
+        info!("Running post-sync compaction...");
+        store.compact_all();
+
+        result
+    }
+
+    async fn snap_sync_inner(
         &mut self,
         store: &Store,
         block_sync_state: &mut SnapBlockSyncState,
