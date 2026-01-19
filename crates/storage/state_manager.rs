@@ -484,6 +484,25 @@ impl SnapSyncTrie {
     pub fn into_paged_trie(self) -> PagedStateTrie {
         self.trie
     }
+
+    /// Debug: dumps the first N accounts for inspection.
+    /// Used to debug state root mismatches.
+    pub fn debug_dump_accounts(&self, count: usize) {
+        self.trie.debug_dump_accounts(count);
+    }
+
+    /// Debug: gets an account by hash for inspection.
+    pub fn debug_get_account(&self, hashed_address: &H256) -> Option<(u64, U256, H256, H256)> {
+        self.trie.get_account_by_hash(hashed_address.as_fixed_bytes())
+            .map(|account| {
+                (
+                    account.nonce,
+                    U256::from_big_endian(&account.balance),
+                    H256::from(account.storage_root),
+                    H256::from(account.code_hash),
+                )
+            })
+    }
 }
 
 impl Default for SnapSyncTrie {

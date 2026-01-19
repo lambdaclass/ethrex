@@ -1,7 +1,6 @@
 //! Optimized storage trie healing module
 //!
-//! This module heals storage tries with significant performance optimizations:
-//! - Bloom filter + LRU cache for fast path existence checks
+//! This module heals storage tries with performance optimizations:
 //! - Batch child lookups to reduce DB round-trips
 //! - Parallel account processing with rayon
 //! - Async select-based event loop (no busy polling)
@@ -21,7 +20,6 @@ use crate::{
 };
 use ethrex_storage::SnapSyncTrie;
 
-use super::healing_cache::{HealingCache, PathStatus, SharedHealingCache};
 
 use bytes::Bytes;
 use ethrex_common::{types::AccountState, H256, U256};
@@ -33,14 +31,14 @@ use rand::random;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    sync::{atomic::Ordering, Arc},
+    sync::atomic::Ordering,
     time::Duration,
 };
 use tokio::{
     sync::mpsc::{error::TrySendError, Sender},
     task::JoinSet,
 };
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 /// Maximum number of concurrent in-flight requests
 const MAX_IN_FLIGHT_REQUESTS: u32 = 200;
@@ -82,7 +80,6 @@ pub struct StorageHealer {
     requests: HashMap<u64, InflightRequest>,
     staleness_timestamp: u64,
     state_root: H256,
-    healing_cache: SharedHealingCache,
 
     // Analytics data
     maximum_length_seen: usize,
@@ -102,7 +99,7 @@ pub struct NodeRequest {
     hash: H256,
 }
 
-/// Heals storage tries with optimized caching and batch operations
+/// Heals storage tries with batch operations
 pub async fn heal_storage_trie(
     state_root: H256,
     storage_accounts: &AccountStorageRoots,
@@ -114,13 +111,10 @@ pub async fn heal_storage_trie(
 ) -> Result<bool, SyncError> {
     METRICS.current_step.set(CurrentStepValue::HealingStorage);
 
-    // Create shared healing cache for this storage healing session
-    let healing_cache = Arc::new(HealingCache::new());
-
     let download_queue = get_initial_downloads(&store, state_root, storage_accounts);
     debug!(
         initial_accounts_count = download_queue.len(),
-        "Started optimized storage healing",
+        "Started storage healing",
     );
 
     let mut state = StorageHealer {
@@ -131,7 +125,6 @@ pub async fn heal_storage_trie(
         requests: HashMap::new(),
         staleness_timestamp,
         state_root,
-        healing_cache,
         maximum_length_seen: 0,
         leafs_healed: 0,
         roots_healed: 0,
@@ -172,8 +165,6 @@ pub async fn heal_storage_trie(
                 .await
                 .unwrap_or(0);
 
-            let cache_stats = state.healing_cache.stats();
-
             debug!(
                 snap_peer_count,
                 inflight_requests = state.requests.len(),
@@ -183,7 +174,6 @@ pub async fn heal_storage_trie(
                 global_leaves_healed = global_leafs_healed,
                 roots_healed = state.roots_healed,
                 succesful_downloads = state.succesful_downloads,
-                cache_paths = cache_stats.paths_added,
                 "Storage Healing",
             );
             state.succesful_downloads = 0;
@@ -200,7 +190,6 @@ pub async fn heal_storage_trie(
             let to_write: Vec<_> = nodes_to_write.drain().collect();
             if !to_write.is_empty() {
                 let store = state.store.clone();
-                let cache = state.healing_cache.clone();
 
                 if !db_joinset.is_empty() {
                     db_joinset.join_next().await;
@@ -208,7 +197,6 @@ pub async fn heal_storage_trie(
 
                 db_joinset.spawn_blocking(move || {
                     let mut encoded_to_write = vec![];
-                    let mut paths_to_cache = Vec::new();
 
                     for (hashed_account, nodes) in to_write {
                         let mut account_nodes = vec![];
@@ -216,32 +204,20 @@ pub async fn heal_storage_trie(
                             for i in 0..path.len() {
                                 account_nodes.push((path.slice(0, i), vec![]));
                             }
-                            account_nodes.push((path.clone(), node.encode_to_vec()));
-
-                            // Build cache key for storage path
-                            let cache_key =
-                                Nibbles::from_bytes(&hashed_account.0).concat(&path);
-                            paths_to_cache.push(cache_key);
+                            account_nodes.push((path, node.encode_to_vec()));
                         }
                         encoded_to_write.push((hashed_account, account_nodes));
                     }
 
                     spawned_rt::tasks::block_on(store.write_storage_trie_nodes_batch(encoded_to_write))
                         .expect("db write failed");
-
-                    // Update cache with newly written paths
-                    cache.mark_exists_batch(&paths_to_cache);
                 });
             }
         }
 
         if is_done {
             db_joinset.join_all().await;
-            let cache_stats = state.healing_cache.stats();
-            debug!(
-                paths_cached = cache_stats.paths_added,
-                "Storage healing complete - cache statistics"
-            );
+            debug!("Storage healing complete");
             return Ok(true);
         }
 
@@ -313,7 +289,6 @@ pub async fn heal_storage_trie(
                     &mut state.roots_healed,
                     &mut state.maximum_length_seen,
                     &mut nodes_to_write,
-                    &state.healing_cache,
                 )
                 .expect("Store error during processing");
             }
@@ -534,7 +509,6 @@ fn process_node_responses(
     roots_healed: &mut usize,
     maximum_length_seen: &mut usize,
     to_write: &mut HashMap<H256, Vec<(Nibbles, Node)>>,
-    healing_cache: &HealingCache,
 ) -> Result<(), StoreError> {
     while let Some(node_response) = node_processing_queue.pop() {
         trace!(?node_response, "Processing node response");
@@ -550,7 +524,7 @@ fn process_node_responses(
         );
 
         let (missing_children_nibbles, missing_children_count) =
-            determine_missing_children_optimized(&node_response, store, healing_cache)?;
+            determine_missing_children_optimized(&node_response, store)?;
 
         if missing_children_count == 0 {
             commit_node(&node_response, membatch, roots_healed, to_write)?;
@@ -605,14 +579,13 @@ fn get_initial_downloads(
         .collect()
 }
 
-/// Optimized version that uses healing cache for fast existence checks
+/// Determines which children of a node are missing from the storage trie.
+/// Uses batch DB lookups for efficiency.
 pub fn determine_missing_children_optimized(
     node_response: &NodeResponse,
     store: &Store,
-    healing_cache: &HealingCache,
 ) -> Result<(Vec<NodeRequest>, usize), StoreError> {
     let mut paths = Vec::new();
-    let mut count = 0;
     let node = node_response.node.clone();
 
     let trie = store.open_direct_storage_trie(
@@ -624,7 +597,7 @@ pub fn determine_missing_children_optimized(
     match &node {
         Node::Branch(branch_node) => {
             // Collect all valid children
-            let mut child_info: Vec<(usize, Nibbles, &ethrex_trie::NodeRef)> = Vec::with_capacity(16);
+            let mut child_info: Vec<(Nibbles, &ethrex_trie::NodeRef)> = Vec::with_capacity(16);
 
             for (index, child) in branch_node.choices.iter().enumerate() {
                 if !child.is_valid() {
@@ -634,84 +607,25 @@ pub fn determine_missing_children_optimized(
                     .node_request
                     .storage_path
                     .append_new(index as u8);
-                child_info.push((index, child_path, child));
+                child_info.push((child_path, child));
             }
 
             if child_info.is_empty() {
                 return Ok((vec![], 0));
             }
 
-            // Build cache keys and check cache
-            let cache_keys: Vec<Nibbles> = child_info
-                .iter()
-                .map(|(_, child_path, _)| {
-                    // Storage cache key includes account path prefix
-                    Nibbles::from_bytes(&node_response.node_request.acc_path.to_bytes())
-                        .concat(child_path)
-                })
-                .collect();
+            // Get all paths to check
+            let paths_to_check: Vec<Nibbles> = child_info.iter().map(|(p, _)| p.clone()).collect();
 
-            let cache_statuses: Vec<_> = cache_keys
-                .iter()
-                .map(|key| healing_cache.check_path(key))
-                .collect();
-
-            // Identify paths needing DB verification
-            // Both ProbablyExists and DefinitelyMissing need DB check
-            // (DefinitelyMissing means cache hasn't seen it, but DB might have it)
-            let mut paths_to_check: Vec<Nibbles> = Vec::new();
-
-            for (i, status) in cache_statuses.iter().enumerate() {
-                match status {
-                    PathStatus::ConfirmedExists => {}
-                    PathStatus::ProbablyExists | PathStatus::DefinitelyMissing => {
-                        paths_to_check.push(child_info[i].1.clone());
-                    }
-                }
-            }
-
-            // Batch check paths
-            let db_exists: Vec<bool> = if !paths_to_check.is_empty() {
-                trie_state
-                    .exists_batch(&paths_to_check)
-                    .map_err(|e| StoreError::Custom(format!("Trie error: {e}")))?
-            } else {
-                vec![]
-            };
-
-            // Update cache with confirmed existences
-            // Build list of cache keys that correspond to paths that exist in DB
-            let mut confirmed_keys: Vec<Nibbles> = Vec::new();
-            let mut db_idx = 0;
-            for (i, status) in cache_statuses.iter().enumerate() {
-                if !matches!(status, PathStatus::ConfirmedExists) {
-                    if db_exists[db_idx] {
-                        confirmed_keys.push(cache_keys[i].clone());
-                    }
-                    db_idx += 1;
-                }
-            }
-
-            if !confirmed_keys.is_empty() {
-                healing_cache.mark_exists_batch(&confirmed_keys);
-            }
+            // Batch check DB
+            let db_exists = trie_state
+                .exists_batch(&paths_to_check)
+                .map_err(|e| StoreError::Custom(format!("Trie error: {e}")))?;
 
             // Build missing children list
-            let mut db_check_idx = 0;
-            for (i, status) in cache_statuses.iter().enumerate() {
-                let (_, ref child_path, child) = child_info[i];
-
-                let exists = match status {
-                    PathStatus::ConfirmedExists => true,
-                    PathStatus::ProbablyExists | PathStatus::DefinitelyMissing => {
-                        let exists = db_exists[db_check_idx];
-                        db_check_idx += 1;
-                        exists
-                    }
-                };
-
+            for (i, exists) in db_exists.iter().enumerate() {
                 if !exists {
-                    count += 1;
+                    let (ref child_path, child) = child_info[i];
                     paths.push(NodeRequest {
                         acc_path: node_response.node_request.acc_path.clone(),
                         storage_path: child_path.clone(),
@@ -732,36 +646,24 @@ pub fn determine_missing_children_optimized(
                 return Ok((vec![], 0));
             }
 
-            // Build cache key
-            let cache_key =
-                Nibbles::from_bytes(&node_response.node_request.acc_path.to_bytes())
-                    .concat(&child_path);
-
-            match healing_cache.check_path(&cache_key) {
-                PathStatus::ConfirmedExists => {}
-                PathStatus::ProbablyExists | PathStatus::DefinitelyMissing => {
-                    // Both cases need DB verification
-                    if trie_state
-                        .exists(child_path.clone())
-                        .map_err(|e| StoreError::Custom(format!("Trie error: {e}")))?
-                    {
-                        healing_cache.mark_exists(&cache_key);
-                    } else {
-                        count = 1;
-                        paths.push(NodeRequest {
-                            acc_path: node_response.node_request.acc_path.clone(),
-                            storage_path: child_path,
-                            parent: node_response.node_request.storage_path.clone(),
-                            hash: ext_node.child.compute_hash().finalize(),
-                        });
-                    }
-                }
+            // Check DB
+            if !trie_state
+                .exists(child_path.clone())
+                .map_err(|e| StoreError::Custom(format!("Trie error: {e}")))?
+            {
+                paths.push(NodeRequest {
+                    acc_path: node_response.node_request.acc_path.clone(),
+                    storage_path: child_path,
+                    parent: node_response.node_request.storage_path.clone(),
+                    hash: ext_node.child.compute_hash().finalize(),
+                });
             }
         }
 
         _ => {}
     }
 
+    let count = paths.len();
     Ok((paths, count))
 }
 
@@ -1280,7 +1182,26 @@ pub async fn heal_state_trie_snap(
                 if let Ok(account) = AccountState::decode(&leaf_node.value) {
                     // Compute full account hash from path + partial
                     let full_path = path.concat(&leaf_node.partial);
-                    let account_hash = H256::from_slice(&full_path.to_bytes());
+                    let path_bytes = full_path.to_bytes();
+
+                    // Account hashes are always 32 bytes (64 nibbles)
+                    // If path length is wrong, skip this node (shouldn't happen in valid trie)
+                    if path_bytes.len() != 32 {
+                        warn!(
+                            "[SNAP SYNC] Invalid account path length: {} bytes (expected 32), path nibbles: {}, partial nibbles: {}",
+                            path_bytes.len(),
+                            path.len(),
+                            leaf_node.partial.len()
+                        );
+                        return (accounts_found, nodes_count);
+                    }
+                    let account_hash = H256::from_slice(&path_bytes);
+
+                    // Log account being inserted during healing (for debugging state root mismatches)
+                    debug!(
+                        "[SNAP SYNC] State healing: inserting account {:?} with nonce={}, storage_root={:?}, code_hash={:?}",
+                        account_hash, account.nonce, account.storage_root, account.code_hash
+                    );
 
                     // Insert into snap_trie
                     snap_trie.insert_account(
@@ -1298,9 +1219,12 @@ pub async fn heal_state_trie_snap(
                 for (i, choice) in branch_node.choices.iter().enumerate() {
                     let child_path = path.append_new(i as u8);
                     match choice {
-                        // Hashed nodes need to be fetched from peers
+                        // Hashed nodes need to be fetched from peers (skip empty/zero hash slots)
                         ethrex_trie::NodeRef::Hash(ethrex_trie::NodeHash::Hashed(child_hash)) => {
-                            paths_to_fetch.push_back((child_path, *child_hash));
+                            // Skip empty branch slots (zero hash means no child at this position)
+                            if *child_hash != H256::zero() {
+                                paths_to_fetch.push_back((child_path, *child_hash));
+                            }
                         }
                         // Inline nodes contain the encoded node data - decode and process locally
                         ethrex_trie::NodeRef::Hash(ethrex_trie::NodeHash::Inline(inline_data)) => {
@@ -1321,9 +1245,12 @@ pub async fn heal_state_trie_snap(
             Node::Extension(ext_node) => {
                 let child_path = path.concat(&ext_node.prefix);
                 match &ext_node.child {
-                    // Hashed nodes need to be fetched from peers
+                    // Hashed nodes need to be fetched from peers (skip empty/zero hash)
                     ethrex_trie::NodeRef::Hash(ethrex_trie::NodeHash::Hashed(child_hash)) => {
-                        paths_to_fetch.push_back((child_path, *child_hash));
+                        // Skip if zero hash (shouldn't happen for extensions, but be safe)
+                        if *child_hash != H256::zero() {
+                            paths_to_fetch.push_back((child_path, *child_hash));
+                        }
                     }
                     // Inline nodes contain the encoded node data - decode and process locally
                     ethrex_trie::NodeRef::Hash(ethrex_trie::NodeHash::Inline(inline_data)) => {
@@ -1375,24 +1302,91 @@ pub async fn heal_state_trie_snap(
                 Ok(trie_nodes) => {
                     peers.peer_table.record_success(&peer_id).await?;
 
+                    let nodes_received = trie_nodes.nodes.len();
+                    info!("[SNAP SYNC] Received {} nodes from peer for batch of {} paths", nodes_received, batch.len());
+                    if nodes_received == 0 && batch.len() <= 3 {
+                        warn!("[SNAP SYNC] Empty response from peer! Requested paths: {:?}", batch.iter().map(|(p, h)| format!("path={:?} hash={:?}", p, h)).collect::<Vec<_>>());
+                    }
+
+                    // Track paths that failed to decode (need to retry with different peer)
+                    let mut failed_paths: Vec<(Nibbles, H256)> = Vec::new();
+                    let mut empty_count = 0u64;
+
                     // Process each node in the response
                     for (i, node_bytes) in trie_nodes.nodes.iter().enumerate() {
                         if i >= batch.len() {
                             break;
                         }
-                        let (path, _hash) = &batch[i];
+                        let (path, hash) = &batch[i];
+
+                        // Empty responses mean the node doesn't exist at this path.
+                        // This is valid for sparse branch nodes - don't retry.
+                        if node_bytes.is_empty() {
+                            trace!("[SNAP SYNC] Empty response for path {:?} (hash {:?}), node doesn't exist", path, hash);
+                            empty_count += 1;
+                            continue;
+                        }
 
                         // Decode the node and process it
-                        if let Ok(node) = Node::decode(node_bytes) {
-                            let (accounts, nodes) = process_node(
-                                path,
-                                node,
-                                &mut paths_to_fetch,
-                                &mut nodes_to_process,
-                                snap_trie,
+                        match Node::decode(node_bytes) {
+                            Ok(node) => {
+                                // Debug: log what node type we got (at trace level to reduce noise)
+                                match &node {
+                                    Node::Leaf(_) => trace!("[SNAP SYNC] Decoded LEAF node at path {:?}", path),
+                                    Node::Branch(b) => {
+                                        let non_empty = b.choices.iter().filter(|c| c.is_valid()).count();
+                                        trace!("[SNAP SYNC] Decoded BRANCH node at path {:?} with {} non-empty children", path, non_empty);
+                                    }
+                                    Node::Extension(e) => trace!("[SNAP SYNC] Decoded EXTENSION node at path {:?} with prefix {:?}", path, e.prefix),
+                                }
+                                let (accounts, nodes) = process_node(
+                                    path,
+                                    node,
+                                    &mut paths_to_fetch,
+                                    &mut nodes_to_process,
+                                    snap_trie,
+                                );
+                                accounts_healed += accounts;
+                                nodes_processed += nodes;
+                            }
+                            Err(e) => {
+                                warn!("[SNAP SYNC] Failed to decode node at path {:?}: {:?}, bytes len: {}", path, e, node_bytes.len());
+                                // Re-queue non-empty failed decodes to try with different peer
+                                failed_paths.push((path.clone(), *hash));
+                            }
+                        }
+                    }
+
+                    // Log if many empty responses (might indicate state root mismatch)
+                    if empty_count > 0 && nodes_received > 0 {
+                        let empty_ratio = empty_count as f64 / nodes_received as f64;
+                        if empty_ratio > 0.5 {
+                            warn!(
+                                "[SNAP SYNC] High ratio of empty responses: {}/{} ({:.1}%) - peer may not have this state root",
+                                empty_count, nodes_received, empty_ratio * 100.0
                             );
-                            accounts_healed += accounts;
-                            nodes_processed += nodes;
+                        }
+                    }
+
+                    // Re-queue paths that failed to decode (non-empty bytes that couldn't be decoded)
+                    if !failed_paths.is_empty() {
+                        debug!(
+                            "[SNAP SYNC] Re-queueing {} paths that failed to decode",
+                            failed_paths.len()
+                        );
+                        for item in failed_paths {
+                            paths_to_fetch.push_back(item);
+                        }
+                    }
+
+                    // Re-queue any paths that weren't returned by the peer
+                    if nodes_received < batch.len() {
+                        debug!(
+                            "[SNAP SYNC] Peer returned fewer nodes than requested ({}/{}), re-queueing missing",
+                            nodes_received, batch.len()
+                        );
+                        for item in batch.into_iter().skip(nodes_received) {
+                            paths_to_fetch.push_back(item);
                         }
                     }
                 }
@@ -1416,12 +1410,10 @@ pub async fn heal_state_trie_snap(
             while batch.len() < 256 && !paths_to_fetch.is_empty() {
                 if let Some((path, hash)) = paths_to_fetch.pop_front() {
                     // For the root path (empty), use empty bytes
-                    // For other paths, use compact encoding
-                    let encoded = if path.is_empty() {
-                        Bytes::new()
-                    } else {
-                        Bytes::from(path.encode_compact())
-                    };
+                    // For other paths, use raw nibble values (not compact encoding, not packed bytes!)
+                    // The snap protocol expects paths as individual nibble values (0-15) as separate bytes
+                    // Example: nibbles [0, 1, 2] should be encoded as bytes [0x00, 0x01, 0x02]
+                    let encoded = Bytes::from(path.as_ref().to_vec());
                     paths_for_request.push(encoded);
                     batch.push((path, hash));
                 }
@@ -1446,12 +1438,26 @@ pub async fn heal_state_trie_snap(
             };
 
             // Send request
+            // IMPORTANT: For state trie (account) nodes, each path must be its own pathset!
+            // The snap protocol structure is: [[path1], [path2], [path3], ...]
+            // NOT [[path1, path2, path3, ...]] which would be interpreted as prefix+suffixes
             let request = GetTrieNodes {
                 id: random(),
                 root_hash: expected_state_root,
-                paths: vec![paths_for_request], // Account trie paths (no storage prefix)
+                paths: paths_for_request.iter().map(|p| vec![p.clone()]).collect(),
                 bytes: MAX_RESPONSE_BYTES,
             };
+
+            // Debug: log what we're requesting (first request only or small batches)
+            if batch.len() <= 3 || (accounts_healed == 0 && nodes_processed <= 1) {
+                info!("[SNAP SYNC] Requesting {} paths under root {:?}",
+                    batch.len(), expected_state_root);
+                for (p, h) in batch.iter().take(5) {
+                    info!("[SNAP SYNC]   path={:?} hash={:?}", p, h);
+                }
+                info!("[SNAP SYNC] Encoded paths (first 5): {:?}",
+                    paths_for_request.iter().take(5).map(|p| hex::encode(p.as_ref())).collect::<Vec<_>>());
+            }
 
             let response_tx_clone = response_tx.clone();
             let batch_clone = batch.clone();
@@ -1489,9 +1495,17 @@ pub async fn heal_state_trie_snap(
     }
 
     info!(
-        "[SNAP SYNC] State trie healing complete: {} accounts found, {} nodes processed",
+        "[SNAP SYNC] State trie healing complete: {} accounts found/inserted, {} nodes processed",
         accounts_healed, nodes_processed
     );
+
+    // Log warning if we found accounts during healing (means initial download was incomplete)
+    if accounts_healed > 0 {
+        warn!(
+            "[SNAP SYNC] DEBUG: State trie healing inserted {} accounts that were missing from initial download!",
+            accounts_healed
+        );
+    }
 
     Ok(true)
 }

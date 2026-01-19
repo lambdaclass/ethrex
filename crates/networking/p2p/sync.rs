@@ -1,13 +1,6 @@
 mod code_collector;
-pub mod healing_cache;
-#[cfg(test)]
-mod healing_bench;
-#[cfg(test)]
-mod healing_tests;
 #[cfg(test)]
 mod memory_tests;
-#[cfg(test)]
-mod recovery_tests;
 mod state_healing;
 mod storage_healing;
 
@@ -33,7 +26,7 @@ use ethrex_common::{
     types::{AccountState, Block, BlockBody, BlockHeader},
 };
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
-use ethrex_storage::{Store, SnapSyncTrie, SnapSyncCheckpoint, SnapSyncPhase, error::StoreError};
+use ethrex_storage::{Store, SnapSyncTrie, SnapSyncPhase, error::StoreError};
 use ethrex_trie::TrieError;
 use ethrex_trie::trie_sorted::TrieGenerationError;
 use rayon::iter::{ParallelBridge, ParallelIterator};
@@ -65,15 +58,6 @@ const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
 
 /// Maximum attempts before giving up on header downloads during syncing
 const MAX_HEADER_FETCH_ATTEMPTS: u64 = 100;
-
-/// Maximum age in seconds for a checkpoint to be considered valid for resume.
-/// If a checkpoint is older than this, snap sync will start fresh.
-const CHECKPOINT_MAX_AGE_SECS: u64 = 30 * 60; // 30 minutes
-
-/// Checkpoint save interval for bytecode downloads.
-/// Saves checkpoint every N chunks to reduce I/O overhead while maintaining
-/// reasonable recovery granularity (~30 sec of progress between saves).
-const CHECKPOINT_CHUNK_INTERVAL: usize = 10;
 
 /// Default storage flush threshold (slots) when memory info unavailable (~2GB)
 const DEFAULT_FLUSH_THRESHOLD: usize = 5_000_000;
@@ -289,31 +273,6 @@ impl Syncer {
 
     /// Performs the sync cycle described in `start_sync`, returns an error if the sync fails at any given step and aborts all active processes
     async fn sync_cycle_snap(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
-        // Check for existing checkpoint first
-        let existing_checkpoint = store.load_snap_sync_checkpoint().await?;
-        if let Some(checkpoint) = &existing_checkpoint {
-            if checkpoint.phase != SnapSyncPhase::NotStarted
-                && checkpoint.phase != SnapSyncPhase::Completed
-            {
-                if checkpoint.is_stale(CHECKPOINT_MAX_AGE_SECS) {
-                    info!(
-                        "Found stale checkpoint (phase: {}, age: {}s). Starting fresh snap sync.",
-                        checkpoint.phase,
-                        std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0)
-                            .saturating_sub(checkpoint.checkpoint_timestamp)
-                    );
-                } else {
-                    info!(
-                        "Found valid checkpoint at phase: {}, pivot block: {}, resuming snap sync",
-                        checkpoint.phase, checkpoint.pivot_block_number
-                    );
-                }
-            }
-        }
-
         // Request all block headers between the current head and the sync head
         // We will begin from the current head so that we download the earliest state first
         // This step is not parallelized
@@ -333,18 +292,8 @@ impl Syncer {
 
         let mut attempts = 0;
 
-        // Save initial checkpoint for header download phase
-        let checkpoint = existing_checkpoint
-            .filter(|cp| !cp.is_stale(CHECKPOINT_MAX_AGE_SECS) && cp.phase != SnapSyncPhase::NotStarted)
-            .unwrap_or_else(|| SnapSyncCheckpoint::new(SnapSyncPhase::HeaderDownload));
-        store.save_snap_sync_checkpoint(&checkpoint).await?;
-
-        // We validate that we have the folders that are being used empty, as we currently assume
-        // they are. If they are not empty we empty the folder
-        // Note: Only delete if starting fresh (phase is HeaderDownload or NotStarted)
-        if checkpoint.phase == SnapSyncPhase::HeaderDownload || checkpoint.phase == SnapSyncPhase::NotStarted {
-            delete_leaves_folder(&self.datadir);
-        }
+        // Clean up any old data folders
+        delete_leaves_folder(&self.datadir);
 
         // Log phase entry for header download
         SNAP_PROGRESS.enter_phase(SnapSyncPhase::HeaderDownload as u8).await;
@@ -492,7 +441,7 @@ impl Syncer {
             crate::snap_sync_progress::format_duration(elapsed)
         );
 
-        self.snap_sync(&store, &mut block_sync_state, checkpoint).await?;
+        self.snap_sync(&store, &mut block_sync_state).await?;
 
         store.clear_snap_state().await?;
         self.snap_enabled.store(false, Ordering::Relaxed);
@@ -902,7 +851,6 @@ impl Syncer {
         &mut self,
         store: &Store,
         block_sync_state: &mut SnapBlockSyncState,
-        mut checkpoint: SnapSyncCheckpoint,
     ) -> Result<(), SyncError> {
         // snap-sync: launch tasks to fetch blocks and state in parallel
         // - Fetch each block's body and its receipt via eth p2p requests
@@ -933,11 +881,6 @@ impl Syncer {
         // Initialize the progress tracker
         SNAP_PROGRESS.start_sync(pivot_header.number).await;
 
-        // Update checkpoint with pivot info
-        checkpoint.pivot_block_number = pivot_header.number;
-        checkpoint.pivot_block_hash = pivot_header.compute_block_hash();
-        checkpoint.pivot_state_root = pivot_header.state_root;
-
         let account_state_snapshots_dir = get_account_state_snapshots_dir(&self.datadir);
         let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
 
@@ -952,534 +895,394 @@ impl Syncer {
         // Create SnapSyncTrie for direct ethrex_db state insertion
         let mut snap_trie = store.create_snap_sync_trie();
 
-        // Helper to determine if we should skip a phase based on checkpoint
-        let should_skip_phase = |phase: SnapSyncPhase, checkpoint_phase: SnapSyncPhase| -> bool {
-            (checkpoint_phase as u8) > (phase as u8)
-        };
+        // Phase 2: Account Download
+        SNAP_PROGRESS.enter_phase(SnapSyncPhase::AccountDownload as u8).await;
+        SNAP_PROGRESS.accounts.start(0).await;
 
-        // Track if we're resuming with persisted state (skipped storage insertion)
-        // If true, state is already in the store and we should use persisted state root
-        let resuming_with_persisted_state = should_skip_phase(SnapSyncPhase::StorageInsertion, checkpoint.phase);
+        self.peers
+            .request_account_range(
+                H256::zero(),
+                H256::repeat_byte(0xff),
+                account_state_snapshots_dir.as_ref(),
+                &mut pivot_header,
+                block_sync_state,
+            )
+            .await?;
+        SNAP_PROGRESS.complete_phase(SnapSyncPhase::AccountDownload as u8).await;
 
-        // Track if we need to redo healing (resuming from StateHealing means healing didn't complete)
-        // In this case, we have persisted state but need to re-heal it
-        let needs_healing_redo = checkpoint.phase == SnapSyncPhase::StateHealing;
+        // Phase 3: Account Insertion
+        SNAP_PROGRESS.enter_phase(SnapSyncPhase::AccountInsertion as u8).await;
+        SNAP_PROGRESS.accounts.start(0).await;
 
-        if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
-            // Phase: Account Download
-            if !should_skip_phase(SnapSyncPhase::AccountDownload, checkpoint.phase) {
-                checkpoint.phase = SnapSyncPhase::AccountDownload;
-                checkpoint.touch();
-                store.save_snap_sync_checkpoint(&checkpoint).await?;
+        *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
 
-                // Log phase entry
-                SNAP_PROGRESS.enter_phase(SnapSyncPhase::AccountDownload as u8).await;
-                SNAP_PROGRESS.accounts.start(0).await; // Total unknown until download completes
+        let (_computed_state_root, accounts_with_storage) = insert_accounts(
+            store.clone(),
+            &mut storage_accounts,
+            &account_state_snapshots_dir,
+            &self.datadir,
+            &mut code_hash_collector,
+            &mut snap_trie,
+        )
+        .await?;
 
-                // We start by downloading all of the leafs of the trie of accounts
-                // The function request_account_range writes the leafs into files in
-                // account_state_snapshots_dir
-                self.peers
-                    .request_account_range(
-                        H256::zero(),
-                        H256::repeat_byte(0xff),
-                        account_state_snapshots_dir.as_ref(),
-                        &mut pivot_header,
-                        block_sync_state,
-                    )
-                    .await?;
-                SNAP_PROGRESS.complete_phase(SnapSyncPhase::AccountDownload as u8).await;
-            } else {
-                info!("[SNAP SYNC] Skipping account download phase (already completed in checkpoint)");
-            }
+        SNAP_PROGRESS.accounts.set_current(snap_trie.account_count() as u64);
+        SNAP_PROGRESS.complete_phase(SnapSyncPhase::AccountInsertion as u8).await;
 
-            // Phase: Account Insertion
-            #[allow(unused_variables)]
-            let (computed_state_root, accounts_with_storage) = if !should_skip_phase(SnapSyncPhase::AccountInsertion, checkpoint.phase) {
-                checkpoint.phase = SnapSyncPhase::AccountInsertion;
-                checkpoint.touch();
-                store.save_snap_sync_checkpoint(&checkpoint).await?;
+        info!(
+            "[SNAP SYNC] Total storage accounts to process: {}",
+            storage_accounts.accounts_with_storage_root.len()
+        );
+        *METRICS.account_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
-                // Log phase entry
-                SNAP_PROGRESS.enter_phase(SnapSyncPhase::AccountInsertion as u8).await;
-                SNAP_PROGRESS.accounts.start(0).await;
+        store.save_incremental_state_trie(pivot_header.number, pivot_header.compute_block_hash())?;
 
-                *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
-                // We read the account leafs from the files in account_state_snapshots_dir, write it into
-                // ethrex_db's SnapSyncTrie for high-performance state storage
+        // Phase 4: Storage Download
+        SNAP_PROGRESS.enter_phase(SnapSyncPhase::StorageDownload as u8).await;
+        SNAP_PROGRESS.storage.start(0).await;
 
-                let result = insert_accounts_with_checkpoint(
-                    store.clone(),
-                    &mut storage_accounts,
-                    &account_state_snapshots_dir,
-                    &self.datadir,
-                    &mut code_hash_collector,
-                    &mut snap_trie,
-                    &mut checkpoint,
-                )
-                .await?;
+        *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
 
-                // Update progress with final count
-                SNAP_PROGRESS.accounts.set_current(snap_trie.account_count() as u64);
-                SNAP_PROGRESS.complete_phase(SnapSyncPhase::AccountInsertion as u8).await;
-
-                info!(
-                    "[SNAP SYNC] Total storage accounts to process: {}",
-                    storage_accounts.accounts_with_storage_root.len()
-                );
-                *METRICS.account_tries_insert_end_time.lock().await = Some(SystemTime::now());
-
-                // Save incremental state trie checkpoint
-                store.save_incremental_state_trie(pivot_header.number, pivot_header.compute_block_hash())?;
-                checkpoint.touch();
-                store.save_snap_sync_checkpoint(&checkpoint).await?;
-
-                result
-            } else if !resuming_with_persisted_state {
-                // Account insertion was completed but storage insertion is still pending.
-                // The snap_trie is fresh and empty, so we need to reload accounts from snapshot files.
-                // Without this, storage tries will be "orphaned" (accounts don't exist in the trie).
-                info!("[SNAP SYNC] Reloading accounts into snap_trie (resuming from checkpoint)");
-
-                // Reset account files processed to reload all accounts
-                let mut reload_checkpoint = checkpoint.clone();
-                reload_checkpoint.account_files_processed = 0;
-
-                let result = insert_accounts_with_checkpoint(
-                    store.clone(),
-                    &mut storage_accounts,
-                    &account_state_snapshots_dir,
-                    &self.datadir,
-                    &mut code_hash_collector,
-                    &mut snap_trie,
-                    &mut reload_checkpoint,
-                )
-                .await?;
-
-                info!(
-                    "[SNAP SYNC] Reloaded {} accounts into snap_trie",
-                    snap_trie.account_count()
-                );
-
-                result
-            } else {
-                info!("[SNAP SYNC] Skipping account insertion phase (already completed in checkpoint)");
-                // When fully resuming with persisted state, we don't need to reload
-                (H256::zero(), BTreeSet::new())
-            };
-
-            // Phase: Storage Download
-            if !should_skip_phase(SnapSyncPhase::StorageDownload, checkpoint.phase) {
-                checkpoint.phase = SnapSyncPhase::StorageDownload;
-                checkpoint.touch();
-                store.save_snap_sync_checkpoint(&checkpoint).await?;
-
-                // Log phase entry
-                SNAP_PROGRESS.enter_phase(SnapSyncPhase::StorageDownload as u8).await;
-                SNAP_PROGRESS.storage.start(0).await;
-
-                *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
-                // Note: State trie healing is skipped for ethrex_db backend because:
-                // 1. SnapSyncTrie builds its own merkle structure from inserted accounts
-                // 2. The accounts are not accessible via open_direct_state_trie() until set_snap_sync_trie() is called
-                // 3. The storage_accounts data was already populated during account insertion
-                // So we proceed directly to storage downloads without healing.
-                let mut chunk_index = 0_u64;
-                let mut storage_range_request_attempts = 0;
-                loop {
-                    while block_is_stale(&pivot_header) {
-                        pivot_header = update_pivot(
-                            pivot_header.number,
-                            pivot_header.timestamp,
-                            &mut self.peers,
-                            block_sync_state,
-                        )
-                        .await?;
-                    }
-
-                    debug!(
-                        "Started request_storage_ranges with {} accounts with storage root unchanged",
-                        storage_accounts.accounts_with_storage_root.len()
-                    );
-                    storage_range_request_attempts += 1;
-                    if storage_range_request_attempts < 5 {
-                        chunk_index = self
-                            .peers
-                            .request_storage_ranges(
-                                &mut storage_accounts,
-                                account_storages_snapshots_dir.as_ref(),
-                                chunk_index,
-                                &mut pivot_header,
-                                store.clone(),
-                            )
-                            .await
-                            .map_err(SyncError::PeerHandler)?;
-                    } else {
-                        for (acc_hash, (maybe_root, old_intervals)) in
-                            storage_accounts.accounts_with_storage_root.iter()
-                        {
-                            // When we fall into this case what happened is there are certain accounts for which
-                            // the storage root went back to a previous value we already had, and thus could not download
-                            // their storage leaves because we were using an old value for their storage root.
-                            // The fallback is to ensure we mark it for storage healing.
-                            storage_accounts.healed_accounts.insert(*acc_hash);
-                            debug!(
-                                "We couldn't download these accounts on request_storage_ranges. Falling back to storage healing for it.
-                                Account hash: {:x?}, {:x?}. Number of intervals {}",
-                                acc_hash,
-                                maybe_root,
-                                old_intervals.len()
-                            );
-                        }
-
-                        warn!("Storage could not be downloaded after multiple attempts. Marking for healing.
-                            This could impact snap sync time (healing may take a while).");
-
-                        storage_accounts.accounts_with_storage_root.clear();
-                    }
-
-                    debug!(
-                        "Ended request_storage_ranges with {} accounts remaining, {} big/healed accounts",
-                        storage_accounts.accounts_with_storage_root.len(),
-                        storage_accounts.healed_accounts.len(),
-                    );
-                    if !block_is_stale(&pivot_header) {
-                        break;
-                    }
-                    info!("We stopped because of staleness, restarting loop");
-                }
-                SNAP_PROGRESS.complete_phase(SnapSyncPhase::StorageDownload as u8).await;
-                *METRICS.storage_tries_download_end_time.lock().await = Some(SystemTime::now());
-            } else {
-                info!("[SNAP SYNC] Skipping storage download phase (already completed in checkpoint)");
-            }
-
-            // Phase: Storage Insertion
-            if !should_skip_phase(SnapSyncPhase::StorageInsertion, checkpoint.phase) {
-                checkpoint.phase = SnapSyncPhase::StorageInsertion;
-                checkpoint.touch();
-                store.save_snap_sync_checkpoint(&checkpoint).await?;
-
-                // Log phase entry
-                SNAP_PROGRESS.enter_phase(SnapSyncPhase::StorageInsertion as u8).await;
-                SNAP_PROGRESS.storage.start(0).await;
-
-                *METRICS.storage_tries_insert_start_time.lock().await = Some(SystemTime::now());
-                METRICS
-                    .current_step
-                    .set(crate::metrics::CurrentStepValue::InsertingStorageRanges);
-                let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
-
-                insert_storages_with_checkpoint(
-                    store.clone(),
-                    &account_storages_snapshots_dir,
-                    &mut snap_trie,
-                    &mut checkpoint,
-                )
-                .await?;
-
-                *METRICS.storage_tries_insert_end_time.lock().await = Some(SystemTime::now());
-
-                // CRITICAL FIX: After storage insertion, some accounts may have had non-empty storage_root
-                // from the network but received 0 storage slots during download. These accounts should
-                // have storage_root = EMPTY_TRIE_HASH. Fix them now before computing state root.
-                let mut accounts_fixed_to_empty = 0usize;
-                for account_hash in &accounts_with_storage {
-                    if !snap_trie.has_storage_trie(account_hash) {
-                        snap_trie.update_account_storage_root(account_hash, (*EMPTY_TRIE_HASH).into());
-                        accounts_fixed_to_empty += 1;
-                    }
-                }
-                if accounts_fixed_to_empty > 0 {
-                    info!(
-                        "[SNAP SYNC] Fixed {} accounts with non-empty storage_root but 0 slots to EMPTY_TRIE_HASH",
-                        accounts_fixed_to_empty
-                    );
-                }
-
-                // Save incremental state trie checkpoint after storage insertion
-                store.save_incremental_state_trie(pivot_header.number, pivot_header.compute_block_hash())?;
-                checkpoint.touch();
-                store.save_snap_sync_checkpoint(&checkpoint).await?;
-
-                SNAP_PROGRESS.complete_phase(SnapSyncPhase::StorageInsertion as u8).await;
-            } else {
-                info!("[SNAP SYNC] Skipping storage insertion phase (already completed in checkpoint)");
-            }
-        }
-
-        // Phase: Healing (State and Storage)
-        if !should_skip_phase(SnapSyncPhase::StateHealing, checkpoint.phase) {
-            checkpoint.phase = SnapSyncPhase::StateHealing;
-            checkpoint.touch();
-            store.save_snap_sync_checkpoint(&checkpoint).await?;
-
-            // Log phase entry
-            SNAP_PROGRESS.enter_phase(SnapSyncPhase::StateHealing as u8).await;
-            SNAP_PROGRESS.healing.start(0).await;
-
-            *METRICS.heal_start_time.lock().await = Some(SystemTime::now());
-
-            // Get the state root to verify against
-            // If resuming with persisted state, use the already-computed root from the store
-            // Otherwise compute from the snap_trie we just built
-            let computed_root = if resuming_with_persisted_state {
-                info!("[SNAP SYNC] Using persisted state root (resuming from checkpoint)");
-                store.get_persisted_state_root()
-            } else {
-                // Calculate staleness timestamp for healing
-                // Use extended window for healing (3x normal) since download may have taken a while
-                let staleness_timestamp = pivot_header.timestamp + (SNAP_LIMIT as u64 * 12 * 3);
-                let mut global_slots_healed = 0u64;
-
-                // Heal storage tries for accounts that failed during initial download
-                if !storage_accounts.healed_accounts.is_empty() {
-                    info!(
-                        "[SNAP SYNC] Phase 6/{}: Healing storage for {} accounts",
-                        crate::snap_sync_progress::TOTAL_PHASES,
-                        storage_accounts.healed_accounts.len()
-                    );
-
-                    let (healed, successfully_queried) = storage_healing::heal_storage_trie_snap(
-                        pivot_header.state_root,
-                        &storage_accounts,
-                        &mut self.peers,
-                        &mut snap_trie,
-                        staleness_timestamp,
-                        &mut global_slots_healed,
-                    ).await?;
-
-                    if !healed {
-                        // Pivot became stale during healing
-                        return Err(SyncError::StorageHealingFailed);
-                    }
-
-                    // CRITICAL FIX: For accounts that were SUCCESSFULLY queried but had 0 slots returned,
-                    // their storage is empty at the pivot state_root. We must update their storage_root
-                    // to EMPTY_TRIE_HASH. We only do this for accounts where the query succeeded -
-                    // if the query failed, we can't assume the storage is empty.
-                    let mut accounts_fixed_to_empty = 0usize;
-                    let mut accounts_query_failed = 0usize;
-                    for account_hash in &storage_accounts.healed_accounts {
-                        if successfully_queried.contains(account_hash) {
-                            // Query succeeded - if no storage was inserted, storage is empty
-                            if !snap_trie.has_storage_trie(account_hash) {
-                                snap_trie.update_account_storage_root(account_hash, (*EMPTY_TRIE_HASH).into());
-                                accounts_fixed_to_empty += 1;
-                            }
-                        } else {
-                            // Query failed - don't assume storage is empty
-                            accounts_query_failed += 1;
-                        }
-                    }
-                    if accounts_fixed_to_empty > 0 || accounts_query_failed > 0 {
-                        info!(
-                            "[SNAP SYNC] Storage healing: {} set to empty, {} query failed (kept original storage_root)",
-                            accounts_fixed_to_empty, accounts_query_failed
-                        );
-                    }
-
-                    // Flush storage tries to compute storage roots and update accounts
-                    // This is critical - without this, accounts have wrong storage roots
-                    let flushed = snap_trie.flush_storage_tries();
-                    info!(
-                        "[SNAP SYNC] Storage healing complete: {} accounts, {} slots healed, {} tries flushed, {} set to empty, {} failed",
-                        storage_accounts.healed_accounts.len(),
-                        global_slots_healed,
-                        flushed,
-                        accounts_fixed_to_empty,
-                        accounts_query_failed
-                    );
-
-                    // If any accounts failed to be queried, warn but continue
-                    // The state root might still not match, but we can't fix those accounts without peer responses
-                    if accounts_query_failed > 0 {
-                        warn!(
-                            "[SNAP SYNC] {} accounts could not be healed (no peer response). State root may not match.",
-                            accounts_query_failed
-                        );
-                    }
-                }
-
-                // Heal state trie by traversing from root and finding missing accounts
-                info!(
-                    "[SNAP SYNC] Phase 6/{}: Healing state trie via GetTrieNodes",
-                    crate::snap_sync_progress::TOTAL_PHASES
-                );
-                let healed = storage_healing::heal_state_trie_snap(
-                    pivot_header.state_root,
+        let mut chunk_index = 0_u64;
+        let mut storage_range_request_attempts = 0;
+        loop {
+            while block_is_stale(&pivot_header) {
+                pivot_header = update_pivot(
+                    pivot_header.number,
+                    pivot_header.timestamp,
                     &mut self.peers,
-                    &mut snap_trie,
-                    staleness_timestamp,
-                ).await?;
-
-                if !healed {
-                    // Pivot became stale during healing
-                    return Err(SyncError::StateHealingFailed);
-                }
-
-                // Compute initial state root from snap_trie
-                let mut computed_root = snap_trie.compute_state_root();
-
-                // If state root doesn't match, crash immediately for debugging
-                if computed_root != pivot_header.state_root {
-                    error!(
-                        "[SNAP SYNC] State root mismatch detected after trie healing. Expected: {:?}, Got: {:?}. Crashing for debugging.",
-                        pivot_header.state_root, computed_root
-                    );
-                    return Err(SyncError::StateRootMismatch {
-                        expected: pivot_header.state_root,
-                        computed: computed_root,
-                    });
-                }
-
-                computed_root
-            };
-
-            // Verify state root
-            info!("[SNAP SYNC] Phase 6/{}: Verifying state root...", crate::snap_sync_progress::TOTAL_PHASES);
-            if computed_root != pivot_header.state_root {
-                warn!(
-                    "[SNAP SYNC] State root mismatch after healing! Expected: {:?}, Got: {:?}",
-                    pivot_header.state_root, computed_root
-                );
-                return Err(SyncError::StateRootMismatch {
-                    expected: pivot_header.state_root,
-                    computed: computed_root,
-                });
+                    block_sync_state,
+                )
+                .await?;
             }
-            info!("[SNAP SYNC] State root verified successfully: {:?}", computed_root);
 
-            *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
-            SNAP_PROGRESS.complete_phase(SnapSyncPhase::StateHealing as u8).await;
-        } else {
-            info!("[SNAP SYNC] Skipping healing phase (already completed in checkpoint)");
+            debug!(
+                "Started request_storage_ranges with {} accounts with storage root unchanged",
+                storage_accounts.accounts_with_storage_root.len()
+            );
+            storage_range_request_attempts += 1;
+            if storage_range_request_attempts < 5 {
+                chunk_index = self
+                    .peers
+                    .request_storage_ranges(
+                        &mut storage_accounts,
+                        account_storages_snapshots_dir.as_ref(),
+                        chunk_index,
+                        &mut pivot_header,
+                        store.clone(),
+                    )
+                    .await
+                    .map_err(SyncError::PeerHandler)?;
+            } else {
+                for (acc_hash, (maybe_root, old_intervals)) in
+                    storage_accounts.accounts_with_storage_root.iter()
+                {
+                    storage_accounts.healed_accounts.insert(*acc_hash);
+                    debug!(
+                        "We couldn't download these accounts on request_storage_ranges. Falling back to storage healing for it.
+                        Account hash: {:x?}, {:x?}. Number of intervals {}",
+                        acc_hash,
+                        maybe_root,
+                        old_intervals.len()
+                    );
+                }
+
+                warn!("Storage could not be downloaded after multiple attempts. Marking for healing.");
+
+                storage_accounts.accounts_with_storage_root.clear();
+            }
+
+            debug!(
+                "Ended request_storage_ranges with {} accounts remaining, {} big/healed accounts",
+                storage_accounts.accounts_with_storage_root.len(),
+                storage_accounts.healed_accounts.len(),
+            );
+            if !block_is_stale(&pivot_header) {
+                break;
+            }
+            info!("We stopped because of staleness, restarting loop");
+        }
+        SNAP_PROGRESS.complete_phase(SnapSyncPhase::StorageDownload as u8).await;
+        *METRICS.storage_tries_download_end_time.lock().await = Some(SystemTime::now());
+
+        // Phase 5: Storage Insertion
+        SNAP_PROGRESS.enter_phase(SnapSyncPhase::StorageInsertion as u8).await;
+        SNAP_PROGRESS.storage.start(0).await;
+
+        *METRICS.storage_tries_insert_start_time.lock().await = Some(SystemTime::now());
+        METRICS
+            .current_step
+            .set(crate::metrics::CurrentStepValue::InsertingStorageRanges);
+        let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
+
+        insert_storages(
+            store.clone(),
+            &account_storages_snapshots_dir,
+            &mut snap_trie,
+        )
+        .await?;
+
+        *METRICS.storage_tries_insert_end_time.lock().await = Some(SystemTime::now());
+
+        // Fix accounts with non-empty storage_root but 0 slots
+        let mut accounts_fixed_to_empty = 0usize;
+        for account_hash in &accounts_with_storage {
+            if !snap_trie.has_storage_trie(account_hash) {
+                snap_trie.update_account_storage_root(account_hash, (*EMPTY_TRIE_HASH).into());
+                accounts_fixed_to_empty += 1;
+            }
+        }
+        if accounts_fixed_to_empty > 0 {
+            info!(
+                "[SNAP SYNC] Fixed {} accounts with non-empty storage_root but 0 slots to EMPTY_TRIE_HASH",
+                accounts_fixed_to_empty
+            );
         }
 
-        // Integrate the SnapSyncTrie into the state manager (only if we built a new trie)
-        if !resuming_with_persisted_state {
-            store.set_snap_sync_trie(snap_trie);
-            let pivot_hash = pivot_header.compute_block_hash();
-            store.persist_snap_sync_state(pivot_header.number, pivot_hash)?;
+        store.save_incremental_state_trie(pivot_header.number, pivot_header.compute_block_hash())?;
+
+        SNAP_PROGRESS.complete_phase(SnapSyncPhase::StorageInsertion as u8).await;
+
+        // Phase 6: State Healing
+        SNAP_PROGRESS.enter_phase(SnapSyncPhase::StateHealing as u8).await;
+        SNAP_PROGRESS.healing.start(0).await;
+
+        *METRICS.heal_start_time.lock().await = Some(SystemTime::now());
+
+        // Calculate staleness timestamp for healing (3x normal window)
+        let staleness_timestamp = pivot_header.timestamp + (SNAP_LIMIT as u64 * 12 * 3);
+        let mut global_slots_healed = 0u64;
+
+        // Heal storage tries for accounts that failed during initial download
+        if !storage_accounts.healed_accounts.is_empty() {
+            info!(
+                "[SNAP SYNC] Phase 6/{}: Healing storage for {} accounts",
+                crate::snap_sync_progress::TOTAL_PHASES,
+                storage_accounts.healed_accounts.len()
+            );
+
+            let (healed, successfully_queried) = storage_healing::heal_storage_trie_snap(
+                pivot_header.state_root,
+                &storage_accounts,
+                &mut self.peers,
+                &mut snap_trie,
+                staleness_timestamp,
+                &mut global_slots_healed,
+            ).await?;
+
+            if !healed {
+                return Err(SyncError::StorageHealingFailed);
+            }
+
+            // Handle accounts with 0 slots returned
+            let mut accounts_fixed_to_empty = 0usize;
+            let mut accounts_query_failed = 0usize;
+            let mut accounts_suspicious_empty = 0usize;
+            for account_hash in &storage_accounts.healed_accounts {
+                if successfully_queried.contains(account_hash) {
+                    if !snap_trie.has_storage_trie(account_hash) {
+                        let expected_storage = storage_accounts.accounts_with_storage_root.get(account_hash);
+                        if let Some((orig_root, _)) = expected_storage {
+                            accounts_suspicious_empty += 1;
+                            warn!(
+                                "[SNAP SYNC] Account {:?} was expected to have storage (orig_root={:?}) but peer returned 0 slots. NOT setting to empty.",
+                                account_hash, orig_root
+                            );
+                        } else {
+                            debug!(
+                                "[SNAP SYNC] Setting account {:?} storage_root to EMPTY (no expected storage, query succeeded with 0 slots)",
+                                account_hash
+                            );
+                            snap_trie.update_account_storage_root(account_hash, (*EMPTY_TRIE_HASH).into());
+                            accounts_fixed_to_empty += 1;
+                        }
+                    }
+                } else {
+                    accounts_query_failed += 1;
+                }
+            }
+            if accounts_fixed_to_empty > 0 || accounts_query_failed > 0 || accounts_suspicious_empty > 0 {
+                info!(
+                    "[SNAP SYNC] Storage healing: {} set to empty, {} query failed, {} suspicious (expected storage but got none)",
+                    accounts_fixed_to_empty, accounts_query_failed, accounts_suspicious_empty
+                );
+            }
+
+            info!("[SNAP SYNC] DEBUG: Account count before storage flush: {}", snap_trie.account_count());
+            let flushed = snap_trie.flush_storage_tries();
+            info!("[SNAP SYNC] DEBUG: Account count after storage flush: {}, tries flushed: {}", snap_trie.account_count(), flushed);
+            info!(
+                "[SNAP SYNC] Storage healing complete: {} accounts, {} slots healed, {} tries flushed, {} set to empty, {} failed",
+                storage_accounts.healed_accounts.len(),
+                global_slots_healed,
+                flushed,
+                accounts_fixed_to_empty,
+                accounts_query_failed
+            );
+
+            if accounts_query_failed > 0 {
+                warn!(
+                    "[SNAP SYNC] {} accounts could not be healed (no peer response). State root may not match.",
+                    accounts_query_failed
+                );
+            }
         }
+
+        // Log stats before state trie healing
+        info!("[SNAP SYNC] DEBUG: Pre-state-healing stats:");
+        info!("[SNAP SYNC] DEBUG:   - Account count in snap_trie: {}", snap_trie.account_count());
+        info!("[SNAP SYNC] DEBUG:   - Accounts with expected storage: {}", storage_accounts.accounts_with_storage_root.len());
+        info!("[SNAP SYNC] DEBUG:   - Healed accounts set size: {}", storage_accounts.healed_accounts.len());
+
+        // Heal state trie
+        info!(
+            "[SNAP SYNC] Phase 6/{}: Healing state trie via GetTrieNodes (expected root: {:?})",
+            crate::snap_sync_progress::TOTAL_PHASES,
+            pivot_header.state_root
+        );
+        let healed = storage_healing::heal_state_trie_snap(
+            pivot_header.state_root,
+            &mut self.peers,
+            &mut snap_trie,
+            staleness_timestamp,
+        ).await?;
+
+        if !healed {
+            return Err(SyncError::StateHealingFailed);
+        }
+
+        info!("[SNAP SYNC] DEBUG: Post-state-healing stats:");
+        info!("[SNAP SYNC] DEBUG:   - Account count in snap_trie: {}", snap_trie.account_count());
+
+        // Compute and verify state root
+        info!("[SNAP SYNC] Computing state root from snap_trie...");
+        let computed_root = snap_trie.compute_state_root();
+        info!("[SNAP SYNC] Computed state root: {:?}", computed_root);
+        info!("[SNAP SYNC] Expected state root: {:?}", pivot_header.state_root);
+
+        if computed_root != pivot_header.state_root {
+            error!(
+                "[SNAP SYNC] State root mismatch detected after trie healing. Expected: {:?}, Got: {:?}",
+                pivot_header.state_root, computed_root
+            );
+
+            let account_count = snap_trie.account_count();
+            error!("[SNAP SYNC] DEBUG: Total accounts in snap_trie: {}", account_count);
+            error!("[SNAP SYNC] DEBUG: Dumping first 20 accounts from snap_trie for inspection:");
+            snap_trie.debug_dump_accounts(20);
+
+            error!("[SNAP SYNC] DEBUG: Healed accounts during this session: storage={}",
+                storage_accounts.healed_accounts.len());
+            error!("[SNAP SYNC] DEBUG: Accounts that were expected to have storage: {}",
+                storage_accounts.accounts_with_storage_root.len());
+
+            error!("[SNAP SYNC] DEBUG: First 10 healed account hashes:");
+            for (i, hash) in storage_accounts.healed_accounts.iter().take(10).enumerate() {
+                if let Some(account_data) = snap_trie.debug_get_account(hash) {
+                    error!("[SNAP SYNC] DEBUG:   {}. {:?} -> nonce={}, storage_root={:?}",
+                        i, hash, account_data.0, account_data.2);
+                } else {
+                    error!("[SNAP SYNC] DEBUG:   {}. {:?} -> NOT FOUND in snap_trie!", i, hash);
+                }
+            }
+
+            return Err(SyncError::StateRootMismatch {
+                expected: pivot_header.state_root,
+                computed: computed_root,
+            });
+        }
+
+        info!("[SNAP SYNC] Phase 6/{}: Verifying state root...", crate::snap_sync_progress::TOTAL_PHASES);
+        info!("[SNAP SYNC] State root verified successfully: {:?}", computed_root);
+
+        *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
+        SNAP_PROGRESS.complete_phase(SnapSyncPhase::StateHealing as u8).await;
+
+        // Integrate the SnapSyncTrie into the state manager
+        store.set_snap_sync_trie(snap_trie);
+        let pivot_hash = pivot_header.compute_block_hash();
+        store.persist_snap_sync_state(pivot_header.number, pivot_hash)?;
 
         store.generate_flatkeyvalue()?;
 
-        // Validate state and storage roots (run in all builds, not just debug)
+        // Validate state and storage roots
         validate_state_root(store.clone(), pivot_header.state_root).await?;
         validate_storage_root(store.clone(), pivot_header.state_root).await?;
 
-        // Phase: Bytecode Download
-        if !should_skip_phase(SnapSyncPhase::BytecodeDownload, checkpoint.phase) {
-            checkpoint.phase = SnapSyncPhase::BytecodeDownload;
-            checkpoint.touch();
-            store.save_snap_sync_checkpoint(&checkpoint).await?;
+        // Phase 7: Bytecode Download
+        code_hash_collector.finish().await?;
 
-            // Finish code hash collection
-            code_hash_collector.finish().await?;
+        SNAP_PROGRESS.enter_phase(SnapSyncPhase::BytecodeDownload as u8).await;
 
-            // Log phase entry
-            SNAP_PROGRESS.enter_phase(SnapSyncPhase::BytecodeDownload as u8).await;
+        *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
 
-            *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
+        let code_hashes_dir = get_code_hashes_snapshots_dir(&self.datadir);
 
-            let code_hashes_dir = get_code_hashes_snapshots_dir(&self.datadir);
+        let file_paths: Vec<PathBuf> = std::fs::read_dir(&code_hashes_dir)
+            .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
+            .filter_map(|entry| entry.ok().map(|e| e.path()))
+            .collect();
 
-            // Collect all file paths first
-            let file_paths: Vec<PathBuf> = std::fs::read_dir(&code_hashes_dir)
-                .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
-                .filter_map(|entry| entry.ok().map(|e| e.path()))
-                .collect();
+        let mut seen_code_hashes = HashSet::new();
+        let mut all_code_hashes = Vec::new();
+        for path in file_paths {
+            let snapshot_contents = std::fs::read(&path)
+                .map_err(|err| SyncError::SnapshotReadError(path.clone(), err))?;
+            let code_hashes: Vec<H256> = RLPDecode::decode(&snapshot_contents)
+                .map_err(|_| SyncError::CodeHashesSnapshotDecodeError(path))?;
 
-            // Process files sequentially to avoid loading all into memory at once
-            let mut seen_code_hashes = HashSet::new();
-            let mut all_code_hashes = Vec::new();
-            for path in file_paths {
-                let snapshot_contents = std::fs::read(&path)
-                    .map_err(|err| SyncError::SnapshotReadError(path.clone(), err))?;
-                let code_hashes: Vec<H256> = RLPDecode::decode(&snapshot_contents)
-                    .map_err(|_| SyncError::CodeHashesSnapshotDecodeError(path))?;
+            drop(snapshot_contents);
 
-                // Drop file contents immediately
-                drop(snapshot_contents);
-
-                for hash in code_hashes {
-                    if seen_code_hashes.insert(hash) {
-                        all_code_hashes.push(hash);
-                    }
+            for hash in code_hashes {
+                if seen_code_hashes.insert(hash) {
+                    all_code_hashes.push(hash);
                 }
             }
-
-            // Skip already downloaded bytecodes based on checkpoint
-            let bytecodes_to_skip = checkpoint.bytecodes_downloaded;
-            let remaining_code_hashes: Vec<H256> = all_code_hashes
-                .into_iter()
-                .skip(bytecodes_to_skip)
-                .collect();
-
-            let total_bytecodes = remaining_code_hashes.len() + bytecodes_to_skip;
-            SNAP_PROGRESS.bytecodes.start(total_bytecodes as u64).await;
-            SNAP_PROGRESS.bytecodes.set_current(bytecodes_to_skip as u64);
-
-            info!(
-                "[SNAP SYNC] Phase 8/{}: Downloading {} unique bytecodes{}",
-                crate::snap_sync_progress::TOTAL_PHASES,
-                remaining_code_hashes.len(),
-                if bytecodes_to_skip > 0 { format!(" (skipped {} from checkpoint)", bytecodes_to_skip) } else { String::new() }
-            );
-
-            // Download bytecodes in chunks
-            let mut bytecodes_downloaded = bytecodes_to_skip;
-            let total_chunks = remaining_code_hashes.chunks(BYTECODE_CHUNK_SIZE).len();
-            for (chunk_idx, chunk) in remaining_code_hashes.chunks(BYTECODE_CHUNK_SIZE).enumerate() {
-                let bytecodes = self
-                    .peers
-                    .request_bytecodes(chunk)
-                    .await
-                    .map_err(SyncError::PeerHandler)?
-                    .ok_or(SyncError::BytecodesNotFound)?;
-
-                store
-                    .write_account_code_batch(
-                        chunk
-                            .iter()
-                            .copied()
-                            .zip(bytecodes)
-                            // SAFETY: hash already checked by the download worker
-                            .map(|(hash, code)| (hash, Code::from_bytecode_unchecked(code, hash)))
-                            .collect(),
-                    )
-                    .await?;
-
-                // Update progress counter
-                bytecodes_downloaded += chunk.len();
-                checkpoint.bytecodes_downloaded = bytecodes_downloaded;
-
-                // Save checkpoint every N chunks to reduce I/O overhead
-                let is_last_chunk = chunk_idx + 1 == total_chunks;
-                if (chunk_idx + 1) % CHECKPOINT_CHUNK_INTERVAL == 0 || is_last_chunk {
-                    checkpoint.touch();
-                    store.save_snap_sync_checkpoint(&checkpoint).await?;
-                }
-
-                // Log progress with ETA
-                SNAP_PROGRESS.bytecodes.set_current(bytecodes_downloaded as u64);
-                SNAP_PROGRESS.log_bytecodes_progress(bytecodes_downloaded as u64, total_bytecodes as u64).await;
-            }
-
-            std::fs::remove_dir_all(code_hashes_dir)
-                .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?;
-
-            *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
-            SNAP_PROGRESS.complete_phase(SnapSyncPhase::BytecodeDownload as u8).await;
-
-            // Validate bytecodes (run in all builds, not just debug)
-            validate_bytecodes(store.clone(), pivot_header.state_root)?;
-        } else {
-            info!("[SNAP SYNC] Skipping bytecode download phase (already completed in checkpoint)");
-            // Still need to finish code hash collector
-            code_hash_collector.finish().await?;
         }
+
+        let total_bytecodes = all_code_hashes.len();
+        SNAP_PROGRESS.bytecodes.start(total_bytecodes as u64).await;
+
+        info!(
+            "[SNAP SYNC] Phase 7/{}: Downloading {} unique bytecodes",
+            crate::snap_sync_progress::TOTAL_PHASES,
+            total_bytecodes
+        );
+
+        let mut bytecodes_downloaded = 0usize;
+        for chunk in all_code_hashes.chunks(BYTECODE_CHUNK_SIZE) {
+            let bytecodes = self
+                .peers
+                .request_bytecodes(chunk)
+                .await
+                .map_err(SyncError::PeerHandler)?
+                .ok_or(SyncError::BytecodesNotFound)?;
+
+            store
+                .write_account_code_batch(
+                    chunk
+                        .iter()
+                        .copied()
+                        .zip(bytecodes)
+                        .map(|(hash, code)| (hash, Code::from_bytecode_unchecked(code, hash)))
+                        .collect(),
+                )
+                .await?;
+
+            bytecodes_downloaded += chunk.len();
+
+            SNAP_PROGRESS.bytecodes.set_current(bytecodes_downloaded as u64);
+            SNAP_PROGRESS.log_bytecodes_progress(bytecodes_downloaded as u64, total_bytecodes as u64).await;
+        }
+
+        std::fs::remove_dir_all(code_hashes_dir)
+            .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?;
+
+        *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
+        SNAP_PROGRESS.complete_phase(SnapSyncPhase::BytecodeDownload as u8).await;
+
+        // Validate bytecodes
+        validate_bytecodes(store.clone(), pivot_header.state_root)?;
 
         store_block_bodies(
             vec![pivot_header.clone()],
@@ -1512,11 +1315,6 @@ impl Syncer {
                 None,
             )
             .await?;
-
-        // Mark snap sync as completed
-        checkpoint.phase = SnapSyncPhase::Completed;
-        checkpoint.touch();
-        store.save_snap_sync_checkpoint(&checkpoint).await?;
 
         // Log final summary
         SNAP_PROGRESS.complete_sync().await;
@@ -1794,17 +1592,15 @@ pub fn validate_bytecodes(store: Store, state_root: H256) -> Result<(), SyncErro
     Ok(())
 }
 
-/// Checkpoint-aware version of insert_accounts.
-/// Tracks progress and saves checkpoint after each file processed.
+/// Insert accounts from snapshot files into the snap trie.
 /// Uses batched parallel decoding for speed while limiting memory.
-async fn insert_accounts_with_checkpoint(
-    store: Store,
+async fn insert_accounts(
+    _store: Store,
     storage_accounts: &mut AccountStorageRoots,
     account_state_snapshots_dir: &Path,
-    _: &Path,
+    _datadir: &Path,
     code_hash_collector: &mut CodeHashCollector,
     snap_trie: &mut SnapSyncTrie,
-    checkpoint: &mut SnapSyncCheckpoint,
 ) -> Result<(H256, BTreeSet<H256>), SyncError> {
     use rayon::prelude::*;
 
@@ -1814,38 +1610,26 @@ async fn insert_accounts_with_checkpoint(
         .filter_map(|entry| entry.ok().map(|e| e.path()))
         .collect();
 
-    // Sort paths to ensure consistent ordering for checkpoint resume
     file_paths.sort();
 
     let file_count = file_paths.len();
-    let files_to_skip = checkpoint.account_files_processed;
-
-    // Calculate batch size based on available memory
     let batch_size = calculate_file_batch_size(BYTES_PER_ACCOUNT_FILE);
 
     info!(
-        "[SNAP SYNC] Phase 3/{}: Inserting accounts from {} files (batch size: {}){}",
+        "[SNAP SYNC] Phase 3/{}: Inserting accounts from {} files (batch size: {})",
         crate::snap_sync_progress::TOTAL_PHASES,
         file_count,
-        batch_size,
-        if files_to_skip > 0 { format!(" (skipping {} from checkpoint)", files_to_skip) } else { String::new() }
+        batch_size
     );
 
-    // Skip already processed files
-    let remaining_files: Vec<PathBuf> = file_paths
-        .into_iter()
-        .skip(files_to_skip)
-        .collect();
-
-    let mut files_processed = files_to_skip;
+    let mut files_processed = 0usize;
     let account_insert_start = std::time::Instant::now();
     let mut total_accounts = 0usize;
 
-    // Process files in batches - decode in parallel, insert sequentially
     // Accumulator for batching inserts - larger batches = better performance
     let mut pending_accounts: Vec<(H256, u64, U256, H256, H256)> = Vec::with_capacity(MIN_ACCOUNT_BATCH_SIZE);
 
-    for batch in remaining_files.chunks(batch_size) {
+    for batch in file_paths.chunks(batch_size) {
         // Parallel decode batch of files using rayon
         let decoded_batch: Vec<Result<(PathBuf, Vec<(H256, AccountState)>), SyncError>> = batch
             .par_iter()
@@ -1890,19 +1674,13 @@ async fn insert_accounts_with_checkpoint(
                 })
             );
 
-            // Update checkpoint counter
             files_processed += 1;
-            checkpoint.account_files_processed = files_processed;
         }
 
         // Flush accumulated accounts when batch is large enough
         if pending_accounts.len() >= MIN_ACCOUNT_BATCH_SIZE {
             snap_trie.insert_accounts_batch(pending_accounts.drain(..));
         }
-
-        // Save checkpoint and log progress after each file batch
-        checkpoint.touch();
-        store.save_snap_sync_checkpoint(checkpoint).await?;
 
         let elapsed = account_insert_start.elapsed();
         let rate = if elapsed.as_secs_f64() > 0.0 {
@@ -1932,14 +1710,12 @@ async fn insert_accounts_with_checkpoint(
     Ok((computed_state_root, BTreeSet::new()))
 }
 
-/// Checkpoint-aware version of insert_storages.
-/// Tracks progress and saves checkpoint after each file processed.
+/// Insert storage slots from snapshot files into the snap trie.
 /// Uses batched parallel decoding for speed while limiting memory.
-async fn insert_storages_with_checkpoint(
-    store: Store,
+async fn insert_storages(
+    _store: Store,
     account_storages_snapshots_dir: &Path,
     snap_trie: &mut SnapSyncTrie,
-    checkpoint: &mut SnapSyncCheckpoint,
 ) -> Result<(), SyncError> {
     use crate::utils::AccountsWithStorage;
     use rayon::prelude::*;
@@ -1950,41 +1726,29 @@ async fn insert_storages_with_checkpoint(
         .filter_map(|entry| entry.ok().map(|e| e.path()))
         .collect();
 
-    // Sort paths to ensure consistent ordering for checkpoint resume
     file_paths.sort();
 
     let file_count = file_paths.len();
-    let files_to_skip = checkpoint.storage_files_processed;
-
-    // Calculate batch size based on available memory
     let batch_size = calculate_file_batch_size(BYTES_PER_STORAGE_FILE);
 
     info!(
-        "[SNAP SYNC] Phase 5/{}: Inserting storage from {} files (batch size: {}){}",
+        "[SNAP SYNC] Phase 5/{}: Inserting storage from {} files (batch size: {})",
         crate::snap_sync_progress::TOTAL_PHASES,
         file_count,
-        batch_size,
-        if files_to_skip > 0 { format!(" (skipping {} from checkpoint)", files_to_skip) } else { String::new() }
+        batch_size
     );
 
-    // Skip already processed files
-    let remaining_files: Vec<PathBuf> = file_paths
-        .into_iter()
-        .skip(files_to_skip)
-        .collect();
-
     let mut total_storage_count = 0usize;
-    let mut files_processed = files_to_skip;
+    let mut files_processed = 0usize;
     let storage_insert_start = std::time::Instant::now();
 
     // Flush storage tries periodically to keep memory bounded
-    // Threshold is calculated dynamically based on available memory
     let storage_flush_threshold = calculate_flush_threshold();
     let mut slots_since_flush = 0usize;
     let mut total_flushes = 0usize;
 
     // Process files in batches - decode in parallel, insert sequentially
-    for batch in remaining_files.chunks(batch_size) {
+    for batch in file_paths.chunks(batch_size) {
         // Parallel decode batch of files using rayon
         let decoded_batch: Vec<Result<(PathBuf, Vec<AccountsWithStorage>), SyncError>> = batch
             .par_iter()
@@ -2014,7 +1778,6 @@ async fn insert_storages_with_checkpoint(
             let mut storage_count = 0usize;
             for account_storages in account_storages_snapshot {
                 let slot_count = account_storages.storages.len();
-                // Batch insert storage slots for each account
                 for account_hash in account_storages.accounts {
                     snap_trie.insert_storage_batch(
                         account_hash,
@@ -2027,7 +1790,6 @@ async fn insert_storages_with_checkpoint(
             slots_since_flush += storage_count;
 
             // Flush storage tries periodically to free memory
-            // This computes storage roots and clears the in-memory tries
             if slots_since_flush >= storage_flush_threshold {
                 let flushed = snap_trie.flush_storage_tries();
                 total_flushes += 1;
@@ -2038,14 +1800,10 @@ async fn insert_storages_with_checkpoint(
                 slots_since_flush = 0;
             }
 
-            // Update checkpoint counter
             files_processed += 1;
-            checkpoint.storage_files_processed = files_processed;
 
-            // Save checkpoint and log progress every batch (not every file) to reduce I/O
+            // Log progress periodically
             if files_processed % batch_size == 0 || files_processed == file_count {
-                checkpoint.touch();
-                store.save_snap_sync_checkpoint(checkpoint).await?;
                 let elapsed = storage_insert_start.elapsed();
                 let rate = if elapsed.as_secs_f64() > 0.0 {
                     total_storage_count as f64 / elapsed.as_secs_f64()
@@ -2061,7 +1819,7 @@ async fn insert_storages_with_checkpoint(
                     crate::snap_sync_progress::format_count(rate as u64)
                 );
             }
-            drop(snapshot_path); // Explicit drop for clarity
+            drop(snapshot_path);
         }
     }
 

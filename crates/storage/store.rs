@@ -989,29 +989,6 @@ impl Store {
             .map_err(StoreError::from)
     }
 
-    /// Saves the current snap sync checkpoint to the database.
-    pub async fn save_snap_sync_checkpoint(
-        &self,
-        checkpoint: &crate::SnapSyncCheckpoint,
-    ) -> Result<(), StoreError> {
-        let key = snap_state_key(SnapStateIndex::FullCheckpoint);
-        let value = checkpoint.encode_to_vec();
-        self.write_async(SNAP_STATE, key, value).await
-    }
-
-    /// Loads the snap sync checkpoint from the database.
-    pub async fn load_snap_sync_checkpoint(
-        &self,
-    ) -> Result<Option<crate::SnapSyncCheckpoint>, StoreError> {
-        let key = snap_state_key(SnapStateIndex::FullCheckpoint);
-        self.backend
-            .begin_read()?
-            .get(SNAP_STATE, &key)?
-            .map(|bytes| crate::SnapSyncCheckpoint::decode(bytes.as_slice()))
-            .transpose()
-            .map_err(StoreError::from)
-    }
-
     /// Saves an incremental state trie checkpoint without updating finalized block metadata.
     /// Used during snap sync to persist progress without committing the full state.
     pub fn save_incremental_state_trie(&self, block_number: u64, block_hash: H256) -> Result<(), StoreError> {
