@@ -35,7 +35,7 @@ use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
 use url::Url;
 
 #[allow(clippy::too_many_arguments)]
-async fn init_rpc_api(
+fn init_rpc_api(
     opts: &L1Options,
     l2_opts: &L2Options,
     peer_handler: Option<PeerHandler>,
@@ -127,7 +127,12 @@ fn init_metrics(opts: &L1Options, network: &str, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-pub fn init_tracing(opts: &L2Options) -> Option<reload::Handle<EnvFilter, Registry>> {
+pub fn init_tracing(
+    opts: &L2Options,
+) -> (
+    Option<reload::Handle<EnvFilter, Registry>>,
+    Option<tracing_appender::non_blocking::WorkerGuard>,
+) {
     if !opts.sequencer_opts.no_monitor {
         let level_filter = EnvFilter::builder()
             .parse_lossy("debug,tower_http::trace=debug,reqwest_tracing=off,hyper=off,libsql=off,ethrex::initializers=off,ethrex::l2::initializers=off,ethrex::l2::command=off");
@@ -139,9 +144,10 @@ pub fn init_tracing(opts: &L2Options) -> Option<reload::Handle<EnvFilter, Regist
         tui_logger::init_logger(LevelFilter::max()).expect("Failed to initialize tui_logger");
 
         // Monitor already registers all log levels
-        None
+        (None, None)
     } else {
-        Some(initializers::init_tracing(&opts.node_opts))
+        let (handle, guard) = initializers::init_tracing(&opts.node_opts);
+        (Some(handle), guard)
     }
 }
 
@@ -186,7 +192,7 @@ pub async fn init_l2(
     let store = init_store(&datadir, genesis.clone()).await?;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
-    let operator_fee_config = get_operator_fee_config(&opts.sequencer_opts).await?;
+    let operator_fee_config = get_operator_fee_config(&opts.sequencer_opts)?;
     let l1_fee_config = get_l1_fee_config(&opts.sequencer_opts);
 
     let fee_config = FeeConfig {
@@ -261,7 +267,6 @@ pub async fn init_l2(
             opts.node_opts.tx_broadcasting_time_interval,
             opts.node_opts.lookup_interval,
         )
-        .await
         .expect("P2P context could not be created");
         let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;
         let peer_handler = PeerHandler::new(peer_table, initiator);
@@ -309,8 +314,7 @@ pub async fn init_l2(
         rollup_store.clone(),
         log_filter_handler,
         Some(opts.sequencer_opts.block_producer_opts.block_gas_limit),
-    )
-    .await;
+    );
 
     // Initialize metrics if enabled
     if opts.node_opts.metrics_enabled {
@@ -355,7 +359,7 @@ pub async fn init_l2(
     if !opts.node_opts.p2p_disabled {
         let peer_handler = peer_handler.ok_or_eyre("Peer handler not initialized")?;
         let node_config = NodeConfigFile::new(peer_handler.peer_table, local_node_record).await;
-        store_node_config_file(node_config, node_config_path).await;
+        store_node_config_file(node_config, node_config_path);
     }
     tokio::time::sleep(Duration::from_secs(1)).await;
     info!("Server shutting down!");
@@ -377,7 +381,7 @@ pub fn get_l1_fee_config(sequencer_opts: &SequencerOptions) -> Option<L1FeeConfi
         })
 }
 
-pub async fn get_operator_fee_config(
+pub fn get_operator_fee_config(
     sequencer_opts: &SequencerOptions,
 ) -> eyre::Result<Option<OperatorFeeConfig>> {
     if sequencer_opts.based {

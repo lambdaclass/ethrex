@@ -9,11 +9,12 @@ use std::{
 use bytes::Bytes;
 use clap::Parser;
 use ethrex_common::H256;
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address, U256,
     types::{Genesis, TxType},
 };
-use ethrex_l2::utils::test_data_io::read_genesis_file;
+use ethrex_l2::{sequencer::utils::get_git_commit_hash, utils::test_data_io::read_genesis_file};
 use ethrex_l2_common::{calldata::Value, prover::ProverType, utils::get_address_from_secret_key};
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
@@ -1078,6 +1079,7 @@ async fn initialize_contracts(
     let risc0_vk = get_vk(ProverType::RISC0, opts)?;
 
     info!("Risc0 vk read");
+    let commit_hash = keccak(get_git_commit_hash());
 
     let deployer_address = get_address_from_secret_key(&opts.private_key.secret_bytes())
         .map_err(DeployerError::InternalError)?;
@@ -1141,6 +1143,7 @@ async fn initialize_contracts(
             Value::Address(contract_addresses.aligned_aggregator_address),
             Value::FixedBytes(sp1_vk),
             Value::FixedBytes(risc0_vk),
+            Value::FixedBytes(commit_hash.0.to_vec().into()),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Address(contract_addresses.sequencer_registry_address),
             Value::Uint(genesis.config.chain_id.into()),
@@ -1253,6 +1256,7 @@ async fn initialize_contracts(
             Value::Address(contract_addresses.aligned_aggregator_address),
             Value::FixedBytes(sp1_vk),
             Value::FixedBytes(risc0_vk),
+            Value::FixedBytes(commit_hash.0.to_vec().into()),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Uint(genesis.config.chain_id.into()),
             Value::Address(contract_addresses.bridge_address),

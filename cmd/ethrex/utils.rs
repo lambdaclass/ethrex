@@ -113,7 +113,7 @@ pub fn init_datadir(datadir: &Path) {
     }
 }
 
-pub async fn store_node_config_file(config: NodeConfigFile, file_path: PathBuf) {
+pub fn store_node_config_file(config: NodeConfigFile, file_path: PathBuf) {
     let json = match serde_json::to_string(&config) {
         Ok(json) => json,
         Err(e) => {

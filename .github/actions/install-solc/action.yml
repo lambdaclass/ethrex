@@ -1,0 +1,24 @@
+name: Install solc
+description: Install solidity compiler
+
+inputs:
+  version:
+    description: "Solidity version (must be >= 0.8.31)"
+    required: false
+    default: "0.8.31"
+
+runs:
+  using: "composite"
+  steps:
+    - id: vars
+      shell: bash
+      run: |
+        if [[ "${{ runner.os }}" == "Linux" && "${{ runner.arch }}" == "X64" ]]; then
+          sudo curl -L -o /usr/local/bin/solc https://github.com/argotorg/solidity/releases/download/v${{ inputs.version }}/solc-static-linux
+        elif [[ "${{ runner.os }}" == "Linux" && "${{ runner.arch }}" == "ARM64" ]]; then
+          sudo curl -L -o /usr/local/bin/solc https://github.com/argotorg/solidity/releases/download/v${{ inputs.version }}/solc-static-linux-arm
+        elif [[ "${{ runner.os }}" == "macOS" ]]; then
+          sudo curl -L -o /usr/local/bin/solc https://github.com/argotorg/solidity/releases/download/v${{ inputs.version }}/solc-macos
+        fi
+        sudo chmod +x /usr/local/bin/solc
+        solc --version
