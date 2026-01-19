@@ -884,11 +884,7 @@ pub fn lookup_interval_function(progress: f64, lower_limit: f64, upper_limit: f6
 #[cfg(test)]
 mod tests {
     use crate::{
-        discv5::{
-            messages::PongMessage,
-            server::DiscoveryServer,
-            session::Session,
-        },
+        discv5::{messages::PongMessage, server::DiscoveryServer, session::Session},
         peer_table::PeerTable,
         types::{Node, NodeRecord},
     };
@@ -1006,7 +1002,8 @@ mod tests {
 
         // Create NodeRecord for the remote node with seq = 5
         // Note: from_node uses remote_signer's public key, so we derive node_id from the record
-        let remote_record = NodeRecord::from_node(&remote_node_template, 5, &remote_signer).unwrap();
+        let remote_record =
+            NodeRecord::from_node(&remote_node_template, 5, &remote_signer).unwrap();
         let remote_node = Node::from_enr(&remote_record).expect("Should create node from record");
         let remote_node_id = remote_node.node_id();
 
@@ -1046,9 +1043,16 @@ mod tests {
 
         // Verify the contact was added
         let contact = server.peer_table.get_contact(remote_node_id).await.unwrap();
-        assert!(contact.is_some(), "Contact should have been added to peer_table");
+        assert!(
+            contact.is_some(),
+            "Contact should have been added to peer_table"
+        );
         let contact = contact.unwrap();
-        assert_eq!(contact.record.as_ref().map(|r| r.seq), Some(5), "Contact should have ENR with seq=5");
+        assert_eq!(
+            contact.record.as_ref().map(|r| r.seq),
+            Some(5),
+            "Contact should have ENR with seq=5"
+        );
 
         // Test 1: PONG with same enr_seq should NOT trigger FINDNODE
         let pong_same_seq = PongMessage {
