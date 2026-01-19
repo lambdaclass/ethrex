@@ -4,10 +4,10 @@ use std::{
     path::PathBuf,
 };
 
-use aligned_sdk::{
-    gateway::{AggregationModeGatewayProvider, GatewayError},
-    types::Network,
-};
+#[cfg(feature = "sp1")]
+use aligned_sdk::gateway::provider::{AggregationModeGatewayProvider, GatewayError};
+use aligned_sdk::types::Network;
+#[cfg(feature = "sp1")]
 use alloy::signers::local::PrivateKeySigner;
 use ethrex_common::{Address, U256};
 use ethrex_guest_program::{ZKVM_RISC0_PROGRAM_VK, ZKVM_SP1_PROGRAM_ELF};
@@ -15,7 +15,9 @@ use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProverType},
 };
-use ethrex_l2_rpc::signer::{Signer, SignerHealth};
+#[cfg(feature = "sp1")]
+use ethrex_l2_rpc::signer::Signer;
+use ethrex_l2_rpc::signer::SignerHealth;
 use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch, get_last_verified_batch};
 #[cfg(feature = "metrics")]
 use ethrex_metrics::l2::metrics::METRICS;

@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use aligned_sdk::{
     blockchain::{
-        AggregationModeVerificationData, ProofAggregationServiceProvider, ProofStatus,
-        ProofVerificationAggModeError,
+        AggregationModeVerificationData, ProofStatus, ProofVerificationAggModeError,
+        provider::ProofAggregationServiceProvider,
     },
     types::Network,
 };
@@ -178,10 +178,13 @@ impl L1ProofVerifier {
                     current_batch_public_inputs = Some(public_inputs.clone());
                 }
 
-                let verification_data = self.verification_data(prover_type, public_inputs)?;
+                // Create verification_data to get the commitment
+                let verification_data =
+                    self.verification_data(prover_type, public_inputs.clone())?;
                 let commitment = H256(verification_data.commitment());
-                if let Some((merkle_root, merkle_path)) =
-                    self.check_proof_aggregation(verification_data).await?
+                if let Some((merkle_root, merkle_path)) = self
+                    .check_proof_aggregation(prover_type, public_inputs)
+                    .await?
                 {
                     info!(
                         ?batch_number,
@@ -329,9 +332,12 @@ impl L1ProofVerifier {
     /// Checks if the received proof was aggregated by Aligned.
     async fn check_proof_aggregation(
         &self,
-        verification_data: AggregationModeVerificationData,
+        prover_type: ProverType,
+        public_inputs: Vec<u8>,
     ) -> Result<Option<(H256, Vec<[u8; 32]>)>, ProofVerifierError> {
-        let proof_status = self.check_proof_verification(&verification_data).await?;
+        let proof_status = self
+            .check_proof_verification(prover_type, public_inputs)
+            .await?;
 
         let (merkle_root, merkle_path) = match proof_status {
             ProofStatus::Verified {
@@ -357,7 +363,8 @@ impl L1ProofVerifier {
     /// Performs the call to the aligned proof verification function with retries over multiple RPC URLs and beacon URLs.
     async fn check_proof_verification(
         &self,
-        verification_data: &AggregationModeVerificationData,
+        prover_type: ProverType,
+        public_inputs: Vec<u8>,
     ) -> Result<ProofStatus, ProofVerifierError> {
         for rpc_url in &self.eth_client.urls {
             for beacon_url in &self.beacon_urls {
@@ -368,8 +375,12 @@ impl L1ProofVerifier {
                     beacon_url.clone(),
                 );
 
+                // Recreate verification data for each attempt (it doesn't implement Clone)
+                let verification_data =
+                    self.verification_data(prover_type, public_inputs.clone())?;
+
                 match provider
-                    .check_proof_verification(None, verification_data.clone())
+                    .check_proof_verification(None, verification_data)
                     .await
                 {
                     Ok(proof_status) => return Ok(proof_status),
