@@ -82,6 +82,7 @@ use ethrex_trie::node::{BranchNode, ExtensionNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
+use lru::LruCache;
 use mempool::Mempool;
 use payload::PayloadOrTask;
 use rustc_hash::FxHashMap;
@@ -106,6 +107,9 @@ use ethrex_common::types::BlobsBundle;
 
 const MAX_PAYLOADS: usize = 10;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
+/// Maximum number of parent headers to cache for faster lookups.
+/// This covers recent blocks to avoid DB lookups during sequential processing.
+const PARENT_HEADER_CACHE_SIZE: usize = 64;
 
 type StoreUpdatesMap = FxHashMap<H256, (Result<Trie, StoreError>, FxHashMap<Nibbles, Vec<u8>>)>;
 
@@ -184,6 +188,8 @@ pub struct Blockchain {
     /// Maps payload IDs to either completed payloads or in-progress build tasks.
     /// Kept around in case consensus requests the same payload twice.
     pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
+    /// LRU cache of recent parent headers to avoid DB lookups.
+    parent_header_cache: Mutex<LruCache<H256, BlockHeader>>,
 }
 
 /// Configuration options for the blockchain.
@@ -246,6 +252,10 @@ impl Blockchain {
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
+            parent_header_cache: Mutex::new(LruCache::new(
+                std::num::NonZeroUsize::new(PARENT_HEADER_CACHE_SIZE)
+                    .expect("PARENT_HEADER_CACHE_SIZE must be > 0"),
+            )),
         }
     }
 
@@ -256,6 +266,10 @@ impl Blockchain {
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
+            parent_header_cache: Mutex::new(LruCache::new(
+                std::num::NonZeroUsize::new(PARENT_HEADER_CACHE_SIZE)
+                    .expect("PARENT_HEADER_CACHE_SIZE must be > 0"),
+            )),
         }
     }
 
@@ -264,8 +278,8 @@ impl Blockchain {
         &self,
         block: &Block,
     ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
-        // Validate if it can be the new head and find the parent
-        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+        // Validate if it can be the new head and find the parent (using cache)
+        let Ok(parent_header) = self.find_parent_header_cached(&block.header) else {
             // If the parent is not present, we store it as pending.
             self.storage.add_pending_block(block.clone())?;
             return Err(ChainError::ParentNotFound);
@@ -1430,6 +1444,9 @@ impl Blockchain {
         // Check state root matches the one in block header
         validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
 
+        // Cache the header for faster parent lookups of future blocks
+        self.cache_block_header(&block.header);
+
         let update_batch = UpdateBatch {
             account_updates: account_updates_list.state_updates,
             storage_updates: account_updates_list.storage_updates,
@@ -1481,8 +1498,8 @@ impl Blockchain {
     }
 
     pub fn add_block_pipeline(&self, block: Block) -> Result<(), ChainError> {
-        // Validate if it can be the new head and find the parent
-        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+        // Validate if it can be the new head and find the parent (using cache)
+        let Ok(parent_header) = self.find_parent_header_cached(&block.header) else {
             // If the parent is not present, we store it as pending.
             self.storage.add_pending_block(block)?;
             return Err(ChainError::ParentNotFound);
@@ -1724,9 +1741,9 @@ impl Blockchain {
                 info!("Received shutdown signal, aborting");
                 return Err((ChainError::Custom(String::from("shutdown signal")), None));
             }
-            // for the first block, we need to query the store
+            // for the first block, we need to query the store (using cache)
             let parent_header = if i == 0 {
-                find_parent_header(&block.header, &self.storage).map_err(|err| {
+                self.find_parent_header_cached(&block.header).map_err(|err| {
                     (
                         err,
                         Some(BatchBlockProcessingFailure {
@@ -2197,6 +2214,41 @@ pub fn find_parent_header(
     match storage.get_block_header_by_hash(block_header.parent_hash)? {
         Some(parent_header) => Ok(parent_header),
         None => Err(ChainError::ParentNotFound),
+    }
+}
+
+impl Blockchain {
+    /// Finds the parent header, checking the cache first before falling back to storage.
+    pub fn find_parent_header_cached(
+        &self,
+        block_header: &BlockHeader,
+    ) -> Result<BlockHeader, ChainError> {
+        let parent_hash = block_header.parent_hash;
+
+        // Check cache first
+        if let Ok(mut cache) = self.parent_header_cache.lock() {
+            if let Some(header) = cache.get(&parent_hash) {
+                return Ok(header.clone());
+            }
+        }
+
+        // Fall back to storage lookup
+        let parent_header = find_parent_header(block_header, &self.storage)?;
+
+        // Populate cache on successful lookup
+        if let Ok(mut cache) = self.parent_header_cache.lock() {
+            cache.put(parent_hash, parent_header.clone());
+        }
+
+        Ok(parent_header)
+    }
+
+    /// Adds a block header to the parent header cache.
+    /// Should be called when storing a block to make subsequent lookups faster.
+    pub fn cache_block_header(&self, header: &BlockHeader) {
+        if let Ok(mut cache) = self.parent_header_cache.lock() {
+            cache.put(header.hash(), header.clone());
+        }
     }
 }
 

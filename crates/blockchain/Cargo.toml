@@ -23,6 +23,7 @@ hex.workspace = true
 rustc-hash.workspace = true
 tokio = { workspace = true, features = ["time", "rt"] }
 tokio-util.workspace = true
+lru = "0.16.2"
 
 [dev-dependencies]
 serde_json.workspace = true
