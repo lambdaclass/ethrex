@@ -926,13 +926,19 @@ impl Blockchain {
             // Gather account updates
             let account_updates = vm.get_state_transitions()?;
 
-            let state_accessed = logger
+            let mut state_accessed = logger
                 .state_accessed
                 .lock()
                 .map_err(|_e| {
                     ChainError::WitnessGeneration("Failed to execute with witness".to_string())
                 })?
                 .clone();
+
+            // Deduplicate storage keys to avoid redundant witness keys and storage trie accesses
+            for keys in state_accessed.values_mut() {
+                keys.sort();
+                keys.dedup();
+            }
 
             for (account, acc_keys) in state_accessed.iter() {
                 let slots: &mut Vec<H256> =
