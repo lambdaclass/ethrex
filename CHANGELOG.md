@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-01-19
+
+- Improve call and related opcodes [#5856](https://github.com/lambdaclass/ethrex/pull/5856)
+
 ### 2026-01-15
 
 - Reduce state iterated when calculating partial state transitions [#5864](https://github.com/lambdaclass/ethrex/pull/5864)
