@@ -115,6 +115,79 @@ impl CodeCache {
     }
 }
 
+// 32mb for account cache
+const ACCOUNT_CACHE_MAX_ENTRIES: usize = 100_000;
+
+/// Cache for account state, keyed by (state_root, address).
+/// This cache stores the full AccountState to avoid repeated trie lookups.
+#[derive(Debug)]
+struct AccountCache {
+    inner_cache: LruCache<(H256, Address), AccountState, FxBuildHasher>,
+}
+
+impl Default for AccountCache {
+    fn default() -> Self {
+        Self {
+            inner_cache: LruCache::unbounded_with_hasher(FxBuildHasher),
+        }
+    }
+}
+
+impl AccountCache {
+    fn get(&mut self, state_root: &H256, address: &Address) -> Option<AccountState> {
+        self.inner_cache.get(&(*state_root, *address)).copied()
+    }
+
+    fn insert(&mut self, state_root: H256, address: Address, account_state: AccountState) {
+        // Evict old entries if we exceed the max
+        while self.inner_cache.len() >= ACCOUNT_CACHE_MAX_ENTRIES {
+            self.inner_cache.pop_lru();
+        }
+        self.inner_cache.push((state_root, address), account_state);
+    }
+}
+
+// 64mb for storage cache
+const STORAGE_CACHE_MAX_ENTRIES: usize = 500_000;
+
+/// Cache for storage values, keyed by (state_root, address, storage_key).
+/// This cache stores storage slot values to avoid repeated trie lookups.
+#[derive(Debug)]
+struct StorageCache {
+    inner_cache: LruCache<(H256, Address, H256), U256, FxBuildHasher>,
+}
+
+impl Default for StorageCache {
+    fn default() -> Self {
+        Self {
+            inner_cache: LruCache::unbounded_with_hasher(FxBuildHasher),
+        }
+    }
+}
+
+impl StorageCache {
+    fn get(&mut self, state_root: &H256, address: &Address, storage_key: &H256) -> Option<U256> {
+        self.inner_cache
+            .get(&(*state_root, *address, *storage_key))
+            .copied()
+    }
+
+    fn insert(
+        &mut self,
+        state_root: H256,
+        address: Address,
+        storage_key: H256,
+        value: U256,
+    ) {
+        // Evict old entries if we exceed the max
+        while self.inner_cache.len() >= STORAGE_CACHE_MAX_ENTRIES {
+            self.inner_cache.pop_lru();
+        }
+        self.inner_cache
+            .push((state_root, address, storage_key), value);
+    }
+}
+
 /// Main storage interface for the ethrex client.
 ///
 /// The `Store` provides a high-level API for all blockchain data operations:
@@ -133,6 +206,8 @@ impl CodeCache {
 /// The store maintains several caches for performance:
 /// - **Trie Layer Cache**: Recent trie nodes for fast state access
 /// - **Code Cache**: LRU cache for contract bytecode (64MB default)
+/// - **Account Cache**: LRU cache for account state (100K entries)
+/// - **Storage Cache**: LRU cache for storage values (500K entries)
 /// - **Latest Block Cache**: Cached latest block header for RPC
 ///
 /// # Example
@@ -177,6 +252,14 @@ pub struct Store {
     /// those changes already affect the code hash stored in the account, and only
     /// may result in this cache having useless data.
     account_code_cache: Arc<Mutex<CodeCache>>,
+
+    /// Cache for account state, keyed by (state_root, address).
+    /// Avoids repeated state trie lookups for the same account.
+    account_cache: Arc<Mutex<AccountCache>>,
+
+    /// Cache for storage values, keyed by (state_root, account_hash, storage_key).
+    /// Avoids repeated storage trie lookups for the same storage slot.
+    storage_cache: Arc<Mutex<StorageCache>>,
 
     background_threads: Arc<ThreadList>,
 }
@@ -1362,6 +1445,8 @@ impl Store {
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
+            account_cache: Arc::new(Mutex::new(AccountCache::default())),
+            storage_cache: Arc::new(Mutex::new(StorageCache::default())),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -1464,9 +1549,25 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
+        let Some(header) = self.get_block_header_by_hash(block_hash)? else {
             return Ok(None);
         };
+        let state_root = header.state_root;
+
+        // Check account cache first
+        {
+            let mut cache = self.account_cache.lock().unwrap();
+            if let Some(account_state) = cache.get(&state_root, &address) {
+                return Ok(Some(AccountInfo {
+                    code_hash: account_state.code_hash,
+                    balance: account_state.balance,
+                    nonce: account_state.nonce,
+                }));
+            }
+        }
+
+        // Cache miss - do trie lookup
+        let state_trie = self.open_state_trie(state_root)?;
         let hashed_address = hash_address_fixed(&address);
 
         let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
@@ -1474,6 +1575,13 @@ impl Store {
         };
 
         let account_state = AccountState::decode(&encoded_state)?;
+
+        // Insert into cache
+        {
+            let mut cache = self.account_cache.lock().unwrap();
+            cache.insert(state_root, address, account_state);
+        }
+
         Ok(Some(AccountInfo {
             code_hash: account_state.code_hash,
             balance: account_state.balance,
@@ -1961,6 +2069,15 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
+        // Check storage cache first
+        {
+            let mut cache = self.storage_cache.lock().unwrap();
+            if let Some(value) = cache.get(&state_root, &address, &storage_key) {
+                return Ok(Some(value));
+            }
+        }
+
+        // Cache miss - do trie lookup
         let account_hash = hash_address_fixed(&address);
         let storage_root = if self.flatkeyvalue_computed(account_hash)? {
             // We will use FKVs, we don't need the root
@@ -1976,10 +2093,19 @@ impl Store {
         let storage_trie = self.open_storage_trie(account_hash, state_root, storage_root)?;
 
         let hashed_key = hash_key_fixed(&storage_key);
-        storage_trie
+        let result = storage_trie
             .get(&hashed_key)?
             .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
-            .transpose()
+            .transpose()?;
+
+        // Insert into cache (even for zero values, to avoid repeated lookups)
+        if let Some(value) = result {
+            let mut cache = self.storage_cache.lock().unwrap();
+            cache.insert(state_root, address, storage_key, value);
+            return Ok(Some(value));
+        }
+
+        Ok(None)
     }
 
     pub fn get_chain_config(&self) -> ChainConfig {
@@ -2073,8 +2199,26 @@ impl Store {
         state_root: H256,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
+        // Check account cache first
+        {
+            let mut cache = self.account_cache.lock().unwrap();
+            if let Some(account_state) = cache.get(&state_root, &address) {
+                return Ok(Some(account_state));
+            }
+        }
+
+        // Cache miss - do trie lookup
         let state_trie = self.open_state_trie(state_root)?;
-        self.get_account_state_from_trie(&state_trie, address)
+        let result = self.get_account_state_from_trie(&state_trie, address)?;
+
+        // Insert into cache on hit
+        if let Some(account_state) = result {
+            let mut cache = self.account_cache.lock().unwrap();
+            cache.insert(state_root, address, account_state);
+            return Ok(Some(account_state));
+        }
+
+        Ok(None)
     }
 
     pub fn get_account_state_from_trie(
