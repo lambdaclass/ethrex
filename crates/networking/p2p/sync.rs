@@ -1180,6 +1180,23 @@ impl Syncer {
 
                 *METRICS.storage_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
+                // CRITICAL FIX: After storage insertion, some accounts may have had non-empty storage_root
+                // from the network but received 0 storage slots during download. These accounts should
+                // have storage_root = EMPTY_TRIE_HASH. Fix them now before computing state root.
+                let mut accounts_fixed_to_empty = 0usize;
+                for account_hash in &accounts_with_storage {
+                    if !snap_trie.has_storage_trie(account_hash) {
+                        snap_trie.update_account_storage_root(account_hash, (*EMPTY_TRIE_HASH).into());
+                        accounts_fixed_to_empty += 1;
+                    }
+                }
+                if accounts_fixed_to_empty > 0 {
+                    info!(
+                        "[SNAP SYNC] Fixed {} accounts with non-empty storage_root but 0 slots to EMPTY_TRIE_HASH",
+                        accounts_fixed_to_empty
+                    );
+                }
+
                 // Save incremental state trie checkpoint after storage insertion
                 store.save_incremental_state_trie(pivot_header.number, pivot_header.compute_block_hash())?;
                 checkpoint.touch();
@@ -1304,85 +1321,16 @@ impl Syncer {
                 // Compute initial state root from snap_trie
                 let mut computed_root = snap_trie.compute_state_root();
 
-                // If state root doesn't match, try account range healing as fallback
+                // If state root doesn't match, crash immediately for debugging
                 if computed_root != pivot_header.state_root {
-                    warn!(
-                        "[SNAP SYNC] State root mismatch detected after trie healing. Expected: {:?}, Got: {:?}. Attempting account range healing...",
+                    error!(
+                        "[SNAP SYNC] State root mismatch detected after trie healing. Expected: {:?}, Got: {:?}. Crashing for debugging.",
                         pivot_header.state_root, computed_root
                     );
-
-                    // Try to heal by re-downloading accounts via ranges
-                    // This returns the set of accounts that have non-empty storage_root
-                    let (healed, accounts_with_storage) = storage_healing::heal_accounts_snap(
-                        pivot_header.state_root,
-                        &mut self.peers,
-                        &mut snap_trie,
-                        staleness_timestamp,
-                    ).await?;
-
-                    if !healed {
-                        // Pivot became stale during healing
-                        return Err(SyncError::StorageHealingFailed);
-                    }
-
-                    // After account healing, we need to heal storage for accounts with non-empty storage
-                    // The account healing updated accounts with their storage_roots from the network
-                    // but didn't re-download storage data to match those roots
-                    // Process in batches to avoid OOM with large account sets
-                    if !accounts_with_storage.is_empty() {
-                        const STORAGE_HEALING_BATCH_SIZE: usize = 50_000;
-                        let total_accounts = accounts_with_storage.len();
-                        info!("[SNAP SYNC] Re-healing storage for {} accounts after account healing (batch size: {})",
-                              total_accounts, STORAGE_HEALING_BATCH_SIZE);
-
-                        let accounts_vec: Vec<H256> = accounts_with_storage.into_iter().collect();
-                        let mut accounts_processed = 0usize;
-
-                        for batch in accounts_vec.chunks(STORAGE_HEALING_BATCH_SIZE) {
-                            let batch_set: std::collections::HashSet<H256> = batch.iter().copied().collect();
-                            let storage_accounts_for_healing = AccountStorageRoots {
-                                accounts_with_storage_root: BTreeMap::new(),
-                                healed_accounts: batch_set,
-                            };
-
-                            let (healed, successfully_queried) = storage_healing::heal_storage_trie_snap(
-                                pivot_header.state_root,
-                                &storage_accounts_for_healing,
-                                &mut self.peers,
-                                &mut snap_trie,
-                                staleness_timestamp,
-                                &mut global_slots_healed,
-                            ).await?;
-
-                            if !healed {
-                                return Err(SyncError::StorageHealingFailed);
-                            }
-
-                            // Fix accounts with 0 slots to have EMPTY_TRIE_HASH (only if query succeeded)
-                            let mut batch_fixed_to_empty = 0usize;
-                            let mut batch_query_failed = 0usize;
-                            for account_hash in batch {
-                                if successfully_queried.contains(account_hash) {
-                                    if !snap_trie.has_storage_trie(account_hash) {
-                                        snap_trie.update_account_storage_root(account_hash, (*EMPTY_TRIE_HASH).into());
-                                        batch_fixed_to_empty += 1;
-                                    }
-                                } else {
-                                    batch_query_failed += 1;
-                                }
-                            }
-
-                            accounts_processed += batch.len();
-
-                            // Flush storage tries to free memory between batches
-                            let flushed = snap_trie.flush_storage_tries();
-                            info!("[SNAP SYNC] Storage healing batch complete: {}/{} accounts, flushed {} tries, {} set to empty, {} failed",
-                                  accounts_processed, total_accounts, flushed, batch_fixed_to_empty, batch_query_failed);
-                        }
-                    }
-
-                    // Recompute state root after account healing
-                    computed_root = snap_trie.compute_state_root();
+                    return Err(SyncError::StateRootMismatch {
+                        expected: pivot_header.state_root,
+                        computed: computed_root,
+                    });
                 }
 
                 computed_root

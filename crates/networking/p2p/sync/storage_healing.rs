@@ -1252,6 +1252,9 @@ pub async fn heal_state_trie_snap(
     let mut paths_to_fetch: VecDeque<(Nibbles, H256)> = VecDeque::new();
     paths_to_fetch.push_back((Nibbles::default(), expected_state_root));
 
+    // Queue of nodes to process locally (for inline nodes that don't need fetching)
+    let mut nodes_to_process: VecDeque<(Nibbles, Node)> = VecDeque::new();
+
     // Track in-flight requests
     let mut inflight_requests = 0u32;
     let (response_tx, mut response_rx) = tokio::sync::mpsc::channel::<(
@@ -1260,7 +1263,89 @@ pub async fn heal_state_trie_snap(
         Vec<(Nibbles, H256)>, // batch that was requested
     )>(TASK_CHANNEL_CAPACITY);
 
-    while !paths_to_fetch.is_empty() || inflight_requests > 0 {
+    // Helper closure to process a node and extract children/accounts
+    // Returns (accounts_found, nodes_processed_count)
+    let mut process_node = |path: &Nibbles,
+                            node: Node,
+                            paths_to_fetch: &mut VecDeque<(Nibbles, H256)>,
+                            nodes_to_process: &mut VecDeque<(Nibbles, Node)>,
+                            snap_trie: &mut SnapSyncTrie|
+     -> (u64, u64) {
+        let mut accounts_found = 0u64;
+        let mut nodes_count = 1u64;
+
+        match node {
+            Node::Leaf(leaf_node) => {
+                // This is an account - decode and insert
+                if let Ok(account) = AccountState::decode(&leaf_node.value) {
+                    // Compute full account hash from path + partial
+                    let full_path = path.concat(&leaf_node.partial);
+                    let account_hash = H256::from_slice(&full_path.to_bytes());
+
+                    // Insert into snap_trie
+                    snap_trie.insert_account(
+                        account_hash,
+                        account.nonce,
+                        account.balance,
+                        account.storage_root,
+                        account.code_hash,
+                    );
+                    accounts_found += 1;
+                }
+            }
+            Node::Branch(branch_node) => {
+                // Process all children
+                for (i, choice) in branch_node.choices.iter().enumerate() {
+                    let child_path = path.append_new(i as u8);
+                    match choice {
+                        // Hashed nodes need to be fetched from peers
+                        ethrex_trie::NodeRef::Hash(ethrex_trie::NodeHash::Hashed(child_hash)) => {
+                            paths_to_fetch.push_back((child_path, *child_hash));
+                        }
+                        // Inline nodes contain the encoded node data - decode and process locally
+                        ethrex_trie::NodeRef::Hash(ethrex_trie::NodeHash::Inline(inline_data)) => {
+                            let data = &inline_data.0[..inline_data.1 as usize];
+                            if !data.is_empty() {
+                                if let Ok(child_node) = Node::decode(data) {
+                                    nodes_to_process.push_back((child_path, child_node));
+                                }
+                            }
+                        }
+                        // Embedded nodes are already decoded - process directly
+                        ethrex_trie::NodeRef::Node(child_node, _) => {
+                            nodes_to_process.push_back((child_path, (**child_node).clone()));
+                        }
+                    }
+                }
+            }
+            Node::Extension(ext_node) => {
+                let child_path = path.concat(&ext_node.prefix);
+                match &ext_node.child {
+                    // Hashed nodes need to be fetched from peers
+                    ethrex_trie::NodeRef::Hash(ethrex_trie::NodeHash::Hashed(child_hash)) => {
+                        paths_to_fetch.push_back((child_path, *child_hash));
+                    }
+                    // Inline nodes contain the encoded node data - decode and process locally
+                    ethrex_trie::NodeRef::Hash(ethrex_trie::NodeHash::Inline(inline_data)) => {
+                        let data = &inline_data.0[..inline_data.1 as usize];
+                        if !data.is_empty() {
+                            if let Ok(child_node) = Node::decode(data) {
+                                nodes_to_process.push_back((child_path, child_node));
+                            }
+                        }
+                    }
+                    // Embedded nodes are already decoded - process directly
+                    ethrex_trie::NodeRef::Node(child_node, _) => {
+                        nodes_to_process.push_back((child_path, (**child_node).clone()));
+                    }
+                }
+            }
+        }
+
+        (accounts_found, nodes_count)
+    };
+
+    while !paths_to_fetch.is_empty() || !nodes_to_process.is_empty() || inflight_requests > 0 {
         // Check for staleness
         if current_unix_time() > staleness_timestamp {
             info!(
@@ -1268,6 +1353,19 @@ pub async fn heal_state_trie_snap(
                 accounts_healed, nodes_processed
             );
             return Ok(false);
+        }
+
+        // Process any locally queued nodes first (inline nodes)
+        while let Some((path, node)) = nodes_to_process.pop_front() {
+            let (accounts, nodes) = process_node(
+                &path,
+                node,
+                &mut paths_to_fetch,
+                &mut nodes_to_process,
+                snap_trie,
+            );
+            accounts_healed += accounts;
+            nodes_processed += nodes;
         }
 
         // Process responses
@@ -1283,47 +1381,18 @@ pub async fn heal_state_trie_snap(
                             break;
                         }
                         let (path, _hash) = &batch[i];
-                        nodes_processed += 1;
 
-                        // Decode the node
+                        // Decode the node and process it
                         if let Ok(node) = Node::decode(node_bytes) {
-                            match node {
-                                Node::Leaf(leaf_node) => {
-                                    // This is an account - decode and insert
-                                    if let Ok(account) = AccountState::decode(&leaf_node.value) {
-                                        // Compute full account hash from path + partial
-                                        let full_path = path.concat(&leaf_node.partial);
-                                        let account_hash = H256::from_slice(&full_path.to_bytes());
-
-                                        // Insert into snap_trie
-                                        snap_trie.insert_account(
-                                            account_hash,
-                                            account.nonce,
-                                            account.balance,
-                                            account.storage_root,
-                                            account.code_hash,
-                                        );
-                                        accounts_healed += 1;
-                                    }
-                                }
-                                Node::Branch(branch_node) => {
-                                    // Add children to fetch queue
-                                    for (i, choice) in branch_node.choices.iter().enumerate() {
-                                        // Only fetch children that are hash references (not inline or embedded)
-                                        if let ethrex_trie::NodeRef::Hash(ethrex_trie::NodeHash::Hashed(child_hash)) = choice {
-                                            let child_path = path.append_new(i as u8);
-                                            paths_to_fetch.push_back((child_path, *child_hash));
-                                        }
-                                    }
-                                }
-                                Node::Extension(ext_node) => {
-                                    // Add child to fetch queue
-                                    if let ethrex_trie::NodeRef::Hash(ethrex_trie::NodeHash::Hashed(child_hash)) = &ext_node.child {
-                                        let child_path = path.concat(&ext_node.prefix);
-                                        paths_to_fetch.push_back((child_path, *child_hash));
-                                    }
-                                }
-                            }
+                            let (accounts, nodes) = process_node(
+                                path,
+                                node,
+                                &mut paths_to_fetch,
+                                &mut nodes_to_process,
+                                snap_trie,
+                            );
+                            accounts_healed += accounts;
+                            nodes_processed += nodes;
                         }
                     }
                 }
@@ -1407,14 +1476,14 @@ pub async fn heal_state_trie_snap(
         // Log progress
         if last_progress_log.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             info!(
-                "[SNAP SYNC] State trie healing progress: {} accounts found, {} nodes processed, {} paths pending",
-                accounts_healed, nodes_processed, paths_to_fetch.len()
+                "[SNAP SYNC] State trie healing progress: {} accounts found, {} nodes processed, {} paths pending, {} inline pending",
+                accounts_healed, nodes_processed, paths_to_fetch.len(), nodes_to_process.len()
             );
             last_progress_log = tokio::time::Instant::now();
         }
 
         // Small sleep to avoid busy loop
-        if paths_to_fetch.is_empty() && inflight_requests > 0 {
+        if paths_to_fetch.is_empty() && nodes_to_process.is_empty() && inflight_requests > 0 {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }

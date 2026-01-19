@@ -110,6 +110,7 @@ pub struct PhaseProgress {
     pub current: AtomicU64,
     pub total: AtomicU64,
     pub start_time: Mutex<Option<Instant>>,
+    pub end_time: Mutex<Option<Instant>>,
     pub last_log_time: Mutex<Option<Instant>>,
 }
 
@@ -119,6 +120,7 @@ impl Default for PhaseProgress {
             current: AtomicU64::new(0),
             total: AtomicU64::new(0),
             start_time: Mutex::new(None),
+            end_time: Mutex::new(None),
             last_log_time: Mutex::new(None),
         }
     }
@@ -133,6 +135,7 @@ impl PhaseProgress {
         self.current.store(0, Ordering::Relaxed);
         self.total.store(total, Ordering::Relaxed);
         *self.start_time.lock().await = Some(Instant::now());
+        *self.end_time.lock().await = None;
         *self.last_log_time.lock().await = None;
     }
 
@@ -140,7 +143,12 @@ impl PhaseProgress {
         self.current.store(0, Ordering::Relaxed);
         self.total.store(0, Ordering::Relaxed);
         *self.start_time.lock().await = None;
+        *self.end_time.lock().await = None;
         *self.last_log_time.lock().await = None;
+    }
+
+    pub async fn complete(&self) {
+        *self.end_time.lock().await = Some(Instant::now());
     }
 
     pub fn increment(&self, amount: u64) {
@@ -164,11 +172,13 @@ impl PhaseProgress {
     }
 
     pub async fn elapsed(&self) -> Duration {
-        self.start_time
-            .lock()
-            .await
-            .map(|t| t.elapsed())
-            .unwrap_or_default()
+        let start = *self.start_time.lock().await;
+        let end = *self.end_time.lock().await;
+        match (start, end) {
+            (Some(s), Some(e)) => e.duration_since(s),
+            (Some(s), None) => s.elapsed(),
+            _ => Duration::ZERO,
+        }
     }
 
     pub async fn rate(&self) -> f64 {
@@ -217,6 +227,8 @@ pub struct SnapSyncProgress {
     pub healing: PhaseProgress,
     /// Minimum interval between progress logs
     pub log_interval: Duration,
+    /// Stored final durations for each phase (indexed by phase number 1-8)
+    pub phase_durations: Mutex<[Option<Duration>; 9]>,
 }
 
 impl Default for SnapSyncProgress {
@@ -231,6 +243,7 @@ impl Default for SnapSyncProgress {
             bytecodes: PhaseProgress::new(),
             healing: PhaseProgress::new(),
             log_interval: Duration::from_secs(5),
+            phase_durations: Mutex::new([None; 9]),
         }
     }
 }
@@ -312,6 +325,11 @@ impl SnapSyncProgress {
             _ => (Duration::ZERO, 0, 0.0),
         };
 
+        // Store the final duration for this phase
+        if phase <= 8 {
+            self.phase_durations.lock().await[phase as usize] = Some(elapsed);
+        }
+
         info!(
             "[SNAP SYNC] Phase {}/{} complete: {} | Processed: {} | Rate: {} | Duration: {}",
             phase_num,
@@ -369,6 +387,7 @@ impl SnapSyncProgress {
     /// Print a progress summary table showing all phases
     pub async fn print_progress_table(&self) {
         let current_phase = self.current_phase.load(Ordering::Relaxed) as u8;
+        let stored_durations = self.phase_durations.lock().await;
 
         // All 8 phases with their progress trackers
         // Note: some phases share trackers (download/insertion use same counter)
@@ -392,8 +411,19 @@ impl SnapSyncProgress {
 
         for (phase_num, name, progress) in phases {
             let processed = progress.get_current();
-            let elapsed = progress.elapsed().await;
-            let rate = progress.rate().await;
+
+            // Use stored duration for completed phases, live elapsed for current phase
+            let elapsed = if let Some(stored) = stored_durations.get(phase_num as usize).and_then(|d| *d) {
+                stored
+            } else {
+                progress.elapsed().await
+            };
+
+            let rate = if elapsed.as_secs_f64() > 0.0 {
+                processed as f64 / elapsed.as_secs_f64()
+            } else {
+                0.0
+            };
 
             let status = if current_phase > phase_num || current_phase == 9 {
                 "✓"
