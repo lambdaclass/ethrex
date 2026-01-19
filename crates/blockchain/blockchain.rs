@@ -1488,6 +1488,21 @@ impl Blockchain {
             return Err(ChainError::ParentNotFound);
         };
 
+        // Pre-warm the code cache with target addresses from transactions
+        // This reduces cache misses during execution
+        let target_addresses: Vec<_> = block
+            .body
+            .transactions
+            .iter()
+            .filter_map(|tx| match tx.to() {
+                ethrex_common::types::TxKind::Call(addr) => Some(addr),
+                ethrex_common::types::TxKind::Create => None,
+            })
+            .collect();
+        let _ = self
+            .storage
+            .warmup_code_cache_for_addresses(parent_header.hash(), &target_addresses);
+
         let (mut vm, logger) = if self.options.precompute_witnesses && self.is_synced() {
             // If witness pre-generation is enabled, we wrap the db with a logger
             // to track state access (block hashes, storage keys, codes) during execution

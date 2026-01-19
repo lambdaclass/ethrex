@@ -705,6 +705,87 @@ impl Store {
         Ok(Some(code))
     }
 
+    /// Pre-warm the code cache by batch-loading contract codes.
+    /// This reduces cache misses during block execution by loading
+    /// codes that are likely to be needed.
+    pub fn warmup_code_cache(&self, code_hashes: &[H256]) -> Result<(), StoreError> {
+        // Don't do anything for empty or small sets
+        if code_hashes.len() < 2 {
+            return Ok(());
+        }
+
+        let tx = self.backend.begin_read()?;
+        let mut cache = self
+            .account_code_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?;
+
+        for code_hash in code_hashes {
+            // Skip if already in cache
+            if cache.get(code_hash)?.is_some() {
+                continue;
+            }
+
+            // Try to load from DB
+            if let Some(bytes) = tx.get(ACCOUNT_CODES, code_hash.as_bytes())? {
+                let bytes: Bytes = bytes.into();
+                let (bytecode_slice, targets) = match decode_bytes(&bytes) {
+                    Ok(result) => result,
+                    Err(_) => continue, // Skip malformed entries
+                };
+                let bytecode = bytes.slice_ref(bytecode_slice);
+
+                let code = match <Vec<_>>::decode(targets) {
+                    Ok(jump_targets) => Code {
+                        hash: *code_hash,
+                        bytecode,
+                        jump_targets,
+                    },
+                    Err(_) => continue, // Skip malformed entries
+                };
+
+                // Insert into cache
+                let _ = cache.insert(&code);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Pre-warm the code cache for a set of addresses.
+    /// This is useful before block execution to reduce cache misses.
+    /// Looks up account states to get code hashes, then loads the codes.
+    pub fn warmup_code_cache_for_addresses(
+        &self,
+        parent_hash: BlockHash,
+        addresses: &[Address],
+    ) -> Result<(), StoreError> {
+        if addresses.is_empty() {
+            return Ok(());
+        }
+
+        let Some(state_trie) = self.state_trie(parent_hash)? else {
+            return Ok(());
+        };
+
+        // Collect code hashes from account states
+        let mut code_hashes = Vec::with_capacity(addresses.len());
+        for address in addresses {
+            let hashed_address = hash_address_fixed(address);
+            if let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? {
+                if let Ok(account_state) = AccountState::decode(&encoded_state) {
+                    // Only add if it's a contract (non-empty code hash)
+                    if account_state.code_hash != *ethrex_common::constants::EMPTY_KECCACK_HASH {
+                        code_hashes.push(account_state.code_hash);
+                    }
+                }
+            }
+        }
+
+        // Warm up the code cache with the collected code hashes
+        self.warmup_code_cache(&code_hashes)
+    }
+
     /// Add account code
     pub async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
         let hash_key = code.hash.0.to_vec();
