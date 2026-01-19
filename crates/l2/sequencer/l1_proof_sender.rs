@@ -6,6 +6,7 @@ use std::{
 
 #[cfg(feature = "sp1")]
 use aligned_sdk::gateway::provider::{AggregationModeGatewayProvider, GatewayError};
+#[cfg(feature = "sp1")]
 use aligned_sdk::types::Network;
 #[cfg(feature = "sp1")]
 use alloy::signers::local::PrivateKeySigner;
@@ -78,7 +79,10 @@ pub struct L1ProofSender {
     sequencer_state: SequencerState,
     rollup_store: StoreRollup,
     l1_chain_id: u64,
+    #[cfg(feature = "sp1")]
     network: Network,
+    #[cfg(not(feature = "sp1"))]
+    network: String,
     /// Directory where checkpoints are stored.
     checkpoints_dir: PathBuf,
     aligned_mode: bool,
@@ -142,7 +146,10 @@ impl L1ProofSender {
             sequencer_state,
             rollup_store,
             l1_chain_id,
+            #[cfg(feature = "sp1")]
             network: aligned_cfg.network.clone(),
+            #[cfg(not(feature = "sp1"))]
+            network: aligned_cfg.network_name.clone(),
             checkpoints_dir,
             aligned_mode: aligned_cfg.aligned_mode,
             #[cfg(feature = "sp1")]

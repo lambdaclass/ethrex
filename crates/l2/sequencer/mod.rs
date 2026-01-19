@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use crate::monitor::EthrexMonitor;
 use crate::sequencer::admin_server::start_api;
+#[cfg(feature = "sp1")]
 use crate::sequencer::errors::SequencerError;
 use crate::sequencer::sequencer_state::{SequencerState, SequencerStatus};
 use crate::sequencer::state_updater::StateUpdater;
@@ -30,6 +31,9 @@ mod admin_server;
 pub mod block_producer;
 pub mod l1_committer;
 pub mod l1_proof_sender;
+/// The l1_proof_verifier module is only available when the sp1 feature is enabled
+/// because it uses aligned-sdk, which unconditionally depends on sp1-sdk.
+#[cfg(feature = "sp1")]
 pub mod l1_proof_verifier;
 pub mod l1_watcher;
 #[cfg(feature = "metrics")]
@@ -171,8 +175,10 @@ pub async fn start_l2(
         .inspect_err(|err| {
             error!("Error starting Block Producer: {err}");
         });
+    #[cfg(feature = "sp1")]
     let mut verifier_handle = None;
 
+    #[cfg(feature = "sp1")]
     if cfg.aligned.aligned_mode {
         verifier_handle = Some(tokio::spawn(l1_proof_verifier::start_l1_proof_verifier(
             cfg.clone(),
@@ -237,6 +243,7 @@ pub async fn start_l2(
     })
     .ok();
 
+    #[cfg(feature = "sp1")]
     let driver = Box::pin(async move {
         match (verifier_handle, admin_server) {
             (Some(handle), Some(admin_server)) => {
@@ -257,9 +264,20 @@ pub async fn start_l2(
 
         Ok(())
     });
+
+    #[cfg(not(feature = "sp1"))]
+    let driver = Box::pin(async move {
+        if let Some(admin_server) = admin_server {
+            if let Err(e) = admin_server.into_future().await {
+                error!("Admin server task error: {e}");
+            }
+        }
+        Ok(())
+    });
     Ok((l1_committer_handle, block_producer_handle, driver))
 }
 
+#[cfg(feature = "sp1")]
 fn handle_verifier_result(res: Result<Result<(), SequencerError>, tokio::task::JoinError>) {
     match res {
         Ok(Ok(_)) => {}

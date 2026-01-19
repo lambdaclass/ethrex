@@ -2,6 +2,7 @@ use crate::based::block_fetcher::BlockFetcherError;
 use crate::sequencer::admin_server::AdminError;
 use crate::sequencer::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
+#[cfg(feature = "sp1")]
 use aligned_sdk::gateway::provider::GatewayError;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidBlockError, InvalidForkChoice};
@@ -143,6 +144,7 @@ pub enum ProofSenderError {
     RollUpStoreError(#[from] RollupStoreError),
     #[error("Proof Sender failed to get nonce from gateway: {0}")]
     AlignedGetNonceError(String),
+    #[cfg(feature = "sp1")]
     #[error("Proof Sender failed to submit proof(s): {0:?}")]
     AlignedSubmitProofError(GatewayError),
     #[error("Wrong batch proof format; should be compressed but found groth16 instead")]
@@ -155,6 +157,7 @@ pub enum ProofSenderError {
     TryIntoError(#[from] std::num::TryFromIntError),
 }
 
+#[cfg(feature = "sp1")]
 impl From<GatewayError> for ProofSenderError {
     fn from(value: GatewayError) -> Self {
         ProofSenderError::AlignedSubmitProofError(value)

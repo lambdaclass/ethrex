@@ -1,3 +1,4 @@
+#[cfg(feature = "sp1")]
 use aligned_sdk::types::Network;
 use ethrex_common::types::Block;
 use ethrex_common::types::batch::Batch;
@@ -114,6 +115,7 @@ pub async fn get_needed_proof_types(
     Ok(needed_proof_types)
 }
 
+#[cfg(feature = "sp1")]
 pub fn resolve_aligned_network(network: &str) -> Network {
     match network {
         "devnet" => Network::Devnet,
