@@ -3634,17 +3634,31 @@ name = "ethrex-benches"
 version = "9.0.0"
 dependencies = [
  "bytes",
+ "chrono",
  "criterion",
+ "ethereum-types 0.15.1",
  "ethrex",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-config",
+ "ethrex-crypto",
  "ethrex-l2-rpc",
+ "ethrex-rlp",
+ "ethrex-rpc",
  "ethrex-storage",
+ "ethrex-vm",
+ "hex",
+ "jsonwebtoken 9.3.1",
+ "once_cell",
+ "rand 0.8.5",
+ "reqwest 0.12.24",
  "secp256k1",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.21",
 ]
 
 [[package]]

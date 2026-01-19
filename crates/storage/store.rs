@@ -1731,9 +1731,23 @@ impl Store {
         &self,
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
+        let total_start = std::time::Instant::now();
+        let total_accounts = genesis_accounts.len();
+        info!("Setting up genesis state trie with {} accounts", total_accounts);
+
         let mut storage_trie_nodes = vec![];
         let mut genesis_state_trie = self.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+
+        let loop_start = std::time::Instant::now();
+        let mut processed = 0usize;
+        let progress_interval = total_accounts / 10;
+
         for (address, account) in genesis_accounts {
+            processed += 1;
+            if progress_interval > 0 && processed % progress_interval == 0 {
+                info!("Genesis trie progress: {}% ({}/{})",
+                    (processed * 100) / total_accounts, processed, total_accounts);
+            }
             let hashed_address = hash_address(&address);
             let h256_hashed_address = H256::from_slice(&hashed_address);
 
@@ -1769,18 +1783,26 @@ impl Store {
             };
             genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
+        let loop_elapsed = loop_start.elapsed();
+        info!("Genesis trie loop completed in {:?}", loop_elapsed);
 
+        let collect_start = std::time::Instant::now();
         let (state_root, account_trie_nodes) = genesis_state_trie.collect_changes_since_last_hash();
         let account_trie_nodes = account_trie_nodes
             .into_iter()
             .map(|(path, n)| (apply_prefix(None, path).into_vec(), n))
             .collect::<Vec<_>>();
+        info!("Genesis trie collect_changes completed in {:?}, {} account nodes, {} storage nodes",
+            collect_start.elapsed(), account_trie_nodes.len(), storage_trie_nodes.len());
 
+        let commit_start = std::time::Instant::now();
         let mut tx = self.backend.begin_write()?;
         tx.put_batch(ACCOUNT_TRIE_NODES, account_trie_nodes)?;
         tx.put_batch(STORAGE_TRIE_NODES, storage_trie_nodes)?;
         tx.commit()?;
+        info!("Genesis trie DB commit completed in {:?}", commit_start.elapsed());
 
+        info!("Genesis state trie setup completed in {:?} total", total_start.elapsed());
         Ok(state_root)
     }
 

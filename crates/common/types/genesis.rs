@@ -10,7 +10,7 @@ use std::{
     io::{BufReader, Error},
     path::Path,
 };
-use tracing::warn;
+use tracing::{info, warn};
 
 use super::{
     AccountState, Block, BlockBody, BlockHeader, BlockNumber, INITIAL_BASE_FEE,
@@ -67,9 +67,12 @@ impl TryFrom<&Path> for Genesis {
     type Error = GenesisError;
 
     fn try_from(genesis_file_path: &Path) -> Result<Self, Self::Error> {
+        let parse_start = std::time::Instant::now();
         let genesis_file = std::fs::File::open(genesis_file_path)?;
         let genesis_reader = BufReader::new(genesis_file);
         let genesis: Genesis = serde_json::from_reader(genesis_reader)?;
+        info!("Genesis JSON parsing took {:?}, {} accounts loaded",
+            parse_start.elapsed(), genesis.alloc.len());
 
         // Try to derive if the genesis file is PoS
         // Different genesis files have different configurations

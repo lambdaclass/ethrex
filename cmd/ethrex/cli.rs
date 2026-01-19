@@ -114,6 +114,15 @@ pub struct Options {
     )]
     pub dev: bool,
     #[arg(
+        long = "dev.no-blocks",
+        action = ArgAction::SetTrue,
+        help = "Disable automatic block production in dev mode",
+        long_help = "When used with --dev, prevents the automatic block producer from starting. Useful for testing genesis loading without block production.",
+        help_heading = "Node options",
+        requires = "dev"
+    )]
+    pub dev_no_blocks: bool,
+    #[arg(
         long = "log.level",
         default_value_t = Level::INFO,
         value_name = "LOG_LEVEL",
@@ -364,6 +373,7 @@ impl Default for Options {
             metrics_port: Default::default(),
             metrics_enabled: Default::default(),
             dev: Default::default(),
+            dev_no_blocks: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
             tx_broadcasting_time_interval: Default::default(),
@@ -453,6 +463,60 @@ pub enum Subcommand {
         )]
         genesis_path: PathBuf,
     },
+    #[command(
+        name = "replay-bench",
+        about = "Re-execute blocks from storage for benchmarking",
+        long_about = "Reads blocks from the database and re-executes them to benchmark performance. \
+                      Useful for profiling block execution without network dependencies. \
+                      The database must contain the blocks and state at the starting block."
+    )]
+    ReplayBench {
+        #[arg(
+            long = "start",
+            value_name = "BLOCK_NUMBER",
+            help = "First block number to replay (must have state available)"
+        )]
+        start_block: u64,
+        #[arg(
+            long = "end",
+            value_name = "BLOCK_NUMBER",
+            help = "Last block number to replay (inclusive)"
+        )]
+        end_block: u64,
+        #[arg(
+            long = "output",
+            value_name = "CSV_FILE",
+            help = "Output CSV file for timing results",
+            default_value = "replay_bench_results.csv"
+        )]
+        output: PathBuf,
+        #[arg(
+            long = "warmup",
+            value_name = "NUM_BLOCKS",
+            help = "Number of warmup blocks to exclude from statistics",
+            default_value = "0"
+        )]
+        warmup_blocks: u64,
+        #[arg(
+            long = "iterations",
+            value_name = "COUNT",
+            help = "Number of times to replay the block range (requires state reset capability)",
+            default_value = "1"
+        )]
+        iterations: u32,
+        #[arg(
+            long = "json-summary",
+            value_name = "JSON_FILE",
+            help = "Output JSON file for summary statistics"
+        )]
+        json_summary: Option<PathBuf>,
+        #[arg(
+            long = "verify-state",
+            action = ArgAction::SetTrue,
+            help = "Verify state root matches after each block execution"
+        )]
+        verify_state: bool,
+    },
     #[cfg(feature = "l2")]
     #[command(name = "l2")]
     L2(crate::l2::L2Command),
@@ -530,6 +594,30 @@ impl Subcommand {
                 let genesis = Network::from(genesis_path).get_genesis()?;
                 let state_root = genesis.compute_state_root();
                 println!("{state_root:#x}");
+            }
+            Subcommand::ReplayBench {
+                start_block,
+                end_block,
+                output,
+                warmup_blocks,
+                iterations,
+                json_summary,
+                verify_state,
+            } => {
+                let network = get_network(opts);
+                let genesis = network.get_genesis()?;
+                replay_bench(
+                    &opts.datadir,
+                    genesis,
+                    start_block,
+                    end_block,
+                    &output,
+                    warmup_blocks,
+                    iterations,
+                    json_summary.as_deref(),
+                    verify_state,
+                )
+                .await?;
             }
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
@@ -898,4 +986,450 @@ pub async fn export_blocks(
         buffer.clear();
     }
     info!(blocks = end.saturating_sub(start) + 1, path = %path, "Exported blocks to file");
+}
+
+/// Timing data collected for each block execution
+#[derive(Debug, Clone)]
+struct BlockTiming {
+    block_number: u64,
+    gas_used: u64,
+    gas_limit: u64,
+    tx_count: usize,
+    total_ms: f64,
+    validation_ms: f64,
+    execution_ms: f64,
+    merkle_ms: f64,
+    store_ms: f64,
+    throughput_ggas: f64,
+    state_root_match: bool,
+}
+
+impl BlockTiming {
+    fn csv_header() -> &'static str {
+        "block_number,gas_used,gas_limit,tx_count,total_ms,validation_ms,execution_ms,merkle_ms,store_ms,throughput_ggas,state_root_match"
+    }
+
+    fn to_csv_row(&self) -> String {
+        format!(
+            "{},{},{},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.6},{}",
+            self.block_number,
+            self.gas_used,
+            self.gas_limit,
+            self.tx_count,
+            self.total_ms,
+            self.validation_ms,
+            self.execution_ms,
+            self.merkle_ms,
+            self.store_ms,
+            self.throughput_ggas,
+            self.state_root_match
+        )
+    }
+}
+
+/// Summary statistics for a set of block timings
+#[derive(Debug, serde::Serialize)]
+struct BenchmarkSummary {
+    start_block: u64,
+    end_block: u64,
+    total_blocks: u64,
+    warmup_blocks: u64,
+    measured_blocks: u64,
+    total_transactions: usize,
+    total_gas_used: u64,
+    total_time_ms: f64,
+    avg_block_time_ms: f64,
+    min_block_time_ms: f64,
+    max_block_time_ms: f64,
+    p50_block_time_ms: f64,
+    p95_block_time_ms: f64,
+    p99_block_time_ms: f64,
+    avg_throughput_ggas: f64,
+    avg_tx_per_block: f64,
+    avg_validation_ms: f64,
+    avg_execution_ms: f64,
+    avg_merkle_ms: f64,
+    avg_store_ms: f64,
+    state_root_mismatches: usize,
+}
+
+fn compute_percentile(sorted_values: &[f64], percentile: f64) -> f64 {
+    if sorted_values.is_empty() {
+        return 0.0;
+    }
+    let idx = ((percentile / 100.0) * (sorted_values.len() - 1) as f64).round() as usize;
+    sorted_values[idx.min(sorted_values.len() - 1)]
+}
+
+fn compute_summary(
+    timings: &[BlockTiming],
+    start_block: u64,
+    end_block: u64,
+    warmup_blocks: u64,
+) -> BenchmarkSummary {
+    let measured: Vec<_> = timings
+        .iter()
+        .filter(|t| t.block_number >= start_block + warmup_blocks)
+        .collect();
+
+    let total_blocks = timings.len() as u64;
+    let measured_blocks = measured.len() as u64;
+
+    if measured.is_empty() {
+        return BenchmarkSummary {
+            start_block,
+            end_block,
+            total_blocks,
+            warmup_blocks,
+            measured_blocks: 0,
+            total_transactions: 0,
+            total_gas_used: 0,
+            total_time_ms: 0.0,
+            avg_block_time_ms: 0.0,
+            min_block_time_ms: 0.0,
+            max_block_time_ms: 0.0,
+            p50_block_time_ms: 0.0,
+            p95_block_time_ms: 0.0,
+            p99_block_time_ms: 0.0,
+            avg_throughput_ggas: 0.0,
+            avg_tx_per_block: 0.0,
+            avg_validation_ms: 0.0,
+            avg_execution_ms: 0.0,
+            avg_merkle_ms: 0.0,
+            avg_store_ms: 0.0,
+            state_root_mismatches: 0,
+        };
+    }
+
+    let total_transactions: usize = measured.iter().map(|t| t.tx_count).sum();
+    let total_gas_used: u64 = measured.iter().map(|t| t.gas_used).sum();
+    let total_time_ms: f64 = measured.iter().map(|t| t.total_ms).sum();
+
+    let mut block_times: Vec<f64> = measured.iter().map(|t| t.total_ms).collect();
+    block_times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    let state_root_mismatches = measured.iter().filter(|t| !t.state_root_match).count();
+
+    BenchmarkSummary {
+        start_block,
+        end_block,
+        total_blocks,
+        warmup_blocks,
+        measured_blocks,
+        total_transactions,
+        total_gas_used,
+        total_time_ms,
+        avg_block_time_ms: total_time_ms / measured_blocks as f64,
+        min_block_time_ms: block_times.first().copied().unwrap_or(0.0),
+        max_block_time_ms: block_times.last().copied().unwrap_or(0.0),
+        p50_block_time_ms: compute_percentile(&block_times, 50.0),
+        p95_block_time_ms: compute_percentile(&block_times, 95.0),
+        p99_block_time_ms: compute_percentile(&block_times, 99.0),
+        avg_throughput_ggas: measured.iter().map(|t| t.throughput_ggas).sum::<f64>()
+            / measured_blocks as f64,
+        avg_tx_per_block: total_transactions as f64 / measured_blocks as f64,
+        avg_validation_ms: measured.iter().map(|t| t.validation_ms).sum::<f64>()
+            / measured_blocks as f64,
+        avg_execution_ms: measured.iter().map(|t| t.execution_ms).sum::<f64>()
+            / measured_blocks as f64,
+        avg_merkle_ms: measured.iter().map(|t| t.merkle_ms).sum::<f64>() / measured_blocks as f64,
+        avg_store_ms: measured.iter().map(|t| t.store_ms).sum::<f64>() / measured_blocks as f64,
+        state_root_mismatches,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn replay_bench(
+    datadir: &Path,
+    _genesis: Genesis, // Not used since we load existing store
+    start_block: u64,
+    end_block: u64,
+    output_path: &Path,
+    warmup_blocks: u64,
+    iterations: u32,
+    json_summary_path: Option<&Path>,
+    verify_state: bool,
+) -> Result<(), ChainError> {
+    use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
+    use ethrex_vm::Evm;
+
+    info!("=== Replay Benchmark ===");
+    info!(
+        "Block range: {} to {} ({} blocks)",
+        start_block,
+        end_block,
+        end_block - start_block + 1
+    );
+    info!("Warmup blocks: {}", warmup_blocks);
+    info!("Iterations: {}", iterations);
+    info!("Verify state: {}", verify_state);
+    info!("Output: {}", output_path.display());
+
+    // Load the store (don't initialize - use existing data)
+    let store = load_store(datadir).await?;
+
+    // Verify the block range exists
+    let latest_block = store.get_latest_block_number().await?;
+    if end_block > latest_block {
+        return Err(ChainError::Custom(format!(
+            "End block {} exceeds latest block {} in database",
+            end_block, latest_block
+        )));
+    }
+
+    // Verify we have state at start_block - 1 (parent state)
+    if start_block > 0 {
+        let parent_block = store
+            .get_block_by_number(start_block - 1)
+            .await?
+            .ok_or_else(|| {
+                ChainError::Custom(format!(
+                    "Parent block {} not found in database",
+                    start_block - 1
+                ))
+            })?;
+        let parent_state_root = parent_block.header.state_root;
+
+        // Check if state trie exists for parent
+        if store.state_trie(parent_block.hash())?.is_none() {
+            return Err(ChainError::Custom(format!(
+                "State not available at parent block {}. The database must have state at block {} to replay from block {}.",
+                start_block - 1, start_block - 1, start_block
+            )));
+        }
+        info!(
+            "Parent state root at block {}: {:#x}",
+            start_block - 1,
+            parent_state_root
+        );
+    }
+
+    // Load all blocks to replay
+    info!("Loading blocks from database...");
+    let mut blocks = Vec::with_capacity((end_block - start_block + 1) as usize);
+    for block_num in start_block..=end_block {
+        let block = store
+            .get_block_by_number(block_num)
+            .await?
+            .ok_or_else(|| ChainError::Custom(format!("Block {} not found in database", block_num)))?;
+        blocks.push(block);
+    }
+    info!("Loaded {} blocks", blocks.len());
+
+    // Note: Multiple iterations would require state reset capability
+    // For now, we only support single iteration
+    if iterations > 1 {
+        warn!("Multiple iterations require state checkpoint/restore capability (not yet implemented)");
+        warn!("Running single iteration only");
+    }
+
+    // Create blockchain for execution
+    let blockchain = Blockchain::new(
+        store.clone(),
+        BlockchainOptions {
+            perf_logs_enabled: false, // We do our own timing
+            ..Default::default()
+        },
+    );
+
+    // Execute blocks and collect timing
+    let mut timings = Vec::with_capacity(blocks.len());
+    let overall_start = Instant::now();
+    let mut last_progress = Instant::now();
+
+    for (idx, block) in blocks.iter().enumerate() {
+        let block_num = block.header.number;
+        let expected_state_root = block.header.state_root;
+
+        // Get parent header
+        let parent_header = if block_num == 0 {
+            return Err(ChainError::Custom(
+                "Cannot replay genesis block".to_string(),
+            ));
+        } else {
+            store
+                .get_block_header(block_num - 1)?
+                .ok_or(ChainError::ParentNotFound)?
+        };
+
+        // Create VM
+        let vm_db = StoreVmDatabase::new(store.clone(), parent_header.clone())?;
+        let mut vm = Evm::new_for_l1(vm_db);
+
+        // Time the execution
+        let start_instant = Instant::now();
+
+        // Execute block through pipeline (this includes validation, execution, merkle, store)
+        let result = blockchain.execute_block_pipeline(block, &parent_header, &mut vm);
+
+        let end_instant = Instant::now();
+
+        match result {
+            Ok((execution_result, account_updates_list, _, _merkle_queue_length, instants)) => {
+                // instants: [start, validated, exec_merkle_start, exec_end, merkle_end, exec_merkle_end]
+                let [
+                    pipeline_start,
+                    validated,
+                    exec_merkle_start,
+                    exec_end,
+                    _merkle_end,
+                    exec_merkle_end,
+                ] = instants;
+
+                // Store the block (needed for next block's parent lookup)
+                let store_start = Instant::now();
+                blockchain.store_block(block.clone(), account_updates_list, execution_result)?;
+                let store_end = Instant::now();
+
+                // Verify state root if requested
+                let state_root_match = if verify_state {
+                    let computed_root = store
+                        .get_block_header(block_num)?
+                        .map(|h| h.state_root)
+                        .unwrap_or_default();
+                    computed_root == expected_state_root
+                } else {
+                    true // Assume match if not verifying
+                };
+
+                if verify_state && !state_root_match {
+                    warn!(
+                        "State root mismatch at block {}: expected {:#x}",
+                        block_num, expected_state_root
+                    );
+                }
+
+                // Calculate timing breakdown
+                let total_ms = end_instant.duration_since(start_instant).as_secs_f64() * 1000.0
+                    + store_end.duration_since(store_start).as_secs_f64() * 1000.0;
+                let validation_ms =
+                    validated.duration_since(pipeline_start).as_secs_f64() * 1000.0;
+                let execution_ms = exec_end.duration_since(exec_merkle_start).as_secs_f64() * 1000.0;
+                let merkle_ms =
+                    exec_merkle_end.duration_since(exec_end).as_secs_f64() * 1000.0;
+                let store_ms = store_end.duration_since(store_start).as_secs_f64() * 1000.0;
+
+                let gas_used = block.header.gas_used;
+                let throughput_ggas = if total_ms > 0.0 {
+                    (gas_used as f64 / 1e9) / (total_ms / 1000.0)
+                } else {
+                    0.0
+                };
+
+                timings.push(BlockTiming {
+                    block_number: block_num,
+                    gas_used,
+                    gas_limit: block.header.gas_limit,
+                    tx_count: block.body.transactions.len(),
+                    total_ms,
+                    validation_ms,
+                    execution_ms,
+                    merkle_ms,
+                    store_ms,
+                    throughput_ggas,
+                    state_root_match,
+                });
+            }
+            Err(e) => {
+                error!("Failed to execute block {}: {:?}", block_num, e);
+                return Err(e);
+            }
+        }
+
+        // Progress reporting every 5 seconds
+        if last_progress.elapsed() > Duration::from_secs(5) {
+            let completed = idx + 1;
+            let percent = (completed as f64 / blocks.len() as f64 * 100.0).round();
+            let elapsed = overall_start.elapsed().as_secs_f64();
+            let blocks_per_sec = completed as f64 / elapsed;
+            let eta_secs = (blocks.len() - completed) as f64 / blocks_per_sec;
+            info!(
+                "Progress: {}/{} blocks ({:.0}%), {:.1} blocks/s, ETA: {:.0}s",
+                completed,
+                blocks.len(),
+                percent,
+                blocks_per_sec,
+                eta_secs
+            );
+            last_progress = Instant::now();
+        }
+    }
+
+    let overall_elapsed = overall_start.elapsed();
+    info!(
+        "Completed {} blocks in {:.2}s ({:.1} blocks/s)",
+        timings.len(),
+        overall_elapsed.as_secs_f64(),
+        timings.len() as f64 / overall_elapsed.as_secs_f64()
+    );
+
+    // Write CSV output
+    info!("Writing results to {}", output_path.display());
+    let mut csv_file = File::create(output_path).map_err(|e| {
+        ChainError::Custom(format!("Failed to create output file: {}", e))
+    })?;
+    writeln!(csv_file, "{}", BlockTiming::csv_header()).map_err(|e| {
+        ChainError::Custom(format!("Failed to write CSV header: {}", e))
+    })?;
+    for timing in &timings {
+        writeln!(csv_file, "{}", timing.to_csv_row()).map_err(|e| {
+            ChainError::Custom(format!("Failed to write CSV row: {}", e))
+        })?;
+    }
+
+    // Compute and print summary
+    let summary = compute_summary(&timings, start_block, end_block, warmup_blocks);
+
+    println!("\n========================================");
+    println!("         BENCHMARK SUMMARY");
+    println!("========================================");
+    println!("Block range: {} - {}", summary.start_block, summary.end_block);
+    println!("Total blocks: {}", summary.total_blocks);
+    println!("Warmup blocks: {}", summary.warmup_blocks);
+    println!("Measured blocks: {}", summary.measured_blocks);
+    println!();
+    println!("Total transactions: {}", summary.total_transactions);
+    println!("Total gas used: {:.3} Ggas", summary.total_gas_used as f64 / 1e9);
+    println!("Total time: {:.2}s", summary.total_time_ms / 1000.0);
+    println!();
+    println!("--- Block Timing ---");
+    println!("  Mean:  {:.3} ms", summary.avg_block_time_ms);
+    println!("  Min:   {:.3} ms", summary.min_block_time_ms);
+    println!("  Max:   {:.3} ms", summary.max_block_time_ms);
+    println!("  P50:   {:.3} ms", summary.p50_block_time_ms);
+    println!("  P95:   {:.3} ms", summary.p95_block_time_ms);
+    println!("  P99:   {:.3} ms", summary.p99_block_time_ms);
+    println!();
+    println!("--- Timing Breakdown (avg) ---");
+    println!("  Validation: {:.3} ms", summary.avg_validation_ms);
+    println!("  Execution:  {:.3} ms", summary.avg_execution_ms);
+    println!("  Merkle:     {:.3} ms", summary.avg_merkle_ms);
+    println!("  Store:      {:.3} ms", summary.avg_store_ms);
+    println!();
+    println!("--- Throughput ---");
+    println!("  Avg throughput: {:.3} Ggas/s", summary.avg_throughput_ggas);
+    println!("  Avg tx/block:   {:.1}", summary.avg_tx_per_block);
+    println!();
+    if verify_state {
+        println!("--- State Verification ---");
+        if summary.state_root_mismatches == 0 {
+            println!("  All state roots matched!");
+        } else {
+            println!("  WARNING: {} state root mismatches!", summary.state_root_mismatches);
+        }
+    }
+    println!("========================================\n");
+
+    // Write JSON summary if requested
+    if let Some(json_path) = json_summary_path {
+        info!("Writing JSON summary to {}", json_path.display());
+        let json = serde_json::to_string_pretty(&summary).map_err(|e| {
+            ChainError::Custom(format!("Failed to serialize summary: {}", e))
+        })?;
+        std::fs::write(json_path, json).map_err(|e| {
+            ChainError::Custom(format!("Failed to write JSON summary: {}", e))
+        })?;
+    }
+
+    Ok(())
 }

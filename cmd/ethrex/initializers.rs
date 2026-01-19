@@ -266,6 +266,11 @@ pub async fn init_network(
 pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracker) {
     info!("Running in DEV_MODE");
 
+    if opts.dev_no_blocks {
+        info!("Block production disabled (--dev.no-blocks)");
+        return;
+    }
+
     let head_block_hash = {
         let current_block_number = store.get_latest_block_number().await.unwrap();
         store

@@ -11,10 +11,27 @@ ethrex-blockchain.workspace = true
 ethrex-common.workspace = true
 ethrex-config.workspace = true
 ethrex-storage.workspace = true
+ethrex-crypto.workspace = true
+ethrex-l2-rpc.workspace = true
+ethrex-vm.workspace = true
+ethrex-rpc.workspace = true
+ethrex-rlp.workspace = true
 
 bytes.workspace = true
 tokio.workspace = true
 serde_json.workspace = true
+serde.workspace = true
+ethereum-types.workspace = true
+secp256k1.workspace = true
+tempfile.workspace = true
+hex.workspace = true
+once_cell = "1.21"
+reqwest.workspace = true
+jsonwebtoken.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+rand = "0.8"
+chrono = "0.4"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = [
@@ -22,9 +39,18 @@ criterion = { version = "0.5.1", features = [
     "async_futures",
     "async_tokio",
 ] }
-secp256k1.workspace = true
-tempfile.workspace = true
-ethrex-l2-rpc.workspace = true
+
+[[bin]]
+name = "perf_bench"
+path = "src/perf_bench.rs"
+
+[[bin]]
+name = "generate_genesis"
+path = "src/generate_genesis.rs"
+
+[[bin]]
+name = "mock_consensus"
+path = "src/mock_consensus.rs"
 
 [[bench]]
 name = "build_block_benchmark"

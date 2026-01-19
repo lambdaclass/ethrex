@@ -297,7 +297,10 @@ impl Blockchain {
         skip_all,
         fields(namespace = "block_execution")
     )]
-    fn execute_block_pipeline(
+    /// Execute block pipeline: validation, execution, and merkleization.
+    /// Returns execution result, account updates, and timing information.
+    /// This is the core execution without storing to DB.
+    pub fn execute_block_pipeline(
         &self,
         block: &Block,
         parent_header: &BlockHeader,
