@@ -3,7 +3,7 @@ use std::{cmp::min, fmt::Display};
 use crate::{errors::EcdsaError, utils::keccak};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, Signature, U256};
-use ethrex_crypto::keccak::keccak_hash;
+use hex_literal::hex;
 pub use mempool::MempoolTransaction;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Serialize, ser::SerializeStruct};
@@ -1443,7 +1443,7 @@ pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, s
         &signature,
     )?;
     // Hash public key to obtain address
-    let hash = keccak_hash(&public.serialize_uncompressed()[1..]);
+    let hash = ethrex_crypto::keccak::keccak_hash(&public.serialize_uncompressed()[1..]);
     Ok(Address::from_slice(&hash[12..]))
 }
 

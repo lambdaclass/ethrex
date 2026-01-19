@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes};
 use ethereum_types::{H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_trie::Trie;
@@ -117,13 +117,23 @@ pub struct AccountInfo {
     pub nonce: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AccountState {
     pub nonce: u64,
     pub balance: U256,
     pub storage_root: H256,
     pub code_hash: H256,
 }
+
+/// A slim codec for an [`AccountState`].
+///
+/// The slim codec will optimize both the [storage root](AccountState::storage_root) and the
+/// [code hash](AccountState::code_hash)'s encoding so that it does not take space when empty.
+///
+/// The correct way to use it is to wrap the [`AccountState`] and encode it using this codec, and
+/// not to store the codec as a field in a struct.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct AccountStateSlimCodec(pub AccountState);
 
 impl Default for AccountInfo {
     fn default() -> Self {
