@@ -4,13 +4,13 @@ use crate::{
 };
 use clap::Parser;
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
+#[cfg(feature = "sp1")]
+use ethrex_l2::sequencer::utils::resolve_aligned_network;
 use ethrex_l2::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
     L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
     sequencer::configs::{AdminConfig, AlignedConfig, MonitorConfig},
 };
-#[cfg(feature = "sp1")]
-use ethrex_l2::sequencer::utils::resolve_aligned_network;
 use ethrex_l2_rpc::signer::{LocalSigner, RemoteSigner, Signer};
 use ethrex_prover_lib::{backend::BackendType, config::ProverConfig};
 use ethrex_rpc::clients::eth::{
@@ -225,7 +225,11 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 },
             },
             aligned: {
-                let network_name = opts.aligned_opts.aligned_network.clone().unwrap_or_default();
+                let network_name = opts
+                    .aligned_opts
+                    .aligned_network
+                    .clone()
+                    .unwrap_or_default();
                 AlignedConfig {
                     aligned_mode: opts.aligned_opts.aligned,
                     aligned_verifier_interval_ms: opts.aligned_opts.aligned_verifier_interval_ms,

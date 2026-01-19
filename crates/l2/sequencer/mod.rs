@@ -267,10 +267,10 @@ pub async fn start_l2(
 
     #[cfg(not(feature = "sp1"))]
     let driver = Box::pin(async move {
-        if let Some(admin_server) = admin_server {
-            if let Err(e) = admin_server.into_future().await {
-                error!("Admin server task error: {e}");
-            }
+        if let Some(admin_server) = admin_server
+            && let Err(e) = admin_server.into_future().await
+        {
+            error!("Admin server task error: {e}");
         }
         Ok(())
     });
