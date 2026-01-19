@@ -30,6 +30,20 @@ const SCORE_WEIGHT: i64 = 1;
 const REQUESTS_WEIGHT: i64 = 1;
 /// Max amount of ongoing requests per peer.
 const MAX_CONCURRENT_REQUESTS_PER_PEER: i64 = 100;
+
+// Quality scoring constants
+/// Score gained for a full response (scales with completeness)
+const FULL_RESPONSE_SCORE: i64 = 10;
+/// Score penalty for a timeout
+const TIMEOUT_PENALTY: i64 = 20;
+/// Score penalty for invalid proof/response
+const INVALID_RESPONSE_PENALTY: i64 = 50;
+/// Number of consecutive failures before temporary ban
+const MAX_CONSECUTIVE_FAILURES: u32 = 3;
+/// Score threshold below which a peer gets banned
+const BAN_SCORE_THRESHOLD: i64 = -100;
+/// Duration of temporary ban in seconds
+const BAN_DURATION_SECS: u64 = 300;
 /// The target number of RLPx connections to reach.
 pub const TARGET_PEERS: usize = 100;
 /// The target number of contacts to maintain in peer_table.
@@ -127,6 +141,10 @@ pub struct PeerData {
     score: i64,
     /// Track the amount of concurrent requests this peer is handling
     requests: i64,
+    /// Track consecutive failures for ban decisions
+    consecutive_failures: u32,
+    /// If set, peer is banned until this time
+    ban_until: Option<Instant>,
 }
 
 impl PeerData {
@@ -144,7 +162,48 @@ impl PeerData {
             connection,
             score: Default::default(),
             requests: Default::default(),
+            consecutive_failures: 0,
+            ban_until: None,
         }
+    }
+
+    /// Check if peer is currently banned
+    pub fn is_banned(&self) -> bool {
+        self.ban_until.is_some_and(|until| Instant::now() < until)
+    }
+
+    /// Apply a score change and check if peer should be banned
+    fn apply_score_change(&mut self, delta: i64) {
+        self.score = (self.score + delta).clamp(MIN_SCORE_CRITICAL, MAX_SCORE);
+
+        // Check if peer should be banned
+        if self.score <= BAN_SCORE_THRESHOLD
+            || self.consecutive_failures >= MAX_CONSECUTIVE_FAILURES
+        {
+            self.ban_until = Some(Instant::now() + Duration::from_secs(BAN_DURATION_SECS));
+        }
+    }
+
+    /// Record a response with given completeness (0.0 to 1.0)
+    pub fn record_response(&mut self, completeness: f64) {
+        let score_delta = (FULL_RESPONSE_SCORE as f64 * completeness) as i64;
+        self.apply_score_change(score_delta);
+        // Reset consecutive failures on successful response
+        if completeness > 0.5 {
+            self.consecutive_failures = 0;
+        }
+    }
+
+    /// Record a timeout
+    pub fn record_timeout(&mut self) {
+        self.apply_score_change(-TIMEOUT_PENALTY);
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+    }
+
+    /// Record an invalid response (bad proof, malformed data)
+    pub fn record_invalid_response(&mut self) {
+        self.apply_score_change(-INVALID_RESPONSE_PENALTY);
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
     }
 }
 
@@ -259,6 +318,37 @@ impl PeerTable {
     pub async fn record_critical_failure(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
         self.handle
             .cast(CastMessage::RecordCriticalFailure { node_id: *node_id })
+            .await?;
+        Ok(())
+    }
+
+    /// Record a response with completeness (0.0 to 1.0)
+    pub async fn record_response(
+        &mut self,
+        node_id: &H256,
+        completeness: f64,
+    ) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::RecordResponse {
+                node_id: *node_id,
+                completeness,
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Record a timeout from peer
+    pub async fn record_timeout(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::RecordTimeout { node_id: *node_id })
+            .await?;
+        Ok(())
+    }
+
+    /// Record an invalid response (bad proof, malformed data)
+    pub async fn record_invalid_response(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::RecordInvalidResponse { node_id: *node_id })
             .await?;
         Ok(())
     }
@@ -646,6 +736,10 @@ impl PeerTableServer {
             .iter()
             // We filter only to those peers which are useful to us
             .filter_map(|(id, peer_data)| {
+                // Skip banned peers
+                if peer_data.is_banned() {
+                    return None;
+                }
                 // Skip the peer if it has too many ongoing requests or if it doesn't match
                 // the capabilities
                 if !self.can_try_more_requests(&peer_data.score, &peer_data.requests)
@@ -901,6 +995,16 @@ enum CastMessage {
         node_id: H256,
     },
     RecordCriticalFailure {
+        node_id: H256,
+    },
+    RecordResponse {
+        node_id: H256,
+        completeness: f64,
+    },
+    RecordTimeout {
+        node_id: H256,
+    },
+    RecordInvalidResponse {
         node_id: H256,
     },
     RecordPingSent {
@@ -1178,6 +1282,24 @@ impl GenServer for PeerTableServer {
                 self.peers
                     .entry(node_id)
                     .and_modify(|peer_data| peer_data.score = MIN_SCORE_CRITICAL);
+            }
+            CastMessage::RecordResponse {
+                node_id,
+                completeness,
+            } => {
+                self.peers
+                    .entry(node_id)
+                    .and_modify(|peer_data| peer_data.record_response(completeness));
+            }
+            CastMessage::RecordTimeout { node_id } => {
+                self.peers
+                    .entry(node_id)
+                    .and_modify(|peer_data| peer_data.record_timeout());
+            }
+            CastMessage::RecordInvalidResponse { node_id } => {
+                self.peers
+                    .entry(node_id)
+                    .and_modify(|peer_data| peer_data.record_invalid_response());
             }
             CastMessage::RecordPingSent { node_id, hash } => {
                 self.contacts
