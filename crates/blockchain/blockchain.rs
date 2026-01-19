@@ -1410,13 +1410,22 @@ impl Blockchain {
             storage_trie_roots.insert(address, (*node).clone());
         }
 
+        let state_trie = state_trie_root
+            .as_ref()
+            .map(EncodedTrie::try_from)
+            .transpose()?;
+        let storage_tries = storage_trie_roots
+            .into_iter()
+            .map(|(k, v)| Ok((k, EncodedTrie::try_from(&v)?)))
+            .collect::<Result<_, ethrex_rlp::error::RLPDecodeError>>()?;
+
         Ok(ExecutionWitness {
             codes,
             block_headers_bytes,
             first_block_number: parent_header.number,
             chain_config: self.storage.get_chain_config(),
-            state_trie_root,
-            storage_trie_roots,
+            state_trie,
+            storage_tries,
             keys,
         })
     }
