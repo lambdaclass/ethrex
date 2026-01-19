@@ -7,7 +7,7 @@ use crate::{
     },
     sync::{
         AccountStorageRoots, SyncError,
-        state_healing::{SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE},
+        state_healing::{HealingThrottle, SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE},
     },
     utils::current_unix_time,
 };
@@ -83,6 +83,8 @@ pub struct StorageHealer {
     staleness_timestamp: u64,
     /// What state tree is our pivot at
     state_root: H256,
+    /// Adaptive throttle for balancing arrival vs processing rate
+    throttle: HealingThrottle,
 
     /// Data for analytics
     maximum_length_seen: usize,
@@ -140,6 +142,7 @@ pub async fn heal_storage_trie(
         requests: HashMap::new(),
         staleness_timestamp,
         state_root,
+        throttle: HealingThrottle::default(),
         maximum_length_seen: Default::default(),
         leafs_healed: Default::default(),
         roots_healed: Default::default(),
@@ -168,6 +171,8 @@ pub async fn heal_storage_trie(
 
     loop {
         yield_now().await;
+        // Periodically adjust the throttle based on arrival/processing balance
+        state.throttle.maybe_adjust();
         if state.last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             METRICS
                 .global_storage_tries_leafs_healed
@@ -194,6 +199,7 @@ pub async fn heal_storage_trie(
                     / (state.succesful_downloads as f64 + state.failed_downloads as f64),
                 empty_count = state.empty_count,
                 disconnected_count = state.disconnected_count,
+                throttle_divisor = format!("{:.2}", state.throttle.divisor()),
                 "We are storage healing",
             );
             //. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Global Leafs Healed {}. Roots Healed {}. Good Downloads {}. Good Download Percentage {}. Empty count {}. Disconnected Count {}.
@@ -242,6 +248,8 @@ pub async fn heal_storage_trie(
             return Ok(false);
         }
 
+        // Use adaptive batch size based on arrival/processing rate balance
+        let effective_batch_size = state.throttle.effective_batch_size(STORAGE_BATCH_SIZE);
         ask_peers_for_nodes(
             &mut state.download_queue,
             &mut state.requests,
@@ -250,6 +258,7 @@ pub async fn heal_storage_trie(
             state.state_root,
             &task_sender,
             &mut logged_no_free_peers_count,
+            effective_batch_size,
         )
         .await;
 
@@ -282,6 +291,10 @@ pub async fn heal_storage_trie(
                     continue;
                 };
 
+                // Track arrivals for adaptive throttle
+                state.throttle.record_arrival(nodes_from_peer.len() as u64);
+
+                let nodes_count = nodes_from_peer.len() as u64;
                 process_node_responses(
                     &mut nodes_from_peer,
                     &mut state.download_queue,
@@ -294,6 +307,9 @@ pub async fn heal_storage_trie(
                     &mut nodes_to_write,
                 )
                 .expect("We shouldn't be getting store errors"); // TODO: if we have a store error we should stop
+
+                // Track processed nodes for adaptive throttle
+                state.throttle.record_processed(nodes_count);
             }
             Err(RequestStorageTrieNodes::RequestError(id, _err)) => {
                 let inflight_request = state.requests.remove(&id).expect("request disappeared");
@@ -311,6 +327,7 @@ pub async fn heal_storage_trie(
 }
 
 /// it grabs N peers to ask for data
+#[allow(clippy::too_many_arguments)]
 async fn ask_peers_for_nodes(
     download_queue: &mut VecDeque<NodeRequest>,
     requests: &mut HashMap<u64, InflightRequest>,
@@ -321,6 +338,7 @@ async fn ask_peers_for_nodes(
     state_root: H256,
     task_sender: &Sender<Result<TrieNodes, RequestStorageTrieNodes>>,
     logged_no_free_peers_count: &mut u32,
+    effective_batch_size: usize,
 ) {
     if (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
         let Some((peer_id, connection)) = peers
@@ -340,7 +358,7 @@ async fn ask_peers_for_nodes(
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
             return;
         };
-        let at = download_queue.len().saturating_sub(STORAGE_BATCH_SIZE);
+        let at = download_queue.len().saturating_sub(effective_batch_size);
         let download_chunk = download_queue.split_off(at);
         let req_id: u64 = random();
         let (paths, inflight_requests_data) = create_node_requests(download_chunk);

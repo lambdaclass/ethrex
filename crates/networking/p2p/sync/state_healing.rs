@@ -29,12 +29,95 @@ use crate::{
     utils::current_unix_time,
 };
 
-/// Max size of a bach to start a storage fetch request in queues
+/// Max size of a batch to start a storage fetch request in queues
 pub const STORAGE_BATCH_SIZE: usize = 300;
-/// Max size of a bach to start a node fetch request in queues
+/// Max size of a batch to start a node fetch request in queues
 pub const NODE_BATCH_SIZE: usize = 500;
 /// Pace at which progress is shown via info tracing
 pub const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(2);
+/// Minimum divisor for adaptive throttle
+const MIN_THROTTLE_DIVISOR: f64 = 1.0;
+/// Maximum divisor for adaptive throttle
+const MAX_THROTTLE_DIVISOR: f64 = 100.0;
+/// How often to adjust the throttle (in seconds)
+const THROTTLE_ADJUSTMENT_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Adaptive throttle for healing requests based on arrival vs processing rate.
+/// Geth uses a similar approach to avoid overwhelming the processing pipeline.
+#[derive(Debug, Clone)]
+pub struct HealingThrottle {
+    /// Divisor applied to batch size (higher = fewer items per batch)
+    divisor: f64,
+    /// Last time we adjusted the throttle
+    last_adjustment: Instant,
+    /// Nodes that arrived since last adjustment
+    nodes_arrived: u64,
+    /// Nodes processed since last adjustment
+    nodes_processed: u64,
+}
+
+impl Default for HealingThrottle {
+    fn default() -> Self {
+        Self {
+            divisor: MIN_THROTTLE_DIVISOR,
+            last_adjustment: Instant::now(),
+            nodes_arrived: 0,
+            nodes_processed: 0,
+        }
+    }
+}
+
+impl HealingThrottle {
+    /// Record nodes that arrived from the network
+    pub fn record_arrival(&mut self, count: u64) {
+        self.nodes_arrived += count;
+    }
+
+    /// Record nodes that were processed
+    pub fn record_processed(&mut self, count: u64) {
+        self.nodes_processed += count;
+    }
+
+    /// Adjust the throttle based on arrival vs processing rate.
+    /// Call this periodically in the main loop.
+    pub fn maybe_adjust(&mut self) {
+        if self.last_adjustment.elapsed() < THROTTLE_ADJUSTMENT_INTERVAL {
+            return;
+        }
+
+        let elapsed_ms = self.last_adjustment.elapsed().as_millis() as f64;
+        if elapsed_ms == 0.0 {
+            return;
+        }
+
+        let arrival_rate = self.nodes_arrived as f64 / elapsed_ms;
+        let process_rate = self.nodes_processed as f64 / elapsed_ms;
+
+        // If arrival rate is significantly higher than process rate, slow down requests
+        if arrival_rate > process_rate * 1.1 && self.nodes_processed > 0 {
+            self.divisor = (self.divisor * 1.33).min(MAX_THROTTLE_DIVISOR);
+        }
+        // If process rate is significantly higher than arrival rate, speed up requests
+        else if process_rate > arrival_rate * 1.1 && self.nodes_arrived > 0 {
+            self.divisor = (self.divisor / 1.25).max(MIN_THROTTLE_DIVISOR);
+        }
+
+        // Reset counters for next interval
+        self.nodes_arrived = 0;
+        self.nodes_processed = 0;
+        self.last_adjustment = Instant::now();
+    }
+
+    /// Get the effective batch size after applying the throttle divisor
+    pub fn effective_batch_size(&self, base_size: usize) -> usize {
+        ((base_size as f64) / self.divisor).max(1.0) as usize
+    }
+
+    /// Get the current divisor (for logging/metrics)
+    pub fn divisor(&self) -> f64 {
+        self.divisor
+    }
+}
 
 use super::SyncError;
 
@@ -122,7 +205,12 @@ async fn heal_state_trie(
 
     let mut logged_no_free_peers_count = 0;
 
+    // Adaptive throttle for balancing arrival vs processing rate
+    let mut throttle = HealingThrottle::default();
+
     loop {
+        // Periodically adjust the throttle based on arrival/processing balance
+        throttle.maybe_adjust();
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             let num_peers = peers
                 .peer_table
@@ -150,6 +238,7 @@ async fn heal_state_trie(
                 paths_to_go = paths.len(),
                 pending_nodes = membatch.len(),
                 heals_per_cycle,
+                throttle_divisor = format!("{:.2}", throttle.divisor()),
                 "State Healing",
             );
             downloads_success = 0;
@@ -196,6 +285,8 @@ async fn heal_state_trie(
                         .iter()
                         .filter(|node| matches!(node, Node::Leaf(_)))
                         .count() as u64;
+                    // Track arrivals for adaptive throttle
+                    throttle.record_arrival(nodes.len() as u64);
                     nodes_to_heal.push((nodes, batch));
                     downloads_success += 1;
                     peers.peer_table.record_success(&peer_id).await?;
@@ -213,8 +304,11 @@ async fn heal_state_trie(
         }
 
         if !is_stale {
-            let batch: Vec<RequestMetadata> =
-                paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
+            // Use adaptive batch size based on arrival/processing rate balance
+            let effective_batch_size = throttle.effective_batch_size(NODE_BATCH_SIZE);
+            let batch: Vec<RequestMetadata> = paths
+                .drain(0..min(paths.len(), effective_batch_size))
+                .collect();
             if !batch.is_empty() {
                 longest_path_seen = usize::max(
                     batch
@@ -274,6 +368,7 @@ async fn heal_state_trie(
         // If there is at least one "batch" of nodes to heal, heal it
         if let Some((nodes, batch)) = nodes_to_heal.pop() {
             heals_per_cycle += 1;
+            let nodes_count = nodes.len() as u64;
             let return_paths = heal_state_batch(
                 batch,
                 nodes,
@@ -284,6 +379,8 @@ async fn heal_state_trie(
             .inspect_err(|err| {
                 debug!(error=?err, "We have found a sync error while trying to write to DB a batch")
             })?;
+            // Track processed nodes for adaptive throttle
+            throttle.record_processed(nodes_count);
             paths.extend(return_paths);
         }
 
