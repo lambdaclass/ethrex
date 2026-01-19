@@ -6,3 +6,5 @@ pub mod in_memory;
 /// RocksDB backend
 #[cfg(feature = "rocksdb")]
 pub mod rocksdb;
+
+pub mod heed;

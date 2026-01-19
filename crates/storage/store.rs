@@ -12,7 +12,7 @@ use crate::{
         },
     },
     apply_prefix,
-    backend::in_memory::InMemoryBackend,
+    backend::{heed::HeedBackend, in_memory::InMemoryBackend},
     error::StoreError,
     layering::{TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
@@ -211,6 +211,7 @@ pub enum EngineType {
     /// RocksDB storage, persistent. Suitable for production.
     #[cfg(feature = "rocksdb")]
     RocksDB,
+    Heed,
 }
 
 /// Batch of updates to apply to the store atomically.
@@ -1322,6 +1323,10 @@ impl Store {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
                 let backend = Arc::new(RocksDBBackend::open(path)?);
+                Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
+            }
+            EngineType::Heed => {
+                let backend = Arc::new(HeedBackend::open(path)?);
                 Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
             }
             EngineType::InMemory => {
@@ -2976,6 +2981,11 @@ mod tests {
     #[tokio::test]
     async fn test_rocksdb_store() {
         test_store_suite(EngineType::RocksDB).await;
+    }
+
+    #[tokio::test]
+    async fn test_heed_store() {
+        test_store_suite(EngineType::Heed).await;
     }
 
     // Creates an empty store, runs the test and then removes the store (if needed)
