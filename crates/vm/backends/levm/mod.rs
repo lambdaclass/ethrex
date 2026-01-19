@@ -202,7 +202,6 @@ impl LEVM {
         vm_type: VMType,
     ) -> Result<(), EvmError> {
         let mut db = GeneralizedDatabase::new(store.clone());
-        Self::prepare_block(block, &mut db, vm_type)?;
 
         block
             .body
