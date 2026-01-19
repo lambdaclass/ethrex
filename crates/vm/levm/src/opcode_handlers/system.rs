@@ -109,7 +109,11 @@ impl<'a> VM<'a> {
         let to = callee; // In this case code_address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
         let is_static = callframe.is_static;
         let is_tracing = self.tracer.active;
-        if !is_tracing && self.precheck_message_call(gas_limit, from, true, value)?.is_none() {
+        if !is_tracing
+            && self
+                .precheck_message_call(gas_limit, from, true, value)?
+                .is_none()
+        {
             return Ok(OpcodeResult::Continue);
         }
 
@@ -211,7 +215,11 @@ impl<'a> VM<'a> {
         let to = callframe.to;
         let is_static = callframe.is_static;
         let is_tracing = self.tracer.active;
-        if !is_tracing && self.precheck_message_call(gas_limit, from, true, value)?.is_none() {
+        if !is_tracing
+            && self
+                .precheck_message_call(gas_limit, from, true, value)?
+                .is_none()
+        {
             return Ok(OpcodeResult::Continue);
         }
 
@@ -333,7 +341,11 @@ impl<'a> VM<'a> {
         let to = callframe.to;
         let is_static = callframe.is_static;
         let is_tracing = self.tracer.active;
-        if !is_tracing && self.precheck_message_call(gas_limit, from, false, value)?.is_none() {
+        if !is_tracing
+            && self
+                .precheck_message_call(gas_limit, from, false, value)?
+                .is_none()
+        {
             return Ok(OpcodeResult::Continue);
         }
 
@@ -435,7 +447,11 @@ impl<'a> VM<'a> {
         let to = address; // In this case address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
 
         let is_tracing = self.tracer.active;
-        if !is_tracing && self.precheck_message_call(gas_limit, from, false, value)?.is_none() {
+        if !is_tracing
+            && self
+                .precheck_message_call(gas_limit, from, false, value)?
+                .is_none()
+        {
             return Ok(OpcodeResult::Continue);
         }
 
