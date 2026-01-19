@@ -260,8 +260,7 @@ jobs:
           SIM_LIMIT: ${{ matrix.limit }}
           SIM_BUILDARG: ${{ matrix.buildarg }}
         run: |
-          # Reviewer: parallelism 8 should be double checked
-          FLAGS='--sim.parallelism 8 --sim.loglevel 3'
+          FLAGS='--sim.parallelism 4 --sim.loglevel 3'
           if [[ -n "$SIM_LIMIT" ]]; then
             escaped_limit=${SIM_LIMIT//\'/\'\\\'\'}
             FLAGS+=" --sim.limit '$escaped_limit'"
