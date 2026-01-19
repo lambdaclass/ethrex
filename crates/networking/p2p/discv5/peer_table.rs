@@ -30,6 +30,12 @@ const MAX_FIND_NODE_PER_PEER: u64 = 20;
 const SCORE_WEIGHT: i64 = 1;
 /// Weight for amount of requests being handled by the peer for the load balancing function.
 const REQUESTS_WEIGHT: i64 = 1;
+/// Weight for throughput in the peer selection function.
+/// Higher values prioritize faster peers more strongly.
+const THROUGHPUT_WEIGHT: f64 = 0.5;
+/// Exponential moving average alpha for throughput calculation.
+/// Higher values give more weight to recent measurements.
+const THROUGHPUT_EMA_ALPHA: f64 = 0.3;
 /// Max amount of ongoing requests per peer.
 const MAX_CONCURRENT_REQUESTS_PER_PEER: i64 = 100;
 /// The target number of RLPx connections to reach.
@@ -132,6 +138,10 @@ pub struct PeerData {
     score: i64,
     /// Track the amount of concurrent requests this peer is handling
     requests: i64,
+    /// Estimated throughput in bytes per millisecond (exponential moving average)
+    throughput_estimate: f64,
+    /// Number of throughput samples collected for this peer
+    throughput_samples: u32,
 }
 
 impl PeerData {
@@ -149,7 +159,28 @@ impl PeerData {
             connection,
             score: Default::default(),
             requests: Default::default(),
+            throughput_estimate: 0.0,
+            throughput_samples: 0,
         }
+    }
+
+    /// Update throughput estimate using exponential moving average.
+    /// `bytes_received` is the number of bytes received in the response.
+    /// `duration_ms` is the time taken to receive the response in milliseconds.
+    pub fn update_throughput(&mut self, bytes_received: u64, duration_ms: u64) {
+        if duration_ms == 0 {
+            return;
+        }
+        let throughput = bytes_received as f64 / duration_ms as f64;
+        if self.throughput_samples == 0 {
+            // First sample, use it directly
+            self.throughput_estimate = throughput;
+        } else {
+            // Exponential moving average
+            self.throughput_estimate = THROUGHPUT_EMA_ALPHA * throughput
+                + (1.0 - THROUGHPUT_EMA_ALPHA) * self.throughput_estimate;
+        }
+        self.throughput_samples = self.throughput_samples.saturating_add(1);
     }
 }
 
@@ -291,6 +322,25 @@ impl PeerTable {
     pub async fn record_critical_failure(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
         self.handle
             .cast(CastMessage::RecordCriticalFailure { node_id: *node_id })
+            .await?;
+        Ok(())
+    }
+
+    /// Record throughput measurement for a peer.
+    /// `bytes_received` is the number of bytes in the response.
+    /// `duration_ms` is the time taken to receive the response in milliseconds.
+    pub async fn record_throughput(
+        &mut self,
+        node_id: &H256,
+        bytes_received: u64,
+        duration_ms: u64,
+    ) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::RecordThroughput {
+                node_id: *node_id,
+                bytes_received,
+                duration_ms,
+            })
             .await?;
         Ok(())
     }
@@ -677,10 +727,14 @@ impl PeerTableServer {
     }
     // Internal functions //
 
-    // Weighting function used to select best peer
-    // TODO: Review this formula and weight constants.
-    fn weight_peer(&self, score: &i64, requests: &i64) -> i64 {
-        score * SCORE_WEIGHT - requests * REQUESTS_WEIGHT
+    // Weighting function used to select best peer.
+    // Combines score, current requests, and throughput estimate.
+    // Higher values indicate better peers.
+    fn weight_peer(&self, score: i64, requests: i64, throughput: f64) -> f64 {
+        let base_weight = (score * SCORE_WEIGHT - requests * REQUESTS_WEIGHT) as f64;
+        // Add throughput bonus - normalized to have reasonable impact
+        // Throughput is in bytes/ms, typical values might be 10-1000
+        base_weight + throughput * THROUGHPUT_WEIGHT
     }
 
     // Returns if the peer has room for more connections given the current score
@@ -707,12 +761,22 @@ impl PeerTableServer {
                     // if the peer doesn't have the channel open, we skip it.
                     let connection = peer_data.connection.clone()?;
 
-                    // We return the id, the score and the channel to connect with.
-                    Some((*id, peer_data.score, peer_data.requests, connection))
+                    // We return the id, score, requests, throughput, and connection.
+                    Some((
+                        *id,
+                        peer_data.score,
+                        peer_data.requests,
+                        peer_data.throughput_estimate,
+                        connection,
+                    ))
                 }
             })
-            .max_by_key(|(_, score, reqs, _)| self.weight_peer(score, reqs))
-            .map(|(k, _, _, v)| (k, v))
+            .max_by(|(_, score_a, reqs_a, tp_a, _), (_, score_b, reqs_b, tp_b, _)| {
+                self.weight_peer(*score_a, *reqs_a, *tp_a)
+                    .partial_cmp(&self.weight_peer(*score_b, *reqs_b, *tp_b))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(k, _, _, _, v)| (k, v))
     }
 
     fn prune(&mut self) {
@@ -974,6 +1038,11 @@ enum CastMessage {
     },
     RecordCriticalFailure {
         node_id: H256,
+    },
+    RecordThroughput {
+        node_id: H256,
+        bytes_received: u64,
+        duration_ms: u64,
     },
     RecordPingSent {
         node_id: H256,
@@ -1261,6 +1330,15 @@ impl GenServer for PeerTableServer {
                 self.peers
                     .entry(node_id)
                     .and_modify(|peer_data| peer_data.score = MIN_SCORE_CRITICAL);
+            }
+            CastMessage::RecordThroughput {
+                node_id,
+                bytes_received,
+                duration_ms,
+            } => {
+                self.peers
+                    .entry(node_id)
+                    .and_modify(|peer_data| peer_data.update_throughput(bytes_received, duration_ms));
             }
             CastMessage::RecordPingSent { node_id, hash } => {
                 self.contacts
