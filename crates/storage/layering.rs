@@ -126,7 +126,8 @@ impl TrieLayerCache {
         // add this new bloom to the global one.
         if let Some(filter) = &mut self.bloom {
             for (p, _) in &key_values {
-                if let Err(qfilter::Error::CapacityExceeded) = filter.insert(p.as_ref()) {
+                let key = p.to_db_key();
+                if let Err(qfilter::Error::CapacityExceeded) = filter.insert(&key) {
                     tracing::warn!("TrieLayerCache: put_batch capacity exceeded");
                     self.bloom = None;
                     break;
@@ -136,7 +137,7 @@ impl TrieLayerCache {
 
         let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
             .into_iter()
-            .map(|(path, value)| (path.into_vec(), value))
+            .map(|(path, value)| (path.to_db_key(), value))
             .collect();
 
         self.last_id += 1;
@@ -222,7 +223,8 @@ impl TrieDB for TrieWrapper {
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);
-        if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
+        let db_key = key.to_db_key();
+        if let Some(value) = self.inner.get(self.state_root, &db_key) {
             return Ok(Some(value));
         }
         self.db.get(key)

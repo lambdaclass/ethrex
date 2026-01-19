@@ -2529,8 +2529,9 @@ impl Store {
 
     fn flatkeyvalue_computed(&self, account: H256) -> Result<bool, StoreError> {
         let account_nibbles = Nibbles::from_bytes(account.as_bytes());
+        let account_key = account_nibbles.to_db_key();
         let last_computed_flatkeyvalue = self.last_written()?;
-        Ok(&last_computed_flatkeyvalue[0..64] > account_nibbles.as_ref())
+        Ok(&last_computed_flatkeyvalue[0..64] > account_key.as_slice())
     }
 }
 
@@ -2710,8 +2711,9 @@ fn flatkeyvalue_generator(
             };
             let account_state = AccountState::decode(&node.value)?;
             let account_hash = H256::from_slice(&path.to_bytes());
-            write_txn.put(MISC_VALUES, "last_written".as_bytes(), path.as_ref())?;
-            write_txn.put(ACCOUNT_FLATKEYVALUE, path.as_ref(), &node.value)?;
+            let db_key = path.to_db_key();
+            write_txn.put(MISC_VALUES, "last_written".as_bytes(), &db_key)?;
+            write_txn.put(ACCOUNT_FLATKEYVALUE, &db_key, &node.value)?;
             ctr += 1;
             if ctr > 10_000 {
                 write_txn.commit()?;
@@ -2740,8 +2742,9 @@ fn flatkeyvalue_generator(
                     return Ok(());
                 };
                 let key = apply_prefix(Some(account_hash), path);
-                write_txn.put(MISC_VALUES, "last_written".as_bytes(), key.as_ref())?;
-                write_txn.put(STORAGE_FLATKEYVALUE, key.as_ref(), &node.value)?;
+                let db_key = key.to_db_key();
+                write_txn.put(MISC_VALUES, "last_written".as_bytes(), &db_key)?;
+                write_txn.put(STORAGE_FLATKEYVALUE, &db_key, &node.value)?;
                 ctr += 1;
                 if ctr > 10_000 {
                     write_txn.commit()?;
