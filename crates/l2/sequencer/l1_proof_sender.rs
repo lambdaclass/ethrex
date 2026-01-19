@@ -46,7 +46,7 @@ use crate::{
 };
 
 #[cfg(feature = "sp1")]
-use sp1_sdk::{SP1ProofWithPublicValues, SP1VerifyingKey, HashableKey, Prover};
+use sp1_sdk::{HashableKey, Prover, SP1ProofWithPublicValues, SP1VerifyingKey};
 
 const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes)";
 
@@ -276,14 +276,17 @@ impl L1ProofSender {
         };
 
         // Create alloy signer from private key
-        let signer = PrivateKeySigner::from_bytes(&local_signer.private_key)
-            .map_err(|e| ProofSenderError::UnexpectedError(format!("Failed to create signer: {e}")))?;
+        let signer = PrivateKeySigner::from_bytes(&local_signer.private_key).map_err(|e| {
+            ProofSenderError::UnexpectedError(format!("Failed to create signer: {e}"))
+        })?;
 
         let sender_address = format!("{:?}", self.signer.address());
 
         // Create the gateway provider with signer
         let gateway = AggregationModeGatewayProvider::new_with_signer(self.network.clone(), signer)
-            .map_err(|e| ProofSenderError::UnexpectedError(format!("Failed to create gateway: {e:?}")))?;
+            .map_err(|e| {
+                ProofSenderError::UnexpectedError(format!("Failed to create gateway: {e:?}"))
+            })?;
 
         let sp1_vk = self.sp1_vk.as_ref().ok_or_else(|| {
             ProofSenderError::UnexpectedError("SP1 verifying key not initialized".to_string())
@@ -308,8 +311,12 @@ impl L1ProofSender {
             };
 
             // Deserialize the proof from bincode format
-            let proof: SP1ProofWithPublicValues = bincode::deserialize(&proof_bytes)
-                .map_err(|e| ProofSenderError::UnexpectedError(format!("Failed to deserialize SP1 proof: {e}")))?;
+            let proof: SP1ProofWithPublicValues =
+                bincode::deserialize(&proof_bytes).map_err(|e| {
+                    ProofSenderError::UnexpectedError(format!(
+                        "Failed to deserialize SP1 proof: {e}"
+                    ))
+                })?;
 
             // Get the nonce that will be used for this submission
             let nonce = gateway
@@ -319,7 +326,12 @@ impl L1ProofSender {
                 .data
                 .nonce;
 
-            info!(?prover_type, ?batch_number, ?nonce, "Submitting proof to Aligned");
+            info!(
+                ?prover_type,
+                ?batch_number,
+                ?nonce,
+                "Submitting proof to Aligned"
+            );
 
             let result = gateway.submit_sp1_proof(&proof, sp1_vk).await;
 
@@ -337,10 +349,9 @@ impl L1ProofSender {
                     self.rollup_store
                         .delete_proof_by_batch_and_type(batch_number, prover_type)
                         .await?;
-                    return Err(ProofSenderError::AlignedSubmitProofError(GatewayError::Api {
-                        status,
-                        message,
-                    }));
+                    return Err(ProofSenderError::AlignedSubmitProofError(
+                        GatewayError::Api { status, message },
+                    ));
                 }
                 Err(e) => {
                     return Err(ProofSenderError::AlignedSubmitProofError(e));
