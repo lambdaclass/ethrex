@@ -665,25 +665,25 @@ pub enum NodeRef {
    }
    ```
 
-### RLP Encoding: Repeated Hash Computation
+### RLP Encoding: Two-Pass Design (Not a Problem)
 
 **Location:** `crates/common/trie/rlp.rs`
 
-**BranchNode::encode** computes child hashes twice:
+**BranchNode::encode** calls `compute_hash_ref()` twice per child, but this is **NOT double computation**:
 
 ```rust
 impl RLPEncode for BranchNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         // First pass: compute payload length
         let payload_len = self.choices.iter().fold(value_len, |acc, child| {
-            acc + RLPEncode::length(child.compute_hash_ref())  // Compute hash
+            acc + RLPEncode::length(child.compute_hash_ref())  // Computes & memoizes
         });
 
         encode_length(payload_len, buf);
 
         // Second pass: encode children
         for child in self.choices.iter() {
-            match child.compute_hash_ref() {  // Compute hash AGAIN
+            match child.compute_hash_ref() {  // Returns cached value (OnceLock fast path)
                 // ...
             }
         }
@@ -691,16 +691,42 @@ impl RLPEncode for BranchNode {
 }
 ```
 
-The `encode_to_vec()` method (line 35-57) has the same issue but at least pre-allocates the buffer.
+**Why it's not a problem:**
 
-**Hash computation in error paths:**
+1. `compute_hash_ref()` uses `OnceLock::get_or_init()` for memoization
+2. First call: computes hash and stores in OnceLock
+3. Second call: returns cached reference (just a pointer read)
+4. `NodeHash::length()` doesn't compute anything - just matches on enum variant:
+   ```rust
+   fn length(&self) -> usize {
+       match self {
+           NodeHash::Hashed(_) => 33,
+           NodeHash::Inline((_, len)) => *len as usize,
+           // ...
+       }
+   }
+   ```
 
-Many error handlers call `compute_hash().finalize()` just for error messages:
+**Why not use Encoder (single pass)?**
+
+The `Encoder` struct buffers all fields into `temp_buf`, then copies to output. The two-pass approach:
+- Pre-allocates exact buffer size (avoids reallocation)
+- Writes directly to output (avoids copy)
+- Second `compute_hash_ref()` is very cheap (OnceLock fast path)
+
+This trade-off is intentional - see comment at line 34:
+```rust
+// Duplicated to prealloc the buffer and avoid calculating the payload length twice
+```
+
+**Actual hash computation concern - error paths:**
+
+Error handlers call `compute_hash().finalize()` for error messages:
 - `branch.rs:62-70` - BranchNode::get
 - `branch.rs:99-107` - BranchNode::insert
 - `extension.rs:42-51` - ExtensionNode::get
 
-This means even successful operations may compute hashes unnecessarily if the compiler doesn't optimize away the error path.
+If hashes aren't already memoized when an error occurs, this triggers computation. The fix would be lazy error message construction.
 
 ### Node Structure: Memory Layout
 
@@ -818,12 +844,12 @@ impl RLPEncode for ExtensionNode {
 |-------|----------|----------------|
 | Nibbles by-value everywhere | All node methods | Use cursor/iterator pattern |
 | Clone-on-read TrieDB | db.rs:102-108 | Return Arc or borrow |
-| No buffer reuse for encoding | rlp.rs | Accept `&mut Vec<u8>` parameter |
+| No buffer reuse for encode_compact | nibbles.rs:180-208 | Accept `&mut Vec<u8>` parameter |
 | OnceLock lost on conversions | node.rs:207-223 | Preserve hash through conversions |
-| Two-pass encoding | rlp.rs:17-32 | Single pass with pre-computed length |
 | Nibbles two-Vec design | nibbles.rs:23-28 | Single array with cursor index |
 | O(n) operations | nibbles.rs:137,170 | Use deque or cursor |
-| Allocate in error paths | Many locations | Lazy error message construction |
+| Hash computation in error paths | branch.rs, extension.rs | Lazy error message construction |
+| NodeRef::PartialEq allocates | node.rs:225-230 | Reuse thread-local buffer |
 
 ### Trie-Specific Optimization Opportunities
 
@@ -831,12 +857,12 @@ impl RLPEncode for ExtensionNode {
 |-------------|-------------|----------------|
 | Stack-allocated Nibbles | Replace Vec with [u8; 68] + cursor | Eliminate ~10 allocs per traversal |
 | Pooled encoding buffers | Thread-local Vec<u8> pool for encode | Reduce allocations in hot path |
-| Hash computation caching | Preserve OnceLock through operations | Avoid redundant keccak calls |
+| Hash preservation on clone | Preserve OnceLock through NodeRef conversions | Avoid redundant keccak calls |
 | Copy-on-write Nibbles | Only allocate on mutation | Reduce allocs for read operations |
 | Cursor-based traversal | Nibbles cursor instead of mutation | Zero allocation for reads |
-| Arc<[u8]> for values | Share encoded nodes | Reduce clone overhead |
-| Lazy error messages | Defer hash computation in errors | Avoid work on success path |
-| Single-pass RLP encoding | Pre-compute child hash lengths | Eliminate duplicate hash calls |
+| Arc<[u8]> for values | Share encoded nodes in TrieDB | Reduce clone overhead |
+| Lazy error messages | Defer hash computation in error paths | Avoid work on success path |
+| encode_compact buffer reuse | Pass buffer to encode_compact() | Avoid allocation per node |
 
 ---
 
@@ -853,14 +879,13 @@ impl RLPEncode for ExtensionNode {
 | OnceLock reset on clone | node.rs:207-223 | Lose memoized hashes on NodeRef conversion |
 | Double HashMap lookup | gen_db.rs:486-505 | current → initial on every SLOAD |
 | CallFrameBackup cloning | call_frame.rs:424 | Clone HashMap on revert |
-| RLP encode computes hash twice | rlp.rs:17-32, 45-51 | Redundant keccak for each branch child |
 | TrieDB clones on read | db.rs:107 | Full Vec clone per cache hit |
 
 ### Medium Impact
 
 | Issue | Location | Impact |
 |-------|----------|--------|
-| Repeated hash in error paths | branch.rs:62-70, extension.rs:42 | compute_hash() for error messages |
+| Hash computation in error paths | branch.rs:62-70, extension.rs:42 | compute_hash().finalize() for error msgs |
 | encode_compact allocates | nibbles.rs:180-208 | New Vec per node serialization |
 | Nibbles::next() is O(n) | nibbles.rs:137 | Vec::remove(0) shifts elements |
 | Nibbles::prepend() is O(n) | nibbles.rs:170 | Vec::insert(0) shifts elements |
