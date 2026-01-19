@@ -75,19 +75,19 @@ const CHECKPOINT_MAX_AGE_SECS: u64 = 30 * 60; // 30 minutes
 /// reasonable recovery granularity (~30 sec of progress between saves).
 const CHECKPOINT_CHUNK_INTERVAL: usize = 10;
 
-/// Default storage flush threshold (slots) when memory info unavailable (~400MB)
-const DEFAULT_FLUSH_THRESHOLD: usize = 1_000_000;
-/// Minimum storage flush threshold (slots) - ~200MB
-const MIN_FLUSH_THRESHOLD: usize = 500_000;
-/// Maximum storage flush threshold (slots) - ~8GB
+/// Default storage flush threshold (slots) when memory info unavailable (~2GB)
+const DEFAULT_FLUSH_THRESHOLD: usize = 5_000_000;
+/// Minimum storage flush threshold (slots) - ~800MB
+const MIN_FLUSH_THRESHOLD: usize = 2_000_000;
+/// Maximum storage flush threshold (slots) - ~20GB
 /// Capped to prevent OOM on systems with large RAM
-const MAX_FLUSH_THRESHOLD: usize = 20_000_000;
+const MAX_FLUSH_THRESHOLD: usize = 50_000_000;
 /// Approximate memory bytes per storage slot in trie
 /// Includes HashMap overhead, MerkleTrie nodes, and allocations
 const BYTES_PER_STORAGE_SLOT: usize = 400;
-/// Percentage of available memory to use for storage tries (40%)
+/// Percentage of available memory to use for storage tries (60%)
 /// Higher values speed up insertion by reducing flush frequency
-const MEMORY_USAGE_PERCENT: usize = 40;
+const MEMORY_USAGE_PERCENT: usize = 60;
 
 /// Get available memory in bytes from /proc/meminfo (Linux only)
 /// Returns None on non-Linux systems or if reading fails

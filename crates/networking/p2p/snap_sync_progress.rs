@@ -229,6 +229,10 @@ pub struct SnapSyncProgress {
     pub log_interval: Duration,
     /// Stored final durations for each phase (indexed by phase number 1-8)
     pub phase_durations: Mutex<[Option<Duration>; 9]>,
+    /// Interval between table prints (30 seconds)
+    pub table_interval: Duration,
+    /// Last time the progress table was printed
+    pub last_table_print: Mutex<Option<Instant>>,
 }
 
 impl Default for SnapSyncProgress {
@@ -244,6 +248,8 @@ impl Default for SnapSyncProgress {
             healing: PhaseProgress::new(),
             log_interval: Duration::from_secs(5),
             phase_durations: Mutex::new([None; 9]),
+            table_interval: Duration::from_secs(30),
+            last_table_print: Mutex::new(None),
         }
     }
 }
@@ -460,6 +466,24 @@ impl SnapSyncProgress {
         table.push_str("└─────────┴────────────────────┴────────────┴───────────┴───────────────────┘");
 
         info!("{}", table);
+
+        // Update last print time
+        *self.last_table_print.lock().await = Some(Instant::now());
+    }
+
+    /// Print the progress table if 30 seconds have passed since last print
+    pub async fn maybe_print_table(&self) {
+        let should_print = {
+            let last_print = *self.last_table_print.lock().await;
+            match last_print {
+                None => true,
+                Some(t) => t.elapsed() >= self.table_interval,
+            }
+        };
+
+        if should_print {
+            self.print_progress_table().await;
+        }
     }
 
     /// Log progress for headers download
@@ -488,6 +512,7 @@ impl SnapSyncProgress {
         );
 
         self.mark_logged(&self.headers).await;
+        self.maybe_print_table().await;
     }
 
     /// Log progress for account download
@@ -516,6 +541,7 @@ impl SnapSyncProgress {
         );
 
         self.mark_logged(&self.accounts).await;
+        self.maybe_print_table().await;
     }
 
     /// Log progress for account insertion
@@ -544,6 +570,7 @@ impl SnapSyncProgress {
         );
 
         self.mark_logged(&self.accounts).await;
+        self.maybe_print_table().await;
     }
 
     /// Log progress for storage download
@@ -567,6 +594,7 @@ impl SnapSyncProgress {
         );
 
         self.mark_logged(&self.storage).await;
+        self.maybe_print_table().await;
     }
 
     /// Log progress for storage insertion
@@ -595,6 +623,7 @@ impl SnapSyncProgress {
         );
 
         self.mark_logged(&self.storage).await;
+        self.maybe_print_table().await;
     }
 
     /// Log progress for healing
@@ -618,6 +647,7 @@ impl SnapSyncProgress {
         );
 
         self.mark_logged(&self.healing).await;
+        self.maybe_print_table().await;
     }
 
     /// Log progress for bytecode download
@@ -646,6 +676,7 @@ impl SnapSyncProgress {
         );
 
         self.mark_logged(&self.bytecodes).await;
+        self.maybe_print_table().await;
     }
 
     /// Check if we should log (respecting minimum interval)
