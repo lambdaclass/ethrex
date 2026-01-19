@@ -1,0 +1,44 @@
+name: Property Tests
+
+on:
+  pull_request:
+    branches: ["**"]
+    paths:
+      - 'crates/common/rlp/**'
+      - 'crates/common/trie/**'
+      - 'crates/common/types/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
+  # Run more proptest cases in CI
+  PROPTEST_CASES: "1000"
+
+jobs:
+  proptest:
+    name: Property Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Run RLP property tests
+        run: |
+          cargo test -p ethrex-rlp --release -- proptests
+
+      - name: Run Trie property tests
+        run: |
+          cargo test -p ethrex-trie --release -- proptest
