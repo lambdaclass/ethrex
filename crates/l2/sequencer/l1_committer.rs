@@ -13,6 +13,7 @@ use bytes::Bytes;
 use ethrex_blockchain::{
     Blockchain, BlockchainOptions, BlockchainType, L2Config, error::ChainError,
 };
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -1208,6 +1209,7 @@ impl L1Committer {
                 encoded_blocks.push(block.encode_to_vec().into());
             }
 
+            calldata_values.push(Value::FixedBytes(commit_hash_bytes.0.to_vec().into()));
             calldata_values.push(Value::Array(
                 encoded_blocks.into_iter().map(Value::Bytes).collect(),
             ));

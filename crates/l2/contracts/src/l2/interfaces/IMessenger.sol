@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity =0.8.31;
 
 /// @author LambdaClass
 /// @notice The Messenger contract is a contract that allows L2->L1 communication and L2->L2 communication.

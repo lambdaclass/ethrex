@@ -168,7 +168,7 @@ pub fn stateless_validation_l1(
 
     let initial_state_hash = report_cycles("state_trie_root", || {
         wrapped_db
-            .auth_state()
+            .state_trie_root()
             .map_err(StatelessExecutionError::GuestProgramState)
     })?;
 
