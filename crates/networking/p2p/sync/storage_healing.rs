@@ -1148,11 +1148,15 @@ pub async fn heal_state_trie_snap(
 
     let mut accounts_healed = 0u64;
     let mut nodes_processed = 0u64;
+    let mut paths_dropped = 0u64;
     let mut last_progress_log = tokio::time::Instant::now();
+    let mut consecutive_empty_responses = 0u32;
+    const MAX_RETRIES: u8 = 3;
+    const MAX_CONSECUTIVE_EMPTY: u32 = 50; // Abort if too many consecutive empty responses
 
-    // Queue of (path, hash) pairs to fetch - start with root
-    let mut paths_to_fetch: VecDeque<(Nibbles, H256)> = VecDeque::new();
-    paths_to_fetch.push_back((Nibbles::default(), expected_state_root));
+    // Queue of (path, hash, retry_count) tuples to fetch - start with root
+    let mut paths_to_fetch: VecDeque<(Nibbles, H256, u8)> = VecDeque::new();
+    paths_to_fetch.push_back((Nibbles::default(), expected_state_root, 0));
 
     // Queue of nodes to process locally (for inline nodes that don't need fetching)
     let mut nodes_to_process: VecDeque<(Nibbles, Node)> = VecDeque::new();
@@ -1162,14 +1166,14 @@ pub async fn heal_state_trie_snap(
     let (response_tx, mut response_rx) = tokio::sync::mpsc::channel::<(
         H256, // peer_id
         Result<TrieNodes, String>,
-        Vec<(Nibbles, H256)>, // batch that was requested
+        Vec<(Nibbles, H256, u8)>, // batch that was requested (with retry counts)
     )>(TASK_CHANNEL_CAPACITY);
 
     // Helper closure to process a node and extract children/accounts
     // Returns (accounts_found, nodes_processed_count)
     let mut process_node = |path: &Nibbles,
                             node: Node,
-                            paths_to_fetch: &mut VecDeque<(Nibbles, H256)>,
+                            paths_to_fetch: &mut VecDeque<(Nibbles, H256, u8)>,
                             nodes_to_process: &mut VecDeque<(Nibbles, Node)>,
                             snap_trie: &mut SnapSyncTrie|
      -> (u64, u64) {
@@ -1223,7 +1227,7 @@ pub async fn heal_state_trie_snap(
                         ethrex_trie::NodeRef::Hash(ethrex_trie::NodeHash::Hashed(child_hash)) => {
                             // Skip empty branch slots (zero hash means no child at this position)
                             if *child_hash != H256::zero() {
-                                paths_to_fetch.push_back((child_path, *child_hash));
+                                paths_to_fetch.push_back((child_path, *child_hash, 0));
                             }
                         }
                         // Inline nodes contain the encoded node data - decode and process locally
@@ -1249,7 +1253,7 @@ pub async fn heal_state_trie_snap(
                     ethrex_trie::NodeRef::Hash(ethrex_trie::NodeHash::Hashed(child_hash)) => {
                         // Skip if zero hash (shouldn't happen for extensions, but be safe)
                         if *child_hash != H256::zero() {
-                            paths_to_fetch.push_back((child_path, *child_hash));
+                            paths_to_fetch.push_back((child_path, *child_hash, 0));
                         }
                     }
                     // Inline nodes contain the encoded node data - decode and process locally
@@ -1300,16 +1304,41 @@ pub async fn heal_state_trie_snap(
             inflight_requests -= 1;
             match result {
                 Ok(trie_nodes) => {
-                    peers.peer_table.record_success(&peer_id).await?;
-
                     let nodes_received = trie_nodes.nodes.len();
                     info!("[SNAP SYNC] Received {} nodes from peer for batch of {} paths", nodes_received, batch.len());
-                    if nodes_received == 0 && batch.len() <= 3 {
-                        warn!("[SNAP SYNC] Empty response from peer! Requested paths: {:?}", batch.iter().map(|(p, h)| format!("path={:?} hash={:?}", p, h)).collect::<Vec<_>>());
+
+                    // Handle empty responses (0 nodes) - this indicates peer doesn't have the state
+                    if nodes_received == 0 {
+                        consecutive_empty_responses += 1;
+                        peers.peer_table.record_failure(&peer_id).await?;
+
+                        // Check if we should abort due to too many consecutive empty responses
+                        if consecutive_empty_responses >= MAX_CONSECUTIVE_EMPTY {
+                            warn!(
+                                "[SNAP SYNC] Aborting state healing: {} consecutive empty responses - state root may be unavailable on peers",
+                                consecutive_empty_responses
+                            );
+                            return Ok(false);
+                        }
+
+                        // Re-queue paths with incremented retry count, dropping those that exceed max
+                        for (path, hash, retry_count) in batch {
+                            if retry_count >= MAX_RETRIES {
+                                debug!("[SNAP SYNC] Dropping path {:?} after {} retries", path, retry_count);
+                                paths_dropped += 1;
+                            } else {
+                                paths_to_fetch.push_back((path, hash, retry_count + 1));
+                            }
+                        }
+                        continue;
                     }
 
+                    // Got actual nodes - record success and reset consecutive empty counter
+                    peers.peer_table.record_success(&peer_id).await?;
+                    consecutive_empty_responses = 0;
+
                     // Track paths that failed to decode (need to retry with different peer)
-                    let mut failed_paths: Vec<(Nibbles, H256)> = Vec::new();
+                    let mut failed_paths: Vec<(Nibbles, H256, u8)> = Vec::new();
                     let mut empty_count = 0u64;
 
                     // Process each node in the response
@@ -1317,7 +1346,7 @@ pub async fn heal_state_trie_snap(
                         if i >= batch.len() {
                             break;
                         }
-                        let (path, hash) = &batch[i];
+                        let (path, hash, retry_count) = &batch[i];
 
                         // Empty responses mean the node doesn't exist at this path.
                         // This is valid for sparse branch nodes - don't retry.
@@ -1352,7 +1381,7 @@ pub async fn heal_state_trie_snap(
                             Err(e) => {
                                 warn!("[SNAP SYNC] Failed to decode node at path {:?}: {:?}, bytes len: {}", path, e, node_bytes.len());
                                 // Re-queue non-empty failed decodes to try with different peer
-                                failed_paths.push((path.clone(), *hash));
+                                failed_paths.push((path.clone(), *hash, *retry_count));
                             }
                         }
                     }
@@ -1374,28 +1403,40 @@ pub async fn heal_state_trie_snap(
                             "[SNAP SYNC] Re-queueing {} paths that failed to decode",
                             failed_paths.len()
                         );
-                        for item in failed_paths {
-                            paths_to_fetch.push_back(item);
+                        for (path, hash, retry_count) in failed_paths {
+                            if retry_count >= MAX_RETRIES {
+                                paths_dropped += 1;
+                            } else {
+                                paths_to_fetch.push_back((path, hash, retry_count + 1));
+                            }
                         }
                     }
 
-                    // Re-queue any paths that weren't returned by the peer
+                    // Re-queue any paths that weren't returned by the peer (with incremented retry count)
                     if nodes_received < batch.len() {
                         debug!(
                             "[SNAP SYNC] Peer returned fewer nodes than requested ({}/{}), re-queueing missing",
                             nodes_received, batch.len()
                         );
-                        for item in batch.into_iter().skip(nodes_received) {
-                            paths_to_fetch.push_back(item);
+                        for (path, hash, retry_count) in batch.into_iter().skip(nodes_received) {
+                            if retry_count >= MAX_RETRIES {
+                                paths_dropped += 1;
+                            } else {
+                                paths_to_fetch.push_back((path, hash, retry_count + 1));
+                            }
                         }
                     }
                 }
                 Err(e) => {
                     debug!("GetTrieNodes request failed: {}", e);
                     peers.peer_table.record_failure(&peer_id).await?;
-                    // Re-queue the failed batch
-                    for item in batch {
-                        paths_to_fetch.push_back(item);
+                    // Re-queue the failed batch with incremented retry count
+                    for (path, hash, retry_count) in batch {
+                        if retry_count >= MAX_RETRIES {
+                            paths_dropped += 1;
+                        } else {
+                            paths_to_fetch.push_back((path, hash, retry_count + 1));
+                        }
                     }
                 }
             }
@@ -1404,11 +1445,11 @@ pub async fn heal_state_trie_snap(
         // Send new requests if we have capacity
         while inflight_requests < MAX_IN_FLIGHT_REQUESTS && !paths_to_fetch.is_empty() {
             // Build batch of paths to request
-            let mut batch: Vec<(Nibbles, H256)> = Vec::new();
+            let mut batch: Vec<(Nibbles, H256, u8)> = Vec::new();
             let mut paths_for_request: Vec<Bytes> = Vec::new();
 
             while batch.len() < 256 && !paths_to_fetch.is_empty() {
-                if let Some((path, hash)) = paths_to_fetch.pop_front() {
+                if let Some((path, hash, retry_count)) = paths_to_fetch.pop_front() {
                     // Snap protocol expects compact (HP) encoded paths for partial paths (<32 bytes)
                     // and plain binary for full paths (32 bytes).
                     // Compact encoding packs nibbles and adds a prefix byte for odd/even length.
@@ -1416,7 +1457,7 @@ pub async fn heal_state_trie_snap(
                     // Example: nibbles [1, 2, 3] → [0x11, 0x23] (odd, extension)
                     let encoded = Bytes::from(path.encode_compact());
                     paths_for_request.push(encoded);
-                    batch.push((path, hash));
+                    batch.push((path, hash, retry_count));
                 }
             }
 
@@ -1453,7 +1494,7 @@ pub async fn heal_state_trie_snap(
             if batch.len() <= 3 || (accounts_healed == 0 && nodes_processed <= 1) {
                 info!("[SNAP SYNC] Requesting {} paths under root {:?}",
                     batch.len(), expected_state_root);
-                for (p, h) in batch.iter().take(5) {
+                for (p, h, _) in batch.iter().take(5) {
                     info!("[SNAP SYNC]   path={:?} hash={:?}", p, h);
                 }
                 info!("[SNAP SYNC] Encoded paths (first 5): {:?}",
@@ -1483,8 +1524,8 @@ pub async fn heal_state_trie_snap(
         // Log progress
         if last_progress_log.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             info!(
-                "[SNAP SYNC] State trie healing progress: {} accounts found, {} nodes processed, {} paths pending, {} inline pending",
-                accounts_healed, nodes_processed, paths_to_fetch.len(), nodes_to_process.len()
+                "[SNAP SYNC] State trie healing progress: {} accounts found, {} nodes processed, {} paths pending, {} dropped, {} consecutive empty",
+                accounts_healed, nodes_processed, paths_to_fetch.len(), paths_dropped, consecutive_empty_responses
             );
             last_progress_log = tokio::time::Instant::now();
         }
@@ -1496,8 +1537,8 @@ pub async fn heal_state_trie_snap(
     }
 
     info!(
-        "[SNAP SYNC] State trie healing complete: {} accounts found/inserted, {} nodes processed",
-        accounts_healed, nodes_processed
+        "[SNAP SYNC] State trie healing complete: {} accounts found/inserted, {} nodes processed, {} paths dropped",
+        accounts_healed, nodes_processed, paths_dropped
     );
 
     // Log warning if we found accounts during healing (means initial download was incomplete)
@@ -1505,6 +1546,14 @@ pub async fn heal_state_trie_snap(
         warn!(
             "[SNAP SYNC] DEBUG: State trie healing inserted {} accounts that were missing from initial download!",
             accounts_healed
+        );
+    }
+
+    // Log warning if many paths were dropped (state root may have been unavailable)
+    if paths_dropped > 0 {
+        warn!(
+            "[SNAP SYNC] Dropped {} paths during state healing (state may be partially unavailable on peers)",
+            paths_dropped
         );
     }
 
