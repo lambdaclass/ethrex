@@ -211,6 +211,7 @@ impl Memory {
             self.store(data, offset, copy_size)?;
         }
 
+        #[allow(clippy::arithmetic_side_effects)]
         if copy_size < total_size {
             let zero_offset = offset.checked_add(copy_size).ok_or(OutOfBounds)?;
             let zero_size = total_size - copy_size;
