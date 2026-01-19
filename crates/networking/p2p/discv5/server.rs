@@ -122,8 +122,8 @@ pub struct DiscoveryServer {
     /// Tracks last WHOAREYOU send time per source IP to prevent amplification attacks.
     whoareyou_rate_limit: FxHashMap<IpAddr, Instant>,
     /// Collects recipient_addr IPs from PONGs for external IP detection via majority voting.
-    /// Key: IP address, Value: list of timestamps when this IP was reported.
-    ip_votes: FxHashMap<IpAddr, Vec<Instant>>,
+    /// Key: reported IP, Value: map of voter node_id -> timestamp (each peer votes once).
+    ip_votes: FxHashMap<IpAddr, FxHashMap<H256, Instant>>,
 }
 
 impl DiscoveryServer {
@@ -488,7 +488,7 @@ impl DiscoveryServer {
         }
 
         // Collect recipient_addr for external IP detection
-        self.record_ip_vote(pong_message.recipient_addr.ip());
+        self.record_ip_vote(pong_message.recipient_addr.ip(), sender_id);
 
         Ok(())
     }
@@ -740,10 +740,10 @@ impl DiscoveryServer {
         let removed_rate_limits = before_rate_limits - self.whoareyou_rate_limit.len();
 
         // Clean stale IP votes
-        for timestamps in self.ip_votes.values_mut() {
-            timestamps.retain(|t| now.duration_since(*t) < IP_VOTE_WINDOW);
+        for voters in self.ip_votes.values_mut() {
+            voters.retain(|_, timestamp| now.duration_since(*timestamp) < IP_VOTE_WINDOW);
         }
-        self.ip_votes.retain(|_, timestamps| !timestamps.is_empty());
+        self.ip_votes.retain(|_, voters| !voters.is_empty());
 
         let total_removed = removed_messages + removed_challenges + removed_rate_limits;
         if total_removed > 0 {
@@ -755,16 +755,26 @@ impl DiscoveryServer {
     }
 
     /// Records an IP vote from a PONG recipient_addr and checks for majority.
-    fn record_ip_vote(&mut self, reported_ip: IpAddr) {
+    /// Each peer can only vote once per IP (prevents single-node manipulation).
+    /// Private IPs are ignored (we only care about external IP detection).
+    fn record_ip_vote(&mut self, reported_ip: IpAddr, voter_id: H256) {
+        // Ignore private IPs - we only care about external IP detection
+        if Self::is_private_ip(reported_ip) {
+            return;
+        }
+
         let now = Instant::now();
 
-        // Add vote for this IP
-        self.ip_votes.entry(reported_ip).or_default().push(now);
+        // Add/update vote for this IP from this peer
+        self.ip_votes
+            .entry(reported_ip)
+            .or_default()
+            .insert(voter_id, now);
 
         // Check if this IP has reached majority threshold
-        if let Some(timestamps) = self.ip_votes.get(&reported_ip) {
-            let recent_votes = timestamps
-                .iter()
+        if let Some(voters) = self.ip_votes.get(&reported_ip) {
+            let recent_votes = voters
+                .values()
                 .filter(|t| now.duration_since(**t) < IP_VOTE_WINDOW)
                 .count();
 
@@ -780,6 +790,14 @@ impl DiscoveryServer {
                     self.update_local_ip(reported_ip);
                 }
             }
+        }
+    }
+
+    /// Returns true if the IP is private/local (not useful for external connectivity).
+    fn is_private_ip(ip: IpAddr) -> bool {
+        match ip {
+            IpAddr::V4(v4) => v4.is_private() || v4.is_loopback() || v4.is_link_local(),
+            IpAddr::V6(v6) => v6.is_loopback(),
         }
     }
 
@@ -958,6 +976,7 @@ mod tests {
     use ethrex_common::H256;
     use ethrex_storage::{EngineType, Store};
     use rand::{SeedableRng, rngs::StdRng};
+    use rustc_hash::FxHashMap;
     use secp256k1::SecretKey;
     use std::{net::{IpAddr, SocketAddr}, sync::Arc, time::Instant};
     use tokio::net::UdpSocket;
@@ -1173,23 +1192,66 @@ mod tests {
         };
 
         let new_ip: IpAddr = "203.0.113.50".parse().unwrap();
+        let voter1 = H256::from_low_u64_be(1);
+        let voter2 = H256::from_low_u64_be(2);
+        let voter3 = H256::from_low_u64_be(3);
 
         // Vote 1 - should not update yet
-        server.record_ip_vote(new_ip);
+        server.record_ip_vote(new_ip, voter1);
         assert_eq!(server.local_node.ip, original_ip);
         assert_eq!(server.ip_votes.get(&new_ip).map(|v| v.len()), Some(1));
 
-        // Vote 2 - should not update yet
-        server.record_ip_vote(new_ip);
+        // Vote 2 from different peer - should not update yet
+        server.record_ip_vote(new_ip, voter2);
         assert_eq!(server.local_node.ip, original_ip);
         assert_eq!(server.ip_votes.get(&new_ip).map(|v| v.len()), Some(2));
 
-        // Vote 3 - should trigger update (threshold reached)
-        server.record_ip_vote(new_ip);
+        // Vote 3 from different peer - should trigger update (threshold reached)
+        server.record_ip_vote(new_ip, voter3);
         assert_eq!(server.local_node.ip, new_ip);
         assert_eq!(server.local_node_record.seq, original_seq + 1);
         // Votes should be cleared after update
         assert!(server.ip_votes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_ip_voting_same_peer_votes_once() {
+        let local_node = Node::from_enode_url(
+            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+        ).expect("Bad enode url");
+        let original_ip = local_node.ip;
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+
+        let mut server = DiscoveryServer {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
+            peer_table: PeerTable::spawn(
+                10,
+                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+            ),
+            initial_lookup_interval: 1000.0,
+            counter: 0,
+            pending_by_nonce: Default::default(),
+            pending_challenges: Default::default(),
+            whoareyou_rate_limit: Default::default(),
+            ip_votes: Default::default(),
+        };
+
+        let new_ip: IpAddr = "203.0.113.50".parse().unwrap();
+        let same_voter = H256::from_low_u64_be(1);
+
+        // Same peer voting 3 times should only count as 1 vote
+        server.record_ip_vote(new_ip, same_voter);
+        server.record_ip_vote(new_ip, same_voter);
+        server.record_ip_vote(new_ip, same_voter);
+
+        // Should still only have 1 vote (same peer)
+        assert_eq!(server.ip_votes.get(&new_ip).map(|v| v.len()), Some(1));
+        // IP should not change
+        assert_eq!(server.local_node.ip, original_ip);
     }
 
     #[tokio::test]
@@ -1219,10 +1281,14 @@ mod tests {
             ip_votes: Default::default(),
         };
 
-        // Vote 3 times for the same IP we already have
-        server.record_ip_vote(original_ip);
-        server.record_ip_vote(original_ip);
-        server.record_ip_vote(original_ip);
+        let voter1 = H256::from_low_u64_be(1);
+        let voter2 = H256::from_low_u64_be(2);
+        let voter3 = H256::from_low_u64_be(3);
+
+        // Vote 3 times for the same IP we already have (from different peers)
+        server.record_ip_vote(original_ip, voter1);
+        server.record_ip_vote(original_ip, voter2);
+        server.record_ip_vote(original_ip, voter3);
 
         // IP and seq should remain unchanged
         assert_eq!(server.local_node.ip, original_ip);
@@ -1259,12 +1325,17 @@ mod tests {
 
         let ip1: IpAddr = "203.0.113.50".parse().unwrap();
         let ip2: IpAddr = "203.0.113.51".parse().unwrap();
+        let voter1 = H256::from_low_u64_be(1);
+        let voter2 = H256::from_low_u64_be(2);
+        let voter3 = H256::from_low_u64_be(3);
+        let voter4 = H256::from_low_u64_be(4);
+        let voter5 = H256::from_low_u64_be(5);
 
         // Vote for different IPs - neither should reach threshold
-        server.record_ip_vote(ip1);
-        server.record_ip_vote(ip2);
-        server.record_ip_vote(ip1);
-        server.record_ip_vote(ip2);
+        server.record_ip_vote(ip1, voter1);
+        server.record_ip_vote(ip2, voter2);
+        server.record_ip_vote(ip1, voter3);
+        server.record_ip_vote(ip2, voter4);
 
         // IP should not change yet
         assert_eq!(server.local_node.ip, original_ip);
@@ -1272,7 +1343,7 @@ mod tests {
         assert_eq!(server.ip_votes.get(&ip2).map(|v| v.len()), Some(2));
 
         // Third vote for ip1 should trigger update
-        server.record_ip_vote(ip1);
+        server.record_ip_vote(ip1, voter5);
         assert_eq!(server.local_node.ip, ip1);
         // Votes cleared after update
         assert!(server.ip_votes.is_empty());
@@ -1304,25 +1375,80 @@ mod tests {
         };
 
         let ip: IpAddr = "203.0.113.50".parse().unwrap();
+        let voter1 = H256::from_low_u64_be(1);
 
         // Manually insert an old vote (simulating a stale entry)
         // We use Instant::now() since we can't easily create old Instants,
         // but we can verify the cleanup logic works on the structure
-        server.ip_votes.insert(ip, vec![Instant::now()]);
+        let mut voters = FxHashMap::default();
+        voters.insert(voter1, Instant::now());
+        server.ip_votes.insert(ip, voters);
         assert_eq!(server.ip_votes.len(), 1);
 
         // Cleanup should retain recent votes
         server.cleanup_stale_entries();
         assert_eq!(server.ip_votes.len(), 1);
 
-        // Insert an empty vec and verify cleanup removes it
+        // Insert an empty map and verify cleanup removes it
         let ip2: IpAddr = "203.0.113.51".parse().unwrap();
-        server.ip_votes.insert(ip2, vec![]);
+        server.ip_votes.insert(ip2, FxHashMap::default());
         assert_eq!(server.ip_votes.len(), 2);
 
         server.cleanup_stale_entries();
-        // Empty vec should be removed
+        // Empty map should be removed
         assert_eq!(server.ip_votes.len(), 1);
         assert!(!server.ip_votes.contains_key(&ip2));
+    }
+
+    #[tokio::test]
+    async fn test_ip_voting_ignores_private_ips() {
+        let local_node = Node::from_enode_url(
+            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+        ).expect("Bad enode url");
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+
+        let mut server = DiscoveryServer {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
+            peer_table: PeerTable::spawn(
+                10,
+                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+            ),
+            initial_lookup_interval: 1000.0,
+            counter: 0,
+            pending_by_nonce: Default::default(),
+            pending_challenges: Default::default(),
+            whoareyou_rate_limit: Default::default(),
+            ip_votes: Default::default(),
+        };
+
+        let voter1 = H256::from_low_u64_be(1);
+        let voter2 = H256::from_low_u64_be(2);
+        let voter3 = H256::from_low_u64_be(3);
+
+        // Private IPs should be ignored
+        let private_ip: IpAddr = "192.168.1.100".parse().unwrap();
+        server.record_ip_vote(private_ip, voter1);
+        server.record_ip_vote(private_ip, voter2);
+        server.record_ip_vote(private_ip, voter3);
+        assert!(server.ip_votes.is_empty());
+
+        // Loopback should be ignored
+        let loopback: IpAddr = "127.0.0.1".parse().unwrap();
+        server.record_ip_vote(loopback, voter1);
+        assert!(server.ip_votes.is_empty());
+
+        // Link-local should be ignored
+        let link_local: IpAddr = "169.254.1.1".parse().unwrap();
+        server.record_ip_vote(link_local, voter1);
+        assert!(server.ip_votes.is_empty());
+
+        // Public IP should be recorded
+        let public_ip: IpAddr = "203.0.113.50".parse().unwrap();
+        server.record_ip_vote(public_ip, voter1);
+        assert_eq!(server.ip_votes.get(&public_ip).map(|v| v.len()), Some(1));
     }
 }
