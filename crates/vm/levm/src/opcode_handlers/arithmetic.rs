@@ -10,6 +10,7 @@ use ethrex_common::{U256, U512};
 
 impl<'a> VM<'a> {
     // ADD operation
+    #[inline]
     pub fn op_add(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::ADD)?;
@@ -189,10 +190,10 @@ impl<'a> VM<'a> {
 
         #[cfg(feature = "zisk")]
         let product_mod = {
-            use ziskos::zisklib::mulmod256_ptr;
+            use ziskos::zisklib::mulmod256_c;
             let mut product_mod = U256::zero();
             unsafe {
-                mulmod256_ptr(
+                mulmod256_c(
                     multiplicand.0.as_ptr(),
                     multiplier.0.as_ptr(),
                     modulus.0.as_ptr(),

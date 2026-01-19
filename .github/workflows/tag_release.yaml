@@ -348,9 +348,12 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
+          dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
           push: ${{ github.event_name != 'workflow_dispatch'}}
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-${{ matrix.arch }}
           platforms: linux/${{ matrix.arch }}
+          variant: l1
 
       - name: Build L2 Docker image
         id: build_l2
@@ -359,10 +362,13 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
+          dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
           push: ${{ github.event_name != 'workflow_dispatch'}}
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-l2-${{ matrix.arch }}
           build_args: BUILD_FLAGS=--features l2,l2-sql
           platforms: linux/${{ matrix.arch }}
+          variant: l2
 
   publish-docker:
     name: "Create and push multi-arch Docker manifests"

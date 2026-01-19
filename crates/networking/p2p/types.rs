@@ -184,6 +184,10 @@ impl Node {
     pub fn from_enr_url(enr: &str) -> Result<Self, NodeError> {
         let base64_decoded = ethrex_common::base64::decode(&enr.as_bytes()[4..]);
         let record = NodeRecord::decode(&base64_decoded).map_err(NodeError::from)?;
+        Node::from_enr(&record)
+    }
+
+    pub fn from_enr(record: &NodeRecord) -> Result<Self, NodeError> {
         let pairs = record.decode_pairs();
         let public_key = pairs.secp256k1.ok_or(NodeError::MissingField(
             "public key not found in record".into(),
@@ -305,7 +309,7 @@ impl NodeRecord {
                     let Ok(bytes) = Bytes::decode(&value) else {
                         continue;
                     };
-                    if bytes.len() < 33 {
+                    if bytes.len() != 33 {
                         continue;
                     }
                     decoded_pairs.secp256k1 = Some(H264::from_slice(&bytes))
@@ -445,10 +449,10 @@ impl From<NodeRecordPairs> for Vec<(Bytes, Bytes)> {
 
 impl RLPDecode for NodeRecord {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        if rlp.len() > MAX_NODE_RECORD_ENCODED_SIZE {
+        let decoder = Decoder::new(rlp)?;
+        if decoder.get_payload_len() > MAX_NODE_RECORD_ENCODED_SIZE {
             return Err(RLPDecodeError::InvalidLength);
         }
-        let decoder = Decoder::new(rlp)?;
         let (signature, decoder) = decoder.decode_field("signature")?;
         let (seq, decoder) = decoder.decode_field("seq")?;
         let (pairs, decoder) = decode_node_record_optional_fields(vec![], decoder)?;

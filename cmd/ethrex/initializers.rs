@@ -1,8 +1,8 @@
 use crate::{
     cli::{LogColor, Options},
     utils::{
-        display_chain_initialization, get_client_version, init_datadir, parse_socket_addr,
-        read_jwtsecret_file, read_node_config_file,
+        display_chain_initialization, get_client_version, init_datadir, is_memory_datadir,
+        parse_socket_addr, read_jwtsecret_file, read_node_config_file,
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
@@ -14,9 +14,9 @@ use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_process
 use ethrex_metrics::rpc::initialize_rpc_metrics;
 use ethrex_p2p::rlpx::initiator::RLPxInitiator;
 use ethrex_p2p::{
-    discv4::peer_table::PeerTable,
     network::P2PContext,
     peer_handler::PeerHandler,
+    peer_table::PeerTable,
     sync::SyncMode,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
@@ -37,7 +37,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{Level, debug, error, info, warn};
+#[cfg(not(feature = "l2"))]
+use tracing::error;
+use tracing::{Level, debug, info, warn};
 use tracing_subscriber::{
     EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt, reload,
 };
@@ -78,7 +80,17 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
     filter_handle
 }
 
-pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
+pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
+    // Initialize node version metrics
+    ethrex_metrics::node::MetricsNode::init(
+        env!("CARGO_PKG_VERSION"),
+        env!("VERGEN_GIT_SHA"),
+        env!("VERGEN_GIT_BRANCH"),
+        env!("VERGEN_RUSTC_SEMVER"),
+        env!("VERGEN_RUSTC_HOST_TRIPLE"),
+        &network.to_string(),
+    );
+
     tracing::info!(
         "Starting metrics server on {}:{}",
         opts.metrics_addr,
@@ -111,7 +123,7 @@ pub async fn load_store(datadir: &Path) -> Result<Store, StoreError> {
 
 /// Opens a pre-existing Store or creates a new one
 pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
-    if datadir.ends_with("memory") {
+    if is_memory_datadir(datadir) {
         Store::new(datadir, EngineType::InMemory)
     } else {
         #[cfg(feature = "rocksdb")]
@@ -139,7 +151,9 @@ pub async fn init_rpc_api(
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) {
-    init_datadir(&opts.datadir);
+    if !is_memory_datadir(&opts.datadir) {
+        init_datadir(&opts.datadir);
+    }
 
     let syncmode = if opts.dev {
         &SyncMode::Full
@@ -194,6 +208,7 @@ pub async fn init_network(
     blockchain: Arc<Blockchain>,
     context: P2PContext,
 ) {
+    #[cfg(not(feature = "l2"))]
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
         panic!(
@@ -274,6 +289,10 @@ pub fn get_bootnodes(opts: &Options, network: &Network, datadir: &Path) -> Vec<N
 }
 
 pub fn get_signer(datadir: &Path) -> SecretKey {
+    if is_memory_datadir(datadir) {
+        return SecretKey::new(&mut OsRng);
+    }
+
     // Get the signer from the default directory, create one if the key file is not present.
     let key_path = datadir.join("node.key");
     match fs::read(key_path.clone()) {
@@ -378,12 +397,16 @@ pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
-    let datadir: &PathBuf = if opts.dev && cfg!(feature = "dev") {
-        &opts.datadir.join("dev")
-    } else {
-        &opts.datadir
-    };
-    init_datadir(datadir);
+    let datadir: &PathBuf =
+        if opts.dev && cfg!(feature = "dev") && !is_memory_datadir(&opts.datadir) {
+            &opts.datadir.join("dev")
+        } else {
+            &opts.datadir
+        };
+
+    if !is_memory_datadir(datadir) {
+        init_datadir(datadir);
+    }
 
     let network = get_network(&opts);
 
@@ -418,6 +441,8 @@ pub async fn init_l1(
             max_mempool_size: opts.mempool_max_size,
             perf_logs_enabled: true,
             r#type: BlockchainType::L1,
+            max_blobs_per_block: opts.max_blobs_per_block,
+            precompute_witnesses: opts.precompute_witnesses,
         },
     );
 
@@ -469,7 +494,7 @@ pub async fn init_l1(
     .await;
 
     if opts.metrics_enabled {
-        init_metrics(&opts, tracker.clone());
+        init_metrics(&opts, &network, tracker.clone());
     }
 
     if opts.dev {

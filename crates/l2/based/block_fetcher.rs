@@ -17,12 +17,9 @@ use spawned_concurrency::{
 };
 use tracing::{debug, error, info};
 
+use crate::sequencer::sequencer_state::{SequencerState, SequencerStatus};
 use crate::utils::state_reconstruct::get_batch;
-use crate::{
-    SequencerConfig,
-    based::sequencer_state::{SequencerState, SequencerStatus},
-    sequencer::utils::node_is_up_to_date,
-};
+use crate::{SequencerConfig, sequencer::utils::node_is_up_to_date};
 
 #[derive(Debug, thiserror::Error)]
 pub enum BlockFetcherError {

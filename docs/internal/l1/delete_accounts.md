@@ -18,7 +18,7 @@ Snap-sync is broadly divided into two stages:
 - Downloading the leaves of the state (account states) and storage tries (storage slots)
 - Healing (reconciling the state). 
 
-Healing is needed because the leaves can be downloaded from disparate blocks, and to "fix" only the nodes of the trie that changed between nodes. [In depth explanation](https://www.notion.so/lambdaclass/Healing-Algorithm-Explanation-and-Documentation-269b9462471380e4a275edd77c8b5dc5?source=copy_link).
+Healing is needed because the leaves can be downloaded from disparate blocks, and to "fix" only the nodes of the trie that changed between nodes. [In depth explanation](./healing.md).
 
 We were working under the assumption that accounts were never deleted, so we adopted some specific optimizations. During the state healing stage every account that was "healed" was added into a list of accounts that needed to be checked for storage healing. When healing the storage of those accounts the algorithm requested their account states and expected them to be there to see if they had any storage that needed healing. This lead to the storage healing threads panicking when they failed to find the account that was deleted.
 

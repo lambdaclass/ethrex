@@ -581,7 +581,7 @@ impl From<Account> for GenesisAccount {
     fn from(val: Account) -> Self {
         GenesisAccount {
             code: val.code,
-            storage: val.storage,
+            storage: val.storage.into_iter().collect(),
             balance: val.balance,
             nonce: val.nonce.as_u64(),
         }

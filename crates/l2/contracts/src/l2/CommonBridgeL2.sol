@@ -42,7 +42,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         );
     }
 
-    function mintETH(address to) external payable {
+    function mintETH(address to) external payable onlySelf {
         (bool success, ) = to.call{value: msg.value}("");
         if (!success) {
             this.withdraw{value: msg.value}(to);
@@ -101,6 +101,36 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
             keccak256(abi.encodePacked(tokenL1, tokenL2, destination, amount))
         );
     }
+
+    /// @inheritdoc ICommonBridgeL2
+    function transferERC20(
+        uint256 chainId,
+        address to,
+        uint256 amount,
+        address tokenL2,
+        address destTokenL2,
+        uint256 destGasLimit
+    ) external override {
+        IERC20L2 token = IERC20L2(tokenL2);
+        token.crosschainBurn(msg.sender, amount);
+        address tokenL1 = token.l1Address();
+        bytes memory data = abi.encodeCall(
+            ICommonBridgeL2.crosschainMintERC20,
+            (tokenL1, tokenL2, destTokenL2, to, amount)
+        );
+        this.sendToL2(chainId, address(this), destGasLimit, data);
+    }
+
+    function crosschainMintERC20(
+        address tokenL1,
+        address tokenL2,
+        address destTokenL2,
+        address to,
+        uint256 amount
+    ) external onlySelf {
+        this.tryMintERC20(tokenL1, destTokenL2, to, amount);
+    }
+
     /// @inheritdoc ICommonBridgeL2
     function sendToL2(
         uint256 chainId,
@@ -117,7 +147,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
                 destGasLimit,
                 transactionIds[chainId],
                 msg.value,
-                abi.encodeCall(ICommonBridgeL2.mintETH,(msg.sender))
+                abi.encodeCall(ICommonBridgeL2.mintETH, (msg.sender))
             );
             transactionIds[chainId] += 1;
         }

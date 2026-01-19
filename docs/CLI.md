@@ -54,7 +54,7 @@ Node options:
 
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
-          
+
           [env: ETHREX_LOG_LEVEL=]
           [default: INFO]
 
@@ -67,6 +67,9 @@ Node options:
           Maximum size of the mempool in number of transactions
 
           [default: 10000]
+
+      --precompute-witnesses
+          Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
 
 P2P options:
       --bootnodes <BOOTNODE_LIST>...
@@ -99,14 +102,14 @@ P2P options:
           [default: 1000]
 
       --p2p.target-peers <MAX_PEERS>
-           Max amount of connected peers.
- 
-           [default: 100]
- 
+          Max amount of connected peers.
+
+          [default: 100]
+
       --p2p.lookup-interval <INITIAL_LOOKUP_INTERVAL>
           Initial Lookup Time Interval (ms) to trigger each Discovery lookup message and RLPx connection attempt.
-          
-         [default: 100]
+
+          [default: 100]
 
 RPC options:
       --http.addr <ADDRESS>
@@ -157,12 +160,15 @@ Block building options:
       --builder.extra-data <EXTRA_DATA>
           Block extra data message.
 
-          [default: "ethrex 7.0.0"]
+          [default: "ethrex 9.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
 
           [default: 60000000]
+
+      --builder.max-blobs <MAX_BLOBS>
+          EIP-7872: Maximum blobs per block for local building. Minimum of 1. Defaults to protocol max.
 ```
 
 <!-- END_CLI_HELP -->
@@ -231,7 +237,7 @@ Node options:
 
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
-          
+
           [env: ETHREX_LOG_LEVEL=]
           [default: INFO]
 
@@ -329,7 +335,7 @@ Block building options:
       --builder.extra-data <EXTRA_DATA>
           Block extra data message.
 
-          [default: "ethrex 7.0.0"]
+          [default: "ethrex 9.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.

@@ -3,9 +3,12 @@ name: L2 (SP1 Backend)
 on:
   push:
     branches: ["main"]
+    paths-ignore:
+      - "docs/**"
   pull_request:
     paths:
       - ".github/workflows/main_prover.yaml"
+  workflow_dispatch:
 
 permissions:
   contents: read

@@ -241,6 +241,22 @@ impl RpcHandler for ExecutionWitnessRequest {
             blocks.push(block);
         }
 
+        if blocks.len() == 1 {
+            // Check if we have a cached witness for this block
+            let block = &blocks[0];
+            if let Some(witness) = context
+                .storage
+                .get_witness_by_number_and_hash(block.header.number, block.hash())?
+            {
+                let rpc_execution_witness =
+                    RpcExecutionWitness::try_from(witness).map_err(|e| {
+                        RpcErr::Internal(format!("Failed to create rpc execution witness {e}"))
+                    })?;
+                return serde_json::to_value(rpc_execution_witness)
+                    .map_err(|error| RpcErr::Internal(error.to_string()));
+            }
+        }
+
         let execution_witness = context
             .blockchain
             .generate_witness_for_blocks(&blocks)

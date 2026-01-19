@@ -9,6 +9,7 @@ use crate::{
 
 impl<'a> VM<'a> {
     // DUP operation
+    #[inline]
     pub fn op_dup<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
         // Increase the consumed gas
         self.current_call_frame

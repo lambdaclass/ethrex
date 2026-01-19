@@ -2,6 +2,32 @@
 
 ## Perf
 
+### 2026-01-15
+
+- Reduce state iterated when calculating partial state transitions [#5864](https://github.com/lambdaclass/ethrex/pull/5864)
+
+### 2026-01-13
+
+- Inline common opcodes [#5761](https://github.com/lambdaclass/ethrex/pull/5761)
+- Improve ecrecover precompile by removing heap allocs and conversions [#5709](https://github.com/lambdaclass/ethrex/pull/5709)
+
+### 2026-01-12
+
+- Refactor `ecpairing` using ark [#5792](https://github.com/lambdaclass/ethrex/pull/5792)
+
+### 2025-12-23
+
+- Remove needless allocs on store api [#5709](https://github.com/lambdaclass/ethrex/pull/5709)
+
+### 2025-12-22
+
+- Avoid double parsing and extra clones in doc signature formatting [#9285](https://github.com/starkware-libs/cairo/pull/9285)
+
+### 2025-12-19
+
+- Make HashSet use fxhash in discv4 peer_table [#5688](https://github.com/lambdaclass/ethrex/pull/5688)
+- Validate tx blobs after checking if it's already in the mempool [#5686](https://github.com/lambdaclass/ethrex/pull/5686)
+
 ### 2025-12-02
 
 - Avoid unnecessary hashing of init codes and already hashed codes [#5397](https://github.com/lambdaclass/ethrex/pull/5397)
