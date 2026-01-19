@@ -2532,6 +2532,23 @@ impl Store {
         let last_computed_flatkeyvalue = self.last_written()?;
         Ok(&last_computed_flatkeyvalue[0..64] > account_nibbles.as_ref())
     }
+
+    /// Clears the in-memory trie layer cache.
+    ///
+    /// # Warning
+    /// This is a test helper that simulates state pruning. **Do not use in production.**
+    ///
+    /// In production, state older than 128 blocks is pruned from the diff layers and
+    /// may not be available on disk if using InMemory backend (which has a 10000 block
+    /// threshold for disk commits).
+    ///
+    /// Use this to test scenarios where a reorg's common ancestor state is unavailable.
+    pub fn clear_trie_cache_for_testing(&self) {
+        use crate::layering::TrieLayerCache;
+        if let Ok(mut cache) = self.trie_cache.lock() {
+            *cache = Arc::new(TrieLayerCache::default());
+        }
+    }
 }
 
 type TrieNodesUpdate = Vec<(Nibbles, Vec<u8>)>;
