@@ -99,11 +99,13 @@ impl InMemoryTrieDB {
 
 impl TrieDB for InMemoryTrieDB {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+        // Use into_vec() for unpacked format to match put_batch storage format
+        let prefixed_key = self.apply_prefix(key).into_vec();
         Ok(self
             .inner
             .lock()
             .map_err(|_| TrieError::LockError)?
-            .get(self.apply_prefix(key).as_ref())
+            .get(&prefixed_key)
             .cloned())
     }
 

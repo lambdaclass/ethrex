@@ -1,6 +1,6 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
 		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
-		load-test-fibonacci load-test-io run-hive-eels-blobs
+		load-test-fibonacci load-test-io run-hive-eels-blobs run-hive-ci
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -125,6 +125,32 @@ run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
 
 run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
 	cd hive && ./hive --sim $(SIMULATION) --client-file $(HIVE_CLIENT_FILE)  --client ethrex --sim.loglevel 4 --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output $(SIM_BUILDARG_FLAG)
+
+# Runs the same Hive test suite as CI (pr-main_l1.yaml workflow).
+# This includes: rpc-compat, devp2p, and engine tests (auth, cancun, paris, withdrawals).
+run-hive-ci: build-image setup-hive ## 🧪 Run the same Hive tests as CI
+	@echo "=== Running Hive CI test suite ==="
+	@echo ""
+	@echo "=== [1/6] Rpc Compat tests ==="
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/rpc-compat --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg "branch=d08382ae5c808680e976fce4b73f4ba91647199b"
+	@echo ""
+	@echo "=== [2/6] Devp2p tests ==="
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim devp2p --sim.limit "discv4|eth|snap" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL)
+	@echo ""
+	@echo "=== [3/6] Engine Auth and EC tests ==="
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/engine --sim.limit "engine-(auth|exchange-capabilities)/" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL)
+	@echo ""
+	@echo "=== [4/6] Cancun Engine tests ==="
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/engine --sim.limit "engine-cancun" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL)
+	@echo ""
+	@echo "=== [5/6] Paris Engine tests ==="
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/engine --sim.limit "engine-api" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL)
+	@echo ""
+	@echo "=== [6/6] Engine withdrawal tests ==="
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/engine --sim.limit "engine-withdrawals" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL)
+	@echo ""
+	@echo "=== Hive CI test suite complete ==="
+	$(MAKE) view-hive
 
 # EELS Hive
 TEST_PATTERN_EELS ?= .*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*

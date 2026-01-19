@@ -1055,10 +1055,12 @@ impl Store {
             for (address_hash, nodes) in storage_trie_nodes {
                 for (node_path, node_data) in nodes {
                     let key = apply_prefix(Some(address_hash), node_path);
+                    // Use into_vec() for unpacked format (consistent with database storage)
+                    let key_bytes = key.into_vec();
                     if node_data.is_empty() {
-                        txn.delete(STORAGE_TRIE_NODES, key.as_ref())?;
+                        txn.delete(STORAGE_TRIE_NODES, &key_bytes)?;
                     } else {
-                        txn.put(STORAGE_TRIE_NODES, key.as_ref(), &node_data)?;
+                        txn.put(STORAGE_TRIE_NODES, &key_bytes, &node_data)?;
                     }
                 }
             }
@@ -2528,9 +2530,12 @@ impl Store {
     }
 
     fn flatkeyvalue_computed(&self, account: H256) -> Result<bool, StoreError> {
-        let account_nibbles = Nibbles::from_bytes(account.as_bytes());
+        // Use from_raw with is_leaf=false to get just the 64 nibbles without leaf flag
+        let account_nibbles = Nibbles::from_raw(account.as_bytes(), false);
         let last_computed_flatkeyvalue = self.last_written()?;
-        Ok(&last_computed_flatkeyvalue[0..64] > account_nibbles.as_ref())
+        // Use unpacked format (to_hex) for comparison since last_computed_flatkeyvalue is stored unpacked
+        let account_hex = account_nibbles.to_hex();
+        Ok(&last_computed_flatkeyvalue[0..64] > account_hex.as_slice())
     }
 }
 
@@ -2710,15 +2715,17 @@ fn flatkeyvalue_generator(
             };
             let account_state = AccountState::decode(&node.value)?;
             let account_hash = H256::from_slice(&path.to_bytes());
-            write_txn.put(MISC_VALUES, "last_written".as_bytes(), path.as_ref())?;
-            write_txn.put(ACCOUNT_FLATKEYVALUE, path.as_ref(), &node.value)?;
+            // Use into_vec() for unpacked format (consistent with database storage)
+            let path_bytes = path.clone().into_vec();
+            write_txn.put(MISC_VALUES, "last_written".as_bytes(), &path_bytes)?;
+            write_txn.put(ACCOUNT_FLATKEYVALUE, &path_bytes, &node.value)?;
             ctr += 1;
             if ctr > 10_000 {
                 write_txn.commit()?;
                 write_txn = backend.begin_write()?;
                 *last_computed_fkv
                     .lock()
-                    .map_err(|_| StoreError::LockError)? = path.as_ref().to_vec();
+                    .map_err(|_| StoreError::LockError)? = path_bytes.clone();
                 ctr = 0;
             }
 
@@ -2726,7 +2733,7 @@ fn flatkeyvalue_generator(
                 Box::new(BackendTrieDB::new_for_account_storage(
                     backend.clone(),
                     account_hash,
-                    path.as_ref().to_vec(),
+                    path_bytes,
                 )?),
                 account_state.storage_root,
             )
@@ -2740,15 +2747,17 @@ fn flatkeyvalue_generator(
                     return Ok(());
                 };
                 let key = apply_prefix(Some(account_hash), path);
-                write_txn.put(MISC_VALUES, "last_written".as_bytes(), key.as_ref())?;
-                write_txn.put(STORAGE_FLATKEYVALUE, key.as_ref(), &node.value)?;
+                // Use into_vec() for unpacked format (consistent with database storage)
+                let key_bytes = key.into_vec();
+                write_txn.put(MISC_VALUES, "last_written".as_bytes(), &key_bytes)?;
+                write_txn.put(STORAGE_FLATKEYVALUE, &key_bytes, &node.value)?;
                 ctr += 1;
                 if ctr > 10_000 {
                     write_txn.commit()?;
                     write_txn = backend.begin_write()?;
                     *last_computed_fkv
                         .lock()
-                        .map_err(|_| StoreError::LockError)? = key.into_vec();
+                        .map_err(|_| StoreError::LockError)? = key_bytes;
                     ctr = 0;
                 }
                 fkv_check_for_stop_msg(control_rx)?;
