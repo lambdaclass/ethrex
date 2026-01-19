@@ -47,7 +47,6 @@ pub mod error;
 pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
-mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
@@ -2383,6 +2382,3 @@ fn collapse_root_node(
     };
     Ok(Some(child))
 }
-
-#[cfg(test)]
-mod tests {}
