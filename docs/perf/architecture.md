@@ -9,8 +9,9 @@ This document contains architecture and code notes relevant to the performance i
 1. [LEVM Architecture](#levm-architecture)
 2. [Block Execution Pipeline](#block-execution-pipeline)
 3. [Trie and Storage Layer](#trie-and-storage-layer)
-4. [Key Performance Bottlenecks](#key-performance-bottlenecks)
-5. [Hot Path Summary](#hot-path-summary)
+4. [Trie Library Deep Dive](#trie-library-deep-dive)
+5. [Key Performance Bottlenecks](#key-performance-bottlenecks)
+6. [Hot Path Summary](#hot-path-summary)
 
 ---
 
@@ -556,18 +557,12 @@ Used for batch reads - holds persistent snapshots of all 4 tables, avoiding per-
 
 ```rust
 pub struct Nibbles {
-    data: Vec<u8>,              // Current path
-    already_consumed: Vec<u8>,  // Consumed during traversal
+    data: Vec<u8>,              // Current path (max 65 nibbles for account, 131 for storage)
+    already_consumed: Vec<u8>,  // Consumed during traversal (for path tracking)
 }
 ```
 
-**Performance Issues:**
-- TODO at line 11 suggests replacing with stack-allocated array
-- Vec allocations during path operations:
-  ```rust
-  self.data = self.data[prefix.len()..].to_vec();  // Allocates
-  ret.already_consumed = [&self.already_consumed, &self.data[0..offset]].concat();
-  ```
+See [Trie Library Deep Dive](#trie-library-deep-dive) below for detailed allocation analysis.
 
 ### Lock Contention Analysis
 
@@ -585,40 +580,309 @@ pub struct Nibbles {
 
 ---
 
+## Trie Library Deep Dive
+
+This section provides detailed analysis of the core trie implementation in `crates/common/trie/`, focusing on allocation patterns, repeated computations, data structure issues, and API design problems.
+
+### Nibbles: Allocation Problems
+
+**Location:** `crates/common/trie/nibbles.rs`
+
+The `Nibbles` struct uses two `Vec<u8>` fields, causing allocations on nearly every operation.
+
+**Structure:**
+```rust
+pub struct Nibbles {
+    data: Vec<u8>,              // Current path (max 65 nibbles)
+    already_consumed: Vec<u8>,  // Path tracking during traversal
+}
+```
+
+**Allocation-Heavy Operations:**
+
+| Method | Line | Issue | Frequency |
+|--------|------|-------|-----------|
+| `skip_prefix()` | 106 | `self.data[prefix.len()..].to_vec()` | Every extension/leaf match |
+| `offset()` | 147-151 | Two allocations: slice + concat | Every branch child traversal |
+| `slice()` | 154-156 | `self.data[start..end].to_vec()` | Node restructuring |
+| `next()` | 137 | `self.data.remove(0)` - O(n) shift | Every branch choice |
+| `prepend()` | 170 | `self.data.insert(0, nibble)` - O(n) shift | Node restructuring |
+| `concat()` | 242-246 | `[...].concat()` creates new Vec | Extension prefix handling |
+| `append_new()` | 250-255 | Two clones + vec![nibble] | Commit path building |
+| `current()` | 258-263 | `already_consumed.clone()` | Error reporting, path tracking |
+| `from_raw()` | 73-86 | `flat_map` allocates intermediates | Every key conversion |
+| `encode_compact()` | 180-208 | New Vec per encoding | Every node serialization |
+
+**Recommended Fix:** Replace with stack-allocated array (noted in TODO at line 11):
+```rust
+pub struct Nibbles {
+    data: [u8; 68],    // Max 65 nibbles + 3 padding
+    len: u8,
+    consumed: u8,      // Index into data for cursor position
+}
+```
+
+### NodeRef and Hash Memoization
+
+**Location:** `crates/common/trie/node.rs:39-49`
+
+```rust
+pub enum NodeRef {
+    Node(Arc<Node>, OnceLock<NodeHash>),  // Embedded node + memoized hash
+    Hash(NodeHash),                        // Reference by hash
+}
+```
+
+**Hash Memoization Issues:**
+
+1. **Lost on Clone** (`node.rs:219-223`):
+   ```rust
+   impl From<Arc<Node>> for NodeRef {
+       fn from(value: Arc<Node>) -> Self {
+           Self::Node(value, OnceLock::new())  // Hash not preserved!
+       }
+   }
+   ```
+   Every conversion to `NodeRef` loses the memoized hash.
+
+2. **Cleared on Mutation** (`node.rs:194-198`):
+   ```rust
+   pub(crate) fn clear_hash(&mut self) {
+       if let NodeRef::Node(_, hash) = self {
+           hash.take();  // Must recompute next time
+       }
+   }
+   ```
+   Called after every insert/remove, even if hash unchanged.
+
+3. **PartialEq Allocates** (`node.rs:225-230`):
+   ```rust
+   impl PartialEq for NodeRef {
+       fn eq(&self, other: &Self) -> bool {
+           let mut buf = Vec::new();  // Allocates on EVERY comparison
+           self.compute_hash_no_alloc(&mut buf) == other.compute_hash_no_alloc(&mut buf)
+       }
+   }
+   ```
+
+### RLP Encoding: Repeated Hash Computation
+
+**Location:** `crates/common/trie/rlp.rs`
+
+**BranchNode::encode** computes child hashes twice:
+
+```rust
+impl RLPEncode for BranchNode {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        // First pass: compute payload length
+        let payload_len = self.choices.iter().fold(value_len, |acc, child| {
+            acc + RLPEncode::length(child.compute_hash_ref())  // Compute hash
+        });
+
+        encode_length(payload_len, buf);
+
+        // Second pass: encode children
+        for child in self.choices.iter() {
+            match child.compute_hash_ref() {  // Compute hash AGAIN
+                // ...
+            }
+        }
+    }
+}
+```
+
+The `encode_to_vec()` method (line 35-57) has the same issue but at least pre-allocates the buffer.
+
+**Hash computation in error paths:**
+
+Many error handlers call `compute_hash().finalize()` just for error messages:
+- `branch.rs:62-70` - BranchNode::get
+- `branch.rs:99-107` - BranchNode::insert
+- `extension.rs:42-51` - ExtensionNode::get
+
+This means even successful operations may compute hashes unnecessarily if the compiler doesn't optimize away the error path.
+
+### Node Structure: Memory Layout
+
+**Location:** `crates/common/trie/node.rs`, `node/*.rs`
+
+```rust
+pub enum Node {
+    Branch(Box<BranchNode>),   // Boxed to keep enum small
+    Extension(ExtensionNode),
+    Leaf(LeafNode),
+}
+
+pub struct BranchNode {
+    pub choices: [NodeRef; 16],  // 16 * ~48 bytes = 768 bytes
+    pub value: ValueRLP,         // Vec<u8>
+}
+
+pub struct ExtensionNode {
+    pub prefix: Nibbles,    // Two Vecs
+    pub child: NodeRef,     // ~48 bytes
+}
+
+pub struct LeafNode {
+    pub partial: Nibbles,   // Two Vecs
+    pub value: ValueRLP,    // Vec<u8>
+}
+```
+
+**Memory Issues:**
+
+1. **BranchNode is large** (~800 bytes):
+   - 16 NodeRefs @ 48 bytes each = 768 bytes
+   - Plus value Vec overhead
+   - Must be boxed to keep Node enum reasonable
+
+2. **Each NodeRef contains OnceLock<NodeHash>**:
+   - OnceLock is 40 bytes on 64-bit
+   - Arc<Node> is 8 bytes
+   - Total ~48 bytes per child reference
+
+3. **Nibbles duplication**:
+   - Both `data` and `already_consumed` Vecs
+   - `already_consumed` only used for path tracking during traversal
+
+### Trie Operations: Allocation Patterns
+
+**Insert Path** (`trie.rs:130-150`, node methods):
+
+```
+insert(path, value)
+  └── Nibbles::from_bytes(&path)           // Allocates 2 Vecs
+        └── path.skip_prefix()              // Allocates new Vec
+              └── path.offset()             // Allocates 2 Vecs
+                    └── path.next_choice()  // O(n) remove(0)
+                          └── ... recursive
+```
+
+Each level of trie traversal allocates multiple times.
+
+**Get Path** (`trie.rs:101-127`):
+
+```
+get(pathrlp)
+  └── Nibbles::from_bytes(pathrlp)         // Allocates
+        └── node.get(db, path)
+              └── path.skip_prefix()        // Allocates
+                    └── path.current()      // Allocates (for error handling)
+```
+
+**Commit/Hash Path** (`node.rs:132-161`):
+
+```
+commit(path, acc)
+  └── path.append_new(choice)              // Allocates 2 Vecs per child
+        └── path.concat(&prefix)           // Allocates new Vec
+              └── Vec::new() for encoding  // Allocates buffer
+```
+
+### TrieDB Interface: Clone on Read
+
+**Location:** `crates/common/trie/db.rs`
+
+```rust
+impl TrieDB for InMemoryTrieDB {
+    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+        Ok(self.inner.lock()?.get(key.as_ref()).cloned())  // Always clones
+    }
+}
+```
+
+**Issue:** Every read clones the entire node value, even for cache hits.
+
+**Possible fix:** Return `Arc<Vec<u8>>` or use a borrow-based API.
+
+### Compact Encoding: Allocation on Every Node
+
+**Location:** `nibbles.rs:180-208`, `rlp.rs:61-65`
+
+Every node serialization calls `encode_compact()`:
+```rust
+impl RLPEncode for ExtensionNode {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        let mut encoder = Encoder::new(buf)
+            .encode_bytes(&self.prefix.encode_compact());  // Allocates Vec
+        // ...
+    }
+}
+```
+
+`encode_compact()` allocates a new `Vec<u8>` every time. With thousands of nodes per block, this adds up.
+
+### API Design Issues Summary
+
+| Issue | Location | Recommendation |
+|-------|----------|----------------|
+| Nibbles by-value everywhere | All node methods | Use cursor/iterator pattern |
+| Clone-on-read TrieDB | db.rs:102-108 | Return Arc or borrow |
+| No buffer reuse for encoding | rlp.rs | Accept `&mut Vec<u8>` parameter |
+| OnceLock lost on conversions | node.rs:207-223 | Preserve hash through conversions |
+| Two-pass encoding | rlp.rs:17-32 | Single pass with pre-computed length |
+| Nibbles two-Vec design | nibbles.rs:23-28 | Single array with cursor index |
+| O(n) operations | nibbles.rs:137,170 | Use deque or cursor |
+| Allocate in error paths | Many locations | Lazy error message construction |
+
+### Trie-Specific Optimization Opportunities
+
+| Opportunity | Description | Potential Gain |
+|-------------|-------------|----------------|
+| Stack-allocated Nibbles | Replace Vec with [u8; 68] + cursor | Eliminate ~10 allocs per traversal |
+| Pooled encoding buffers | Thread-local Vec<u8> pool for encode | Reduce allocations in hot path |
+| Hash computation caching | Preserve OnceLock through operations | Avoid redundant keccak calls |
+| Copy-on-write Nibbles | Only allocate on mutation | Reduce allocs for read operations |
+| Cursor-based traversal | Nibbles cursor instead of mutation | Zero allocation for reads |
+| Arc<[u8]> for values | Share encoded nodes | Reduce clone overhead |
+| Lazy error messages | Defer hash computation in errors | Avoid work on success path |
+| Single-pass RLP encoding | Pre-compute child hash lengths | Eliminate duplicate hash calls |
+
+---
+
 ## Key Performance Bottlenecks
 
 ### High Impact
 
 | Issue | Location | Impact |
 |-------|----------|--------|
-| Nibbles Vec allocations | nibbles.rs:106, 149 | Allocation per path operation |
+| Nibbles Vec allocations | nibbles.rs:106, 137, 149 | ~10 allocations per trie traversal |
 | Trie cache lock contention | store.rs:2328-2330 | Every state/storage access |
 | Per-node DB transactions | trie.rs:96-101 | New transaction per get() |
 | Sequential tx execution | payload.rs:515-596 | Cannot parallelize within block |
-| OnceLock reset on clone | node.rs:209, 221 | Lose memoized hashes |
+| OnceLock reset on clone | node.rs:207-223 | Lose memoized hashes on NodeRef conversion |
 | Double HashMap lookup | gen_db.rs:486-505 | current → initial on every SLOAD |
 | CallFrameBackup cloning | call_frame.rs:424 | Clone HashMap on revert |
+| RLP encode computes hash twice | rlp.rs:17-32, 45-51 | Redundant keccak for each branch child |
+| TrieDB clones on read | db.rs:107 | Full Vec clone per cache hit |
 
 ### Medium Impact
 
 | Issue | Location | Impact |
 |-------|----------|--------|
-| Repeated hash computations | rlp.rs, error paths | Extra keccak calls |
+| Repeated hash in error paths | branch.rs:62-70, extension.rs:42 | compute_hash() for error messages |
+| encode_compact allocates | nibbles.rs:180-208 | New Vec per node serialization |
+| Nibbles::next() is O(n) | nibbles.rs:137 | Vec::remove(0) shifts elements |
+| Nibbles::prepend() is O(n) | nibbles.rs:170 | Vec::insert(0) shifts elements |
+| NodeRef::PartialEq allocates | node.rs:225-230 | Vec::new() on every comparison |
 | Block cloning in payload loop | payload.rs:373, 375 | Full block copy per retry |
 | Code not cached during execution | store.rs:163-169 | Extra DB lookups |
 | TransactionQueue Vec::remove(0) | payload.rs:795-819 | O(n) per tx removed |
 | RCU deep copy | store.rs:2600 | Full TrieLayerCache clone per block |
 | Substate parent chain walk | vm.rs:263-269 | O(depth) per is_address_accessed() |
 | Per-slot backup HashMap | call_frame.rs:82 | Allocation on first write |
+| compact_to_hex multiple allocs | nibbles.rs:301-313 | .to_vec() called multiple times |
 
 ### Low Impact
 
 | Issue | Location | Impact |
 |-------|----------|--------|
-| Pending removal Vec allocs | trie.rs:243 | Per deleted key |
+| Pending removal FxHashSet | trie.rs:57 | Nibbles allocation per removal |
+| Dirty tracking FxHashSet | trie.rs:58 | Nibbles allocation per insert |
 | RefCell borrow checking | memory.rs | Runtime overhead (minimal) |
 | Gas i64 conversion | call_frame.rs:379 | Already optimized |
 | Hook Vec cloning | vm.rs:671-683 | Rc pointer clone (cheap) |
+| BranchNode size | node/branch.rs:25-28 | 768+ bytes per branch node |
 
 ### LEVM-Specific Optimization Opportunities
 
