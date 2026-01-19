@@ -304,7 +304,7 @@ where
                     .finalize()
             }
             Node::Extension(extension_node) => {
-                extension_node.prefix.prepend(index as u8);
+                extension_node.prefix.prepend_nibble(index as u8);
                 // This next works because this target path is always length of 1 element,
                 // and we're just removing that one element
                 target_path.next();
@@ -313,7 +313,7 @@ where
                     .finalize()
             }
             Node::Leaf(leaf_node) => {
-                leaf_node.partial.prepend(index as u8);
+                leaf_node.partial.prepend_nibble(index as u8);
                 // This next works because this target path is always length of 1 element,
                 // and we're just removing that one element
                 target_path.next();

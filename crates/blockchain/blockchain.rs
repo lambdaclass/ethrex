@@ -2372,12 +2372,12 @@ fn collapse_root_node(
         // Replace root with the child extension node, updating its path in the process
         Node::Extension(mut extension_node) => {
             let mut extension_node = extension_node.take();
-            extension_node.prefix.prepend(choice as u8);
+            extension_node.prefix.prepend_nibble(choice as u8);
             extension_node.into()
         }
         Node::Leaf(mut leaf) => {
             let mut leaf = leaf.take();
-            leaf.partial.prepend(choice as u8);
+            leaf.partial.prepend_nibble(choice as u8);
             leaf.into()
         }
     };
