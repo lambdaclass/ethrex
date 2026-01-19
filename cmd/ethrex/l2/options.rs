@@ -234,9 +234,9 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     aligned_mode: opts.aligned_opts.aligned,
                     aligned_verifier_interval_ms: opts.aligned_opts.aligned_verifier_interval_ms,
                     beacon_urls: opts.aligned_opts.beacon_url.unwrap_or_default(),
-                    network_name: network_name.clone(),
                     #[cfg(feature = "sp1")]
                     network: resolve_aligned_network(&network_name),
+                    network_name,
                 }
             },
             monitor: MonitorConfig {
