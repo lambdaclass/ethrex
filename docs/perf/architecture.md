@@ -16,24 +16,57 @@ This document contains architecture and code notes relevant to the performance i
 
 ## LEVM Architecture
 
+### Main Execution Loop
+
+**Location:** `crates/vm/levm/src/vm.rs:500-636`
+
+The core execution loop follows this pattern:
+
+```rust
+loop {
+    let opcode = self.current_call_frame.next_opcode();
+    self.advance_pc(1)?;
+
+    // Fast path for common opcodes (direct match)
+    let op_result = match opcode {
+        0x60 => self.op_push::<1>(),
+        // ... 71 fast-path opcodes
+        _ => self.opcode_table[opcode as usize].call(self)  // Lookup table
+    };
+
+    let result = match op_result {
+        Ok(OpcodeResult::Continue) => continue,
+        Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
+        Err(error) => self.handle_opcode_error(error)?,
+    };
+
+    if self.is_initial_call_frame() {
+        self.handle_state_backup(&result)?;
+        return Ok(result);
+    }
+    self.handle_return(&result)?;
+}
+```
+
 ### Opcode Dispatch
 
-**Location:** `crates/vm/levm/src/vm.rs:554-629`, `crates/vm/levm/src/opcodes.rs:376-449`
+**Location:** `crates/vm/levm/src/vm.rs:536-613`, `crates/vm/levm/src/opcodes.rs`
 
 **Current Implementation: Hybrid Fast-Path + Lookup Table**
 
-Hot opcodes have a direct match before the lookup table:
-- PUSH1-PUSH32 (32 specialized handlers)
+Hot opcodes have a direct match before the lookup table (71 total):
+- PUSH1-PUSH32 (32 specialized handlers with const generics)
 - DUP1-DUP16 (16 specialized handlers)
 - SWAP1-SWAP16 (16 specialized handlers)
-- ADD, CODECOPY, MLOAD, JUMP, JUMPI, JUMPDEST, TSTORE
+- ADD, CODECOPY, MLOAD, JUMP, JUMPI, JUMPDEST, TSTORE (since Cancun)
 
 Cold opcodes use a 256-element function pointer table: `[OpCodeFn; 256]`
 
 **Performance Notes:**
-- Hot path bypasses indirection for ~15% of all executed instructions
+- Hot path bypasses indirection for ~71 opcodes (stack/memory-heavy operations)
 - Function pointers have branch prediction overhead
 - Fork-specific tables built at VM construction (one-time cost)
+- `#[inline(always)]` on all fast-path handlers ensures no call overhead
 
 ### Stack Implementation
 
@@ -42,30 +75,41 @@ Cold opcodes use a 256-element function pointer table: `[OpCodeFn; 256]`
 ```rust
 pub struct Stack {
     pub values: Box<[U256; 1024]>,  // Fixed 1024-element array (32 KB)
-    pub offset: usize,              // Grows downward
+    pub offset: usize,              // Grows downward from 1024
 }
 ```
 
 **Key Operations (all use unsafe pointer ops):**
-- `pop()`: Generic, pops N elements with `first_chunk::<N>()`
+- `pop<N>()`: Generic, pops N elements with `get_unchecked()` + `first_chunk::<N>()`
+- `pop1()`: Specialized single-pop with bounds check
 - `push()`: Uses `ptr::copy_nonoverlapping()` for U256 (4 u64s)
-- `dup()`: Uses `ptr::copy_nonoverlapping()`
-- `swap()`: Direct array `.swap()`
+- `push_zero()`: Writes zero array directly via `cast()`
+- `dup<N>()`: Uses `ptr::copy_nonoverlapping()`, const generic depth
+- `swap<N>()`: Direct array `.swap()` with compile-time bounds assertion
+
+**Stack Pool** (`vm.rs:390`):
+```rust
+pub stack_pool: Vec<Stack>,  // Reused stacks to avoid allocation
+```
+- When creating a child call frame, a stack is taken from the pool if available
+- Returned to pool after call frame completes
+- Avoids 32KB allocation per nested call
 
 **Performance Notes:**
 - Fixed allocation avoids dynamic resizing
-- Unsafe pointer operations are well-justified and fast
-- Stack pool reuse via `stack_pool: Vec<Stack>` reduces allocation
+- Grows downward: underflow check doubles as overflow detection
+- Unsafe pointer operations avoid bounds checking in hot path
+- `#[inline]` and `#[inline(always)]` on all methods
 
 ### Memory Implementation
 
-**Location:** `crates/vm/levm/src/memory.rs:17-268`
+**Location:** `crates/vm/levm/src/memory.rs`
 
 ```rust
 pub struct Memory {
     pub buffer: Rc<RefCell<Vec<u8>>>,  // Shared across call frames
-    pub len: usize,
-    pub current_base: usize,
+    pub len: usize,                     // Logical size (high water mark)
+    pub current_base: usize,            // Offset for this call frame
 }
 ```
 
@@ -74,29 +118,71 @@ pub struct Memory {
 - Lazy expansion, padded to 32-byte multiples
 - Zero-initialization via `Vec::resize(new_size, 0)`
 
+**Memory Operations:**
+- `load()`: Expands if needed, copies 32 bytes to U256
+- `store()`: Expands if needed, writes 32 bytes from U256
+- `copy_within()`: Uses `Vec::copy_within()` for MCOPY
+- `get_slice()`: Returns `&[u8]` view for RETURN/REVERT data
+
+**Expansion Flow:**
+```rust
+if offset + size > self.len {
+    let new_size = offset.checked_add(size)?.checked_next_multiple_of(32)?;
+    self.buffer.borrow_mut().resize(new_size, 0);  // Zero-fill
+    self.len = new_size;
+}
+```
+
 **Performance Notes:**
 - RefCell has runtime borrow checking overhead (minimal)
-- Memory expansion gas calculation: `floor(words²/128) + 3*words`
+- Memory expansion gas: `floor(words²/512) + 3*words`
 - Single growing Vec per transaction
+- Expansion cost quadratic - discourages huge memory
 
 ### State Access from VM
 
-**Location:** `crates/vm/levm/src/db/gen_db.rs:70-116, 471-526`
+**Location:** `crates/vm/levm/src/db/gen_db.rs`
 
-**Multi-tier Caching:**
-1. `current_accounts_state` (FxHashMap) - hot cache
-2. `initial_accounts_state` (FxHashMap) - transaction-start snapshot
-3. Database backend - cold storage
+**GeneralizedDatabase Structure:**
+```rust
+pub struct GeneralizedDatabase {
+    pub store: Arc<dyn Database>,                           // Backend storage
+    pub current_accounts_state: FxHashMap<Address, LevmAccount>,  // Hot cache
+    pub initial_accounts_state: FxHashMap<Address, LevmAccount>,  // Tx-start snapshot
+    pub codes: FxHashMap<H256, Code>,                        // Bytecode cache
+    pub tx_backup: Option<CallFrameBackup>,                  // For undo_last_transaction()
+}
+```
 
-**Storage Access Pattern (`get_storage_value()` line 486):**
-1. Check `current_accounts_state.storage` HashMap
-2. Fallback to `initial_accounts_state`
-3. Load from database via `get_value_from_database()`
+**LevmAccount Structure:**
+```rust
+pub struct LevmAccount {
+    pub info: AccountInfo,                  // balance, nonce, code_hash
+    pub storage: HashMap<H256, U256>,       // Cached storage slots
+    pub status: AccountStatus,              // Unmodified/Modified/Created/Deleted
+    pub has_storage: bool,                  // Optimization flag
+}
+```
+
+**Storage Read Path (`get_storage_value()` line 486):**
+1. Check `current_accounts_state[address].storage[key]`
+2. Fallback to `initial_accounts_state[address].storage[key]`
+3. Load from database via `get_value_from_database()` → inserts into cache
+
+**Storage Write Path (`write_account_storage()` line 405):**
+1. Backup original value in `CallFrameBackup` (first-write-wins)
+2. Update `current_accounts_state[address].storage[key]`
+3. Set `account.status = AccountStatus::Modified`
+
+**Account Access:**
+- `get_account()`: Same 3-tier lookup as storage
+- Creates default empty account if not found (lazy creation)
 
 **Performance Notes:**
-- FxHashMap (rustc_hash) is faster than std HashMap
+- FxHashMap (rustc_hash) is faster than std HashMap for small keys
 - Every modification backed up in `CallFrameBackup` for reversion
-- Storage uses `HashMap<H256, U256>` per account
+- `initial_accounts_state` enables cheap reversion to tx-start state
+- Double-lookup (current → initial) on every read
 
 ### Gas Metering
 
@@ -116,6 +202,91 @@ pub fn increase_consumed_gas(&mut self, gas: u64) -> Result<(), ExceptionalHalt>
 **Performance Notes:**
 - Uses i64 for single subtraction + sign check (faster than u64 comparison)
 - Gas limit bounded by EIP-7825 (2^24), safe in i64
+
+### Substate: Hierarchical Checkpoint System
+
+**Location:** `crates/vm/levm/src/vm.rs:45-331`
+
+The Substate tracks all changes during execution that may need reverting on failure:
+
+```rust
+pub struct Substate {
+    parent: Option<Box<Self>>,              // Linked list of checkpoints
+    selfdestruct_set: HashSet<Address>,     // Scheduled destructions
+    accessed_addresses: HashSet<Address>,   // EIP-2929 warm addresses
+    accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,  // EIP-2929 warm slots
+    created_accounts: HashSet<Address>,     // Newly created accounts
+    pub refunded_gas: u64,                  // Gas refund accumulator
+    transient_storage: TransientStorage,    // EIP-1153 TSTORE/TLOAD
+    logs: Vec<Log>,                         // Emitted events
+}
+```
+
+**Checkpoint Operations:**
+- `push_backup()`: Creates checkpoint by moving current state to parent link
+- `commit_backup()`: Merges child changes into parent (call succeeded)
+- `revert_backup()`: Discards current and restores parent (call failed)
+
+**Lookup Pattern** (walks parent chain):
+```rust
+pub fn is_address_accessed(&self, address: &Address) -> bool {
+    self.accessed_addresses.contains(address)
+        || self.parent.as_ref()
+            .map(|parent| parent.is_address_accessed(address))
+            .unwrap_or_default()
+}
+```
+
+**Performance Notes:**
+- Append-only design allows simple merge/revert
+- Parent chain walk is O(call depth), typically shallow
+- HashSet/BTreeSet insertions are fast but allocate
+
+### CallFrameBackup: Account State Reversion
+
+**Location:** `crates/vm/levm/src/call_frame.rs:273-308`
+
+Separate from Substate, each CallFrame tracks the original state of modified accounts:
+
+```rust
+pub struct CallFrameBackup {
+    pub original_accounts_info: HashMap<Address, LevmAccount>,
+    pub original_account_storage_slots: HashMap<Address, HashMap<H256, U256>>,
+}
+```
+
+**Backup Flow:**
+1. Before modifying account/storage, check if already backed up
+2. If not, store original value (first-write-wins semantics)
+3. On revert: restore from backup via `restore_cache_state()`
+4. On success: merge child backup into parent via `merge_call_frame_backup_with_parent()`
+
+**Key Functions:**
+- `backup_account_info()`: Saves original account state before modification
+- `restore_cache_state()` (`utils.rs:72-97`): Reverts cache to backup state
+- `merge_call_frame_backup_with_parent()` (`call_frame.rs:432-462`): Propagates backup up call stack
+
+**Performance Notes:**
+- Separate from Substate because it backs up GeneralizedDatabase cache, not Substate fields
+- HashMap allocations on first write to each account/slot
+- Clone on revert for nested calls
+
+### Transaction-Level Backup (BackupHook)
+
+**Location:** `crates/vm/levm/src/hooks/backup_hook.rs`
+
+For stateless execution (estimateGas, eth_call), the BackupHook preserves pre-execution state:
+
+```rust
+pub struct BackupHook {
+    pub pre_execution_backup: CallFrameBackup,  // State before tx
+}
+```
+
+**Workflow:**
+1. `prepare_execution()`: Store current `call_frame_backup`
+2. `finalize_execution()`: Merge pre-execution + execution backups into `db.tx_backup`
+3. `undo_last_transaction()`: Restore from `tx_backup`
 
 ### Hooks System
 
@@ -425,6 +596,8 @@ pub struct Nibbles {
 | Per-node DB transactions | trie.rs:96-101 | New transaction per get() |
 | Sequential tx execution | payload.rs:515-596 | Cannot parallelize within block |
 | OnceLock reset on clone | node.rs:209, 221 | Lose memoized hashes |
+| Double HashMap lookup | gen_db.rs:486-505 | current → initial on every SLOAD |
+| CallFrameBackup cloning | call_frame.rs:424 | Clone HashMap on revert |
 
 ### Medium Impact
 
@@ -435,6 +608,8 @@ pub struct Nibbles {
 | Code not cached during execution | store.rs:163-169 | Extra DB lookups |
 | TransactionQueue Vec::remove(0) | payload.rs:795-819 | O(n) per tx removed |
 | RCU deep copy | store.rs:2600 | Full TrieLayerCache clone per block |
+| Substate parent chain walk | vm.rs:263-269 | O(depth) per is_address_accessed() |
+| Per-slot backup HashMap | call_frame.rs:82 | Allocation on first write |
 
 ### Low Impact
 
@@ -443,6 +618,17 @@ pub struct Nibbles {
 | Pending removal Vec allocs | trie.rs:243 | Per deleted key |
 | RefCell borrow checking | memory.rs | Runtime overhead (minimal) |
 | Gas i64 conversion | call_frame.rs:379 | Already optimized |
+| Hook Vec cloning | vm.rs:671-683 | Rc pointer clone (cheap) |
+
+### LEVM-Specific Optimization Opportunities
+
+| Opportunity | Description | Potential Gain |
+|-------------|-------------|----------------|
+| Flatten Substate | Replace linked list with flat structure + index markers | Avoid parent chain walks |
+| Batch backup writes | Coalesce multiple slot writes in CallFrameBackup | Reduce HashMap operations |
+| Arena allocator for Substate | Pre-allocate HashSet/BTreeSet capacity | Reduce allocations |
+| Speculative execution cache | Pre-warm likely storage slots | Hide DB latency |
+| Inline critical opcodes | More opcodes in fast path match | Reduce function pointer overhead |
 
 ---
 
@@ -450,19 +636,104 @@ pub struct Nibbles {
 
 **Most executed code paths during block execution:**
 
-1. **Opcode dispatch** (`vm.rs:554-629`) - every instruction
-2. **Stack push/pop** (`call_frame.rs:35-100`) - most instructions
-3. **Gas metering** (`call_frame.rs:379`) - every instruction
-4. **Memory access** (`memory.rs:147-196`) - MLOAD/MSTORE heavy workloads
-5. **Storage access** (`gen_db.rs:471-526`) - SLOAD/SSTORE
-6. **Trie layer lookup** (`layering.rs:63-91`) - every state access not in VM cache
-7. **Hash computation** (`node.rs:167-179`) - merkleization
+1. **Opcode dispatch** (`vm.rs:527-613`) - every instruction
+   - Fast path match for 71 common opcodes
+   - Function pointer table lookup for remainder
+
+2. **Stack push/pop** (`call_frame.rs:35-192`) - most instructions
+   - `push()`: unsafe ptr::copy_nonoverlapping, overflow via underflow check
+   - `pop<N>()`: get_unchecked + first_chunk, const generic
+   - `dup<N>()`/`swap<N>()`: unsafe, const generic
+
+3. **Gas metering** (`call_frame.rs:376-387`) - every instruction
+   - Single i64 subtraction + sign check
+   - No branch on success path
+
+4. **Memory access** (`memory.rs`) - MLOAD/MSTORE heavy workloads
+   - RefCell borrow on each access
+   - Expansion triggers resize + zero-fill
+
+5. **Storage access** (`gen_db.rs:400-530`) - SLOAD/SSTORE
+   - 2-tier HashMap lookup (current → initial)
+   - Backup on first write per slot
+   - Database fallback on cache miss
+
+6. **Substate lookups** (`vm.rs:252-270`) - warm/cold gas calculation
+   - HashSet contains + parent chain walk
+   - Called on every CALL/SLOAD/SSTORE
+
+7. **Trie layer lookup** (`layering.rs:63-91`) - every state access not in VM cache
+   - Bloom filter fast-path for negatives
+   - Chain walk through layer diffs
+
+8. **Hash computation** (`node.rs:167-179`) - merkleization
+   - Keccak-256 for every trie node
+   - OnceLock memoization (lost on clone)
 
 **Optimization priority should focus on these paths first.**
 
 ---
 
 ## Appendix: Key Data Flow
+
+### LEVM Call Stack and Backup Flow
+
+```
+Transaction Start
+      │
+      ▼
+┌─────────────────────────────────────────────────────────────┐
+│  VM::execute()                                               │
+│    │                                                         │
+│    ├── prepare_execution() ──► Hooks run, nonce increment    │
+│    │                                                         │
+│    ├── clear call_frame_backup ──► Changes now permanent     │
+│    │                                                         │
+│    └── substate.push_backup() ──► Create checkpoint          │
+│          │                                                   │
+│          ▼                                                   │
+│    ┌─────────────────────────────────────────────────────┐   │
+│    │  run_execution() - Main opcode loop                 │   │
+│    │                                                     │   │
+│    │  On CALL/CREATE:                                    │   │
+│    │    substate.push_backup()                           │   │
+│    │    add_callframe(new_call_frame)                    │   │
+│    │         │                                           │   │
+│    │         ▼                                           │   │
+│    │    [Child execution loop]                           │   │
+│    │         │                                           │   │
+│    │    On Success: ◄────────────────────────────────┐   │   │
+│    │      substate.commit_backup()                   │   │   │
+│    │      merge_call_frame_backup_with_parent()      │   │   │
+│    │                                                 │   │   │
+│    │    On Failure: ◄────────────────────────────────┤   │   │
+│    │      substate.revert_backup()                   │   │   │
+│    │      restore_cache_state() ──► Reverts db cache │   │   │
+│    │                                                 │   │   │
+│    └─────────────────────────────────────────────────┼───┘   │
+│                                                      │       │
+│    finalize_execution() ──► Hooks finalize, extract logs     │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+
+Backup Data Structures:
+┌────────────────────────────────────────────────────────────┐
+│  Substate (linked list via parent pointer)                 │
+│  ├── accessed_addresses: HashSet<Address>                  │
+│  ├── accessed_storage_slots: BTreeMap<Address, BTreeSet>   │
+│  ├── logs: Vec<Log>                                        │
+│  └── parent: Option<Box<Substate>> ──► Previous checkpoint │
+└────────────────────────────────────────────────────────────┘
+                           │
+                           │ (separate from)
+                           ▼
+┌────────────────────────────────────────────────────────────┐
+│  CallFrameBackup (per call frame)                          │
+│  ├── original_accounts_info: HashMap<Address, LevmAccount> │
+│  └── original_account_storage_slots: HashMap<...>          │
+│      └── Stores first-seen values for modified slots       │
+└────────────────────────────────────────────────────────────┘
+```
 
 ### Block Execution to Storage
 
