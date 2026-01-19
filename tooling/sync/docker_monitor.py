@@ -101,8 +101,8 @@ def git_pull_latest(branch: str, ethrex_dir: str) -> tuple[bool, str]:
         subprocess.run(["git", "fetch", "--all"], cwd=ethrex_dir, check=True, capture_output=True)
         # Checkout the branch
         subprocess.run(["git", "checkout", branch], cwd=ethrex_dir, check=True, capture_output=True)
-        # Pull latest
-        subprocess.run(["git", "pull"], cwd=ethrex_dir, check=True, capture_output=True)
+        # Pull latest from origin explicitly
+        subprocess.run(["git", "pull", "origin", branch], cwd=ethrex_dir, check=True, capture_output=True)
         # Get new commit hash
         new_commit = subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -112,7 +112,12 @@ def git_pull_latest(branch: str, ethrex_dir: str) -> tuple[bool, str]:
         print(f"✅ Updated to commit {new_commit}")
         return True, new_commit
     except subprocess.CalledProcessError as e:
+        error_details = ""
+        if e.stderr:
+            error_details = e.stderr.decode(errors='replace').strip()
         print(f"❌ Failed to pull latest: {e}")
+        if error_details:
+            print(f"   {error_details}")
         return False, ""
 
 
