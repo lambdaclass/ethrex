@@ -1,3 +1,49 @@
+//! # ethrex SDK
+//!
+//! Developer SDK for interacting with ethrex L2 rollup.
+//!
+//! ## Overview
+//!
+//! This crate provides a high-level SDK for building applications on ethrex L2.
+//! It includes utilities for:
+//! - **Bridge Operations**: Deposits, withdrawals, and claims between L1 and L2
+//! - **Contract Deployment**: CREATE, CREATE2, and proxy deployment patterns
+//! - **Transaction Building**: Generic transaction construction with gas estimation
+//! - **Calldata Encoding**: ABI encoding for contract calls
+//! - **Fee Token Operations**: Custom fee token registration and pricing
+//!
+//! ## Modules
+//!
+//! | Module | Description |
+//! |--------|-------------|
+//! | [`calldata`] | ABI calldata encoding utilities |
+//! | [`l1_to_l2_tx_data`] | L1 → L2 transaction data handling |
+//! | [`privileged_data`] | Privileged transaction data (deposits) |
+//!
+//! ## Quick Start
+//!
+//! ```ignore
+//! use ethrex_l2_sdk::{transfer, deposit_through_transfer, withdraw};
+//!
+//! // Transfer ETH on L2
+//! let tx_hash = transfer(amount, from, to, &pk, &client).await?;
+//!
+//! // Deposit from L1 to L2
+//! let tx_hash = deposit_through_transfer(amount, from, &pk, &l1_client).await?;
+//!
+//! // Withdraw from L2 to L1
+//! let tx_hash = withdraw(amount, from, pk, &l2_client, None, None).await?;
+//! ```
+//!
+//! ## System Contracts
+//!
+//! | Contract | Address | Description |
+//! |----------|---------|-------------|
+//! | `COMMON_BRIDGE_L2_ADDRESS` | `0x...ffff` | L2 bridge |
+//! | `L2_TO_L1_MESSENGER_ADDRESS` | `0x...fffe` | Message passing |
+//! | `FEE_TOKEN_REGISTRY_ADDRESS` | `0x...fffc` | Fee token registry |
+//! | `FEE_TOKEN_PRICER_ADDRESS` | `0x...fffb` | Fee token pricing |
+
 use bytes::Bytes;
 use calldata::encode_calldata;
 use ethereum_types::{H160, H256, U256};
