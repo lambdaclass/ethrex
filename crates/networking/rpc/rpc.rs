@@ -593,12 +593,13 @@ pub async fn handle_authrpc_request(
             // Proceed with the request
             let res = map_authrpc_requests(&req, service_context).await;
 
-            // Record full request duration including JSON parsing and auth
+            // Build response (includes JSON serialization)
+            let response = rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+            // Record full request duration including JSON parsing, auth, and response serialization
             record_full_rpc_duration(namespace, method, start);
 
-            Ok(Json(
-                rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?,
-            ))
+            Ok(Json(response))
         }
     }
 }
