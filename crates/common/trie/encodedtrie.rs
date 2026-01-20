@@ -872,18 +872,24 @@ impl EncodedTrie {
 }
 
 fn encode_leaf(partial: Nibbles, value: &[u8]) -> Vec<u8> {
-    let mut buf = Vec::new();
+    // Pre-allocate: RLP overhead (3-5 bytes) + compact path + value
+    let compact = partial.encode_compact();
+    let estimated_size = 5 + compact.len() + value.len();
+    let mut buf = Vec::with_capacity(estimated_size);
     let mut encoder = Encoder::new(&mut buf);
-    encoder = encoder.encode_bytes(&partial.encode_compact());
+    encoder = encoder.encode_bytes(&compact);
     encoder = encoder.encode_bytes(value);
     encoder.finish();
     buf
 }
 
 fn encode_extension(path: Nibbles, child: NodeHash) -> Vec<u8> {
-    let mut buf = Vec::new();
+    // Pre-allocate: RLP overhead (3-5 bytes) + compact path + child hash (up to 33 bytes)
+    let compact = path.encode_compact();
+    let estimated_size = 5 + compact.len() + 33;
+    let mut buf = Vec::with_capacity(estimated_size);
     let mut encoder = Encoder::new(&mut buf);
-    encoder = encoder.encode_bytes(&path.encode_compact());
+    encoder = encoder.encode_bytes(&compact);
     encoder = child.encode(encoder);
     encoder.finish();
     buf

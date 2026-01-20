@@ -179,7 +179,8 @@ impl Nibbles {
     /// Taken from https://github.com/citahub/cita_trie/blob/master/src/nibbles.rs#L56
     /// Encodes the nibbles in compact form
     pub fn encode_compact(&self) -> Vec<u8> {
-        let mut compact = vec![];
+        // Pre-allocate capacity: 1 byte for prefix + up to (data.len() / 2) bytes for pairs
+        let mut compact = Vec::with_capacity((self.data.len() / 2) + 1);
         let is_leaf = self.is_leaf();
         let mut hex = if is_leaf {
             &self.data[0..self.data.len() - 1]

@@ -43,7 +43,8 @@ impl NodeHash {
     pub fn from_encoded(encoded: &[u8]) -> NodeHash {
         if encoded.len() >= 32 {
             let hash = keccak_hash(encoded);
-            NodeHash::Hashed(H256::from_slice(&hash))
+            // Use H256 direct construction to avoid memcpy from from_slice
+            NodeHash::Hashed(H256(hash))
         } else {
             NodeHash::from_slice(encoded)
         }
