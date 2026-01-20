@@ -66,8 +66,6 @@ vergen-git2 = { version = "1.0.7" }
 
 [dev-dependencies]
 anyhow = "1.0.86"
-# Enable SQL for tests so we don't need `cargo test -p ethrex-l2 --features l2-sql`.
-ethrex-storage-rollup = { workspace = true, features = ["sql"] }
 
 [lib]
 path = "./l2.rs"
