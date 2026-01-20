@@ -2,7 +2,7 @@ use crate::{
     call_frame::CallFrame,
     constants::{FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
-    gas_cost::{self, max_message_call_gas},
+    gas_cost::{self, max_message_call_gas_with_fork},
     memory::calculate_memory_size,
     precompiles,
     utils::{address_to_word, word_to_address, *},
@@ -68,7 +68,7 @@ impl<'a> VM<'a> {
             eip7702_get_code(self.db, &mut self.substate, callee)?;
 
         // GAS
-        let (new_memory_size, gas_left, account_is_empty, address_was_cold) = self
+        let (new_memory_size, gas_left, account_is_empty, address_was_cold, account_exists) = self
             .get_call_gas_params(
                 args_offset,
                 args_size,
@@ -84,6 +84,7 @@ impl<'a> VM<'a> {
             current_memory_size,
             address_was_cold,
             account_is_empty,
+            account_exists,
             value,
             gas,
             gas_left,
@@ -121,6 +122,7 @@ impl<'a> VM<'a> {
             return_data_size,
             bytecode,
             is_delegation_7702,
+            true, // CALL touches the target address for EIP-161
         )
     }
 
@@ -168,8 +170,8 @@ impl<'a> VM<'a> {
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(self.db, &mut self.substate, address)?;
         // GAS
-        let (new_memory_size, gas_left, _account_is_empty, address_was_cold) = self
-            .get_call_gas_params(
+        let (new_memory_size, gas_left, _account_is_empty, address_was_cold, _account_exists) =
+            self.get_call_gas_params(
                 args_offset,
                 args_size,
                 return_data_offset,
@@ -221,6 +223,7 @@ impl<'a> VM<'a> {
             return_data_size,
             bytecode,
             is_delegation_7702,
+            false, // CALLCODE doesn't touch target - no message is sent, only code is read
         )
     }
 
@@ -287,8 +290,8 @@ impl<'a> VM<'a> {
             eip7702_get_code(self.db, &mut self.substate, address)?;
 
         // GAS
-        let (new_memory_size, gas_left, _account_is_empty, address_was_cold) = self
-            .get_call_gas_params(
+        let (new_memory_size, gas_left, _account_is_empty, address_was_cold, _account_exists) =
+            self.get_call_gas_params(
                 args_offset,
                 args_size,
                 return_data_offset,
@@ -341,6 +344,7 @@ impl<'a> VM<'a> {
             return_data_size,
             bytecode,
             is_delegation_7702,
+            false, // DELEGATECALL doesn't touch target - runs code in caller's context
         )
     }
 
@@ -386,8 +390,8 @@ impl<'a> VM<'a> {
             eip7702_get_code(self.db, &mut self.substate, address)?;
 
         // GAS
-        let (new_memory_size, gas_left, _account_is_empty, address_was_cold) = self
-            .get_call_gas_params(
+        let (new_memory_size, gas_left, _account_is_empty, address_was_cold, _account_exists) =
+            self.get_call_gas_params(
                 args_offset,
                 args_size,
                 return_data_offset,
@@ -425,6 +429,10 @@ impl<'a> VM<'a> {
         self.tracer
             .enter(STATICCALL, from, to, value, gas_limit, &data);
 
+        // Note: STATICCALL touches the target for EIP-161 purposes.
+        // Although STATICCALL is read-only and cannot modify state, the Ethereum
+        // test suite requires that STATICCALL triggers empty account deletion.
+        // This edge case was formally undefined until EIP-4747.
         self.generic_call(
             gas_limit,
             value,
@@ -438,6 +446,7 @@ impl<'a> VM<'a> {
             return_data_size,
             bytecode,
             is_delegation_7702,
+            true, // STATICCALL touches target for EIP-161 (per EF test suite)
         )
     }
 
@@ -552,7 +561,11 @@ impl<'a> VM<'a> {
         };
 
         let target_account_is_cold = !self.substate.add_accessed_address(beneficiary);
-        let target_account_is_empty = self.db.get_account(beneficiary)?.is_empty();
+        // Mark beneficiary as touched for EIP-161 empty account deletion
+        self.touch_address(beneficiary);
+        let target_account = self.db.get_account(beneficiary)?;
+        let target_account_is_empty = target_account.is_empty();
+        let target_account_exists = target_account.exists;
 
         let current_account = self.db.get_account(to)?;
         let balance = current_account.info.balance;
@@ -562,6 +575,7 @@ impl<'a> VM<'a> {
             .increase_consumed_gas(gas_cost::selfdestruct_with_fork(
                 target_account_is_cold,
                 target_account_is_empty,
+                target_account_exists,
                 balance,
                 fork,
             )?)?;
@@ -580,6 +594,16 @@ impl<'a> VM<'a> {
         } else {
             self.increase_account_balance(beneficiary, balance)?;
             self.get_account_mut(to)?.info.balance = U256::zero();
+
+            // Pre-London: SELFDESTRUCT refund of 24000 gas if contract wasn't already destroyed
+            // EIP-3529 (London): Removed SELFDESTRUCT refunds
+            if fork < Fork::London && !self.substate.is_selfdestruct(&to) {
+                self.substate.refunded_gas = self
+                    .substate
+                    .refunded_gas
+                    .checked_add(gas_cost::SELFDESTRUCT_REFUND)
+                    .ok_or(InternalError::Overflow)?;
+            }
 
             self.substate.add_selfdestruct(to);
         }
@@ -615,8 +639,9 @@ impl<'a> VM<'a> {
         // Clear callframe subreturn data
         current_call_frame.sub_return_data = Bytes::new();
 
-        // Reserve gas for subcall
-        let gas_limit = max_message_call_gas(current_call_frame)?;
+        // Reserve gas for subcall (fork-aware for EIP-150 63/64 rule)
+        let fork = self.env.config.fork;
+        let gas_limit = max_message_call_gas_with_fork(current_call_frame, fork)?;
         current_call_frame.increase_consumed_gas(gas_limit)?;
 
         // Load code from memory
@@ -740,6 +765,7 @@ impl<'a> VM<'a> {
         ret_size: usize,
         bytecode: Code,
         is_delegation_7702: bool,
+        should_touch: bool,
     ) -> Result<OpcodeResult, VMError> {
         // Clear callframe subreturn data
         self.current_call_frame.sub_return_data.clear();
@@ -767,6 +793,18 @@ impl<'a> VM<'a> {
         if precompiles::is_precompile(&code_address, self.env.config.fork, self.vm_type)
             && !is_delegation_7702
         {
+            // Snapshot touched_addresses BEFORE touching for EIP-161 revert handling.
+            // If the precompile call fails (e.g., OOG), we restore touched_addresses to this snapshot.
+            // This ensures that sub-call failures don't leave touched marks on accounts.
+            let touched_snapshot = self.db.touched_addresses.clone();
+
+            // Touch the recipient address for EIP-161 (must be after snapshot so it can be reverted)
+            // Note: For precompiles, we touch `to` (the recipient) not `code_address`.
+            // For CALL, they're the same. For CALLCODE, `to` is self so we shouldn't touch.
+            if should_touch {
+                self.touch_address(to);
+            }
+
             let mut gas_remaining = gas_limit;
             let ctx_result = Self::execute_precompile(
                 code_address,
@@ -775,6 +813,23 @@ impl<'a> VM<'a> {
                 &mut gas_remaining,
                 self.env.config.fork,
             )?;
+
+            // Restore touched_addresses if precompile call failed
+            if !ctx_result.is_success() {
+                // EIP-161 RIPEMD160 special case: even if the call fails, RIPEMD160 (0x03)
+                // should remain touched. This is a historical consensus hack that applies
+                // to forks before The Merge (Paris).
+                // Reference: EIP-4747, https://github.com/ethereum/aleth/pull/5652
+                let ripemd160_address = Address::from_low_u64_be(3);
+                let ripemd160_was_touched = self.db.touched_addresses.contains(&ripemd160_address);
+
+                self.db.touched_addresses = touched_snapshot;
+
+                // Re-add RIPEMD160 if it was touched (pre-Paris only)
+                if ripemd160_was_touched && self.env.config.fork < Fork::Paris {
+                    self.db.touched_addresses.insert(ripemd160_address);
+                }
+            }
 
             let call_frame = &mut self.current_call_frame;
 
@@ -840,7 +895,16 @@ impl<'a> VM<'a> {
                 stack,
                 next_memory,
             );
+            // add_callframe takes a snapshot of touched_addresses in the call_frame_backup.
+            // The snapshot captures the state BEFORE we touch the address.
             self.add_callframe(new_call_frame);
+
+            // Touch the address for EIP-161 AFTER the snapshot is taken.
+            // If the call fails, restore_cache_state will restore from the snapshot,
+            // reverting the touch.
+            if should_touch {
+                self.touch_address(code_address);
+            }
 
             // Transfer value from caller to callee.
             if should_transfer_value {
@@ -998,6 +1062,7 @@ impl<'a> VM<'a> {
 
     /// Obtains the values needed for CALL, CALLCODE, DELEGATECALL and STATICCALL opcodes to calculate total gas cost
     #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
+    /// Returns (new_memory_size, gas_left, account_is_empty, address_was_cold, account_exists)
     fn get_call_gas_params(
         &mut self,
         args_offset: usize,
@@ -1006,10 +1071,14 @@ impl<'a> VM<'a> {
         return_data_size: usize,
         eip7702_gas_consumed: u64,
         address: Address,
-    ) -> Result<(usize, u64, bool, bool), VMError> {
+    ) -> Result<(usize, u64, bool, bool, bool), VMError> {
         // Creation of previously empty accounts and cold addresses have higher gas cost
         let address_was_cold = !self.substate.add_accessed_address(address);
-        let account_is_empty = self.db.get_account(address)?.is_empty();
+        // Note: Touching for EIP-161 is handled in generic_call, after the backup snapshot.
+        // This ensures that if the call fails, the touch is properly reverted.
+        let account = self.db.get_account(address)?;
+        let account_is_empty = account.is_empty();
+        let account_exists = account.exists;
 
         // Calculated here for memory expansion gas cost
         let new_memory_size_for_args = calculate_memory_size(args_offset, args_size)?;
@@ -1028,6 +1097,7 @@ impl<'a> VM<'a> {
             gas_left as u64,
             account_is_empty,
             address_was_cold,
+            account_exists,
         ))
     }
 

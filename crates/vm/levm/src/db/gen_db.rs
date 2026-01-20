@@ -22,6 +22,9 @@ use std::collections::hash_map::Entry;
 
 pub type CacheDB = FxHashMap<Address, LevmAccount>;
 
+use ethrex_common::types::Fork;
+use std::collections::HashSet;
+
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
@@ -29,6 +32,12 @@ pub struct GeneralizedDatabase {
     pub initial_accounts_state: CacheDB,
     pub codes: FxHashMap<H256, Code>,
     pub tx_backup: Option<CallFrameBackup>,
+    /// Addresses touched during execution for EIP-161 empty account deletion.
+    /// This set persists through reverts for empty account cleanup at the end of tx.
+    pub touched_addresses: HashSet<Address>,
+    /// Current fork, used for EIP-161 logic in get_state_transitions.
+    /// EIP-161 only applies to Spurious Dragon and later.
+    pub fork: Fork,
 }
 
 impl GeneralizedDatabase {
@@ -39,6 +48,8 @@ impl GeneralizedDatabase {
             initial_accounts_state: Default::default(),
             tx_backup: None,
             codes: Default::default(),
+            touched_addresses: Default::default(),
+            fork: Fork::default(),
         }
     }
 
@@ -62,7 +73,14 @@ impl GeneralizedDatabase {
             initial_accounts_state: levm_accounts,
             tx_backup: None,
             codes,
+            touched_addresses: Default::default(),
+            fork: Fork::default(),
         }
+    }
+
+    /// Set the current fork for EIP-161 logic.
+    pub fn set_fork(&mut self, fork: Fork) {
+        self.fork = fork;
     }
 
     // ================== Account related functions =====================
@@ -75,12 +93,29 @@ impl GeneralizedDatabase {
                 if let Some(account) = self.initial_accounts_state.get(&address) {
                     return Ok(entry.insert(account.clone()));
                 }
+                // Check if account exists in the underlying store before loading
+                let exists = self.store.account_exists(address)?;
                 let state = self.store.get_account_state(address)?;
-                let account = LevmAccount::from(state);
+                let mut account = LevmAccount::from(state);
+                account.exists = exists; // Track whether account existed in the state
                 self.initial_accounts_state.insert(address, account.clone());
                 Ok(entry.insert(account))
             }
         }
+    }
+
+    /// Check if an account exists in the state (not just empty but actually present).
+    /// This is important for pre-EIP161 G_newaccount charging.
+    pub fn account_exists(&mut self, address: Address) -> Result<bool, InternalError> {
+        // If already loaded, check the cached exists flag
+        if let Some(account) = self.current_accounts_state.get(&address) {
+            return Ok(account.exists);
+        }
+        if let Some(account) = self.initial_accounts_state.get(&address) {
+            return Ok(account.exists);
+        }
+        // Not loaded yet - check the store directly
+        Ok(self.store.account_exists(address)?)
     }
 
     /// Gets reference of an account
@@ -156,9 +191,22 @@ impl GeneralizedDatabase {
 
     pub fn get_state_transitions(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
+        // EIP-161 (Spurious Dragon) introduced empty account deletion.
+        // Only apply to forks >= SpuriousDragon.
+        let eip161_enabled = self.fork >= Fork::SpuriousDragon;
+
         for (address, new_state_account) in self.current_accounts_state.iter() {
-            if new_state_account.is_unmodified() {
+            // EIP-161: Touched empty accounts should be deleted at end of transaction.
+            // Even if unmodified, if the account was touched and is now empty, mark for removal.
+            // Only applies to Spurious Dragon and later forks.
+            // Note: touched_addresses is reverted with sub-call failures, so only persisted touches count.
+            let is_touched = eip161_enabled && self.touched_addresses.contains(address);
+            let is_empty = new_state_account.is_empty();
+            let is_touched_empty = is_touched && is_empty;
+
+            if new_state_account.is_unmodified() && !is_touched_empty {
                 // Skip processing account that we know wasn't mutably accessed during execution
+                // unless it's a touched empty account (EIP-161, Spurious Dragon+)
                 continue;
             }
             // In case the account is not in immutable_cache (rare) we search for it in the actual database.
@@ -226,10 +274,16 @@ impl GeneralizedDatabase {
                 None
             };
 
-            // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
-            // ethrex is a post-Merge client, empty accounts have already been pruned from the trie on Mainnet by the Merge (see EIP-161), so we won't have any empty accounts in the trie.
+            // EIP-161 (Spurious Dragon+): "At the end of the transaction, any account touched by the execution
+            // of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
+            // This applies to:
+            // 1. Accounts that became empty (were not empty before)
+            // 2. Accounts that were already empty and were touched (e.g., called with 0 value)
+            // Note: EIP-161 only applies to Spurious Dragon and later forks.
+            // Note: touched_addresses is reverted with sub-call failures, so only persisted touches count.
             let was_empty = initial_state_account.is_empty();
-            let removed = new_state_account.is_empty() && !was_empty;
+            let became_empty = eip161_enabled && new_state_account.is_empty() && !was_empty;
+            let removed = became_empty || is_touched_empty;
 
             if !removed && !acc_info_updated && !storage_updated && !removed_storage {
                 // Account hasn't been updated
@@ -247,6 +301,8 @@ impl GeneralizedDatabase {
 
             account_updates.push(account_update);
         }
+        // Clear touched_addresses after processing
+        self.touched_addresses.clear();
         self.initial_accounts_state.clear();
         self.current_accounts_state.clear();
         self.codes.clear();
@@ -255,9 +311,21 @@ impl GeneralizedDatabase {
 
     pub fn get_state_transitions_tx(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
+        // EIP-161 (Spurious Dragon) introduced empty account deletion.
+        // Only apply to forks >= SpuriousDragon.
+        let eip161_enabled = self.fork >= Fork::SpuriousDragon;
+
         for (address, new_state_account) in self.current_accounts_state.drain() {
-            if new_state_account.is_unmodified() {
+            // EIP-161: Touched empty accounts should be deleted at end of transaction.
+            // Even if unmodified, if the account was touched and is now empty, mark for removal.
+            // Only applies to Spurious Dragon and later forks.
+            let is_touched = eip161_enabled && self.touched_addresses.contains(&address);
+            let is_empty = new_state_account.is_empty();
+            let is_touched_empty = is_touched && is_empty;
+
+            if new_state_account.is_unmodified() && !is_touched_empty {
                 // Skip processing account that we know wasn't mutably accessed during execution
+                // unless it's a touched empty account (EIP-161, Spurious Dragon+)
                 continue;
             }
             // [LIE] In case the account is not in immutable_cache (rare) we search for it in the actual database.
@@ -322,10 +390,16 @@ impl GeneralizedDatabase {
 
             let info = acc_info_updated.then(|| new_state_account.info.clone());
 
-            // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
-            // ethrex is a post-Merge client, empty accounts have already been pruned from the trie on Mainnet by the Merge (see EIP-161), so we won't have any empty accounts in the trie.
+            // EIP-161 (Spurious Dragon+): "At the end of the transaction, any account touched by the execution
+            // of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
+            // This applies to:
+            // 1. Accounts that became empty (were not empty before)
+            // 2. Accounts that were already empty and were touched (e.g., called with 0 value)
+            // Note: EIP-161 only applies to Spurious Dragon and later forks.
+            // Note: touched_addresses is reverted with sub-call failures, so only persisted touches count.
             let was_empty = initial_state_account.is_empty();
-            let removed = new_state_account.is_empty() && !was_empty;
+            let became_empty = eip161_enabled && new_state_account.is_empty() && !was_empty;
+            let removed = became_empty || is_touched_empty;
 
             if !removed && !acc_info_updated && !storage_updated && !removed_storage {
                 // Account hasn't been updated
@@ -346,6 +420,8 @@ impl GeneralizedDatabase {
 
             account_updates.push(account_update);
         }
+        // Clear touched_addresses for next transaction (not used for now, but kept for future use)
+        self.touched_addresses.clear();
         Ok(account_updates)
     }
 }

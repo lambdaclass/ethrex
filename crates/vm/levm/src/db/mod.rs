@@ -12,4 +12,8 @@ pub trait Database: Send + Sync {
     fn get_block_hash(&self, block_number: u64) -> Result<H256, DatabaseError>;
     fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError>;
     fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError>;
+    /// Check if an account exists in the state (as opposed to being a non-existent address).
+    /// This is important for pre-EIP161 G_newaccount charging: we should only charge
+    /// when the account doesn't exist, not when it exists but is empty.
+    fn account_exists(&self, address: Address) -> Result<bool, DatabaseError>;
 }

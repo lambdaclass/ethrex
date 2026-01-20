@@ -44,6 +44,9 @@ pub struct GasSchedule {
     pub selfdestruct: u64,
     pub selfdestruct_new_account: u64,
 
+    // CALL to empty account with value (EIP-150)
+    pub call_new_account: u64,
+
     // EXP operation
     pub exp_byte: u64,
 
@@ -59,6 +62,10 @@ pub struct GasSchedule {
     pub warm_sload: u64,
     pub cold_account_access: u64,
     pub warm_account_access: u64,
+
+    // Whether this fork uses the 63/64 gas rule (EIP-150)
+    // Before EIP-150, callers could pass all remaining gas to subcalls.
+    pub has_63_64_rule: bool,
 }
 
 impl GasSchedule {
@@ -142,6 +149,10 @@ pub static FRONTIER_SCHEDULE: GasSchedule = GasSchedule {
     selfdestruct: 0,
     selfdestruct_new_account: 0,
 
+    // G_newaccount existed since Frontier (Yellow Paper). It's the cost for
+    // CALLing an empty account with non-zero value (creating a new account).
+    call_new_account: 25000,
+
     exp_byte: 10, // EIP-160 changed this to 50 in Spurious Dragon
 
     calldata_zero: 4,
@@ -152,6 +163,8 @@ pub static FRONTIER_SCHEDULE: GasSchedule = GasSchedule {
     warm_sload: 0,
     cold_account_access: 0,
     warm_account_access: 0,
+
+    has_63_64_rule: false, // EIP-150 not yet introduced
 };
 
 /// Tangerine Whistle gas schedule (EIP-150, block 2,463,000)
@@ -176,6 +189,8 @@ pub static TANGERINE_WHISTLE_SCHEDULE: GasSchedule = GasSchedule {
     selfdestruct: 5000,
     selfdestruct_new_account: 25000,
 
+    call_new_account: 25000, // EIP-150 introduced this cost
+
     exp_byte: 10,
 
     calldata_zero: 4,
@@ -186,6 +201,8 @@ pub static TANGERINE_WHISTLE_SCHEDULE: GasSchedule = GasSchedule {
     warm_sload: 0,
     cold_account_access: 0,
     warm_account_access: 0,
+
+    has_63_64_rule: true, // EIP-150 introduced the 63/64 rule
 };
 
 /// Spurious Dragon gas schedule (EIP-158/160, block 2,675,000)
@@ -237,6 +254,8 @@ pub static BERLIN_SCHEDULE: GasSchedule = GasSchedule {
     selfdestruct: 5000,
     selfdestruct_new_account: 25000,
 
+    call_new_account: 25000,
+
     exp_byte: 50,
 
     calldata_zero: 4,
@@ -247,6 +266,8 @@ pub static BERLIN_SCHEDULE: GasSchedule = GasSchedule {
     warm_sload: 100,
     cold_account_access: 2600,
     warm_account_access: 100,
+
+    has_63_64_rule: true,
 };
 
 #[cfg(test)]

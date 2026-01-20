@@ -17,6 +17,12 @@ use serde::{Deserialize, Serialize};
 pub struct LevmAccount {
     pub info: AccountInfo,
     pub storage: FxHashMap<H256, U256>,
+    /// Whether this account existed in the state at the time it was loaded.
+    /// This is important for pre-EIP161 G_newaccount: we charge 25000 only for
+    /// accounts that don't exist (non-existent), not for empty accounts that exist.
+    /// - true: Account was found in the state (exists, possibly empty)
+    /// - false: Account was not found (non-existent, default values used)
+    pub exists: bool,
     /// If true it means that attempting to create an account with this address it would at least collide because of storage.
     /// We just care about this kind of collision if the account doesn't have code or nonce. Otherwise its value doesn't matter.
     /// For more information see EIP-7610: https://eips.ethereum.org/EIPS/eip-7610
@@ -55,6 +61,7 @@ impl From<GenesisAccount> for LevmAccount {
             has_storage: !storage.is_empty(),
             storage,
             status: AccountStatus::Unmodified,
+            exists: true, // Genesis accounts exist by definition
         }
     }
 }
@@ -69,6 +76,31 @@ impl From<AccountState> for LevmAccount {
             storage: Default::default(),
             status: AccountStatus::Unmodified,
             has_storage: state.storage_root != *EMPTY_TRIE_HASH,
+            // Note: This From impl assumes the account exists. If creating from
+            // a default AccountState for a non-existent account, use from_option instead.
+            exists: true,
+        }
+    }
+}
+
+impl LevmAccount {
+    /// Create an LevmAccount from an optional AccountState.
+    /// - Some(state): Account exists in the state
+    /// - None: Account doesn't exist (non-existent address)
+    pub fn from_option(state: Option<AccountState>) -> Self {
+        match state {
+            Some(state) => {
+                let mut account = LevmAccount::from(state);
+                account.exists = true;
+                account
+            }
+            None => {
+                // Account doesn't exist - use default values
+                LevmAccount {
+                    exists: false,
+                    ..Default::default()
+                }
+            }
         }
     }
 }
@@ -85,6 +117,10 @@ impl LevmAccount {
         if self.status == AccountStatus::Destroyed {
             self.status = AccountStatus::DestroyedModified;
         }
+        // Once an account is modified, it exists in our execution context.
+        // This is important for pre-EIP161 G_newaccount charging, which should
+        // only apply to addresses that don't exist (not to newly created accounts).
+        self.exists = true;
     }
 
     pub fn has_nonce(&self) -> bool {

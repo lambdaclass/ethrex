@@ -134,6 +134,30 @@ impl Hook for DefaultHook {
     ) -> Result<(), VMError> {
         if !ctx_result.is_success() {
             undo_value_transfer(vm)?;
+
+            // EIP-161: Restore touched_addresses to the state before execution.
+            // When a transaction fails, addresses touched during execution should not
+            // cause empty account deletion. The snapshot was taken after prepare_execution.
+            if let Some(touched_snapshot) = vm
+                .current_call_frame
+                .call_frame_backup
+                .touched_addresses_snapshot
+                .take()
+            {
+                // EIP-161 RIPEMD160 special case: even if the transaction fails, RIPEMD160 (0x03)
+                // should remain touched. This is a historical consensus hack that applies
+                // to forks before The Merge (Paris).
+                // Reference: EIP-4747, https://github.com/ethereum/aleth/pull/5652
+                let ripemd160_address = Address::from_low_u64_be(3);
+                let ripemd160_was_touched = vm.db.touched_addresses.contains(&ripemd160_address);
+
+                vm.db.touched_addresses = touched_snapshot;
+
+                // Re-add RIPEMD160 if it was touched (pre-Paris only)
+                if ripemd160_was_touched && vm.env.config.fork < Fork::Paris {
+                    vm.db.touched_addresses.insert(ripemd160_address);
+                }
+            }
         }
 
         let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
@@ -187,12 +211,21 @@ pub fn refund_sender(
     Ok(())
 }
 
-// [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
+// Gas refund quotient (max refund = gas_used / quotient):
+// Pre-London: quotient = 2 (max 50% refund)
+// London+ (EIP-3529): quotient = 5 (max 20% refund)
 pub fn compute_gas_refunded(vm: &VM<'_>, ctx_result: &ContextResult) -> Result<u64, VMError> {
-    Ok(vm
-        .substate
-        .refunded_gas
-        .min(ctx_result.gas_used / MAX_REFUND_QUOTIENT))
+    let refund_quotient = if vm.env.config.fork >= Fork::London {
+        MAX_REFUND_QUOTIENT // 5
+    } else {
+        2 // Pre-London: max 50% refund
+    };
+    let available_refund = vm.substate.refunded_gas;
+    #[expect(clippy::arithmetic_side_effects, reason = "quotient is always 2 or 5")]
+    let max_refund = ctx_result.gas_used / refund_quotient;
+    let actual_refund = available_refund.min(max_refund);
+
+    Ok(actual_refund)
 }
 
 // Calculate actual gas used in the whole transaction. Since Prague there is a base minimum to be consumed.
@@ -252,8 +285,9 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
         return Err(TxValidationError::IntrinsicGasTooLow.into());
     }
 
-    // calldata_cost = tokens_in_calldata * 4
-    let calldata_cost: u64 = gas_cost::tx_calldata(&calldata)?;
+    // calldata_cost: pre-Istanbul = 68 per non-zero byte, Istanbul+ = 16 per non-zero byte
+    let fork = vm.env.config.fork;
+    let calldata_cost: u64 = gas_cost::tx_calldata_with_fork(&calldata, fork)?;
 
     // same as calculated in gas_used()
     let tokens_in_calldata: u64 = calldata_cost / STANDARD_TOKEN_COST;

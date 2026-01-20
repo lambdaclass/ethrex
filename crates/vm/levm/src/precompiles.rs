@@ -98,7 +98,7 @@ pub const ECRECOVER: Precompile = Precompile {
         0x00, 0x00, 0x00, 0x00, 0x01,
     ]),
     name: "ECREC",
-    active_since_fork: Paris,
+    active_since_fork: Frontier, // Genesis precompile
 };
 
 pub const SHA2_256: Precompile = Precompile {
@@ -107,7 +107,7 @@ pub const SHA2_256: Precompile = Precompile {
         0x00, 0x00, 0x00, 0x00, 0x02,
     ]),
     name: "SHA256",
-    active_since_fork: Paris,
+    active_since_fork: Frontier, // Genesis precompile
 };
 
 pub const RIPEMD_160: Precompile = Precompile {
@@ -116,7 +116,7 @@ pub const RIPEMD_160: Precompile = Precompile {
         0x00, 0x00, 0x00, 0x00, 0x03,
     ]),
     name: "RIPEMD160",
-    active_since_fork: Paris,
+    active_since_fork: Frontier, // Genesis precompile
 };
 
 pub const IDENTITY: Precompile = Precompile {
@@ -125,7 +125,7 @@ pub const IDENTITY: Precompile = Precompile {
         0x00, 0x00, 0x00, 0x00, 0x04,
     ]),
     name: "ID",
-    active_since_fork: Paris,
+    active_since_fork: Frontier, // Genesis precompile
 };
 
 pub const MODEXP: Precompile = Precompile {
@@ -134,7 +134,7 @@ pub const MODEXP: Precompile = Precompile {
         0x00, 0x00, 0x00, 0x00, 0x05,
     ]),
     name: "MODEXP",
-    active_since_fork: Paris,
+    active_since_fork: Byzantium, // EIP-198
 };
 
 pub const ECADD: Precompile = Precompile {
@@ -143,7 +143,7 @@ pub const ECADD: Precompile = Precompile {
         0x00, 0x00, 0x00, 0x00, 0x06,
     ]),
     name: "BN254_ADD",
-    active_since_fork: Paris,
+    active_since_fork: Byzantium, // EIP-196
 };
 
 pub const ECMUL: Precompile = Precompile {
@@ -152,7 +152,7 @@ pub const ECMUL: Precompile = Precompile {
         0x00, 0x00, 0x00, 0x00, 0x07,
     ]),
     name: "BN254_MUL",
-    active_since_fork: Paris,
+    active_since_fork: Byzantium, // EIP-196
 };
 
 pub const ECPAIRING: Precompile = Precompile {
@@ -161,7 +161,7 @@ pub const ECPAIRING: Precompile = Precompile {
         0x00, 0x00, 0x00, 0x00, 0x08,
     ]),
     name: "BN254_PAIRING",
-    active_since_fork: Paris,
+    active_since_fork: Byzantium, // EIP-197
 };
 
 pub const BLAKE2F: Precompile = Precompile {
@@ -170,7 +170,7 @@ pub const BLAKE2F: Precompile = Precompile {
         0x00, 0x00, 0x00, 0x00, 0x09,
     ]),
     name: "BLAKE2F",
-    active_since_fork: Paris,
+    active_since_fork: Istanbul, // EIP-152
 };
 
 pub const POINT_EVALUATION: Precompile = Precompile {
@@ -585,8 +585,11 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<B
         const ZERO_BYTES: [u8; 32] = [0u8; 32];
 
         if base_size_bytes == ZERO_BYTES && modulus_size_bytes == ZERO_BYTES {
-            // On Berlin or newer there is a floor cost for the modexp precompile
-            increase_precompile_consumed_gas(MODEXP_STATIC_COST, gas_remaining)?;
+            // EIP-2565 (Berlin): floor cost of 200 for modexp precompile
+            // Pre-Berlin: no floor cost
+            if fork >= Fork::Berlin {
+                increase_precompile_consumed_gas(MODEXP_STATIC_COST, gas_remaining)?;
+            }
             return Ok(Bytes::new());
         }
     }

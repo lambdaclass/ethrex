@@ -380,13 +380,17 @@ impl<'a> VM<'a> {
             Self::build_opcode_table_pre_osaka()
         } else if fork >= Fork::Shanghai {
             Self::build_opcode_table_pre_cancun()
-        } else {
+        } else if fork >= Fork::London {
             Self::build_opcode_table_pre_shanghai()
+        } else {
+            Self::build_opcode_table_pre_london()
         }
     }
 
+    /// Pre-London opcode table (Berlin and earlier forks)
+    /// Does NOT include BASEFEE (EIP-3198, London)
     #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    const fn build_opcode_table_pre_shanghai() -> [OpCodeFn<'a>; 256] {
+    const fn build_opcode_table_pre_london() -> [OpCodeFn<'a>; 256] {
         let mut opcode_table: [OpCodeFn<'a>; 256] = [OpCodeFn(VM::on_invalid_opcode); 256];
 
         opcode_table[Opcode::STOP as usize] = OpCodeFn(VM::op_stop);
@@ -512,7 +516,7 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::PREVRANDAO as usize] = OpCodeFn(VM::op_prevrandao);
         opcode_table[Opcode::GASLIMIT as usize] = OpCodeFn(VM::op_gaslimit);
         opcode_table[Opcode::CHAINID as usize] = OpCodeFn(VM::op_chainid);
-        opcode_table[Opcode::BASEFEE as usize] = OpCodeFn(VM::op_basefee);
+        // Note: BASEFEE (0x48) is NOT included here - it's London-only (EIP-3198)
         opcode_table[Opcode::AND as usize] = OpCodeFn(VM::op_and);
         opcode_table[Opcode::OR as usize] = OpCodeFn(VM::op_or);
         opcode_table[Opcode::XOR as usize] = OpCodeFn(VM::op_xor);
@@ -536,6 +540,18 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::LOG2 as usize] = OpCodeFn(VM::op_log::<2>);
         opcode_table[Opcode::LOG3 as usize] = OpCodeFn(VM::op_log::<3>);
         opcode_table[Opcode::LOG4 as usize] = OpCodeFn(VM::op_log::<4>);
+
+        opcode_table
+    }
+
+    /// Pre-Shanghai opcode table (London fork)
+    /// Adds BASEFEE (EIP-3198)
+    #[allow(clippy::as_conversions, clippy::indexing_slicing)]
+    const fn build_opcode_table_pre_shanghai() -> [OpCodeFn<'a>; 256] {
+        let mut opcode_table: [OpCodeFn<'a>; 256] = Self::build_opcode_table_pre_london();
+
+        // [EIP-3198] - BASEFEE is only available from LONDON
+        opcode_table[Opcode::BASEFEE as usize] = OpCodeFn(VM::op_basefee);
 
         opcode_table
     }

@@ -276,11 +276,39 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
         let mut vm = self.new_evm(vm_db)?;
 
-        let execution_result = vm.execute_block(block)?;
-        let account_updates = vm.get_state_transitions()?;
+        let mut execution_result = vm.execute_block(block)?;
+        let mut account_updates = vm.get_state_transitions()?;
+
+        // For pre-Byzantium forks, receipts need intermediate state roots.
+        // The VM's execute_block doesn't apply block rewards for pre-Byzantium,
+        // so we can compute receipt state roots from tx-only transitions, then
+        // apply block rewards for the final block state.
+        let fork = chain_config.get_fork_for_block(block.header.number, block.header.timestamp);
+        if fork < Fork::Byzantium {
+            // For single-tx blocks, compute the state root after transaction execution
+            // (before block rewards are applied).
+            if execution_result.receipts.len() == 1 {
+                if let Some(account_updates_list) = self
+                    .storage
+                    .apply_account_updates_batch(parent_header.hash(), &account_updates)?
+                {
+                    let state_root = account_updates_list.state_trie_hash;
+                    execution_result.receipts[0].state_root = Some(state_root);
+                }
+            }
+
+            // Apply block rewards for pre-Byzantium forks
+            // We need to add the block reward transitions to account_updates
+            apply_pre_byzantium_block_rewards(
+                block,
+                &parent_header,
+                &mut account_updates,
+                &self.storage,
+            )?;
+        }
 
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
@@ -2393,6 +2421,123 @@ fn collapse_root_node(
         }
     };
     Ok(Some(child))
+}
+
+/// Applies block rewards for pre-Byzantium forks by mutating account_updates.
+/// This properly merges rewards with any existing account updates from transaction execution.
+fn apply_pre_byzantium_block_rewards(
+    block: &Block,
+    parent_header: &BlockHeader,
+    account_updates: &mut Vec<AccountUpdate>,
+    storage: &Store,
+) -> Result<(), ChainError> {
+    use ethrex_common::U256;
+
+    // Block reward amounts (in wei)
+    const WEI_PER_ETH: u128 = 1_000_000_000_000_000_000;
+    // Pre-Byzantium always uses 5 ETH base reward
+    let base_reward: u128 = 5 * WEI_PER_ETH;
+
+    // Compute miner reward (base + uncle inclusion bonuses)
+    let mut miner_reward = base_reward;
+    let uncle_count = block.body.ommers.len() as u128;
+    let uncle_inclusion_reward = base_reward
+        .checked_mul(uncle_count)
+        .ok_or_else(|| ChainError::Custom("Uncle inclusion reward overflow".to_string()))?
+        .checked_div(32)
+        .unwrap_or(0);
+    miner_reward = miner_reward
+        .checked_add(uncle_inclusion_reward)
+        .ok_or_else(|| ChainError::Custom("Miner reward overflow".to_string()))?;
+
+    // Helper to add reward to an address, merging with existing update if present
+    let add_reward =
+        |address: Address,
+         reward: u128,
+         account_updates: &mut Vec<AccountUpdate>,
+         storage: &Store,
+         parent_hash: H256|
+         -> Result<(), ChainError> {
+            let reward = U256::from(reward);
+
+            // Check if address already has an update from transaction execution
+            if let Some(existing) = account_updates.iter_mut().find(|u| u.address == address) {
+                // Add reward to existing update's balance
+                if let Some(ref mut info) = existing.info {
+                    info.balance = info
+                        .balance
+                        .checked_add(reward)
+                        .ok_or_else(|| ChainError::Custom("Balance overflow".to_string()))?;
+                } else {
+                    // Account was touched but info is None - get from parent state and add reward
+                    let parent_info = storage
+                        .get_account_info_by_hash(parent_hash, address)?
+                        .unwrap_or_default();
+                    existing.info = Some(ethrex_common::types::AccountInfo {
+                        nonce: parent_info.nonce,
+                        balance: parent_info
+                            .balance
+                            .checked_add(reward)
+                            .ok_or_else(|| ChainError::Custom("Balance overflow".to_string()))?,
+                        code_hash: parent_info.code_hash,
+                    });
+                }
+            } else {
+                // No existing update - create new one from parent state
+                let parent_info = storage
+                    .get_account_info_by_hash(parent_hash, address)?
+                    .unwrap_or_default();
+                account_updates.push(AccountUpdate {
+                    address,
+                    removed: false,
+                    info: Some(ethrex_common::types::AccountInfo {
+                        nonce: parent_info.nonce,
+                        balance: parent_info
+                            .balance
+                            .checked_add(reward)
+                            .ok_or_else(|| ChainError::Custom("Balance overflow".to_string()))?,
+                        code_hash: parent_info.code_hash,
+                    }),
+                    code: None,
+                    added_storage: Default::default(),
+                    removed_storage: false,
+                });
+            }
+            Ok(())
+        };
+
+    // Apply miner reward
+    add_reward(
+        block.header.coinbase,
+        miner_reward,
+        account_updates,
+        storage,
+        parent_header.hash(),
+    )?;
+
+    // Apply uncle rewards to each uncle author
+    for ommer in &block.body.ommers {
+        let uncle_depth = block.header.number.checked_sub(ommer.number).unwrap_or(0);
+
+        // Uncle depth must be 1-6 (max 6 generations back)
+        if uncle_depth > 0 && uncle_depth <= 6 {
+            let uncle_reward = base_reward
+                .checked_mul((8 - uncle_depth) as u128)
+                .ok_or_else(|| ChainError::Custom("Uncle reward overflow".to_string()))?
+                .checked_div(8)
+                .unwrap_or(0);
+
+            add_reward(
+                ommer.coinbase,
+                uncle_reward,
+                account_updates,
+                storage,
+                parent_header.hash(),
+            )?;
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

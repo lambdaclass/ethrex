@@ -1574,6 +1574,7 @@ impl Store {
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
         let state_root = state_trie.hash_no_commit();
+
         for update in account_updates {
             let hashed_address = hash_address_fixed(&update.address);
             if update.removed {

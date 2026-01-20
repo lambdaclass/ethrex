@@ -86,10 +86,20 @@ impl LEVM {
             Self::process_withdrawals(db, withdrawals)?;
         }
 
-        // Apply block rewards for pre-merge forks (PoW)
-        // Post-merge forks don't have block rewards (PoS)
+        // Apply block rewards for PoW forks (Byzantium to London)
+        // Pre-Byzantium: block rewards are applied AFTER receipt state roots are computed
+        //                (handled in blockchain.rs for correct intermediate state roots)
+        // Byzantium-London: block rewards applied here (receipts use status, not state_root)
+        // Paris+: no block rewards (PoS)
         if let VMType::L1 = vm_type {
-            Self::apply_block_rewards(block, db)?;
+            let chain_config = db.store.get_chain_config()?;
+            let fork =
+                chain_config.get_fork_for_block(block.header.number, block.header.timestamp);
+            // Only apply block rewards in execute_block for Byzantium+ (but pre-Paris)
+            // Pre-Byzantium forks need to compute receipt state roots before block rewards
+            if fork >= Fork::Byzantium {
+                Self::apply_block_rewards(block, db)?;
+            }
         }
 
         // TODO: I don't like deciding the behavior based on the VMType here.
@@ -272,6 +282,8 @@ impl LEVM {
         vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        // Set fork on db for EIP-161 logic in get_state_transitions
+        db.set_fork(env.config.fork);
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         vm.execute().map_err(VMError::into)
@@ -290,6 +302,8 @@ impl LEVM {
         stack_pool: &mut Vec<Stack>,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        // Set fork on db for EIP-161 logic in get_state_transitions
+        db.set_fork(env.config.fork);
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         std::mem::swap(&mut vm.stack_pool, stack_pool);
@@ -316,6 +330,9 @@ impl LEVM {
         env.block_gas_limit = i64::MAX as u64; // disable block gas limit
 
         adjust_disabled_base_fee(&mut env);
+
+        // Set fork on db for EIP-161 logic in get_state_transitions
+        db.set_fork(env.config.fork);
 
         let mut vm = vm_from_generic(tx, env, db, vm_type)?;
 
@@ -556,7 +573,9 @@ impl LEVM {
         let uncle_count = block.body.ommers.len() as u128;
         let uncle_inclusion_reward = base_reward
             .checked_mul(uncle_count)
-            .ok_or(EvmError::Custom("Uncle inclusion reward overflow".to_string()))?
+            .ok_or(EvmError::Custom(
+                "Uncle inclusion reward overflow".to_string(),
+            ))?
             .checked_div(32)
             .unwrap_or(0);
         miner_reward = miner_reward
@@ -564,20 +583,19 @@ impl LEVM {
             .ok_or(EvmError::Custom("Miner reward overflow".to_string()))?;
 
         // Add miner reward to coinbase account
-        let coinbase = db
-            .get_account_mut(block.header.coinbase)
-            .map_err(|_| EvmError::DB(format!("Coinbase account {} not found", block.header.coinbase)))?;
+        let coinbase = db.get_account_mut(block.header.coinbase).map_err(|_| {
+            EvmError::DB(format!(
+                "Coinbase account {} not found",
+                block.header.coinbase
+            ))
+        })?;
         coinbase.info.balance += U256::from(miner_reward);
 
         // Apply uncle rewards to each uncle author
         for ommer in &block.body.ommers {
             // Uncle reward: (8 + uncle_number - block_number) / 8 * base_reward
             // This gives higher rewards for uncles that are closer to the current block
-            let uncle_depth = block
-                .header
-                .number
-                .checked_sub(ommer.number)
-                .unwrap_or(0);
+            let uncle_depth = block.header.number.checked_sub(ommer.number).unwrap_or(0);
 
             // Uncle depth must be 1-6 (max 6 generations back)
             if uncle_depth > 0 && uncle_depth <= 6 {
@@ -587,9 +605,9 @@ impl LEVM {
                     .checked_div(8)
                     .unwrap_or(0);
 
-                let uncle_author = db
-                    .get_account_mut(ommer.coinbase)
-                    .map_err(|_| EvmError::DB(format!("Uncle author account {} not found", ommer.coinbase)))?;
+                let uncle_author = db.get_account_mut(ommer.coinbase).map_err(|_| {
+                    EvmError::DB(format!("Uncle author account {} not found", ommer.coinbase))
+                })?;
                 uncle_author.info.balance += U256::from(uncle_reward);
             }
         }

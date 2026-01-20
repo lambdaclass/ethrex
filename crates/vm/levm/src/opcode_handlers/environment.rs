@@ -30,6 +30,8 @@ impl<'a> VM<'a> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
 
         let address_was_cold = !self.substate.add_accessed_address(address);
+        // Note: BALANCE is a read-only operation and does NOT touch the account for EIP-161 purposes.
+        // Only state-changing operations (CALL, CREATE, SELFDESTRUCT) touch accounts.
         let account_balance = self.db.get_account(address)?.info.balance;
 
         let fork = self.env.config.fork;
@@ -286,6 +288,8 @@ impl<'a> VM<'a> {
     pub fn op_extcodesize(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
         let address_was_cold = !self.substate.add_accessed_address(address);
+        // Note: EXTCODESIZE is a read-only operation and does NOT touch the account for EIP-161 purposes.
+        // Only state-changing operations (CALL, CREATE, SELFDESTRUCT) touch accounts.
         // FIXME: a bit wasteful to fetch the whole code just to get the length.
         let account_code_length = self.db.get_account_code(address)?.bytecode.len().into();
 
@@ -309,6 +313,8 @@ impl<'a> VM<'a> {
 
         let current_memory_size = call_frame.memory.len();
         let address_was_cold = !self.substate.add_accessed_address(address);
+        // Note: EXTCODECOPY is a read-only operation and does NOT touch the account for EIP-161 purposes.
+        // Only state-changing operations (CALL, CREATE, SELFDESTRUCT) touch accounts.
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
         let fork = self.env.config.fork;
@@ -420,6 +426,8 @@ impl<'a> VM<'a> {
     pub fn op_extcodehash(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
         let address_was_cold = !self.substate.add_accessed_address(address);
+        // Note: EXTCODEHASH is a read-only operation and does NOT touch the account for EIP-161 purposes.
+        // Only state-changing operations (CALL, CREATE, SELFDESTRUCT) touch accounts.
         let account = self.db.get_account(address)?;
         let account_is_empty = account.is_empty();
         let account_code_hash = account.info.code_hash.0;

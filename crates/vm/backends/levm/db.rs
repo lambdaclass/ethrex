@@ -98,6 +98,13 @@ impl LevmDatabase for DatabaseLogger {
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
             .get_account_code(code_hash)
     }
+
+    fn account_exists(&self, address: CoreAddress) -> Result<bool, DatabaseError> {
+        self.store
+            .lock()
+            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
+            .account_exists(address)
+    }
 }
 
 impl LevmDatabase for DynVmDatabase {
@@ -134,5 +141,13 @@ impl LevmDatabase for DynVmDatabase {
     fn get_account_code(&self, code_hash: CoreH256) -> Result<Code, DatabaseError> {
         <dyn VmDatabase>::get_account_code(self.as_ref(), code_hash)
             .map_err(|e| DatabaseError::Custom(e.to_string()))
+    }
+
+    fn account_exists(&self, address: CoreAddress) -> Result<bool, DatabaseError> {
+        // Check if VmDatabase::get_account_state returns Some (exists) or None (non-existent)
+        let exists = <dyn VmDatabase>::get_account_state(self.as_ref(), address)
+            .map_err(|e| DatabaseError::Custom(e.to_string()))?
+            .is_some();
+        Ok(exists)
     }
 }

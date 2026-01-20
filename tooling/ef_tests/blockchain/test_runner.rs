@@ -102,6 +102,12 @@ async fn run(
     blockchain: &Blockchain,
     store: &Store,
 ) -> Result<(), String> {
+    // For pre-merge (PoW) tests, we don't apply fork choice after each block.
+    // Instead, we process all blocks and apply fork choice to lastblockhash at the end.
+    // This allows proper handling of multi-chain tests where the canonical chain
+    // is determined by total difficulty, not by block arrival order.
+    let is_pre_merge = test.network.is_pre_merge();
+
     // Execute all blocks in test
     for block_fixture in test.blocks.iter() {
         let expects_exception = block_fixture.expect_exception.is_some();
@@ -136,10 +142,21 @@ async fn run(
                         block_fixture.expect_exception.clone()
                     ));
                 }
-                // Advance fork choice to the new head
-                apply_fork_choice(store, hash, hash, hash).await.unwrap();
+                // For post-merge (PoS) tests, advance fork choice to the new head after each block.
+                // For pre-merge (PoW) tests, skip this - we'll apply fork choice at the end.
+                if !is_pre_merge {
+                    apply_fork_choice(store, hash, hash, hash).await.unwrap();
+                }
             }
         }
+    }
+
+    // For pre-merge tests, apply fork choice to the expected canonical chain tip (lastblockhash).
+    // This ensures the correct chain is canonical for state verification.
+    if is_pre_merge {
+        apply_fork_choice(store, test.lastblockhash, test.lastblockhash, test.lastblockhash)
+            .await
+            .unwrap();
     }
 
     // Final post-state verification

@@ -93,6 +93,26 @@ pub fn restore_cache_state(
         }
     }
 
+    // Restore touched_addresses for EIP-161 if snapshot exists
+    if let Some(touched_snapshot) = callframe_backup.touched_addresses_snapshot {
+        // EIP-161 RIPEMD160 special case (historical consensus hack):
+        // When a sub-call fails, normally all touches are reverted. However, due to a
+        // historical consensus bug that was canonicalized, RIPEMD160 (precompile 0x03)
+        // should remain touched even when the call that touched it reverts.
+        // This special case applies to forks before The Merge (Paris).
+        // After The Merge, all empty accounts were deleted and this edge case cannot occur.
+        // Reference: EIP-4747, https://github.com/ethereum/aleth/pull/5652
+        let ripemd160_address = Address::from_low_u64_be(3);
+        let ripemd160_was_touched = db.touched_addresses.contains(&ripemd160_address);
+
+        db.touched_addresses = touched_snapshot;
+
+        // Re-add RIPEMD160 if it was touched during the failed sub-call (pre-Paris only)
+        if ripemd160_was_touched && db.fork < Fork::Paris {
+            db.touched_addresses.insert(ripemd160_address);
+        }
+    }
+
     Ok(())
 }
 
@@ -595,6 +615,7 @@ pub fn account_to_levm_account(account: Account) -> (LevmAccount, Code) {
             has_storage: !account.storage.is_empty(), // This is used in scenarios in which the storage is already all in the account. For the Levm Runner
             storage: account.storage,
             status: AccountStatus::Unmodified,
+            exists: true, // Converting from existing Account means it exists
         },
         account.code,
     )

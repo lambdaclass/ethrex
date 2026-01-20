@@ -6,7 +6,7 @@ use crate::{
 };
 
 use bytes::Bytes;
-use ethrex_common::types::Code;
+use ethrex_common::types::{Code, Fork};
 
 impl<'a> VM<'a> {
     pub fn handle_precompile_result(
@@ -141,8 +141,9 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Overflow)?;
 
         // Revert Scenarios
-        // 1. If the first byte of code is 0xEF
-        if code.first().is_some_and(|v| v == &EOF_PREFIX) {
+        // 1. [EIP-3541] If the first byte of code is 0xEF (London+)
+        // Before London, contracts with 0xEF prefix were allowed.
+        if self.env.config.fork >= Fork::London && code.first().is_some_and(|v| v == &EOF_PREFIX) {
             return Err(ExceptionalHalt::InvalidContractPrefix.into());
         }
 

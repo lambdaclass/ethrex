@@ -467,6 +467,104 @@ pub fn sstore(
         .ok_or(OutOfGas.into())
 }
 
+/// Fork-aware gas cost for SSTORE operation.
+///
+/// Gas costs vary significantly by fork:
+/// - Pre-Constantinople: Simple model (20000 for new slot, 5000 for update)
+/// - Constantinople/Istanbul (EIP-2200): Net gas metering with SLOAD_GAS for no-ops
+/// - Berlin+ (EIP-2929): Cold/warm access + net gas metering
+pub fn sstore_with_fork(
+    original_value: U256,
+    current_value: U256,
+    new_value: U256,
+    storage_slot_was_cold: bool,
+    fork: Fork,
+) -> Result<u64, VMError> {
+    let schedule = GasSchedule::for_fork(fork);
+
+    // Berlin+ (EIP-2929): Uses cold/warm access + net gas metering
+    if schedule.has_access_lists {
+        let base_dynamic_gas = if new_value == current_value {
+            SSTORE_DEFAULT_DYNAMIC // 100 (warm SLOAD)
+        } else if current_value == original_value {
+            if original_value.is_zero() {
+                SSTORE_STORAGE_CREATION // 20000
+            } else {
+                SSTORE_STORAGE_MODIFICATION // 2900
+            }
+        } else {
+            SSTORE_DEFAULT_DYNAMIC // 100 (warm SLOAD)
+        };
+
+        let cold_access_cost = if storage_slot_was_cold {
+            SSTORE_COLD_DYNAMIC // 2100
+        } else {
+            0
+        };
+
+        return SSTORE_STATIC
+            .checked_add(base_dynamic_gas)
+            .ok_or(OutOfGas)?
+            .checked_add(cold_access_cost)
+            .ok_or(OutOfGas.into());
+    }
+
+    // Istanbul (EIP-2200): Net gas metering with SLOAD_GAS for unchanged values
+    if fork >= Fork::Istanbul {
+        // EIP-2200: Net gas metering
+        // SLOAD_GAS = 800 in Istanbul
+        if new_value == current_value {
+            // No-op: charge SLOAD_GAS
+            return Ok(schedule.sload);
+        } else if current_value == original_value {
+            if original_value.is_zero() {
+                // Fresh slot: 20000
+                return Ok(20000);
+            } else {
+                // Reset slot: 5000
+                return Ok(5000);
+            }
+        } else {
+            // Dirty slot: charge SLOAD_GAS
+            return Ok(schedule.sload);
+        }
+    }
+
+    // Constantinople (EIP-1283): Net gas metering (removed in Petersburg due to reentrancy bug)
+    // EIP-1283 was included in Constantinople but reverted in Petersburg (ConstantinopleFix)
+    if fork == Fork::Constantinople {
+        // EIP-1283: Net gas metering with SLOAD_GAS = 200
+        if new_value == current_value {
+            // No-op: charge SLOAD_GAS
+            return Ok(schedule.sload); // 200
+        } else if current_value == original_value {
+            if original_value.is_zero() {
+                // Fresh slot: 20000
+                return Ok(20000);
+            } else {
+                // Reset slot: 5000
+                return Ok(5000);
+            }
+        } else {
+            // Dirty slot: charge SLOAD_GAS
+            return Ok(schedule.sload); // 200
+        }
+    }
+
+    // Pre-Constantinople and Petersburg: Simple model
+    // Petersburg reverted EIP-1283, so uses the same model as pre-Constantinople
+    if new_value.is_zero() && !current_value.is_zero() {
+        // Clear: 5000 gas (refund handled separately)
+        Ok(5000)
+    } else if current_value.is_zero() && !new_value.is_zero() {
+        // New non-zero: 20000 gas
+        Ok(20000)
+    } else {
+        // Update (including no-op): 5000 gas
+        Ok(5000)
+    }
+}
+
 pub fn mcopy(
     new_memory_size: usize,
     current_memory_size: usize,
@@ -764,6 +862,7 @@ pub fn call_with_fork(
     current_memory_size: usize,
     address_was_cold: bool,
     address_is_empty: bool,
+    address_exists: bool,
     value_to_transfer: U256,
     gas_from_stack: U256,
     gas_left: u64,
@@ -779,10 +878,25 @@ pub fn call_with_fork(
         0
     };
 
-    let value_to_empty_account = if address_is_empty && !value_to_transfer.is_zero() {
-        CALL_TO_EMPTY_ACCOUNT
+    // G_newaccount: Cost for calling a non-existent or empty account.
+    // - Pre-EIP161 (Frontier, Homestead, Tangerine Whistle): Charged for calls to NON-EXISTENT
+    //   addresses. Existing empty accounts don't trigger this charge.
+    // - EIP161+ (Spurious Dragon and later): Charged when address is empty/dead AND value > 0
+    let eip161_enabled = fork >= Fork::SpuriousDragon;
+    let new_account_cost = if eip161_enabled {
+        // EIP-161: Only charge if transferring value to an empty (dead) account
+        if address_is_empty && !value_to_transfer.is_zero() {
+            schedule.call_new_account
+        } else {
+            0
+        }
     } else {
-        0
+        // Pre-EIP161: Charge for calling non-existent accounts (not existing empty ones)
+        if !address_exists {
+            schedule.call_new_account
+        } else {
+            0
+        }
     };
 
     let call_gas_costs = memory_expansion_cost
@@ -790,15 +904,16 @@ pub fn call_with_fork(
         .ok_or(OutOfGas)?
         .checked_add(positive_value_cost)
         .ok_or(OutOfGas)?
-        .checked_add(value_to_empty_account)
+        .checked_add(new_account_cost)
         .ok_or(OutOfGas)?;
 
-    calculate_cost_and_gas_limit_call(
+    calculate_cost_and_gas_limit_call_with_fork(
         value_to_transfer.is_zero(),
         gas_from_stack,
         gas_left,
         call_gas_costs,
         CALL_POSITIVE_VALUE_STIPEND,
+        fork,
     )
 }
 
@@ -828,12 +943,13 @@ pub fn callcode_with_fork(
         .checked_add(positive_value_cost)
         .ok_or(OutOfGas)?;
 
-    calculate_cost_and_gas_limit_call(
+    calculate_cost_and_gas_limit_call_with_fork(
         value_to_transfer.is_zero(),
         gas_from_stack,
         gas_left,
         call_gas_costs,
         CALLCODE_POSITIVE_VALUE_STIPEND,
+        fork,
     )
 }
 
@@ -855,7 +971,14 @@ pub fn delegatecall_with_fork(
         .checked_add(address_access_cost)
         .ok_or(OutOfGas)?;
 
-    calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
+    calculate_cost_and_gas_limit_call_with_fork(
+        true,
+        gas_from_stack,
+        gas_left,
+        call_gas_costs,
+        0,
+        fork,
+    )
 }
 
 /// Fork-aware gas cost for STATICCALL operation.
@@ -876,13 +999,21 @@ pub fn staticcall_with_fork(
         .checked_add(address_access_cost)
         .ok_or(OutOfGas)?;
 
-    calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
+    calculate_cost_and_gas_limit_call_with_fork(
+        true,
+        gas_from_stack,
+        gas_left,
+        call_gas_costs,
+        0,
+        fork,
+    )
 }
 
 /// Fork-aware gas cost for SELFDESTRUCT operation.
 pub fn selfdestruct_with_fork(
     address_was_cold: bool,
     account_is_empty: bool,
+    account_exists: bool,
     balance_to_transfer: U256,
     fork: Fork,
 ) -> Result<u64, VMError> {
@@ -898,11 +1029,24 @@ pub fn selfdestruct_with_fork(
     // Base selfdestruct cost
     let base_cost = schedule.selfdestruct;
 
-    // New account cost if sending value to empty account
-    let new_account_cost = if account_is_empty && balance_to_transfer > U256::zero() {
-        schedule.selfdestruct_new_account
+    // G_newaccount for SELFDESTRUCT.
+    // - Pre-EIP161: Charged for selfdestructing to NON-EXISTENT addresses
+    // - EIP161+: Only charged when transferring positive balance to empty/dead account
+    let eip161_enabled = fork >= Fork::SpuriousDragon;
+    let new_account_cost = if eip161_enabled {
+        // EIP-161: Only charge if transferring positive balance to empty account
+        if account_is_empty && balance_to_transfer > U256::zero() {
+            schedule.selfdestruct_new_account
+        } else {
+            0
+        }
     } else {
-        0
+        // Pre-EIP161: Charge for selfdestructing to non-existent accounts
+        if !account_exists {
+            schedule.selfdestruct_new_account
+        } else {
+            0
+        }
     };
 
     base_cost
@@ -936,6 +1080,7 @@ pub fn call(
         0
     };
 
+    // Post-Berlin: EIP-150 cost for calling empty accounts with value
     let value_to_empty_account = if address_is_empty && !value_to_transfer.is_zero() {
         CALL_TO_EMPTY_ACCOUNT
     } else {
@@ -1221,6 +1366,28 @@ pub fn max_message_call_gas(current_call_frame: &CallFrame) -> Result<u64, VMErr
     Ok(remaining_gas as u64)
 }
 
+/// Fork-aware max message call gas.
+///
+/// EIP-150 (Tangerine Whistle) introduced the 63/64 rule to prevent call-depth attacks.
+/// Before EIP-150, callers could pass all remaining gas to subcalls.
+#[expect(clippy::arithmetic_side_effects, reason = "can't overflow")]
+#[expect(clippy::as_conversions, reason = "remaining gas conversion")]
+pub fn max_message_call_gas_with_fork(
+    current_call_frame: &CallFrame,
+    fork: Fork,
+) -> Result<u64, VMError> {
+    let schedule = GasSchedule::for_fork(fork);
+    let remaining_gas = current_call_frame.gas_remaining;
+
+    if schedule.has_63_64_rule {
+        // EIP-150+: Apply 63/64 rule
+        Ok((remaining_gas - remaining_gas / 64) as u64)
+    } else {
+        // Pre-EIP-150: Pass all remaining gas
+        Ok(remaining_gas as u64)
+    }
+}
+
 fn calculate_cost_and_gas_limit_call(
     value_is_zero: bool,
     gas_from_stack: U256,
@@ -1233,6 +1400,43 @@ fn calculate_cost_and_gas_limit_call(
 
     // EIP 150, https://eips.ethereum.org/EIPS/eip-150
     let max_gas_for_call = gas_left.checked_sub(gas_left / 64).ok_or(OutOfGas)?;
+
+    let gas: u64 = gas_from_stack
+        .min(max_gas_for_call.into())
+        .try_into()
+        .map_err(|_err| ExceptionalHalt::OutOfGas)?;
+
+    Ok((
+        gas.checked_add(call_gas_costs)
+            .ok_or(ExceptionalHalt::OutOfGas)?,
+        gas.checked_add(gas_stipend)
+            .ok_or(ExceptionalHalt::OutOfGas)?,
+    ))
+}
+
+/// Fork-aware version of calculate_cost_and_gas_limit_call.
+///
+/// EIP-150 introduced the 63/64 rule. Before EIP-150, the caller could pass
+/// all remaining gas (up to gas_from_stack) to the subcall.
+fn calculate_cost_and_gas_limit_call_with_fork(
+    value_is_zero: bool,
+    gas_from_stack: U256,
+    gas_left: u64,
+    call_gas_costs: u64,
+    stipend: u64,
+    fork: Fork,
+) -> Result<(u64, u64), VMError> {
+    let gas_stipend = if value_is_zero { 0 } else { stipend };
+    let gas_left = gas_left.checked_sub(call_gas_costs).ok_or(OutOfGas)?;
+
+    let schedule = GasSchedule::for_fork(fork);
+    let max_gas_for_call = if schedule.has_63_64_rule {
+        // EIP-150+: Apply 63/64 rule
+        gas_left.checked_sub(gas_left / 64).ok_or(OutOfGas)?
+    } else {
+        // Pre-EIP-150: No limit based on remaining gas
+        gas_left
+    };
 
     let gas: u64 = gas_from_stack
         .min(max_gas_for_call.into())

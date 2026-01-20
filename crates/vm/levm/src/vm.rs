@@ -410,6 +410,19 @@ impl<'a> VM<'a> {
 
         let fork = env.config.fork;
 
+        // Initialize touched_addresses for EIP-161.
+        // Origin (sender) is always touched.
+        db.touched_addresses.insert(env.origin);
+        // For CALL transactions: touch the callee at initialization.
+        // The act of sending a message call touches the target, even if the call has 0 value
+        // and the target has empty code. This is required for EIP-161 empty account deletion.
+        // For CREATE transactions: do NOT touch the callee at initialization.
+        // If CREATE fails, the new contract address shouldn't be marked for deletion.
+        // The callee will be touched only if CREATE succeeds.
+        if !is_create {
+            db.touched_addresses.insert(callee);
+        }
+
         let mut vm = Self {
             call_frames: Vec::new(),
             substate,
@@ -469,6 +482,12 @@ impl<'a> VM<'a> {
         self.hooks.push(Rc::new(RefCell::new(hook)));
     }
 
+    /// Mark an address as touched for EIP-161 empty account deletion.
+    /// This set persists through reverts, unlike accessed_addresses.
+    pub fn touch_address(&mut self, address: Address) {
+        self.db.touched_addresses.insert(address);
+    }
+
     /// Executes a whole external transaction. Performing validations at the beginning.
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
         if let Err(e) = self.prepare_execution() {
@@ -480,6 +499,13 @@ impl<'a> VM<'a> {
         // Clear callframe backup so that changes made in prepare_execution are written in stone.
         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
         self.current_call_frame.call_frame_backup.clear();
+
+        // Snapshot touched_addresses for EIP-161 revert handling.
+        // If the tx fails during execution, we restore touched_addresses to this snapshot.
+        // This ensures addresses touched during failed execution don't cause empty account deletion.
+        self.current_call_frame
+            .call_frame_backup
+            .touched_addresses_snapshot = Some(self.db.touched_addresses.clone());
 
         if self.is_create()? {
             // Create contract, reverting the Tx if address is already occupied.

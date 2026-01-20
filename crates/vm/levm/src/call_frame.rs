@@ -274,6 +274,8 @@ pub struct CallFrame {
 pub struct CallFrameBackup {
     pub original_accounts_info: HashMap<Address, LevmAccount>,
     pub original_account_storage_slots: HashMap<Address, HashMap<H256, U256>>,
+    /// Backup of touched addresses for EIP-161. Used to revert touches when a sub-call fails.
+    pub touched_addresses_snapshot: Option<std::collections::HashSet<Address>>,
 }
 
 impl CallFrameBackup {
@@ -289,6 +291,7 @@ impl CallFrameBackup {
                 storage: Default::default(),
                 status: account.status.clone(),
                 has_storage: account.has_storage,
+                exists: account.exists,
             });
 
         Ok(())
@@ -297,6 +300,7 @@ impl CallFrameBackup {
     pub fn clear(&mut self) {
         self.original_accounts_info.clear();
         self.original_account_storage_slots.clear();
+        self.touched_addresses_snapshot = None;
     }
 
     pub fn extend(&mut self, other: CallFrameBackup) {
@@ -304,6 +308,10 @@ impl CallFrameBackup {
             .extend(other.original_account_storage_slots);
         self.original_accounts_info
             .extend(other.original_accounts_info);
+        // For touched_addresses_snapshot, keep the original (oldest) snapshot
+        if self.touched_addresses_snapshot.is_none() {
+            self.touched_addresses_snapshot = other.touched_addresses_snapshot;
+        }
     }
 }
 
@@ -395,7 +403,12 @@ impl CallFrame {
 impl<'a> VM<'a> {
     /// Adds current calframe to call_frames, sets current call frame to the passed callframe.
     #[inline(always)]
-    pub fn add_callframe(&mut self, new_call_frame: CallFrame) {
+    pub fn add_callframe(&mut self, mut new_call_frame: CallFrame) {
+        // Snapshot touched_addresses for EIP-161 revert handling.
+        // If this sub-call fails, we'll restore touched_addresses to this snapshot.
+        new_call_frame.call_frame_backup.touched_addresses_snapshot =
+            Some(self.db.touched_addresses.clone());
+
         self.call_frames.push(new_call_frame);
         #[allow(unsafe_code, reason = "just pushed, so the vec is not empty")]
         unsafe {
