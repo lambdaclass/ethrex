@@ -938,7 +938,12 @@ fn encode_branch(children: [Option<NodeHash>; 16]) -> Vec<u8> {
             continue;
         };
         match child {
-            NodeHash::Hashed(hash) => hash.0.encode(&mut buf),
+            NodeHash::Hashed(hash) => {
+                // RLP encode 32-byte string directly: 0xa0 prefix + 32 bytes
+                // Avoids RLPEncode trait call overhead
+                buf.put_u8(0xa0);
+                buf.extend_from_slice(&hash.0);
+            }
             NodeHash::Inline((_, 0)) => buf.put_u8(RLP_NULL),
             NodeHash::Inline((encoded, len)) => buf.put_slice(&encoded[..*len as usize]),
         }

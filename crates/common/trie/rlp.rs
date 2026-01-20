@@ -23,7 +23,11 @@ impl RLPEncode for BranchNode {
         encode_length(payload_len, buf);
         for child in self.choices.iter() {
             match child.compute_hash_ref() {
-                NodeHash::Hashed(hash) => hash.0.encode(buf),
+                NodeHash::Hashed(hash) => {
+                    // RLP encode 32-byte string directly: 0xa0 prefix + 32 bytes
+                    buf.put_u8(0xa0);
+                    buf.put_slice(&hash.0);
+                }
                 NodeHash::Inline((_, 0)) => buf.put_u8(RLP_NULL),
                 NodeHash::Inline((encoded, len)) => buf.put_slice(&encoded[..*len as usize]),
             }
@@ -44,7 +48,11 @@ impl RLPEncode for BranchNode {
         encode_length(payload_len, &mut buf);
         for child in self.choices.iter() {
             match child.compute_hash_ref() {
-                NodeHash::Hashed(hash) => hash.0.encode(&mut buf),
+                NodeHash::Hashed(hash) => {
+                    // RLP encode 32-byte string directly: 0xa0 prefix + 32 bytes
+                    buf.push(0xa0);
+                    buf.extend_from_slice(&hash.0);
+                }
                 NodeHash::Inline((_, 0)) => buf.push(RLP_NULL),
                 NodeHash::Inline((encoded, len)) => {
                     buf.extend_from_slice(&encoded[..*len as usize])
