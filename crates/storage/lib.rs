@@ -101,3 +101,7 @@ pub const STORE_SCHEMA_VERSION: u64 = 2;
 /// This file contains version information and is used to detect
 /// incompatible database formats on startup.
 pub const STORE_METADATA_FILENAME: &str = "metadata.json";
+
+#[cfg(test)]
+#[path = "test_state_root_comparison.rs"]
+mod test_state_root_comparison;

@@ -338,35 +338,39 @@ impl Blockchain {
 
                 // Apply account changes to state trie
                 for (addr, account_opt) in block.account_changes() {
-                    // Convert H256 address to [u8; 20] (take last 20 bytes)
-                    let addr_bytes: [u8; 20] = addr.as_bytes()[12..32].try_into().unwrap();
+                    // addr is already a hashed address (H256 = 32 bytes)
+                    // Use set_account_by_hash to avoid double hashing
+                    let addr_hash: [u8; 32] = *addr.as_fixed_bytes();
 
                     match account_opt {
                         Some(account) => {
                             let account_data = account_to_data(account);
-                            state_trie.set_account(&addr_bytes, account_data);
+                            state_trie.set_account_by_hash(&addr_hash, account_data);
                         }
                         None => {
                             // For deletion, set to empty account
                             // (In a full implementation, we'd remove it from the trie)
-                            state_trie.set_account(&addr_bytes, AccountData::empty());
+                            state_trie.set_account_by_hash(&addr_hash, AccountData::empty());
                         }
                     }
                 }
 
                 // Apply storage changes to state trie
                 for (addr, slots) in block.storage_changes() {
-                    let addr_bytes: [u8; 20] = addr.as_bytes()[12..32].try_into().unwrap();
-                    let storage = state_trie.storage_trie(&addr_bytes);
+                    // addr is already a hashed address (H256 = 32 bytes)
+                    // Use storage_trie_by_hash to avoid double hashing
+                    let addr_hash: [u8; 32] = *addr.as_fixed_bytes();
+                    let storage = state_trie.storage_trie_by_hash(&addr_hash);
 
                     for (key, value) in slots {
-                        // H256 keys are already big-endian
-                        let slot: [u8; 32] = *key.as_fixed_bytes();
+                        // key is already hashed (H256 = 32 bytes)
+                        // Use set_by_hash to avoid double hashing
+                        let slot_hash: [u8; 32] = *key.as_fixed_bytes();
 
                         // U256 values need to be converted
                         let val = value.to_big_endian();
 
-                        storage.set(&slot, val);
+                        storage.set_by_hash(&slot_hash, val);
                     }
                 }
             }
