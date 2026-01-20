@@ -8,14 +8,13 @@ use crate::{
     },
     utils::{self, default_datadir, init_datadir, parse_private_key},
 };
-use bytes::Bytes;
 use clap::{FromArgMatches, Parser, Subcommand};
 use ethrex_blockchain::{
     Blockchain, BlockchainOptions, BlockchainType, L2Config, fork_choice::apply_fork_choice,
 };
 use ethrex_common::{
     Address, U256,
-    types::{BYTES_PER_BLOB, Block, blobs_bundle, bytes_from_blob, fee_config::FeeConfig},
+    types::{BYTES_PER_BLOB, Block, bytes_from_blob, fee_config::FeeConfig},
 };
 use ethrex_common::{types::BlobsBundle, utils::keccak};
 use ethrex_config::networks::Network;
