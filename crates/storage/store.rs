@@ -1342,11 +1342,15 @@ impl Store {
             let block_hash = block.hash();
             let state_root = block.header.state_root;
 
+            println!("DEBUG [store_block_updates]: Storing state for block_hash={}, state_root={}", block_hash, state_root);
+
             // Move pending state to block_states cache
             let mut pending = self.pending_block_state.lock()
                 .map_err(|_| StoreError::LockError)?;
 
             if let Some(state) = pending.take() {
+                println!("DEBUG [store_block_updates]: Moving pending state with {} accounts to block_states", state.len());
+
                 let mut block_states = self.block_states.lock()
                     .map_err(|_| StoreError::LockError)?;
 
@@ -1356,6 +1360,7 @@ impl Store {
                 drop(block_states);
                 let mut state_root_to_block = self.state_root_to_block.lock()
                     .map_err(|_| StoreError::LockError)?;
+                println!("DEBUG [store_block_updates]: Registering mapping: state_root={} -> block_hash={}", state_root, block_hash);
                 state_root_to_block.insert(state_root, block_hash);
                 drop(state_root_to_block);
 
@@ -1365,6 +1370,8 @@ impl Store {
                     self.block_states.lock().unwrap().get(&block_hash).map(|s| s.len()).unwrap_or(0),
                     state_root
                 );
+            } else {
+                println!("DEBUG [store_block_updates]: No pending state to store!");
             }
         }
 
@@ -1757,12 +1764,26 @@ impl Store {
             .ok_or_else(|| StoreError::Custom(format!("Parent state trie not found for {}", parent_hash)))?;
 
         // Get parent state from cache for tracking
+        // IMPORTANT: Force a deep clone to avoid modifying the cached parent state
         let parent_state: StdHashMap<Address, CachedAccountData> = {
             let block_states = self.block_states.lock()
                 .map_err(|_| StoreError::LockError)?;
-            block_states.get(&parent_hash)
-                .cloned()
-                .unwrap_or_default()
+            if let Some(cached_parent) = block_states.get(&parent_hash) {
+                // Manually deep clone to ensure parent state isn't modified
+                let mut cloned = StdHashMap::new();
+                for (addr, cached_data) in cached_parent.iter() {
+                    let new_cached = CachedAccountData {
+                        state: cached_data.state.clone(),
+                        storage: cached_data.storage.clone(),
+                    };
+                    cloned.insert(*addr, new_cached);
+                }
+                println!("DEBUG [apply_account_updates_batch]: Deep cloned parent_state with {} accounts", cloned.len());
+                cloned
+            } else {
+                println!("DEBUG [apply_account_updates_batch]: No parent state found, using empty");
+                StdHashMap::new()
+            }
         };
 
         // Delegate to the existing legacy method that handles storage roots correctly
@@ -1825,6 +1846,21 @@ impl Store {
             account_updates_list.state_trie_hash,
             account_updates.len()
         );
+
+        // DEBUG: Verify parent state wasn't modified
+        {
+            let block_states = self.block_states.lock()
+                .map_err(|_| StoreError::LockError)?;
+            if let Some(parent_state_check) = block_states.get(&parent_hash) {
+                println!("DEBUG [apply_account_updates_batch]: Checking if parent state was modified...");
+                for update in account_updates {
+                    if let Some(cached) = parent_state_check.get(&update.address) {
+                        println!("  Parent state for {}: balance={}, storage_len={}",
+                                 update.address, cached.state.balance, cached.storage.len());
+                    }
+                }
+            }
+        }
 
         Ok(Some(account_updates_list))
     }
@@ -2582,14 +2618,49 @@ impl Store {
         state_root: H256,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
+        // WORKAROUND: For system contract addresses, always load from trie to avoid cache pollution
+        // System contract addresses that should bypass cache:
+        const BEACON_ROOTS_ADDRESS: &str = "0x000f3df6d732807ef1319fb7b8bb8522d0beac02";
+        const HISTORY_STORAGE_ADDRESS: &str = "0x0000f90827f1c53a10cb7a02335b175320002935";
+        const WITHDRAWAL_REQUEST_ADDRESS: &str = "0x00000961ef480eb55e80d19ad83579a64c007002";
+        const CONSOLIDATION_REQUEST_ADDRESS: &str = "0x0000bbddc7ce488642fb579f8b00f3a590007251";
+
+        let addr_str = format!("{:?}", address).to_lowercase();
+        let is_system_contract = addr_str == BEACON_ROOTS_ADDRESS.to_lowercase()
+            || addr_str == HISTORY_STORAGE_ADDRESS.to_lowercase()
+            || addr_str == WITHDRAWAL_REQUEST_ADDRESS.to_lowercase()
+            || addr_str == CONSOLIDATION_REQUEST_ADDRESS.to_lowercase();
+
+        if is_system_contract {
+            println!("DEBUG [get_account_state_by_root]: System contract {}, loading from trie (bypassing cache)", address);
+            // Load directly from trie for system contracts by finding the block with this state root
+            let state_root_to_block_check = self.state_root_to_block.lock()
+                .map_err(|_| StoreError::LockError)?;
+            if let Some(block_hash) = state_root_to_block_check.get(&state_root) {
+                let block_hash = *block_hash;
+                drop(state_root_to_block_check);
+                let state_trie = self.state_trie(block_hash)?
+                    .ok_or_else(|| StoreError::Custom(format!("State trie not found for block {}", block_hash)))?;
+                return self.get_account_state_from_trie(&state_trie, address);
+            }
+            drop(state_root_to_block_check);
+            return Ok(None);
+        }
+
         // Use state_root -> block_hash mapping to find the right block state
         let state_root_to_block = self.state_root_to_block.lock()
             .map_err(|_| StoreError::LockError)?;
 
         let block_hash = match state_root_to_block.get(&state_root) {
-            Some(hash) => *hash,
+            Some(hash) => {
+                println!("DEBUG [get_account_state_by_root]: address={}, state_root={} -> block_hash={}",
+                         address, state_root, hash);
+                *hash
+            }
             None => {
                 drop(state_root_to_block);
+                println!("DEBUG [get_account_state_by_root]: address={}, state_root={} NOT FOUND in mapping",
+                         address, state_root);
                 // State root not found in mapping - this might be during execution
                 // before the mapping is registered. Return None for now.
                 // TODO: This is a workaround and should be fixed properly
@@ -2607,7 +2678,16 @@ impl Store {
             .ok_or_else(|| StoreError::Custom(format!("Block state for {} not found", block_hash)))?;
 
         // Get the account from the block state (extract the state field from CachedAccountData)
-        Ok(state.get(&address).map(|cached| cached.state))
+        let result = state.get(&address).map(|cached| cached.state);
+
+        if let Some(account_state) = &result {
+            println!("DEBUG [get_account_state_by_root]: Found account - nonce={}, balance={}, storage_root={}",
+                     account_state.nonce, account_state.balance, account_state.storage_root);
+        } else {
+            println!("DEBUG [get_account_state_by_root]: Account NOT found in block state");
+        }
+
+        Ok(result)
     }
 
     pub fn get_account_state_from_trie(

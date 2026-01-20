@@ -659,12 +659,23 @@ impl Blockchain {
     pub fn finalize_payload(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
         let account_updates = context.vm.get_state_transitions()?;
 
+        println!("DEBUG [build_payload]: parent_hash={}, tx_count={}, account_updates_count={}",
+                 context.parent_hash(), context.payload.body.transactions.len(), account_updates.len());
+        for (i, update) in account_updates.iter().enumerate() {
+            println!("  Update {}: address={}, removed={}, nonce={:?}, balance={:?}",
+                     i, update.address, update.removed,
+                     update.info.as_ref().map(|i| i.nonce),
+                     update.info.as_ref().map(|i| i.balance));
+        }
+
         let ret_acount_updates_list = self
             .storage
             .apply_account_updates_batch(context.parent_hash(), &account_updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
 
         let state_root = ret_acount_updates_list.state_trie_hash;
+
+        println!("DEBUG [build_payload]: computed state_root={}", state_root);
 
         context.payload.header.state_root = state_root;
         context.payload.header.transactions_root =

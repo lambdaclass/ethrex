@@ -156,9 +156,27 @@ impl GeneralizedDatabase {
 
     pub fn get_state_transitions(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
+
+        println!("DEBUG [get_state_transitions]: total_accounts={}, initial_accounts={}",
+                 self.current_accounts_state.len(), self.initial_accounts_state.len());
+
+        println!("DEBUG [get_state_transitions]: Current accounts:");
+        for (addr, acc) in self.current_accounts_state.iter() {
+            println!("  {}: status={:?}, nonce={}, balance={}",
+                     addr, acc.status, acc.info.nonce, acc.info.balance);
+        }
+
+        println!("DEBUG [get_state_transitions]: Initial accounts:");
+        for (addr, acc) in self.initial_accounts_state.iter() {
+            println!("  {}: nonce={}, balance={}",
+                     addr, acc.info.nonce, acc.info.balance);
+        }
+
+        let mut unmodified_count = 0;
         for (address, new_state_account) in self.current_accounts_state.iter() {
             if new_state_account.is_unmodified() {
                 // Skip processing account that we know wasn't mutably accessed during execution
+                unmodified_count += 1;
                 continue;
             }
             // In case the account is not in immutable_cache (rare) we search for it in the actual database.
@@ -206,6 +224,9 @@ impl GeneralizedDatabase {
             // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage: FxHashMap<_, _> = Default::default();
 
+            println!("DEBUG [get_state_transitions]: Checking storage for address={}, current_storage_len={}, initial_storage_len={}",
+                     address, new_state_account.storage.len(), initial_state_account.storage.len());
+
             for (key, new_value) in &new_state_account.storage {
                 let old_value = if !removed_storage {
                     initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address:?}. For key: {key:?}")))})?
@@ -215,8 +236,11 @@ impl GeneralizedDatabase {
                 };
 
                 if new_value != old_value {
+                    println!("  Storage changed: key={}, old={}, new={}", key, old_value, new_value);
                     added_storage.insert(*key, *new_value);
                     storage_updated = true;
+                } else {
+                    println!("  Storage unchanged: key={}, value={}", key, new_value);
                 }
             }
 
@@ -247,6 +271,9 @@ impl GeneralizedDatabase {
 
             account_updates.push(account_update);
         }
+
+        println!("DEBUG [get_state_transitions]: unmodified={}, updates={}", unmodified_count, account_updates.len());
+
         self.initial_accounts_state.clear();
         self.current_accounts_state.clear();
         self.codes.clear();
