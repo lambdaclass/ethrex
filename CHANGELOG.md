@@ -4,6 +4,7 @@
 
 ### 2026-01-19
 
+- Use FxHashset for access lists [#5864](https://github.com/lambdaclass/ethrex/pull/5864)
 - Prewarm cache by executing in parallel [#5906](https://github.com/lambdaclass/ethrex/pull/5906)
 
 ### 2026-01-15
