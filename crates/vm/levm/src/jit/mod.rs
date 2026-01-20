@@ -29,8 +29,8 @@ pub mod context;
 pub mod executable;
 pub mod stencils;
 
-pub use compiler::JitCompiler;
-pub use context::JitContext;
+pub use compiler::{JitCode, JitCompiler, execute_jit};
+pub use context::{JitContext, JitExitReason};
 pub use executable::ExecutableBuffer;
 
 #[cfg(test)]

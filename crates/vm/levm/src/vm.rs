@@ -4,7 +4,7 @@ use crate::{
     db::gen_db::GeneralizedDatabase,
     debug::DebugMode,
     environment::Environment,
-    errors::{ContextResult, ExecutionReport, InternalError, OpcodeResult, VMError},
+    errors::{ContextResult, ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
     hooks::{
         backup_hook::BackupHook,
         hook::{Hook, get_hooks},
@@ -15,6 +15,11 @@ use crate::{
         self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
     },
     tracing::LevmCallTracer,
+};
+#[cfg(feature = "jit")]
+use crate::jit::{
+    compiler::{JitCode, JitCompiler, execute_jit},
+    context::{JitContext, JitExitReason},
 };
 use bytes::Bytes;
 use ethrex_common::{
@@ -393,6 +398,12 @@ pub struct VM<'a> {
     pub vm_type: VMType,
     /// Opcode dispatch table, built dynamically per fork.
     pub(crate) opcode_table: [OpCodeFn<'a>; 256],
+    /// JIT compiler for accelerating bytecode execution.
+    #[cfg(feature = "jit")]
+    pub jit_compiler: JitCompiler,
+    /// Cache of JIT-compiled code, keyed by bytecode hash.
+    #[cfg(feature = "jit")]
+    pub jit_cache: HashMap<H256, JitCode>,
 }
 
 impl<'a> VM<'a> {
@@ -441,6 +452,10 @@ impl<'a> VM<'a> {
             ),
             env,
             opcode_table: VM::build_opcode_table(fork),
+            #[cfg(feature = "jit")]
+            jit_compiler: JitCompiler::new(),
+            #[cfg(feature = "jit")]
+            jit_cache: HashMap::new(),
         };
 
         let call_type = if is_create {
@@ -498,6 +513,143 @@ impl<'a> VM<'a> {
         Ok(report)
     }
 
+    /// Try to execute bytecode using JIT compilation.
+    ///
+    /// Returns `Some(ContextResult)` if JIT execution completed,
+    /// or `None` if JIT cannot handle this bytecode (falls back to interpreter).
+    #[cfg(feature = "jit")]
+    fn try_jit_execute(&mut self) -> Result<Option<ContextResult>, VMError> {
+        use ethrex_common::utils::keccak;
+
+        // Compute bytecode hash for cache lookup
+        let bytecode = &self.current_call_frame.bytecode.bytecode;
+        if bytecode.is_empty() {
+            return Ok(None);
+        }
+
+        let bytecode_hash = keccak(bytecode);
+
+        // Try to get from cache or compile
+        let jit_code = if let Some(code) = self.jit_cache.get(&bytecode_hash) {
+            code
+        } else {
+            // Try to compile - if unsupported opcodes, return None to fall back
+            match self.jit_compiler.compile(bytecode) {
+                Ok(code) => {
+                    self.jit_cache.insert(bytecode_hash, code);
+                    self.jit_cache.get(&bytecode_hash).expect("just inserted")
+                }
+                Err(_) => return Ok(None), // Fall back to interpreter
+            }
+        };
+
+        // Build JitContext from CallFrame
+        // SAFETY: We ensure the CallFrame outlives this JitContext usage
+        let mut jit_ctx = unsafe {
+            JitContext::from_call_frame(
+                &mut self.current_call_frame,
+                std::ptr::null(), // No jump table yet
+                std::ptr::null_mut(), // No VM callbacks yet
+            )
+        };
+
+        // Execute JIT code
+        let exit_reason = unsafe { execute_jit(jit_code, &mut jit_ctx) };
+
+        // Write back state to CallFrame
+        jit_ctx.write_back_to_call_frame(&mut self.current_call_frame);
+
+        // Compute gas used
+        #[expect(clippy::as_conversions)]
+        let gas_used = self
+            .current_call_frame
+            .gas_limit
+            .saturating_sub(self.current_call_frame.gas_remaining as u64);
+
+        // Convert JIT exit reason to ContextResult
+        match exit_reason {
+            JitExitReason::Stop => Ok(Some(ContextResult {
+                result: TxResult::Success,
+                gas_used,
+                output: Bytes::new(),
+            })),
+            JitExitReason::Return => {
+                // Extract return data from memory
+                let offset = jit_ctx.return_offset;
+                let size = jit_ctx.return_size;
+                let output = if size > 0 {
+                    self.current_call_frame
+                        .memory
+                        .load_range(offset, size)
+                        .unwrap_or_default()
+                } else {
+                    Bytes::new()
+                };
+                Ok(Some(ContextResult {
+                    result: TxResult::Success,
+                    gas_used,
+                    output,
+                }))
+            }
+            JitExitReason::Revert => {
+                let offset = jit_ctx.return_offset;
+                let size = jit_ctx.return_size;
+                let output = if size > 0 {
+                    self.current_call_frame
+                        .memory
+                        .load_range(offset, size)
+                        .unwrap_or_default()
+                } else {
+                    Bytes::new()
+                };
+                Ok(Some(ContextResult {
+                    result: TxResult::Revert(VMError::RevertOpcode),
+                    gas_used,
+                    output,
+                }))
+            }
+            JitExitReason::OutOfGas => {
+                // OOG consumes all gas
+                Ok(Some(ContextResult {
+                    result: TxResult::Revert(VMError::ExceptionalHalt(
+                        crate::errors::ExceptionalHalt::OutOfGas,
+                    )),
+                    gas_used: self.current_call_frame.gas_limit,
+                    output: Bytes::new(),
+                }))
+            }
+            JitExitReason::StackUnderflow => Ok(Some(ContextResult {
+                result: TxResult::Revert(VMError::ExceptionalHalt(
+                    crate::errors::ExceptionalHalt::StackUnderflow,
+                )),
+                gas_used: self.current_call_frame.gas_limit,
+                output: Bytes::new(),
+            })),
+            JitExitReason::StackOverflow => Ok(Some(ContextResult {
+                result: TxResult::Revert(VMError::ExceptionalHalt(
+                    crate::errors::ExceptionalHalt::StackOverflow,
+                )),
+                gas_used: self.current_call_frame.gas_limit,
+                output: Bytes::new(),
+            })),
+            JitExitReason::InvalidJump => Ok(Some(ContextResult {
+                result: TxResult::Revert(VMError::ExceptionalHalt(
+                    crate::errors::ExceptionalHalt::InvalidJump,
+                )),
+                gas_used: self.current_call_frame.gas_limit,
+                output: Bytes::new(),
+            })),
+            JitExitReason::InvalidOpcode => {
+                // Unsupported opcode - should have been caught at compile time
+                Ok(None)
+            }
+            JitExitReason::Continue | JitExitReason::ExitToInterpreter => {
+                // Need to fall back to interpreter
+                Ok(None)
+            }
+        }
+    }
+
     /// Main execution loop.
     pub fn run_execution(&mut self) -> Result<ContextResult, VMError> {
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
@@ -520,6 +672,12 @@ impl<'a> VM<'a> {
             call_frame.gas_remaining = gas_remaining as i64;
 
             return result;
+        }
+
+        // Try JIT execution if enabled - falls back to interpreter if unsupported
+        #[cfg(feature = "jit")]
+        if let Some(result) = self.try_jit_execute()? {
+            return Ok(result);
         }
 
         #[cfg(feature = "perf_opcode_timings")]
