@@ -224,26 +224,24 @@ impl<'a> VM<'a> {
         let code_len = current_call_frame.bytecode.bytecode.len();
 
         #[expect(clippy::arithmetic_side_effects)]
-        if code_offset < code_len {
+        let slice = if code_offset < code_len {
             let available_data = code_len - code_offset;
             let copy_size = size.min(available_data);
             let end = code_offset + copy_size;
-
             #[expect(unsafe_code, reason = "bounds checked beforehand")]
-            let slice = unsafe {
+            unsafe {
                 current_call_frame
                     .bytecode
                     .bytecode
                     .get_unchecked(code_offset..end)
-            };
-            current_call_frame
-                .memory
-                .store_data_zero_padded(dest_offset, slice, size)?;
+            }
         } else {
-            current_call_frame
-                .memory
-                .store_data_zero_padded(dest_offset, &[], size)?;
-        }
+            &[]
+        };
+
+        current_call_frame
+            .memory
+            .store_data_zero_padded(dest_offset, slice, size)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -320,21 +318,21 @@ impl<'a> VM<'a> {
         let code_len = bytecode.bytecode.len();
 
         #[expect(clippy::arithmetic_side_effects)]
-        if offset < code_len {
+        let slice = if offset < code_len {
             let available_data = code_len - offset;
             let copy_size = size.min(available_data);
             let end = offset + copy_size;
-
             #[expect(unsafe_code, reason = "bounds checked beforehand")]
-            let slice = unsafe { bytecode.bytecode.get_unchecked(offset..end) };
-            self.current_call_frame
-                .memory
-                .store_data_zero_padded(dest_offset, slice, size)?;
+            unsafe {
+                bytecode.bytecode.get_unchecked(offset..end)
+            }
         } else {
-            self.current_call_frame
-                .memory
-                .store_data_zero_padded(dest_offset, &[], size)?;
-        }
+            &[]
+        };
+
+        self.current_call_frame
+            .memory
+            .store_data_zero_padded(dest_offset, slice, size)?;
 
         Ok(OpcodeResult::Continue)
     }
