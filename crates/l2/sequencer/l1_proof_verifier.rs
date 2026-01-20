@@ -208,8 +208,11 @@ impl L1ProofVerifier {
             }
 
             // Note: RISC0 merkle proofs are collected even though RISC0 is not currently
-            // supported by Aligned in aggregation mode. This code path is preserved for
-            // future compatibility when Aligned re-enables RISC0 support.
+            // supported by Aligned in aggregation mode. These will be empty arrays since
+            // needed_proof_types won't include RISC0 when aligned mode is enabled.
+            // The contract's verifyBatchesAligned() accepts these empty arrays and skips
+            // RISC0 verification when REQUIRE_RISC0_PROOF is false.
+            // This code path is preserved for future compatibility when Aligned re-enables RISC0.
             let sp1_merkle_proof =
                 self.proof_of_inclusion(&aggregated_proofs_for_batch, ProverType::SP1);
             let risc0_merkle_proof =

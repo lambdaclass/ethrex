@@ -79,10 +79,10 @@ pub struct L1ProofSender {
     sequencer_state: SequencerState,
     rollup_store: StoreRollup,
     l1_chain_id: u64,
+    /// The Aligned SDK Network type, only available when sp1 feature is enabled.
+    /// Not needed when sp1 is disabled since aligned mode requires sp1.
     #[cfg(feature = "sp1")]
     network: Network,
-    #[cfg(not(feature = "sp1"))]
-    network: String,
     /// Directory where checkpoints are stored.
     checkpoints_dir: PathBuf,
     aligned_mode: bool,
@@ -100,6 +100,8 @@ pub struct L1ProofSenderHealth {
     proof_send_interval_ms: u64,
     sequencer_state: String,
     l1_chain_id: u64,
+    /// Only present when sp1 feature is enabled (aligned mode requires sp1)
+    #[cfg(feature = "sp1")]
     network: String,
 }
 
@@ -148,8 +150,6 @@ impl L1ProofSender {
             l1_chain_id,
             #[cfg(feature = "sp1")]
             network: aligned_cfg.network.clone(),
-            #[cfg(not(feature = "sp1"))]
-            network: aligned_cfg.network_name.clone(),
             checkpoints_dir,
             aligned_mode: aligned_cfg.aligned_mode,
             #[cfg(feature = "sp1")]
@@ -486,6 +486,7 @@ impl L1ProofSender {
             proof_send_interval_ms: self.proof_send_interval_ms,
             sequencer_state: format!("{:?}", self.sequencer_state.status().await),
             l1_chain_id: self.l1_chain_id,
+            #[cfg(feature = "sp1")]
             network: format!("{:?}", self.network),
         })))
     }

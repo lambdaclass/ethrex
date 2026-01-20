@@ -564,8 +564,9 @@ contract OnChainProposer is
                 );
             }
 
-            // TODO: RISC0 is not currently supported by Aligned in aggregation mode.
-            // When Aligned re-enables RISC0, add the correct proving system ID constant.
+            // NOTE: This block is currently unreachable because initialize() prevents
+            // aligned mode with RISC0 enabled. It is kept for future compatibility when
+            // Aligned re-enables RISC0 support - at that point, update the proving system ID.
             if (REQUIRE_RISC0_PROOF) {
                 _verifyProofInclusionAligned(
                     risc0MerkleProofsList[i],
