@@ -20,6 +20,10 @@ use crate::{
     utils::{ChainDataIndex, SnapStateIndex},
 };
 
+// ethrex_db imports for new storage backend
+use ethrex_db::store::PagedDb;
+use ethrex_db::chain::Blockchain;
+
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
@@ -119,7 +123,7 @@ impl CodeCache {
 ///
 /// The `Store` provides a high-level API for all blockchain data operations:
 /// - Block storage and retrieval
-/// - State trie management
+/// - State trie management (via ethrex_db)
 /// - Account and storage queries
 /// - Transaction indexing
 ///
@@ -128,17 +132,23 @@ impl CodeCache {
 /// `Store` is `Clone` and thread-safe. All clones share the same underlying
 /// database connection and caches via `Arc`.
 ///
+/// # Storage Architecture (ethrex_db)
+///
+/// The store uses a two-tier architecture:
+/// - **Hot Storage (Blockchain)**: Recent unfinalized blocks with COW semantics
+/// - **Cold Storage (PagedDb)**: Finalized blocks in memory-mapped pages
+///
 /// # Caching
 ///
 /// The store maintains several caches for performance:
-/// - **Trie Layer Cache**: Recent trie nodes for fast state access
 /// - **Code Cache**: LRU cache for contract bytecode (64MB default)
 /// - **Latest Block Cache**: Cached latest block header for RPC
+/// - ethrex_db handles trie caching internally
 ///
 /// # Example
 ///
 /// ```ignore
-/// let store = Store::new("./data", EngineType::RocksDB)?;
+/// let store = Store::new("./data", EngineType::InMemory)?;
 ///
 /// // Add a block
 /// store.add_block(block).await?;
@@ -147,20 +157,23 @@ impl CodeCache {
 /// let info = store.get_account_info(block_number, address)?;
 /// let balance = info.map(|a| a.balance).unwrap_or_default();
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Store {
     /// Path to the database directory.
     db_path: PathBuf,
-    /// Storage backend (InMemory or RocksDB).
+
+    /// ethrex_db Blockchain layer for managing hot/recent blocks
+    /// Handles unfinalized blocks with COW semantics and fork management
+    /// Internally contains PagedDb for finalized state (cold storage)
+    blockchain: Arc<Mutex<Blockchain>>,
+
+    /// Legacy storage backend for non-trie operations (headers, bodies, receipts, etc.)
+    /// TODO: Phase out as we migrate more functionality to ethrex_db
     backend: Arc<dyn StorageBackend>,
+
     /// Chain configuration (fork schedule, chain ID, etc.).
     chain_config: ChainConfig,
-    /// Cache for trie nodes from recent blocks.
-    trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
-    /// Channel for controlling the FlatKeyValue generator background task.
-    flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
-    /// Channel for sending trie updates to the background worker.
-    trie_update_worker_tx: std::sync::mpsc::SyncSender<TrieUpdate>,
+
     /// Cached latest canonical block header.
     ///
     /// Wrapped in Arc for cheap reads with infrequent writes.
@@ -169,8 +182,6 @@ pub struct Store {
     /// - RPC "latest" block queries (small delay acceptable)
     /// - Sync operations (must be idempotent anyway)
     latest_block_header: LatestBlockHeaderCache,
-    /// Last computed FlatKeyValue for incremental updates.
-    last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
 
     /// Cache for account bytecodes, keyed by the bytecode hash.
     /// Note that we don't remove entries on account code changes, since
@@ -1310,7 +1321,6 @@ impl Store {
     }
 
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
-        // Ignore unused variable warning when compiling without DB features
         let db_path = path.as_ref().to_path_buf();
 
         if engine_type != EngineType::InMemory {
@@ -1318,17 +1328,49 @@ impl Store {
             validate_store_schema_version(&db_path)?;
         }
 
-        match engine_type {
+        // Create ethrex_db storage components
+        let paged_db = match engine_type {
+            EngineType::InMemory => {
+                // 10000 pages ≈ 40MB for in-memory testing
+                PagedDb::in_memory(10000)
+                    .map_err(|e| StoreError::Custom(format!("Failed to create in-memory PagedDb: {}", e)))?
+            }
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
-                let backend = Arc::new(RocksDBBackend::open(path)?);
-                Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
+                // For production, use persistent file-backed PagedDb
+                let ethrex_db_path = db_path.join("ethrex_db");
+                std::fs::create_dir_all(&ethrex_db_path)
+                    .map_err(|e| StoreError::Custom(format!("Failed to create ethrex_db directory: {}", e)))?;
+
+                PagedDb::open(&ethrex_db_path)
+                    .map_err(|e| StoreError::Custom(format!("Failed to create PagedDb: {}", e)))?
+            }
+        };
+
+        // Initialize Blockchain layer (takes ownership of PagedDb)
+        let blockchain = Blockchain::new(paged_db);
+
+        // Create legacy backend for non-trie operations (blocks, receipts, etc.)
+        // TODO: Migrate these to ethrex_db and remove this
+        let legacy_backend: Arc<dyn StorageBackend> = match engine_type {
+            #[cfg(feature = "rocksdb")]
+            EngineType::RocksDB => {
+                Arc::new(RocksDBBackend::open(path)?)
             }
             EngineType::InMemory => {
-                let backend = Arc::new(InMemoryBackend::open()?);
-                Self::from_backend(backend, db_path, IN_MEMORY_COMMIT_THRESHOLD)
+                Arc::new(InMemoryBackend::open()?)
             }
-        }
+        };
+
+        Ok(Self {
+            db_path,
+            blockchain: Arc::new(Mutex::new(blockchain)),
+            backend: legacy_backend,
+            chain_config: Default::default(),
+            latest_block_header: Default::default(),
+            account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
+            background_threads: Default::default(),
+        })
     }
 
     fn from_backend(
@@ -2531,6 +2573,83 @@ impl Store {
         let account_nibbles = Nibbles::from_bytes(account.as_bytes());
         let last_computed_flatkeyvalue = self.last_written()?;
         Ok(&last_computed_flatkeyvalue[0..64] > account_nibbles.as_ref())
+    }
+
+    // ============================================================================
+    // ethrex_db Integration - New state query methods
+    // ============================================================================
+
+    /// Get account info using ethrex_db for a specific block number
+    ///
+    /// This is the new implementation that uses ethrex_db instead of the old trie layer.
+    /// Flow: block_number → block_hash → blockchain.get_account()
+    pub fn get_account_info_ethrex_db(
+        &self,
+        block_number: BlockNumber,
+        address: Address,
+    ) -> Result<Option<AccountInfo>, StoreError> {
+        // Get canonical block hash for this block number
+        let block_hash = match self.get_canonical_block_hash_sync(block_number)? {
+            Some(hash) => hash,
+            None => return Ok(None),
+        };
+
+        // Query account from blockchain layer
+        let blockchain = self.blockchain.lock()
+            .map_err(|_| StoreError::LockError)?;
+
+        // Hash the address for ethrex_db lookup
+        let address_hash = H256::from(keccak_hash(address.to_fixed_bytes()));
+
+        match blockchain.get_account(&block_hash, &address_hash) {
+            Some(account) => {
+                Ok(Some(AccountInfo {
+                    nonce: account.nonce,
+                    balance: account.balance,
+                    code_hash: account.code_hash,
+                }))
+            }
+            None => {
+                // Block not in hot storage
+                // TODO: Implement fallback to PagedDb cold storage
+                Ok(None)
+            }
+        }
+    }
+
+    /// Get storage value using ethrex_db for a specific block number
+    ///
+    /// This is the new implementation that uses ethrex_db instead of the old trie layer.
+    pub fn get_storage_at_ethrex_db(
+        &self,
+        block_number: BlockNumber,
+        address: Address,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        // Get canonical block hash for this block number
+        let block_hash = match self.get_canonical_block_hash_sync(block_number)? {
+            Some(hash) => hash,
+            None => return Ok(None),
+        };
+
+        // Query storage from blockchain layer
+        let blockchain = self.blockchain.lock()
+            .map_err(|_| StoreError::LockError)?;
+
+        // Hash the address for ethrex_db lookup
+        let address_hash = H256::from(keccak_hash(address.to_fixed_bytes()));
+
+        // Hash the storage key for ethrex_db lookup
+        let key_hash = H256::from(keccak_hash(storage_key.to_fixed_bytes()));
+
+        match blockchain.get_storage(&block_hash, &address_hash, &key_hash) {
+            Some(value) => Ok(Some(value)),
+            None => {
+                // Block not in hot storage or storage slot not set
+                // TODO: Implement fallback to PagedDb cold storage
+                Ok(None)
+            }
+        }
     }
 }
 
