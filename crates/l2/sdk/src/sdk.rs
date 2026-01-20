@@ -109,9 +109,25 @@ pub async fn wait_for_transaction_receipt(
     client: &EthClient,
     max_retries: u64,
 ) -> Result<RpcReceipt, EthClientError> {
-    let mut receipt = client.get_transaction_receipt(tx_hash).await?;
     let mut r#try = 1;
-    while receipt.is_none() {
+    loop {
+        match client.get_transaction_receipt(tx_hash).await {
+            Ok(Some(receipt)) => return Ok(receipt),
+            Ok(None) => {
+                // Receipt not yet available, retry
+            }
+            Err(e) => {
+                // Geth 1.14+ returns "transaction indexing is in progress" error instead of null
+                // when the transaction indexer hasn't caught up yet. We should retry in this case.
+                // See: https://github.com/ethereum/go-ethereum/issues/29956
+                let error_msg = e.to_string();
+                if !error_msg.contains("transaction indexing is in progress") {
+                    return Err(e);
+                }
+                // Indexing in progress, retry
+            }
+        }
+
         println!("[{try}/{max_retries}] Retrying to get transaction receipt for {tx_hash:#x}");
 
         if max_retries == r#try {
@@ -122,12 +138,7 @@ pub async fn wait_for_transaction_receipt(
         r#try += 1;
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-        receipt = client.get_transaction_receipt(tx_hash).await?;
     }
-    receipt.ok_or(EthClientError::Custom(
-        "Transaction receipt is None".to_owned(),
-    ))
 }
 
 pub async fn transfer(

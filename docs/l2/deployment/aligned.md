@@ -185,12 +185,12 @@ Then you should wait until Aligned aggregates your proof. Note that proofs are t
       seconds_per_slot: 4
     ```
 
-    Change `ethereum-genesis-generator` to 5.0.8
+    Change `ethereum-genesis-generator` to 5.2.3
 
     ```
     ethereum_genesis_generator_params:
       # The image to use for ethereum genesis generator
-      image: ethpandaops/ethereum-genesis-generator:5.0.8
+      image: ethpandaops/ethereum-genesis-generator:5.2.3
     ```
 
 3. Make sure you have the latest version of [kurtosis](https://github.com/kurtosis-tech/kurtosis) installed and start the ethereum-package:
