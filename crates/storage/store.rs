@@ -1725,8 +1725,9 @@ impl Store {
         let mut tx = backend.begin_write()?;
 
         // Persist state trie node updates
+        // IMPORTANT: Use .into_vec() not .encode_compact() to match BackendTrieDB.make_key() format
         for (path, node_rlp) in &updates.state_updates {
-            let key = path.encode_compact();
+            let key = path.clone().into_vec();
             tx.put(ACCOUNT_TRIE_NODES, &key, node_rlp)?;
         }
 
@@ -1735,7 +1736,7 @@ impl Store {
             for (path, node_rlp) in storage_updates {
                 // Storage trie keys are prefixed with account hash
                 let key_nibbles = apply_prefix(Some(*account_hash), path.clone());
-                let key = key_nibbles.encode_compact();
+                let key = key_nibbles.into_vec();
                 tx.put(STORAGE_TRIE_NODES, &key, node_rlp)?;
             }
         }
@@ -2159,41 +2160,9 @@ impl Store {
         };
         self.persist_trie_updates(&genesis_updates)?;
 
-        // Compute and return the actual state root from the committed genesis block
-        use ethrex_db::store::{StateTrie, AccountData};
-        let mut state_trie = StateTrie::new();
-        for (address, account) in &genesis_accounts {
-            let hashed_address = H256::from(keccak_hash(address.to_fixed_bytes()));
-            let code = Code::from_bytecode(account.code.clone());
-            let code_hash = code.hash;
-
-            let storage_root = if account.storage.is_empty() {
-                *EMPTY_TRIE_HASH
-            } else {
-                use ethrex_db::store::StorageTrie;
-                let mut storage_trie = StorageTrie::new();
-                for (key, value) in &account.storage {
-                    if !value.is_zero() {
-                        let key_h256 = H256::from(key.to_big_endian());
-                        let hashed_key = H256::from(keccak_hash(key_h256.to_fixed_bytes()));
-                        let value_bytes = ethrex_common::utils::u256_to_big_endian(*value);
-                        storage_trie.set(&hashed_key.to_fixed_bytes(), value_bytes);
-                    }
-                }
-                H256::from(storage_trie.root_hash())
-            };
-
-            let balance_bytes = ethrex_common::utils::u256_to_big_endian(account.balance);
-            let account_data = AccountData {
-                nonce: account.nonce,
-                balance: balance_bytes,
-                storage_root: storage_root.to_fixed_bytes(),
-                code_hash: code_hash.to_fixed_bytes(),
-            };
-            state_trie.set_account(&address.to_fixed_bytes(), account_data);
-        }
-
-        Ok(H256::from(state_trie.root_hash()))
+        // Return the state root from the legacy trie that we just persisted
+        // This MUST match the persisted trie nodes so they can be loaded later
+        Ok(state_trie_hash)
     }
 
     // Key format: block_number (8 bytes, big-endian) + block_hash (32 bytes)
@@ -2379,7 +2348,41 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        // Use state_root -> block_hash mapping to find the right block state
+        // Try trie-based approach first (for persisted state)
+        let account_hash = hash_address_fixed(&address);
+        let backend = self.backend.clone();
+        let trie_db = Box::new(BackendTrieDB::new_for_accounts(backend.clone(), Vec::new())?);
+        let state_trie = Trie::open(trie_db, state_root);
+
+        match state_trie.get(account_hash.as_bytes()) {
+            Ok(Some(encoded_account)) => {
+                // Account found in trie, read storage from storage trie
+                let account = AccountState::decode(&encoded_account)?;
+                let storage_root = account.storage_root;
+
+                let storage_trie_db = Box::new(BackendTrieDB::new_for_account_storage(
+                    backend,
+                    account_hash,
+                    Vec::new(),
+                )?);
+                let storage_trie = Trie::open(storage_trie_db, storage_root);
+
+                let hashed_key = hash_key_fixed(&storage_key);
+                return storage_trie
+                    .get(&hashed_key)?
+                    .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
+                    .transpose();
+            }
+            Ok(None) => {
+                // Account not in trie, return None
+                return Ok(None);
+            }
+            Err(_) => {
+                // Trie read failed, fall back to cache approach
+            }
+        }
+
+        // Fall back to cache-based approach (for pending/recent state)
         let state_root_to_block = self.state_root_to_block.lock()
             .map_err(|_| StoreError::LockError)?;
 
@@ -2387,27 +2390,23 @@ impl Store {
             Some(hash) => *hash,
             None => {
                 drop(state_root_to_block);
-                // State root not found in mapping
                 return Ok(Some(U256::zero()));
             }
         };
 
         drop(state_root_to_block);
 
-        // Now get the block state
         let block_states = self.block_states.lock()
             .map_err(|_| StoreError::LockError)?;
 
         let state = block_states.get(&block_hash)
             .ok_or_else(|| StoreError::Custom(format!("Block state for {} not found", block_hash)))?;
 
-        // Get the cached account data
         let cached_data = match state.get(&address) {
             Some(data) => data,
-            None => return Ok(Some(U256::zero())), // Account doesn't exist, return zero
+            None => return Ok(Some(U256::zero())),
         };
 
-        // Get storage value from cached storage
         Ok(Some(cached_data.storage.get(&storage_key).copied().unwrap_or(U256::zero())))
     }
 
@@ -2451,25 +2450,17 @@ impl Store {
     /// Obtain the storage trie for the given block
     // TODO: LEGACY METHOD - Returns Trie object which is deprecated
     pub fn state_trie(&self, block_hash: BlockHash) -> Result<Option<Trie>, StoreError> {
-        // Load state from block_states cache
-        let block_states = self.block_states.lock()
-            .map_err(|_| StoreError::LockError)?;
+        // Get the block header to find the state root
+        let Some(header) = self.get_block_header_by_hash(block_hash)? else {
+            return Ok(None);
+        };
 
-        let state = block_states.get(&block_hash)
-            .ok_or_else(|| StoreError::Custom(format!("State not found for block {}", block_hash)))?;
+        // Use the actual backend that has persisted trie nodes
+        let backend = self.backend.clone();
+        let trie_db = Box::new(BackendTrieDB::new_for_accounts(backend, Vec::new())?);
 
-        // Create a legacy Trie using in-memory backend
-        use crate::backend::in_memory::InMemoryBackend;
-        let backend = Arc::new(InMemoryBackend::open()?);
-        let trie_db = Box::new(BackendTrieDB::new_for_accounts(backend.clone(), Vec::new())?);
-        let mut trie = Trie::new(trie_db);
-
-        // Populate the trie with the cached state
-        for (address, cached_data) in state {
-            let hashed_address = H256::from(keccak_hash(address.to_fixed_bytes()));
-            let encoded = cached_data.state.encode_to_vec();
-            trie.insert(hashed_address.to_fixed_bytes().to_vec(), encoded)?;
-        }
+        // Open trie with the state root (loads nodes from backend as needed)
+        let trie = Trie::open(trie_db, header.state_root);
 
         Ok(Some(trie))
     }
@@ -2478,10 +2469,36 @@ impl Store {
     // TODO: LEGACY METHOD - Returns Trie object which is deprecated
     pub fn storage_trie(
         &self,
-        _block_hash: BlockHash,
-        _address: Address,
+        block_hash: BlockHash,
+        address: Address,
     ) -> Result<Option<Trie>, StoreError> {
-        unimplemented!("Legacy storage_trie - use get_storage_at_ethrex_db instead")
+        let Some(header) = self.get_block_header_by_hash(block_hash)? else {
+            return Ok(None);
+        };
+
+        // Fetch account from state_trie
+        let Some(state_trie) = self.state_trie(block_hash)? else {
+            return Ok(None);
+        };
+
+        let hashed_address = hash_address_fixed(&address);
+        let Some(encoded_account) = state_trie.get(hashed_address.as_bytes())? else {
+            return Ok(None);
+        };
+
+        let account = AccountState::decode(&encoded_account)?;
+
+        // Open storage_trie with the account's storage root
+        let storage_root = account.storage_root;
+        let backend = self.backend.clone();
+        let trie_db = Box::new(BackendTrieDB::new_for_account_storage(
+            backend,
+            hashed_address,
+            Vec::new(),
+        )?);
+
+        let trie = Trie::open(trie_db, storage_root);
+        Ok(Some(trie))
     }
 
     pub async fn get_account_state(
