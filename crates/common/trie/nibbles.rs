@@ -201,7 +201,7 @@ impl Nibbles {
 
         compact.push(v + if is_leaf { 0x20 } else { 0x00 });
         for i in 0..(hex.len() / 2) {
-            compact.push((hex[i * 2] * 16) + (hex[i * 2 + 1]));
+            compact.push((hex[i * 2] << 4) | (hex[i * 2 + 1]));
         }
 
         compact
