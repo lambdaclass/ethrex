@@ -2651,6 +2651,134 @@ impl Store {
             }
         }
     }
+
+    // ============================================================================
+    // ethrex_db Block Execution - New block creation and state update methods
+    // ============================================================================
+
+    /// Execute and commit a block with account updates using ethrex_db
+    ///
+    /// This is the main method for block execution. It:
+    /// 1. Creates a new block from the parent
+    /// 2. Applies all account/storage updates
+    /// 3. Commits the block (stores in blockchain hot storage)
+    ///
+    /// The block is stored in the Blockchain layer but not yet finalized to PagedDb.
+    pub fn execute_block_ethrex_db(
+        &self,
+        parent_hash: H256,
+        block_hash: H256,
+        block_number: u64,
+        account_updates: &[AccountUpdate],
+    ) -> Result<(), StoreError> {
+        let blockchain = self.blockchain.lock()
+            .map_err(|_| StoreError::LockError)?;
+
+        // Start new block (creates COW state from parent)
+        let mut block = blockchain.start_new(parent_hash, block_hash, block_number)
+            .map_err(|e| StoreError::Custom(format!("Failed to start new block: {}", e)))?;
+
+        // Apply all account updates
+        for update in account_updates {
+            self.apply_account_update_to_block(&mut block, update)?;
+        }
+
+        // Commit block (stores in blockchain's hot storage)
+        blockchain.commit(block)
+            .map_err(|e| StoreError::Custom(format!("Failed to commit block: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Apply a single account update to a Block (helper function)
+    ///
+    /// This is called internally by execute_block_ethrex_db.
+    /// The block parameter must be mutable.
+    fn apply_account_update_to_block(
+        &self,
+        block: &mut ethrex_db::chain::Block,
+        update: &AccountUpdate,
+    ) -> Result<(), StoreError> {
+        use ethrex_db::chain::WorldState;
+
+        // Hash the address for ethrex_db
+        let address_hash = H256::from(keccak_hash(update.address.to_fixed_bytes()));
+
+        // Handle account removal
+        if update.removed {
+            block.delete_account(&address_hash);
+            return Ok(());
+        }
+
+        // Get account info (or create default for new accounts)
+        let account_info = update.info.as_ref()
+            .ok_or_else(|| StoreError::Custom("AccountUpdate has no info but not marked as removed".to_string()))?;
+
+        // Create ethrex_db Account
+        let account = ethrex_db::chain::Account {
+            nonce: account_info.nonce,
+            balance: account_info.balance,
+            code_hash: account_info.code_hash,
+            storage_root: H256::zero(), // Will be computed by ethrex_db
+        };
+
+        block.set_account(address_hash, account);
+
+        // Apply storage updates
+        for (key, value) in &update.added_storage {
+            let key_hash = H256::from(keccak_hash(key.to_fixed_bytes()));
+            block.set_storage(address_hash, key_hash, *value);
+        }
+
+        // Handle removed storage (delete and recreate account to clear storage)
+        if update.removed_storage {
+            // Clear all storage for this account by deleting and recreating
+            block.delete_account(&address_hash);
+            block.set_account(address_hash, account);
+        }
+
+        Ok(())
+    }
+
+    /// Finalize a block, moving it from hot to cold storage
+    ///
+    /// This persists the block's state to PagedDb and frees the COW memory.
+    /// Should be called once a block is considered final/canonical.
+    pub fn finalize_block_ethrex_db(
+        &self,
+        block_hash: H256,
+    ) -> Result<(), StoreError> {
+        let mut blockchain = self.blockchain.lock()
+            .map_err(|_| StoreError::LockError)?;
+
+        blockchain.finalize(block_hash)
+            .map_err(|e| StoreError::Custom(format!("Failed to finalize block: {}", e)))
+    }
+
+    /// Update fork choice (head, safe, finalized blocks)
+    ///
+    /// This is called by the consensus layer to indicate which blocks
+    /// are considered head, safe, and finalized.
+    pub fn fork_choice_update_ethrex_db(
+        &self,
+        head: H256,
+        safe: Option<H256>,
+        finalized: Option<H256>,
+    ) -> Result<(), StoreError> {
+        let mut blockchain = self.blockchain.lock()
+            .map_err(|_| StoreError::LockError)?;
+
+        blockchain.fork_choice_update(head, safe, finalized)
+            .map_err(|e| StoreError::Custom(format!("Fork choice update failed: {}", e)))?;
+
+        // Auto-finalize if specified
+        if let Some(finalized_hash) = finalized {
+            blockchain.finalize(finalized_hash)
+                .map_err(|e| StoreError::Custom(format!("Failed to finalize block: {}", e)))?;
+        }
+
+        Ok(())
+    }
 }
 
 type TrieNodesUpdate = Vec<(Nibbles, Vec<u8>)>;
