@@ -188,11 +188,11 @@ where
     Ok((blocks, fee_configs))
 }
 
-pub fn batch_checkpoint_name(batch_number: u64) -> String {
-    format!("checkpoint_batch_{batch_number}")
-}
-
 /// Returns the git commit hash of the current build.
 pub fn get_git_commit_hash() -> String {
     env!("VERGEN_GIT_SHA").to_string()
+}
+
+pub fn batch_checkpoint_name(batch_number: u64) -> String {
+    format!("checkpoint_batch_{batch_number}")
 }
