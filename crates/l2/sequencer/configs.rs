@@ -103,8 +103,6 @@ pub struct AlignedConfig {
     pub aligned_mode: bool,
     pub aligned_verifier_interval_ms: u64,
     pub beacon_urls: Vec<Url>,
-    /// Network name string (e.g., "devnet", "hoodi", "mainnet")
-    pub network_name: String,
     /// The aligned SDK Network type. Only available when sp1 feature is enabled
     /// because aligned-sdk unconditionally depends on sp1-sdk.
     #[cfg(feature = "sp1")]

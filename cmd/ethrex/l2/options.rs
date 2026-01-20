@@ -224,20 +224,14 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     fetch_block_step: opts.based_opts.block_fetcher.fetch_block_step,
                 },
             },
-            aligned: {
-                let network_name = opts
-                    .aligned_opts
-                    .aligned_network
-                    .clone()
-                    .unwrap_or_default();
-                AlignedConfig {
-                    aligned_mode: opts.aligned_opts.aligned,
-                    aligned_verifier_interval_ms: opts.aligned_opts.aligned_verifier_interval_ms,
-                    beacon_urls: opts.aligned_opts.beacon_url.unwrap_or_default(),
-                    #[cfg(feature = "sp1")]
-                    network: resolve_aligned_network(&network_name),
-                    network_name,
-                }
+            aligned: AlignedConfig {
+                aligned_mode: opts.aligned_opts.aligned,
+                aligned_verifier_interval_ms: opts.aligned_opts.aligned_verifier_interval_ms,
+                beacon_urls: opts.aligned_opts.beacon_url.unwrap_or_default(),
+                #[cfg(feature = "sp1")]
+                network: resolve_aligned_network(
+                    &opts.aligned_opts.aligned_network.clone().unwrap_or_default(),
+                ),
             },
             monitor: MonitorConfig {
                 enabled: !opts.no_monitor,
