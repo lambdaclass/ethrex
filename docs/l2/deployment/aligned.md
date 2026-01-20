@@ -231,7 +231,7 @@ Then you should wait until Aligned aggregates your proof. Note that proofs are t
     make proof_aggregator_start_dev_ethereum_package AGGREGATOR=sp1
     ```
 
-    > **Note**: The dev mode aggregator uses mock proofs for faster iteration. For production-like testing, use `proof_aggregator_start_ethereum_package` instead (requires more resources).
+    > **Note**: The dev mode aggregator uses mock proofs for faster iteration. For production-like testing, use `make proof_aggregator_start_ethereum_package SP1_PROVER=cuda AGGREGATOR=sp1` instead (requires more resources and a CUDA-capable GPU).
 
 ### Initialize L2 node
 

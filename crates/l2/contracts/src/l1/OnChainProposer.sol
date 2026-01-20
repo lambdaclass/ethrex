@@ -46,6 +46,10 @@ contract OnChainProposer is
     uint8 internal constant SP1_VERIFIER_ID = 1;
     uint8 internal constant RISC0_VERIFIER_ID = 2;
 
+    /// @notice Aligned Layer proving system IDs
+    uint16 internal constant ALIGNED_SP1_PROVING_SYSTEM_ID = 1;
+    uint16 internal constant ALIGNED_RISC0_PROVING_SYSTEM_ID = 2;
+
     /// @notice The commitments of the committed batches.
     /// @dev If a batch is committed, the commitment is stored here.
     /// @dev If a batch was not committed yet, it won't be here.
@@ -547,6 +551,7 @@ contract OnChainProposer is
             if (REQUIRE_SP1_PROOF) {
                 _verifyProofInclusionAligned(
                     sp1MerkleProofsList[i],
+                    ALIGNED_SP1_PROVING_SYSTEM_ID,
                     verificationKeys[batchCommitments[batchNumber].commitHash][
                         SP1_VERIFIER_ID
                     ],
@@ -557,6 +562,7 @@ contract OnChainProposer is
             if (REQUIRE_RISC0_PROOF) {
                 _verifyProofInclusionAligned(
                     risc0MerkleProofsList[i],
+                    ALIGNED_RISC0_PROVING_SYSTEM_ID,
                     verificationKeys[batchCommitments[batchNumber].commitHash][
                         RISC0_VERIFIER_ID
                     ],
@@ -580,12 +586,14 @@ contract OnChainProposer is
 
     function _verifyProofInclusionAligned(
         bytes32[] calldata merkleProofsList,
+        uint16 provingSystemId,
         bytes32 verificationKey,
         bytes memory publicInputsList
     ) internal view {
         bytes memory callData = abi.encodeWithSignature(
-            "verifyProofInclusion(bytes32[],bytes32,bytes)",
+            "isProofVerified(bytes32[],uint16,bytes32,bytes)",
             merkleProofsList,
+            provingSystemId,
             verificationKey,
             publicInputsList
         );
