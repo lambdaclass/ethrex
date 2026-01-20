@@ -23,6 +23,7 @@ members = [
   "crates/vm/levm",
   "crates/vm/levm/runner",
   "crates/common/config",
+  "test",
 ]
 exclude = ["crates/vm/levm/bench/revm_comparison"]
 resolver = "2"
