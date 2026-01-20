@@ -1355,8 +1355,20 @@ impl Store {
                 let backend = EthrexDbBackend::open(path)?;
                 let blockchain = BlockchainRef(backend.blockchain());
                 let backend = Arc::new(backend);
-                let mut store = Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)?;
+                let mut store = Self::from_backend(backend.clone(), db_path, DB_COMMIT_THRESHOLD)?;
                 store.ethrex_blockchain = Some(blockchain);
+
+                // Mark FlatKeyValue generation as complete for ethrex_db backend.
+                // ethrex_db uses its own flat key-value model internally (PagedStateTrie),
+                // so the FlatKeyValue generator is not needed.
+                {
+                    let mut tx = backend.begin_write()?;
+                    tx.put(MISC_VALUES, "last_written".as_bytes(), &[0xff])?;
+                    tx.commit()?;
+                    *store.last_computed_flatkeyvalue.lock().map_err(|_| StoreError::LockError)? = vec![0xff; 64];
+                }
+                info!("ethrex_db backend: FlatKeyValue generation skipped (using native PagedStateTrie)");
+
                 Ok(store)
             }
             EngineType::InMemory => {
@@ -2032,6 +2044,65 @@ impl Store {
     #[cfg(feature = "ethrex-db")]
     pub fn ethrex_blockchain(&self) -> Option<&BlockchainRef> {
         self.ethrex_blockchain.as_ref()
+    }
+
+    /// Persists the current state trie to ethrex_db during snap-sync.
+    ///
+    /// This should be called after snap-sync completes to persist the state trie
+    /// and update the finalized block metadata.
+    ///
+    /// Returns Ok(()) if successful, or Ok(()) if not using ethrex_db backend
+    /// (in which case the caller should use the standard trie persistence).
+    #[cfg(feature = "ethrex-db")]
+    pub fn persist_snap_sync_state(
+        &self,
+        block_number: BlockNumber,
+        block_hash: BlockHash,
+    ) -> Result<(), StoreError> {
+        if let Some(blockchain_ref) = &self.ethrex_blockchain {
+            let blockchain = blockchain_ref.0.write().map_err(|_| {
+                StoreError::Custom("Failed to acquire write lock on ethrex_db blockchain".into())
+            })?;
+            blockchain.persist_state_trie(block_number, block_hash).map_err(|e| {
+                StoreError::Custom(format!("Failed to persist snap-sync state: {}", e))
+            })?;
+            info!("ethrex_db: Persisted snap-sync state at block {}", block_number);
+        }
+        Ok(())
+    }
+
+    /// Saves a checkpoint during snap-sync for recovery purposes.
+    ///
+    /// Unlike `persist_snap_sync_state`, this doesn't update the in-memory
+    /// finalized state, allowing the sync to resume from the checkpoint.
+    #[cfg(feature = "ethrex-db")]
+    pub fn save_snap_sync_checkpoint(
+        &self,
+        block_number: BlockNumber,
+        block_hash: BlockHash,
+    ) -> Result<(), StoreError> {
+        if let Some(blockchain_ref) = &self.ethrex_blockchain {
+            let blockchain = blockchain_ref.0.write().map_err(|_| {
+                StoreError::Custom("Failed to acquire write lock on ethrex_db blockchain".into())
+            })?;
+            blockchain.persist_state_trie_checkpoint(block_number, block_hash).map_err(|e| {
+                StoreError::Custom(format!("Failed to save snap-sync checkpoint: {}", e))
+            })?;
+            debug!("ethrex_db: Saved snap-sync checkpoint at block {}", block_number);
+        }
+        Ok(())
+    }
+
+    /// Returns true if this Store is using the ethrex_db backend.
+    #[cfg(feature = "ethrex-db")]
+    pub fn uses_ethrex_db(&self) -> bool {
+        self.ethrex_blockchain.is_some()
+    }
+
+    /// Returns true if this Store is using the ethrex_db backend.
+    #[cfg(not(feature = "ethrex-db"))]
+    pub fn uses_ethrex_db(&self) -> bool {
+        false
     }
 
     pub async fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {

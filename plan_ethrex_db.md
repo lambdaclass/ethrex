@@ -372,9 +372,33 @@ impl<'a> TrieDB for BackendTrieDB<'a> {
 5. **Checkpoints**: RocksDB checkpoint for auxiliary data, ethrex_db has own mechanism
 
 **Deliverables**:
-- [ ] Snap-sync compatibility
-- [ ] FlatKeyValue decision (keep/remove)
-- [ ] Checkpoint mechanism for hybrid backend
+- [x] Snap-sync compatibility
+- [x] FlatKeyValue decision (keep/remove)
+- [x] Checkpoint mechanism for hybrid backend
+
+**Implementation Notes**:
+
+1. **Snap-sync compatibility**:
+   - Added `Store::persist_snap_sync_state()` - Persists state trie after snap-sync completes
+   - Added `Store::save_snap_sync_checkpoint()` - Saves incremental checkpoints during sync
+   - These methods use ethrex_db's native `persist_state_trie()` and `persist_state_trie_checkpoint()`
+   - ethrex_db already supports snap-sync via `get_finalized_account_by_hash()` / `get_finalized_storage_by_hash()`
+
+2. **FlatKeyValue decision**:
+   - **Skipped for ethrex_db backend**: ethrex_db uses its own flat key-value model internally (PagedStateTrie)
+   - On Store creation with ethrex_db, `last_written` is set to `[0xff]` (completion marker)
+   - This prevents the background FlatKeyValue generator from running unnecessarily
+   - For RocksDB backend, FlatKeyValue generation continues as before
+
+3. **Execution witnesses**: Remain in RocksDB (routed to auxiliary storage) - no changes needed
+
+4. **Code cache**: Remains in RocksDB (routed to auxiliary storage) - no changes needed
+
+5. **Checkpoint mechanism**: Already implemented in Phase 3 via `EthrexDbBackend::create_checkpoint()`
+   - Creates RocksDB checkpoint for auxiliary data
+   - ethrex_db uses its own persistence mechanism via PagedDb
+
+6. **Helper method**: Added `Store::uses_ethrex_db()` to check if using ethrex_db backend
 
 ---
 
