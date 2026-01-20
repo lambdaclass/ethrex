@@ -7,5 +7,5 @@ pub mod in_memory;
 #[cfg(feature = "rocksdb")]
 pub mod rocksdb;
 /// Hybrid ethrex-db + RocksDB backend
-#[cfg(all(feature = "ethrex-db", feature = "rocksdb"))]
+#[cfg(feature = "ethrex-db")]
 pub mod ethrex_db;

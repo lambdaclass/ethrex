@@ -1,6 +1,6 @@
 #[cfg(feature = "rocksdb")]
 use crate::backend::rocksdb::RocksDBBackend;
-#[cfg(all(feature = "ethrex-db", feature = "rocksdb"))]
+#[cfg(feature = "ethrex-db")]
 use crate::backend::ethrex_db::EthrexDbBackend;
 use crate::{
     STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION,
@@ -216,7 +216,7 @@ pub enum EngineType {
     /// Hybrid ethrex-db + RocksDB storage.
     /// Uses ethrex-db for state/storage tries (optimized page-based storage)
     /// and RocksDB for blocks, headers, receipts, and other data.
-    #[cfg(all(feature = "ethrex-db", feature = "rocksdb"))]
+    #[cfg(feature = "ethrex-db")]
     EthrexDb,
 }
 
@@ -1331,7 +1331,7 @@ impl Store {
                 let backend = Arc::new(RocksDBBackend::open(path)?);
                 Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
             }
-            #[cfg(all(feature = "ethrex-db", feature = "rocksdb"))]
+            #[cfg(feature = "ethrex-db")]
             EngineType::EthrexDb => {
                 let backend = Arc::new(EthrexDbBackend::open(path)?);
                 Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
