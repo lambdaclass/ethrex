@@ -47,11 +47,10 @@ pub mod error;
 pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
-mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::{debug, info, instrument, trace};
+use ::tracing::{debug, info, instrument, trace, warn};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -81,6 +80,7 @@ use ethrex_storage::{
 use ethrex_trie::encodedtrie::EncodedTrie;
 use ethrex_trie::node::{BranchNode, ExtensionNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
+use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::system_contracts::SYSTEM_ADDRESS;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
@@ -317,7 +317,16 @@ impl Blockchain {
         let queue_length = AtomicUsize::new(0);
         let queue_length_ref = &queue_length;
         let mut max_queue_length = 0;
+
         let (execution_result, merkleization_result) = std::thread::scope(|s| {
+            let store = vm.db.store.clone();
+            let vm_type = vm.vm_type;
+            let warm_handle = std::thread::Builder::new()
+                .name("block_executor_warmer".to_string())
+                .spawn_scoped(s, move || {
+                    let _ = LEVM::warm_block(block, store, vm_type);
+                })
+                .expect("Failed to spawn block_executor warmer thread");
             let max_queue_length_ref = &mut max_queue_length;
             let (tx, rx) = channel();
             let execution_handle = std::thread::Builder::new()
@@ -358,6 +367,9 @@ impl Blockchain {
                     ))
                 })
                 .expect("Failed to spawn block_executor merkleizer thread");
+            let _ = warm_handle
+                .join()
+                .inspect_err(|e| warn!("Warming thread error: {e:?}"));
             (
                 execution_handle.join().unwrap_or_else(|_| {
                     Err(ChainError::Custom("execution thread panicked".to_string()))
@@ -371,6 +383,7 @@ impl Blockchain {
         });
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
         let (execution_result, exec_end_instant) = execution_result?;
+
         let exec_merkle_end_instant = Instant::now();
 
         Ok((
@@ -2396,6 +2409,3 @@ fn collapse_root_node(
     };
     Ok(Some(child))
 }
-
-#[cfg(test)]
-mod tests {}

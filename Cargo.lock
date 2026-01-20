@@ -4034,7 +4034,6 @@ dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
  "hex",
- "hex-literal 0.4.1",
  "lazy_static",
  "snap",
  "thiserror 2.0.18",
@@ -4164,6 +4163,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-test"
+version = "9.0.0"
+dependencies = [
+ "bytes",
+ "cita_trie",
+ "ethereum-types 0.15.1",
+ "ethrex",
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-crypto",
+ "ethrex-levm",
+ "ethrex-p2p",
+ "ethrex-rlp",
+ "ethrex-storage",
+ "ethrex-trie",
+ "hasher",
+ "hex",
+ "hex-literal 0.4.1",
+ "proptest",
+ "rand 0.8.5",
+ "rkyv",
+ "secp256k1",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "ethrex-threadpool"
 version = "9.0.0"
 dependencies = [
@@ -4176,26 +4203,19 @@ version = "9.0.0"
 dependencies = [
  "anyhow",
  "bytes",
- "cita_trie",
- "criterion",
  "crossbeam 0.8.4",
  "digest 0.10.7",
  "ethereum-types 0.15.1",
  "ethrex-crypto",
  "ethrex-rlp",
  "ethrex-threadpool",
- "hasher",
  "hex",
- "hex-literal 0.4.1",
  "lazy_static",
- "proptest",
- "rand 0.8.5",
  "rkyv",
  "rustc-hash 2.1.1",
  "serde",
  "serde_json",
  "smallvec",
- "tempfile",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -4215,6 +4235,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "lazy_static",
+ "rayon",
  "rkyv",
  "serde",
  "thiserror 2.0.18",
@@ -6245,9 +6266,9 @@ dependencies = [
 
 [[package]]
 name = "liblzma-sys"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01b9596486f6d60c3bbe644c0e1be1aa6ccc472ad630fe8927b456973d7cb736"
+checksum = "9f2db66f3268487b5033077f266da6777d057949b8f93c8ad82e441df25e6186"
 dependencies = [
  "cc",
  "libc",
@@ -7420,9 +7441,9 @@ checksum = "d05e27ee213611ffe7d6348b942e8f942b37114c00cc03cec254295a4a17852e"
 
 [[package]]
 name = "openssl-probe"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f50d9b3dabb09ecd771ad0aa242ca6894994c130308ca3d7684634df8037391"
+checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
 name = "openssl-sys"
@@ -11300,7 +11321,7 @@ version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "612460d5f7bea540c490b2b6395d8e34a953e52b491accd6c86c8164c5932a63"
 dependencies = [
- "openssl-probe 0.2.0",
+ "openssl-probe 0.2.1",
  "rustls-pki-types",
  "schannel",
  "security-framework 3.5.1",
@@ -15013,9 +15034,9 @@ dependencies = [
 
 [[package]]
 name = "zmij"
-version = "1.0.15"
+version = "1.0.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94f63c051f4fe3c1509da62131a678643c5b6fbdc9273b2b79d4378ebda003d2"
+checksum = "dfcd145825aace48cff44a8844de64bf75feec3080e0aa5cdbde72961ae51a65"
 
 [[package]]
 name = "zopfli"

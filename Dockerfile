@@ -21,6 +21,7 @@ COPY benches ./benches
 COPY crates ./crates
 COPY metrics ./metrics
 COPY cmd ./cmd
+COPY test ./test
 COPY Cargo.* .
 COPY .cargo/ ./.cargo
 
