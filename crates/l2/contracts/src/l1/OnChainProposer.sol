@@ -147,8 +147,10 @@ contract OnChainProposer is
             "OnChainProposer: missing RISC0 verifier address"
         );
         RISC0_VERIFIER_ADDRESS = r0verifier;
+        // In Aligned mode, SP1 proofs are verified through the AlignedProofAggregator,
+        // not through a direct SP1 verifier contract, so we don't require sp1verifier.
         require(
-            !REQUIRE_SP1_PROOF || sp1verifier != address(0),
+            !REQUIRE_SP1_PROOF || aligned || sp1verifier != address(0),
             "OnChainProposer: missing SP1 verifier address"
         );
         SP1_VERIFIER_ADDRESS = sp1verifier;
@@ -160,6 +162,12 @@ contract OnChainProposer is
 
         ALIGNED_MODE = aligned;
         ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
+
+        // Aligned mode requires SP1 proofs to be enabled
+        require(
+            !aligned || requireSp1Proof,
+            "OnChainProposer: Aligned mode requires SP1 proof"
+        );
 
         require(
             commitHash != bytes32(0),
