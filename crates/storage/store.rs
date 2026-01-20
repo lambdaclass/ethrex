@@ -2077,6 +2077,12 @@ impl Store {
         blockchain.commit(genesis_block)
             .map_err(|e| StoreError::Custom(format!("Failed to commit genesis block: {}", e)))?;
 
+        // IMPORTANT: Finalize genesis to update the state_trie
+        // This applies all account/storage changes to the state_trie and calls root_hash()
+        // Without this, state_root() returns the hash of the empty trie
+        blockchain.finalize(genesis_hash)
+            .map_err(|e| StoreError::Custom(format!("Failed to finalize genesis block: {}", e)))?;
+
         // DEBUG: Get ethrex_db computed state root for comparison
         let ethrex_db_state_root = H256::from(blockchain.state_root());
         println!("DEBUG: ethrex_db computed state root after genesis commit: {}", ethrex_db_state_root);

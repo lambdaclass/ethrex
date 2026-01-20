@@ -65,16 +65,27 @@ impl Account {
         buf
     }
 
-    /// Decodes an account from bytes.
+    /// Decodes an account from RLP-encoded bytes.
+    ///
+    /// This MUST match the legacy AccountState RLP decoding to ensure
+    /// compatibility between ethrex_db and legacy trie systems.
     pub fn decode(data: &[u8]) -> Option<Self> {
-        if data.len() < 104 {
-            return None;
-        }
+        use ethrex_rlp::structs::Decoder;
+        use ethereum_types::{U256 as EthU256, H256 as EthH256};
 
-        let nonce = u64::from_le_bytes(data[0..8].try_into().ok()?);
-        let balance = U256::from_little_endian(&data[8..40]);
-        let code_hash = H256::from_slice(&data[40..72]);
-        let storage_root = H256::from_slice(&data[72..104]);
+        // Decode RLP list: [nonce, balance, storage_root, code_hash]
+        let decoder = Decoder::new(data).ok()?;
+
+        // Decode fields (each decode_field returns (value, updated_decoder))
+        let (nonce, decoder): (u64, _) = decoder.decode_field("nonce").ok()?;
+        let (balance_eth, decoder): (EthU256, _) = decoder.decode_field("balance").ok()?;
+        let (storage_root_eth, decoder): (EthH256, _) = decoder.decode_field("storage_root").ok()?;
+        let (code_hash_eth, _): (EthH256, _) = decoder.decode_field("code_hash").ok()?;
+
+        // Convert ethereum_types back to primitive_types
+        let balance = U256::from_big_endian(&balance_eth.to_big_endian());
+        let storage_root = H256(storage_root_eth.0);
+        let code_hash = H256(code_hash_eth.0);
 
         Some(Self {
             nonce,
