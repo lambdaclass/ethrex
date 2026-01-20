@@ -36,8 +36,9 @@ serde_json.workspace = true
 ethrex.workspace = true
 ethrex-l2-common.workspace = true
 ethrex-sdk.workspace = true
- # Enable SQL for tests so we don't need `cargo test -p ethrex-test --features sql`.
+# Enable SQL for tests so we don't need `cargo test -p ethrex-test --features sql`.
 ethrex-storage-rollup = { workspace = true, features = ["sql"] }
+anyhow = "1.0.86"
 
 [[test]]
 name = "ethrex_tests"

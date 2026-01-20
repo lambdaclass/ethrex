@@ -4129,6 +4129,7 @@ dependencies = [
 name = "ethrex-test"
 version = "9.0.0"
 dependencies = [
+ "anyhow",
  "bytes",
  "cita_trie",
  "ethereum-types 0.15.1",

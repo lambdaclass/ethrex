@@ -1,11 +1,12 @@
-use bytes::{BufMut, BytesMut};
-use ethrex_common::utils::keccak;
 use ethrex_common::{Address, Bytes, H32, U256};
 use ethrex_l2_common::calldata::Value;
-use ethrex_l2_sdk::calldata::{decode_calldata, encode_calldata, encode_tuple, parse_signature};
+use ethrex_l2_sdk::calldata::{
+    compute_function_selector, decode_calldata, encode_calldata, encode_tuple, parse_signature,
+};
 
 #[test]
 fn fixed_array_encoding_test() {
+    use bytes::{BufMut, BytesMut};
     let raw_function_signature = "test(uint256,bytes,bytes32,bytes,bytes32,bytes,bytes,bytes32,bytes,uint256[8],bytes,bytes)";
     let bytes_calldata: [u8; 32] = [0; 32];
 
@@ -69,10 +70,10 @@ fn calldata_test() {
     assert_eq!(
         calldata,
         vec![
-            20, 108, 34, 199, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 3, 134, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            20, 108, 34, 199, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 3, 134, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
         ]
@@ -84,9 +85,7 @@ fn raw_function_selector() {
     let raw_function_signature = "deposit((address,address,uint256,bytes))";
 
     let (name, params) = parse_signature(raw_function_signature).unwrap();
-    let normalized_signature = format!("{name}({})", params.join(","));
-    let hash = keccak(normalized_signature.as_bytes());
-    let selector = H32::from(&hash[..4].try_into().unwrap());
+    let selector = compute_function_selector(&name, &params).unwrap();
 
     assert_eq!(selector, H32::from(&[0x02, 0xe8, 0x6b, 0xbe]));
 }
