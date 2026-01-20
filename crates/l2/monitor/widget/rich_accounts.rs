@@ -3,7 +3,7 @@ use ethrex_common::{Address, U256};
 use ethrex_config::networks::LOCAL_DEVNET_PRIVATE_KEYS;
 use ethrex_l2_common::utils::get_address_from_secret_key;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
-use hex::FromHexError;
+use ethrex_common::utils::FromHexError;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Rect},
@@ -93,8 +93,8 @@ impl RichAccountsTable {
 
 pub fn parse_hex(s: &str) -> Result<Bytes, FromHexError> {
     match s.strip_prefix("0x") {
-        Some(s) => hex::decode(s).map(Into::into),
-        None => hex::decode(s).map(Into::into),
+        Some(s) => hex_simd::decode_to_vec(s).map(Into::into),
+        None => hex_simd::decode_to_vec(s).map(Into::into),
     }
 }
 

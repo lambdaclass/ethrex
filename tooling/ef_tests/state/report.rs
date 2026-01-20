@@ -712,7 +712,7 @@ impl fmt::Display for ComparisonReport {
                             if base_account.code.bytecode.is_empty() {
                                 "empty".to_string()
                             } else {
-                                hex::encode(&base_account.code.bytecode)
+                                hex_simd::encode_to_string(&base_account.code.bytecode, hex_simd::AsciiCase::Lower)
                             },
                             account_update
                                 .code
@@ -720,7 +720,7 @@ impl fmt::Display for ComparisonReport {
                                 .map(|code| if code.bytecode.is_empty() {
                                     "empty".to_string()
                                 } else {
-                                    hex::encode(&code.bytecode)
+                                    hex_simd::encode_to_string(&code.bytecode, hex_simd::AsciiCase::Lower)
                                 })
                                 .expect("If code hash changed then 'code' shouldn't be None.")
                         )?;

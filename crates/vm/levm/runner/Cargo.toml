@@ -9,7 +9,7 @@ ethrex-vm.workspace = true
 ethrex-common.workspace = true
 ethrex-storage.workspace = true
 ethrex-blockchain.workspace = true
-hex.workspace = true
+hex-simd.workspace = true
 bytes.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true

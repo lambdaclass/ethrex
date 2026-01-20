@@ -75,7 +75,7 @@ async fn test_state_block(addresses: &[Address], block_number: u64, rich_account
             // The bridge owner accept the ownership transfer, so the balance is not exactly 500000000000000000000000000
             if *address
                 == H160::from_slice(
-                    &hex::decode("4417092b70a3e5f10dc504d0947dd256b965fc62").unwrap(),
+                    &hex_simd::decode_to_vec("4417092b70a3e5f10dc504d0947dd256b965fc62").unwrap(),
                 )
             {
                 assert!(balance > U256::zero(), "Bridge owner has zero balance");

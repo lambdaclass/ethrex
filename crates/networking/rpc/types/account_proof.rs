@@ -30,7 +30,7 @@ where
 {
     let mut seq_serializer = serializer.serialize_seq(Some(value.len()))?;
     for encoded_node in value {
-        seq_serializer.serialize_element(&format!("0x{}", hex::encode(encoded_node)))?;
+        seq_serializer.serialize_element(&format!("0x{}", hex_simd::encode_to_string(encoded_node, hex_simd::AsciiCase::Lower)))?;
     }
     seq_serializer.end()
 }

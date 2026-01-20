@@ -211,7 +211,7 @@ pub enum BlockProducerError {
     #[error("Block Producer failed to read jwt_secret: {0}")]
     FailedToReadJWT(#[from] std::io::Error),
     #[error("Block Producer failed to decode jwt_secret: {0}")]
-    FailedToDecodeJWT(#[from] hex::FromHexError),
+    FailedToDecodeJWT(#[from] hex_simd::Error),
     #[error("Block Producer failed because of an execution cache error")]
     ExecutionCache(#[from] ExecutionCacheError),
     #[error("Block Producer failed to convert values: {0}")]
@@ -393,5 +393,5 @@ pub enum MonitorError {
     #[error("Error while parsing private key")]
     DecodingError(String),
     #[error("Error parsing secret key")]
-    FromHexError(#[from] hex::FromHexError),
+    FromHexError(#[from] hex_simd::Error),
 }

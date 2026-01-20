@@ -210,7 +210,7 @@ impl EthClient {
     }
 
     pub async fn send_raw_transaction(&self, data: &[u8]) -> Result<H256, EthClientError> {
-        let params = Some(vec![json!("0x".to_string() + &hex::encode(data))]);
+        let params = Some(vec![json!("0x".to_string() + &hex_simd::encode_to_string(data, hex_simd::AsciiCase::Lower))]);
         let request = RpcRequest::new("eth_sendRawTransaction", params);
 
         match self.send_request_to_all(request).await? {
@@ -261,7 +261,7 @@ impl EthClient {
             let blobs_str: Vec<_> = transaction
                 .blobs
                 .into_iter()
-                .map(|blob| format!("0x{}", hex::encode(blob)))
+                .map(|blob| format!("0x{}", hex_simd::encode_to_string(blob, hex_simd::AsciiCase::Lower)))
                 .collect();
 
             data.as_object_mut()
@@ -601,7 +601,7 @@ impl EthClient {
         let request = RpcRequest::new("eth_getCode", params);
 
         match self.send_request(request).await? {
-            RpcResponse::Success(result) => hex::decode(
+            RpcResponse::Success(result) => hex_simd::decode_to_vec(
                 &serde_json::from_value::<String>(result.result)
                     .map(|hex_str| {
                         hex_str

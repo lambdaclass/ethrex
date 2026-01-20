@@ -344,12 +344,12 @@ pub fn get_message_from_revert_data(data: &str) -> Result<String, EthClientError
         Ok(data.to_owned())
     } else {
         let abi_decoded_error_data =
-            hex::decode(data.strip_prefix("0x").ok_or(EthClientError::Custom(
+            hex_simd::decode_to_vec(data.strip_prefix("0x").ok_or(EthClientError::Custom(
                 "Failed to strip_prefix when getting message from revert data".to_owned(),
             ))?)
             .map_err(|_| {
                 EthClientError::Custom(
-                    "Failed to hex::decode when getting message from revert data".to_owned(),
+                    "Failed to decode hex when getting message from revert data".to_owned(),
                 )
             })?;
         let string_length = U256::from_big_endian(abi_decoded_error_data.get(36..68).ok_or(

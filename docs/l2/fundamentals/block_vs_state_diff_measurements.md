@@ -396,7 +396,7 @@ async fn deploy_contract(
 }
 
 async fn erc20_deploy(client: EthClient, deployer: &Signer) -> eyre::Result<Address> {
-    let erc20_bytecode = hex::decode(ERC20).expect("Failed to decode ERC20 bytecode");
+    let erc20_bytecode = hex_simd::decode_to_vec(ERC20).expect("Failed to decode ERC20 bytecode");
     deploy_contract(client, deployer, erc20_bytecode).await
 }
 

@@ -16,7 +16,6 @@ fn main() {
 
 #[cfg(all(not(clippy), feature = "risc0"))]
 fn build_risc0_program() {
-    use hex;
     use risc0_build::{DockerOptionsBuilder, GuestOptionsBuilder, embed_methods_with_options};
 
     let features = if cfg!(feature = "l2") {
@@ -57,14 +56,13 @@ fn build_risc0_program() {
 
     std::fs::write(
         "./src/risc0/out/riscv32im-risc0-vk",
-        format!("0x{}\n", hex::encode(image_id.as_bytes())),
+        format!("0x{}\n", hex_simd::encode_to_string(image_id.as_bytes(), hex_simd::AsciiCase::Lower)),
     )
     .expect("could not write Risc0 vk to file");
 }
 
 #[cfg(all(not(clippy), feature = "sp1"))]
 fn build_sp1_program() {
-    use hex;
     use sp1_sdk::{HashableKey, ProverClient};
 
     let features = if cfg!(feature = "l2") {
@@ -100,7 +98,7 @@ fn build_sp1_program() {
     .expect("could not write SP1 vk-bn254 to file");
     std::fs::write(
         "./src/sp1/out/riscv32im-succinct-zkvm-vk-u32",
-        format!("0x{}\n", hex::encode(vk.vk.hash_bytes())),
+        format!("0x{}\n", hex_simd::encode_to_string(vk.vk.hash_bytes(), hex_simd::AsciiCase::Lower)),
     )
     .expect("could not write SP1 vk-u32 to file");
 }

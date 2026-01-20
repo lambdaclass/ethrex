@@ -574,7 +574,7 @@ impl DumpIpcReader {
         });
         let response = send_ipc_json_request(&mut self.stream, request).await?;
         let rlp_block_str: String = serde_json::from_value(response)?;
-        let rlp_block = hex::decode(rlp_block_str.trim_start_matches("0x"))?;
+        let rlp_block = hex_simd::decode_to_vec(rlp_block_str.trim_start_matches("0x"))?;
         Ok(rlp_block)
     }
 

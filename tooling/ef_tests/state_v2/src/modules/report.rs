@@ -233,11 +233,11 @@ impl fmt::Display for PostCheckResult {
                     code_table.add_row(Row::new(vec![Cell::new("Type"), Cell::new("Value")]));
                     code_table.add_row(Row::new(vec![
                         Cell::new("Expected Code Hash"),
-                        Cell::new(&format!("0x{}", hex::encode(expected_code_hash))),
+                        Cell::new(&format!("0x{}", hex_simd::encode_to_string(expected_code_hash, hex_simd::AsciiCase::Lower))),
                     ]));
                     code_table.add_row(Row::new(vec![
                         Cell::new("Actual Code Hash"),
-                        Cell::new(&format!("0x{}", hex::encode(actual_code_hash))),
+                        Cell::new(&format!("0x{}", hex_simd::encode_to_string(actual_code_hash, hex_simd::AsciiCase::Lower))),
                     ]));
                     writeln!(f, "{}", code_table)?;
                 }

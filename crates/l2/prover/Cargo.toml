@@ -14,7 +14,7 @@ tokio.workspace = true
 tokio-util.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tracing.workspace = true
-hex.workspace = true
+hex-simd.workspace = true
 thiserror.workspace = true
 clap.workspace = true
 kzg-rs.workspace = true

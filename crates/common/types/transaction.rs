@@ -2185,7 +2185,7 @@ mod serde_impl {
         )
         .map_err(serde::de::Error::custom)?;
         if let Some(stripped) = data_str.strip_prefix("0x") {
-            match hex::decode(stripped) {
+            match hex_simd::decode_to_vec(stripped) {
                 Ok(decoded_bytes) => Ok(Bytes::from(decoded_bytes)),
                 Err(_) => Err(serde::de::Error::custom(
                     "Invalid hex format in 'input' field",
@@ -2538,7 +2538,7 @@ mod serde_impl {
             }
         };
         let value = String::deserialize(value).map_err(D::Error::custom)?;
-        let bytes = hex::decode(value.trim_start_matches("0x"))
+        let bytes = hex_simd::decode_to_vec(value.trim_start_matches("0x"))
             .map_err(|e| D::Error::custom(e.to_string()))?;
         Ok(Bytes::from(bytes))
     }
@@ -3136,14 +3136,14 @@ mod tests {
     #[test]
     fn legacy_tx_rlp_decode() {
         let encoded_tx = "f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4";
-        let encoded_tx_bytes = hex::decode(encoded_tx).unwrap();
+        let encoded_tx_bytes = hex_simd::decode_to_vec(encoded_tx).unwrap();
         let tx = LegacyTransaction::decode(&encoded_tx_bytes).unwrap();
         let expected_tx = LegacyTransaction {
             nonce: 0,
             gas_price: U256::from(1001000000u64),
             gas: 63000,
             to: TxKind::Call(Address::from_slice(
-                &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
+                &hex_simd::decode_to_vec("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
             )),
             value: 3000000000000000_u64.into(),
             data: Bytes::new(),
@@ -3166,14 +3166,14 @@ mod tests {
     #[test]
     fn eip1559_tx_rlp_decode() {
         let encoded_tx = "f86c8330182480114e82f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee53800080c080a0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4";
-        let encoded_tx_bytes = hex::decode(encoded_tx).unwrap();
+        let encoded_tx_bytes = hex_simd::decode_to_vec(encoded_tx).unwrap();
         let tx = EIP1559Transaction::decode(&encoded_tx_bytes).unwrap();
         let expected_tx = EIP1559Transaction {
             nonce: 0,
             max_fee_per_gas: 78,
             max_priority_fee_per_gas: 17,
             to: TxKind::Call(Address::from_slice(
-                &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
+                &hex_simd::decode_to_vec("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
             )),
             value: 3000000000000000_u64.into(),
             data: Bytes::new(),
@@ -3202,7 +3202,7 @@ mod tests {
         let tx_kind_call = r#""0x6177843db3138ae69679A54b95cf345ED759450d""#;
         let deserialized_tx_kind_create = TxKind::Create;
         let deserialized_tx_kind_call = TxKind::Call(Address::from_slice(
-            &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
+            &hex_simd::decode_to_vec("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
         ));
         assert_eq!(
             deserialized_tx_kind_create,
@@ -3256,18 +3256,18 @@ mod tests {
             nonce: Some(2),
             to: TxKind::Create,
             from: Address::from_slice(
-                &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
+                &hex_simd::decode_to_vec("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
             ),
             gas: Some(0x5208),
             value: U256::from(1),
-            input: Bytes::from(hex::decode("010203040506").unwrap()),
+            input: Bytes::from(hex_simd::decode_to_vec("010203040506").unwrap()),
             gas_price: 7,
             max_priority_fee_per_gas: Default::default(),
             max_fee_per_gas: Default::default(),
             max_fee_per_blob_gas: Default::default(),
             access_list: vec![AccessListEntry {
                 address: Address::from_slice(
-                    &hex::decode("000f3df6d732807ef1319fb7b8bb8522d0beac02").unwrap(),
+                    &hex_simd::decode_to_vec("000f3df6d732807ef1319fb7b8bb8522d0beac02").unwrap(),
                 ),
                 storage_keys: vec![H256::from_low_u64_be(12), H256::from_low_u64_be(8203)],
             }],
@@ -3311,18 +3311,18 @@ mod tests {
             nonce: Some(2),
             to: TxKind::Create,
             from: Address::from_slice(
-                &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
+                &hex_simd::decode_to_vec("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
             ),
             gas: Some(0x5208),
             value: U256::from(1),
-            input: Bytes::from(hex::decode("010203040506").unwrap()),
+            input: Bytes::from(hex_simd::decode_to_vec("010203040506").unwrap()),
             gas_price: 7,
             max_priority_fee_per_gas: Default::default(),
             max_fee_per_gas: Default::default(),
             max_fee_per_blob_gas: Default::default(),
             access_list: vec![AccessListEntry {
                 address: Address::from_slice(
-                    &hex::decode("000f3df6d732807ef1319fb7b8bb8522d0beac02").unwrap(),
+                    &hex_simd::decode_to_vec("000f3df6d732807ef1319fb7b8bb8522d0beac02").unwrap(),
                 ),
                 storage_keys: vec![H256::from_low_u64_be(12), H256::from_low_u64_be(8203)],
             }],
@@ -3372,7 +3372,7 @@ mod tests {
             chain_id: 0x01,
             nonce: 0x02,
             to: Address::from_slice(
-                &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
+                &hex_simd::decode_to_vec("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
             ),
             max_priority_fee_per_gas: 1,
             max_fee_per_gas: 1,
@@ -3383,7 +3383,7 @@ mod tests {
             data: Bytes::from_static(b"03"),
             access_list: vec![(
                 Address::from_slice(
-                    &hex::decode("000f3df6d732807ef1319fb7b8bb8522d0beac02").unwrap(),
+                    &hex_simd::decode_to_vec("000f3df6d732807ef1319fb7b8bb8522d0beac02").unwrap(),
                 ),
                 vec![H256::from_low_u64_be(12), H256::from_low_u64_be(8203)],
             )],

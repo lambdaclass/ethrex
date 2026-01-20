@@ -14,7 +14,7 @@ ethrex-sdk-contract-utils = { path = "contract_utils" }
 
 ethereum-types.workspace = true
 tokio.workspace = true
-hex.workspace = true
+hex-simd.workspace = true
 secp256k1.workspace = true
 itertools = "0.13.0"
 thiserror.workspace = true
@@ -33,7 +33,7 @@ path = "src/sdk.rs"
 
 [build-dependencies]
 ethrex-sdk-contract-utils = { path = "contract_utils" }
-hex.workspace = true
+hex-simd.workspace = true
 
 [lints.clippy]
 unwrap_used = "deny"

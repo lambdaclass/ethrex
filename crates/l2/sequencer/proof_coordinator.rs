@@ -400,8 +400,8 @@ impl ProofCoordinator {
                 prepare_quote_prerequisites(
                     &self.eth_client,
                     &self.rpc_url,
-                    &hex::encode(key.secret_bytes()),
-                    &hex::encode(&payload),
+                    &hex_simd::encode_to_string(key.secret_bytes(), hex_simd::AsciiCase::Lower),
+                    &hex_simd::encode_to_string(&payload, hex_simd::AsciiCase::Lower),
                     qpl_tool_path,
                 )
                 .await

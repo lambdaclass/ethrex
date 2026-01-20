@@ -24,8 +24,8 @@ const SENDER_ADDRESS: u64 = 0x100;
 const CONTRACT_ADDRESS: u64 = 0x42;
 
 pub fn run_with_levm(contract_code: &str, runs: u64, calldata: &str) {
-    let bytecode = Bytes::from(hex::decode(contract_code).unwrap());
-    let calldata = Bytes::from(hex::decode(calldata).unwrap());
+    let bytecode = Bytes::from(hex_simd::decode_to_vec(contract_code).unwrap());
+    let calldata = Bytes::from(hex_simd::decode_to_vec(calldata).unwrap());
 
     let mut db = init_db(bytecode);
 
@@ -42,7 +42,7 @@ pub fn run_with_levm(contract_code: &str, runs: u64, calldata: &str) {
 
     match tx_report.result {
         TxResult::Success => {
-            println!("output: \t\t0x{}", hex::encode(tx_report.output));
+            println!("output: \t\t0x{}", hex_simd::encode_to_string(tx_report.output, hex_simd::AsciiCase::Lower));
         }
         TxResult::Revert(error) => panic!("Execution failed: {error:?}"),
     }

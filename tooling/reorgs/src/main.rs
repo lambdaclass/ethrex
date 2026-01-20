@@ -311,7 +311,7 @@ async fn test_many_blocks_reorg(simulator: Arc<Mutex<Simulator>>) {
 async fn test_storage_slots_reorg(simulator: Arc<Mutex<Simulator>>) {
     let mut simulator = simulator.lock().await;
     // Initcode for deploying a contract that receives two `bytes32` parameters and sets `storage[param0] = param1`
-    let contract_deploy_bytecode = hex::decode("656020355f35555f526006601af3").unwrap().into();
+    let contract_deploy_bytecode = hex_simd::decode_to_vec("656020355f35555f526006601af3").unwrap().into();
     let signer: Signer = LocalSigner::new(
         "941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e"
             .parse()

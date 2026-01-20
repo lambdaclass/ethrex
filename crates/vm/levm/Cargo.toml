@@ -50,7 +50,7 @@ bitvec = { version = "1.0.1", features = ["alloc"] }
 rustc-hash.workspace = true
 
 [dev-dependencies]
-hex.workspace = true
+hex-simd.workspace = true
 colored = "2.1.0"
 spinoff = "0.8.0"
 

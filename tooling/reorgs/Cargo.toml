@@ -18,7 +18,7 @@ tokio-util.workspace = true
 tracing.workspace = true
 rand.workspace = true
 sha2.workspace = true
-hex.workspace = true
+hex-simd.workspace = true
 nix = { version = "0.30", features = ["signal"] }
 secp256k1.workspace = true
 url.workspace = true

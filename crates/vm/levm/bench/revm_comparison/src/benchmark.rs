@@ -64,7 +64,7 @@ fn generate_calldata(function: &str, n: u64) -> String {
         .copied()
         .collect();
 
-    hex::encode(calldata)
+    hex_simd::encode_to_string(calldata, hex_simd::AsciiCase::Lower)
 }
 
 fn load_contract_bytecode(bench_name: &str) -> String {

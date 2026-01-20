@@ -295,7 +295,7 @@ fn compile_contract_to_bytecode(
 fn decode_to_bytecode(input_file_path: &Path, output_file_path: &Path) {
     let bytecode_hex = fs::read_to_string(input_file_path).expect("Failed to read file");
 
-    let bytecode = hex::decode(bytecode_hex.trim()).expect("Failed to decode bytecode");
+    let bytecode = hex_simd::decode_to_vec(bytecode_hex.trim()).expect("Failed to decode bytecode");
 
     fs::write(output_file_path, bytecode).expect("Failed to write bytecode");
 }
@@ -310,7 +310,7 @@ use ethrex_l2_sdk::{
 #[derive(Debug, thiserror::Error)]
 pub enum SystemContractsUpdaterError {
     #[error("Failed to deploy contract: {0}")]
-    FailedToDecodeRuntimeCode(#[from] hex::FromHexError),
+    FailedToDecodeRuntimeCode(#[from] hex_simd::Error),
     #[error("Failed to serialize modified genesis: {0}")]
     FailedToSerializeModifiedGenesis(#[from] serde_json::Error),
     #[error("Failed to write modified genesis file: {0}")]

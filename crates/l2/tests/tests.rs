@@ -39,7 +39,7 @@ use ethrex_rpc::{
         receipt::RpcReceipt,
     },
 };
-use hex::FromHexError;
+use ethrex_common::utils::FromHexError;
 use reqwest::Url;
 use secp256k1::SecretKey;
 use std::cmp::min;
@@ -315,7 +315,7 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<Fees
         None,
     )?;
 
-    let bridge_code = hex::decode(std::fs::read("contracts/solc_out/CommonBridgeL2.bin")?)?;
+    let bridge_code = hex_simd::decode_to_vec(std::fs::read("contracts/solc_out/CommonBridgeL2.bin")?)?;
 
     println!("test_upgrade: Deploying CommonBridgeL2 contract");
     let (deploy_address, fees_details) = test_deploy(
@@ -384,7 +384,7 @@ async fn test_privileged_tx_with_contract_call(
     //         emit NumberSet(_number);
     //     }
     // }
-    let init_code = hex::decode(
+    let init_code = hex_simd::decode_to_vec(
         "6080604052348015600e575f5ffd5b506101008061001c5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063f15d140b14602a575b5f5ffd5b60406004803603810190603c919060a4565b6042565b005b807f9ec8254969d1974eac8c74afb0c03595b4ffe0a1d7ad8a7f82ed31b9c854259160405160405180910390a250565b5f5ffd5b5f819050919050565b6086816076565b8114608f575f5ffd5b50565b5f81359050609e81607f565b92915050565b5f6020828403121560b65760b56072565b5b5f60c1848285016092565b9150509291505056fea26469706673582212206f6d360696127c56e2d2a456f3db4a61e30eae0ea9b3af3c900c81ea062e8fe464736f6c634300081c0033",
     )?;
 
@@ -481,7 +481,7 @@ async fn test_privileged_tx_with_contract_call_revert(
     //         revert("Reverted");
     //     }
     // }
-    let init_code = hex::decode(
+    let init_code = hex_simd::decode_to_vec(
         "6080604052348015600e575f5ffd5b506101138061001c5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c806311ebce9114602a575b5f5ffd5b60306032565b005b6040517f08c379a000000000000000000000000000000000000000000000000000000000815260040160629060c1565b60405180910390fd5b5f82825260208201905092915050565b7f52657665727465640000000000000000000000000000000000000000000000005f82015250565b5f60ad600883606b565b915060b682607b565b602082019050919050565b5f6020820190508181035f83015260d68160a3565b905091905056fea2646970667358221220903f571921ce472f979989f9135b8637314b68e080fd70d0da6ede87ad8b5bd564736f6c634300081c0033",
     )?;
 
@@ -545,7 +545,7 @@ async fn test_erc20_roundtrip(
     let rich_wallet_signer: Signer = LocalSigner::new(rich_wallet_private_key).into();
     let rich_address = rich_wallet_signer.address();
 
-    let init_code_l1 = hex::decode(std::fs::read(
+    let init_code_l1 = hex_simd::decode_to_vec(std::fs::read(
         "../../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin",
     )?)?;
 
@@ -569,7 +569,7 @@ async fn test_erc20_roundtrip(
         &[contracts_path],
         None,
     )?;
-    let init_code_l2_inner = hex::decode(String::from_utf8(std::fs::read(
+    let init_code_l2_inner = hex_simd::decode_to_vec(String::from_utf8(std::fs::read(
         "contracts/solc_out/TestTokenL2.bin",
     )?)?)?;
     let init_code_l2 = [
@@ -773,7 +773,7 @@ async fn test_aliasing(
     rich_wallet_private_key: SecretKey,
 ) -> Result<FeesDetails> {
     println!("Testing aliasing");
-    let init_code_l1 = hex::decode(std::fs::read("../../fixtures/contracts/caller/Caller.bin")?)?;
+    let init_code_l1 = hex_simd::decode_to_vec(std::fs::read("../../fixtures/contracts/caller/Caller.bin")?)?;
     let caller_l1 = test_deploy_l1(&l1_client, &init_code_l1, &rich_wallet_private_key).await?;
     let send_to_l2_calldata = encode_calldata(
         "sendToL2((address,uint256,uint256,bytes))",
@@ -827,7 +827,7 @@ async fn test_erc20_failed_deposit(
     let rich_wallet_signer: Signer = LocalSigner::new(rich_wallet_private_key).into();
     let rich_address = rich_wallet_signer.address();
 
-    let init_code_l1 = hex::decode(std::fs::read(
+    let init_code_l1 = hex_simd::decode_to_vec(std::fs::read(
         "../../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin",
     )?)?;
 
@@ -1217,7 +1217,7 @@ async fn test_privileged_spammer(
     l1_client: EthClient,
     rich_wallet_private_key: SecretKey,
 ) -> Result<FeesDetails> {
-    let init_code_l1 = hex::decode(std::fs::read(
+    let init_code_l1 = hex_simd::decode_to_vec(std::fs::read(
         "../../fixtures/contracts/deposit_spammer/DepositSpammer.bin",
     )?)?;
     let caller_l1 = test_deploy_l1(&l1_client, &init_code_l1, &rich_wallet_private_key).await?;
@@ -2072,7 +2072,7 @@ async fn test_fee_token(
     )?;
 
     let mut fee_token_contract =
-        hex::decode(std::fs::read(fee_token_path.join("solc_out/FeeToken.bin"))?)?;
+        hex_simd::decode_to_vec(std::fs::read(fee_token_path.join("solc_out/FeeToken.bin"))?)?;
     fee_token_contract.extend_from_slice(&[0u8; 32]); // constructor argument: address(0), we don't want now an L1 fee token
     let (fee_token_address, deploy_fees) = test_deploy(
         &l2_client,
@@ -2574,8 +2574,8 @@ pub fn parse_private_key(s: &str) -> Result<SecretKey, Box<dyn std::error::Error
 
 pub fn parse_hex(s: &str) -> Result<Bytes, FromHexError> {
     match s.strip_prefix("0x") {
-        Some(s) => hex::decode(s).map(Into::into),
-        None => hex::decode(s).map(Into::into),
+        Some(s) => hex_simd::decode_to_vec(s).map(Into::into),
+        None => hex_simd::decode_to_vec(s).map(Into::into),
     }
 }
 

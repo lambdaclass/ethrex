@@ -74,7 +74,7 @@ async fn do_loop(private_key: &SecretKey, commit_hash: String) -> Result<u64, St
 
 async fn setup(private_key: &SecretKey) -> Result<(), String> {
     let quote = get_quote(private_key)?;
-    println!("Sending quote {}", hex::encode(&quote));
+    println!("Sending quote {}", hex_simd::encode_to_string(&quote, hex_simd::AsciiCase::Lower));
     submit_quote(quote).await?;
     Ok(())
 }

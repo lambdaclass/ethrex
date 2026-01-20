@@ -7,14 +7,14 @@ use std::hint::black_box;
 
 pub fn run_with_revm(contract_code: &str, runs: u64, calldata: &str) {
     let rich_acc_address = address!("1000000000000000000000000000000000000000");
-    let bytes = hex::decode(contract_code).unwrap();
+    let bytes = hex_simd::decode_to_vec(contract_code).unwrap();
     let raw_bytecode = Bytecode::new_raw(bytes.clone().into());
 
     let mut evm = Evm::builder()
         .modify_tx_env(|tx| {
             tx.caller = rich_acc_address;
             tx.transact_to = TransactTo::Call(Address::ZERO);
-            tx.data = hex::decode(calldata).unwrap().into();
+            tx.data = hex_simd::decode_to_vec(calldata).unwrap().into();
         })
         .with_db(BenchmarkDB::new_bytecode(raw_bytecode))
         .build();

@@ -256,7 +256,7 @@ pub async fn init_l2(
                 // This should be replaced with the Signer enum once the refactor is complete.
                 committer_key: Arc::new(
                     SecretKey::from_slice(
-                        &hex::decode(
+                        &hex_simd::decode_to_vec(
                             "385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
                         )
                         .expect("Invalid committer key"),

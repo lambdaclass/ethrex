@@ -28,7 +28,6 @@ use ethrex_rpc::{
     },
     utils::RpcRequest,
 };
-use hex;
 use serde_json::json;
 
 pub async fn get_l1_message_proof(
@@ -202,7 +201,7 @@ pub async fn send_ethrex_transaction(
 
     let payload = json!({
         "to": format!("{to:#x}"),
-        "data": format!("0x{}", hex::encode(data)),
+        "data": format!("0x{}", hex_simd::encode_to_string(data, hex_simd::AsciiCase::Lower)),
         "authorizationList": authorization_list,
     });
     let request = RpcRequest::new("ethrex_sendTransaction", Some(vec![payload]));

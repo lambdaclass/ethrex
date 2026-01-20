@@ -195,7 +195,7 @@ async fn deploy_l1_erc20(
     let init_code_bytes = std::fs::read("../../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin")
         .context("failed to read L1 ERC20 bytecode file")?;
     let init_code_l1 =
-        hex::decode(init_code_bytes).context("failed to decode L1 ERC20 bytecode")?;
+        hex_simd::decode_to_vec(init_code_bytes).context("failed to decode L1 ERC20 bytecode")?;
 
     let (tx_hash, l1_erc20_contract_address) =
         create_deploy(l1_client, signer, init_code_l1.into(), Overrides::default()).await?;
@@ -237,7 +237,7 @@ fn build_fee_token_bytecode(l1_erc20_contract_address: Address) -> Result<Vec<u8
     )?;
 
     let mut fee_token_contract =
-        hex::decode(std::fs::read(fee_token_path.join("solc_out/FeeToken.bin"))?)?;
+        hex_simd::decode_to_vec(std::fs::read(fee_token_path.join("solc_out/FeeToken.bin"))?)?;
     fee_token_contract.extend_from_slice(&[0u8; 12]);
     fee_token_contract.extend_from_slice(&l1_erc20_contract_address.to_fixed_bytes());
 
@@ -673,7 +673,7 @@ async fn compile_and_deploy_counter(
         &[contracts_path],
         None,
     )?;
-    let init_code_l2 = hex::decode(String::from_utf8(std::fs::read(
+    let init_code_l2 = hex_simd::decode_to_vec(String::from_utf8(std::fs::read(
         "contracts/solc_out/Counter.bin",
     )?)?)?;
 

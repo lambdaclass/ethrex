@@ -90,7 +90,7 @@ use url::Url;
 async fn main() -> Result<()> {
     // 1. Connect and create the signer.
     let l2 = EthClient::new(Url::parse("http://localhost:1729")?)?;
-    let private_key = SecretKey::from_slice(&hex::decode("<hex-private-key>")?)?;
+    let private_key = SecretKey::from_slice(&hex_simd::decode_to_vec("<hex-private-key>")?)?;
     let signer = Signer::Local(LocalSigner::new(private_key));
 
     // 2. Build the fee-token transaction.

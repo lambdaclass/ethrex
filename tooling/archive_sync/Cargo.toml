@@ -20,5 +20,5 @@ eyre.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-hex.workspace = true
+hex-simd.workspace = true
 ethrex.workspace = true

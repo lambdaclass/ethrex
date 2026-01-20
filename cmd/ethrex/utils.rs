@@ -7,7 +7,7 @@ use ethrex_p2p::{
     sync::SyncMode,
     types::{Node, NodeRecord},
 };
-use hex::FromHexError;
+use ethrex_common::utils::FromHexError;
 use secp256k1::{PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -52,7 +52,7 @@ pub fn write_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
     }
 
     std::fs::write(jwt_secret_path, &secret).expect("Unable to write JWT secret file");
-    hex::decode(secret)
+    hex_simd::decode_to_vec(secret)
         .map(Bytes::from)
         .expect("Failed to decode generated JWT secret")
 }
@@ -62,7 +62,7 @@ pub fn generate_jwt_secret() -> String {
     let mut rng = rand::thread_rng();
     let mut secret = [0u8; 32];
     rng.fill(&mut secret);
-    hex::encode(secret)
+    hex_simd::encode_to_string(secret, hex_simd::AsciiCase::Lower)
 }
 
 pub fn read_chain_file(chain_rlp_path: &str) -> Vec<Block> {
@@ -153,8 +153,8 @@ pub fn parse_public_key(s: &str) -> eyre::Result<PublicKey> {
 
 pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {
     match s.strip_prefix("0x") {
-        Some(s) => hex::decode(s).map(Into::into),
-        None => hex::decode(s).map(Into::into),
+        Some(s) => hex_simd::decode_to_vec(s).map(Into::into),
+        None => hex_simd::decode_to_vec(s).map(Into::into),
     }
 }
 

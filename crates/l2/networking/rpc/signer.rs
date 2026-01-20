@@ -134,8 +134,8 @@ impl RemoteSigner {
         let url = self
             .url
             .join("api/v1/eth1/sign/")?
-            .join(&hex::encode(&self.public_key.serialize_uncompressed()[1..]))?;
-        let body = format!("{{\"data\": \"0x{}\"}}", hex::encode(data));
+            .join(&hex_simd::encode_to_string(&self.public_key.serialize_uncompressed()[1..], hex_simd::AsciiCase::Lower))?;
+        let body = format!("{{\"data\": \"0x{}\"}}", hex_simd::encode_to_string(data, hex_simd::AsciiCase::Lower));
 
         let client = Client::new();
         let response = client

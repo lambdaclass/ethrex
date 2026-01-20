@@ -224,7 +224,7 @@ impl Node {
     }
 
     pub fn enode_url(&self) -> String {
-        let public_key = hex::encode(self.public_key);
+        let public_key = hex_simd::encode_to_string(self.public_key, hex_simd::AsciiCase::Lower);
         let node_ip = self.ip;
         let discovery_port = self.udp_port;
         let listener_port = self.tcp_port;

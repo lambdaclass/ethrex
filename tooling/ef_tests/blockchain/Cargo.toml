@@ -17,7 +17,6 @@ guest_program = { path = "../../../crates/l2/prover/src/guest_program", default-
 serde.workspace = true
 serde_json.workspace = true
 bytes.workspace = true
-hex.workspace = true
 lazy_static.workspace = true
 tokio = { workspace = true, features = ["full"] }
 datatest-stable = "0.2.9"

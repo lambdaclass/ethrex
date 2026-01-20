@@ -50,7 +50,7 @@ impl Simulator {
     pub fn new(cmd_path: PathBuf, test_name: String) -> Self {
         let mut opts = Options::default_l1();
         let jwt_secret = generate_jwt_secret();
-        std::fs::write("jwt.hex", hex::encode(&jwt_secret)).unwrap();
+        std::fs::write("jwt.hex", hex_simd::encode_to_string(&jwt_secret, hex_simd::AsciiCase::Lower)).unwrap();
 
         let genesis_path = std::path::absolute("../../fixtures/genesis/l1.json")
             .unwrap()

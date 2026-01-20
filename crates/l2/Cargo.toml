@@ -31,7 +31,7 @@ ethrex-dev = { path = "../../crates/blockchain/dev", default-features = false }
 ethrex-metrics = { path = "../blockchain/metrics", default-features = false }
 ethrex-sdk = { path = "./sdk" }
 ethrex-p2p.workspace = true
-hex.workspace = true
+hex-simd.workspace = true
 bytes.workspace = true
 jsonwebtoken.workspace = true
 secp256k1.workspace = true

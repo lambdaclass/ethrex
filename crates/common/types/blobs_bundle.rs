@@ -281,7 +281,7 @@ mod tests {
     mod shared {
         #[cfg(feature = "c-kzg")]
         pub fn convert_str_to_bytes48(s: &str) -> [u8; 48] {
-            let bytes = hex::decode(s).expect("Invalid hex string");
+            let bytes = hex_simd::decode_to_vec(s).expect("Invalid hex string");
             let mut array = [0u8; 48];
             array.copy_from_slice(&bytes[..48]);
             array
@@ -435,7 +435,7 @@ mod tests {
             ]
             .into_iter()
             .map(|b| {
-                let bytes = hex::decode(b).expect("Invalid hex string");
+                let bytes = hex_simd::decode_to_vec(b).expect("Invalid hex string");
                 crate::H256::from_slice(&bytes)
             })
             .collect::<Vec<crate::H256>>(),
@@ -487,7 +487,7 @@ mod tests {
             ]
             .into_iter()
             .map(|b| {
-                let bytes = hex::decode(b).expect("Invalid hex string");
+                let bytes = hex_simd::decode_to_vec(b).expect("Invalid hex string");
                 crate::H256::from_slice(&bytes)
             })
             .collect::<Vec<crate::H256>>(),

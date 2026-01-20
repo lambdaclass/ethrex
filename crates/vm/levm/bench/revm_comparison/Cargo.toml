@@ -18,7 +18,7 @@ ethrex-crypto = { path = "../../../../common/crypto" }
 ethrex-storage = { path = "../../../../storage" }
 ethrex-blockchain = { path = "../../../../blockchain" }
 rustc-hash = "2.1.1"
-hex = "0.4.3"
+hex-simd = "0.8.0"
 bytes = { version = "1.6.0", features = ["serde"] }
 
 revm = "9.0.0"

@@ -404,7 +404,7 @@ impl RpcHandler for GetRawTransaction {
             Some(tx) => tx,
             _ => return Ok(Value::Null),
         };
-        serde_json::to_value(format!("0x{}", &hex::encode(tx.encode_to_vec())))
+        serde_json::to_value(format!("0x{}", &hex_simd::encode_to_string(tx.encode_to_vec(), hex_simd::AsciiCase::Lower)))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -636,5 +636,5 @@ fn get_transaction_data(rpc_req_params: &Option<Vec<Value>>) -> Result<Vec<u8>, 
     let str_data = str_data
         .strip_prefix("0x")
         .ok_or(RpcErr::BadParams("Params are note 0x prefixed".to_owned()))?;
-    hex::decode(str_data).map_err(|error| RpcErr::BadParams(error.to_string()))
+    hex_simd::decode_to_vec(str_data).map_err(|error| RpcErr::BadParams(error.to_string()))
 }

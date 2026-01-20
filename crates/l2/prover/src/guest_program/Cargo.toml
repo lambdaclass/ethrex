@@ -23,7 +23,7 @@ ethrex-trie = { path = "../../../../common/trie", default-features = false }
 ethrex-l2-common = { path = "../../../common", default-features = false }
 
 [build-dependencies]
-hex.workspace = true
+hex-simd.workspace = true
 risc0-build = { version = "=3.0.3", optional = true }
 risc0-zkvm = { version = "=3.0.3", optional = true, features = ["getrandom"] }
 sp1-build = { version = "=5.0.8", optional = true }

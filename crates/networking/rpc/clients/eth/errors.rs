@@ -248,7 +248,7 @@ pub enum GetCodeError {
     #[error("{0}")]
     RPCError(String),
     #[error("{0}")]
-    NotHexError(#[from] hex::FromHexError),
+    NotHexError(#[from] hex_simd::Error),
 }
 
 #[derive(Debug, thiserror::Error)]

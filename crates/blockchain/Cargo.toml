@@ -19,14 +19,14 @@ ethrex-metrics = { path = "./metrics", default-features = false }
 thiserror.workspace = true
 tracing.workspace = true
 bytes.workspace = true
-hex.workspace = true
+hex-simd.workspace = true
 rustc-hash.workspace = true
 tokio = { workspace = true, features = ["time", "rt"] }
 tokio-util.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
-hex = "0.4.3"
+hex-simd.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
 [lib]

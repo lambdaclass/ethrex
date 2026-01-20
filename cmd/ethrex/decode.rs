@@ -15,7 +15,7 @@ pub fn jwtsecret_file(file: &mut File) -> Bytes {
         .unwrap_or(&contents)
         .trim_end_matches('\n')
         .to_string();
-    hex::decode(contents)
+    hex_simd::decode_to_vec(contents)
         .expect("Secret should be hex encoded")
         .into()
 }

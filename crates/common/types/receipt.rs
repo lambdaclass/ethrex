@@ -332,7 +332,7 @@ mod test {
     use super::*;
 
     fn h256_from_hex(s: &str) -> H256 {
-        H256::from_slice(&hex::decode(s).unwrap())
+        H256::from_slice(&hex_simd::decode_to_vec(s).unwrap())
     }
 
     #[test]

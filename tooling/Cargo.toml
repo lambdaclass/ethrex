@@ -51,7 +51,7 @@ serde_json = "1.0.117"
 bytes = { version = "1.6.0", features = ["serde"] }
 tokio = { version = "1.41.1", default-features = false }
 thiserror = "2.0.9"
-hex = "0.4.3"
+hex-simd = "0.8.0"
 hex-literal = "0.4.1"
 crc32fast = "1.4.2"
 lazy_static = "1.5.0"

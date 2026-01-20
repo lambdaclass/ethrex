@@ -210,7 +210,7 @@ impl RpcHandler for GetRawHeaderRequest {
             .get_block_header(block_number)?
             .ok_or(RpcErr::BadParams("Header not found".to_owned()))?;
 
-        let str_encoded = format!("0x{}", hex::encode(header.encode_to_vec()));
+        let str_encoded = format!("0x{}", hex_simd::encode_to_string(header.encode_to_vec(), hex_simd::AsciiCase::Lower));
         Ok(Value::String(str_encoded))
     }
 }
@@ -243,7 +243,7 @@ impl RpcHandler for GetRawBlockRequest {
         };
         let block = Block::new(header, body).encode_to_vec();
 
-        serde_json::to_value(format!("0x{}", &hex::encode(block)))
+        serde_json::to_value(format!("0x{}", &hex_simd::encode_to_string(block, hex_simd::AsciiCase::Lower)))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -277,7 +277,7 @@ impl RpcHandler for GetRawReceipts {
         let receipts: Vec<String> = get_all_block_receipts(block_number, header, body, storage)
             .await?
             .iter()
-            .map(|receipt| format!("0x{}", hex::encode(receipt.encode_inner_with_bloom())))
+            .map(|receipt| format!("0x{}", hex_simd::encode_to_string(receipt.encode_inner_with_bloom(), hex_simd::AsciiCase::Lower)))
             .collect();
         serde_json::to_value(receipts).map_err(|error| RpcErr::Internal(error.to_string()))
     }

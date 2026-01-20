@@ -414,7 +414,10 @@ pub mod bytes48 {
     where
         S: Serializer,
     {
-        serializer.serialize_str(&format!("0x{}", hex::encode(value)))
+        serializer.serialize_str(&format!(
+            "0x{}",
+            hex_simd::encode_to_string(value, hex_simd::AsciiCase::Lower)
+        ))
     }
 
     pub mod vec {
@@ -459,7 +462,10 @@ pub mod blob {
     where
         S: Serializer,
     {
-        serializer.serialize_str(&format!("0x{}", hex::encode(value)))
+        serializer.serialize_str(&format!(
+            "0x{}",
+            hex_simd::encode_to_string(value, hex_simd::AsciiCase::Lower)
+        ))
     }
 
     pub mod vec {
@@ -507,7 +513,10 @@ fn serialize_vec_of_hex_encodables<S: Serializer, T: std::convert::AsRef<[u8]>>(
 ) -> Result<S::Ok, S::Error> {
     let mut seq_serializer = serializer.serialize_seq(Some(value.len()))?;
     for encoded in value {
-        seq_serializer.serialize_element(&format!("0x{}", hex::encode(encoded)))?;
+        seq_serializer.serialize_element(&format!(
+            "0x{}",
+            hex_simd::encode_to_string(encoded, hex_simd::AsciiCase::Lower)
+        ))?;
     }
     seq_serializer.end()
 }

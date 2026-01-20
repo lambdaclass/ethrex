@@ -34,7 +34,7 @@ use ethrex_rpc::clients::{EthClientError, eth::errors::CalldataEncodeError};
 
 use clap::ArgAction;
 use ethrex_common::H160;
-use hex::FromHexError;
+use ethrex_common::utils::FromHexError;
 use secp256k1::SecretKey;
 use url::Url;
 
@@ -463,8 +463,8 @@ pub fn parse_private_key(s: &str) -> eyre::Result<SecretKey> {
 
 pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {
     match s.strip_prefix("0x") {
-        Some(s) => hex::decode(s).map(Into::into),
-        None => hex::decode(s).map(Into::into),
+        Some(s) => hex_simd::decode_to_vec(s).map(Into::into),
+        None => hex_simd::decode_to_vec(s).map(Into::into),
     }
 }
 
@@ -972,7 +972,7 @@ fn deploy_tdx_contracts(
 ) -> Result<Address, DeployerError> {
     Command::new("make")
         .arg("deploy-all")
-        .env("PRIVATE_KEY", hex::encode(opts.private_key.as_ref()))
+        .env("PRIVATE_KEY", hex_simd::encode_to_string(opts.private_key.as_ref(), hex_simd::AsciiCase::Lower))
         .env("RPC_URL", opts.rpc_url.as_str())
         .env("ON_CHAIN_PROPOSER", format!("{on_chain_proposer:#x}"))
         .current_dir("tee/contracts")
@@ -1048,7 +1048,7 @@ fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, Depl
 fn read_vk(path: &str) -> Result<Bytes, DeployerError> {
     let string = std::fs::read_to_string(path)?;
     let trimmed = string.trim_start_matches("0x").trim();
-    let decoded = hex::decode(trimmed)
+    let decoded = hex_simd::decode_to_vec(trimmed)
         .map_err(|_| DeployerError::InternalError("failed to decode vk".to_string()))?;
     Ok(Bytes::from(decoded))
 }

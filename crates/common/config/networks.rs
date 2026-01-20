@@ -158,7 +158,7 @@ mod tests {
     fn assert_genesis_hash(network: PublicNetwork, expected_hash: &str) {
         let genesis = Network::PublicNetwork(network).get_genesis().unwrap();
         let genesis_hash = genesis.get_block().hash();
-        let expected_hash = hex::decode(expected_hash).unwrap();
+        let expected_hash = hex_simd::decode_to_vec(expected_hash).unwrap();
         assert_eq!(genesis_hash, H256::from_slice(&expected_hash));
     }
 

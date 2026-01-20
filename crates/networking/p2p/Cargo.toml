@@ -25,7 +25,7 @@ tracing.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["codec", "net"] }
 bytes.workspace = true
-hex.workspace = true
+hex-simd.workspace = true
 thiserror.workspace = true
 lazy_static.workspace = true
 snap.workspace = true

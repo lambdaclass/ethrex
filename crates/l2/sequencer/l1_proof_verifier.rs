@@ -170,8 +170,8 @@ impl L1ProofVerifier {
                         return Err(ProofVerifierError::MismatchedPublicInputs {
                             batch_number,
                             prover_type,
-                            existing_hex: hex::encode(existing_pi),
-                            latest_hex: hex::encode(public_inputs),
+                            existing_hex: hex_simd::encode_to_string(existing_pi, hex_simd::AsciiCase::Lower),
+                            latest_hex: hex_simd::encode_to_string(public_inputs, hex_simd::AsciiCase::Lower),
                         });
                     }
                 } else {

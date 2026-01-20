@@ -179,7 +179,7 @@ mod test {
             max_fee_per_gas: 78,
             max_priority_fee_per_gas: 17,
             to: TxKind::Call(Address::from_slice(
-                &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
+                &hex_simd::decode_to_vec("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
             )),
             value: 3000000000000000_u64.into(),
             data: Bytes::from_static(b"0x1568"),
@@ -198,7 +198,7 @@ mod test {
             gas_limit: 63000,
             access_list: vec![(
                 Address::from_slice(
-                    &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
+                    &hex_simd::decode_to_vec("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
                 ),
                 vec![],
             )],

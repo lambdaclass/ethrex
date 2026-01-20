@@ -389,7 +389,7 @@ impl GuestProgramState {
                 // Sidenote: logger doesn't work inside SP1, that's why we use println!
                 println!(
                     "Missing bytecode for hash {} in witness. Defaulting to empty code.", // If there's a state root mismatch and this prints we have to see if it's the cause or not.
-                    hex::encode(code_hash)
+                    hex_simd::encode_to_string(code_hash, hex_simd::AsciiCase::Lower)
                 );
                 Ok(Code::default())
             }

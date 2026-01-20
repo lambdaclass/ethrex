@@ -704,7 +704,7 @@ impl Blockchain {
             let hashed_address = hashed_address_h256.0.to_vec();
             trace!(
                 "Execute block pipeline: Update cycle for {}",
-                hex::encode(&hashed_address)
+                hex_simd::encode_to_string(&hashed_address, hex_simd::AsciiCase::Lower)
             );
             if update.removed {
                 // Remove account from trie
@@ -718,7 +718,7 @@ impl Blockchain {
                 Entry::Occupied(occupied_entry) => {
                     trace!(
                         "Found account state in cache for {}",
-                        hex::encode(&hashed_address)
+                        hex_simd::encode_to_string(&hashed_address, hex_simd::AsciiCase::Lower)
                     );
                     occupied_entry.into_mut()
                 }
@@ -727,14 +727,14 @@ impl Blockchain {
                         Some(encoded_state) => {
                             trace!(
                                 "Found account state in trie for {}",
-                                hex::encode(&hashed_address)
+                                hex_simd::encode_to_string(&hashed_address, hex_simd::AsciiCase::Lower)
                             );
                             AccountState::decode(&encoded_state)?
                         }
                         None => {
                             trace!(
                                 "Created account state in trie for {}",
-                                hex::encode(&hashed_address)
+                                hex_simd::encode_to_string(&hashed_address, hex_simd::AsciiCase::Lower)
                             );
                             AccountState::default()
                         }
@@ -749,8 +749,8 @@ impl Blockchain {
             if let Some(info) = &update.info {
                 trace!(
                     nonce = info.nonce,
-                    balance = hex::encode(info.balance.to_big_endian()),
-                    code_hash = hex::encode(info.code_hash),
+                    balance = hex_simd::encode_to_string(info.balance.to_big_endian(), hex_simd::AsciiCase::Lower),
+                    code_hash = hex_simd::encode_to_string(info.code_hash, hex_simd::AsciiCase::Lower),
                     "With info"
                 );
                 account_state.nonce = info.nonce;
@@ -780,29 +780,29 @@ impl Blockchain {
                 let Ok(storage_trie) = storage_trie else {
                     debug!(
                         "Failed to open storage trie for account {}",
-                        hex::encode(&hashed_address)
+                        hex_simd::encode_to_string(&hashed_address, hex_simd::AsciiCase::Lower)
                     );
                     return Err(StoreError::Custom("Error opening storage trie".to_string()));
                 };
                 for (storage_key, storage_value) in &update.added_storage {
                     let hashed_key = hash_key(storage_key);
                     if storage_value.is_zero() {
-                        trace!(slot = hex::encode(&hashed_key), "Removing");
+                        trace!(slot = hex_simd::encode_to_string(&hashed_key, hex_simd::AsciiCase::Lower), "Removing");
                         storage_trie.remove(&hashed_key)?;
                     } else {
-                        trace!(slot = hex::encode(&hashed_key), "Inserting");
+                        trace!(slot = hex_simd::encode_to_string(&hashed_key, hex_simd::AsciiCase::Lower), "Inserting");
                         storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                     }
                 }
                 trace!(
                     "Collecting storage changes for account {}",
-                    hex::encode(&hashed_address)
+                    hex_simd::encode_to_string(&hashed_address, hex_simd::AsciiCase::Lower)
                 );
                 let (storage_hash, storage_updates) =
                     storage_trie.collect_changes_since_last_hash();
                 trace!(
                     "Storage changes collected for account {}",
-                    hex::encode(&hashed_address)
+                    hex_simd::encode_to_string(&hashed_address, hex_simd::AsciiCase::Lower)
                 );
                 storage_updates_map.extend(storage_updates);
                 account_state.storage_root = storage_hash;

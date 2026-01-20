@@ -108,7 +108,7 @@ where
 {
     let s = String::deserialize(deserializer)?;
     Ok(Bytes::from(
-        hex::decode(s.trim_start_matches("0x")).map_err(|err| {
+        hex_simd::decode_to_vec(s.trim_start_matches("0x")).map_err(|err| {
             serde::de::Error::custom(format!(
                 "error decoding hex data when deserializing bytes: {err}"
             ))
@@ -124,7 +124,7 @@ where
     let mut ret = Vec::new();
     for s in s {
         ret.push(Bytes::from(
-            hex::decode(s.trim_start_matches("0x")).map_err(|err| {
+            hex_simd::decode_to_vec(s.trim_start_matches("0x")).map_err(|err| {
                 serde::de::Error::custom(format!(
                     "error decoding hex data when deserializing bytes vec: {err}"
                 ))

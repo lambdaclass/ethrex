@@ -51,7 +51,7 @@ fn main() {
     let contract_bytecode_hex =
         std::fs::read_to_string(contracts_path.join("solc_out/ERC1967Proxy.bin"))
             .expect("failed to read ERC1967Proxy bytecode");
-    let contract_bytecode = hex::decode(contract_bytecode_hex.trim())
+    let contract_bytecode = hex_simd::decode_to_vec(contract_bytecode_hex.trim())
         .expect("failed to hex-decode ERC1967Proxy bytecode");
 
     std::fs::write(

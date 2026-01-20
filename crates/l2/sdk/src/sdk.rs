@@ -241,7 +241,7 @@ pub async fn claim_withdraw(
 
     println!(
         "Claiming withdrawal with calldata: {}",
-        hex::encode(&claim_withdrawal_data)
+        hex_simd::encode_to_string(&claim_withdrawal_data, hex_simd::AsciiCase::Lower)
     );
 
     let claim_tx = build_generic_tx(
@@ -294,7 +294,7 @@ pub async fn claim_erc20withdraw(
 
     println!(
         "Claiming withdrawal with calldata: {}",
-        hex::encode(&claim_withdrawal_data)
+        hex_simd::encode_to_string(&claim_withdrawal_data, hex_simd::AsciiCase::Lower)
     );
 
     let claim_tx = build_generic_tx(
@@ -401,7 +401,7 @@ pub enum DeployError {
     #[error("Failed to decode init code: {0}")]
     FailedToReadInitCode(#[from] std::io::Error),
     #[error("Failed to decode init code: {0}")]
-    FailedToDecodeBytecode(#[from] hex::FromHexError),
+    FailedToDecodeBytecode(#[from] hex_simd::Error),
     #[error("Failed to deploy contract: {0}")]
     FailedToDeploy(#[from] EthClientError),
     #[error("Proxy bytecode not found. Make sure to compile the sdk with `COMPILE_CONTRACTS` set.")]
@@ -452,7 +452,7 @@ pub async fn create2_deploy_from_path(
     eth_client: &EthClient,
 ) -> Result<(H256, Address), DeployError> {
     let bytecode_hex = read_to_string(contract_path)?;
-    let bytecode = hex::decode(bytecode_hex.trim_start_matches("0x").trim())?;
+    let bytecode = hex_simd::decode_to_vec(bytecode_hex.trim_start_matches("0x").trim())?;
     create2_deploy_from_bytecode(constructor_args, &bytecode, deployer, salt, eth_client).await
 }
 
@@ -575,7 +575,7 @@ pub async fn deploy_with_proxy_no_wait(
     overrides: Overrides,
 ) -> Result<ProxyDeployment, DeployError> {
     let bytecode_hex = read_to_string(contract_path)?;
-    let bytecode = hex::decode(bytecode_hex.trim_start_matches("0x").trim())?;
+    let bytecode = hex_simd::decode_to_vec(bytecode_hex.trim_start_matches("0x").trim())?;
     let (implementation_tx_hash, implementation_address) = create2_deploy_from_bytecode_no_wait(
         &[],
         &bytecode,
@@ -1276,7 +1276,7 @@ async fn _call_bytes32_variable(
         "Couldn't strip '0x' prefix from hex string".to_owned(),
     ))?;
 
-    let bytes = hex::decode(hex)
+    let bytes = hex_simd::decode_to_vec(hex)
         .map_err(|e| EthClientError::Custom(format!("Failed to decode hex string: {e}")))?;
 
     let arr: [u8; 32] = bytes

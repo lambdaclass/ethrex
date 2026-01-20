@@ -14,7 +14,6 @@ use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
 use ethrex_rpc::types::receipt::RpcReceipt;
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
-use hex::ToHex;
 use secp256k1::SecretKey;
 use std::fs;
 use std::path::Path;
@@ -100,17 +99,17 @@ async fn deploy_contract(
 }
 
 async fn erc20_deploy(client: EthClient, deployer: &Signer) -> eyre::Result<Address> {
-    let erc20_bytecode = hex::decode(ERC20).expect("Failed to decode ERC20 bytecode");
+    let erc20_bytecode = hex_simd::decode_to_vec(ERC20).expect("Failed to decode ERC20 bytecode");
     deploy_contract(client, deployer, erc20_bytecode).await
 }
 
 async fn deploy_fibo(client: EthClient, deployer: &Signer) -> eyre::Result<Address> {
-    let fibo_bytecode = hex::decode(FIBO_CODE).expect("Failed to decode Fibo bytecode");
+    let fibo_bytecode = hex_simd::decode_to_vec(FIBO_CODE).expect("Failed to decode Fibo bytecode");
     deploy_contract(client, deployer, fibo_bytecode).await
 }
 
 async fn deploy_io_heavy(client: EthClient, deployer: &Signer) -> eyre::Result<Address> {
-    let io_heavy_bytecode = hex::decode(IO_HEAVY_CODE).expect("Failed to decode IO Heavy bytecode");
+    let io_heavy_bytecode = hex_simd::decode_to_vec(IO_HEAVY_CODE).expect("Failed to decode IO Heavy bytecode");
     deploy_contract(client, deployer, io_heavy_bytecode).await
 }
 

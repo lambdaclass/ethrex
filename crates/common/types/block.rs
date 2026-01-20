@@ -962,13 +962,13 @@ mod test {
         let transactions: Vec<Transaction> = encoded_transactions
             .iter()
             .map(|hex| {
-                Transaction::decode_canonical(&hex::decode(hex.trim_start_matches("0x")).unwrap())
+                Transaction::decode_canonical(&hex_simd::decode_to_vec(hex.trim_start_matches("0x")).unwrap())
                     .unwrap()
             })
             .collect();
         let transactions_root = compute_transactions_root(&transactions);
         let expected_root = H256::from_slice(
-            &hex::decode("adf0387d2303fe80aeca23bf6828c979b44d8a8fe4a1ba1d3511bc1567ca80de")
+            &hex_simd::decode_to_vec("adf0387d2303fe80aeca23bf6828c979b44d8a8fe4a1ba1d3511bc1567ca80de")
                 .unwrap(),
         );
         assert_eq!(transactions_root, expected_root);

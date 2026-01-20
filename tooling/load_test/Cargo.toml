@@ -7,7 +7,7 @@ documentation.workspace = true
 
 [dependencies]
 clap.workspace = true
-hex.workspace = true
+hex-simd.workspace = true
 secp256k1.workspace = true
 ethereum-types.workspace = true
 ethrex-rpc.workspace = true

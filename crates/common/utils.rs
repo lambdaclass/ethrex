@@ -1,7 +1,8 @@
 use crate::H256;
 use ethereum_types::U256;
 use ethrex_crypto::keccak::keccak_hash;
-use hex::FromHexError;
+
+pub type FromHexError = hex_simd::Error;
 
 pub const ZERO_U256: U256 = U256([0, 0, 0, 0]);
 
@@ -61,7 +62,7 @@ pub fn u256_to_h256(value: U256) -> H256 {
 
 pub fn decode_hex(hex: &str) -> Result<Vec<u8>, FromHexError> {
     let trimmed = hex.strip_prefix("0x").unwrap_or(hex);
-    hex::decode(trimmed)
+    hex_simd::decode_to_vec(trimmed)
 }
 
 pub fn keccak(data: impl AsRef<[u8]>) -> H256 {

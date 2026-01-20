@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 configfs-tsm = "0.0.1"
 tokio = { version = "1.41.1", features = ["full"] }
-hex = "0.4"
+hex-simd = "0.8.0"
 zerocopy = "0.8"
 serde = { version = "<1.0.220", features = ["derive"] }
 # serde >=1.0.220 contains a breaking change for alloy-consensus

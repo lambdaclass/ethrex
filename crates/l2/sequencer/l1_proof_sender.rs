@@ -293,7 +293,7 @@ impl L1ProofSender {
                     }
 
                     let trimmed = ZKVM_RISC0_PROGRAM_VK.trim_start_matches("0x").trim();
-                    hex::decode(trimmed).map_err(|e| {
+                    hex_simd::decode_to_vec(trimmed).map_err(|e| {
                         std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e}"))
                     })?
                 }

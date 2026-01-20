@@ -70,7 +70,7 @@ fn main() {
         // We convert to Bytes and then to String just because of convenience
         // We could change the logic so that it is Mnemonic -> String -> Bytes (and here skip the last step) but it's unimportant IMO
         let bytecode = mnemonics_to_bytecode(mnemonics);
-        let hex_string = format!("0x{}", hex::encode(&bytecode));
+        let hex_string = format!("0x{}", hex_simd::encode_to_string(&bytecode, hex_simd::AsciiCase::Lower));
 
         let output_path = format!("{}_bytes.txt", mnemonics_path.trim_end_matches(".txt"));
         let mut output_file = File::create(&output_path).expect("Failed to create output file");
@@ -110,13 +110,13 @@ fn main() {
         let bytecode = if strings.len() == 1 && strings[0].parse::<Opcode>().is_err() {
             debug!("Decoding raw bytecode");
             let code = strings[0].trim_start_matches("0x");
-            Bytes::from(hex::decode(code).expect("Failed to decode hex string"))
+            Bytes::from(hex_simd::decode_to_vec(code).expect("Failed to decode hex string"))
         } else {
             debug!("Parsing mnemonics");
             mnemonics_to_bytecode(strings)
         };
 
-        debug!("Final bytecode: 0x{}", hex::encode(bytecode.clone()));
+        debug!("Final bytecode: 0x{}", hex_simd::encode_to_string(bytecode.clone(), hex_simd::AsciiCase::Lower));
 
         bytecode
     } else {
@@ -196,7 +196,7 @@ fn main() {
             .collect::<Vec<_>>()
     );
     let final_memory: Vec<u8> = callframe.memory.buffer.borrow()[0..callframe.memory.len].to_vec();
-    info!("Final Memory: 0x{}", hex::encode(final_memory));
+    info!("Final Memory: 0x{}", hex_simd::encode_to_string(final_memory, hex_simd::AsciiCase::Lower));
 
     // Print Accounts diff
     compare_initial_and_current_accounts(
@@ -334,7 +334,7 @@ fn mnemonics_to_bytecode(mnemonics: Vec<String>) -> Bytes {
                 decoded_value = [padding, decoded_value].concat();
             }
 
-            debug!("Parsed PUSH{} 0x{}", push_size, hex::encode(&decoded_value));
+            debug!("Parsed PUSH{} 0x{}", push_size, hex_simd::encode_to_string(&decoded_value, hex_simd::AsciiCase::Lower));
 
             bytecode.append(&mut decoded_value);
         } else {
