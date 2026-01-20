@@ -8,6 +8,7 @@ members = [
   "crates/common/rlp",
   "crates/common/trie",
   "crates/common/crypto",
+  "crates/common/ethrex_db",
   "crates/l2/",
   "crates/l2/common",
   "crates/l2/prover",
@@ -73,6 +74,7 @@ ethrex-storage-rollup = { path = "./crates/l2/storage" }
 ethrex = { path = "./cmd/ethrex" }
 ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
 ethrex-threadpool = { path = "./crates/concurrency" }
+ethrex_db = { path = "./crates/common/ethrex_db" }
 
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }

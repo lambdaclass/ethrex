@@ -67,6 +67,7 @@
 pub mod api;
 pub mod backend;
 pub mod error;
+mod ethrex_db_adapter;
 mod layering;
 pub mod rlp;
 pub mod store;
