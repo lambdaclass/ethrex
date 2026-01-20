@@ -4,8 +4,8 @@ use std::array;
 // This encoding is only used to store the nodes in the DB, it is not the encoding used for hash computation
 use ethrex_rlp::{
     constants::RLP_NULL,
-    decode::{RLPDecode, decode_bytes},
-    encode::{RLPEncode, encode_length},
+    decode::{decode_bytes, RLPDecode},
+    encode::{encode_length, RLPEncode},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
@@ -153,7 +153,10 @@ impl RLPDecode for Node {
 
 pub fn decode_child(rlp: &[u8]) -> NodeHash {
     match decode_bytes(rlp) {
-        Ok((hash, &[])) if hash.len() == 32 => NodeHash::from_slice(hash),
+        Ok((hash, &[])) if hash.len() == 32 => {
+            let arr: [u8; 32] = hash.try_into().expect("length checked above");
+            NodeHash::Hashed(ethereum_types::H256(arr))
+        }
         Ok((&[], &[])) => NodeHash::default(),
         _ => NodeHash::from_slice(rlp),
     }
