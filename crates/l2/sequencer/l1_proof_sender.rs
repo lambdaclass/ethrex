@@ -285,7 +285,9 @@ impl L1ProofSender {
         };
 
         // Create alloy signer from private key
-        let signer = PrivateKeySigner::from_bytes(&local_signer.private_key).map_err(|e| {
+        // Convert secp256k1::SecretKey to FixedBytes<32> for alloy signer
+        let private_key_bytes: [u8; 32] = local_signer.private_key.secret_bytes();
+        let signer = PrivateKeySigner::from_bytes(&private_key_bytes.into()).map_err(|e| {
             ProofSenderError::UnexpectedError(format!("Failed to create signer: {e}"))
         })?;
 
