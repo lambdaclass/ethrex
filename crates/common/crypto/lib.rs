@@ -31,14 +31,9 @@
 //!
 //! ### BLAKE2b Compression
 //!
-//! ```rust
-//! use ethrex_crypto::blake2f::blake2b_f;
-//!
-//! let mut state = [1u64, 2, 3, 4, 5, 6, 7, 8];
-//! let message = [101u64, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116];
-//! let offset = [1000u64, 1001];
-//! blake2b_f(12, &mut state, &message, &offset, true);
-//! ```
+//! The [`blake2f::blake2b_f`] function implements the BLAKE2b compression function
+//! (EVM precompile 0x09). It takes a mutable state array, message block, offset
+//! counter, and finalization flag.
 //!
 //! ### KZG Trusted Setup
 //!
