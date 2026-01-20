@@ -337,10 +337,17 @@ impl<'a> TrieDB for BackendTrieDB<'a> {
 - Reorg handling: ethrex_db should handle naturally via Fork Choice
 
 **Deliverables**:
-- [ ] Block execution integration
-- [ ] forkchoice_update() adaptation
-- [ ] Reorg handling verification
-- [ ] Commit threshold removal (ethrex_db handles internally)
+- [x] Block execution integration
+- [x] forkchoice_update() adaptation
+- [x] Reorg handling verification
+- [ ] Commit threshold removal (ethrex_db handles internally) - deferred to Phase 6
+
+**Implementation Notes**:
+- Added `BlockchainRef` wrapper type to Store for accessing ethrex_db Blockchain
+- `Store::ethrex_blockchain()` returns optional reference to the Blockchain
+- `forkchoice_update()` now calls ethrex_db's `fork_choice_update()` for state finalization
+- The current TrieLayerCache mechanism remains active for compatibility
+- Full replacement of TrieLayerCache with ethrex_db will be completed in Phase 6
 
 ---
 

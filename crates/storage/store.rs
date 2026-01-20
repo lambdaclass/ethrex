@@ -2,6 +2,21 @@
 use crate::backend::rocksdb::RocksDBBackend;
 #[cfg(feature = "ethrex-db")]
 use crate::backend::ethrex_db::EthrexDbBackend;
+#[cfg(feature = "ethrex-db")]
+use ethrex_db::chain::Blockchain;
+
+/// Wrapper for ethrex_db Blockchain that implements Debug.
+#[cfg(feature = "ethrex-db")]
+#[derive(Clone)]
+pub struct BlockchainRef(pub Arc<std::sync::RwLock<Blockchain>>);
+
+#[cfg(feature = "ethrex-db")]
+impl std::fmt::Debug for BlockchainRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlockchainRef").finish_non_exhaustive()
+    }
+}
+
 use crate::{
     STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION,
     api::{
@@ -155,6 +170,10 @@ pub struct Store {
     db_path: PathBuf,
     /// Storage backend (InMemory or RocksDB).
     backend: Arc<dyn StorageBackend>,
+    /// Optional reference to ethrex_db Blockchain for direct state operations.
+    /// Only present when using the ethrex-db backend.
+    #[cfg(feature = "ethrex-db")]
+    ethrex_blockchain: Option<BlockchainRef>,
     /// Chain configuration (fork schedule, chain ID, etc.).
     chain_config: ChainConfig,
     /// Cache for trie nodes from recent blocks.
@@ -1333,8 +1352,12 @@ impl Store {
             }
             #[cfg(feature = "ethrex-db")]
             EngineType::EthrexDb => {
-                let backend = Arc::new(EthrexDbBackend::open(path)?);
-                Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
+                let backend = EthrexDbBackend::open(path)?;
+                let blockchain = BlockchainRef(backend.blockchain());
+                let backend = Arc::new(backend);
+                let mut store = Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)?;
+                store.ethrex_blockchain = Some(blockchain);
+                Ok(store)
             }
             EngineType::InMemory => {
                 let backend = Arc::new(InMemoryBackend::open()?);
@@ -1367,6 +1390,8 @@ impl Store {
         let mut store = Self {
             db_path,
             backend,
+            #[cfg(feature = "ethrex-db")]
+            ethrex_blockchain: None,
             chain_config: Default::default(),
             latest_block_header: Default::default(),
             trie_cache: Arc::new(Mutex::new(Arc::new(TrieLayerCache::new(commit_threshold)))),
@@ -1998,6 +2023,17 @@ impl Store {
         self.chain_config
     }
 
+    /// Returns a reference to the ethrex_db Blockchain if using the ethrex-db backend.
+    ///
+    /// This provides direct access to ethrex_db's native API for operations like:
+    /// - Creating and committing blocks
+    /// - Managing hot/cold state storage
+    /// - Fork choice updates and finalization
+    #[cfg(feature = "ethrex-db")]
+    pub fn ethrex_blockchain(&self) -> Option<&BlockchainRef> {
+        self.ethrex_blockchain.as_ref()
+    }
+
     pub async fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
         Ok(Some(self.latest_block_header.get().hash()))
     }
@@ -2020,13 +2056,42 @@ impl Store {
             .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
         self.latest_block_header.update(new_head);
         self.forkchoice_update_inner(
-            new_canonical_blocks,
+            new_canonical_blocks.clone(),
             head_number,
             head_hash,
             safe,
             finalized,
         )
         .await?;
+
+        // If using ethrex_db backend, finalize state in ethrex_db's Blockchain
+        #[cfg(feature = "ethrex-db")]
+        if let Some(blockchain_ref) = &self.ethrex_blockchain
+            && let Some(finalized_number) = finalized
+        {
+            // Find the finalized block hash from new_canonical_blocks or from storage
+            let finalized_hash = new_canonical_blocks
+                .iter()
+                .find(|(num, _)| *num == finalized_number)
+                .map(|(_, hash)| *hash)
+                .or_else(|| self.get_canonical_block_hash_sync(finalized_number).ok().flatten());
+
+            if let Some(hash) = finalized_hash {
+                let blockchain = blockchain_ref.0.write().map_err(|_| {
+                    StoreError::Custom("Failed to acquire write lock on ethrex_db blockchain".into())
+                })?;
+                // Call ethrex_db's fork_choice_update which handles finalization
+                blockchain
+                    .fork_choice_update(head_hash, safe.and_then(|n| {
+                        new_canonical_blocks
+                            .iter()
+                            .find(|(num, _)| *num == n)
+                            .map(|(_, h)| *h)
+                            .or_else(|| self.get_canonical_block_hash_sync(n).ok().flatten())
+                    }), Some(hash))
+                    .map_err(|e| StoreError::Custom(format!("ethrex_db fork_choice_update failed: {}", e)))?;
+            }
+        }
 
         Ok(())
     }
