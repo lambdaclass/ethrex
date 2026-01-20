@@ -8,7 +8,7 @@ use ethrex_common::H512;
 use ethrex_rlp::structs::{Decoder, Encoder};
 use ethrex_rlp::{
     decode::{RLPDecode, decode_rlp_item},
-    encode::RLPEncode,
+    encode::{list_length, RLPEncode},
     error::{RLPDecodeError, RLPEncodeError},
 };
 use secp256k1::PublicKey;
@@ -85,6 +85,11 @@ impl RLPEncode for Capability {
             .encode_field(&self.protocol())
             .encode_field(&self.version)
             .finish();
+    }
+
+    fn length(&self) -> usize {
+        let payload_len = self.protocol().length() + self.version.length();
+        list_length(payload_len)
     }
 }
 

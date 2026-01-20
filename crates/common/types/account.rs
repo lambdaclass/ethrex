@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use ethrex_rlp::{
     decode::RLPDecode,
-    encode::RLPEncode,
+    encode::{list_length, RLPEncode},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
@@ -197,6 +197,12 @@ impl RLPEncode for AccountInfo {
             .encode_field(&self.nonce)
             .finish();
     }
+
+    fn length(&self) -> usize {
+        let payload_len =
+            self.code_hash.length() + self.balance.length() + self.nonce.length();
+        list_length(payload_len)
+    }
 }
 
 impl RLPDecode for AccountInfo {
@@ -222,6 +228,14 @@ impl RLPEncode for AccountState {
             .encode_field(&self.storage_root)
             .encode_field(&self.code_hash)
             .finish();
+    }
+
+    fn length(&self) -> usize {
+        let payload_len = self.nonce.length()
+            + self.balance.length()
+            + self.storage_root.length()
+            + self.code_hash.length();
+        list_length(payload_len)
     }
 }
 
@@ -255,6 +269,14 @@ impl RLPEncode for AccountStateSlimCodec {
 
                 data.encode(buf);
             }
+
+            fn length(&self) -> usize {
+                if *self.0 != *EMPTY_TRIE_HASH {
+                    33 // 1 byte prefix + 32 bytes
+                } else {
+                    1 // empty bytes: 0x80
+                }
+            }
         }
 
         struct CodeHashCodec<'a>(&'a H256);
@@ -268,6 +290,14 @@ impl RLPEncode for AccountStateSlimCodec {
 
                 data.encode(buf);
             }
+
+            fn length(&self) -> usize {
+                if *self.0 != *EMPTY_KECCACK_HASH {
+                    33 // 1 byte prefix + 32 bytes
+                } else {
+                    1 // empty bytes: 0x80
+                }
+            }
         }
 
         Encoder::new(buf)
@@ -276,6 +306,23 @@ impl RLPEncode for AccountStateSlimCodec {
             .encode_field(&StorageRootCodec(&self.0.storage_root))
             .encode_field(&CodeHashCodec(&self.0.code_hash))
             .finish();
+    }
+
+    fn length(&self) -> usize {
+        // Compute lengths inline to avoid recreating the codec structs
+        let storage_root_len = if self.0.storage_root != *EMPTY_TRIE_HASH {
+            33
+        } else {
+            1
+        };
+        let code_hash_len = if self.0.code_hash != *EMPTY_KECCACK_HASH {
+            33
+        } else {
+            1
+        };
+        let payload_len =
+            self.0.nonce.length() + self.0.balance.length() + storage_root_len + code_hash_len;
+        list_length(payload_len)
     }
 }
 

@@ -27,6 +27,13 @@ impl RLPEncode for BalanceDiff {
         self.value_per_token.encode(buf);
         self.message_hashes.encode(buf);
     }
+
+    fn length(&self) -> usize {
+        self.chain_id.length()
+            + self.value.length()
+            + self.value_per_token.length()
+            + self.message_hashes.length()
+    }
 }
 
 impl RLPDecode for BalanceDiff {
@@ -53,6 +60,13 @@ impl RLPEncode for AssetDiff {
         self.token_src_l2.encode(buf);
         self.token_dst_l2.encode(buf);
         self.value.encode(buf);
+    }
+
+    fn length(&self) -> usize {
+        self.token_l1.length()
+            + self.token_src_l2.length()
+            + self.token_dst_l2.length()
+            + self.value.length()
     }
 }
 
