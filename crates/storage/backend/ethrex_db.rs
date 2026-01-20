@@ -7,6 +7,18 @@
 //! The hybrid approach leverages ethrex_db's optimized trie storage (memory-mapped pages,
 //! Copy-on-Write concurrency) while keeping RocksDB for data that benefits from its
 //! compression and indexing capabilities.
+//!
+//! ## Key Translation
+//!
+//! ethrex uses nibble-based paths for trie keys:
+//! - Account trie leaf: 65 nibbles = keccak256(address)[64] + terminator[1]
+//! - Storage trie leaf: 131 nibbles = address_hash[64] + separator(17)[1] + slot_hash[64] + terminator[2]
+//!
+//! ethrex_db uses direct address/slot access:
+//! - `get_finalized_account_by_hash(&[u8; 32])` for account queries
+//! - `get_finalized_storage_by_hash(&[u8; 32], &[u8; 32])` for storage queries
+//!
+//! This module translates between these formats for leaf data queries.
 
 use crate::api::tables::{
     ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
@@ -17,12 +29,214 @@ use crate::api::{
 use crate::error::StoreError;
 use ethrex_db::chain::Blockchain;
 use ethrex_db::store::PagedDb;
+use primitive_types::U256;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 use super::rocksdb::RocksDBBackend;
+
+// =============================================================================
+// Path Translation Utilities
+// =============================================================================
+//
+// These utilities convert between ethrex's nibble-based trie keys and
+// ethrex_db's native account/storage address format.
+
+/// Represents a parsed nibble key from ethrex's trie.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParsedTrieKey {
+    /// Account trie leaf: contains the keccak256 hash of the address (32 bytes).
+    AccountLeaf { address_hash: [u8; 32] },
+    /// Storage trie leaf: contains address hash and storage slot hash.
+    StorageLeaf {
+        address_hash: [u8; 32],
+        slot_hash: [u8; 32],
+    },
+    /// Intermediate trie node (not a leaf).
+    IntermediateNode,
+    /// Invalid or unrecognized key format.
+    Invalid,
+}
+
+/// Converts 64 nibbles to a 32-byte hash.
+///
+/// Each byte in the input represents a single nibble (0-15).
+/// Two nibbles combine to form one output byte.
+/// Returns None if the input is not exactly 64 nibbles or contains invalid values.
+#[inline]
+fn nibbles_to_hash(nibbles: &[u8]) -> Option<[u8; 32]> {
+    if nibbles.len() != 64 {
+        return None;
+    }
+
+    let mut result = [0u8; 32];
+    for (i, chunk) in nibbles.chunks_exact(2).enumerate() {
+        let high = chunk[0];
+        let low = chunk[1];
+        if high >= 16 || low >= 16 {
+            return None;
+        }
+        result[i] = (high << 4) | low;
+    }
+    Some(result)
+}
+
+/// Parses an ethrex nibble key into its semantic components.
+///
+/// Key formats:
+/// - Account leaf (ACCOUNT_FLATKEYVALUE): 65 nibbles
+///   - nibbles[0..64]: keccak256(address) as nibbles
+///   - nibbles[64]: terminator (16)
+///
+/// - Storage leaf (STORAGE_FLATKEYVALUE): 131 nibbles
+///   - nibbles[0..64]: keccak256(address) as nibbles
+///   - nibbles[64]: separator (17)
+///   - nibbles[65..129]: keccak256(slot) as nibbles
+///   - nibbles[129..131]: terminator
+///
+/// - Intermediate nodes: any other length
+pub fn parse_trie_key(key: &[u8], table: &str) -> ParsedTrieKey {
+    match table {
+        t if t == ACCOUNT_FLATKEYVALUE => {
+            // Account leaf: 65 nibbles = 64 nibbles for hash + 1 terminator
+            if key.len() == 65 && key[64] == 16 {
+                if let Some(address_hash) = nibbles_to_hash(&key[0..64]) {
+                    return ParsedTrieKey::AccountLeaf { address_hash };
+                }
+            }
+            // Might be an intermediate account trie node
+            if key.len() < 65 {
+                return ParsedTrieKey::IntermediateNode;
+            }
+            ParsedTrieKey::Invalid
+        }
+        t if t == STORAGE_FLATKEYVALUE => {
+            // Storage leaf: 131 nibbles = 64 + 1 (separator) + 64 + 2 (terminator)
+            // Note: actual format may vary, check for separator at position 64
+            if key.len() == 131 && key[64] == 17 {
+                if let (Some(address_hash), Some(slot_hash)) = (
+                    nibbles_to_hash(&key[0..64]),
+                    nibbles_to_hash(&key[65..129]),
+                ) {
+                    return ParsedTrieKey::StorageLeaf {
+                        address_hash,
+                        slot_hash,
+                    };
+                }
+            }
+            // Might be an intermediate storage trie node
+            if key.len() < 131 {
+                return ParsedTrieKey::IntermediateNode;
+            }
+            ParsedTrieKey::Invalid
+        }
+        t if t == ACCOUNT_TRIE_NODES || t == STORAGE_TRIE_NODES => {
+            // Trie node tables always contain intermediate nodes (or leaf nodes)
+            // These are RLP-encoded trie nodes, not flat key-value pairs
+            ParsedTrieKey::IntermediateNode
+        }
+        _ => ParsedTrieKey::Invalid,
+    }
+}
+
+/// Encodes an ethrex_db Account for storage in the trie.
+///
+/// The trie stores account data as RLP-encoded [nonce, balance, storage_root, code_hash].
+/// This matches Ethereum's account state trie format.
+fn encode_account_for_trie(account: &ethrex_db::chain::Account) -> Vec<u8> {
+    use ethrex_rlp::encode::RLPEncode;
+
+    // Build the account RLP: [nonce, balance, storage_root, code_hash]
+    let mut buf = Vec::new();
+
+    // Calculate the header for a list with 4 elements
+    let nonce_encoded = {
+        let mut b = Vec::new();
+        account.nonce.encode(&mut b);
+        b
+    };
+    let balance_encoded = {
+        let mut b = Vec::new();
+        // Convert U256 to bytes for encoding
+        let balance_bytes: [u8; 32] = account.balance.to_big_endian();
+        // Trim leading zeros for canonical RLP
+        let trimmed = trim_leading_zeros(&balance_bytes);
+        trimmed.to_vec().encode(&mut b);
+        b
+    };
+    let storage_root_encoded = {
+        let mut b = Vec::new();
+        account.storage_root.as_bytes().encode(&mut b);
+        b
+    };
+    let code_hash_encoded = {
+        let mut b = Vec::new();
+        account.code_hash.as_bytes().encode(&mut b);
+        b
+    };
+
+    let total_len =
+        nonce_encoded.len() + balance_encoded.len() + storage_root_encoded.len() + code_hash_encoded.len();
+
+    // RLP list header
+    if total_len < 56 {
+        buf.push(0xc0 + total_len as u8);
+    } else {
+        let len_bytes = encode_length(total_len);
+        buf.push(0xf7 + len_bytes.len() as u8);
+        buf.extend_from_slice(&len_bytes);
+    }
+
+    buf.extend_from_slice(&nonce_encoded);
+    buf.extend_from_slice(&balance_encoded);
+    buf.extend_from_slice(&storage_root_encoded);
+    buf.extend_from_slice(&code_hash_encoded);
+
+    buf
+}
+
+/// Encodes a storage value (U256) for storage in the trie.
+///
+/// Storage values are RLP-encoded U256 values.
+fn encode_storage_value_for_trie(value: &U256) -> Vec<u8> {
+    use ethrex_rlp::encode::RLPEncode;
+
+    let mut buf = Vec::new();
+    let value_bytes: [u8; 32] = value.to_big_endian();
+
+    // Trim leading zeros for canonical RLP
+    let trimmed = trim_leading_zeros(&value_bytes);
+    trimmed.to_vec().encode(&mut buf);
+    buf
+}
+
+/// Trims leading zeros from a byte slice.
+fn trim_leading_zeros(bytes: &[u8]) -> &[u8] {
+    let first_nonzero = bytes.iter().position(|&b| b != 0).unwrap_or(bytes.len());
+    if first_nonzero == bytes.len() {
+        // All zeros, return empty or single zero
+        &[]
+    } else {
+        &bytes[first_nonzero..]
+    }
+}
+
+/// Encodes a length as big-endian bytes (for RLP headers).
+fn encode_length(len: usize) -> Vec<u8> {
+    if len == 0 {
+        return vec![];
+    }
+    let mut bytes = Vec::new();
+    let mut n = len;
+    while n > 0 {
+        bytes.push((n & 0xff) as u8);
+        n >>= 8;
+    }
+    bytes.reverse();
+    bytes
+}
 
 /// Tables that are handled by ethrex_db (state and storage tries).
 const ETHREX_DB_TABLES: [&str; 4] = [
@@ -206,18 +420,50 @@ impl<'a> StorageReadView for EthrexDbReadView<'a> {
                 }
             }
 
-            // TODO: For full integration, we need to translate the nibble-based key
-            // to ethrex_db's account/storage API. For now, return None for trie tables
-            // as the actual integration will happen at a higher level (Store).
-            //
-            // The key format in ethrex is:
-            // - Account trie: Nibbles of keccak256(address)
-            // - Storage trie: address_prefix (17 separator) + Nibbles of keccak256(slot)
-            //
-            // ethrex_db uses:
-            // - blockchain.get_finalized_account(&[u8; 20]) for accounts
-            // - blockchain.get_finalized_storage_by_hash(&[u8; 32], &[u8; 32]) for storage
-            Ok(None)
+            // Try to parse the key and query ethrex_db for leaf data
+            match parse_trie_key(key, table) {
+                ParsedTrieKey::AccountLeaf { address_hash } => {
+                    // Query ethrex_db for account data using the hashed address
+                    let blockchain = self.blockchain.read().map_err(|_| {
+                        StoreError::Custom("Failed to acquire read lock on blockchain".into())
+                    })?;
+
+                    if let Some(account) = blockchain.get_finalized_account_by_hash(&address_hash) {
+                        // Encode account data for ethrex's trie format
+                        // ethrex uses RLP encoding for account state
+                        let encoded = encode_account_for_trie(&account);
+                        return Ok(Some(encoded));
+                    }
+                    Ok(None)
+                }
+                ParsedTrieKey::StorageLeaf {
+                    address_hash,
+                    slot_hash,
+                } => {
+                    // Query ethrex_db for storage value
+                    let blockchain = self.blockchain.read().map_err(|_| {
+                        StoreError::Custom("Failed to acquire read lock on blockchain".into())
+                    })?;
+
+                    if let Some(value) =
+                        blockchain.get_finalized_storage_by_hash(&address_hash, &slot_hash)
+                    {
+                        // Storage values are encoded as RLP(U256)
+                        let encoded = encode_storage_value_for_trie(&value);
+                        return Ok(Some(encoded));
+                    }
+                    Ok(None)
+                }
+                ParsedTrieKey::IntermediateNode => {
+                    // Intermediate nodes are not stored in ethrex_db
+                    // They exist only in the pending writes or need to be reconstructed
+                    Ok(None)
+                }
+                ParsedTrieKey::Invalid => {
+                    // Unknown key format, return None
+                    Ok(None)
+                }
+            }
         } else {
             self.auxiliary.get(table, key)
         }
@@ -342,11 +588,40 @@ impl StorageLockedView for EthrexDbLockedView {
             return Ok(Some(value.clone()));
         }
 
-        // TODO: Translate to ethrex_db API when full integration is complete
-        // For now, return None as actual trie data access will happen at Store level
-        let _ = self.blockchain; // Suppress unused warning
-        let _ = self.table_name;
-        Ok(None)
+        // Try to parse the key and query ethrex_db for leaf data
+        match parse_trie_key(key, self.table_name) {
+            ParsedTrieKey::AccountLeaf { address_hash } => {
+                let blockchain = self.blockchain.read().map_err(|_| {
+                    StoreError::Custom("Failed to acquire read lock on blockchain".into())
+                })?;
+
+                if let Some(account) = blockchain.get_finalized_account_by_hash(&address_hash) {
+                    let encoded = encode_account_for_trie(&account);
+                    return Ok(Some(encoded));
+                }
+                Ok(None)
+            }
+            ParsedTrieKey::StorageLeaf {
+                address_hash,
+                slot_hash,
+            } => {
+                let blockchain = self.blockchain.read().map_err(|_| {
+                    StoreError::Custom("Failed to acquire read lock on blockchain".into())
+                })?;
+
+                if let Some(value) =
+                    blockchain.get_finalized_storage_by_hash(&address_hash, &slot_hash)
+                {
+                    let encoded = encode_storage_value_for_trie(&value);
+                    return Ok(Some(encoded));
+                }
+                Ok(None)
+            }
+            ParsedTrieKey::IntermediateNode | ParsedTrieKey::Invalid => {
+                // Intermediate nodes are not stored in ethrex_db
+                Ok(None)
+            }
+        }
     }
 }
 
@@ -418,5 +693,124 @@ mod tests {
             let value = tx.get(ACCOUNT_TRIE_NODES, b"trie_key").unwrap();
             assert_eq!(value, Some(b"trie_value".to_vec()));
         }
+    }
+
+    // =========================================================================
+    // Path Translation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_nibbles_to_hash() {
+        // Test with exactly 64 nibbles (produces 32-byte hash)
+        let mut nibbles = [0u8; 64];
+        for i in 0..64 {
+            nibbles[i] = (i % 16) as u8;
+        }
+        let hash = nibbles_to_hash(&nibbles).unwrap();
+        // First two nibbles (0, 1) should become byte 0x01
+        assert_eq!(hash[0], 0x01);
+        // Nibbles (2, 3) should become byte 0x23
+        assert_eq!(hash[1], 0x23);
+        // Last two nibbles (14, 15) % 16 = (14, 15) should become 0xef
+        assert_eq!(hash[31], 0xef);
+
+        // Test with wrong length (not 64 nibbles)
+        let short_nibbles = [0u8; 32];
+        assert!(nibbles_to_hash(&short_nibbles).is_none());
+
+        // Test with invalid nibble values (>= 16)
+        let mut invalid_nibbles = [0u8; 64];
+        invalid_nibbles[0] = 16; // Invalid nibble
+        assert!(nibbles_to_hash(&invalid_nibbles).is_none());
+    }
+
+    #[test]
+    fn test_parse_account_leaf_key() {
+        // Create a valid account leaf key: 64 nibbles of address hash + terminator (16)
+        let mut key = vec![0u8; 65];
+        // Fill with a recognizable pattern: 0x0102...1f20
+        for i in 0..64 {
+            key[i] = (i % 16) as u8;
+        }
+        key[64] = 16; // terminator
+
+        let parsed = parse_trie_key(&key, ACCOUNT_FLATKEYVALUE);
+
+        match parsed {
+            ParsedTrieKey::AccountLeaf { address_hash } => {
+                // Verify the hash was correctly converted from nibbles
+                // First two nibbles (0, 1) should become byte 0x01
+                assert_eq!(address_hash[0], 0x01);
+                assert_eq!(address_hash[1], 0x23);
+            }
+            _ => panic!("Expected AccountLeaf, got {:?}", parsed),
+        }
+    }
+
+    #[test]
+    fn test_parse_storage_leaf_key() {
+        // Create a valid storage leaf key:
+        // 64 nibbles (address hash) + separator (17) + 64 nibbles (slot hash) + 2 terminators
+        let mut key = vec![0u8; 131];
+        // Address hash nibbles
+        for i in 0..64 {
+            key[i] = (i % 16) as u8;
+        }
+        // Separator
+        key[64] = 17;
+        // Slot hash nibbles
+        for i in 65..129 {
+            key[i] = ((i - 65) % 16) as u8;
+        }
+        // Terminators
+        key[129] = 16;
+        key[130] = 0;
+
+        let parsed = parse_trie_key(&key, STORAGE_FLATKEYVALUE);
+
+        match parsed {
+            ParsedTrieKey::StorageLeaf {
+                address_hash,
+                slot_hash,
+            } => {
+                // Verify both hashes were correctly converted
+                assert_eq!(address_hash[0], 0x01);
+                assert_eq!(slot_hash[0], 0x01);
+            }
+            _ => panic!("Expected StorageLeaf, got {:?}", parsed),
+        }
+    }
+
+    #[test]
+    fn test_parse_intermediate_node() {
+        // Intermediate nodes have keys shorter than leaf keys
+        let short_key = vec![0x01, 0x02, 0x03, 0x04];
+
+        let parsed = parse_trie_key(&short_key, ACCOUNT_FLATKEYVALUE);
+        assert_eq!(parsed, ParsedTrieKey::IntermediateNode);
+
+        let parsed = parse_trie_key(&short_key, STORAGE_FLATKEYVALUE);
+        assert_eq!(parsed, ParsedTrieKey::IntermediateNode);
+
+        // Trie node tables always return IntermediateNode
+        let parsed = parse_trie_key(&short_key, ACCOUNT_TRIE_NODES);
+        assert_eq!(parsed, ParsedTrieKey::IntermediateNode);
+    }
+
+    #[test]
+    fn test_trim_leading_zeros() {
+        assert_eq!(trim_leading_zeros(&[0, 0, 0, 1, 2, 3]), &[1, 2, 3]);
+        assert_eq!(trim_leading_zeros(&[1, 2, 3]), &[1, 2, 3]);
+        assert_eq!(trim_leading_zeros(&[0, 0, 0]), &[] as &[u8]);
+        assert_eq!(trim_leading_zeros(&[]), &[] as &[u8]);
+    }
+
+    #[test]
+    fn test_encode_length() {
+        assert_eq!(encode_length(0), vec![] as Vec<u8>);
+        assert_eq!(encode_length(1), vec![1]);
+        assert_eq!(encode_length(255), vec![255]);
+        assert_eq!(encode_length(256), vec![1, 0]);
+        assert_eq!(encode_length(65535), vec![255, 255]);
     }
 }

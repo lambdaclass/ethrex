@@ -294,9 +294,18 @@ impl<'a> TrieDB for BackendTrieDB<'a> {
 - Storage trie isolation: ethrex uses address prefix, ethrex_db may use separate tries
 
 **Deliverables**:
-- [ ] Updated `BackendTrieDB` with ethrex_db support
-- [ ] Adapters for path encoding if needed
-- [ ] Storage trie routing to correct account
+- [x] Updated `BackendTrieDB` with ethrex_db support
+- [x] Adapters for path encoding if needed
+- [x] Storage trie routing to correct account
+
+**Implementation Notes**:
+- Added `ParsedTrieKey` enum to represent parsed nibble keys (AccountLeaf, StorageLeaf, IntermediateNode)
+- Implemented `parse_trie_key()` to convert nibble-based paths to address/slot hashes
+- Account leaf keys: 65 nibbles = 64 nibbles (keccak256(address)) + terminator
+- Storage leaf keys: 131 nibbles = 64 nibbles (address hash) + separator(17) + 64 nibbles (slot hash) + terminators
+- `EthrexDbReadView::get()` and `EthrexDbLockedView::get()` now query ethrex_db's finalized state for leaf data
+- Added RLP encoding helpers for account state and storage values
+- 6 new unit tests for path translation utilities
 
 ---
 
