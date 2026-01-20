@@ -213,7 +213,9 @@ impl Memory {
 
         #[allow(clippy::arithmetic_side_effects)]
         if copy_size < total_size {
-            let zero_offset = offset.checked_add(copy_size).ok_or(OutOfBounds)?;
+            // SAFETY: copy_size < total_size and offset + total_size didn't overflow (checked above),
+            // so offset + copy_size cannot overflow.
+            let zero_offset = offset.wrapping_add(copy_size);
             let zero_size = total_size - copy_size;
             let real_offset = self.current_base.wrapping_add(zero_offset);
             let mut buffer = self.buffer.borrow_mut();
