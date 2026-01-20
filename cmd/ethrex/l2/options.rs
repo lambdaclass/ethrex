@@ -230,7 +230,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 beacon_urls: opts.aligned_opts.beacon_url.unwrap_or_default(),
                 #[cfg(feature = "sp1")]
                 network: resolve_aligned_network(
-                    &opts.aligned_opts.aligned_network.clone().unwrap_or_default(),
+                    &opts.aligned_opts.aligned_network.unwrap_or_default(),
                 ),
             },
             monitor: MonitorConfig {
