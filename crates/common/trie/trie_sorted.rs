@@ -1,10 +1,10 @@
 use crate::{
     EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError,
     node::{BranchNode, ExtensionNode, LeafNode},
+    threadpool::ThreadPool,
 };
 use crossbeam::channel::{Receiver, Sender, bounded};
 use ethereum_types::H256;
-use ethrex_threadpool::ThreadPool;
 use std::{sync::Arc, thread::scope};
 
 /// The elements of the stack represent the branch node that is the parent of the current

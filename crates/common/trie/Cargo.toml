@@ -8,7 +8,6 @@ documentation.workspace = true
 [dependencies]
 ethrex-crypto.workspace = true
 ethrex-rlp.workspace = true
-ethrex-threadpool.workspace = true
 
 ethereum-types.workspace = true
 anyhow = "1.0.86"
