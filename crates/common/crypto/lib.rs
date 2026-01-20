@@ -34,22 +34,19 @@
 //! ```rust
 //! use ethrex_crypto::blake2f::blake2b_f;
 //!
-//! let mut state = [0u64; 8];
-//! let message = [0u64; 16];
-//! let offset = [0u64; 2];
+//! let mut state = [1u64, 2, 3, 4, 5, 6, 7, 8];
+//! let message = [101u64, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116];
+//! let offset = [1000u64, 1001];
 //! blake2b_f(12, &mut state, &message, &offset, true);
 //! ```
 //!
-//! ### KZG Blob Verification
+//! ### KZG Trusted Setup
 //!
-//! ```rust,ignore
-//! use ethrex_crypto::kzg::{warm_up_trusted_setup, verify_blob_kzg_proof};
+//! ```rust
+//! use ethrex_crypto::kzg::warm_up_trusted_setup;
 //!
-//! // Load trusted setup on startup
+//! // Load trusted setup on startup (runs in background thread)
 //! warm_up_trusted_setup();
-//!
-//! // Verify blob commitment
-//! let valid = verify_blob_kzg_proof(blob, commitment, proof)?;
 //! ```
 //!
 //! ## Feature Flags
