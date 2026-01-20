@@ -155,17 +155,33 @@ pub async fn load_store(datadir: &Path) -> Result<Store, StoreError> {
     Ok(store)
 }
 
-/// Opens a pre-existing Store or creates a new one
+/// Opens a pre-existing Store or creates a new one.
+///
+/// The storage engine is determined at compile-time:
+/// - If `ethrex_db` feature is enabled, uses EthrexDb for state storage
+/// - Otherwise, uses RocksDB for state storage
+/// - Memory datadir (`memory://`) always uses InMemory engine
 pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
-    if is_memory_datadir(datadir) {
-        Store::new(datadir, EngineType::InMemory)
+    let engine_type = if is_memory_datadir(datadir) {
+        EngineType::InMemory
     } else {
-        #[cfg(feature = "rocksdb")]
-        let engine_type = EngineType::RocksDB;
-        #[cfg(feature = "metrics")]
-        ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
-        Store::new(datadir, engine_type)
-    }
+        // Use ethrex_db when the feature is enabled, otherwise fallback to RocksDB
+        #[cfg(feature = "ethrex_db")]
+        {
+            info!("Using ethrex_db state engine");
+            EngineType::EthrexDb
+        }
+        #[cfg(not(feature = "ethrex_db"))]
+        {
+            EngineType::RocksDB
+        }
+    };
+
+    #[cfg(feature = "metrics")]
+    ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
+
+    info!("Opening store with engine: {:?}", engine_type);
+    Store::new(datadir, engine_type)
 }
 
 pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<Blockchain> {

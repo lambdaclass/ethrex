@@ -96,7 +96,11 @@ use std::time::Instant;
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
+#[cfg(feature = "ethrex_db")]
+use ethrex_storage::EthrexDbStateEngine;
 use vm::StoreVmDatabase;
+#[cfg(feature = "ethrex_db")]
+use vm::state_engine_db::StateEngineVmDatabase;
 
 #[cfg(feature = "metrics")]
 use ethrex_metrics::blocks::METRICS_BLOCKS;
@@ -170,6 +174,9 @@ pub struct L2Config {
 pub struct Blockchain {
     /// Underlying storage for blocks and state.
     storage: Store,
+    /// State engine for high-performance state operations (when ethrex_db is enabled).
+    #[cfg(feature = "ethrex_db")]
+    state_engine: Arc<EthrexDbStateEngine>,
     /// Transaction mempool for pending transactions.
     pub mempool: Mempool,
     /// Whether the node has completed initial sync.
@@ -240,8 +247,15 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
 
 impl Blockchain {
     pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
+        #[cfg(feature = "ethrex_db")]
+        let state_engine = Arc::new(
+            EthrexDbStateEngine::in_memory().expect("Failed to create EthrexDbStateEngine"),
+        );
+
         Self {
             storage: store,
+            #[cfg(feature = "ethrex_db")]
+            state_engine,
             mempool: Mempool::new(blockchain_opts.max_mempool_size),
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
@@ -250,13 +264,66 @@ impl Blockchain {
     }
 
     pub fn default_with_store(store: Store) -> Self {
+        #[cfg(feature = "ethrex_db")]
+        let state_engine = Arc::new(
+            EthrexDbStateEngine::in_memory().expect("Failed to create EthrexDbStateEngine"),
+        );
+
         Self {
             storage: store,
+            #[cfg(feature = "ethrex_db")]
+            state_engine,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
         }
+    }
+
+    /// Creates a VM database for the given parent header.
+    ///
+    /// When `ethrex_db` feature is enabled, uses StateEngineVmDatabase for
+    /// high-performance state access. Otherwise, uses StoreVmDatabase.
+    #[cfg(feature = "ethrex_db")]
+    fn create_vm_db(&self, parent_header: BlockHeader) -> Result<StateEngineVmDatabase, EvmError> {
+        Ok(StateEngineVmDatabase::new(
+            self.state_engine.clone(),
+            self.storage.clone(),
+            parent_header,
+        ))
+    }
+
+    #[cfg(not(feature = "ethrex_db"))]
+    fn create_vm_db(&self, parent_header: BlockHeader) -> Result<StoreVmDatabase, EvmError> {
+        StoreVmDatabase::new(self.storage.clone(), parent_header)
+    }
+
+    /// Creates a VM database with a pre-populated block hash cache.
+    #[cfg(feature = "ethrex_db")]
+    fn create_vm_db_with_cache(
+        &self,
+        parent_header: BlockHeader,
+        block_hash_cache: BTreeMap<BlockNumber, BlockHash>,
+    ) -> Result<StateEngineVmDatabase, EvmError> {
+        Ok(StateEngineVmDatabase::new_with_block_hash_cache(
+            self.state_engine.clone(),
+            self.storage.clone(),
+            parent_header,
+            block_hash_cache,
+        ))
+    }
+
+    #[cfg(not(feature = "ethrex_db"))]
+    fn create_vm_db_with_cache(
+        &self,
+        parent_header: BlockHeader,
+        block_hash_cache: BTreeMap<BlockNumber, BlockHash>,
+    ) -> Result<StoreVmDatabase, EvmError> {
+        StoreVmDatabase::new_with_block_hash_cache(
+            self.storage.clone(),
+            parent_header,
+            block_hash_cache,
+        )
     }
 
     /// Executes a block withing a new vm instance and state
@@ -276,7 +343,7 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
+        let vm_db = self.create_vm_db(parent_header)?;
         let mut vm = self.new_evm(vm_db)?;
 
         let execution_result = vm.execute_block(block)?;
@@ -2090,7 +2157,7 @@ impl Blockchain {
         Ok(result)
     }
 
-    pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
+    pub fn new_evm<D: ethrex_vm::VmDatabase + 'static>(&self, vm_db: D) -> Result<Evm, EvmError> {
         new_evm(&self.options.r#type, vm_db)
     }
 
@@ -2106,7 +2173,10 @@ impl Blockchain {
     }
 }
 
-pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
+pub fn new_evm<D: ethrex_vm::VmDatabase + 'static>(
+    blockchain_type: &BlockchainType,
+    vm_db: D,
+) -> Result<Evm, EvmError> {
     let evm = match blockchain_type {
         BlockchainType::L1 => Evm::new_for_l1(vm_db),
         BlockchainType::L2(l2_config) => {

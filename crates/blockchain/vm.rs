@@ -169,3 +169,146 @@ impl VmDatabase for StoreVmDatabase {
         }
     }
 }
+
+/// VM Database implementation using EthrexDb StateEngine.
+///
+/// This provides high-performance state access using ethrex_db's
+/// memory-mapped storage with Copy-on-Write semantics.
+#[cfg(feature = "ethrex_db")]
+pub mod state_engine_db {
+    use super::*;
+    use ethrex_storage::EthrexDbStateEngine;
+    use std::sync::Arc;
+
+    /// VM database backed by EthrexDbStateEngine for state and Store for block data.
+    #[derive(Clone)]
+    pub struct StateEngineVmDatabase {
+        /// StateEngine for state operations (accounts, storage, code).
+        pub state_engine: Arc<EthrexDbStateEngine>,
+        /// Store for block-level operations (headers, chain config).
+        pub store: Store,
+        /// Block hash for state queries.
+        pub block_hash: BlockHash,
+        /// Cache for block hashes during execution.
+        pub block_hash_cache: Arc<Mutex<BTreeMap<BlockNumber, BlockHash>>>,
+    }
+
+    impl StateEngineVmDatabase {
+        /// Creates a new StateEngineVmDatabase.
+        pub fn new(
+            state_engine: Arc<EthrexDbStateEngine>,
+            store: Store,
+            block_header: BlockHeader,
+        ) -> Self {
+            Self {
+                state_engine,
+                store,
+                block_hash: block_header.hash(),
+                block_hash_cache: Arc::new(Mutex::new(BTreeMap::new())),
+            }
+        }
+
+        /// Creates with a pre-populated block hash cache.
+        pub fn new_with_block_hash_cache(
+            state_engine: Arc<EthrexDbStateEngine>,
+            store: Store,
+            block_header: BlockHeader,
+            block_hash_cache: BTreeMap<BlockNumber, BlockHash>,
+        ) -> Self {
+            Self {
+                state_engine,
+                store,
+                block_hash: block_header.hash(),
+                block_hash_cache: Arc::new(Mutex::new(block_hash_cache)),
+            }
+        }
+    }
+
+    impl VmDatabase for StateEngineVmDatabase {
+        fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
+            self.state_engine
+                .get_account_state(self.block_hash, address)
+                .map_err(|e| EvmError::DB(e.to_string()))
+        }
+
+        fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
+            let value = self
+                .state_engine
+                .get_storage(self.block_hash, address, key)
+                .map_err(|e| EvmError::DB(e.to_string()))?;
+            // Return None for zero values to match expected behavior
+            if value.is_zero() {
+                Ok(None)
+            } else {
+                Ok(Some(value))
+            }
+        }
+
+        fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
+            let mut block_hash_cache = self
+                .block_hash_cache
+                .lock()
+                .map_err(|_| EvmError::Custom("LockError".to_string()))?;
+
+            if let Some(block_hash) = block_hash_cache.get(&block_number) {
+                return Ok(*block_hash);
+            }
+
+            // Use Store for block hash lookups (block data, not state)
+            if self
+                .store
+                .is_canonical_sync(self.block_hash)
+                .map_err(|err| EvmError::DB(err.to_string()))?
+            {
+                if let Some(hash) = self
+                    .store
+                    .get_canonical_block_hash_sync(block_number)
+                    .map_err(|err| EvmError::DB(err.to_string()))?
+                {
+                    block_hash_cache.insert(block_number, hash);
+                    return Ok(hash);
+                }
+            } else {
+                let oldest_succesor = block_hash_cache
+                    .iter()
+                    .find_map(|(key, hash)| (*key > block_number).then_some(*hash))
+                    .unwrap_or(self.block_hash);
+                for ancestor_res in self.store.ancestors(oldest_succesor) {
+                    let (hash, ancestor) = ancestor_res.map_err(|e| EvmError::DB(e.to_string()))?;
+                    block_hash_cache.insert(ancestor.number, hash);
+                    match ancestor.number.cmp(&block_number) {
+                        Ordering::Greater => continue,
+                        Ordering::Equal => return Ok(hash),
+                        Ordering::Less => {
+                            return Err(EvmError::DB(format!(
+                                "Block number requested {block_number} is higher than the current block number {}",
+                                ancestor.number
+                            )));
+                        }
+                    }
+                }
+            }
+
+            Err(EvmError::DB(format!(
+                "Block hash not found for block number {block_number}"
+            )))
+        }
+
+        fn get_chain_config(&self) -> Result<ChainConfig, EvmError> {
+            Ok(self.store.get_chain_config())
+        }
+
+        fn get_account_code(&self, code_hash: H256) -> Result<Code, EvmError> {
+            if code_hash == *EMPTY_KECCACK_HASH {
+                return Ok(Code::default());
+            }
+            match self.state_engine.get_code(code_hash) {
+                Ok(Some(code)) => Ok(code),
+                Ok(None) => Err(EvmError::DB(format!(
+                    "Code not found for hash: {code_hash:?}",
+                ))),
+                Err(e) => Err(EvmError::DB(e.to_string())),
+            }
+        }
+    }
+}

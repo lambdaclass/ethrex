@@ -211,6 +211,10 @@ pub enum EngineType {
     /// RocksDB storage, persistent. Suitable for production.
     #[cfg(feature = "rocksdb")]
     RocksDB,
+    /// EthrexDb storage engine with high-performance state storage.
+    /// Uses memory-mapped files with Copy-on-Write semantics.
+    #[cfg(feature = "ethrex_db")]
+    EthrexDb,
 }
 
 /// Batch of updates to apply to the store atomically.
@@ -1327,6 +1331,29 @@ impl Store {
             EngineType::InMemory => {
                 let backend = Arc::new(InMemoryBackend::open()?);
                 Self::from_backend(backend, db_path, IN_MEMORY_COMMIT_THRESHOLD)
+            }
+            #[cfg(feature = "ethrex_db")]
+            EngineType::EthrexDb => {
+                // For EthrexDb mode, we use RocksDB for block data and ethrex_db for state.
+                // This hybrid approach gives us the best of both worlds:
+                // - Block-level data (headers, bodies, receipts) uses proven RocksDB storage
+                // - State data uses ethrex_db's high-performance memory-mapped storage
+                //
+                // Note: Currently, this creates a standard Store with RocksDB backend.
+                // The state engine integration happens at a higher level when the Store
+                // is used with an EthrexDbStateEngine. Full integration would require
+                // further refactoring of the Store to properly delegate state operations.
+                #[cfg(feature = "rocksdb")]
+                {
+                    let backend = Arc::new(RocksDBBackend::open(&db_path)?);
+                    Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
+                }
+                #[cfg(not(feature = "rocksdb"))]
+                {
+                    // If RocksDB is not available, fall back to in-memory for block storage
+                    let backend = Arc::new(InMemoryBackend::open()?);
+                    Self::from_backend(backend, db_path, IN_MEMORY_COMMIT_THRESHOLD)
+                }
             }
         }
     }
@@ -2848,7 +2875,7 @@ pub fn hash_address(address: &Address) -> Vec<u8> {
     keccak_hash(address.to_fixed_bytes()).to_vec()
 }
 
-fn hash_address_fixed(address: &Address) -> H256 {
+pub fn hash_address_fixed(address: &Address) -> H256 {
     keccak(address.to_fixed_bytes())
 }
 
