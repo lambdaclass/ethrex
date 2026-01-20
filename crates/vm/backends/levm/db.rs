@@ -16,7 +16,6 @@ pub struct DatabaseLogger {
     pub block_hashes_accessed: Arc<Mutex<HashMap<u64, CoreH256>>>,
     pub state_accessed: Arc<Mutex<HashMap<CoreAddress, Vec<CoreH256>>>>,
     pub code_accessed: Arc<Mutex<Vec<CoreH256>>>,
-    // TODO: Refactor this
     pub store: Arc<dyn LevmDatabase>,
 }
 
