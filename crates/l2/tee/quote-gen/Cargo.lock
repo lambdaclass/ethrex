@@ -2533,6 +2533,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "lazy_static",
+ "rayon",
  "rkyv",
  "serde 1.0.228",
  "thiserror 2.0.16",
