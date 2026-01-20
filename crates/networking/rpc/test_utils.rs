@@ -1,3 +1,10 @@
+//! Test utilities for the ethrex-rpc crate.
+//!
+//! This module provides helper functions and test fixtures for testing RPC functionality.
+//! It is primarily intended for use in integration tests.
+
+#![allow(clippy::unwrap_used)]
+
 use crate::{
     eth::gas_tip_estimator::GasTipEstimator,
     rpc::{ClientVersion, NodeData, RpcApiContext, start_api, start_block_executor},

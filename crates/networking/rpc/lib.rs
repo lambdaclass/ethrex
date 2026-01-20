@@ -62,11 +62,11 @@
 mod admin;
 mod authentication;
 pub mod debug;
-mod engine;
+pub mod engine;
 mod eth;
 mod mempool;
 mod net;
-mod rpc;
+pub mod rpc;
 mod tracing;
 
 pub mod clients;
@@ -76,8 +76,7 @@ pub use clients::{EngineClient, EthClient};
 
 pub use rpc::{start_api, start_block_executor};
 
-#[cfg(test)]
-mod test_utils;
+pub mod test_utils;
 
 // TODO: These exports are needed by ethrex-l2-rpc, but we do not want to
 // export them in the public API of this crate.

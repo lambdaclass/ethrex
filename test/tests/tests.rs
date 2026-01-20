@@ -5,5 +5,6 @@ mod crypto;
 mod levm;
 mod p2p;
 mod rlp;
+mod rpc;
 mod storage;
 mod trie;
