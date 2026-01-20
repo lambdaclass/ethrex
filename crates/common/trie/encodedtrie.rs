@@ -634,8 +634,8 @@ impl EncodedTrie {
                 NodeType::Extension { child_index, .. } => {
                     if let Some(child_index) = child_index {
                         let child_hash = trie.get_hash(*child_index)?;
-                        let encoded_items = trie.get_encoded_items(index)?;
-                        let encoded_child_hash = decode_bytes(encoded_items[1])?.0;
+                        let (_, item1) = trie.get_two_encoded_items(index)?;
+                        let encoded_child_hash = decode_bytes(item1)?.0;
                         if child_hash.as_ref() != encoded_child_hash {
                             return Err(EncodedTrieError::AuthFailed(
                                 "invalid encoded child hash for extension node",
@@ -816,23 +816,23 @@ impl EncodedTrie {
         let data = match (override_partial, override_value) {
             (Some(partial), Some(value)) => (partial.clone(), value.as_slice()),
             (Some(partial), None) => {
-                let encoded_items = self.get_encoded_items(index)?;
-                let (value, _) = decode_bytes(encoded_items[1])?;
+                let (_, item1) = self.get_two_encoded_items(index)?;
+                let (value, _) = decode_bytes(item1)?;
                 (partial.clone(), value)
             }
             (None, Some(value)) => {
-                let encoded_items = self.get_encoded_items(index)?;
-                let (partial, _) = decode_bytes(encoded_items[0])?;
+                let (item0, _) = self.get_two_encoded_items(index)?;
+                let (partial, _) = decode_bytes(item0)?;
                 let partial = Nibbles::decode_compact(partial);
                 debug_assert!(partial.is_leaf());
                 (partial, value.as_slice())
             }
             (None, None) => {
-                let encoded_items = self.get_encoded_items(index)?;
-                let (partial, _) = decode_bytes(encoded_items[0])?;
+                let (item0, item1) = self.get_two_encoded_items(index)?;
+                let (partial, _) = decode_bytes(item0)?;
                 let partial = Nibbles::decode_compact(partial);
                 debug_assert!(partial.is_leaf());
-                let (value, _) = decode_bytes(encoded_items[1])?;
+                let (value, _) = decode_bytes(item1)?;
                 (partial, value)
             }
         };
@@ -854,8 +854,8 @@ impl EncodedTrie {
         let data = match override_prefix {
             Some(prefix) => prefix.clone(),
             None => {
-                let encoded_items = self.get_encoded_items(index)?;
-                let (prefix, _) = decode_bytes(encoded_items[0])?;
+                let (item0, _) = self.get_two_encoded_items(index)?;
+                let (prefix, _) = decode_bytes(item0)?;
                 let prefix = Nibbles::decode_compact(prefix);
                 debug_assert!(!prefix.is_leaf());
                 prefix
@@ -873,8 +873,8 @@ impl EncodedTrie {
         &self,
         index: usize,
     ) -> Result<NodeHash, RLPDecodeError> {
-        let encoded_items = self.get_encoded_items(index)?;
-        let child_hash = decode_child(encoded_items[1]);
+        let (_, item1) = self.get_two_encoded_items(index)?;
+        let child_hash = decode_child(item1);
         Ok(child_hash)
     }
 
@@ -892,6 +892,20 @@ impl EncodedTrie {
             rlp_items.push(item);
         }
         Ok(rlp_items)
+    }
+
+    /// Gets exactly two encoded items from a node (optimized for leaf/extension nodes).
+    /// Avoids Vec allocation by returning a tuple.
+    #[inline]
+    pub fn get_two_encoded_items(&self, index: usize) -> Result<(&[u8], &[u8]), RLPDecodeError> {
+        let node = &self.nodes[index];
+        let encoded_range = node.encoded_range.expect("could not get encoded range");
+        let data = &self.encoded_data[encoded_range.0..encoded_range.1];
+
+        let decoder = Decoder::new(data)?;
+        let (item0, decoder) = decoder.get_encoded_item_ref()?;
+        let (item1, _) = decoder.get_encoded_item_ref()?;
+        Ok((item0, item1))
     }
 }
 
