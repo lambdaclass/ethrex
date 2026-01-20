@@ -14,8 +14,6 @@ lazy_static.workspace = true
 ethereum-types.workspace = true
 snap.workspace = true
 
-[dev-dependencies]
-hex-literal.workspace = true
 [lib]
 path = "./rlp.rs"
 
