@@ -235,7 +235,7 @@ impl DiscoveryServer {
         // Check enr-seq to decide if we have to send the local ENR in the handshake.
         let whoareyou = WhoAreYou::decode(&packet)?;
         let record = (self.local_node_record.seq != whoareyou.enr_seq)
-            .then_some(self.local_node_record.clone());
+            .then(|| self.local_node_record.clone());
         self.send_handshake(&message, signature, &ephemeral_pubkey, &node, record)
             .await
     }
