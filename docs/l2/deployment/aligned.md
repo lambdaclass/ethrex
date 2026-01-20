@@ -93,6 +93,18 @@ cargo run --release -- deposit \
 
 > **Note**: The deposit command sends a fixed amount of ETH (currently 0.0035 ETH) to the payment service contract. The contract addresses are automatically resolved based on the network parameter.
 
+#### Monitoring Quota Balance
+
+To check your remaining quota, you can query the `AggregationModePaymentService` contract directly:
+
+```bash
+# Get the payment service contract address for your network from Aligned docs
+# Then query the quota balance for your proof sender address
+cast call <PAYMENT_SERVICE_ADDRESS> "getQuota(address)(uint256)" <PROOF_SENDER_ADDRESS> --rpc-url <RPC_URL>
+```
+
+Monitor your quota balance regularly. When the L1ProofSender runs out of quota, you'll see `AlignedSubmitProofError` with an insufficient quota message in the logs. Deposit more funds before this happens to avoid proof submission failures.
+
 ### 4. Running a node
 
 Run the sequencer using the installed `ethrex` binary:
@@ -320,6 +332,8 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 - Generates `Compressed` proofs instead of `Groth16` (used in standard mode).
 - Required because Aligned accepts compressed SP1 proofs.
 - **Only SP1 proofs are supported** for Aligned mode.
+
+> **Note**: RISC0 support is not currently available in Aligned's aggregation mode. The codebase retains RISC0 code paths (verifier IDs, merkle proof handling, contract logic) for future compatibility when Aligned re-enables RISC0 support.
 
 ### Proof Sender
 

@@ -207,6 +207,9 @@ impl L1ProofVerifier {
                 break;
             }
 
+            // Note: RISC0 merkle proofs are collected even though RISC0 is not currently
+            // supported by Aligned in aggregation mode. This code path is preserved for
+            // future compatibility when Aligned re-enables RISC0 support.
             let sp1_merkle_proof =
                 self.proof_of_inclusion(&aggregated_proofs_for_batch, ProverType::SP1);
             let risc0_merkle_proof =

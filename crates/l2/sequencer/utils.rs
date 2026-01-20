@@ -22,6 +22,8 @@ use reqwest::Url;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::info;
+#[cfg(feature = "sp1")]
+use tracing::warn;
 
 pub async fn sleep_random(sleep_amount: u64) {
     sleep(random_duration(sleep_amount)).await;
@@ -121,7 +123,13 @@ pub fn resolve_aligned_network(network: &str) -> Network {
         "devnet" => Network::Devnet,
         "hoodi" => Network::Hoodi,
         "mainnet" => Network::Mainnet,
-        _ => Network::Devnet, // Default to devnet for unknown networks
+        unknown => {
+            warn!(
+                "Unknown Aligned network '{}', defaulting to devnet. Valid options: devnet, hoodi, mainnet",
+                unknown
+            );
+            Network::Devnet
+        }
     }
 }
 

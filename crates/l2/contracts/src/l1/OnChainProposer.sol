@@ -46,9 +46,9 @@ contract OnChainProposer is
     uint8 internal constant SP1_VERIFIER_ID = 1;
     uint8 internal constant RISC0_VERIFIER_ID = 2;
 
-    /// @notice Aligned Layer proving system IDs
+    /// @notice Aligned Layer proving system ID for SP1 in isProofVerified calls.
+    /// @dev Currently only SP1 is supported by Aligned in aggregation mode.
     uint16 internal constant ALIGNED_SP1_PROVING_SYSTEM_ID = 1;
-    uint16 internal constant ALIGNED_RISC0_PROVING_SYSTEM_ID = 2;
 
     /// @notice The commitments of the committed batches.
     /// @dev If a batch is committed, the commitment is stored here.
@@ -171,6 +171,11 @@ contract OnChainProposer is
         require(
             !aligned || requireSp1Proof,
             "OnChainProposer: Aligned mode requires SP1 proof"
+        );
+        // Aligned mode does not support RISC0 proofs (not yet available in aggregation mode)
+        require(
+            !aligned || !requireRisc0Proof,
+            "OnChainProposer: Aligned mode does not support RISC0 proof"
         );
 
         require(
@@ -559,10 +564,12 @@ contract OnChainProposer is
                 );
             }
 
+            // TODO: RISC0 is not currently supported by Aligned in aggregation mode.
+            // When Aligned re-enables RISC0, add the correct proving system ID constant.
             if (REQUIRE_RISC0_PROOF) {
                 _verifyProofInclusionAligned(
                     risc0MerkleProofsList[i],
-                    ALIGNED_RISC0_PROVING_SYSTEM_ID,
+                    0, // Placeholder - RISC0 proving system ID TBD
                     verificationKeys[batchCommitments[batchNumber].commitHash][
                         RISC0_VERIFIER_ID
                     ],
