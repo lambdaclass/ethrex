@@ -37,6 +37,36 @@ if [[ "$result_count" -eq 0 ]]; then
   exit 1
 fi
 
+# Query version information from eth_exe_web3_client_version metric
+VERSION_QUERY="eth_exe_web3_client_version"
+version_curl_args=(-sS -G "$QUERY_URL" --data-urlencode "query=$VERSION_QUERY")
+if [[ -n "${BLOCK_TIME_PROMETHEUS_BEARER_TOKEN:-}" ]]; then
+  version_curl_args+=(-H "Authorization: Bearer $BLOCK_TIME_PROMETHEUS_BEARER_TOKEN")
+fi
+if [[ -n "${BLOCK_TIME_PROMETHEUS_BASIC_AUTH:-}" ]]; then
+  version_curl_args+=(-u "$BLOCK_TIME_PROMETHEUS_BASIC_AUTH")
+fi
+
+version_response=$(curl "${version_curl_args[@]}")
+
+# Extract version for each client by instance pattern (bash 3.2 compatible)
+# Extracts only the version portion (e.g., "v1.2.3" from "Client/v1.2.3/platform")
+get_version_by_instance() {
+  local instance_pattern="$1"
+  jq -r --arg pattern "$instance_pattern" '
+    .data.result[] | select(.metric.instance | test($pattern)) | .metric.version // "unknown" | split("/")[1] // "unknown"
+  ' <<<"$version_response" 2>/dev/null | head -1
+}
+
+version_ethrex=$(get_version_by_instance "^ethrex-mainnet-1:")
+version_reth=$(get_version_by_instance "^reth-mainnet-1:")
+version_geth=$(get_version_by_instance "^geth-mainnet-1:")
+version_nethermind=$(get_version_by_instance "^nethermind-mainnet-1:")
+: "${version_ethrex:=unknown}"
+: "${version_reth:=unknown}"
+: "${version_geth:=unknown}"
+: "${version_nethermind:=unknown}"
+
 raw_series=()
 while IFS= read -r line; do
   raw_series+=("$line")
@@ -109,54 +139,47 @@ for row in "${raw_series[@]}"; do
   esac
 done
 
-ordered_lines=()
-if [[ -n "$ethrex_value" ]]; then
-  ordered_lines+=("$(printf "* ethrex: %.3fms (mean)\n  %s" "$ethrex_value" "$ethrex_host")")
-fi
-if [[ -n "$reth_p50" || -n "$reth_p999" ]]; then
-  ordered_lines+=("$(printf "* reth: %.3fms (p50) | %.3fms (p99.9)\n  %s" "${reth_p50:-0}" "${reth_p999:-0}" "$reth_host")")
-fi
-if [[ -n "$geth_p50" || -n "$geth_p999" ]]; then
-  ordered_lines+=("$(printf "* geth: %.3fms (p50) | %.3fms (p99.9)\n  %s" "${geth_p50:-0}" "${geth_p999:-0}" "$geth_host")")
-fi
-if [[ -n "$nether_value" ]]; then
-  ordered_lines+=("$(printf "* nethermind: %.3fms (mean)\n  %s" "$nether_value" "$nether_host")")
-fi
-ordered_lines+=("${extra_lines[@]:-}")
-
-ordered_slack_lines=()
-if [[ -n "$ethrex_value" ]]; then
-  ordered_slack_lines+=("$(printf "• *ethrex*: %.3fms (mean)\n    %s" "$ethrex_value" "$ethrex_host")")
-fi
-if [[ -n "$reth_p50" || -n "$reth_p999" ]]; then
-  ordered_slack_lines+=("$(printf "• *reth*: %.3fms (p50) | %.3fms (p99.9)\n    %s" "${reth_p50:-0}" "${reth_p999:-0}" "$reth_host")")
-fi
-if [[ -n "$geth_p50" || -n "$geth_p999" ]]; then
-  ordered_slack_lines+=("$(printf "• *geth*: %.3fms (p50) | %.3fms (p99.9)\n    %s" "${geth_p50:-0}" "${geth_p999:-0}" "$geth_host")")
-fi
-if [[ -n "$nether_value" ]]; then
-  ordered_slack_lines+=("$(printf "• *nethermind*: %.3fms (mean)\n    %s" "$nether_value" "$nether_host")")
-fi
-ordered_slack_lines+=("${slack_extra_lines[@]:-}")
-
 header_text="Daily block time report (24-hour average)"
+
+# Generate text report for GitHub
 {
   echo "# ${header_text}"
   echo
-  printf '%s\n' "${ordered_lines[@]}"
+  if [[ -n "$ethrex_value" ]]; then
+    printf "* ethrex: %.3fms (mean)\n  %s (%s)\n" "$ethrex_value" "$ethrex_host" "$version_ethrex"
+  fi
+  if [[ -n "$reth_p50" || -n "$reth_p999" ]]; then
+    printf "* reth: %.3fms (p50) | %.3fms (p99.9)\n  %s (%s)\n" "${reth_p50:-0}" "${reth_p999:-0}" "$reth_host" "$version_reth"
+  fi
+  if [[ -n "$geth_p50" || -n "$geth_p999" ]]; then
+    printf "* geth: %.3fms (p50) | %.3fms (p99.9)\n  %s (%s)\n" "${geth_p50:-0}" "${geth_p999:-0}" "$geth_host" "$version_geth"
+  fi
+  if [[ -n "$nether_value" ]]; then
+    printf "* nethermind: %.3fms (mean)\n  %s (%s)\n" "$nether_value" "$nether_host" "$version_nethermind"
+  fi
 } >"${OUTPUT_DIR}/block_time_report_github.txt"
 
-series_text=""
-for entry in "${ordered_slack_lines[@]}"; do
-  if [[ -n "$series_text" ]]; then
-    series_text+=$'\n\n'
-  fi
-  series_text+="$entry"
-done
+# Generate Slack message with code block table
+slack_table='```'$'\n'
+slack_table+='Client       Version                  Block Time'$'\n'
+slack_table+='-------------------------------------------------------'$'\n'
+if [[ -n "$ethrex_value" ]]; then
+  slack_table+=$(printf "%-12s %-24s %.3fms (mean)" "ethrex" "$version_ethrex" "$ethrex_value")$'\n'
+fi
+if [[ -n "$reth_p50" || -n "$reth_p999" ]]; then
+  slack_table+=$(printf "%-12s %-24s %.3fms (p50) / %.3fms (p99.9)" "reth" "$version_reth" "${reth_p50:-0}" "${reth_p999:-0}")$'\n'
+fi
+if [[ -n "$geth_p50" || -n "$geth_p999" ]]; then
+  slack_table+=$(printf "%-12s %-24s %.3fms (p50) / %.3fms (p99.9)" "geth" "$version_geth" "${geth_p50:-0}" "${geth_p999:-0}")$'\n'
+fi
+if [[ -n "$nether_value" ]]; then
+  slack_table+=$(printf "%-12s %-24s %.3fms (mean)" "nethermind" "$version_nethermind" "$nether_value")$'\n'
+fi
+slack_table+='```'
 
-jq -n --arg header "$header_text" --arg series "$series_text" '{
+jq -n --arg header "$header_text" --arg table "$slack_table" '{
   "blocks": [
     { "type": "header", "text": { "type": "plain_text", "text": $header } },
-    { "type": "section", "text": { "type": "mrkdwn", "text": $series } }
+    { "type": "section", "text": { "type": "mrkdwn", "text": $table } }
   ]
 }' >"${OUTPUT_DIR}/block_time_report_slack.json"
