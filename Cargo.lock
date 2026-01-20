@@ -3995,9 +3995,14 @@ name = "ethrex-rlp"
 version = "9.0.0"
 dependencies = [
  "bytes",
+ "criterion",
  "ethereum-types 0.15.1",
+ "ethrex-common",
+ "ethrex-p2p",
+ "ethrex-trie",
  "hex",
  "lazy_static",
+ "rand 0.8.5",
  "snap",
  "thiserror 2.0.17",
  "tinyvec",
