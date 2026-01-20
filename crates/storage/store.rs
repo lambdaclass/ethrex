@@ -1252,53 +1252,14 @@ impl Store {
     // This method needs to be migrated to use execute_block_ethrex_db()
     // For now, it's commented out to allow compilation
     #[allow(dead_code)]
-    fn apply_updates(&self, _update_batch: UpdateBatch) -> Result<(), StoreError> {
-        // TODO: LEGACY METHOD - State updates should be done via execute_block_ethrex_db
-        // For now, just return Ok() to allow tests to proceed
-        Ok(())
-        /*
+    fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+        // State updates are handled by ethrex_db, but we still need to store
+        // blocks, receipts, and codes to the legacy backend for retrieval
         let db = self.backend.clone();
-        let parent_state_root = self
-            .get_block_header_by_hash(
-                update_batch
-                    .blocks
-                    .first()
-                    .ok_or(StoreError::UpdateBatchNoBlocks)?
-                    .header
-                    .parent_hash,
-            )?
-            .map(|header| header.state_root)
-            .unwrap_or_default();
-        let last_state_root = update_batch
-            .blocks
-            .last()
-            .ok_or(StoreError::UpdateBatchNoBlocks)?
-            .header
-            .state_root;
-        let trie_upd_worker_tx = self.trie_update_worker_tx.clone();
-
-        let UpdateBatch {
-            account_updates,
-            storage_updates,
-            ..
-        } = update_batch;
-
-        // Capacity one ensures sender just notifies and goes on
-        let (notify_tx, notify_rx) = sync_channel(1);
-        let wait_for_new_layer = notify_rx;
-        let trie_update = TrieUpdate {
-            parent_state_root,
-            account_updates,
-            storage_updates,
-            result_sender: notify_tx,
-            child_state_root: last_state_root,
-        };
-        trie_upd_worker_tx.send(trie_update).map_err(|e| {
-            StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
-        })?;
         let mut tx = db.begin_write()?;
 
-        for block in update_batch.blocks {
+        // Store blocks (headers, bodies, block numbers, transaction locations)
+        for block in &update_batch.blocks {
             let block_number = block.header.number;
             let block_hash = block.hash();
             let hash_key = block_hash.encode_to_vec();
@@ -1322,29 +1283,23 @@ impl Store {
             }
         }
 
-        for (block_hash, receipts) in update_batch.receipts {
-            for (index, receipt) in receipts.into_iter().enumerate() {
-                let key = (block_hash, index as u64).encode_to_vec();
+        // Store receipts
+        for (block_hash, receipts) in &update_batch.receipts {
+            for (index, receipt) in receipts.iter().enumerate() {
+                let key = (*block_hash, index as u64).encode_to_vec();
                 let value = receipt.encode_to_vec();
                 tx.put(RECEIPTS, &key, &value)?;
             }
         }
 
-        for (code_hash, code) in update_batch.code_updates {
-            let buf = encode_code(&code);
+        // Store account codes
+        for (code_hash, code) in &update_batch.code_updates {
+            let buf = encode_code(code);
             tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
         }
 
-        // Wait for an updated top layer so every caller afterwards sees a consistent view.
-        // Specifically, the next block produced MUST see this upper layer.
-        wait_for_new_layer
-            .recv()
-            .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
-        // After top-level is added, we can make the rest of the changes visible.
         tx.commit()?;
-
         Ok(())
-        */
     }
 
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
