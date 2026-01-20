@@ -55,7 +55,7 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
 use ethrex_common::types::Block;
-use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
+use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_full_rpc_duration, record_rpc_outcome};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
@@ -68,7 +68,7 @@ use std::{
     future::IntoFuture,
     net::SocketAddr,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::net::TcpListener;
 use tokio::sync::{
@@ -562,6 +562,9 @@ pub async fn handle_authrpc_request(
     auth_header: Option<TypedHeader<Authorization<Bearer>>>,
     body: String,
 ) -> Result<Json<Value>, StatusCode> {
+    // Start timing before JSON parsing to capture full request duration
+    let start = Instant::now();
+
     let req: RpcRequest = match serde_json::from_str(&body) {
         Ok(req) => req,
         Err(_) => {
@@ -574,6 +577,14 @@ pub async fn handle_authrpc_request(
             ));
         }
     };
+
+    // Extract namespace and method for metrics
+    let namespace = match req.namespace() {
+        Ok(RpcNamespace::Engine) => "engine",
+        _ => "rpc",
+    };
+    let method = req.method.as_str();
+
     match authenticate(&service_context.node_data.jwt_secret, auth_header) {
         Err(error) => Ok(Json(
             rpc_response(req.id, Err(error)).map_err(|_| StatusCode::BAD_REQUEST)?,
@@ -581,6 +592,10 @@ pub async fn handle_authrpc_request(
         Ok(()) => {
             // Proceed with the request
             let res = map_authrpc_requests(&req, service_context).await;
+
+            // Record full request duration including JSON parsing and auth
+            record_full_rpc_duration(namespace, method, start);
+
             Ok(Json(
                 rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?,
             ))

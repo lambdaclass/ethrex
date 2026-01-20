@@ -1923,9 +1923,23 @@
               "expr": "sum by (method) (increase(rpc_request_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"}[18s])) \n/ sum by (method) (increase(rpc_request_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"}[18s]))",
               "instant": false,
               "interval": "",
-              "legendFormat": "__auto",
+              "legendFormat": "{{method}} (handler)",
               "range": true,
               "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "editorMode": "code",
+              "exemplar": false,
+              "expr": "sum by (method) (increase(rpc_request_full_duration_seconds_sum{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"}[18s])) \n/ sum by (method) (increase(rpc_request_full_duration_seconds_count{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\", namespace=\"engine\"}[18s]))",
+              "instant": false,
+              "interval": "",
+              "legendFormat": "{{method}} (full)",
+              "range": true,
+              "refId": "B"
             }
           ],
           "title": "Engine Latency by Method - $instance",
