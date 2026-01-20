@@ -149,4 +149,3 @@ bin/profile-sp1.sh <input_file> [output_dir] [sample_rate] [description]
 1. **Always create a git branch** before making changes.
 2. **One optimization per commit** for easy bisection.
 3. **Never skip validation** — always compare before/after.
-4. **Preserve correctness** — a faster wrong answer is worthless.
