@@ -18,7 +18,7 @@ use ethrex_common::{H128, H256, H512, Signature};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
     decode::RLPDecode,
-    encode::{list_length, RLPEncode},
+    encode::{RLPEncode, list_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };

@@ -5,7 +5,7 @@ use std::array;
 use ethrex_rlp::{
     constants::RLP_NULL,
     decode::{RLPDecode, decode_bytes},
-    encode::{list_length, RLPEncode, encode_length},
+    encode::{RLPEncode, encode_length, list_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };

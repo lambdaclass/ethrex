@@ -17,7 +17,7 @@ pub const EIP1559_DEFAULT_SERIALIZED_LENGTH: usize = 15;
 use ethrex_rlp::{
     constants::RLP_NULL,
     decode::{RLPDecode, decode_rlp_item},
-    encode::{bytes_length, list_length, PayloadRLPEncode, RLPEncode},
+    encode::{PayloadRLPEncode, RLPEncode, bytes_length, list_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };

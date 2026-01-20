@@ -3,7 +3,7 @@ use ethereum_types::{Address, Bloom, BloomInput, H256};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
     decode::{RLPDecode, get_rlp_bytes_item_payload, is_encoded_as_bytes},
-    encode::{bytes_length, list_length, RLPEncode},
+    encode::{RLPEncode, bytes_length, list_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };

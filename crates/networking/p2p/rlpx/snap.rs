@@ -9,7 +9,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::{
     decode::RLPDecode,
-    encode::{list_length, RLPEncode},
+    encode::{RLPEncode, list_length},
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };

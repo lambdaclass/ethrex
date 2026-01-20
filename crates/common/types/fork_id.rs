@@ -3,7 +3,7 @@ use std::fmt;
 use crc32fast::Hasher;
 use ethrex_rlp::{
     decode::RLPDecode,
-    encode::{list_length, RLPEncode},
+    encode::{RLPEncode, list_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };

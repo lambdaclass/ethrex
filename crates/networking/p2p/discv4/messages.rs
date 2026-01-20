@@ -7,7 +7,7 @@ use ethrex_common::{H256, H512, H520, utils::keccak};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
     decode::RLPDecode,
-    encode::{list_length, RLPEncode},
+    encode::{RLPEncode, list_length},
     error::RLPDecodeError,
     structs::{self, Decoder, Encoder},
 };
@@ -418,8 +418,7 @@ impl RLPEncode for PongMessage {
     }
 
     fn length(&self) -> usize {
-        let mut payload_len =
-            self.to.length() + self.ping_hash.length() + self.expiration.length();
+        let mut payload_len = self.to.length() + self.ping_hash.length() + self.expiration.length();
         if let Some(enr_seq) = self.enr_seq {
             payload_len += enr_seq.length();
         }

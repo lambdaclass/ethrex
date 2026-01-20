@@ -4,7 +4,7 @@ use ethrex_common::{H256, H264, H512};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
     decode::RLPDecode,
-    encode::{list_length, RLPEncode},
+    encode::{RLPEncode, list_length},
     error::RLPDecodeError,
     structs::{self, Decoder, Encoder},
 };

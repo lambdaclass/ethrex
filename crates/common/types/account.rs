@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use ethrex_rlp::{
     decode::RLPDecode,
-    encode::{list_length, RLPEncode},
+    encode::{RLPEncode, list_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
@@ -199,8 +199,7 @@ impl RLPEncode for AccountInfo {
     }
 
     fn length(&self) -> usize {
-        let payload_len =
-            self.code_hash.length() + self.balance.length() + self.nonce.length();
+        let payload_len = self.code_hash.length() + self.balance.length() + self.nonce.length();
         list_length(payload_len)
     }
 }

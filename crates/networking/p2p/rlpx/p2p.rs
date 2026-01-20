@@ -8,7 +8,7 @@ use ethrex_common::H512;
 use ethrex_rlp::structs::{Decoder, Encoder};
 use ethrex_rlp::{
     decode::{RLPDecode, decode_rlp_item},
-    encode::{list_length, RLPEncode},
+    encode::{RLPEncode, list_length},
     error::{RLPDecodeError, RLPEncodeError},
 };
 use secp256k1::PublicKey;

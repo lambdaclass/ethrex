@@ -16,7 +16,7 @@ use bytes::Bytes;
 use ethereum_types::Bloom;
 use ethrex_rlp::{
     decode::RLPDecode,
-    encode::{list_length, RLPEncode},
+    encode::{RLPEncode, list_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
@@ -61,9 +61,8 @@ impl RLPEncode for Block {
     }
 
     fn length(&self) -> usize {
-        let mut payload_len = self.header.length()
-            + self.body.transactions.length()
-            + self.body.ommers.length();
+        let mut payload_len =
+            self.header.length() + self.body.transactions.length() + self.body.ommers.length();
         if let Some(ref withdrawals) = self.body.withdrawals {
             payload_len += withdrawals.length();
         }
