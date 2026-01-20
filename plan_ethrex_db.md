@@ -254,10 +254,18 @@ impl StorageBackend for EthrexDbBackend {
 | All others (14 tables) | RocksDB |
 
 **Deliverables**:
-- [ ] `EthrexDbBackend` struct implementing `StorageBackend`
-- [ ] `EthrexDbReadView` implementing `StorageReadView`
-- [ ] `EthrexDbWriteBatch` implementing `StorageWriteBatch`
-- [ ] Feature flag `ethrex_db` in Cargo.toml
+- [x] `EthrexDbBackend` struct implementing `StorageBackend` (`backend/ethrex_db.rs`)
+- [x] `EthrexDbReadView` implementing `StorageReadView`
+- [x] `EthrexDbWriteBatch` implementing `StorageWriteBatch`
+- [x] `EthrexDbLockedView` implementing `StorageLockedView`
+- [x] Feature flag `ethrex-db` in Cargo.toml
+- [x] `EngineType::EthrexDb` variant added to store.rs
+- [x] 4 unit tests for hybrid backend
+
+**Implementation Notes**:
+- Tables routed to ethrex-db: `ACCOUNT_TRIE_NODES`, `STORAGE_TRIE_NODES`, `ACCOUNT_FLATKEYVALUE`, `STORAGE_FLATKEYVALUE`
+- Added `pending_trie_writes` cache to bridge write batch model with ethrex-db's block model
+- Storage layout: `state.db` (PagedDb file) + `auxiliary/` (RocksDB directory)
 
 ---
 
