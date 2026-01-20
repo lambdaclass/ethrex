@@ -24,6 +24,7 @@ members = [
   "crates/vm/levm/runner",
   "crates/common/config",
   "crates/concurrency",
+  "test",
 ]
 exclude = ["crates/vm/levm/bench/revm_comparison"]
 resolver = "2"
