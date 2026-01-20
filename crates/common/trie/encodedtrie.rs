@@ -1,8 +1,8 @@
 use bytes::BufMut;
 use ethrex_rlp::{
     constants::RLP_NULL,
-    decode::{RLPDecode, decode_bytes},
-    encode::{RLPEncode, encode_length},
+    decode::{decode_bytes, RLPDecode},
+    encode::{encode_length, RLPEncode},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
@@ -10,8 +10,8 @@ use rkyv::with::Skip;
 use thiserror::Error;
 
 use crate::{
-    EMPTY_TRIE_HASH, Nibbles, Node as EthrexTrieNode, NodeHash, NodeRef as EthrexTrieNodeRef,
-    rlp::decode_child,
+    rlp::decode_child, Nibbles, Node as EthrexTrieNode, NodeHash, NodeRef as EthrexTrieNodeRef,
+    EMPTY_TRIE_HASH,
 };
 
 /// A trie implementation optimal for zkVM environments.
@@ -287,7 +287,7 @@ impl EncodedTrie {
                             // pruned child, we must make its hash available by encoding the branch
                             // TODO: hacky
                             let child_hash = self.get_extension_encoded_child_hash(self_index)?;
-                            let encoded = encode_extension(prefix.offset(1), child_hash);
+                            let encoded = encode_extension(&prefix.offset(1), child_hash);
                             self.put_node_encoded(handle, encoded)
                         };
                         {
@@ -697,13 +697,13 @@ impl EncodedTrie {
                         recursive(trie, *child_index)?;
                         let child_hash = trie.get_hash(*child_index)?;
                         let prefix = trie.get_extension_data(index)?;
-                        let encoded = encode_extension(prefix, child_hash);
+                        let encoded = encode_extension(&prefix, child_hash);
                         trie.hashes[index] = Some(NodeHash::from_encoded(&encoded));
                     }
                     (Some(prefix), None) => {
                         // get encoded child hash and re-encode
                         let child_hash = trie.get_extension_encoded_child_hash(index)?;
-                        let encoded = encode_extension(prefix.clone(), child_hash);
+                        let encoded = encode_extension(prefix, child_hash);
                         trie.hashes[index] = Some(NodeHash::from_encoded(&encoded));
                     }
                 },
@@ -883,7 +883,7 @@ fn encode_leaf(partial: Nibbles, value: &[u8]) -> Vec<u8> {
     buf
 }
 
-fn encode_extension(path: Nibbles, child: NodeHash) -> Vec<u8> {
+fn encode_extension(path: &Nibbles, child: NodeHash) -> Vec<u8> {
     // Pre-allocate: RLP overhead (3-5 bytes) + compact path + child hash (up to 33 bytes)
     let compact = path.encode_compact();
     let estimated_size = 5 + compact.len() + 33;
