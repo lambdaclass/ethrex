@@ -3659,6 +3659,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
+ "futures",
  "hex",
  "rustc-hash 2.1.1",
  "serde_json",
