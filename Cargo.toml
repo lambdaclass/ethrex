@@ -19,6 +19,7 @@ members = [
   "crates/networking/p2p",
   "crates/networking/rpc",
   "crates/storage",
+  "crates/storage/ethrex-db",
   "crates/vm",
   "crates/vm/levm",
   "crates/vm/levm/runner",
@@ -119,6 +120,11 @@ lambdaworks-crypto = "0.13.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 crossbeam = "0.8.4"
 rayon = "1.10.0"
+memmap2 = "0.9"
+tiny-keccak = { version = "2.0", features = ["keccak"] }
+rlp = "0.6"
+primitive-types = "0.13"
+parking_lot = "0.12"
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 tempfile = "3.8"
 uuid = { version = "1.18.1", features = ["v4"] }
@@ -130,6 +136,8 @@ rocksdb = { version = "0.24.0", default-features = false, features = [
   "bindgen-runtime",
   "lz4",
 ] }
+
+ethrex-db = { path = "./crates/storage/ethrex-db", package = "ethrex_db" }
 
 [workspace.lints.clippy]
 redundant_clone = "warn"
