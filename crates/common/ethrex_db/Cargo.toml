@@ -18,6 +18,9 @@ rayon = "1.10"
 lru = "0.12"  # LRU page cache for performance
 hashbrown = { version = "0.15", features = ["rayon"] }  # Faster HashMap with parallel iteration
 rustc-hash = "2.1"  # FxHash - fast non-cryptographic hash for known-good keys
+ethereum-types.workspace = true
+ethrex-rlp.workspace = true
+bytes.workspace = true
 
 [dev-dependencies]
 proptest = "1.4"

@@ -2004,7 +2004,31 @@ impl Store {
             self.add_account_code(code).await?;
         }
 
-        // Now lock blockchain and set up genesis block
+        // STEP 1: Compute storage roots for all accounts FIRST
+        // This ensures both ethrex_db and legacy trie use the same storage roots
+        let mut computed_storage_roots: HashMap<Address, H256> = HashMap::new();
+
+        for (address, account) in &genesis_accounts {
+            let storage_root = if account.storage.is_empty() {
+                *EMPTY_TRIE_HASH
+            } else {
+                // Compute storage root using StorageTrie
+                use ethrex_db::store::StorageTrie;
+                let mut storage_trie = StorageTrie::new();
+                for (key, value) in &account.storage {
+                    if !value.is_zero() {
+                        let key_h256 = H256::from(key.to_big_endian());
+                        let hashed_key = H256::from(keccak_hash(key_h256.to_fixed_bytes()));
+                        let value_bytes = ethrex_common::utils::u256_to_big_endian(*value);
+                        storage_trie.set(&hashed_key.to_fixed_bytes(), value_bytes);
+                    }
+                }
+                H256::from(storage_trie.root_hash())
+            };
+            computed_storage_roots.insert(*address, storage_root);
+        }
+
+        // STEP 2: Set up ethrex_db genesis block with pre-computed storage roots
         let blockchain = self.blockchain.lock().map_err(|_| StoreError::LockError)?;
 
         // Start genesis block (block number 0, no parent)
@@ -2019,13 +2043,22 @@ impl Store {
             let code = Code::from_bytecode(account.code.clone());
             let code_hash = code.hash;
 
-            // Create account with genesis values
+            // Get pre-computed storage root
+            let storage_root = *computed_storage_roots.get(address).unwrap();
+
+            // Create account with genesis values and computed storage root
             let account_state = ethrex_db::chain::Account {
                 nonce: account.nonce,
                 balance: account.balance,
                 code_hash,
-                storage_root: H256::zero(), // Will be computed by ethrex_db
+                storage_root, // Use pre-computed storage root
             };
+
+            // DEBUG: Print encoded account for first address (do this before move)
+            if genesis_accounts.iter().next().unwrap().0 == address {
+                let encoded_ethrex_db = account_state.encode();
+                println!("DEBUG: First account (ethrex_db encoding): {}", hex::encode(&encoded_ethrex_db));
+            }
 
             // Set account in genesis block
             genesis_block.set_account(hashed_address, account_state);
@@ -2044,33 +2077,28 @@ impl Store {
         blockchain.commit(genesis_block)
             .map_err(|e| StoreError::Custom(format!("Failed to commit genesis block: {}", e)))?;
 
-        // Store genesis state in block_states cache
-        // Build the genesis state from the genesis accounts
+        // DEBUG: Get ethrex_db computed state root for comparison
+        let ethrex_db_state_root = H256::from(blockchain.state_root());
+        println!("DEBUG: ethrex_db computed state root after genesis commit: {}", ethrex_db_state_root);
+        tracing::info!(
+            "ethrex_db computed state root after genesis commit: {}",
+            ethrex_db_state_root
+        );
+
+        // STEP 3: Build genesis state cache using pre-computed storage roots
         let mut genesis_state = HashMap::new();
         for (address, account) in &genesis_accounts {
             let code = Code::from_bytecode(account.code.clone());
             let code_hash = code.hash;
 
+            // Use pre-computed storage root
+            let storage_root = *computed_storage_roots.get(address).unwrap();
+
             let account_state = AccountState {
                 nonce: account.nonce,
                 balance: account.balance,
                 code_hash,
-                storage_root: if account.storage.is_empty() {
-                    *EMPTY_TRIE_HASH
-                } else {
-                    // Compute storage root for this account
-                    use ethrex_db::store::StorageTrie;
-                    let mut storage_trie = StorageTrie::new();
-                    for (key, value) in &account.storage {
-                        if !value.is_zero() {
-                            let key_h256 = H256::from(key.to_big_endian());
-                            let hashed_key = H256::from(keccak_hash(key_h256.to_fixed_bytes()));
-                            let value_bytes = ethrex_common::utils::u256_to_big_endian(*value);
-                            storage_trie.set(&hashed_key.to_fixed_bytes(), value_bytes);
-                        }
-                    }
-                    H256::from(storage_trie.root_hash())
-                },
+                storage_root,
             };
             genesis_state.insert(*address, account_state);
         }
@@ -2116,9 +2144,16 @@ impl Store {
             // Insert account into state trie with correct storage root
             let mut account_for_trie = account_state.clone();
             account_for_trie.storage_root = final_storage_root;
+            let encoded_legacy = account_for_trie.encode_to_vec();
+
+            // DEBUG: Print encoded account for first address
+            if genesis_accounts.iter().next().unwrap().0 == address {
+                println!("DEBUG: First account (legacy encoding):   {}", hex::encode(&encoded_legacy));
+            }
+
             state_trie.insert(
                 hashed_address.as_bytes().to_vec(),
-                account_for_trie.encode_to_vec(),
+                encoded_legacy,
             )?;
 
             // Build storage map for cached state
@@ -2143,6 +2178,27 @@ impl Store {
         drop(block_states);
 
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
+
+        println!("\n=== Genesis State Root Comparison ===");
+        println!("  Legacy trie:  {} (matches expected: {})", state_trie_hash, state_trie_hash == expected_state_root);
+        println!("  ethrex_db:    {} (matches expected: {})", ethrex_db_state_root, ethrex_db_state_root == expected_state_root);
+        println!("  Expected:     {}", expected_state_root);
+        println!("  Legacy == ethrex_db: {}", state_trie_hash == ethrex_db_state_root);
+        println!("====================================\n");
+
+        tracing::info!(
+            "Genesis state root comparison:\n  \
+             Legacy trie:  {} (matches expected: {})\n  \
+             ethrex_db:    {} (matches expected: {})\n  \
+             Expected:     {}\n  \
+             Legacy == ethrex_db: {}",
+            state_trie_hash,
+            state_trie_hash == expected_state_root,
+            ethrex_db_state_root,
+            ethrex_db_state_root == expected_state_root,
+            expected_state_root,
+            state_trie_hash == ethrex_db_state_root
+        );
 
         // Register genesis state_root -> block_hash mapping for VmDatabase queries
         // Use the expected state_root from the genesis block header, not our computed one

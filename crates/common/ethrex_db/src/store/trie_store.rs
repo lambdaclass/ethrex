@@ -515,25 +515,27 @@ impl AccountData {
     /// Uses full 32-byte encoding for storage_root and code_hash (not slim encoding).
     /// Note: Slim encoding (0x80 for empty hashes) is only for snap protocol wire format,
     /// the state trie stores full 32-byte hashes.
+    ///
+    /// This encoding MUST match the legacy AccountState RLP encoding byte-for-byte
+    /// to ensure state root hashes match between ethrex_db and legacy trie systems.
     pub fn encode(&self) -> Vec<u8> {
-        use crate::merkle::RlpEncoder;
+        use ethereum_types::{U256, H256};
+        use ethrex_rlp::structs::Encoder;
 
-        let mut enc = RlpEncoder::new();
-        enc.encode_list(|e| {
-            e.encode_u64(self.nonce);
-            // Encode balance (trim leading zeros)
-            let balance_trimmed: Vec<u8> = self.balance.iter().skip_while(|&&b| b == 0).copied().collect();
-            if balance_trimmed.is_empty() {
-                e.encode_empty();
-            } else {
-                e.encode_bytes(&balance_trimmed);
-            }
-            // Encode storage_root - always full 32 bytes for state trie
-            e.encode_bytes(&self.storage_root);
-            // Encode code_hash - always full 32 bytes for state trie
-            e.encode_bytes(&self.code_hash);
-        });
-        enc.into_bytes()
+        // Convert fields to types matching AccountState
+        let balance_u256 = U256::from_big_endian(&self.balance);
+        let storage_root_h256 = H256::from(self.storage_root);
+        let code_hash_h256 = H256::from(self.code_hash);
+
+        // Encode using same RLP encoder as AccountState
+        let mut buf = Vec::with_capacity(128);
+        Encoder::new(&mut buf)
+            .encode_field(&self.nonce)
+            .encode_field(&balance_u256)
+            .encode_field(&storage_root_h256)
+            .encode_field(&code_hash_h256)
+            .finish();
+        buf
     }
 
     /// Decodes account data from RLP bytes.

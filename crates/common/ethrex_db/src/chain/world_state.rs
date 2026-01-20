@@ -39,15 +39,29 @@ impl Account {
         self.nonce == 0 && self.balance.is_zero() && self.code_hash == H256::zero()
     }
 
-    /// Encodes the account for storage.
+    /// Encodes the account for storage using RLP encoding.
     ///
-    /// Format: [nonce (8)] [balance (32)] [code_hash (32)] [storage_root (32)]
+    /// This MUST match the legacy AccountState RLP encoding byte-for-byte
+    /// to ensure state root hashes match between ethrex_db and legacy trie systems.
+    ///
+    /// Format: RLP([nonce, balance, storage_root, code_hash])
     pub fn encode(&self) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(104);
-        buf.extend_from_slice(&self.nonce.to_le_bytes());
-        buf.extend_from_slice(&self.balance.to_little_endian());
-        buf.extend_from_slice(self.code_hash.as_bytes());
-        buf.extend_from_slice(self.storage_root.as_bytes());
+        use ethereum_types::{U256 as EthU256, H256 as EthH256};
+        use ethrex_rlp::structs::Encoder;
+
+        // Convert primitive_types to ethereum_types for RLP encoding
+        let balance_eth = EthU256::from_big_endian(&self.balance.to_big_endian());
+        let storage_root_eth = EthH256::from(self.storage_root.0);
+        let code_hash_eth = EthH256::from(self.code_hash.0);
+
+        // Encode using same RLP encoder as AccountState
+        let mut buf = Vec::with_capacity(128);
+        Encoder::new(&mut buf)
+            .encode_field(&self.nonce)
+            .encode_field(&balance_eth)
+            .encode_field(&storage_root_eth)
+            .encode_field(&code_hash_eth)
+            .finish();
         buf
     }
 

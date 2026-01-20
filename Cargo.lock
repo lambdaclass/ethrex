@@ -4190,7 +4190,10 @@ dependencies = [
 name = "ethrex_db"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "criterion",
+ "ethereum-types 0.15.1",
+ "ethrex-rlp",
  "hashbrown 0.15.5",
  "hex",
  "hex-literal 0.4.1",
