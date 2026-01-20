@@ -430,9 +430,68 @@ impl<'a> TrieDB for BackendTrieDB<'a> {
 - Custom stress tests
 
 **Deliverables**:
-- [ ] Full test suite passing
-- [ ] Benchmark results documented
+- [x] Full test suite passing
+- [ ] Benchmark results documented (see approach below)
 - [ ] Performance regression tests
+
+**Implementation Notes**:
+
+1. **Test Suite Results** (33 tests total):
+   - 10 unit tests in `backend/ethrex_db.rs` - path translation, table routing, RLP encoding
+   - 11 integration tests in `tests/ethrex_db_integration.rs` - ethrex_db API usage patterns
+   - 12 Store-level tests in `tests/ethrex_db_store_tests.rs` - Store API with ethrex_db backend
+
+2. **Test Coverage**:
+   - Store creation and initialization with ethrex_db
+   - Genesis state loading
+   - Block operations (add, retrieve, canonicalize)
+   - Concurrent read access (multiple threads)
+   - Concurrent reads during writes
+   - Blockchain reference access
+   - forkchoice_update operations
+   - File structure verification (state.db + auxiliary/)
+   - Store persistence across reopening
+
+3. **Current Limitations** (documented in tests):
+   - Full ethrex_db finalization with forkchoice_update requires blocks to be in ethrex_db's Blockchain (currently blocks go to RocksDB auxiliary)
+   - State root verification pending deeper integration
+   - ethrex_db's Copy-on-Write concurrency benefits require state writes to go through Blockchain API
+
+**Benchmark Approach**:
+
+To benchmark the hybrid backend vs RocksDB-only:
+
+1. **Setup**:
+   ```bash
+   # Build with both features
+   cargo build --release --features "rocksdb,ethrex-db"
+   ```
+
+2. **Metrics to capture**:
+   - Trie insert throughput: `time/op` for account/storage writes
+   - Trie lookup throughput: `time/op` for account/storage reads
+   - Block execution: blocks/second during sync
+   - Disk usage: Compare DB size after N blocks
+   - Memory usage: Peak RSS during sync
+
+3. **Benchmark commands**:
+   ```bash
+   # Run with RocksDB backend
+   ./ethrex --data-dir ./data-rocksdb --engine rocksdb
+
+   # Run with ethrex_db backend
+   ./ethrex --data-dir ./data-ethrex-db --engine ethrex-db
+   ```
+
+4. **Test scenarios**:
+   - Mainnet sync: First 100K blocks
+   - State-heavy blocks: Blocks with many state changes
+   - Read-heavy workload: Simulate RPC queries during sync
+
+5. **Expected improvements**:
+   - Lookups: 10-15x faster (ethrex_db uses flat key-value vs MPT traversal)
+   - Inserts: 1.5-2x faster (no LSM write amplification)
+   - Disk: 30-50% reduction (no LSM overhead)
 
 ---
 
@@ -452,9 +511,38 @@ impl<'a> TrieDB for BackendTrieDB<'a> {
 - Ensure backward compatibility with RocksDB-only builds
 
 **Deliverables**:
-- [ ] Updated documentation
-- [ ] Clean feature flag structure
-- [ ] Migration guide for existing databases
+- [x] Updated documentation
+- [x] Clean feature flag structure
+- [ ] Migration guide for existing databases (not needed for new installations)
+
+**Implementation Notes**:
+
+1. **README.md Updated** (`crates/storage/README.md`):
+   - Quick start guide with all three backends
+   - Feature flags documentation
+   - Detailed backend descriptions (InMemory, RocksDB, ethrex_db Hybrid)
+   - ASCII architecture diagrams showing:
+     - Store → StorageBackend trait → Backend implementations
+     - Table routing for hybrid backend
+     - ethrex_db two-tier storage (Blockchain → PagedDb)
+   - Usage examples (genesis, building chain, querying state, concurrent access)
+   - Testing instructions
+   - Configuration options
+
+2. **Feature Flags** (verified clean):
+   - `rocksdb`: Enables RocksDB backend
+   - `ethrex-db`: Enables hybrid backend (automatically enables `rocksdb` and `primitive-types`)
+   - No dead features or unused dependencies
+
+3. **Backward Compatibility** (verified):
+   - In-memory build (no features): Compiles and tests pass
+   - RocksDB-only build (`--features rocksdb`): Compiles and tests pass
+   - Hybrid build (`--features ethrex-db`): Compiles and all 33 tests pass
+
+4. **Migration Guide**: Not included as:
+   - This is a new backend, not a migration from existing format
+   - Users can choose which backend to use at database creation time
+   - No automatic migration between backends is supported (use export/import if needed)
 
 ---
 
