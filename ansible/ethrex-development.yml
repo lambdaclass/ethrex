@@ -270,6 +270,11 @@
             cmd: make ethereum_metrics_exporter
             chdir: "{{ monitoring_stack_dir }}"
 
+        - name: Build promtail locally
+          command:
+            cmd: make promtail
+            chdir: "{{ monitoring_stack_dir }}"
+
         - name: Remove monitoring stack repository locally
           file:
             path: "{{ monitoring_stack_dir }}"
