@@ -612,11 +612,27 @@ impl EncodedTrie {
             if trie.hashes[index].is_some() {
                 return Ok(());
             }
-            match &trie.nodes[index].node_type.clone() {
+
+            // Extract indices for recursion to avoid cloning NodeType
+            let (child_index, children_indices) = match &trie.nodes[index].node_type {
+                NodeType::Leaf { .. } => (None, None),
+                NodeType::Extension { child_index, .. } => (*child_index, None),
+                NodeType::Branch { children_indices } => (None, Some(*children_indices)),
+            };
+
+            if let Some(child_index) = child_index {
+                recursive(trie, child_index)?;
+            }
+            if let Some(children) = children_indices {
+                for child in children.iter().flatten().flatten() {
+                    recursive(trie, *child)?;
+                }
+            }
+
+            match &trie.nodes[index].node_type {
                 NodeType::Leaf { .. } => {}
                 NodeType::Extension { child_index, .. } => {
                     if let Some(child_index) = child_index {
-                        recursive(trie, *child_index)?;
                         let child_hash = trie.get_hash(*child_index)?;
                         let encoded_items = trie.get_encoded_items(index)?;
                         let encoded_child_hash = decode_bytes(encoded_items[1])?.0;
@@ -628,14 +644,6 @@ impl EncodedTrie {
                     }
                 }
                 NodeType::Branch { children_indices } => {
-                    for (_, child_index) in children_indices
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, c)| c.flatten().map(|c| (i, c)))
-                    {
-                        recursive(trie, child_index)?;
-                    }
-
                     let encoded_items = trie.get_encoded_items(index)?;
                     for (i, child_index) in children_indices
                         .iter()
@@ -673,46 +681,58 @@ impl EncodedTrie {
             if trie.hashes[index].is_some() {
                 return Ok(());
             }
-            match &trie.nodes[index].node_type.clone() {
+
+            // Extract indices for recursion to avoid cloning NodeType
+            let (child_index, children_indices) = match &trie.nodes[index].node_type {
+                NodeType::Leaf { .. } => (None, None),
+                NodeType::Extension { child_index, .. } => (*child_index, None),
+                NodeType::Branch { children_indices } => (None, Some(*children_indices)),
+            };
+
+            if let Some(child_index) = child_index {
+                recursive(trie, child_index)?;
+            }
+            if let Some(children) = children_indices {
+                for child in children.iter().flatten().flatten() {
+                    recursive(trie, *child)?;
+                }
+            }
+
+            let hash = match &trie.nodes[index].node_type {
                 NodeType::Leaf { partial, value } => {
                     if partial.is_some() || value.is_some() {
                         // re-encode with new values
                         let (partial, value) = trie.get_leaf_data(index)?;
                         let encoded = encode_leaf(partial, value);
-                        trie.hashes[index] = Some(NodeHash::from_encoded(&encoded));
+                        Some(NodeHash::from_encoded(&encoded))
                     } else {
                         // use already encoded
-                        trie.hashes[index] = trie.hash_encoded_data(index).map(Some)?;
+                        Some(trie.hash_encoded_data(index)?)
                     }
                 }
                 NodeType::Extension {
                     prefix,
                     child_index,
                 } => match (prefix, child_index) {
-                    (None, None) => {
-                        trie.hashes[index] = trie.hash_encoded_data(index).map(Some)?;
-                    }
+                    (None, None) => Some(trie.hash_encoded_data(index)?),
                     (_, Some(child_index)) => {
                         // recurse to calculate the child hash and re-encode
-                        recursive(trie, *child_index)?;
                         let child_hash = trie.get_hash(*child_index)?;
                         let prefix = trie.get_extension_data(index)?;
                         let encoded = encode_extension(&prefix, child_hash);
-                        trie.hashes[index] = Some(NodeHash::from_encoded(&encoded));
+                        Some(NodeHash::from_encoded(&encoded))
                     }
                     (Some(prefix), None) => {
                         // get encoded child hash and re-encode
                         let child_hash = trie.get_extension_encoded_child_hash(index)?;
                         let encoded = encode_extension(prefix, child_hash);
-                        trie.hashes[index] = Some(NodeHash::from_encoded(&encoded));
+                        Some(NodeHash::from_encoded(&encoded))
                     }
                 },
                 NodeType::Branch { children_indices } => {
                     let mut any_pruned = false;
                     for child_index in children_indices.iter().flatten() {
-                        if let Some(child_index) = child_index {
-                            recursive(trie, *child_index)?;
-                        } else {
+                        if child_index.is_none() {
                             any_pruned = true;
                         }
                     }
@@ -747,8 +767,12 @@ impl EncodedTrie {
                     }
 
                     let encoded = encode_branch(children_hashes);
-                    trie.hashes[index] = Some(NodeHash::from_encoded(&encoded));
+                    Some(NodeHash::from_encoded(&encoded))
                 }
+            };
+
+            if let Some(hash) = hash {
+                trie.hashes[index] = Some(hash);
             }
             Ok(())
         }
