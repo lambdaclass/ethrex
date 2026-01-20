@@ -49,6 +49,12 @@ bitvec = { version = "1.0.1", features = ["alloc"] }
 
 rustc-hash.workspace = true
 
+# JIT dependencies
+libc = { version = "0.2", optional = true }
+
+[build-dependencies]
+object = { version = "0.36", optional = true }
+
 [dev-dependencies]
 hex.workspace = true
 colored = "2.1.0"
@@ -65,6 +71,7 @@ risc0 = ["dep:substrate-bn", "c-kzg"]
 zisk = ["dep:substrate-bn", "dep:ziskos"]
 openvm = ["ethrex-common/openvm"]
 perf_opcode_timings = []
+jit = ["dep:libc", "dep:object"]
 
 [lints.rust]
 unsafe_code = "warn"
