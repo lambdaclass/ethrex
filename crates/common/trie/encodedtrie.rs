@@ -703,7 +703,7 @@ impl EncodedTrie {
                     if partial.is_some() || value.is_some() {
                         // re-encode with new values
                         let (partial, value) = trie.get_leaf_data(index)?;
-                        let encoded = encode_leaf(partial, value);
+                        let encoded = encode_leaf(&partial, value);
                         Some(NodeHash::from_encoded(&encoded))
                     } else {
                         // use already encoded
@@ -909,7 +909,7 @@ impl EncodedTrie {
     }
 }
 
-fn encode_leaf(partial: Nibbles, value: &[u8]) -> Vec<u8> {
+fn encode_leaf(partial: &Nibbles, value: &[u8]) -> Vec<u8> {
     // Pre-allocate: RLP overhead (3-5 bytes) + compact path + value
     let compact = partial.encode_compact();
     let estimated_size = 5 + compact.len() + value.len();
