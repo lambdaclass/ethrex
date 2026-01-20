@@ -1230,7 +1230,13 @@ impl Store {
         self.apply_updates(update_batch)
     }
 
-    fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+    // TODO: LEGACY METHOD - Uses old trie layer infrastructure
+    // This method needs to be migrated to use execute_block_ethrex_db()
+    // For now, it's commented out to allow compilation
+    #[allow(dead_code)]
+    fn apply_updates(&self, _update_batch: UpdateBatch) -> Result<(), StoreError> {
+        unimplemented!("Legacy apply_updates - use execute_block_ethrex_db instead")
+        /*
         let db = self.backend.clone();
         let parent_state_root = self
             .get_block_header_by_hash(
@@ -1318,6 +1324,7 @@ impl Store {
         tx.commit()?;
 
         Ok(())
+        */
     }
 
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
@@ -1373,7 +1380,18 @@ impl Store {
         })
     }
 
+    // TODO: LEGACY METHOD - Remove after migration complete
+    #[allow(dead_code)]
     fn from_backend(
+        _backend: Arc<dyn StorageBackend>,
+        _db_path: PathBuf,
+        _commit_threshold: usize,
+    ) -> Result<Self, StoreError> {
+        unimplemented!("Legacy from_backend method - use Store::new() instead")
+    }
+
+    /* OLD IMPLEMENTATION - COMMENTED OUT
+    fn from_backend_old(
         backend: Arc<dyn StorageBackend>,
         db_path: PathBuf,
         commit_threshold: usize,
@@ -1474,6 +1492,7 @@ impl Store {
         });
         Ok(store)
     }
+    */
 
     pub async fn new_from_genesis(
         store_path: &Path,
@@ -2340,119 +2359,50 @@ impl Store {
     /// Obtain a state trie from the given state root
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
-    pub fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
-            state_root,
-            inner: self
-                .trie_cache
-                .lock()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
-            db: Box::new(BackendTrieDB::new_for_accounts(
-                self.backend.clone(),
-                self.last_written()?,
-            )?),
-            prefix: None,
-        };
-        Ok(Trie::open(Box::new(trie_db), state_root))
+    // TODO: LEGACY METHOD - Replace with ethrex_db state queries
+    pub fn open_state_trie(&self, _state_root: H256) -> Result<Trie, StoreError> {
+        unimplemented!("Legacy open_state_trie - use get_account_info_ethrex_db instead")
     }
 
-    /// Obtain a state trie from the given state root
-    /// Doesn't check if the state root is valid
-    /// Used for internal store operations
-    pub fn open_direct_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        Ok(Trie::open(
-            Box::new(BackendTrieDB::new_for_accounts(
-                self.backend.clone(),
-                self.last_written()?,
-            )?),
-            state_root,
-        ))
+    // TODO: LEGACY METHOD - Replace with ethrex_db
+    pub fn open_direct_state_trie(&self, _state_root: H256) -> Result<Trie, StoreError> {
+        unimplemented!("Legacy open_direct_state_trie - use ethrex_db instead")
     }
 
-    /// Obtain a state trie locked for reads from the given state root
-    /// Doesn't check if the state root is valid
-    /// Used for internal store operations
-    pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
-            state_root,
-            inner: self
-                .trie_cache
-                .lock()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
-            db: Box::new(state_trie_locked_backend(
-                self.backend.as_ref(),
-                self.last_written()?,
-            )?),
-            prefix: None,
-        };
-        Ok(Trie::open(Box::new(trie_db), state_root))
+    // TODO: LEGACY METHOD - Replace with ethrex_db
+    pub fn open_locked_state_trie(&self, _state_root: H256) -> Result<Trie, StoreError> {
+        unimplemented!("Legacy open_locked_state_trie - use ethrex_db instead")
     }
 
-    /// Obtain a storage trie from the given address and storage_root.
-    /// Doesn't check if the account is stored
+    // TODO: LEGACY METHOD - Replace with ethrex_db
     pub fn open_storage_trie(
         &self,
-        account_hash: H256,
-        state_root: H256,
-        storage_root: H256,
+        _account_hash: H256,
+        _state_root: H256,
+        _storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
-            state_root,
-            inner: self
-                .trie_cache
-                .lock()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
-            db: Box::new(BackendTrieDB::new_for_storages(
-                self.backend.clone(),
-                self.last_written()?,
-            )?),
-            prefix: Some(account_hash),
-        };
-        Ok(Trie::open(Box::new(trie_db), storage_root))
+        unimplemented!("Legacy open_storage_trie - use get_storage_at_ethrex_db instead")
     }
 
     /// Obtain a storage trie from the given address and storage_root.
     /// Doesn't check if the account is stored
+    // TODO: LEGACY METHOD - Replace with ethrex_db
     pub fn open_direct_storage_trie(
         &self,
-        account_hash: H256,
-        storage_root: H256,
+        _account_hash: H256,
+        _storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        Ok(Trie::open(
-            Box::new(BackendTrieDB::new_for_account_storage(
-                self.backend.clone(),
-                account_hash,
-                self.last_written()?,
-            )?),
-            storage_root,
-        ))
+        unimplemented!("Legacy open_direct_storage_trie - use ethrex_db instead")
     }
 
-    /// Obtain a read-locked storage trie from the given address and storage_root.
-    /// Doesn't check if the account is stored
+    // TODO: LEGACY METHOD - Replace with ethrex_db
     pub fn open_locked_storage_trie(
         &self,
-        account_hash: H256,
-        state_root: H256,
-        storage_root: H256,
+        _account_hash: H256,
+        _state_root: H256,
+        _storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
-            state_root,
-            inner: self
-                .trie_cache
-                .lock()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
-            db: Box::new(state_trie_locked_backend(
-                self.backend.as_ref(),
-                self.last_written()?,
-            )?),
-            prefix: Some(account_hash),
-        };
-        Ok(Trie::open(Box::new(trie_db), storage_root))
+        unimplemented!("Legacy open_locked_storage_trie - use ethrex_db instead")
     }
 
     pub fn has_state_root(&self, state_root: H256) -> Result<bool, StoreError> {
@@ -2488,10 +2438,10 @@ impl Store {
             .is_some_and(|h| h == block_hash))
     }
 
+    // TODO: LEGACY METHOD - FlatKeyValue no longer needed with ethrex_db
     pub fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {
-        self.flatkeyvalue_control_tx
-            .send(FKVGeneratorControlMessage::Continue)
-            .map_err(|_| StoreError::Custom("FlatKeyValue thread disconnected.".to_string()))
+        // No-op with ethrex_db - it has its own optimization index
+        Ok(())
     }
 
     pub fn create_checkpoint(&self, path: impl AsRef<Path>) -> Result<(), StoreError> {
@@ -2561,18 +2511,14 @@ impl Store {
         Ok(header)
     }
 
+    // TODO: LEGACY METHOD - No longer needed with ethrex_db
     fn last_written(&self) -> Result<Vec<u8>, StoreError> {
-        let last_computed_flatkeyvalue = self
-            .last_computed_flatkeyvalue
-            .lock()
-            .map_err(|_| StoreError::LockError)?;
-        Ok(last_computed_flatkeyvalue.clone())
+        Ok(vec![0u8; 64])
     }
 
-    fn flatkeyvalue_computed(&self, account: H256) -> Result<bool, StoreError> {
-        let account_nibbles = Nibbles::from_bytes(account.as_bytes());
-        let last_computed_flatkeyvalue = self.last_written()?;
-        Ok(&last_computed_flatkeyvalue[0..64] > account_nibbles.as_ref())
+    // TODO: LEGACY METHOD - No longer needed with ethrex_db
+    fn flatkeyvalue_computed(&self, _account: H256) -> Result<bool, StoreError> {
+        Ok(false)
     }
 
     // ============================================================================
@@ -2733,8 +2679,15 @@ impl Store {
         // Handle removed storage (delete and recreate account to clear storage)
         if update.removed_storage {
             // Clear all storage for this account by deleting and recreating
+            // Need to clone account since we already moved it
+            let account_copy = ethrex_db::chain::Account {
+                nonce: account_info.nonce,
+                balance: account_info.balance,
+                code_hash: account_info.code_hash,
+                storage_root: H256::zero(),
+            };
             block.delete_account(&address_hash);
-            block.set_account(address_hash, account);
+            block.set_account(address_hash, account_copy);
         }
 
         Ok(())
