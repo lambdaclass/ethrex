@@ -1,4 +1,4 @@
-use crossbeam::channel::{select_biased, unbounded, Sender};
+use crossbeam::channel::{Sender, select_biased, unbounded};
 use std::marker::Send;
 use std::thread::{Builder, Scope};
 
