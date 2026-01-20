@@ -1312,7 +1312,6 @@ dependencies = [
  "sha3",
  "thiserror 2.0.18",
  "tracing",
- "vergen-git2",
 ]
 
 [[package]]
@@ -3229,6 +3228,7 @@ dependencies = [
  "serde 0.9.15",
  "serde_json",
  "tokio",
+ "vergen-git2",
  "zerocopy",
 ]
 

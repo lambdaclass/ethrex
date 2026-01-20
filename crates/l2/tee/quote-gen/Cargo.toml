@@ -3,6 +3,9 @@ name = "quote-gen"
 version = "9.0.0"
 edition = "2024"
 
+[build-dependencies]
+vergen-git2 = { version = "1.0.7" }
+
 [dependencies]
 configfs-tsm = "0.0.1"
 tokio = { version = "1.41.1", features = ["full"] }

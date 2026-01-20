@@ -4,7 +4,8 @@ use crate::{
         errors::CommitterError,
         sequencer_state::{SequencerState, SequencerStatus},
         utils::{
-            self, batch_checkpoint_name, fetch_blocks_with_respective_fee_configs, system_now_ms,
+            self, batch_checkpoint_name, fetch_blocks_with_respective_fee_configs,
+            get_git_commit_hash, system_now_ms,
         },
     },
 };
@@ -21,7 +22,6 @@ use ethrex_common::{
         fee_config::FeeConfig,
     },
 };
-use ethrex_l2_common::utils::get_git_commit_hash;
 use ethrex_l2_common::{
     calldata::Value,
     merkle_tree::compute_merkle_root,

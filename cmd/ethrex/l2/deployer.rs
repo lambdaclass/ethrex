@@ -14,11 +14,12 @@ use ethrex_common::{
     Address, U256,
     types::{Genesis, TxType},
 };
+use ethrex_l2::sequencer::utils::get_git_commit_hash;
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_common::{
     calldata::Value,
     prover::ProverType,
-    utils::{get_address_from_secret_key, get_git_commit_hash},
+    utils::get_address_from_secret_key,
 };
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{

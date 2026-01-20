@@ -6,9 +6,14 @@ use ethrex_common::utils::keccak;
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofCalldata, ProverType},
-    utils::{get_address_from_secret_key, get_git_commit_hash},
+    utils::get_address_from_secret_key,
 };
 use ethrex_guest_program::input::ProgramInput;
+
+/// Returns the git commit hash of the current build.
+fn get_git_commit_hash() -> String {
+    env!("VERGEN_GIT_SHA").to_string()
+}
 use secp256k1::{Message, SecretKey, generate_keypair, rand};
 use sender::{get_batch, submit_proof, submit_quote};
 use std::time::Duration;

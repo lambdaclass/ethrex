@@ -5,7 +5,7 @@ use vergen_git2::{Emitter, Git2Builder};
 // VERGEN_GIT_SHA to get the git commit hash
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // Export git commit hash and branch name as environment variables
+    // Export git commit hash as environment variable
     // When building tdx image with nix the commit version is stored as an env var
     if let Ok(sha) = std::env::var("VERGEN_GIT_SHA") {
         println!("cargo:rustc-env=VERGEN_GIT_SHA={}", sha.trim());
