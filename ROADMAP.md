@@ -29,44 +29,44 @@ This is a WIP document and it requires better descriptions; it's supposed to be 
 
 ## Execution
 
-| Item | Priority | Status | Description |
-|-----|----------|--------|-------------|
-| Replace BTreeMap with FxHashMap | 0 | In Progress | Replace BTreeMap/BTreeSet with FxHashMap/FxHashSet|
-| Skip Zero-Initialization in Memory Resize | 0 | Pending | Use unsafe set_len (EVM spec says expanded memory is zero) |
-| Remove RefCell from Memory | 0 | Pending | Consider using UnsafeCell with manual safety guarantees, or restructure to avoid shared ownership. |
-| Try out PEVM | 0 | In Progress | Benchmark again against pevm |
-| Inline Hot Opcodes | 0 | In Progress | Opcodes call a function in a jump table when some of the most used ones could perform better being inlined instead |
-| Test ECPairing libraries | 0 | Pending | Benchmark arkworks pairing in levm|
-| PGO/BOLT | 0 | Pending | Try out both [PGO](https://doc.rust-lang.org/beta/rustc/profile-guided-optimization.html) and [BOLT](https://github.com/llvm/llvm-project/tree/main/bolt) to see if we can improve perf |
-| Use an arena allocator for substate tracking | 0 | Pending | Substates are currently a linked list allocated through boxing. Consider using an arena allocator (e.g. bumpalo) for them |
-| ruint | 0 | Pending | Try out [ruint](https://github.com/recmo/uint) as the `U256` library to see if it improves performance. Part of SIMD initiative |
-| Nibbles | 1 | Pending | Nibbles are currently stored as a byte (`u8`), when they could be stored compactly as actual nibbles in memory and reduce by half their representation size |
-| RLP Duplication | 1 | Pending | Check whether we are encoding/decoding something twice (clearly unnecessary) |
-| Object pooling | 2 | Pending | Reuse EVM stack frames to reduce allocations and improve performance |
-| Avoid clones in hot path | 2 | Pending | Avoid Clone on Account Load and check rest of the hot path |
-| SIMD Everywhere | 2 | Pending | There are some libraries that can be replaced by others that use SIMD instructions for better performance |
-
+| Item | Issue | Priority | Status | Description |
+|---|----|----------|--------|-------------|
+| Replace BTreeMap with FxHashMap | #5757 | 0 | Discarded (small regression) | Replace BTreeMap/BTreeSet with FxHashMap/FxHashSet|
+| Use FxHashset for access lists | #5800 | 0 | Done (8% improvement) | Replace HashSet with FxHashset |
+| Skip Zero-Initialization in Memory Resize | #5755 | 0 | Measure #5774 | Use unsafe set_len (EVM spec says expanded memory is zero) |
+| Remove RefCell from Memory  | #5756 | 0 | Measure #5793 | Consider using UnsafeCell with manual safety guarantees, or restructure to avoid shared ownership. |
+| Try out PEVM | | 0 | Done. Simple integration caused regression. | Benchmark again against pevm |
+| Inline Hot Opcodes | #5752 | 0 | Done. 0 to 20% speedup depending on the time. | Opcodes call a function in a jump table when some of the most used ones could perform better being inlined instead |
+| Test ECPairing libraries | #5758 | 0 | Done (#5792). Used Arkworks. 2x speedup on those specific operations. | Benchmark arkworks pairing in levm|
+| PGO/BOLT | #5759 | 0 | In progress (#5775) | Try out both [PGO](https://doc.rust-lang.org/beta/rustc/profile-guided-optimization.html) and [BOLT](https://github.com/llvm/llvm-project/tree/main/bolt) to see if we can improve perf |
+| Use an arena allocator for substate tracking | #5754 | 0 | Discarded (#5791). Regression of 10% in mainnet. | Substates are currently a linked list allocated through boxing. Consider using an arena allocator (e.g. bumpalo) for them |
+| ruint  | #5760 | 0 | Discarded simple approach. Regression. | Try out [ruint](https://github.com/recmo/uint) as the `U256` library to see if it improves performance. Part of SIMD initiative |
+| Nibbles | #5801 | 1 | Measure #5912 and #5932 | Nibbles are currently stored as a byte (`u8`), when they could be stored compactly as actual nibbles in memory and reduce by half their representation size. Also we may stack-allocate their buffers instead of heap-allocated vecs. |
+| RLP Duplication | #5949 | 1 | Pending | Check whether we are encoding/decoding something twice (clearly unnecessary) |
+| Object pooling | #5934 | 2 | Pending | Reuse EVM stack frames to reduce allocations and improve performance |
+| Avoid clones in hot path | #5753 | 2 | Measure #5809 on mainnet | Avoid Clone on Account Load and check rest of the hot path |
+| SIMD Everywhere | | 2 | Pending | There are some libraries that can be replaced by others that use SIMD instructions for better performance |
 
 ---
 
 ## IO
 
-| Item | Priority | Status | Description |
-|-----|----------|--------|-------------|
-| Add Block Cache (RocksDB) | 0 | Pending | Currently there is no explicit block cache, relying on OS page cache. Also try row cache |
-| Use Two-Level Index (RocksDB) | 0 | Pending | Use Two-Level Index with Partitioned Filters |
-| Enable unordered writes for State (RocksDB) | 0 | Pending | For `ACCOUNT_TRIE_NODES, STORAGE_TRIE_NODES cf_opts.set_unordered_write(true);` Faster writes when we don't need strict ordering|
-| Increase Bloom Filter (RocksDB) | 0 | Pending | Change and benchmark higher bits per key for state tables |
-| Consider LZ4 for State Tables (RocksDB) | 0 | Pending | Trades CPU for smaller DB and potentially better cache utilization |
-| Add Read-Ahead for Sequential Scans (RocksDB)| 0 | Pending | Use for trie iteration, sync operations |
-| Optimize for Point Lookups (RocksDB) | 0 | Pending | Adds hash index inside FlatKeyValue for faster point lookups |
-| Modify block size (RocksDB) | 0 | Pending | Benchmark different block size configurations |
-| Memory-Mapped Reads (RocksDB) | 0 | Pending | Can be an improvement on high-RAM systems |
-| Increase layers commit threshold | 0 | Pending | For read-heavy workloads with plenty of RAM |
-| Remove locks | 1 | Pending | Check if there are still some unnecessary locks, e.g. in the VM we have one |
-| Benchmark bloom filter | 1 | Pending | Review trie layer's bloom filter, remove it or test other libraries/configurations |
-| Use multiget on trie traversal | 1 | Pending | Using multiget on trie traversal might reduce read time |
-| Spawned | 3 | Pending | [*Spawnify*](https://github.com/lambdaclass/spawned) io intensive components/flows. Mempool and Snapsync are top priorities |
+| Item | Issue | Priority | Status | Description |
+|-----| ----- |----------|--------|-------------|
+| Add Block Cache (RocksDB) | #5935 | 0 | Pending | Currently there is no explicit block cache, relying on OS page cache. Also try row cache |
+| Use Two-Level Index (RocksDB) |  #5936 | 0 | Pending | Use Two-Level Index with Partitioned Filters |
+| Enable unordered writes for State (RocksDB) | #5937 | 0 | Pending | For `ACCOUNT_TRIE_NODES, STORAGE_TRIE_NODES cf_opts.set_unordered_write(true);` Faster writes when we don't need strict ordering|
+| Increase Bloom Filter (RocksDB) | #5938 | 0 | Pending | Change and benchmark higher bits per key for state tables |
+| Consider LZ4 for State Tables (RocksDB) | #5939 | 0 | Pending | Trades CPU for smaller DB and potentially better cache utilization |
+| Page caching + readahead | #5940 | 0 | Pending | Use for trie iteration, sync operations |
+| Optimize for Point Lookups (RocksDB) | #5941 | 0 | Pending | Adds hash index inside FlatKeyValue for faster point lookups |
+| Modify block size (RocksDB) | #5942 | 0 | Pending | Benchmark different block size configurations |
+| Memory-Mapped Reads (RocksDB) | #5943 | 0 | Pending | Can be an improvement on high-RAM systems |
+| Increase layers commit threshold | #5944 | 0 | Pending | For read-heavy workloads with plenty of RAM |
+| Remove locks | #5945 | 1 | Pending | Check if there are still some unnecessary locks, e.g. in the VM we have one |
+| Benchmark bloom filter | #5946 | 1 | Pending | Review trie layer's bloom filter, remove it or test other libraries/configurations |
+| Use multiget on trie traversal | #4949 | 1 | Pending | Using multiget on trie traversal might reduce read time |
+| Spawned | #5947 | 3 | Pending | [*Spawnify*](https://github.com/lambdaclass/spawned) io intensive components/flows. Mempool and Snapsync are top priorities |
 
 ---
 
