@@ -1,3 +1,14 @@
+//! # DEPRECATED - Legacy Trie Backend
+//!
+//! This module implements the old trie storage backend and is deprecated.
+//! It will be removed in a future release.
+//!
+//! **New code should use ethrex_db storage methods instead.**
+//!
+//! This is kept temporarily for compatibility with sync code.
+
+#![allow(deprecated)]
+
 use crate::api::tables::{
     ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
 };

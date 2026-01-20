@@ -1,3 +1,14 @@
+//! # DEPRECATED - Legacy Trie Layer Cache
+//!
+//! This module implements the old trie layer caching system and is deprecated.
+//! It will be removed in a future release.
+//!
+//! **New code should use ethrex_db storage methods instead.**
+//!
+//! This is kept temporarily for compatibility with sync code.
+
+#![allow(deprecated)]
+
 use ethrex_common::H256;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;

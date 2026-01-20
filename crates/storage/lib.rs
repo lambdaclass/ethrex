@@ -56,32 +56,45 @@
 //!
 //! ## State Management
 //!
-//! State is stored using Merkle Patricia Tries for efficient verification:
-//! - **State Trie**: Maps account addresses to account data
-//! - **Storage Tries**: Maps storage keys to values for each contract
-//! - **Code Storage**: Separate storage for contract bytecode
+//! State is now managed using the high-performance `ethrex_db` storage engine:
+//! - **Hot Storage**: Recent unfinalized blocks in the Blockchain layer (COW semantics)
+//! - **Cold Storage**: Finalized blocks in PagedDb (memory-mapped pages)
+//! - **Performance**: 10-15x faster reads, 1.6-2.2x faster writes, 12-13x faster state roots
 //!
-//! The store maintains a cache layer (`TrieLayerCache`) for efficient state access
-//! without requiring full trie traversal for recent blocks.
+//! ### Legacy Trie Layer (Deprecated)
+//!
+//! The old trie implementation (`ethrex-trie`, `TrieLayerCache`) is deprecated and
+//! will be removed in a future release. New code should use the `*_ethrex_db()` methods
+//! on the Store struct.
 
 pub mod api;
 pub mod backend;
 pub mod error;
 mod ethrex_db_adapter;
-mod layering;
 pub mod rlp;
 pub mod store;
-pub mod trie;
 pub mod utils;
 
+// Legacy modules - deprecated, will be removed
+#[deprecated(since = "9.1.0", note = "Use ethrex_db storage methods instead")]
+mod layering;
+#[deprecated(since = "9.1.0", note = "Use ethrex_db storage methods instead")]
+pub mod trie;
+
+// Legacy exports - deprecated
+#[deprecated(since = "9.1.0", note = "Use ethrex_db storage methods instead")]
 pub use layering::apply_prefix;
+
 pub use store::{AccountUpdatesList, EngineType, Store, UpdateBatch, hash_address, hash_key};
 
 /// Store Schema Version, must be updated on any breaking change.
 ///
 /// An upgrade to a newer schema version invalidates currently stored data,
 /// requiring a re-sync from genesis or a snapshot.
-pub const STORE_SCHEMA_VERSION: u64 = 1;
+///
+/// Version 2: Migrated from ethrex-trie to ethrex_db storage engine.
+/// This is a breaking change that requires a full resync from genesis.
+pub const STORE_SCHEMA_VERSION: u64 = 2;
 
 /// Name of the file storing the metadata about the database.
 ///
