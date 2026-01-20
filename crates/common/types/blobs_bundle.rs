@@ -47,7 +47,8 @@ pub fn blob_from_bytes(bytes: Bytes) -> Result<Blob, BlobsBundleError> {
     let mut dst = 0usize;
 
     for chunk in bytes.chunks(31) {
-        let needed = 1 + chunk.len();
+        let len = chunk.len();
+        let needed = 1 + len;
         if dst + needed > BYTES_PER_BLOB {
             return Err(BlobsBundleError::BlobDataInvalidBytesLength);
         }
@@ -55,8 +56,8 @@ pub fn blob_from_bytes(bytes: Bytes) -> Result<Blob, BlobsBundleError> {
         buf[dst] = 0x00;
         dst += 1;
 
-        buf[dst..dst + chunk.len()].copy_from_slice(chunk);
-        dst += chunk.len();
+        buf[dst..dst + len].copy_from_slice(chunk);
+        dst += len;
     }
 
     Ok(buf)
