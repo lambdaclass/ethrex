@@ -4,7 +4,6 @@ use crate::{
 };
 use clap::Parser;
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
-#[cfg(feature = "sp1")]
 use ethrex_l2::sequencer::utils::resolve_aligned_network;
 use ethrex_l2::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
@@ -228,7 +227,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 aligned_mode: opts.aligned_opts.aligned,
                 aligned_verifier_interval_ms: opts.aligned_opts.aligned_verifier_interval_ms,
                 beacon_urls: opts.aligned_opts.beacon_url.unwrap_or_default(),
-                #[cfg(feature = "sp1")]
                 network: resolve_aligned_network(
                     &opts.aligned_opts.aligned_network.unwrap_or_default(),
                 ),

@@ -3980,6 +3980,7 @@ dependencies = [
  "sha3",
  "thiserror 2.0.17",
  "tracing",
+ "vergen-git2",
 ]
 
 [[package]]

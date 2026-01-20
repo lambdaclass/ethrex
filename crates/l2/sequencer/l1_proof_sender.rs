@@ -4,11 +4,10 @@ use std::{
     path::PathBuf,
 };
 
+use aligned_sdk::gateway::provider::AggregationModeGatewayProvider;
 #[cfg(feature = "sp1")]
-use aligned_sdk::gateway::provider::{AggregationModeGatewayProvider, GatewayError};
-#[cfg(feature = "sp1")]
+use aligned_sdk::gateway::provider::GatewayError;
 use aligned_sdk::types::Network;
-#[cfg(feature = "sp1")]
 use alloy::signers::local::PrivateKeySigner;
 use ethrex_common::{Address, U256};
 use ethrex_guest_program::{ZKVM_RISC0_PROGRAM_VK, ZKVM_SP1_PROGRAM_ELF};
@@ -16,9 +15,7 @@ use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProverType},
 };
-#[cfg(feature = "sp1")]
-use ethrex_l2_rpc::signer::Signer;
-use ethrex_l2_rpc::signer::SignerHealth;
+use ethrex_l2_rpc::signer::{Signer, SignerHealth};
 use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch, get_last_verified_batch};
 #[cfg(feature = "metrics")]
 use ethrex_metrics::l2::metrics::METRICS;
@@ -79,9 +76,6 @@ pub struct L1ProofSender {
     sequencer_state: SequencerState,
     rollup_store: StoreRollup,
     l1_chain_id: u64,
-    /// The Aligned SDK Network type, only available when sp1 feature is enabled.
-    /// Not needed when sp1 is disabled since aligned mode requires sp1.
-    #[cfg(feature = "sp1")]
     network: Network,
     /// Directory where checkpoints are stored.
     checkpoints_dir: PathBuf,
@@ -100,8 +94,6 @@ pub struct L1ProofSenderHealth {
     proof_send_interval_ms: u64,
     sequencer_state: String,
     l1_chain_id: u64,
-    /// Only present when sp1 feature is enabled (aligned mode requires sp1)
-    #[cfg(feature = "sp1")]
     network: String,
 }
 
@@ -148,7 +140,6 @@ impl L1ProofSender {
             sequencer_state,
             rollup_store,
             l1_chain_id,
-            #[cfg(feature = "sp1")]
             network: aligned_cfg.network.clone(),
             checkpoints_dir,
             aligned_mode: aligned_cfg.aligned_mode,
@@ -270,7 +261,6 @@ impl L1ProofSender {
         Ok(())
     }
 
-    #[cfg(feature = "sp1")]
     async fn send_proof_to_aligned(
         &self,
         batch_number: u64,
@@ -299,73 +289,28 @@ impl L1ProofSender {
                 ProofSenderError::UnexpectedError(format!("Failed to create gateway: {e:?}"))
             })?;
 
-        let sp1_vk = self.sp1_vk.as_ref().ok_or_else(|| {
-            ProofSenderError::UnexpectedError("SP1 verifying key not initialized".to_string())
-        })?;
-
         for batch_proof in batch_proofs {
             let prover_type = batch_proof.prover_type();
 
-            // Aligned mode only supports SP1 proofs
-            if prover_type != ProverType::SP1 {
-                warn!(
-                    ?prover_type,
-                    "Aligned mode only supports SP1 proofs, skipping"
-                );
-                return Err(ProofSenderError::AlignedUnsupportedProverType(
-                    prover_type.to_string(),
-                ));
-            }
-
-            let Some(proof_bytes) = batch_proof.compressed() else {
-                return Err(ProofSenderError::AlignedWrongProofFormat);
-            };
-
-            // Deserialize the proof from bincode format
-            let proof: SP1ProofWithPublicValues =
-                bincode::deserialize(&proof_bytes).map_err(|e| {
-                    ProofSenderError::UnexpectedError(format!(
-                        "Failed to deserialize SP1 proof: {e}"
-                    ))
-                })?;
-
-            // Get the nonce that will be used for this submission
-            let nonce = gateway
-                .get_nonce_for(sender_address.clone())
-                .await
-                .map_err(|e| ProofSenderError::AlignedGetNonceError(format!("{e:?}")))?
-                .data
-                .nonce;
-
-            info!(
-                ?prover_type,
-                ?batch_number,
-                ?nonce,
-                "Submitting proof to Aligned"
-            );
-
-            let result = gateway.submit_sp1_proof(&proof, sp1_vk).await;
-
-            match result {
-                Ok(response) => {
-                    info!(
-                        ?batch_number,
-                        ?nonce,
-                        task_id = ?response.data.task_id,
-                        "Submitted proof to Aligned"
+            match prover_type {
+                ProverType::SP1 => {
+                    self.submit_sp1_proof_to_aligned(
+                        &gateway,
+                        &sender_address,
+                        batch_number,
+                        batch_proof,
+                    )
+                    .await?;
+                }
+                // Future: Add risc0, zisk, etc. support here
+                _ => {
+                    warn!(
+                        ?prover_type,
+                        "Prover type not yet supported for Aligned, skipping"
                     );
-                }
-                Err(GatewayError::Api { status, message }) if message.contains("invalid") => {
-                    warn!("Proof is invalid, will be deleted: {message}");
-                    self.rollup_store
-                        .delete_proof_by_batch_and_type(batch_number, prover_type)
-                        .await?;
-                    return Err(ProofSenderError::AlignedSubmitProofError(
-                        GatewayError::Api { status, message },
+                    return Err(ProofSenderError::AlignedUnsupportedProverType(
+                        prover_type.to_string(),
                     ));
-                }
-                Err(e) => {
-                    return Err(ProofSenderError::AlignedSubmitProofError(e));
                 }
             }
         }
@@ -373,14 +318,82 @@ impl L1ProofSender {
         Ok(())
     }
 
-    #[cfg(not(feature = "sp1"))]
-    async fn send_proof_to_aligned(
+    #[cfg(feature = "sp1")]
+    async fn submit_sp1_proof_to_aligned(
         &self,
+        gateway: &AggregationModeGatewayProvider<PrivateKeySigner>,
+        sender_address: &str,
+        batch_number: u64,
+        batch_proof: &BatchProof,
+    ) -> Result<(), ProofSenderError> {
+        let prover_type = batch_proof.prover_type();
+
+        let sp1_vk = self.sp1_vk.as_ref().ok_or_else(|| {
+            ProofSenderError::UnexpectedError("SP1 verifying key not initialized".to_string())
+        })?;
+
+        let Some(proof_bytes) = batch_proof.compressed() else {
+            return Err(ProofSenderError::AlignedWrongProofFormat);
+        };
+
+        // Deserialize the proof from bincode format
+        let proof: SP1ProofWithPublicValues = bincode::deserialize(&proof_bytes).map_err(|e| {
+            ProofSenderError::UnexpectedError(format!("Failed to deserialize SP1 proof: {e}"))
+        })?;
+
+        // Get the nonce that will be used for this submission
+        let nonce = gateway
+            .get_nonce_for(sender_address.to_string())
+            .await
+            .map_err(|e| ProofSenderError::AlignedGetNonceError(format!("{e:?}")))?
+            .data
+            .nonce;
+
+        info!(
+            ?prover_type,
+            ?batch_number,
+            ?nonce,
+            "Submitting proof to Aligned"
+        );
+
+        let result = gateway.submit_sp1_proof(&proof, sp1_vk).await;
+
+        match result {
+            Ok(response) => {
+                info!(
+                    ?batch_number,
+                    ?nonce,
+                    task_id = ?response.data.task_id,
+                    "Submitted proof to Aligned"
+                );
+            }
+            Err(GatewayError::Api { status, message }) if message.contains("invalid") => {
+                warn!("Proof is invalid, will be deleted: {message}");
+                self.rollup_store
+                    .delete_proof_by_batch_and_type(batch_number, prover_type)
+                    .await?;
+                return Err(ProofSenderError::AlignedSubmitProofError(
+                    GatewayError::Api { status, message },
+                ));
+            }
+            Err(e) => {
+                return Err(ProofSenderError::AlignedSubmitProofError(e));
+            }
+        }
+
+        Ok(())
+    }
+
+    #[cfg(not(feature = "sp1"))]
+    async fn submit_sp1_proof_to_aligned(
+        &self,
+        _gateway: &AggregationModeGatewayProvider<PrivateKeySigner>,
+        _sender_address: &str,
         _batch_number: u64,
-        _batch_proofs: impl IntoIterator<Item = &BatchProof>,
+        _batch_proof: &BatchProof,
     ) -> Result<(), ProofSenderError> {
         Err(ProofSenderError::UnexpectedError(
-            "Aligned mode requires the 'sp1' feature to be enabled".to_string(),
+            "SP1 proofs require the 'sp1' feature to be enabled".to_string(),
         ))
     }
 
@@ -486,7 +499,6 @@ impl L1ProofSender {
             proof_send_interval_ms: self.proof_send_interval_ms,
             sequencer_state: format!("{:?}", self.sequencer_state.status().await),
             l1_chain_id: self.l1_chain_id,
-            #[cfg(feature = "sp1")]
             network: format!("{:?}", self.network),
         })))
     }

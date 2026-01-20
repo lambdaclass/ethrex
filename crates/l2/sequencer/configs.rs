@@ -1,4 +1,3 @@
-#[cfg(feature = "sp1")]
 use aligned_sdk::types::Network;
 use ethrex_common::{Address, U256};
 use ethrex_l2_rpc::signer::Signer;
@@ -103,9 +102,6 @@ pub struct AlignedConfig {
     pub aligned_mode: bool,
     pub aligned_verifier_interval_ms: u64,
     pub beacon_urls: Vec<Url>,
-    /// The aligned SDK Network type. Only available when sp1 feature is enabled
-    /// because aligned-sdk unconditionally depends on sp1-sdk.
-    #[cfg(feature = "sp1")]
     pub network: Network,
 }
 

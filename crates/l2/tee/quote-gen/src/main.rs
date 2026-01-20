@@ -3,11 +3,10 @@ mod sender;
 use configfs_tsm::create_tdx_quote;
 use ethrex_common::Bytes;
 use ethrex_common::utils::keccak;
-use ethrex_l2::sequencer::utils::get_git_commit_hash;
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofCalldata, ProverType},
-    utils::get_address_from_secret_key,
+    utils::{get_address_from_secret_key, get_git_commit_hash},
 };
 use ethrex_guest_program::input::ProgramInput;
 use secp256k1::{Message, SecretKey, generate_keypair, rand};

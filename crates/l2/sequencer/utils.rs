@@ -1,4 +1,3 @@
-#[cfg(feature = "sp1")]
 use aligned_sdk::types::Network;
 use ethrex_common::types::Block;
 use ethrex_common::types::batch::Batch;
@@ -21,9 +20,7 @@ use rand::Rng;
 use reqwest::Url;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
-use tracing::info;
-#[cfg(feature = "sp1")]
-use tracing::warn;
+use tracing::{info, warn};
 
 pub async fn sleep_random(sleep_amount: u64) {
     sleep(random_duration(sleep_amount)).await;
@@ -117,7 +114,6 @@ pub async fn get_needed_proof_types(
     Ok(needed_proof_types)
 }
 
-#[cfg(feature = "sp1")]
 pub fn resolve_aligned_network(network: &str) -> Network {
     match network {
         "devnet" => Network::Devnet,
@@ -190,11 +186,6 @@ where
     }
 
     Ok((blocks, fee_configs))
-}
-
-/// Returns the git commit hash of the current build.
-pub fn get_git_commit_hash() -> String {
-    env!("VERGEN_GIT_SHA").to_string()
 }
 
 pub fn batch_checkpoint_name(batch_number: u64) -> String {
