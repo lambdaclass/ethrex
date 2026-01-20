@@ -4138,6 +4138,7 @@ dependencies = [
  "ethrex-levm",
  "ethrex-p2p",
  "ethrex-rlp",
+ "ethrex-rpc",
  "ethrex-storage",
  "ethrex-trie",
  "hasher",
