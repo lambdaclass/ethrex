@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-01-20
+
+Adds rlp length function implementation for many types so they are not encoded twice: [#5951](https://github.com/lambdaclass/ethrex/pull/5951)
+
 ### 2026-01-19
 
 - Use FxHashset for access lists [#5864](https://github.com/lambdaclass/ethrex/pull/5864)
