@@ -9,25 +9,29 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+BENCH_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 INPUT_FILE=${1:-""}
-OUTPUT_DIR=${2:-"$REPO_ROOT/profiles/zisk"}
+OUTPUT_DIR=${2:-"$BENCH_ROOT/profiles/zisk"}
 TOP_ROI=${3:-25}  # Number of top functions to show
-ELF_PATH="${4:-$REPO_ROOT/crates/l2/prover/src/guest_program/src/zisk/target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program}"
+DESCRIPTION=${4:-""}  # Optional description for filename
+ELF_PATH="${5:-$REPO_ROOT/crates/l2/prover/src/guest_program/src/zisk/target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program}"
 
 if [ -z "$INPUT_FILE" ]; then
-    echo "Usage: $0 <input_file> [output_dir] [top_roi] [elf_path]"
+    echo "Usage: $0 <input_file> [output_dir] [top_roi] [description] [elf_path]"
     echo ""
     echo "Arguments:"
     echo "  input_file  - Path to the input .bin file (required)"
     echo "  output_dir  - Directory for stats output (default: profiles/zisk)"
     echo "  top_roi     - Number of top functions to display (default: 25)"
+    echo "  description  - Optional description for filename (sanitized: lowercase, underscores for spaces)"
     echo "  elf_path    - Path to ELF file (default: guest program output)"
     echo ""
     echo "Example:"
     echo "  $0 inputs/ethrex_mainnet_23769082_input.bin"
-    echo "  $0 inputs/block.bin profiles/zisk 50"
+    echo "  $0 inputs/block.bin profiles/zisk 50 'baseline'"
+    echo "  $0 inputs/block.bin profiles/zisk 50 'decode_child_opt'"
     exit 1
 fi
 
@@ -46,13 +50,24 @@ fi
 
 mkdir -p "$OUTPUT_DIR"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-STATS_FILE="$OUTPUT_DIR/stats_$TIMESTAMP.txt"
+
+# Add description to filename if provided
+if [ -n "$DESCRIPTION" ]; then
+    # Sanitize description: lowercase, replace spaces with underscores, remove special chars
+    SANITIZED=$(echo "$DESCRIPTION" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -cd '[:alnum:]_')
+    STATS_FILE="$OUTPUT_DIR/stats_${TIMESTAMP}_${SANITIZED}.txt"
+else
+    STATS_FILE="$OUTPUT_DIR/stats_$TIMESTAMP.txt"
+fi
 
 echo "Profiling ZisK execution..."
 echo "Input: $INPUT_FILE"
 echo "ELF: $ELF_PATH"
 echo "Output: $STATS_FILE"
 echo "Top functions: $TOP_ROI"
+if [ -n "$DESCRIPTION" ]; then
+    echo "Description: $DESCRIPTION"
+fi
 echo ""
 
 # Run ziskemu with full statistics

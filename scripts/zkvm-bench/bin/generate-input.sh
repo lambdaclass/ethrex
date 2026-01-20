@@ -9,11 +9,12 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+BENCH_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 BLOCK=${1:-""}
 RPC_URL=${2:-"${RPC_URL:-http://localhost:8545}"}
-OUTPUT_DIR=${3:-"$SCRIPT_DIR/inputs"}
+OUTPUT_DIR=${3:-"$BENCH_ROOT/inputs"}
 ETHREX_REPLAY_PATH=${ETHREX_REPLAY_PATH:-"$REPO_ROOT/../ethrex-replay"}
 
 if [ -z "$BLOCK" ]; then

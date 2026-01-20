@@ -39,23 +39,23 @@ make help                                      # Show all commands
 
 ## Quick Start (Scripts)
 
-You can also use the scripts directly:
+You can also use the scripts directly (located in `bin/`):
 
 ```bash
 # Generate input
-./generate-input.sh 23769082 $RPC_URL
+bin/generate-input.sh 23769082 $RPC_URL
 
 # Build guest program
-./build.sh zisk     # or sp1
+bin/build.sh zisk     # or sp1
 
 # Profile execution
-./profile-zisk.sh inputs/ethrex_mainnet_23769082_input.bin
+bin/profile-zisk.sh inputs/ethrex_mainnet_23769082_input.bin
 
 # Compare results
-python compare.py profiles/zisk/stats_baseline.txt profiles/zisk/stats_current.txt
+python bin/compare.py profiles/zisk/stats_baseline.txt profiles/zisk/stats_current.txt
 
 # Convert to JSON for tooling
-./to-json.sh profiles/zisk/stats_latest.txt
+bin/to-json.sh profiles/zisk/stats_latest.txt
 ```
 
 ## Scripts
@@ -65,11 +65,11 @@ python compare.py profiles/zisk/stats_baseline.txt profiles/zisk/stats_current.t
 Generate block execution inputs using ethrex-replay.
 
 ```bash
-./generate-input.sh <block_number> [rpc_url] [output_dir]
+bin/generate-input.sh <block_number> [rpc_url] [output_dir]
 
 # Examples
-./generate-input.sh 23769082
-./generate-input.sh 23769082 $RPC_URL inputs/
+bin/generate-input.sh 23769082
+bin/generate-input.sh 23769082 $RPC_URL inputs/
 ```
 
 Requires ethrex-replay (set `ETHREX_REPLAY_PATH` env var if not at `../ethrex-replay`).
@@ -79,9 +79,9 @@ Requires ethrex-replay (set `ETHREX_REPLAY_PATH` env var if not at `../ethrex-re
 Build SP1 or ZisK guest programs.
 
 ```bash
-./build.sh sp1      # Build SP1 guest
-./build.sh zisk     # Build ZisK guest
-./build.sh both     # Build both
+bin/build.sh sp1      # Build SP1 guest
+bin/build.sh zisk     # Build ZisK guest
+bin/build.sh both     # Build both
 ```
 
 ### profile-sp1.sh
@@ -89,10 +89,10 @@ Build SP1 or ZisK guest programs.
 Generate SP1 flamegraph profiles using tracing.
 
 ```bash
-./profile-sp1.sh <input_file> [output_dir] [sample_rate]
+bin/profile-sp1.sh <input_file> [output_dir] [sample_rate] [description]
 
 # Example
-./profile-sp1.sh inputs/block.bin profiles/sp1 100
+bin/profile-sp1.sh inputs/block.bin profiles/sp1 100 "baseline"
 ```
 
 Output: JSON trace file viewable with `samply load <trace.json>`
@@ -102,10 +102,10 @@ Output: JSON trace file viewable with `samply load <trace.json>`
 Generate ZisK execution statistics using ziskemu.
 
 ```bash
-./profile-zisk.sh <input_file> [output_dir] [top_roi] [elf_path]
+bin/profile-zisk.sh <input_file> [output_dir] [top_roi] [description] [elf_path]
 
 # Example
-./profile-zisk.sh inputs/block.bin profiles/zisk 50
+bin/profile-zisk.sh inputs/block.bin profiles/zisk 50 "optimization_1"
 ```
 
 Output: Text file with cycle counts, cost distribution, and top functions.
@@ -115,11 +115,11 @@ Output: Text file with cycle counts, cost distribution, and top functions.
 Run benchmarks on mainnet blocks using ethrex-replay.
 
 ```bash
-./run-bench.sh <zkvm> <block_number> [rpc_url] [action]
+bin/run-bench.sh <zkvm> <block_number> [rpc_url] [action]
 
 # Examples
-./run-bench.sh zisk 23769082 http://localhost:8545 execute
-./run-bench.sh sp1 23769082 $RPC_URL prove
+bin/run-bench.sh zisk 23769082 http://localhost:8545 execute
+bin/run-bench.sh sp1 23769082 $RPC_URL prove
 ```
 
 Requires ethrex-replay repository (set `ETHREX_REPLAY_PATH` env var).
@@ -129,10 +129,10 @@ Requires ethrex-replay repository (set `ETHREX_REPLAY_PATH` env var).
 Compare benchmark results between runs.
 
 ```bash
-python compare.py <baseline.txt> <current.txt>
+python bin/compare.py <baseline.txt> <current.txt>
 
 # Example
-python compare.py profiles/zisk/stats_before.txt profiles/zisk/stats_after.txt
+python bin/compare.py profiles/zisk/stats_before.txt profiles/zisk/stats_after.txt
 ```
 
 Shows:
@@ -146,10 +146,10 @@ Shows:
 Convert profiling output to JSON for AI analysis.
 
 ```bash
-./to-json.sh <input_file> [output_file]
+bin/to-json.sh <input_file> [output_file]
 
 # Example
-./to-json.sh profiles/zisk/stats.txt
+bin/to-json.sh profiles/zisk/stats.txt
 ```
 
 ## Workflow
@@ -250,7 +250,7 @@ See `zkvm_landscape.md` and `zkvm_optimization_workflow.md` for detailed patch a
 
 ## Documentation
 
-- [zkvm_optimization_workflow.md](../../zkvm_optimization_workflow.md) - Full workflow documentation
-- [zkvm_landscape.md](../../zkvm_landscape.md) - Patch registry and zkVM details
+- [zkvm_optimization_workflow.md](docs/zkvm_optimization_workflow.md) - Full workflow documentation
+- [zkvm_landscape.md](docs/zkvm_landscape.md) - Patch registry and zkVM details
 - [ZisK Docs](https://0xpolygonhermez.github.io/zisk/)
 - [SP1 Docs](https://docs.succinct.xyz/docs/sp1/introduction)

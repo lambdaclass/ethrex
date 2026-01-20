@@ -5,7 +5,7 @@
 #   make bench ZKVM=zisk BLOCK=23769082 RPC_URL=http://localhost:8545
 #   make input BLOCK=23769082
 #   make build ZKVM=zisk
-#   make profile ZKVM=zisk BLOCK=23769082
+#   make profile ZKVM=zisk BLOCK=23769082 TITLE="optimization_attempt_1"
 #   make compare BASELINE=stats_before.txt CURRENT=stats_after.txt
 
 # ==============================================================================
@@ -16,9 +16,11 @@ ZKVM ?= zisk
 BLOCK ?=
 RPC_URL ?= http://localhost:8545
 TOP_ROI ?= 25
+TITLE ?=
 
 # Directories
 SCRIPT_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+BIN_DIR := $(SCRIPT_DIR)/bin
 REPO_ROOT := $(abspath $(SCRIPT_DIR)/../..)
 INPUT_DIR := $(SCRIPT_DIR)/inputs
 PROFILE_DIR := $(SCRIPT_DIR)/profiles/$(ZKVM)
@@ -26,8 +28,6 @@ GUEST_DIR := $(REPO_ROOT)/crates/l2/prover/src/guest_program/src
 
 # Derived paths
 INPUT_FILE := $(INPUT_DIR)/ethrex_mainnet_$(BLOCK)_input.bin
-TIMESTAMP := $(shell date +%Y%m%d_%H%M%S)
-STATS_FILE := $(PROFILE_DIR)/stats_$(BLOCK)_$(TIMESTAMP).txt
 
 # ELF paths
 ZISK_ELF := $(GUEST_DIR)/zisk/target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program
@@ -61,11 +61,12 @@ help:
 	@echo "  BLOCK    - Block number (required for input/profile/bench)"
 	@echo "  RPC_URL  - RPC endpoint (default: http://localhost:8545)"
 	@echo "  TOP_ROI  - Top functions to show (default: 25)"
+	@echo "  TITLE    - Short description for profile filename"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make bench ZKVM=zisk BLOCK=23769082 RPC_URL=\$$ALCHEMY_URL"
-	@echo "  make profile ZKVM=zisk BLOCK=23769082"
-	@echo "  make compare BASELINE=profiles/zisk/stats_before.txt CURRENT=profiles/zisk/stats_after.txt"
+	@echo "  make profile ZKVM=zisk BLOCK=23769082 TITLE=avoid_clone"
+	@echo "  make compare BASELINE=profiles/zisk/stats_baseline.txt CURRENT=profiles/zisk/stats_opt.txt"
 
 # ==============================================================================
 # Full Workflow
@@ -78,10 +79,8 @@ bench: _check-block input build profile
 	@echo "Benchmark complete for block $(BLOCK)"
 	@echo "=========================================="
 	@echo ""
-	@echo "Profile: $(STATS_FILE)"
-	@echo ""
 	@echo "To compare with a baseline:"
-	@echo "  make compare BASELINE=<baseline.txt> CURRENT=$(STATS_FILE)"
+	@echo "  make compare BASELINE=<baseline.txt> CURRENT=<latest_profile>"
 
 # ==============================================================================
 # Individual Steps
@@ -94,30 +93,27 @@ input: _check-block
 		echo "Input exists: $(INPUT_FILE)"; \
 	else \
 		echo "Generating input for block $(BLOCK)..."; \
-		./generate-input.sh $(BLOCK) $(RPC_URL) $(INPUT_DIR); \
+		$(BIN_DIR)/generate-input.sh $(BLOCK) $(RPC_URL) $(INPUT_DIR); \
 	fi
 
 .PHONY: build
 build:
 	@echo "Building $(ZKVM) guest program..."
-	@./build.sh $(ZKVM)
+	@$(BIN_DIR)/build.sh $(ZKVM)
 
 .PHONY: profile
 profile: _check-block _check-input
 	@mkdir -p $(PROFILE_DIR)
 	@echo "Profiling $(ZKVM) execution for block $(BLOCK)..."
-	@echo "Output: $(STATS_FILE)"
 	@echo ""
 ifeq ($(ZKVM),zisk)
-	@./profile-zisk.sh $(INPUT_FILE) $(PROFILE_DIR) $(TOP_ROI) 2>&1 | tee $(STATS_FILE)
+	@$(BIN_DIR)/profile-zisk.sh $(INPUT_FILE) $(PROFILE_DIR) $(TOP_ROI) "$(TITLE)"
 else ifeq ($(ZKVM),sp1)
-	@./profile-sp1.sh $(INPUT_FILE) $(PROFILE_DIR)
+	@$(BIN_DIR)/profile-sp1.sh $(INPUT_FILE) $(PROFILE_DIR) 100 "$(TITLE)"
 else
 	@echo "Error: Unknown ZKVM=$(ZKVM). Use 'zisk' or 'sp1'."
 	@exit 1
 endif
-	@echo ""
-	@echo "Profile saved: $(STATS_FILE)"
 
 .PHONY: compare
 compare:
@@ -128,7 +124,7 @@ compare:
 		echo "  make compare BASELINE=profiles/zisk/stats_before.txt CURRENT=profiles/zisk/stats_after.txt"; \
 		exit 1; \
 	fi
-	@python3 compare.py $(BASELINE) $(CURRENT)
+	@python3 $(BIN_DIR)/compare.py $(BASELINE) $(CURRENT)
 
 # ==============================================================================
 # Utilities
@@ -150,12 +146,12 @@ to-json:
 		echo "Usage: make to-json FILE=<stats.txt>"; \
 		exit 1; \
 	fi
-	@./to-json.sh $(FILE)
+	@$(BIN_DIR)/to-json.sh $(FILE)
 
 .PHONY: clean
 clean:
 	@echo "Removing generated files..."
-	@rm -rf $(SCRIPT_DIR)/inputs
+	@rm -rf $(INPUT_DIR)
 	@rm -rf $(SCRIPT_DIR)/profiles
 	@rm -rf $(SCRIPT_DIR)/benchmarks
 	@echo "Done."

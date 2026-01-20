@@ -5,8 +5,8 @@ You are an autonomous agent tasked with optimizing the ethrex zkVM guest program
 ## Context Files
 
 Before starting, read these files to understand the codebase:
-- `scripts/zkvm-bench/zkvm_landscape.md` — Patch registry, crypto operation mapping, known gaps
-- `scripts/zkvm-bench/zkvm_optimization_workflow.md` — Optimization principles and workflow details
+- `scripts/zkvm-bench/docs/zkvm_landscape.md` — Patch registry, crypto operation mapping, known gaps
+- `scripts/zkvm-bench/docs/zkvm_optimization_workflow.md` — Optimization principles and workflow details
 - `scripts/zkvm-bench/README.md` — Benchmarking tools documentation
 
 ## Working Directory
@@ -28,16 +28,16 @@ cd /path/to/ethrex
 2. **Build and profile both backends:**
    ```bash
    # ZisK baseline
-   make -C scripts/zkvm-bench bench ZKVM=zisk BLOCK=23769082
+   make -C scripts/zkvm-bench bench ZKVM=zisk BLOCK=23769082 TITLE="baseline"
 
    # SP1 baseline
-   make -C scripts/zkvm-bench bench ZKVM=sp1 BLOCK=23769082
+   make -C scripts/zkvm-bench bench ZKVM=sp1 BLOCK=23769082 TITLE="baseline"
    ```
 
 3. **Save baseline profiles:**
    ```bash
-   cp scripts/zkvm-bench/profiles/zisk/stats_23769082_*.txt scripts/zkvm-bench/profiles/zisk/baseline.txt
-   cp scripts/zkvm-bench/profiles/sp1/trace_*.json scripts/zkvm-bench/profiles/sp1/baseline.json
+   # (Optional) If you want a specific "baseline.txt" copy, though the timestamped/titled one is usually sufficient.
+   cp scripts/zkvm-bench/profiles/zisk/stats_*_baseline.txt scripts/zkvm-bench/profiles/zisk/baseline.txt
    ```
 
 4. **Convert to JSON for analysis:**
@@ -121,16 +121,16 @@ Based on your analysis, implement ONE optimization at a time:
    make -C scripts/zkvm-bench build ZKVM=zisk
    ```
 
-2. **Profile again:**
+2. **Profile again (with description):**
    ```bash
-   make -C scripts/zkvm-bench profile ZKVM=zisk BLOCK=23769082
+   make -C scripts/zkvm-bench profile ZKVM=zisk BLOCK=23769082 TITLE="optimization_name"
    ```
 
 3. **Compare with baseline:**
    ```bash
    make -C scripts/zkvm-bench compare \
      BASELINE=scripts/zkvm-bench/profiles/zisk/baseline.txt \
-     CURRENT=scripts/zkvm-bench/profiles/zisk/stats_23769082_*.txt
+     CURRENT=scripts/zkvm-bench/profiles/zisk/stats_*_optimization_name.txt
    ```
 
 4. **Evaluate results:**
@@ -140,12 +140,14 @@ Based on your analysis, implement ONE optimization at a time:
 
 5. **If improvement, update baseline:**
    ```bash
-   cp scripts/zkvm-bench/profiles/zisk/stats_23769082_*.txt scripts/zkvm-bench/profiles/zisk/baseline.txt
+   cp scripts/zkvm-bench/profiles/zisk/stats_*_optimization_name.txt scripts/zkvm-bench/profiles/zisk/baseline.txt
    ```
 
 ### Phase 5: Report
 
-Create a new folder with a name and timestamp for the implemented optimization, observations that led to it and results. Make a final section summarizing learnings and important information for future optimizations.
+1. Update `scripts/zkvm-bench/logbook.md` with a new entry for the optimization.
+2. Include the Date, ID, Description, Impact, Result, and Commit hash (if available).
+3. Create a detailed report in `scripts/zkvm-bench/reports/YYYYMMDD_optimization_name.md` if the optimization is significant or requires detailed analysis.
 
 You can read previous logs to take advantage of previous iterations.
 
@@ -181,62 +183,52 @@ You can read previous logs to take advantage of previous iterations.
 - **RISC0 Keccak/BLS**: Patches require "unstable" feature, not production-ready
 - **ZisK P256**: No patch exists for P256VERIFY precompile
 
-## Output Format
-
-After each optimization cycle, report:
-
-```
-## Optimization Report
-
-### Change
-[Brief description of what was changed]
-
-### Files Modified
-- path/to/file1.rs
-- path/to/file2.rs
-
-### Results
-
-| Metric | Before | After | Change |
-|--------|--------|-------|--------|
-| Total Steps | X | Y | -Z% |
-| Top Function | name (X%) | name (Y%) | ... |
-
-### Analysis
-[Why did this help/not help]
-
-### Next Steps
-[What to try next based on new profile]
-```
-
-## Example Session
-
-```
-1. Baseline: 150M steps, top function is tiny_keccak::Keccak::update at 25%
-2. Analysis: Keccak should be using precompile but isn't
-3. Fix: Verify tiny-keccak patch in guest Cargo.toml
-4. Result: 95M steps (-37%), top function now syscall_keccak_f at 18%
-5. Next: memcpy is now 22%, investigate cloning in transaction processing
-```
-
 ## Commands Reference
 
+### Using Makefile (Recommended)
+
 ```bash
-# Full workflow
-make -C scripts/zkvm-bench bench ZKVM=zisk BLOCK=23769082 RPC_URL=$RPC
+# Full workflow with description
+make -C scripts/zkvm-bench bench ZKVM=zisk BLOCK=23769082 RPC_URL=$RPC TITLE="my_optimization"
 
 # Individual steps
 make -C scripts/zkvm-bench input BLOCK=23769082 RPC_URL=$RPC
 make -C scripts/zkvm-bench build ZKVM=zisk
-make -C scripts/zkvm-bench profile ZKVM=zisk BLOCK=23769082
+make -C scripts/zkvm-bench profile ZKVM=zisk BLOCK=23769082 TITLE="my_optimization"
 make -C scripts/zkvm-bench compare BASELINE=a.txt CURRENT=b.txt
 
 # Utilities
 make -C scripts/zkvm-bench list-inputs
 make -C scripts/zkvm-bench list-profiles ZKVM=zisk
 make -C scripts/zkvm-bench to-json FILE=stats.txt
+```
 
-# Direct ziskemu for detailed analysis
+### Direct Script Usage (Advanced)
+
+The scripts are located in `scripts/zkvm-bench/bin/`.
+
+**profile-zisk.sh Arguments:**
+```bash
+bin/profile-zisk.sh <input_file> [output_dir] [top_roi] [description] [elf_path]
+```
+
+**Examples:**
+```bash
+# Basic profile
+scripts/zkvm-bench/bin/profile-zisk.sh scripts/zkvm-bench/inputs/block.bin
+
+# With description and custom ROI
+scripts/zkvm-bench/bin/profile-zisk.sh scripts/zkvm-bench/inputs/block.bin scripts/zkvm-bench/profiles/zisk 50 "optimization_attempt_1"
+```
+
+**Description Sanitization:**
+Descriptions are automatically sanitized (lowercase, spaces to underscores, alphanumeric only).
+- `"My Optimization #1"` → `my_optimization_1`
+
+### Direct ZisK Emulator
+
+For detailed analysis beyond the scripts:
+```bash
 ziskemu -e <ELF> -i <INPUT> -X -S -D -T 50
 ```
 
@@ -246,4 +238,4 @@ ziskemu -e <ELF> -i <INPUT> -X -S -D -T 50
 2. **One optimization per commit** for easy bisection
 3. **Never skip validation** — always compare before/after
 4. **Preserve correctness** — a faster wrong answer is worthless
-5. **Document findings** — update `zkvm_landscape.md` with new discoveries
+5. **Document findings** — update `zkvm_landscape.md` and `logbook.md` with new discoveries

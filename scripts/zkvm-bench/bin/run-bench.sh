@@ -9,7 +9,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+BENCH_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 ZKVM=${1:-zisk}  # Default to ZisK (most optimized)
 BLOCK_NUM=${2:-""}
@@ -37,7 +38,7 @@ if [ -z "$BLOCK_NUM" ]; then
     exit 1
 fi
 
-OUTPUT_DIR="$REPO_ROOT/benchmarks/$ZKVM/$(date +%Y%m%d)"
+OUTPUT_DIR="$BENCH_ROOT/benchmarks/$ZKVM/$(date +%Y%m%d)"
 mkdir -p "$OUTPUT_DIR"
 
 echo "Running $ZKVM $ACTION on block $BLOCK_NUM"
