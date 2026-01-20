@@ -13,6 +13,7 @@
 
 ### 2026-01-13
 
+- Remove needless allocs in CALLDATACOPY/CODECOPY/EXTCODECOPY [#5810](https://github.com/lambdaclass/ethrex/pull/5810)
 - Inline common opcodes [#5761](https://github.com/lambdaclass/ethrex/pull/5761)
 - Improve ecrecover precompile by removing heap allocs and conversions [#5709](https://github.com/lambdaclass/ethrex/pull/5709)
 
