@@ -4,41 +4,44 @@
 //!
 //! ## Overview
 //!
-//! This crate implements the Ethereum P2P networking stack:
-//! - **Discovery**: Node discovery using discv4 (and experimental discv5)
-//! - **RLPx**: Encrypted transport protocol for peer communication
-//! - **eth Protocol**: Block and transaction propagation
-//! - **snap Protocol**: Fast state synchronization
+//! This crate implements the complete Ethereum P2P networking stack:
+//! - **Discovery**: Node discovery using discv4 (stable) and discv5 (experimental)
+//! - **RLPx**: ECIES-encrypted transport protocol for peer communication
+//! - **eth Protocol**: Block and transaction propagation (eth/68, eth/69)
+//! - **snap Protocol**: Fast state synchronization (snap/1)
 //!
 //! ## Architecture
 //!
 //! ```text
 //! ┌─────────────────────────────────────────────────────────────┐
 //! │                      Network Layer                           │
-//! │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
-//! │  │   discv4    │  │    RLPx     │  │   Peer Handler      │ │
-//! │  │ (Discovery) │  │ (Transport) │  │   (Messages)        │ │
-//! │  └─────────────┘  └─────────────┘  └─────────────────────┘ │
+//! │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────┐ │
+//! │  │    Discovery    │  │     RLPx        │  │ Peer Handler│ │
+//! │  │  (discv4/v5)    │  │   (Transport)   │  │  (Messages) │ │
+//! │  └─────────────────┘  └─────────────────┘  └─────────────┘ │
 //! └─────────────────────────────────────────────────────────────┘
 //!                              │
-//!           ┌──────────────────┼──────────────────┐
-//!           ▼                  ▼                  ▼
+//!          ┌───────────────────┼───────────────────┐
+//!          ▼                   ▼                   ▼
 //! ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-//! │   Sync Manager  │ │ TX Broadcaster  │ │  Snap Sync      │
+//! │   Sync Manager  │ │ TX Broadcaster  │ │ Snap/Full Sync  │
 //! └─────────────────┘ └─────────────────┘ └─────────────────┘
 //! ```
 //!
-//! ## Key Components
+//! ## Modules
 //!
-//! - [`network`]: Network initialization and peer management
-//! - [`peer_handler`]: Message handling for connected peers
-//! - [`sync_manager`]: Block synchronization coordination
-//! - [`sync`]: Full and snap sync implementations
-//! - [`tx_broadcaster`]: Transaction pool broadcasting
-//! - [`discv4`]: Node discovery protocol v4
-//! - [`rlpx`]: RLPx encrypted transport
+//! | Module | Description |
+//! |--------|-------------|
+//! | [`network`] | Network initialization, P2P context, and peer management |
+//! | [`peer_handler`] | Message handling for connected peers |
+//! | [`sync_manager`] | High-level sync coordination and FCU handling |
+//! | [`sync`] | Full and snap sync implementations with healing |
+//! | [`tx_broadcaster`] | Transaction pool broadcasting to peers |
+//! | [`discv4`] | Node discovery protocol v4 (Kademlia-based) |
+//! | [`rlpx`] | RLPx encrypted transport (ECIES + AES-CTR) |
+//! | [`types`] | P2P-specific types (Node, endpoint info) |
 //!
-//! ## Usage
+//! ## Quick Start
 //!
 //! ```ignore
 //! use ethrex_p2p::{start_network, SyncManager};
@@ -53,18 +56,34 @@
 //!     blockchain,
 //! ).await?;
 //!
-//! // Start synchronization
-//! sync_manager.start_sync().await?;
+//! // Trigger sync to a specific head
+//! sync_manager.sync_to_head(block_hash);
+//!
+//! // Check current sync mode
+//! let mode = sync_manager.sync_mode();  // Full or Snap
 //! ```
 //!
-//! ## Protocols
+//! ## Wire Protocols
 //!
-//! - **eth/68**: Block and transaction exchange
-//! - **snap/1**: State snapshot synchronization
+//! | Protocol | Version | Description |
+//! |----------|---------|-------------|
+//! | eth | 68, 69 | Block and transaction exchange |
+//! | snap | 1 | State snapshot synchronization |
 //!
-//! ## Features
+//! ## Sync Modes
 //!
-//! - `experimental-discv5`: Enable discv5 node discovery (experimental)
+//! - **Full Sync**: Download and execute all blocks sequentially
+//! - **Snap Sync**: Download state snapshots, then full sync recent blocks (~10,000)
+//!
+//! ## Feature Flags
+//!
+//! | Feature | Description |
+//! |---------|-------------|
+//! | `c-kzg` | KZG commitment support (EIP-4844) - default |
+//! | `sync-test` | Testing utilities for sync operations |
+//! | `l2` | L2 rollup support with additional protocols |
+//! | `metrics` | Prometheus metrics collection |
+//! | `experimental-discv5` | Enable discv5 node discovery |
 
 pub mod discv4;
 #[cfg(feature = "experimental-discv5")]

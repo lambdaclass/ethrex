@@ -1,22 +1,36 @@
-//! # ethrex Blockchain
+//! # ethrex-blockchain
 //!
 //! Core blockchain logic for the ethrex Ethereum client.
 //!
 //! ## Overview
 //!
-//! This module implements the blockchain layer, which is responsible for:
+//! This crate implements the blockchain layer responsible for:
 //! - Block validation and execution
 //! - State management and transitions
 //! - Fork choice rule implementation
 //! - Transaction mempool management
 //! - Payload building for block production
+//! - Witness generation for zkVM proving
 //!
 //! ## Key Components
 //!
 //! - [`Blockchain`]: Main interface for blockchain operations
-//! - [`Mempool`]: Transaction pool for pending transactions
-//! - [`fork_choice`]: Fork choice rule implementation
-//! - [`payload`]: Block payload building for consensus
+//! - [`mempool::Mempool`]: Transaction pool with sender-nonce indexing
+//! - [`fork_choice`]: Fork choice rule implementation (LMD-GHOST)
+//! - [`payload`]: Block payload building for validators
+//! - [`vm::StoreVmDatabase`]: Database adapter connecting storage to EVM
+//!
+//! ## Modules
+//!
+//! | Module | Description |
+//! |--------|-------------|
+//! | [`error`] | Error types (`ChainError`, `MempoolError`) |
+//! | [`fork_choice`] | Fork choice rule application |
+//! | [`mempool`] | Transaction pool management |
+//! | [`payload`] | Block building for validators |
+//! | [`constants`] | Yellow Paper gas constants |
+//! | [`vm`] | Storage-to-EVM database adapter |
+//! | [`tracing`] | Transaction call tracing |
 //!
 //! ## Block Execution Flow
 //!
@@ -24,23 +38,45 @@
 //! 1. Receive block from consensus/P2P
 //! 2. Validate block header (parent, timestamp, gas limit, etc.)
 //! 3. Execute transactions in EVM
-//! 4. Verify state root matches header
-//! 5. Store block and update canonical chain
+//! 4. Validate post-execution state (gas, receipts, state root)
+//! 5. Apply state updates (merkleization)
+//! 6. Store block and update canonical chain
 //! ```
 //!
-//! ## Usage
+//! ## Quick Start
 //!
 //! ```ignore
-//! use ethrex_blockchain::Blockchain;
+//! use ethrex_blockchain::{Blockchain, BlockchainOptions};
 //!
+//! // Create blockchain instance
 //! let blockchain = Blockchain::new(store, BlockchainOptions::default());
 //!
 //! // Add a block
-//! blockchain.add_block(&block)?;
+//! blockchain.add_block(&block).await?;
 //!
 //! // Add transaction to mempool
-//! blockchain.add_transaction_to_mempool(tx).await?;
+//! blockchain.mempool.add_transaction(hash, sender, tx);
+//!
+//! // Build a block for validators
+//! let payload = blockchain.build_payload(block)?;
 //! ```
+//!
+//! ## Feature Flags
+//!
+//! | Feature | Description |
+//! |---------|-------------|
+//! | `secp256k1` | ECDSA signature verification (default) |
+//! | `c-kzg` | KZG commitments for EIP-4844 |
+//! | `metrics` | Prometheus metrics collection |
+//! | `sp1` | Succinct SP1 zkVM support |
+//! | `risc0` | RISC Zero zkVM support |
+//! | `zisk` | Polygon ZisK zkVM support |
+//!
+//! ## L1/L2 Support
+//!
+//! The crate supports both L1 and L2 execution modes via [`BlockchainType`]:
+//! - **L1**: Standard Ethereum execution
+//! - **L2**: Rollup mode with custom fee configuration
 
 pub mod constants;
 pub mod error;
