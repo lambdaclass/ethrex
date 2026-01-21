@@ -86,7 +86,7 @@ use mempool::Mempool;
 use payload::PayloadOrTask;
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{
     Arc, Mutex, RwLock,
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -897,6 +897,7 @@ impl Blockchain {
 
         let mut blockhash_opcode_references = HashMap::new();
         let mut codes = Vec::new();
+        let mut seen_code_hashes = BTreeSet::new();
 
         for (i, block) in blocks.iter().enumerate() {
             let parent_hash = block.header.parent_hash;
@@ -1014,6 +1015,11 @@ impl Blockchain {
                 })?
                 .iter()
             {
+                // Deduplicate bytecodes by their code hash to avoid redundant allocations
+                if !seen_code_hashes.insert(*code_hash) {
+                    continue;
+                }
+
                 let code = self
                     .storage
                     .get_account_code(*code_hash)
@@ -1044,8 +1050,7 @@ impl Blockchain {
                     ChainError::WitnessGeneration("Failed to lock storage trie witness".to_string())
                 })?;
                 let witness = std::mem::take(&mut *witness);
-                let witness = witness.into_values().collect::<Vec<_>>();
-                used_trie_nodes.extend_from_slice(&witness);
+                used_trie_nodes.extend(witness.into_values());
                 touched_account_storage_slots.entry(address).or_default();
             }
 
@@ -1073,9 +1078,7 @@ impl Blockchain {
             current_trie_witness = new_state_trie_witness;
         }
 
-        used_trie_nodes.extend_from_slice(&Vec::from_iter(
-            accumulated_state_trie_witness.into_values(),
-        ));
+        used_trie_nodes.extend(accumulated_state_trie_witness.into_values());
 
         // If the witness is empty at least try to store the root
         if used_trie_nodes.is_empty()
