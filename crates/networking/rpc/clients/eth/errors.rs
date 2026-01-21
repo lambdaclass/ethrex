@@ -8,8 +8,11 @@ use ethrex_common::{FromStrRadixErr, types::transaction::GenericTransactionError
 pub enum RpcRequestError {
     #[error("{0}")]
     SerdeJSONError(#[from] serde_json::Error),
-    #[error("{0}")]
-    RPCError(String),
+    #[error("{method}: {message}")]
+    RPCError {
+        method: &'static str,
+        message: String,
+    },
     #[error("{0}")]
     ParseIntError(#[from] std::num::ParseIntError),
     #[error("{0}")]
