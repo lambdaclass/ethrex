@@ -640,8 +640,9 @@ impl EncodedTrie {
                     if let Some(child_index) = child_index {
                         let child_hash = trie.get_hash(*child_index)?;
                         let (_, item1) = trie.get_two_encoded_items(index)?;
-                        let encoded_child_hash = decode_bytes(item1)?.0;
-                        if child_hash.as_ref() != encoded_child_hash {
+                        // Use decode_child to handle both hashes (bytes) and inline nodes (lists)
+                        let encoded_child_hash = decode_child(item1);
+                        if child_hash != encoded_child_hash {
                             return Err(EncodedTrieError::AuthFailed(
                                 "invalid encoded child hash for extension node",
                             ));
@@ -658,8 +659,9 @@ impl EncodedTrie {
                         .filter_map(|(i, c)| c.flatten().map(|c| (i, c)))
                     {
                         let child_hash = trie.get_hash(child_index)?;
-                        let encoded_child_hash = decode_bytes(encoded_items[i])?.0;
-                        if child_hash.as_ref() != encoded_child_hash {
+                        // Use decode_child to handle both hashes (bytes) and inline nodes (lists)
+                        let encoded_child_hash = decode_child(encoded_items[i]);
+                        if child_hash != encoded_child_hash {
                             return Err(EncodedTrieError::AuthFailed(
                                 "invalid encoded child hash for branch node",
                             ));
@@ -1075,6 +1077,78 @@ mod test {
                 (Just(kvs), shuffle)
             })
         })
+    }
+
+    #[test]
+    fn test_rkyv_roundtrip_then_get() {
+        use rkyv::rancor::Error;
+
+        // Build a trie with some data
+        let mut trie = Trie::new_temp();
+        let kv = vec![
+            (vec![1, 2, 3], vec![4, 5, 6]),
+            (vec![1, 2, 4], vec![7, 8, 9]),
+            (vec![2, 3, 4], vec![10, 11, 12]),
+        ];
+
+        for (key, value) in kv.iter() {
+            trie.insert(key.clone(), value.clone()).unwrap();
+        }
+
+        // Convert to EncodedTrie
+        let root_node = trie.get_root_node(Nibbles::default()).unwrap();
+        let encoded_trie = EncodedTrie::try_from(&(*root_node)).unwrap();
+
+        // Serialize with rkyv
+        let bytes = rkyv::to_bytes::<Error>(&encoded_trie).unwrap();
+
+        // Deserialize with rkyv
+        let deserialized: EncodedTrie = rkyv::from_bytes::<EncodedTrie, Error>(&bytes).unwrap();
+
+        // Verify get() works on deserialized trie
+        for (key, value) in kv.iter() {
+            let result = deserialized.get(key).unwrap();
+            assert_eq!(result, Some(value.as_slice()), "Key {:?} should return {:?}", key, value);
+        }
+    }
+
+    #[test]
+    fn test_rkyv_roundtrip_then_authenticate() {
+        use rkyv::rancor::Error;
+
+        // Build a trie with some data
+        let mut trie = Trie::new_temp();
+        let kv = vec![
+            (vec![1, 2, 3], vec![4, 5, 6]),
+            (vec![1, 2, 4], vec![7, 8, 9]),
+            (vec![2, 3, 4], vec![10, 11, 12]),
+        ];
+
+        for (key, value) in kv.iter() {
+            trie.insert(key.clone(), value.clone()).unwrap();
+        }
+
+        let original_hash = trie.hash_no_commit();
+
+        // Convert to EncodedTrie
+        let root_node = trie.get_root_node(Nibbles::default()).unwrap();
+        let encoded_trie = EncodedTrie::try_from(&(*root_node)).unwrap();
+
+        // Serialize with rkyv
+        let bytes = rkyv::to_bytes::<Error>(&encoded_trie).unwrap();
+
+        // Deserialize with rkyv
+        let mut deserialized: EncodedTrie = rkyv::from_bytes::<EncodedTrie, Error>(&bytes).unwrap();
+
+        // Authenticate should work and produce the same hash
+        let authenticated_hash = deserialized.authenticate().unwrap().finalize();
+        assert_eq!(original_hash, authenticated_hash);
+
+        // Get should still work after authenticate
+        for (key, value) in kv.iter() {
+            let result = deserialized.get(key).unwrap();
+            assert_eq!(result, Some(value.as_slice()));
+        }
     }
 
     proptest! {
