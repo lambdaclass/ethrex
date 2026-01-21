@@ -209,7 +209,10 @@ impl EthClient {
         let method = request.method.clone();
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(RpcRequestError::SerdeJSONError)
+                .map_err(|e| RpcRequestError::SerdeJSONError {
+                    method: method.clone(),
+                    source: e,
+                })
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method,
@@ -227,7 +230,10 @@ impl EthClient {
         let method = request.method.clone();
         match self.send_request_to_all(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(RpcRequestError::SerdeJSONError)
+                .map_err(|e| RpcRequestError::SerdeJSONError {
+                    method: method.clone(),
+                    source: e,
+                })
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method,
@@ -302,8 +308,12 @@ impl EthClient {
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => {
-                let res = serde_json::from_value::<String>(result.result)
-                    .map_err(RpcRequestError::SerdeJSONError)?;
+                let res = serde_json::from_value::<String>(result.result).map_err(|e| {
+                    RpcRequestError::SerdeJSONError {
+                        method: "eth_estimateGas".to_string(),
+                        source: e,
+                    }
+                })?;
                 let res = res.get(2..).ok_or(RpcRequestError::Custom(
                     "Failed to slice index response in estimate_gas".to_owned(),
                 ))?;
@@ -384,7 +394,10 @@ impl EthClient {
         match self.send_request(request).await? {
             RpcResponse::Success(result) => u64::from_str_radix(
                 serde_json::from_value::<String>(result.result)
-                    .map_err(RpcRequestError::SerdeJSONError)?
+                    .map_err(|e| RpcRequestError::SerdeJSONError {
+                        method: "eth_getTransactionCount".to_string(),
+                        source: e,
+                    })?
                     .get(2..)
                     .ok_or(EthClientError::Custom(
                         "Failed to deserialize get_nonce request".to_owned(),
@@ -434,7 +447,10 @@ impl EthClient {
 
         let encoded_block: Result<String, _> = match self.send_request(request).await? {
             RpcResponse::Success(result) => {
-                serde_json::from_value(result.result).map_err(RpcRequestError::SerdeJSONError)
+                serde_json::from_value(result.result).map_err(|e| RpcRequestError::SerdeJSONError {
+                    method: "debug_getRawBlock".to_string(),
+                    source: e,
+                })
             }
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method: "debug_getRawBlock".to_string(),
@@ -530,7 +546,10 @@ impl EthClient {
                             .map(ToString::to_string)
                             .unwrap_or(hex_str)
                     })
-                    .map_err(RpcRequestError::SerdeJSONError)
+                    .map_err(|e| RpcRequestError::SerdeJSONError {
+                        method: "eth_getCode".to_string(),
+                        source: e,
+                    })
                     .map_err(EthClientError::from)?,
             )
             .map(Into::into)
@@ -582,7 +601,10 @@ impl EthClient {
         match self.send_request(request).await? {
             RpcResponse::Success(result) => Ok(u64::from_str_radix(
                 serde_json::from_value::<String>(result.result)
-                    .map_err(RpcRequestError::SerdeJSONError)?
+                    .map_err(|e| RpcRequestError::SerdeJSONError {
+                        method: "eth_blobBaseFee".to_string(),
+                        source: e,
+                    })?
                     .trim_start_matches("0x"),
                 16,
             )

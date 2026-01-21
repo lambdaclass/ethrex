@@ -6,8 +6,11 @@ use ethrex_common::{FromStrRadixErr, types::transaction::GenericTransactionError
 /// GetBlockNumberError, etc.) into one reusable type.
 #[derive(Debug, thiserror::Error)]
 pub enum RpcRequestError {
-    #[error("{0}")]
-    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{method}: {source}")]
+    SerdeJSONError {
+        method: String,
+        source: serde_json::Error,
+    },
     #[error("{method}: {message}")]
     RPCError { method: String, message: String },
     #[error("{0}")]

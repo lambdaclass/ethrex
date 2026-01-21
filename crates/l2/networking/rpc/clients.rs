@@ -52,7 +52,10 @@ pub async fn get_batch_number(client: &EthClient) -> Result<u64, EthClientError>
     match client.send_request(request).await? {
         RpcResponse::Success(result) => {
             let batch_number_hex: String = serde_json::from_value(result.result)
-                .map_err(RpcRequestError::SerdeJSONError)
+                .map_err(|e| RpcRequestError::SerdeJSONError {
+                    method: "ethrex_batchNumber".to_string(),
+                    source: e,
+                })
                 .map_err(EthClientError::from)?;
             let hex_str = batch_number_hex
                 .strip_prefix("0x")
@@ -136,7 +139,10 @@ pub async fn send_ethrex_transaction(
     match client.send_request(request).await? {
         RpcResponse::Success(result) => {
             let tx_hash_str: String = serde_json::from_value(result.result)
-                .map_err(RpcRequestError::SerdeJSONError)
+                .map_err(|e| RpcRequestError::SerdeJSONError {
+                    method: "ethrex_sendTransaction".to_string(),
+                    source: e,
+                })
                 .map_err(EthClientError::from)?;
             H256::from_str(&tx_hash_str)
                 .map_err(|e| RpcRequestError::Custom(e.to_string()))
