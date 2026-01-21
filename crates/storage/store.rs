@@ -1681,6 +1681,11 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if let Some(blockchain_ref) = &self.ethrex_blockchain {
+            return self.get_account_info_ethrex_db(block_hash, address, blockchain_ref);
+        }
+
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -1696,6 +1701,77 @@ impl Store {
             balance: account_state.balance,
             nonce: account_state.nonce,
         }))
+    }
+
+    /// Get account info from ethrex_db backend.
+    ///
+    /// Queries both hot (unfinalized) and cold (finalized) storage:
+    /// 1. First tries to find the block in hot storage and get the account from it
+    /// 2. If not in hot storage, queries finalized state
+    #[cfg(feature = "ethrex-db")]
+    fn get_account_info_ethrex_db(
+        &self,
+        block_hash: BlockHash,
+        address: Address,
+        blockchain_ref: &BlockchainRef,
+    ) -> Result<Option<AccountInfo>, StoreError> {
+        let blockchain = blockchain_ref
+            .0
+            .read()
+            .map_err(|_| StoreError::Custom("Blockchain lock poisoned".into()))?;
+
+        let block_hash_pt = primitive_types::H256::from(block_hash.0);
+        let addr_hash = primitive_types::H256::from(keccak_hash(address.as_bytes()));
+
+        // Try hot storage first (committed but not finalized blocks)
+        if let Some(account) = blockchain.get_account(&block_hash_pt, &addr_hash) {
+            return Ok(Some(AccountInfo {
+                nonce: account.nonce,
+                balance: account.balance,
+                code_hash: H256::from(account.code_hash.0),
+            }));
+        }
+
+        // Check if this is the finalized block or earlier
+        let finalized_hash = blockchain.last_finalized_hash();
+        if block_hash_pt == finalized_hash {
+            // Query finalized state using raw address
+            let addr_bytes: [u8; 20] = address.0;
+            if let Some(account) = blockchain.get_finalized_account(&addr_bytes) {
+                return Ok(Some(AccountInfo {
+                    nonce: account.nonce,
+                    balance: account.balance,
+                    code_hash: H256::from(account.code_hash.0),
+                }));
+            }
+        }
+
+        // Block might be older than finalized - check by block number
+        // First get the block number for this hash from RocksDB metadata
+        drop(blockchain); // Release lock before querying RocksDB
+
+        if let Some(queried_block_number) = self.get_block_number_sync(block_hash)? {
+            let blockchain = blockchain_ref
+                .0
+                .read()
+                .map_err(|_| StoreError::Custom("Blockchain lock poisoned".into()))?;
+
+            let finalized_number = blockchain.last_finalized_number();
+
+            if queried_block_number <= finalized_number {
+                // Block is finalized, query finalized state
+                let addr_bytes: [u8; 20] = address.0;
+                if let Some(account) = blockchain.get_finalized_account(&addr_bytes) {
+                    return Ok(Some(AccountInfo {
+                        nonce: account.nonce,
+                        balance: account.balance,
+                        code_hash: H256::from(account.code_hash.0),
+                    }));
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     pub fn get_account_state_by_acc_hash(
@@ -1733,6 +1809,15 @@ impl Store {
         block_number: BlockNumber,
         address: Address,
     ) -> Result<Option<Code>, StoreError> {
+        // For ethrex_db, get code_hash from account info, then look up code in RocksDB
+        #[cfg(feature = "ethrex-db")]
+        if self.ethrex_blockchain.is_some() {
+            let Some(account_info) = self.get_account_info(block_number, address).await? else {
+                return Ok(None);
+            };
+            return self.get_account_code(account_info.code_hash);
+        }
+
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
@@ -1752,6 +1837,12 @@ impl Store {
         block_number: BlockNumber,
         address: Address,
     ) -> Result<Option<u64>, StoreError> {
+        // For ethrex_db, we can reuse get_account_info which already has routing
+        #[cfg(feature = "ethrex-db")]
+        if self.ethrex_blockchain.is_some() {
+            return Ok(self.get_account_info(block_number, address).await?.map(|a| a.nonce));
+        }
+
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
@@ -2166,10 +2257,83 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if let Some(blockchain_ref) = &self.ethrex_blockchain {
+            // Get block hash for this block number
+            if let Some(block_hash) = self.get_canonical_block_hash_sync(block_number)? {
+                return self.get_storage_at_ethrex_db(block_hash, address, storage_key, blockchain_ref);
+            }
+            return Ok(None);
+        }
+
         match self.get_block_header(block_number)? {
             Some(header) => self.get_storage_at_root(header.state_root, address, storage_key),
             None => Ok(None),
         }
+    }
+
+    /// Get storage value from ethrex_db backend.
+    ///
+    /// Queries both hot (unfinalized) and cold (finalized) storage:
+    /// 1. First tries to find the block in hot storage and get the storage from it
+    /// 2. If not in hot storage, queries finalized state
+    #[cfg(feature = "ethrex-db")]
+    fn get_storage_at_ethrex_db(
+        &self,
+        block_hash: BlockHash,
+        address: Address,
+        storage_key: H256,
+        blockchain_ref: &BlockchainRef,
+    ) -> Result<Option<U256>, StoreError> {
+        let blockchain = blockchain_ref
+            .0
+            .read()
+            .map_err(|_| StoreError::Custom("Blockchain lock poisoned".into()))?;
+
+        let block_hash_pt = primitive_types::H256::from(block_hash.0);
+        let addr_hash = primitive_types::H256::from(keccak_hash(address.as_bytes()));
+        let slot_hash = primitive_types::H256::from(keccak_hash(storage_key.as_bytes()));
+
+        // Try hot storage first (committed but not finalized blocks)
+        if let Some(value) = blockchain.get_storage(&block_hash_pt, &addr_hash, &slot_hash) {
+            return Ok(Some(value));
+        }
+
+        // Check if this is the finalized block or earlier
+        let finalized_hash = blockchain.last_finalized_hash();
+        if block_hash_pt == finalized_hash {
+            // Query finalized state using hashed keys
+            if let Some(value) = blockchain.get_finalized_storage_by_hash(
+                addr_hash.as_fixed_bytes(),
+                slot_hash.as_fixed_bytes(),
+            ) {
+                return Ok(Some(value));
+            }
+        }
+
+        // Block might be older than finalized - check by block number
+        drop(blockchain); // Release lock before querying RocksDB
+
+        if let Some(queried_block_number) = self.get_block_number_sync(block_hash)? {
+            let blockchain = blockchain_ref
+                .0
+                .read()
+                .map_err(|_| StoreError::Custom("Blockchain lock poisoned".into()))?;
+
+            let finalized_number = blockchain.last_finalized_number();
+
+            if queried_block_number <= finalized_number {
+                // Block is finalized, query finalized state
+                if let Some(value) = blockchain.get_finalized_storage_by_hash(
+                    addr_hash.as_fixed_bytes(),
+                    slot_hash.as_fixed_bytes(),
+                ) {
+                    return Ok(Some(value));
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     pub fn get_storage_at_root(
@@ -2378,10 +2542,83 @@ impl Store {
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
+
+        #[cfg(feature = "ethrex-db")]
+        if let Some(blockchain_ref) = &self.ethrex_blockchain {
+            return self.get_account_state_ethrex_db(block_hash, address, blockchain_ref);
+        }
+
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
         self.get_account_state_from_trie(&state_trie, address)
+    }
+
+    /// Get full account state from ethrex_db backend.
+    #[cfg(feature = "ethrex-db")]
+    fn get_account_state_ethrex_db(
+        &self,
+        block_hash: BlockHash,
+        address: Address,
+        blockchain_ref: &BlockchainRef,
+    ) -> Result<Option<AccountState>, StoreError> {
+        let blockchain = blockchain_ref
+            .0
+            .read()
+            .map_err(|_| StoreError::Custom("Blockchain lock poisoned".into()))?;
+
+        let block_hash_pt = primitive_types::H256::from(block_hash.0);
+        let addr_hash = primitive_types::H256::from(keccak_hash(address.as_bytes()));
+
+        // Try hot storage first (committed but not finalized blocks)
+        if let Some(account) = blockchain.get_account(&block_hash_pt, &addr_hash) {
+            return Ok(Some(AccountState {
+                nonce: account.nonce,
+                balance: account.balance,
+                storage_root: H256::from(account.storage_root.0),
+                code_hash: H256::from(account.code_hash.0),
+            }));
+        }
+
+        // Check if this is the finalized block or earlier
+        let finalized_hash = blockchain.last_finalized_hash();
+        if block_hash_pt == finalized_hash {
+            let addr_bytes: [u8; 20] = address.0;
+            if let Some(account) = blockchain.get_finalized_account(&addr_bytes) {
+                return Ok(Some(AccountState {
+                    nonce: account.nonce,
+                    balance: account.balance,
+                    storage_root: H256::from(account.storage_root.0),
+                    code_hash: H256::from(account.code_hash.0),
+                }));
+            }
+        }
+
+        // Block might be older than finalized
+        drop(blockchain);
+
+        if let Some(queried_block_number) = self.get_block_number_sync(block_hash)? {
+            let blockchain = blockchain_ref
+                .0
+                .read()
+                .map_err(|_| StoreError::Custom("Blockchain lock poisoned".into()))?;
+
+            let finalized_number = blockchain.last_finalized_number();
+
+            if queried_block_number <= finalized_number {
+                let addr_bytes: [u8; 20] = address.0;
+                if let Some(account) = blockchain.get_finalized_account(&addr_bytes) {
+                    return Ok(Some(AccountState {
+                        nonce: account.nonce,
+                        balance: account.balance,
+                        storage_root: H256::from(account.storage_root.0),
+                        code_hash: H256::from(account.code_hash.0),
+                    }));
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     pub fn get_account_state_by_root(
