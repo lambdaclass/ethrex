@@ -412,8 +412,6 @@ async fn re_run_stateless(
     let program_input = ProgramInput {
         blocks,
         execution_witness,
-        elasticity_multiplier: ethrex_common::types::ELASTICITY_MULTIPLIER,
-        ..Default::default()
     };
 
     let execute_result = match backend_type {
