@@ -10,8 +10,8 @@ use ethereum_types::{Address, H160, H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::encodedtrie::EncodedTrie;
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, Trie, TrieError};
+use ethrex_trie::encodedtrie::{EncodedTrie, EncodedTrieError};
+use ethrex_trie::{EMPTY_TRIE_HASH, TrieError};
 use rkyv::with::{Identity, MapKV};
 use serde::{Deserialize, Serialize};
 
@@ -99,6 +99,8 @@ pub enum GuestProgramStateError {
     NoncontiguousBlockHeaders,
     #[error("Trie error: {0}")]
     Trie(#[from] TrieError),
+    #[error("Encoded trie error: {0}")]
+    EncodedTrie(#[from] EncodedTrieError),
     #[error("RLP Decode: {0}")]
     RLPDecode(#[from] RLPDecodeError),
     #[error("Unreachable code reached: {0}")]
@@ -142,11 +144,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
         )?;
 
         // hash state trie nodes
-        let state_trie = if let Some(state_trie) = state_trie {
-            state_trie
-        } else {
-            EncodedTrie::default()
-        };
+        let state_trie: EncodedTrie = state_trie.unwrap_or_default();
 
         let mut storage_tries = BTreeMap::new();
         for (address, storage_trie) in original_storage_tries {
@@ -206,8 +204,9 @@ impl GuestProgramState {
                     .get(hashed_address)
                     .expect("failed to get account state from trie")
                 {
-                    Some(encoded_state) => AccountState::decode(&encoded_state)
-                        .expect("failed to decode account state"),
+                    Some(encoded_state) => {
+                        AccountState::decode(encoded_state).expect("failed to decode account state")
+                    }
                     None => AccountState::default(),
                 };
                 if update.removed_storage {
@@ -248,7 +247,10 @@ impl GuestProgramState {
                             .expect("failed to remove key");
                     }
 
-                    let storage_root = storage_trie.hash().unwrap().finalize();
+                    let storage_root = storage_trie
+                        .hash()
+                        .expect("failed to hash storage trie")
+                        .finalize();
                     account_state.storage_root = storage_root;
                 }
 
@@ -263,13 +265,13 @@ impl GuestProgramState {
     /// Returns the root hash of the state trie
     /// Returns an error if the state trie is not built yet
     pub fn state_trie_root(&mut self) -> Result<H256, GuestProgramStateError> {
-        Ok(self.state_trie.hash().unwrap().finalize()) // TOOD: unwrap
+        Ok(self.state_trie.hash()?.finalize())
     }
 
     /// Returns the root hash of the state trie
     /// Returns an error if the state trie is not built yet
     pub fn auth_state(&mut self) -> Result<H256, GuestProgramStateError> {
-        Ok(self.state_trie.authenticate().unwrap().finalize())
+        Ok(self.state_trie.authenticate()?.finalize())
     }
 
     /// Returns Some(block_number) if the hash for block_number is not the parent
@@ -342,7 +344,7 @@ impl GuestProgramState {
         let Ok(Some(encoded_state)) = self.state_trie.get(hashed_address) else {
             return Ok(None);
         };
-        let state = AccountState::decode(&encoded_state).map_err(|_| {
+        let state = AccountState::decode(encoded_state).map_err(|_| {
             GuestProgramStateError::Database("Failed to get decode account from trie".to_string())
         })?;
 
@@ -376,7 +378,7 @@ impl GuestProgramState {
             .get(&hashed_key)
             .map_err(|e| GuestProgramStateError::Database(e.to_string()))?
         {
-            U256::decode(&encoded_key)
+            U256::decode(encoded_key)
                 .map_err(|_| {
                     GuestProgramStateError::Database("failed to read storage from trie".to_string())
                 })
@@ -458,10 +460,13 @@ impl GuestProgramState {
             let storage_trie = match self.storage_tries.get_mut(&address) {
                 None if storage_root == *EMPTY_TRIE_HASH => return Ok(None),
                 Some(trie) => {
-                    if trie.authenticate().unwrap().finalize() == storage_root {
+                    let trie_root = trie.authenticate()?.finalize();
+                    if trie_root == storage_root {
                         trie
                     } else {
-                        panic!()
+                        return Err(GuestProgramStateError::Custom(format!(
+                            "storage trie root mismatch for account {address}: expected {storage_root:?}, got {trie_root:?}"
+                        )));
                     }
                 }
                 _ => {

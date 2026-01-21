@@ -1,8 +1,8 @@
 use bytes::BufMut;
 use ethrex_rlp::{
     constants::RLP_NULL,
-    decode::{decode_bytes, RLPDecode},
-    encode::{encode_length, RLPEncode},
+    decode::{RLPDecode, decode_bytes},
+    encode::{RLPEncode, encode_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
@@ -10,8 +10,8 @@ use rkyv::with::Skip;
 use thiserror::Error;
 
 use crate::{
-    rlp::decode_child, Nibbles, Node as EthrexTrieNode, NodeHash, NodeRef as EthrexTrieNodeRef,
-    EMPTY_TRIE_HASH,
+    EMPTY_TRIE_HASH, Nibbles, Node as EthrexTrieNode, NodeHash, NodeRef as EthrexTrieNodeRef,
+    rlp::decode_child,
 };
 
 /// A trie implementation optimal for zkVM environments.
@@ -541,7 +541,7 @@ impl EncodedTrie {
             };
             return Err(EncodedTrieError::OverridingDifferentNode {
                 original_type: node_type_name(original_node.node_type.clone()),
-                override_type: node_type_name(override_node_type.clone()),
+                override_type: node_type_name(override_node_type),
             });
         }
 
@@ -1028,6 +1028,7 @@ impl TryFrom<&EthrexTrieNode> for EncodedTrie {
                 node_type: handle,
                 encoded_range: Some((offset, trie.encoded_data.len())),
             });
+            trie.hashes.push(None);
             Ok(())
         }
 
@@ -1048,6 +1049,7 @@ mod test {
     const MAX_VALUE_SIZE: usize = 256;
     const MAX_KV_PAIRS: usize = 100;
 
+    #[allow(clippy::type_complexity)]
     fn kv_pairs_strategy() -> impl Strategy<Value = (Vec<(Vec<u8>, Vec<u8>)>, Vec<usize>)> {
         // create random key-values, with keys all the same size, and a random permutation of indices
         (1usize..=MAX_KEY_SIZE).prop_flat_map(|key_len| {

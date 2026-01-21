@@ -4,8 +4,8 @@ use std::array;
 // This encoding is only used to store the nodes in the DB, it is not the encoding used for hash computation
 use ethrex_rlp::{
     constants::RLP_NULL,
-    decode::{decode_bytes, RLPDecode},
-    encode::{encode_length, RLPEncode},
+    decode::{RLPDecode, decode_bytes},
+    encode::{RLPEncode, encode_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
