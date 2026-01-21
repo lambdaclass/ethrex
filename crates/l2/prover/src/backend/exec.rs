@@ -24,11 +24,10 @@ impl ExecBackend {
         guest_program::execution::execution_program(input).map_err(BackendError::execution)
     }
 
-    fn to_calldata(proof: &ProgramOutput) -> ProofCalldata {
-        let public_inputs = proof.encode();
+    fn to_calldata() -> ProofCalldata {
         ProofCalldata {
             prover_type: ProverType::Exec,
-            calldata: vec![Value::Bytes(public_inputs.into())],
+            calldata: vec![Value::Bytes(vec![].into())],
         }
     }
 }
@@ -61,9 +60,9 @@ impl ProverBackend for ExecBackend {
 
     fn to_batch_proof(
         &self,
-        proof: Self::ProofOutput,
+        _proof: Self::ProofOutput,
         _format: ProofFormat,
     ) -> Result<BatchProof, BackendError> {
-        Ok(BatchProof::ProofCalldata(Self::to_calldata(&proof)))
+        Ok(BatchProof::ProofCalldata(Self::to_calldata()))
     }
 }
