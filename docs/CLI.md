@@ -87,7 +87,12 @@ P2P options:
 
 
       --p2p.addr <ADDRESS>
-          Listening address for the P2P protocol.
+          Advertised address for the P2P protocol (Node Record). Defaults to local IP if not set.
+
+      --p2p.bind-addr <ADDRESS>
+          Bind address for the P2P protocol.
+
+          [default: 0.0.0.0]
 
       --p2p.port <PORT>
           TCP port for the P2P protocol.

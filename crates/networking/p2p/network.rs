@@ -21,7 +21,7 @@ use secp256k1::SecretKey;
 use spawned_concurrency::tasks::GenServerHandle;
 use std::{
     io,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::{Arc, atomic::Ordering},
     time::{Duration, SystemTime},
 };
@@ -40,6 +40,7 @@ pub struct P2PContext {
     pub blockchain: Arc<Blockchain>,
     pub(crate) broadcast: PeerConnBroadcastSender,
     pub local_node: Node,
+    pub bind_ip: IpAddr,
     pub client_version: String,
     #[cfg(feature = "l2")]
     pub based_context: Option<P2PBasedContext>,
@@ -51,6 +52,7 @@ impl P2PContext {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         local_node: Node,
+        bind_ip: IpAddr,
         tracker: TaskTracker,
         signer: SecretKey,
         peer_table: PeerTable,
@@ -80,6 +82,7 @@ impl P2PContext {
 
         Ok(P2PContext {
             local_node,
+            bind_ip,
             tracker,
             signer,
             table: peer_table,
@@ -104,7 +107,8 @@ pub enum NetworkError {
 }
 
 pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<(), NetworkError> {
-    let udp_socket = UdpSocket::bind(context.local_node.udp_addr())
+    let udp_addr = SocketAddr::new(context.bind_ip, context.local_node.udp_port);
+    let udp_socket = UdpSocket::bind(udp_addr)
         .await
         .expect("Failed to bind udp socket");
 
@@ -128,7 +132,7 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
 }
 
 pub(crate) async fn serve_p2p_requests(context: P2PContext) {
-    let tcp_addr = context.local_node.tcp_addr();
+    let tcp_addr = SocketAddr::new(context.bind_ip, context.local_node.tcp_port);
     let listener = match listener(tcp_addr) {
         Ok(result) => result,
         Err(e) => {

@@ -25,7 +25,11 @@ use ethrex_storage::{EngineType, Store};
 use hex_literal::hex;
 use secp256k1::SecretKey;
 use spawned_concurrency::tasks::{GenServer, GenServerHandle};
-use std::{net::SocketAddr, str::FromStr, sync::Arc};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    str::FromStr,
+    sync::Arc,
+};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::info;
@@ -318,6 +322,7 @@ pub async fn dummy_p2p_context(peer_table: PeerTable) -> P2PContext {
 
     P2PContext::new(
         local_node,
+        IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
         TaskTracker::default(),
         SecretKey::from_byte_array(&[0xcd; 32]).expect("32 bytes, within curve order"),
         peer_table,

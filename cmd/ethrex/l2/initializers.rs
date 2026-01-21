@@ -26,7 +26,7 @@ use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use eyre::OptionExt;
 use secp256k1::SecretKey;
 use spawned_concurrency::tasks::GenServerHandle;
-use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
+use std::{fs::read_to_string, net::IpAddr, path::Path, sync::Arc, time::Duration};
 use tokio::task::JoinSet;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{info, warn};
@@ -239,8 +239,14 @@ pub async fn init_l2(
             blockchain.set_synced();
         }
         let peer_table = PeerTable::spawn(opts.node_opts.target_peers);
+        let p2p_bind_addr: IpAddr = opts
+            .node_opts
+            .p2p_bind_addr
+            .parse()
+            .expect("Failed to parse p2p bind address");
         let p2p_context = P2PContext::new(
             local_p2p_node.clone(),
+            p2p_bind_addr,
             tracker.clone(),
             signer,
             peer_table.clone(),
