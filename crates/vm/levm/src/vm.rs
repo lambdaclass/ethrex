@@ -643,7 +643,7 @@ impl<'a> VM<'a> {
                 // Unsupported opcode - should have been caught at compile time
                 Ok(None)
             }
-            JitExitReason::Continue | JitExitReason::ExitToInterpreter => {
+            JitExitReason::Continue | JitExitReason::ExitToInterpreter | JitExitReason::Jump => {
                 // Need to fall back to interpreter
                 Ok(None)
             }

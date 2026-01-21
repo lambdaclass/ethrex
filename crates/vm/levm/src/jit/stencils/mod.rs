@@ -99,3 +99,45 @@ pub static STENCIL_PUSH: Stencil = Stencil {
     bytes: &[],
     relocations: &[],
 };
+
+#[cfg(not(feature = "jit"))]
+pub static STENCIL_JUMPDEST: Stencil = Stencil {
+    bytes: &[],
+    relocations: &[],
+};
+
+#[cfg(not(feature = "jit"))]
+pub static STENCIL_PC: Stencil = Stencil {
+    bytes: &[],
+    relocations: &[],
+};
+
+#[cfg(not(feature = "jit"))]
+pub static STENCIL_GAS: Stencil = Stencil {
+    bytes: &[],
+    relocations: &[],
+};
+
+#[cfg(not(feature = "jit"))]
+pub static STENCIL_LT: Stencil = Stencil {
+    bytes: &[],
+    relocations: &[],
+};
+
+#[cfg(not(feature = "jit"))]
+pub static STENCIL_GT: Stencil = Stencil {
+    bytes: &[],
+    relocations: &[],
+};
+
+#[cfg(not(feature = "jit"))]
+pub static STENCIL_EQ: Stencil = Stencil {
+    bytes: &[],
+    relocations: &[],
+};
+
+#[cfg(not(feature = "jit"))]
+pub static STENCIL_ISZERO: Stencil = Stencil {
+    bytes: &[],
+    relocations: &[],
+};

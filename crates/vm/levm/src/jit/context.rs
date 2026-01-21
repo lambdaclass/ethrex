@@ -80,6 +80,10 @@ pub struct JitContext {
     /// Return data size (for RETURN/REVERT)
     pub return_size: usize,
 
+    // PUSH value (set by dispatch loop before calling PUSH wrapper)
+    /// Current push value for PUSH wrappers to use
+    pub push_value: U256,
+
     // JIT non-local exit support
     /// Jump buffer for longjmp-based exit from JIT code
     pub jmp_buf: JmpBuf,
@@ -112,6 +116,8 @@ pub enum JitExitReason {
     ExitToInterpreter = 8,
     /// Invalid opcode
     InvalidOpcode = 9,
+    /// Jump taken - ctx.pc has the destination
+    Jump = 10,
 }
 
 impl JitContext {
@@ -163,6 +169,9 @@ impl JitContext {
             return_offset: 0,
             return_size: 0,
 
+            // PUSH value (set by dispatch loop)
+            push_value: U256::zero(),
+
             // JIT non-local exit support (initialized by execute_jit)
             jmp_buf: Default::default(),
             exit_callback: None,
@@ -194,6 +203,7 @@ impl JitContext {
             6 => JitExitReason::StackOverflow,
             7 => JitExitReason::InvalidJump,
             8 => JitExitReason::ExitToInterpreter,
+            10 => JitExitReason::Jump,
             _ => JitExitReason::InvalidOpcode,
         }
     }

@@ -139,6 +139,51 @@ impl U256 {
 
         Self(result)
     }
+
+    /// Check if self < rhs (unsigned)
+    #[inline(always)]
+    pub fn lt(self, rhs: Self) -> bool {
+        // Compare from most significant limb to least
+        if self.0[3] != rhs.0[3] {
+            return self.0[3] < rhs.0[3];
+        }
+        if self.0[2] != rhs.0[2] {
+            return self.0[2] < rhs.0[2];
+        }
+        if self.0[1] != rhs.0[1] {
+            return self.0[1] < rhs.0[1];
+        }
+        self.0[0] < rhs.0[0]
+    }
+
+    /// Check if self > rhs (unsigned)
+    #[inline(always)]
+    pub fn gt(self, rhs: Self) -> bool {
+        rhs.lt(self)
+    }
+
+    /// Check if self == rhs
+    #[inline(always)]
+    pub fn eq(self, rhs: Self) -> bool {
+        self.0[0] == rhs.0[0]
+            && self.0[1] == rhs.0[1]
+            && self.0[2] == rhs.0[2]
+            && self.0[3] == rhs.0[3]
+    }
+
+    /// Check if self == 0
+    #[inline(always)]
+    pub fn is_zero(self) -> bool {
+        self.0[0] == 0 && self.0[1] == 0 && self.0[2] == 0 && self.0[3] == 0
+    }
+
+    /// Create U256 from a single u64 value
+    #[inline(always)]
+    pub const fn from_u64(val: u64) -> Self {
+        Self([val, 0, 0, 0])
+    }
+
+    pub const ONE: Self = Self([1, 0, 0, 0]);
 }
 
 /// JitContext for stencils - must match main JitContext layout exactly
@@ -193,3 +238,14 @@ pub const GAS_MUL: i64 = 5;
 pub const GAS_SUB: i64 = 3;
 pub const GAS_POP: i64 = 2;
 pub const GAS_PUSH: i64 = 3;
+pub const GAS_JUMPDEST: i64 = 1;
+pub const GAS_JUMP: i64 = 8;
+pub const GAS_JUMPI: i64 = 10;
+pub const GAS_PC: i64 = 2;
+pub const GAS_GAS: i64 = 2;
+pub const GAS_LT: i64 = 3;
+pub const GAS_GT: i64 = 3;
+pub const GAS_EQ: i64 = 3;
+pub const GAS_ISZERO: i64 = 3;
+pub const GAS_DUP: i64 = 3;
+pub const GAS_SWAP: i64 = 3;
