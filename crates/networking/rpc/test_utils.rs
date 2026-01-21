@@ -235,13 +235,13 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             http_addr,
             Some(ws_addr),
             authrpc_addr,
-            storage,
-            blockchain,
+            storage.clone(),
+            blockchain.clone(),
             jwt_secret,
             local_p2p_node,
             local_node_record,
             dummy_sync_manager().await,
-            dummy_peer_handler().await,
+            dummy_peer_handler(storage).await,
             "ethrex/test".to_string(),
             None,
             DEFAULT_BUILDER_GAS_CEIL,
@@ -257,11 +257,11 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
     let local_node_record = example_local_node_record();
     let block_worker_channel = start_block_executor(blockchain.clone());
     RpcApiContext {
-        storage,
-        blockchain,
+        storage: storage.clone(),
+        blockchain: blockchain.clone(),
         active_filters: Default::default(),
         syncer: Some(Arc::new(dummy_sync_manager().await)),
-        peer_handler: Some(dummy_peer_handler().await),
+        peer_handler: Some(dummy_peer_handler(storage).await),
         node_data: NodeData {
             jwt_secret: Default::default(),
             local_p2p_node: example_p2p_node(),
@@ -279,13 +279,13 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
 /// Creates a dummy SyncManager for tests where syncing is not needed
 /// This should only be used in tests as it won't be able to connect to the p2p network
 pub async fn dummy_sync_manager() -> SyncManager {
+    let store = Store::new("", EngineType::InMemory).expect("Failed to start Store Engine");
+    let blockchain = Arc::new(Blockchain::default_with_store(store.clone()));
     SyncManager::new(
-        dummy_peer_handler().await,
+        dummy_peer_handler(store).await,
         &SyncMode::Full,
         CancellationToken::new(),
-        Arc::new(Blockchain::default_with_store(
-            Store::new("", EngineType::InMemory).expect("Failed to start Store Engine"),
-        )),
+        blockchain,
         Store::new("temp.db", ethrex_storage::EngineType::InMemory)
             .expect("Failed to start Storage Engine"),
         ".".into(),
@@ -295,8 +295,8 @@ pub async fn dummy_sync_manager() -> SyncManager {
 
 /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
 /// This should only be used in tests as it won't be able to interact with the node's connected peers
-pub async fn dummy_peer_handler() -> PeerHandler {
-    let peer_table = PeerTable::spawn(TARGET_PEERS);
+pub async fn dummy_peer_handler(store: Store) -> PeerHandler {
+    let peer_table = PeerTable::spawn(TARGET_PEERS, store);
     PeerHandler::new(peer_table.clone(), dummy_gen_server(peer_table).await)
 }
 

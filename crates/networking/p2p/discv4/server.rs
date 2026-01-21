@@ -1,4 +1,5 @@
 use crate::{
+    backend,
     discv4::{
         codec::Discv4Codec,
         messages::{
@@ -574,13 +575,7 @@ impl DiscoveryServer {
             latest_block_number,
         );
 
-        if !local_fork_id.is_valid(
-            remote_fork_id.clone(),
-            latest_block_number,
-            latest_block_header.timestamp,
-            chain_config,
-            genesis_header,
-        ) {
+        if !backend::is_fork_id_valid(&self.store, &remote_fork_id).await? {
             self.peer_table
                 .set_is_fork_id_valid(&node_id, false)
                 .await?;
