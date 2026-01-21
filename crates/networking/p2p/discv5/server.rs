@@ -167,7 +167,11 @@ impl DiscoveryServer {
             first_ip_vote_round_completed: false,
         };
 
-        info!(protocol = "discv5", count = bootnodes.len(), "Adding bootnodes");
+        info!(
+            protocol = "discv5",
+            count = bootnodes.len(),
+            "Adding bootnodes"
+        );
         peer_table
             .new_contacts(bootnodes, local_node.node_id(), DiscoveryProtocol::Discv5)
             .await?;
@@ -236,7 +240,10 @@ impl DiscoveryServer {
     ) -> Result<(), DiscoveryServerError> {
         let nonce = packet.header.nonce;
         let Some((node, message, _)) = self.pending_by_nonce.remove(&nonce) else {
-            tracing::trace!(protocol = "discv5", "Received unexpected WhoAreYou packet. Ignoring it");
+            tracing::trace!(
+                protocol = "discv5",
+                "Received unexpected WhoAreYou packet. Ignoring it"
+            );
             return Ok(());
         };
         tracing::trace!(protocol = "discv5", received = "WhoAreYou", from = %node.node_id(), %addr);
@@ -763,7 +770,10 @@ impl DiscoveryServer {
             trace!(
                 protocol = "discv5",
                 "Cleaned up {} stale entries ({} messages, {} challenges, {} rate limits)",
-                total_removed, removed_messages, removed_challenges, removed_rate_limits
+                total_removed,
+                removed_messages,
+                removed_challenges,
+                removed_rate_limits
             );
         }
     }
@@ -928,31 +938,30 @@ impl GenServer for DiscoveryServer {
                     .handle_packet(*message)
                     .await
                     // log level trace as we don't want to spam decoding errors from bad peers.
-                    .inspect_err(|e| trace!(protocol = "discv5", err=%e, "Error Handling Discovery message"));
+                    .inspect_err(
+                        |e| trace!(protocol = "discv5", err=%e, "Error Handling Discovery message"),
+                    );
             }
             Self::CastMsg::Revalidate => {
                 trace!(protocol = "discv5", received = "Revalidate");
-                let _ = self
-                    .revalidate()
-                    .await
-                    .inspect_err(|e| error!(protocol = "discv5", err=%e, "Error revalidating discovered peers"));
+                let _ = self.revalidate().await.inspect_err(
+                    |e| error!(protocol = "discv5", err=%e, "Error revalidating discovered peers"),
+                );
             }
             Self::CastMsg::Lookup => {
                 trace!(protocol = "discv5", received = "Lookup");
-                let _ = self
-                    .lookup()
-                    .await
-                    .inspect_err(|e| error!(protocol = "discv5", err=%e, "Error performing Discovery lookup"));
+                let _ = self.lookup().await.inspect_err(
+                    |e| error!(protocol = "discv5", err=%e, "Error performing Discovery lookup"),
+                );
 
                 let interval = self.get_lookup_interval().await;
                 send_after(interval, handle.clone(), Self::CastMsg::Lookup);
             }
             Self::CastMsg::Prune => {
                 trace!(protocol = "discv5", received = "Prune");
-                let _ = self
-                    .prune()
-                    .await
-                    .inspect_err(|e| error!(protocol = "discv5", err=?e, "Error Pruning peer table"));
+                let _ = self.prune().await.inspect_err(
+                    |e| error!(protocol = "discv5", err=?e, "Error Pruning peer table"),
+                );
                 self.cleanup_stale_entries();
             }
             Self::CastMsg::Shutdown => return CastResponse::Stop,

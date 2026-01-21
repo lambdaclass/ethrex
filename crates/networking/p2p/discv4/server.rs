@@ -29,7 +29,6 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::net::UdpSocket;
 use tracing::{debug, error, info, trace};
 
-pub(crate) const MAX_NODES_IN_NEIGHBORS_PACKET: usize = 16;
 const EXPIRATION_SECONDS: u64 = 20;
 /// Interval between revalidation checks.
 const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours,
@@ -126,10 +125,18 @@ impl DiscoveryServer {
             initial_lookup_interval,
         };
 
-        info!(protocol = "discv4", count = bootnodes.len(), "Adding bootnodes");
+        info!(
+            protocol = "discv4",
+            count = bootnodes.len(),
+            "Adding bootnodes"
+        );
 
         peer_table
-            .new_contacts(bootnodes.clone(), local_node.node_id(), DiscoveryProtocol::Discv4)
+            .new_contacts(
+                bootnodes.clone(),
+                local_node.node_id(),
+                DiscoveryProtocol::Discv4,
+            )
             .await?;
 
         for bootnode in &bootnodes {
@@ -718,44 +725,39 @@ impl GenServer for DiscoveryServer {
     ) -> CastResponse {
         match message {
             Self::CastMsg::Message(message) => {
-                let _ = self
-                    .handle_message(*message)
-                    .await
-                    .inspect_err(|e| error!(protocol = "discv4", err=?e, "Error Handling Discovery message"));
+                let _ = self.handle_message(*message).await.inspect_err(
+                    |e| error!(protocol = "discv4", err=?e, "Error Handling Discovery message"),
+                );
             }
             Self::CastMsg::Revalidate => {
                 trace!(protocol = "discv4", received = "Revalidate");
-                let _ = self
-                    .revalidate()
-                    .await
-                    .inspect_err(|e| error!(protocol = "discv4", err=?e, "Error revalidating discovered peers"));
+                let _ = self.revalidate().await.inspect_err(
+                    |e| error!(protocol = "discv4", err=?e, "Error revalidating discovered peers"),
+                );
             }
             Self::CastMsg::Lookup => {
                 trace!(protocol = "discv4", received = "Lookup");
-                let _ = self
-                    .lookup()
-                    .await
-                    .inspect_err(|e| error!(protocol = "discv4", err=?e, "Error performing Discovery lookup"));
+                let _ = self.lookup().await.inspect_err(
+                    |e| error!(protocol = "discv4", err=?e, "Error performing Discovery lookup"),
+                );
 
                 let interval = self.get_lookup_interval().await;
                 send_after(interval, handle.clone(), Self::CastMsg::Lookup);
             }
             Self::CastMsg::EnrLookup => {
                 trace!(protocol = "discv4", received = "EnrLookup");
-                let _ = self
-                    .enr_lookup()
-                    .await
-                    .inspect_err(|e| error!(protocol = "discv4", err=?e, "Error performing Discovery lookup"));
+                let _ = self.enr_lookup().await.inspect_err(
+                    |e| error!(protocol = "discv4", err=?e, "Error performing Discovery lookup"),
+                );
 
                 let interval = self.get_lookup_interval().await;
                 send_after(interval, handle.clone(), Self::CastMsg::EnrLookup);
             }
             Self::CastMsg::Prune => {
                 trace!(protocol = "discv4", received = "Prune");
-                let _ = self
-                    .prune()
-                    .await
-                    .inspect_err(|e| error!(protocol = "discv4", err=?e, "Error Pruning peer table"));
+                let _ = self.prune().await.inspect_err(
+                    |e| error!(protocol = "discv4", err=?e, "Error Pruning peer table"),
+                );
             }
             Self::CastMsg::ChangeFindNodeMessage => {
                 self.find_node_message = Self::random_message(&self.signer);

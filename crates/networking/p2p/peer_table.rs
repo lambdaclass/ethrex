@@ -888,7 +888,8 @@ impl PeerTableServer {
         self.contacts
             .values()
             .filter(|c| {
-                c.supports_protocol(protocol) && Self::is_validation_needed(c, revalidation_interval)
+                c.supports_protocol(protocol)
+                    && Self::is_validation_needed(c, revalidation_interval)
             })
             .cloned()
             .collect()
@@ -1340,16 +1341,16 @@ impl GenServer for PeerTableServer {
             CallMessage::GetPeerConnections { capabilities } => CallResponse::Reply(
                 OutMessage::PeerConnection(self.get_peer_connections(capabilities)),
             ),
-            CallMessage::InsertIfNew { node, protocol } => CallResponse::Reply(Self::OutMsg::IsNew(
-                match self.contacts.entry(node.node_id()) {
+            CallMessage::InsertIfNew { node, protocol } => CallResponse::Reply(
+                Self::OutMsg::IsNew(match self.contacts.entry(node.node_id()) {
                     Entry::Occupied(_) => false,
                     Entry::Vacant(entry) => {
                         METRICS.record_new_discovery().await;
                         entry.insert(Contact::new(node, protocol));
                         true
                     }
-                },
-            )),
+                }),
+            ),
             CallMessage::ValidateContact { node_id, sender_ip } => {
                 CallResponse::Reply(self.validate_contact(node_id, sender_ip))
             }

@@ -20,13 +20,13 @@ use tracing::{debug, info};
 use super::codec::DiscriminatingCodec;
 use crate::discv4::{
     messages::Packet as Discv4Packet,
-    server::{Discv4Message, DiscoveryServer as Discv4Server, InMessage as Discv4InMessage},
+    server::{DiscoveryServer as Discv4Server, Discv4Message, InMessage as Discv4InMessage},
 };
 
 #[cfg(feature = "experimental-discv5")]
 use crate::discv5::{
     messages::Packet as Discv5Packet,
-    server::{Discv5Message, DiscoveryServer as Discv5Server, InMessage as Discv5InMessage},
+    server::{DiscoveryServer as Discv5Server, Discv5Message, InMessage as Discv5InMessage},
 };
 
 /// Minimum packet size for a valid discv4 packet.
@@ -69,7 +69,9 @@ impl DiscoveryMultiplexer {
         local_node_id: H256,
         config: DiscoveryConfig,
         discv4_handle: Option<GenServerHandle<Discv4Server>>,
-        #[cfg(feature = "experimental-discv5")] discv5_handle: Option<GenServerHandle<Discv5Server>>,
+        #[cfg(feature = "experimental-discv5")] discv5_handle: Option<
+            GenServerHandle<Discv5Server>,
+        >,
     ) -> Self {
         Self {
             udp_socket,
@@ -90,7 +92,10 @@ impl DiscoveryMultiplexer {
 #[derive(Debug, Clone)]
 pub enum InMessage {
     /// Raw packet received from UDP socket
-    RawPacket { data: BytesMut, from: SocketAddr },
+    RawPacket {
+        data: BytesMut,
+        from: SocketAddr,
+    },
     Shutdown,
 }
 

@@ -3,9 +3,11 @@ use crate::rlpx::l2::l2_connection::P2PBasedContext;
 #[cfg(not(feature = "l2"))]
 #[derive(Clone, Debug)]
 pub struct P2PBasedContext;
+#[cfg(feature = "experimental-discv5")]
+use crate::discv5::server::{DiscoveryServer as Discv5Server, DiscoveryServerError as Discv5Error};
 use crate::{
-    discv4::server::{DiscoveryServer as Discv4Server, DiscoveryServerError as Discv4Error},
     discovery::{DiscoveryConfig, DiscoveryMultiplexer},
+    discv4::server::{DiscoveryServer as Discv4Server, DiscoveryServerError as Discv4Error},
     metrics::METRICS,
     peer_table::{PeerData, PeerTable},
     rlpx::{
@@ -16,8 +18,6 @@ use crate::{
     tx_broadcaster::{TxBroadcaster, TxBroadcasterError},
     types::Node,
 };
-#[cfg(feature = "experimental-discv5")]
-use crate::discv5::server::{DiscoveryServer as Discv5Server, DiscoveryServerError as Discv5Error};
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
 use secp256k1::SecretKey;
