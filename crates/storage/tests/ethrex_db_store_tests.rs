@@ -10,7 +10,8 @@
 
 use bytes::Bytes;
 use ethrex_common::{
-    types::{Block, BlockBody, BlockHeader, ChainConfig, Genesis, GenesisAccount},
+    types::{Block, BlockBody, BlockHeader, ChainConfig, Code, Genesis, GenesisAccount},
+    utils::keccak,
     Address, H256, U256,
 };
 use ethrex_storage::{EngineType, Store};
@@ -553,4 +554,105 @@ async fn test_forkchoice_update_with_safe_and_finalized() {
     // Verify the chain is canonical
     let latest = store.get_latest_block_number().await.expect("Failed to get latest");
     assert_eq!(latest, 5);
+}
+
+/// Test contract code storage and retrieval with ethrex_db backend.
+/// Code is stored in RocksDB auxiliary storage, not in ethrex_db itself.
+#[tokio::test]
+async fn test_code_storage_and_retrieval_with_ethrex_db() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+    // Create store with ethrex_db backend
+    let store = Store::new(temp_dir.path(), EngineType::EthrexDb)
+        .expect("Failed to create store");
+
+    // Create some test bytecode (simple contract)
+    let bytecode = Bytes::from(vec![
+        0x60, 0x80, 0x60, 0x40, 0x52, // PUSH1 0x80 PUSH1 0x40 MSTORE
+        0x34, 0x80, 0x15, // CALLVALUE DUP1 ISZERO
+        0x60, 0x0f, 0x57, // PUSH1 0x0f JUMPI
+        0x60, 0x00, // PUSH1 0x00
+        0x80, 0xfd, // DUP1 REVERT
+        0x5b, // JUMPDEST
+        0x50, // POP
+        0x60, 0x00, 0x80, 0xfd, // PUSH1 0x00 DUP1 REVERT
+    ]);
+
+    // Compute the code hash
+    let code_hash = H256::from(keccak(bytecode.as_ref()));
+
+    // Create Code struct
+    let code = Code::from_bytecode_unchecked(bytecode.clone(), code_hash);
+
+    // Store the code
+    store
+        .add_account_code(code.clone())
+        .await
+        .expect("Failed to add account code");
+
+    // Retrieve the code
+    let retrieved_code = store
+        .get_account_code(code_hash)
+        .expect("Failed to get account code")
+        .expect("Code should exist");
+
+    // Verify the code matches
+    assert_eq!(retrieved_code.hash, code_hash);
+    assert_eq!(retrieved_code.bytecode, bytecode);
+    assert_eq!(retrieved_code.jump_targets, code.jump_targets);
+}
+
+/// Test code storage persists across store reopening.
+#[tokio::test]
+async fn test_code_storage_persistence_with_ethrex_db() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let temp_path = temp_dir.path().to_path_buf();
+
+    // Create some test bytecode
+    let bytecode = Bytes::from(vec![0x60, 0x01, 0x60, 0x02, 0x01, 0x00]); // PUSH1 1 PUSH1 2 ADD STOP
+    let code_hash = H256::from(keccak(bytecode.as_ref()));
+    let code = Code::from_bytecode_unchecked(bytecode.clone(), code_hash);
+
+    // Store code in first store instance
+    {
+        let store = Store::new(&temp_path, EngineType::EthrexDb)
+            .expect("Failed to create store");
+
+        store
+            .add_account_code(code.clone())
+            .await
+            .expect("Failed to add account code");
+    }
+
+    // Reopen store and verify code is still there
+    {
+        let store = Store::new(&temp_path, EngineType::EthrexDb)
+            .expect("Failed to reopen store");
+
+        let retrieved_code = store
+            .get_account_code(code_hash)
+            .expect("Failed to get account code")
+            .expect("Code should persist after reopen");
+
+        assert_eq!(retrieved_code.hash, code_hash);
+        assert_eq!(retrieved_code.bytecode, bytecode);
+    }
+}
+
+/// Test that non-existent code returns None.
+#[test]
+fn test_nonexistent_code_returns_none() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+    let store = Store::new(temp_dir.path(), EngineType::EthrexDb)
+        .expect("Failed to create store");
+
+    // Try to get a code hash that was never stored
+    let fake_code_hash = H256::repeat_byte(0xAB);
+
+    let result = store
+        .get_account_code(fake_code_hash)
+        .expect("Query should succeed");
+
+    assert!(result.is_none(), "Non-existent code should return None");
 }
