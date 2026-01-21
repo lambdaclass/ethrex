@@ -82,6 +82,24 @@ pub trait ProverBackend {
     /// The proof output type specific to this backend.
     type ProofOutput;
 
+    /// The serialized input type specific to this backend.
+    type SerializedInput;
+
+    /// Serialize the program input into the backend-specific format.
+    fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError>;
+
+    /// Serialize the program input and measure the duration.
+    ///
+    /// Default implementation wraps `serialize_input` with timing.
+    fn serialize_input_timed(
+        &self,
+        input: &ProgramInput,
+    ) -> Result<(Self::SerializedInput, Duration), BackendError> {
+        let start = Instant::now();
+        let serialized = self.serialize_input(input)?;
+        Ok((serialized, start.elapsed()))
+    }
+
     /// Execute the program without generating a proof (for testing/debugging).
     fn execute(&self, input: ProgramInput) -> Result<(), BackendError>;
 
