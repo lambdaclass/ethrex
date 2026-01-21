@@ -1,6 +1,10 @@
 #![no_main]
 
-use guest_program::{execution::execution_program, input::ProgramInput};
+#[cfg(feature = "l2")]
+use guest_program::l2::{ProgramInput, execution_program};
+#[cfg(not(feature = "l2"))]
+use guest_program::l1::{ProgramInput, execution_program};
+
 use rkyv::rancor::Error;
 
 sp1_zkvm::entrypoint!(main);
