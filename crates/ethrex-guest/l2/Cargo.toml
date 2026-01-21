@@ -9,6 +9,7 @@ ethrex-guest-common.workspace = true
 ethrex-common = { path = "../../common", default-features = false }
 ethrex-crypto = { path = "../../common/crypto", default-features = false }
 ethrex-vm = { path = "../../vm", default-features = false }
+ethrex-blockchain = { path = "../../blockchain", default-features = false }
 ethrex-rlp = { path = "../../common/rlp", default-features = false }
 ethrex-l2-common = { path = "../../l2/common", default-features = false }
 rkyv = { version = "0.8.10", default-features = false, features = ["std", "unaligned"] }

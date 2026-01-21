@@ -942,6 +942,58 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-guest-common"
+version = "9.0.0"
+dependencies = [
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-vm",
+ "thiserror",
+]
+
+[[package]]
+name = "ethrex-guest-l2"
+version = "9.0.0"
+dependencies = [
+ "bytes",
+ "ethrex-common",
+ "ethrex-crypto",
+ "ethrex-guest-common",
+ "ethrex-l2-common",
+ "ethrex-rlp",
+ "ethrex-vm",
+ "rkyv",
+ "serde",
+ "serde_with",
+ "thiserror",
+]
+
+[[package]]
+name = "ethrex-guest-program"
+version = "9.0.0"
+dependencies = [
+ "ethrex-common",
+ "ethrex-guest-common",
+ "ethrex-vm",
+ "rkyv",
+ "serde",
+]
+
+[[package]]
+name = "ethrex-guest-zisk"
+version = "9.0.0"
+dependencies = [
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-guest-l2",
+ "ethrex-guest-program",
+ "ethrex-vm",
+ "rkyv",
+ "sha2",
+ "ziskos",
+]
+
+[[package]]
 name = "ethrex-l2-common"
 version = "9.0.0"
 dependencies = [
@@ -1268,28 +1320,6 @@ dependencies = [
  "ff",
  "rand_core",
  "subtle",
-]
-
-[[package]]
-name = "guest_program"
-version = "9.0.0"
-dependencies = [
- "bincode 1.3.3",
- "bytes",
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-crypto",
- "ethrex-l2-common",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-trie",
- "ethrex-vm",
- "hex",
- "rkyv",
- "serde",
- "serde_json",
- "serde_with",
- "thiserror",
 ]
 
 [[package]]
@@ -3338,17 +3368,4 @@ dependencies = [
  "serde",
  "static_assertions",
  "tiny-keccak",
-]
-
-[[package]]
-name = "zkvm-zisk-program"
-version = "9.0.0"
-dependencies = [
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-vm",
- "guest_program",
- "rkyv",
- "sha2",
- "ziskos",
 ]
