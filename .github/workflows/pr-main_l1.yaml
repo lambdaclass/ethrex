@@ -1,5 +1,6 @@
 name: L1
 on:
+  workflow_dispatch:
   push:
     branches: ["main"]
   merge_group:
@@ -9,6 +10,7 @@ on:
 permissions:
   contents: read
   actions: write
+  packages: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -132,8 +134,12 @@ jobs:
         name: Build Ethrex Docker Image
         uses: ./.github/actions/build-docker
         with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
+          dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
+          variant: l1
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

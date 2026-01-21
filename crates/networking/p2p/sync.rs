@@ -2,8 +2,8 @@ mod code_collector;
 mod state_healing;
 mod storage_healing;
 
-use crate::discv4::peer_table::PeerTableError;
 use crate::peer_handler::{BlockRequestOrder, PeerHandlerError, SNAP_LIMIT};
+use crate::peer_table::PeerTableError;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::code_collector::CodeHashCollector;
 use crate::sync::state_healing::heal_state_trie_wrap;
@@ -1177,10 +1177,10 @@ pub enum SyncError {
     CorruptPath,
     #[error("Sorted Trie Generation Error: {0}")]
     TrieGenerationError(#[from] TrieGenerationError),
-    #[error("Failed to get account temp db directory")]
-    AccountTempDBDirNotFound,
-    #[error("Failed to get storage temp db directory")]
-    StorageTempDBDirNotFound,
+    #[error("Failed to get account temp db directory: {0}")]
+    AccountTempDBDirNotFound(String),
+    #[error("Failed to get storage temp db directory: {0}")]
+    StorageTempDBDirNotFound(String),
     #[error("RocksDB Error: {0}")]
     RocksDBError(String),
     #[error("Bytecode file error")]
@@ -1207,8 +1207,8 @@ impl SyncError {
             | SyncError::PeerHandler(_)
             | SyncError::CorruptPath
             | SyncError::TrieGenerationError(_)
-            | SyncError::AccountTempDBDirNotFound
-            | SyncError::StorageTempDBDirNotFound
+            | SyncError::AccountTempDBDirNotFound(_)
+            | SyncError::StorageTempDBDirNotFound(_)
             | SyncError::RocksDBError(_)
             | SyncError::BytecodeFileError
             | SyncError::NoLatestCanonical
@@ -1454,7 +1454,7 @@ async fn insert_accounts(
     let mut db_options = rocksdb::Options::default();
     db_options.create_if_missing(true);
     let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
-        .map_err(|_| SyncError::AccountTempDBDirNotFound)?;
+        .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
     let file_paths: Vec<PathBuf> = std::fs::read_dir(account_state_snapshots_dir)
         .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
         .collect::<Result<Vec<_>, _>>()
@@ -1495,10 +1495,12 @@ async fn insert_accounts(
     )
     .map_err(SyncError::TrieGenerationError)?;
 
+    drop(db); // close db before removing directory
+
     std::fs::remove_dir_all(account_state_snapshots_dir)
         .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?;
     std::fs::remove_dir_all(get_rocksdb_temp_accounts_dir(datadir))
-        .map_err(|_| SyncError::AccountTempDBDirNotFound)?;
+        .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
 
     let accounts_with_storage =
         BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().copied());
@@ -1514,9 +1516,8 @@ async fn insert_storages(
 ) -> Result<(), SyncError> {
     use crate::utils::get_rocksdb_temp_storage_dir;
     use crossbeam::channel::{bounded, unbounded};
-    use ethrex_threadpool::ThreadPool;
     use ethrex_trie::{
-        Nibbles, Node,
+        Nibbles, Node, ThreadPool,
         trie_sorted::{BUFFER_COUNT, SIZE_TO_WRITE_DB, trie_from_sorted_accounts},
     };
     use std::thread::scope;
@@ -1634,10 +1635,14 @@ async fn insert_storages(
         }
     });
 
+    // close db before removing directory
+    drop(snapshot);
+    drop(db);
+
     std::fs::remove_dir_all(account_storages_snapshots_dir)
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
     std::fs::remove_dir_all(get_rocksdb_temp_storage_dir(datadir))
-        .map_err(|_| SyncError::StorageTempDBDirNotFound)?;
+        .map_err(|e| SyncError::StorageTempDBDirNotFound(e.to_string()))?;
 
     Ok(())
 }

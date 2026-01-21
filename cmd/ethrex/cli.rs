@@ -15,10 +15,8 @@ use ethrex_blockchain::{
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
 use ethrex_p2p::{
-    discv4::{peer_table::TARGET_PEERS, server::INITIAL_LOOKUP_INTERVAL_MS},
-    sync::SyncMode,
-    tx_broadcaster::BROADCAST_INTERVAL_MS,
-    types::Node,
+    discv4::server::INITIAL_LOOKUP_INTERVAL_MS, peer_table::TARGET_PEERS, sync::SyncMode,
+    tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
@@ -288,6 +286,14 @@ pub struct Options {
         value_parser = clap::value_parser!(u32).range(1..)
     )]
     pub max_blobs_per_block: Option<u32>,
+    #[arg(
+        long = "precompute-witnesses",
+        action = ArgAction::SetTrue,
+        default_value = "false",
+        help = "Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage",
+        help_heading = "Node options"
+    )]
+    pub precompute_witnesses: bool,
 }
 
 impl Options {
@@ -364,6 +370,7 @@ impl Default for Options {
             extra_data: get_minimal_client_version(),
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
             max_blobs_per_block: None,
+            precompute_witnesses: false,
         }
     }
 }
