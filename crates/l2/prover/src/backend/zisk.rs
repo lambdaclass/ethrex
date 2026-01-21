@@ -4,8 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::zkvm::{ProgramInput, ZKVM_ZISK_PROGRAM_ELF};
 use ethrex_l2_common::prover::{BatchProof, ProofFormat};
-use crate::zkvm::{ZKVM_ZISK_PROGRAM_ELF, ProgramInput};
 
 use crate::backend::{BackendError, ProverBackend};
 

@@ -3350,6 +3350,7 @@ name = "ethrex-guest-l2"
 version = "9.0.0"
 dependencies = [
  "bytes",
+ "ethrex-blockchain",
  "ethrex-common 9.0.0",
  "ethrex-crypto",
  "ethrex-guest-common",

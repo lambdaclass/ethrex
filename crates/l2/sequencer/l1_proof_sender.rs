@@ -4,6 +4,7 @@ use std::{
     path::PathBuf,
 };
 
+use crate::zkvm::{ZKVM_RISC0_PROGRAM_VK, ZKVM_SP1_PROGRAM_ELF};
 use ethrex_common::{Address, U256};
 use ethrex_l2_common::{
     calldata::Value,
@@ -19,7 +20,6 @@ use ethrex_rpc::{
     clients::{EthClientError, eth::errors::EstimateGasError},
 };
 use ethrex_storage_rollup::StoreRollup;
-use crate::zkvm::{ZKVM_RISC0_PROGRAM_VK, ZKVM_SP1_PROGRAM_ELF};
 use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, send_after,

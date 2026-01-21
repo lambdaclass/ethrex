@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
-use ethrex_l2_common::prover::{BatchProof, ProofFormat};
 use crate::zkvm::ProgramInput;
+use ethrex_l2_common::prover::{BatchProof, ProofFormat};
 use openvm_continuations::verifier::internal::types::VmStarkProof;
 use openvm_sdk::{Sdk, StdIn, types::EvmProof};
 use openvm_stark_sdk::config::baby_bear_poseidon2::BabyBearPoseidon2Config;
@@ -9,7 +9,8 @@ use rkyv::rancor::Error;
 
 use crate::backend::{BackendError, ProverBackend};
 
-static PROGRAM_ELF: &[u8] = include_bytes!("../../../../ethrex-guest/bin/openvm/out/riscv32im-openvm-elf");
+static PROGRAM_ELF: &[u8] =
+    include_bytes!("../../../../ethrex-guest/bin/openvm/out/riscv32im-openvm-elf");
 
 /// OpenVM-specific proof output.
 pub enum OpenVmProveOutput {

@@ -1,9 +1,9 @@
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 
+use crate::zkvm::ProgramInput;
 use clap::ValueEnum;
 use ethrex_l2_common::prover::{BatchProof, ProofFormat};
-use crate::zkvm::ProgramInput;
 use serde::{Deserialize, Serialize};
 
 pub mod error;

@@ -13,14 +13,16 @@ pub static ZKVM_SP1_PROGRAM_ELF: &[u8] =
 pub const ZKVM_SP1_PROGRAM_ELF: &[u8] = &[];
 
 #[cfg(all(not(clippy), feature = "risc0"))]
-pub static ZKVM_RISC0_PROGRAM_VK: &str =
-    include_str!(concat!("../../../ethrex-guest/bin/risc0/out/riscv32im-risc0-vk"));
+pub static ZKVM_RISC0_PROGRAM_VK: &str = include_str!(concat!(
+    "../../../ethrex-guest/bin/risc0/out/riscv32im-risc0-vk"
+));
 #[cfg(any(clippy, not(feature = "risc0")))]
 pub const ZKVM_RISC0_PROGRAM_VK: &str = "";
 
 #[cfg(all(not(clippy), feature = "zisk"))]
-pub static ZKVM_ZISK_PROGRAM_ELF: &[u8] =
-    include_bytes!("../../../ethrex-guest/bin/zisk/target/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk");
+pub static ZKVM_ZISK_PROGRAM_ELF: &[u8] = include_bytes!(
+    "../../../ethrex-guest/bin/zisk/target/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk"
+);
 #[cfg(any(clippy, not(feature = "zisk")))]
 pub const ZKVM_ZISK_PROGRAM_ELF: &[u8] = &[];
 

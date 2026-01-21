@@ -2,11 +2,11 @@ use std::time::{Duration, Instant};
 
 use tracing::{info, warn};
 
+use crate::zkvm::{ProgramInput, ProgramOutput, execution_program};
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofCalldata, ProofFormat, ProverType},
 };
-use crate::zkvm::{ProgramInput, ProgramOutput, execution_program};
 
 use crate::backend::{BackendError, ProverBackend};
 
