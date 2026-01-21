@@ -79,6 +79,10 @@ impl SQLStore {
         Ok(())
     }
 
+    #[doc(hidden)]
+    /// Executes a raw SQL query.
+    ///
+    /// Exposed for testing - not part of the stable public API.
     pub async fn query<T: IntoParams>(
         &self,
         sql: &str,

@@ -60,6 +60,10 @@ pub fn parse_signature(signature: &str) -> Result<(String, Vec<String>), Calldat
     Ok((name.to_string(), splitted_params))
 }
 
+#[doc(hidden)]
+/// Computes the 4-byte function selector from a function name and parameters.
+///
+/// Exposed for testing - not part of the stable public API.
 pub fn compute_function_selector(
     name: &str,
     params: &[String],
