@@ -5,7 +5,7 @@ members = ["bin/sp1", "bin/risc0", "bin/zisk", "bin/openvm"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "9.0.0"
 edition = "2024"
 license = "MIT"
 rust-version = "1.85"

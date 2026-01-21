@@ -18,13 +18,12 @@ use ethrex_common::{
 };
 #[cfg(feature = "sp1")]
 use ethrex_prover_lib::Sp1Backend;
-use ethrex_prover_lib::{BackendType, ExecBackend, ProverBackend};
+use ethrex_prover_lib::BackendType;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmError;
-// Import L1 ProgramInput directly to avoid Cargo feature unification issues
-// (ethrex-prover has l2 as default, which would give us L2's ProgramInput with extra fields)
-use ethrex_guest_program::ProgramInput;
+// Import L1 guest program types directly to avoid Cargo feature unification issues
+use ethrex_guest_program::{ProgramInput, execution_program};
 use regex::Regex;
 
 pub fn parse_and_execute(
@@ -416,13 +415,27 @@ async fn re_run_stateless(
         execution_witness,
     };
 
-    let execute_result = match backend_type {
-        BackendType::Exec => ExecBackend::new().execute(program_input),
+    // Execute using the appropriate backend
+    let execute_result: Result<(), String> = match backend_type {
+        // For Exec backend, call the L1 execution program directly
+        BackendType::Exec => execution_program(program_input)
+            .map(|_| ())
+            .map_err(|e| format!("{e:?}")),
         #[cfg(feature = "sp1")]
-        BackendType::SP1 => Sp1Backend::new().execute(program_input),
+        BackendType::SP1 => {
+            // SP1 backend needs the prover-lib's ProgramInput type
+            // For now, we construct it with the same fields (L1 has only blocks + witness)
+            let sp1_input = ethrex_prover_lib::zkvm::ProgramInput {
+                blocks: program_input.blocks,
+                execution_witness: program_input.execution_witness,
+            };
+            Sp1Backend::new()
+                .execute(sp1_input)
+                .map_err(|e| format!("{e:?}"))
+        }
     };
 
-    if let Err(e) = execute_result {
+    if let Err(e) = &execute_result {
         if !test_should_fail {
             return Err(format!(
                 "Expected test: {test_key} to succeed but failed with {e}"
