@@ -9,15 +9,15 @@ use ethrex_l2_common::{
     utils::get_address_from_secret_key,
 };
 use ethrex_guest_program::input::ProgramInput;
+use secp256k1::{Message, SecretKey, generate_keypair, rand};
+use sender::{get_batch, submit_proof, submit_quote};
+use std::time::Duration;
+use tokio::time::sleep;
 
 /// Returns the git commit hash of the current build.
 fn get_git_commit_hash() -> String {
     env!("VERGEN_GIT_SHA").to_string()
 }
-use secp256k1::{Message, SecretKey, generate_keypair, rand};
-use sender::{get_batch, submit_proof, submit_quote};
-use std::time::Duration;
-use tokio::time::sleep;
 
 const POLL_INTERVAL_MS: u64 = 5000;
 
