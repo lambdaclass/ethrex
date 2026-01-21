@@ -1,6 +1,8 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
 		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
-		load-test-fibonacci load-test-io run-hive-eels-blobs
+		load-test-fibonacci load-test-io run-hive-eels-blobs \
+		build-bolt bolt-instrument bolt-optimize bolt-clean \
+		pgo-bolt-build pgo-bolt-optimize pgo-full-build pgo-full-optimize
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -14,6 +16,111 @@ endif
 
 build: ## 🔨 Build the client
 	cargo build $(PROFILING_CFG) --workspace
+
+# BOLT optimization targets (Linux x86-64)
+# Prerequisites: llvm-bolt from LLVM 19+ (Debian Trixie has bolt-19, or use apt.llvm.org for newer)
+#
+# STATUS: BOLT works on x86_64 Linux with proper build flags.
+#
+# REQUIREMENTS:
+#   1. Build RocksDB without function splitting: CXXFLAGS='-fno-reorder-blocks-and-partition'
+#   2. Avoid function names containing ".warm" or ".cold" (BOLT false positives)
+#   3. Link with relocations: -Clink-arg=-Wl,--emit-relocs -Clink-arg=-Wl,-q
+#
+# KNOWN ISSUES:
+#   - ARM64: Fails with "Undefined temporary symbol .Ltmp0" during emission (BOLT bug)
+#   - Any Rust function with ".warm" or ".cold" in name triggers false "split function" detection
+#
+# INSTALL BOLT (Debian/Ubuntu):
+#   # Option 1: Use Debian Trixie's bolt-19
+#   sudo apt install bolt-19 libbolt-19-dev
+#   sudo ln -sf /usr/lib/llvm-19/lib/libbolt_rt_instr.a /usr/lib/libbolt_rt_instr.a
+#
+#   # Option 2: Use latest from apt.llvm.org
+#   wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+#   echo "deb http://apt.llvm.org/unstable/ llvm-toolchain main" | sudo tee /etc/apt/sources.list.d/llvm.list
+#   sudo apt update && sudo apt install bolt-22 libbolt-22-dev
+#   sudo ln -sf /usr/lib/llvm-22/lib/libbolt_rt_instr.a /usr/lib/libbolt_rt_instr.a
+#
+BOLT_PROFILE_DIR ?= /tmp/bolt-profiles
+BOLT_BINARY := target/release-bolt/ethrex
+PERF_DATA ?= perf.data
+
+build-bolt: ## 🔨 Build release binary for BOLT optimization (with relocations)
+	CXXFLAGS='-fno-reorder-blocks-and-partition' cargo build --profile release-bolt
+
+bolt-perf2bolt: ## 📊 Convert perf.data to BOLT profile format
+	@mkdir -p $(BOLT_PROFILE_DIR)
+	perf2bolt -p $(PERF_DATA) -o $(BOLT_PROFILE_DIR)/perf.fdata $(BOLT_BINARY)
+
+bolt-optimize: ## ⚡ Apply BOLT optimization using collected profiles
+	@if [ -f $(BOLT_PROFILE_DIR)/perf.fdata ]; then \
+		llvm-bolt $(BOLT_BINARY) -o ethrex-bolt-optimized \
+			-data=$(BOLT_PROFILE_DIR)/perf.fdata \
+			-reorder-blocks=ext-tsp \
+			-reorder-functions=cdsort \
+			-split-functions \
+			-split-all-cold \
+			-split-eh \
+			-dyno-stats; \
+	elif ls $(BOLT_PROFILE_DIR)/prof.* 1>/dev/null 2>&1; then \
+		merge-fdata $(BOLT_PROFILE_DIR)/prof.* > $(BOLT_PROFILE_DIR)/merged.fdata && \
+		llvm-bolt $(BOLT_BINARY) -o ethrex-bolt-optimized \
+			-data=$(BOLT_PROFILE_DIR)/merged.fdata \
+			-reorder-blocks=ext-tsp \
+			-reorder-functions=cdsort \
+			-split-functions \
+			-split-all-cold \
+			-split-eh \
+			-dyno-stats; \
+	else \
+		echo "No profile data found. Run perf profiling first:"; \
+		echo "  perf record -e cycles:u -j any,u -o perf.data -- $(BOLT_BINARY) ..."; \
+		echo "  make bolt-perf2bolt"; \
+		exit 1; \
+	fi
+
+bolt-verify: ## 🔍 Verify binary was processed by BOLT
+	@if readelf -S ethrex-bolt-optimized 2>/dev/null | grep -q '\.note\.bolt_info'; then \
+		echo "✓ Binary contains BOLT markers"; \
+		readelf -p .note.bolt_info ethrex-bolt-optimized 2>/dev/null || true; \
+	else \
+		echo "✗ Binary does not contain BOLT markers"; \
+		exit 1; \
+	fi
+
+bolt-clean: ## 🧹 Clean BOLT profiles and artifacts
+	rm -rf $(BOLT_PROFILE_DIR)
+	rm -f ethrex-instrumented ethrex-bolt-optimized $(PERF_DATA)
+
+# BOLT instrumentation (creates instrumented binary for profiling)
+bolt-instrument: build-bolt ## 🔧 Create BOLT-instrumented binary for profiling
+	@mkdir -p $(BOLT_PROFILE_DIR)
+	llvm-bolt \
+		$(BOLT_BINARY) \
+		-o ethrex-instrumented \
+		-instrument \
+		--instrumentation-file-append-pid \
+		--instrumentation-file=$(BOLT_PROFILE_DIR)/prof
+	@echo "Instrumented binary created: ethrex-instrumented"
+	@echo "Run the binary with a representative workload to collect profile data."
+	@echo "Profile will be written to $(BOLT_PROFILE_DIR)/prof.<pid>.fdata"
+
+# cargo-pgo workflow (requires: cargo install cargo-pgo)
+# NOTE: cargo-pgo doesn't pass CXXFLAGS, so use the manual Makefile targets instead
+pgo-bolt-build: ## 🔨 Build with cargo-pgo for BOLT instrumentation (use build-bolt instead)
+	@echo "NOTE: cargo-pgo doesn't pass CXXFLAGS. Use 'make build-bolt' then 'make bolt-instrument' instead."
+	CXXFLAGS='-fno-reorder-blocks-and-partition' cargo pgo bolt build --release
+
+pgo-bolt-optimize: ## ⚡ Build BOLT-optimized binary with cargo-pgo
+	cargo pgo bolt optimize --release
+
+pgo-full-build: ## 🔨 Build with PGO instrumentation
+	cargo pgo build
+
+pgo-full-optimize: ## ⚡ Build PGO+BOLT optimized binary
+	CXXFLAGS='-fno-reorder-blocks-and-partition' cargo pgo bolt build --with-pgo
+	@echo "Run profiling workload, then: cargo pgo bolt optimize --with-pgo"
 
 lint-l1:
 	cargo clippy --lib --bins -F debug,sync-test \

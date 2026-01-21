@@ -1,5 +1,28 @@
+# BOLT compatibility flags for post-link optimization
+# These preserve relocation info needed by BOLT and enable frame pointers for profiling.
+#
+# BOLT USAGE (x86_64 Linux only):
+#   1. Build with: CXXFLAGS='-fno-reorder-blocks-and-partition' cargo build --profile release-bolt
+#   2. Instrument: llvm-bolt target/release-bolt/ethrex -instrument -o ethrex-inst ...
+#   3. Run workload with instrumented binary to collect profile
+#   4. Optimize: llvm-bolt target/release-bolt/ethrex -data=profile.fdata -o ethrex-bolt ...
+#
+# NOTE: ARM64 currently fails during BOLT emission phase (LLVM bug with .Ltmp symbols)
+
 [target.x86_64-unknown-linux-gnu]
 rustflags = [
     "-Ctarget-cpu=x86-64-v3",
     "-Ctarget-feature=+avx2,+sse2,+ssse3,+sse4.1,+sse4.2,+bmi1,+lzcnt,+pclmulqdq",
+    # BOLT compatibility flags - preserves relocation info for post-link optimization
+    "-Clink-arg=-Wl,--emit-relocs",
+    "-Clink-arg=-Wl,-q",
+    "-Cforce-frame-pointers=yes",  # Better profiling accuracy
+]
+
+[target.aarch64-unknown-linux-gnu]
+rustflags = [
+    # BOLT compatibility flags - preserves relocation info for post-link optimization
+    "-Clink-arg=-Wl,--emit-relocs",
+    "-Clink-arg=-Wl,-q",
+    "-Cforce-frame-pointers=yes",  # Better profiling accuracy
 ]

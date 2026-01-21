@@ -52,6 +52,16 @@ debug = 2
 inherits = "release"
 debug-assertions = true
 
+# Profile for BOLT preparation - keeps symbols for BOLT optimization
+[profile.release-bolt]
+inherits = "release"
+debug = 1  # Keep symbols for BOLT
+
+# For PGO + BOLT combined (maximum optimization)
+[profile.release-pgo-bolt]
+inherits = "release"
+debug = 1
+
 [workspace.dependencies]
 ethrex-blockchain = { path = "./crates/blockchain", default-features = false }
 ethrex-common = { path = "./crates/common", default-features = false }
