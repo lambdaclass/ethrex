@@ -13,9 +13,6 @@ pub enum BackendError {
     #[error("Verification error: {0}")]
     Verification(String),
 
-    #[error("Verify not supported for this backend")]
-    VerifyNotSupported,
-
     #[error("Batch proof conversion error: {0}")]
     BatchProofConversion(String),
 
@@ -46,5 +43,9 @@ impl BackendError {
 
     pub fn not_implemented(msg: impl Into<String>) -> Self {
         Self::NotImplemented(msg.into())
+    }
+
+    pub fn verify_not_supported() -> Self {
+        Self::NotImplemented("Verify not implemented for this backend".to_string())
     }
 }
