@@ -9,10 +9,7 @@ pub enum RpcRequestError {
     #[error("{0}")]
     SerdeJSONError(#[from] serde_json::Error),
     #[error("{method}: {message}")]
-    RPCError {
-        method: &'static str,
-        message: String,
-    },
+    RPCError { method: String, message: String },
     #[error("{0}")]
     ParseIntError(#[from] std::num::ParseIntError),
     #[error("{0}")]
