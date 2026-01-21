@@ -84,6 +84,18 @@ pub struct JitContext {
     /// Current push value for PUSH wrappers to use
     pub push_value: U256,
 
+    // Environment data
+    /// Current contract address (ADDRESS opcode)
+    pub address: [u8; 20],
+    /// Caller address (CALLER opcode)
+    pub caller: [u8; 20],
+    /// Call value in wei (CALLVALUE opcode)
+    pub callvalue: U256,
+    /// Pointer to calldata (CALLDATALOAD, CALLDATACOPY)
+    pub calldata_ptr: *const u8,
+    /// Calldata length (CALLDATASIZE)
+    pub calldata_len: usize,
+
     // JIT non-local exit support
     /// Jump buffer for longjmp-based exit from JIT code
     pub jmp_buf: JmpBuf,
@@ -171,6 +183,13 @@ impl JitContext {
 
             // PUSH value (set by dispatch loop)
             push_value: U256::zero(),
+
+            // Environment data
+            address: frame.to.0,
+            caller: frame.msg_sender.0,
+            callvalue: frame.msg_value,
+            calldata_ptr: frame.calldata.as_ptr(),
+            calldata_len: frame.calldata.len(),
 
             // JIT non-local exit support (initialized by execute_jit)
             jmp_buf: Default::default(),

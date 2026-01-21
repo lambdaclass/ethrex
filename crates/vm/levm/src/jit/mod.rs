@@ -47,6 +47,25 @@ mod tests {
         gas: i64,
         bytecode: &[u8],
     ) -> JitContext {
+        make_test_ctx_with_env(stack_values, stack_offset, gas, bytecode, &[])
+    }
+
+    /// Helper to create a test JitContext with calldata
+    fn make_test_ctx_with_env(
+        stack_values: &mut [U256; STACK_LIMIT],
+        stack_offset: usize,
+        gas: i64,
+        bytecode: &[u8],
+        calldata: &[u8],
+    ) -> JitContext {
+        // Default test addresses and values
+        static TEST_CALLDATA: &[u8] = &[];
+        let calldata_ptr = if calldata.is_empty() {
+            TEST_CALLDATA.as_ptr()
+        } else {
+            calldata.as_ptr()
+        };
+
         JitContext {
             stack_values: stack_values.as_mut_ptr(),
             stack_offset,
@@ -63,6 +82,12 @@ mod tests {
             return_offset: 0,
             return_size: 0,
             push_value: U256::zero(),
+            // Environment data with test values
+            address: [0x11; 20],   // Test contract address
+            caller: [0x22; 20],    // Test caller address
+            callvalue: U256::from(1000u64),  // 1000 wei
+            calldata_ptr,
+            calldata_len: calldata.len(),
             jmp_buf: Default::default(),
             exit_callback: None,
         }
@@ -465,5 +490,724 @@ mod tests {
         // Exit: JUMPDEST(1) + POP(2) = 3
         // Total: 40*3 + 20 + 3 = 143
         assert_eq!(ctx.gas_remaining, 1000 - 143, "Should consume 143 gas for 3-iteration loop");
+    }
+
+    /// Test: AND opcode
+    #[test]
+    fn test_and() {
+        // PUSH1 0xFF, PUSH1 0x0F, AND, STOP -> should get 0x0F
+        let bytecode = [0x60, 0xff, 0x60, 0x0f, 0x16, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset], U256::from(0x0fu64), "0xFF AND 0x0F = 0x0F");
+    }
+
+    /// Test: OR opcode
+    #[test]
+    fn test_or() {
+        // PUSH1 0xF0, PUSH1 0x0F, OR, STOP -> should get 0xFF
+        let bytecode = [0x60, 0xf0, 0x60, 0x0f, 0x17, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset], U256::from(0xffu64), "0xF0 OR 0x0F = 0xFF");
+    }
+
+    /// Test: XOR opcode
+    #[test]
+    fn test_xor() {
+        // PUSH1 0xFF, PUSH1 0xF0, XOR, STOP -> should get 0x0F
+        let bytecode = [0x60, 0xff, 0x60, 0xf0, 0x18, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset], U256::from(0x0fu64), "0xFF XOR 0xF0 = 0x0F");
+    }
+
+    /// Test: NOT opcode
+    #[test]
+    fn test_not() {
+        // PUSH1 0, NOT, STOP -> should get MAX (all 1s)
+        let bytecode = [0x60, 0x00, 0x19, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset], U256::MAX, "NOT 0 = MAX");
+    }
+
+    /// Test: BYTE opcode
+    #[test]
+    fn test_byte() {
+        // PUSH1 0xAB, PUSH1 31, BYTE, STOP -> get byte 31 (LSB) = 0xAB
+        let bytecode = [0x60, 0xab, 0x60, 0x1f, 0x1a, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset], U256::from(0xabu64), "BYTE(31, 0xAB) = 0xAB");
+    }
+
+    /// Test: SHL opcode
+    #[test]
+    fn test_shl() {
+        // PUSH1 1, PUSH1 4, SHL, STOP -> 1 << 4 = 16
+        let bytecode = [0x60, 0x01, 0x60, 0x04, 0x1b, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset], U256::from(16u64), "1 << 4 = 16");
+    }
+
+    /// Test: SHR opcode
+    #[test]
+    fn test_shr() {
+        // PUSH1 16, PUSH1 4, SHR, STOP -> 16 >> 4 = 1
+        let bytecode = [0x60, 0x10, 0x60, 0x04, 0x1c, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset], U256::from(1u64), "16 >> 4 = 1");
+    }
+
+    /// Test: SAR opcode (arithmetic shift right)
+    #[test]
+    fn test_sar() {
+        // PUSH32 MAX (all 1s), PUSH1 4, SAR, STOP -> should still be MAX (sign extension)
+        // Bytecode: PUSH32 <32 bytes of 0xFF>, PUSH1 4, SAR, STOP
+        let mut bytecode = vec![0x7f]; // PUSH32
+        bytecode.extend_from_slice(&[0xff; 32]); // 32 bytes of 0xFF
+        bytecode.push(0x60); // PUSH1
+        bytecode.push(0x04); // 4
+        bytecode.push(0x1d); // SAR
+        bytecode.push(0x00); // STOP
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        // SAR on MAX (negative in 2's complement) should give MAX (sign extension fills with 1s)
+        assert_eq!(stack_values[ctx.stack_offset], U256::MAX, "SAR(4, MAX) = MAX");
+    }
+
+    /// Test: MSIZE opcode
+    #[test]
+    fn test_msize() {
+        // MSIZE, STOP -> should push 0 (no memory used yet)
+        let bytecode = [0x59, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+        // Memory size starts at 0
+        ctx.memory_size = 0;
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset], U256::zero(), "MSIZE should be 0");
+    }
+
+    /// Test: DIV opcode (unsigned division)
+    #[test]
+    fn test_div() {
+        // PUSH1 3, PUSH1 10, DIV, STOP -> 10 / 3 = 3
+        let bytecode = [0x60, 0x03, 0x60, 0x0a, 0x04, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset], U256::from(3u64), "10 / 3 = 3");
+    }
+
+    /// Test: DIV by zero returns zero
+    #[test]
+    fn test_div_by_zero() {
+        // PUSH1 0, PUSH1 10, DIV, STOP -> 10 / 0 = 0 (EVM semantics)
+        let bytecode = [0x60, 0x00, 0x60, 0x0a, 0x04, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset], U256::zero(), "10 / 0 = 0");
+    }
+
+    /// Test: SDIV opcode (signed division)
+    #[test]
+    fn test_sdiv() {
+        // Test: -10 / 3 = -3 (truncate toward zero)
+        // -10 in 256-bit two's complement is MAX - 9
+        // PUSH1 3, PUSH32 <-10>, SDIV, STOP -> stack: top=-10, second=3 -> -10 / 3 = -3
+        let neg_10 = U256::MAX - U256::from(9u64); // -10 in two's complement
+        let mut bytecode = vec![0x60, 0x03]; // PUSH1 3
+        bytecode.push(0x7f); // PUSH32
+        bytecode.extend_from_slice(&neg_10.to_big_endian());
+        bytecode.push(0x05); // SDIV
+        bytecode.push(0x00); // STOP
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 200, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        // -10 / 3 = -3 (truncate toward zero)
+        let neg_3 = U256::MAX - U256::from(2u64); // -3 in two's complement
+        assert_eq!(stack_values[ctx.stack_offset], neg_3, "-10 / 3 = -3");
+    }
+
+    /// Test: MOD opcode (unsigned modulo)
+    #[test]
+    fn test_mod() {
+        // PUSH1 3, PUSH1 10, MOD, STOP -> 10 % 3 = 1
+        let bytecode = [0x60, 0x03, 0x60, 0x0a, 0x06, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset], U256::from(1u64), "10 % 3 = 1");
+    }
+
+    /// Test: MOD by zero returns zero
+    #[test]
+    fn test_mod_by_zero() {
+        // PUSH1 0, PUSH1 10, MOD, STOP -> 10 % 0 = 0 (EVM semantics)
+        let bytecode = [0x60, 0x00, 0x60, 0x0a, 0x06, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset], U256::zero(), "10 % 0 = 0");
+    }
+
+    /// Test: SMOD opcode (signed modulo)
+    #[test]
+    fn test_smod() {
+        // Test: -10 % 3 = -1 (sign of dividend)
+        // -10 in 256-bit two's complement is MAX - 9
+        // PUSH1 3, PUSH32 <-10>, SMOD, STOP -> stack: top=-10, second=3 -> -10 % 3 = -1
+        let neg_10 = U256::MAX - U256::from(9u64); // -10 in two's complement
+        let mut bytecode = vec![0x60, 0x03]; // PUSH1 3
+        bytecode.push(0x7f); // PUSH32
+        bytecode.extend_from_slice(&neg_10.to_big_endian());
+        bytecode.push(0x07); // SMOD
+        bytecode.push(0x00); // STOP
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 200, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        // -10 % 3 = -1 (sign follows dividend)
+        let neg_1 = U256::MAX; // -1 in two's complement
+        assert_eq!(stack_values[ctx.stack_offset], neg_1, "-10 % 3 = -1");
+    }
+
+    /// Test: ADDMOD opcode
+    #[test]
+    fn test_addmod() {
+        // PUSH1 8, PUSH1 10, PUSH1 10, ADDMOD, STOP -> (10 + 10) % 8 = 4
+        let bytecode = [0x60, 0x08, 0x60, 0x0a, 0x60, 0x0a, 0x08, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset], U256::from(4u64), "(10 + 10) % 8 = 4");
+    }
+
+    /// Test: ADDMOD with modulus 0 returns 0
+    #[test]
+    fn test_addmod_mod_zero() {
+        // PUSH1 0, PUSH1 10, PUSH1 10, ADDMOD, STOP -> (10 + 10) % 0 = 0
+        let bytecode = [0x60, 0x00, 0x60, 0x0a, 0x60, 0x0a, 0x08, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset], U256::zero(), "(10 + 10) % 0 = 0");
+    }
+
+    /// Test: MULMOD opcode
+    #[test]
+    fn test_mulmod() {
+        // PUSH1 8, PUSH1 10, PUSH1 10, MULMOD, STOP -> (10 * 10) % 8 = 4
+        let bytecode = [0x60, 0x08, 0x60, 0x0a, 0x60, 0x0a, 0x09, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset], U256::from(4u64), "(10 * 10) % 8 = 4");
+    }
+
+    /// Test: EXP opcode (exponentiation)
+    #[test]
+    fn test_exp() {
+        // PUSH1 3, PUSH1 2, EXP, STOP -> 2^3 = 8
+        let bytecode = [0x60, 0x03, 0x60, 0x02, 0x0a, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 200, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset], U256::from(8u64), "2^3 = 8");
+    }
+
+    /// Test: EXP with larger exponent
+    #[test]
+    fn test_exp_larger() {
+        // PUSH1 10, PUSH1 2, EXP, STOP -> 2^10 = 1024
+        let bytecode = [0x60, 0x0a, 0x60, 0x02, 0x0a, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 200, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset], U256::from(1024u64), "2^10 = 1024");
+    }
+
+    /// Test: SIGNEXTEND opcode
+    #[test]
+    fn test_signextend() {
+        // Sign extend a negative byte value
+        // PUSH1 0xFF (255, or -1 as signed byte), PUSH1 0, SIGNEXTEND, STOP
+        // Result should be 0xFFFF...FF (all 1s, which is -1 in 256-bit)
+        let bytecode = [0x60, 0xff, 0x60, 0x00, 0x0b, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset], U256::MAX, "SIGNEXTEND(0, 0xFF) = -1");
+    }
+
+    /// Test: SIGNEXTEND with positive value
+    #[test]
+    fn test_signextend_positive() {
+        // Sign extend a positive byte value
+        // PUSH1 0x7F (127, positive byte), PUSH1 0, SIGNEXTEND, STOP
+        // Result should still be 0x7F (no sign extension needed)
+        let bytecode = [0x60, 0x7f, 0x60, 0x00, 0x0b, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset], U256::from(0x7fu64), "SIGNEXTEND(0, 0x7F) = 0x7F");
+    }
+
+    /// Test: ADDRESS opcode
+    #[test]
+    fn test_address() {
+        // ADDRESS, STOP -> push current contract address
+        let bytecode = [0x30, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        // Test address is [0x11; 20]
+        let expected = U256::from_big_endian(&[0u8; 12].into_iter().chain([0x11u8; 20]).collect::<Vec<_>>());
+        assert_eq!(stack_values[ctx.stack_offset], expected, "ADDRESS should return test address");
+    }
+
+    /// Test: CALLER opcode
+    #[test]
+    fn test_caller() {
+        // CALLER, STOP -> push msg sender address
+        let bytecode = [0x33, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        // Test caller is [0x22; 20]
+        let expected = U256::from_big_endian(&[0u8; 12].into_iter().chain([0x22u8; 20]).collect::<Vec<_>>());
+        assert_eq!(stack_values[ctx.stack_offset], expected, "CALLER should return test caller");
+    }
+
+    /// Test: CALLVALUE opcode
+    #[test]
+    fn test_callvalue() {
+        // CALLVALUE, STOP -> push msg value
+        let bytecode = [0x34, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        // Test callvalue is 1000
+        assert_eq!(stack_values[ctx.stack_offset], U256::from(1000u64), "CALLVALUE should return 1000");
+    }
+
+    /// Test: CALLDATASIZE opcode
+    #[test]
+    fn test_calldatasize() {
+        // CALLDATASIZE, STOP -> push calldata length
+        let bytecode = [0x36, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        // Create context with calldata
+        let calldata = [0x11, 0x22, 0x33, 0x44];
+        let mut ctx = make_test_ctx_with_env(&mut stack_values, STACK_LIMIT, 100, &bytecode, &calldata);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset], U256::from(4u64), "CALLDATASIZE should return 4");
+    }
+
+    /// Test: CODESIZE opcode
+    #[test]
+    fn test_codesize() {
+        // CODESIZE, STOP -> push bytecode length
+        let bytecode = [0x38, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset], U256::from(2u64), "CODESIZE should return 2");
+    }
+
+    /// Test: CALLDATALOAD opcode
+    #[test]
+    fn test_calldataload() {
+        // PUSH1 0, CALLDATALOAD, STOP -> load first 32 bytes of calldata
+        let bytecode = [0x60, 0x00, 0x35, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        // Create 32 bytes of calldata
+        let mut calldata = [0u8; 32];
+        calldata[0] = 0xAB;
+        calldata[1] = 0xCD;
+        let mut ctx = make_test_ctx_with_env(&mut stack_values, STACK_LIMIT, 100, &bytecode, &calldata);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        let expected = U256::from_big_endian(&calldata);
+        assert_eq!(stack_values[ctx.stack_offset], expected, "CALLDATALOAD should load first 32 bytes");
+    }
+
+    /// Test: CALLDATALOAD with out-of-bounds offset returns zeros
+    #[test]
+    fn test_calldataload_oob() {
+        // PUSH1 100, CALLDATALOAD, STOP -> load from offset 100 (past end of calldata)
+        let bytecode = [0x60, 0x64, 0x35, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        // Only 4 bytes of calldata
+        let calldata = [0x11, 0x22, 0x33, 0x44];
+        let mut ctx = make_test_ctx_with_env(&mut stack_values, STACK_LIMIT, 100, &bytecode, &calldata);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset], U256::zero(), "CALLDATALOAD OOB should return 0");
+    }
+
+    /// Test: RETURN opcode
+    #[test]
+    fn test_return() {
+        // PUSH1 32 (size), PUSH1 0 (offset), RETURN -> return 32 bytes from offset 0
+        let bytecode = [0x60, 0x20, 0x60, 0x00, 0xf3];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Return);
+        assert_eq!(ctx.return_offset, 0, "Return offset should be 0");
+        assert_eq!(ctx.return_size, 32, "Return size should be 32");
+        assert_eq!(ctx.stack_offset, STACK_LIMIT, "Stack should be empty after RETURN pops args");
+    }
+
+    /// Test: RETURN with zero size
+    #[test]
+    fn test_return_zero_size() {
+        // PUSH1 0 (size), PUSH1 0 (offset), RETURN -> return nothing
+        let bytecode = [0x60, 0x00, 0x60, 0x00, 0xf3];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Return);
+        assert_eq!(ctx.return_offset, 0, "Return offset should be 0");
+        assert_eq!(ctx.return_size, 0, "Return size should be 0");
+    }
+
+    /// Test: REVERT opcode
+    #[test]
+    fn test_revert() {
+        // PUSH1 4 (size), PUSH1 0 (offset), REVERT -> revert with 4 bytes from offset 0
+        let bytecode = [0x60, 0x04, 0x60, 0x00, 0xfd];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Revert);
+        assert_eq!(ctx.return_offset, 0, "Revert offset should be 0");
+        assert_eq!(ctx.return_size, 4, "Revert size should be 4");
+        assert_eq!(ctx.stack_offset, STACK_LIMIT, "Stack should be empty after REVERT pops args");
     }
 }
