@@ -55,7 +55,9 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
 use ethrex_common::types::Block;
-use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_full_rpc_duration, record_rpc_outcome};
+use ethrex_metrics::rpc::{
+    RpcOutcome, record_async_duration, record_full_rpc_duration, record_rpc_outcome,
+};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
