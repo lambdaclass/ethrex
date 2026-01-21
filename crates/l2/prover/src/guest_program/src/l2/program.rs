@@ -1,7 +1,7 @@
 use ethrex_l2_common::messages::get_balance_diffs;
 use ethrex_vm::{Evm, GuestProgramStateWrapper};
 
-use crate::common::{BlockExecutionResult, execute_blocks};
+use crate::common::{BatchExecutionResult, execute_blocks};
 use crate::l2::blobs::verify_blob;
 use crate::l2::error::L2ExecutionError;
 use crate::l2::input::ProgramInput;
@@ -23,7 +23,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, L2Executi
     } = input;
 
     // Execute blocks using the common execution logic
-    let BlockExecutionResult {
+    let BatchExecutionResult {
         receipts,
         initial_state_hash,
         final_state_hash,

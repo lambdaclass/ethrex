@@ -1,7 +1,7 @@
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_vm::Evm;
 
-use crate::common::{BlockExecutionResult, ExecutionError, execute_blocks};
+use crate::common::{BatchExecutionResult, ExecutionError, execute_blocks};
 use crate::l1::input::ProgramInput;
 use crate::l1::output::ProgramOutput;
 
@@ -15,7 +15,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Execution
         execution_witness,
     } = input;
 
-    let BlockExecutionResult {
+    let BatchExecutionResult {
         receipts: _,
         initial_state_hash,
         final_state_hash,

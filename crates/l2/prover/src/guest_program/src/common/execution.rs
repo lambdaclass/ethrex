@@ -1,18 +1,16 @@
-use std::collections::HashMap;
-
 use ethrex_blockchain::{
     validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
 };
 use ethrex_common::types::block_execution_witness::{ExecutionWitness, GuestProgramState};
-use ethrex_common::types::{AccountUpdate, Block, Receipt};
-use ethrex_common::{Address, H256, U256};
+use ethrex_common::types::{Block, Receipt};
+use ethrex_common::{H256, U256};
 use ethrex_vm::{Evm, GuestProgramStateWrapper, VmDatabase};
 
 use crate::common::ExecutionError;
 use crate::report_cycles;
 
 /// Result of executing a batch of blocks.
-pub struct BlockExecutionResult {
+pub struct BatchExecutionResult {
     /// Receipts for each block (outer vec) and each transaction (inner vec).
     pub receipts: Vec<Vec<Receipt>>,
     /// Initial state trie root hash.
@@ -43,7 +41,7 @@ pub fn execute_blocks<F>(
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
     vm_factory: F,
-) -> Result<BlockExecutionResult, ExecutionError>
+) -> Result<BatchExecutionResult, ExecutionError>
 where
     F: Fn(&GuestProgramStateWrapper, usize) -> Result<Evm, ExecutionError>,
 {
@@ -98,7 +96,6 @@ where
 
     // Execute blocks
     let mut parent_block_header = &parent_block_header;
-    let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
     let mut acc_receipts = Vec::new();
     let mut non_privileged_count: usize = 0;
 
@@ -128,22 +125,13 @@ where
             vm.get_state_transitions().map_err(ExecutionError::Evm)
         })?;
 
-        // Update db for the next block
+        // Apply state transitions to the db (needed for both next block execution
+        // and final state validation via state_trie_root())
         report_cycles("apply_account_updates", || {
             wrapped_db
                 .apply_account_updates(&account_updates)
                 .map_err(ExecutionError::GuestProgramState)
         })?;
-
-        // Accumulate account updates
-        for account in account_updates {
-            let address = account.address;
-            if let Some(existing) = acc_account_updates.get_mut(&address) {
-                existing.merge(account);
-            } else {
-                acc_account_updates.insert(address, account);
-            }
-        }
 
         // Count non-privileged transactions
         non_privileged_count += block
@@ -187,7 +175,7 @@ where
 
     let last_block_hash = last_block.header.hash();
 
-    Ok(BlockExecutionResult {
+    Ok(BatchExecutionResult {
         receipts: acc_receipts,
         initial_state_hash,
         final_state_hash,
