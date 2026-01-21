@@ -120,8 +120,10 @@ pub fn post_state_root(
     initial_block_hash: H256,
     store: Store,
 ) -> H256 {
+    // Generate a test block hash from the parent hash
+    let block_hash = H256::from_slice(&ethrex_crypto::keccak::keccak_hash(initial_block_hash.as_bytes()));
     let ret_account_updates_batch = store
-        .apply_account_updates_batch(initial_block_hash, account_updates)
+        .apply_account_updates_batch(initial_block_hash, block_hash, 1, account_updates)
         .unwrap()
         .unwrap();
     ret_account_updates_batch.state_trie_hash

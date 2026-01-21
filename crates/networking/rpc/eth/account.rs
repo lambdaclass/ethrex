@@ -136,7 +136,8 @@ impl RpcHandler for GetStorageAtRequest {
 
         let storage_value = context
             .storage
-            .get_storage_at(block_number, self.address, self.storage_slot).await?
+            .get_storage_at(block_number, self.address, self.storage_slot)
+            .await?
             .unwrap_or_default();
         let storage_value = H256::from_uint(&storage_value);
         serde_json::to_value(format!("{storage_value:#x}"))

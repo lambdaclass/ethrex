@@ -72,8 +72,11 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
-        futures::executor::block_on(self.store.get_account_state_by_root(self.state_root, address))
-            .map_err(|e| EvmError::DB(e.to_string()))
+        futures::executor::block_on(
+            self.store
+                .get_account_state_by_root(self.state_root, address),
+        )
+        .map_err(|e| EvmError::DB(e.to_string()))
     }
 
     #[instrument(
@@ -83,8 +86,11 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
-        futures::executor::block_on(self.store.get_storage_at_root(self.state_root, address, key))
-            .map_err(|e| EvmError::DB(e.to_string()))
+        futures::executor::block_on(
+            self.store
+                .get_storage_at_root(self.state_root, address, key),
+        )
+        .map_err(|e| EvmError::DB(e.to_string()))
     }
 
     #[instrument(

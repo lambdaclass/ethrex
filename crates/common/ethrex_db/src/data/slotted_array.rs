@@ -191,7 +191,13 @@ impl SlottedArray {
 
             if entry.starts_with(&key_bytes) {
                 // Mark as tombstone
-                self.set_slot(slot_offset, Slot { offset: 0, length: 0 });
+                self.set_slot(
+                    slot_offset,
+                    Slot {
+                        offset: 0,
+                        length: 0,
+                    },
+                );
                 return true;
             }
         }
@@ -209,11 +215,7 @@ impl SlottedArray {
         let mut i = 0;
         while i < key.len() {
             let high = key.get(i);
-            let low = if i + 1 < key.len() {
-                key.get(i + 1)
-            } else {
-                0
-            };
+            let low = if i + 1 < key.len() { key.get(i + 1) } else { 0 };
             encoded.push((high << 4) | low);
             i += 2;
         }
@@ -517,7 +519,8 @@ mod tests {
         assert_eq!(entries.len(), 5);
 
         // Verify all values are present (order may vary due to newest-first)
-        let values: std::collections::HashSet<_> = entries.iter()
+        let values: std::collections::HashSet<_> = entries
+            .iter()
             .map(|(_, v)| String::from_utf8(v.clone()).unwrap())
             .collect();
         for i in 0..5 {

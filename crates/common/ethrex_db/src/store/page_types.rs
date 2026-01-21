@@ -49,7 +49,8 @@ impl RootPage {
     const ABANDONED_ADDRESSES_OFFSET: usize = Self::ABANDONED_COUNT_OFFSET + 2;
 
     /// Maximum number of abandoned page addresses that can be stored inline.
-    pub const MAX_ABANDONED: usize = (PAGE_SIZE - Self::ABANDONED_ADDRESSES_OFFSET) / DbAddress::SIZE;
+    pub const MAX_ABANDONED: usize =
+        (PAGE_SIZE - Self::ABANDONED_ADDRESSES_OFFSET) / DbAddress::SIZE;
 
     /// Default reorg depth (64 batches).
     pub const DEFAULT_REORG_DEPTH: u32 = 64;
@@ -386,7 +387,11 @@ impl DataPage {
 
     /// Returns the number of nibbles consumed by this page.
     pub fn consumed_nibbles(&self) -> usize {
-        if self.is_fanout() { 2 } else { 1 }
+        if self.is_fanout() {
+            2
+        } else {
+            1
+        }
     }
 
     /// Returns the bucket index for a given nibble path.

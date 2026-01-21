@@ -2,11 +2,10 @@
 ///
 /// This module provides type conversions and helper functions to bridge
 /// between the main ethrex codebase and the vendored ethrex_db storage engine.
-
 use crate::error::StoreError;
 use ethrex_common::{
-    types::{AccountInfo, AccountState, AccountUpdate},
     Address, H256, U256,
+    types::{AccountInfo, AccountState, AccountUpdate},
 };
 
 /// Convert ethrex H256 to ethrex_db H256
@@ -108,7 +107,7 @@ pub fn partial_to_account_info(nonce: u64, balance: U256, code_hash: H256) -> Ac
 ///
 /// Returns StoreError if ethrex_db operations fail
 pub fn apply_account_update_to_block(
-    _block: &mut (),  // TODO: Replace with actual ethrex_db::chain::Block type once integrated
+    _block: &mut (), // TODO: Replace with actual ethrex_db::chain::Block type once integrated
     _update: &AccountUpdate,
 ) -> Result<(), StoreError> {
     // NOTE: This function signature is a placeholder.
@@ -134,7 +133,7 @@ pub fn apply_account_update_to_block(
 ///
 /// Returns StoreError if any update fails to apply
 pub fn apply_account_updates_batch(
-    _block: &mut (),  // TODO: Replace with actual ethrex_db::chain::Block type
+    _block: &mut (), // TODO: Replace with actual ethrex_db::chain::Block type
     _updates: &[AccountUpdate],
 ) -> Result<(), StoreError> {
     // NOTE: Placeholder - will be implemented in Phase 4

@@ -2,7 +2,7 @@
 //!
 //! Demonstrates the Merkle Patricia Trie implementation for Ethereum state.
 
-use ethrex_db::merkle::{MerkleTrie, keccak256, EMPTY_ROOT};
+use ethrex_db::merkle::{keccak256, MerkleTrie, EMPTY_ROOT};
 
 fn main() {
     println!("=== Merkle Patricia Trie Example ===\n");
@@ -82,15 +82,20 @@ fn main() {
 
     println!("Trie A root: 0x{}", hex::encode(root_a));
     println!("Trie B root: 0x{}", hex::encode(root_b));
-    assert_eq!(root_a, root_b, "Same data = same root regardless of insertion order");
+    assert_eq!(
+        root_a, root_b,
+        "Same data = same root regardless of insertion order"
+    );
     println!("Roots match - trie is deterministic!");
 
     // 7. Iterate over all entries
     println!("\n=== Iterating Trie Contents ===");
     for (key, value) in trie.iter() {
-        println!("Key: 0x{}... Value len: {} bytes",
-                 hex::encode(&key[..4]),
-                 value.len());
+        println!(
+            "Key: 0x{}... Value len: {} bytes",
+            hex::encode(&key[..4]),
+            value.len()
+        );
     }
 
     println!("\nDone!");

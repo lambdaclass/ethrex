@@ -2,9 +2,9 @@
 
 #[cfg(test)]
 mod proptest_tests {
-    use proptest::prelude::*;
-    use crate::merkle::{MerkleTrie, Node, RlpEncoder, keccak256};
     use crate::merkle::node::EMPTY_ROOT;
+    use crate::merkle::{keccak256, MerkleTrie, Node, RlpEncoder};
+    use proptest::prelude::*;
 
     proptest! {
         #[test]

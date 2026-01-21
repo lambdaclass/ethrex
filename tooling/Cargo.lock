@@ -2594,6 +2594,7 @@ dependencies = [
  "colored",
  "ethrex-blockchain",
  "ethrex-common 9.0.0",
+ "ethrex-crypto",
  "ethrex-levm",
  "ethrex-rlp 9.0.0",
  "ethrex-storage 9.0.0",
@@ -3813,6 +3814,9 @@ dependencies = [
 name = "ethrex_db"
 version = "0.1.0"
 dependencies = [
+ "bytes",
+ "ethereum-types 0.15.1",
+ "ethrex-rlp 9.0.0",
  "hashbrown 0.15.5",
  "lru 0.12.5",
  "memmap2",

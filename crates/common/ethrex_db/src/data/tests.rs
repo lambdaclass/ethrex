@@ -2,8 +2,8 @@
 
 #[cfg(test)]
 mod proptest_tests {
-    use proptest::prelude::*;
     use crate::data::{NibblePath, SlottedArray};
+    use proptest::prelude::*;
 
     proptest! {
         #[test]

@@ -53,8 +53,12 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<BlockExecutionResult, EvmError> {
-        println!("DEBUG [VM execute_block]: block_number={}, tx_count={}, withdrawals={:?}",
-                 block.header.number, block.body.transactions.len(), block.body.withdrawals.as_ref().map(|w| w.len()));
+        println!(
+            "DEBUG [VM execute_block]: block_number={}, tx_count={}, withdrawals={:?}",
+            block.header.number,
+            block.body.transactions.len(),
+            block.body.withdrawals.as_ref().map(|w| w.len())
+        );
 
         Self::prepare_block(block, db, vm_type)?;
 
@@ -493,8 +497,12 @@ impl LEVM {
         let block_header = &block.header;
         let fork = chain_config.fork(block_header.timestamp);
 
-        println!("DEBUG [prepare_block]: fork={:?}, parent_beacon_block_root={:?}, vm_type={:?}",
-                 fork, block_header.parent_beacon_block_root.is_some(), vm_type);
+        println!(
+            "DEBUG [prepare_block]: fork={:?}, parent_beacon_block_root={:?}, vm_type={:?}",
+            fork,
+            block_header.parent_beacon_block_root.is_some(),
+            vm_type
+        );
 
         // TODO: I don't like deciding the behavior based on the VMType here.
         if let VMType::L2(_) = vm_type {
@@ -576,15 +584,23 @@ pub fn generic_system_contract_levm(
 
     let report = vm.execute().map_err(EvmError::from)?;
 
-    println!("DEBUG [generic_system_contract]: contract={}, gas_used={}, success={}, current_accounts_count={}",
-             contract_address, report.gas_used, matches!(report.result, TxResult::Success),
-             db.current_accounts_state.len());
+    println!(
+        "DEBUG [generic_system_contract]: contract={}, gas_used={}, success={}, current_accounts_count={}",
+        contract_address,
+        report.gas_used,
+        matches!(report.result, TxResult::Success),
+        db.current_accounts_state.len()
+    );
 
-    println!("DEBUG [generic_system_contract]: Accounts in current_accounts_state BEFORE restore (count={}):",
-             db.current_accounts_state.len());
+    println!(
+        "DEBUG [generic_system_contract]: Accounts in current_accounts_state BEFORE restore (count={}):",
+        db.current_accounts_state.len()
+    );
     for (addr, acc) in db.current_accounts_state.iter() {
-        println!("  addr={:?}, nonce={}, balance={}, status={:?}",
-                 addr, acc.info.nonce, acc.info.balance, acc.status);
+        println!(
+            "  addr={:?}, nonce={}, balance={}, status={:?}",
+            addr, acc.info.nonce, acc.info.balance, acc.status
+        );
     }
     if db.current_accounts_state.is_empty() {
         println!("  (empty)");
@@ -606,14 +622,20 @@ pub fn generic_system_contract_levm(
         db.current_accounts_state.remove(&block_header.coinbase);
     }
 
-    println!("DEBUG [generic_system_contract]: After restore, current_accounts_count={}",
-             db.current_accounts_state.len());
+    println!(
+        "DEBUG [generic_system_contract]: After restore, current_accounts_count={}",
+        db.current_accounts_state.len()
+    );
 
-    println!("DEBUG [generic_system_contract]: Accounts in current_accounts_state AFTER restore (count={}):",
-             db.current_accounts_state.len());
+    println!(
+        "DEBUG [generic_system_contract]: Accounts in current_accounts_state AFTER restore (count={}):",
+        db.current_accounts_state.len()
+    );
     for (addr, acc) in db.current_accounts_state.iter() {
-        println!("  addr={:?}, nonce={}, balance={}, status={:?}",
-                 addr, acc.info.nonce, acc.info.balance, acc.status);
+        println!(
+            "  addr={:?}, nonce={}, balance={}, status={:?}",
+            addr, acc.info.nonce, acc.info.balance, acc.status
+        );
     }
     if db.current_accounts_state.is_empty() {
         println!("  (empty)");

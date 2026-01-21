@@ -1446,29 +1446,43 @@ impl Blockchain {
     pub fn add_block(&self, block: Block) -> Result<(), ChainError> {
         let since = Instant::now();
 
-        println!("DEBUG [add_block]: block_number={}, parent_hash={}, tx_count={}",
-                 block.header.number, block.header.parent_hash, block.body.transactions.len());
+        println!(
+            "DEBUG [add_block]: block_number={}, parent_hash={}, tx_count={}",
+            block.header.number,
+            block.header.parent_hash,
+            block.body.transactions.len()
+        );
 
         let (res, updates) = self.execute_block(&block)?;
         let executed = Instant::now();
 
-        println!("DEBUG [add_block]: account_updates_count={}",
-                 updates.len());
+        println!("DEBUG [add_block]: account_updates_count={}", updates.len());
         for (i, update) in updates.iter().enumerate() {
-            println!("  Update {}: address={}, removed={}, nonce={:?}, balance={:?}",
-                     i, update.address, update.removed,
-                     update.info.as_ref().map(|i| i.nonce),
-                     update.info.as_ref().map(|i| i.balance));
+            println!(
+                "  Update {}: address={}, removed={}, nonce={:?}, balance={:?}",
+                i,
+                update.address,
+                update.removed,
+                update.info.as_ref().map(|i| i.nonce),
+                update.info.as_ref().map(|i| i.balance)
+            );
         }
 
         // Apply the account updates over the last block's state and compute the new state root
         let account_updates_list = self
             .storage
-            .apply_account_updates_batch(block.header.parent_hash, &updates)?
+            .apply_account_updates_batch(
+                block.header.parent_hash,
+                block.hash(),
+                block.header.number,
+                &updates,
+            )?
             .ok_or(ChainError::ParentStateNotFound)?;
 
-        println!("DEBUG [add_block]: computed state_root={}, block state_root={}",
-                 account_updates_list.state_trie_hash, block.header.state_root);
+        println!(
+            "DEBUG [add_block]: computed state_root={}, block state_root={}",
+            account_updates_list.state_trie_hash, block.header.state_root
+        );
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -1792,7 +1806,12 @@ impl Blockchain {
         // Apply the account updates over all blocks and compute the new state root
         let account_updates_list = self
             .storage
-            .apply_account_updates_batch(first_block_header.parent_hash, &account_updates)
+            .apply_account_updates_batch(
+                first_block_header.parent_hash,
+                last_block.hash(),
+                last_block.header.number,
+                &account_updates,
+            )
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
 

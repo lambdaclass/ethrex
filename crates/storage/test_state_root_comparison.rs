@@ -5,14 +5,14 @@
 
 #[cfg(test)]
 mod state_root_comparison {
-    use ethrex_common::{Address, H256, U256};
-    use ethrex_common::types::AccountState;
-    use ethrex_rlp::encode::RLPEncode;
-    use ethrex_trie::{Trie, EMPTY_TRIE_HASH};
-    use ethrex_db::store::{StateTrie, AccountData, StorageTrie};
-    use ethrex_db::merkle::EMPTY_ROOT;
-    use std::str::FromStr;
     use crate::Store;
+    use ethrex_common::types::AccountState;
+    use ethrex_common::{Address, H256, U256};
+    use ethrex_db::merkle::EMPTY_ROOT;
+    use ethrex_db::store::{AccountData, StateTrie, StorageTrie};
+    use ethrex_rlp::encode::RLPEncode;
+    use ethrex_trie::{EMPTY_TRIE_HASH, Trie};
+    use std::str::FromStr;
 
     fn keccak_hash(data: &[u8]) -> [u8; 32] {
         use ethrex_crypto::keccak::keccak_hash as keccak;
@@ -60,10 +60,15 @@ mod state_root_comparison {
         let encoded_account = account_state.encode_to_vec();
 
         println!("Hashed Address: {}", hashed_address);
-        println!("Encoded Account (legacy): {}", hex::encode(&encoded_account));
+        println!(
+            "Encoded Account (legacy): {}",
+            hex::encode(&encoded_account)
+        );
         println!("Encoded Length: {} bytes", encoded_account.len());
 
-        legacy_trie.insert(hashed_address.as_bytes().to_vec(), encoded_account.clone()).unwrap();
+        legacy_trie
+            .insert(hashed_address.as_bytes().to_vec(), encoded_account.clone())
+            .unwrap();
         let (legacy_state_root, _) = legacy_trie.collect_changes_since_last_hash();
 
         println!("Legacy State Root: {}", legacy_state_root);
@@ -83,7 +88,10 @@ mod state_root_comparison {
         };
 
         let encoded_ethrex_db = account_data.encode();
-        println!("Encoded Account (ethrex_db): {}", hex::encode(&encoded_ethrex_db));
+        println!(
+            "Encoded Account (ethrex_db): {}",
+            hex::encode(&encoded_ethrex_db)
+        );
         println!("Encoded Length: {} bytes", encoded_ethrex_db.len());
 
         ethrex_db_trie.set_account(&address_bytes, account_data);
@@ -95,7 +103,10 @@ mod state_root_comparison {
         // === COMPARISON ===
         println!("\n--- Comparison ---");
         println!("Encodings match: {}", encoded_account == encoded_ethrex_db);
-        println!("State roots match: {}", legacy_state_root == ethrex_db_state_root_h256);
+        println!(
+            "State roots match: {}",
+            legacy_state_root == ethrex_db_state_root_h256
+        );
 
         if encoded_account != encoded_ethrex_db {
             println!("\nENCODING MISMATCH!");
@@ -105,11 +116,19 @@ mod state_root_comparison {
 
         if legacy_state_root != ethrex_db_state_root_h256 {
             println!("\nSTATE ROOT MISMATCH!");
-            println!("This indicates a difference in how the Merkle trie is structured or computed.");
+            println!(
+                "This indicates a difference in how the Merkle trie is structured or computed."
+            );
         }
 
-        assert_eq!(encoded_account, encoded_ethrex_db, "Account encodings must match");
-        assert_eq!(legacy_state_root, ethrex_db_state_root_h256, "State roots must match");
+        assert_eq!(
+            encoded_account, encoded_ethrex_db,
+            "Account encodings must match"
+        );
+        assert_eq!(
+            legacy_state_root, ethrex_db_state_root_h256,
+            "State roots must match"
+        );
     }
 
     #[test]
@@ -172,9 +191,14 @@ mod state_root_comparison {
         let hashed_address = hash_address(&address);
         let encoded_account = account_state.encode_to_vec();
 
-        println!("Encoded Account (legacy): {}", hex::encode(&encoded_account));
+        println!(
+            "Encoded Account (legacy): {}",
+            hex::encode(&encoded_account)
+        );
 
-        legacy_trie.insert(hashed_address.as_bytes().to_vec(), encoded_account.clone()).unwrap();
+        legacy_trie
+            .insert(hashed_address.as_bytes().to_vec(), encoded_account.clone())
+            .unwrap();
         let (legacy_state_root, _) = legacy_trie.collect_changes_since_last_hash();
 
         println!("Legacy State Root: {}", legacy_state_root);
@@ -194,7 +218,10 @@ mod state_root_comparison {
         };
 
         let encoded_ethrex_db = account_data.encode();
-        println!("Encoded Account (ethrex_db): {}", hex::encode(&encoded_ethrex_db));
+        println!(
+            "Encoded Account (ethrex_db): {}",
+            hex::encode(&encoded_ethrex_db)
+        );
 
         ethrex_db_trie.set_account(&address_bytes, account_data);
         let ethrex_db_state_root = ethrex_db_trie.root_hash();
@@ -205,7 +232,10 @@ mod state_root_comparison {
         // === COMPARISON ===
         println!("\n--- Comparison ---");
         println!("Encodings match: {}", encoded_account == encoded_ethrex_db);
-        println!("State roots match: {}", legacy_state_root == ethrex_db_state_root_h256);
+        println!(
+            "State roots match: {}",
+            legacy_state_root == ethrex_db_state_root_h256
+        );
 
         if encoded_account != encoded_ethrex_db {
             println!("\nENCODING MISMATCH!");
@@ -215,8 +245,14 @@ mod state_root_comparison {
             println!("\nSTATE ROOT MISMATCH!");
         }
 
-        assert_eq!(encoded_account, encoded_ethrex_db, "Account encodings must match");
-        assert_eq!(legacy_state_root, ethrex_db_state_root_h256, "State roots must match");
+        assert_eq!(
+            encoded_account, encoded_ethrex_db,
+            "Account encodings must match"
+        );
+        assert_eq!(
+            legacy_state_root, ethrex_db_state_root_h256,
+            "State roots must match"
+        );
     }
 
     #[test]
@@ -235,8 +271,14 @@ mod state_root_comparison {
         let balance2 = U256::from(2000);
         let code_hash2 = H256::from_slice(&keccak_hash(b"code"));
 
-        println!("Account 1: {}, nonce={}, balance={}", address1, nonce1, balance1);
-        println!("Account 2: {}, nonce={}, balance={}", address2, nonce2, balance2);
+        println!(
+            "Account 1: {}, nonce={}, balance={}",
+            address1, nonce1, balance1
+        );
+        println!(
+            "Account 2: {}, nonce={}, balance={}",
+            address2, nonce2, balance2
+        );
 
         // === LEGACY TRIE ===
         println!("\n--- Legacy Trie ---");
@@ -254,7 +296,12 @@ mod state_root_comparison {
             storage_root: *EMPTY_TRIE_HASH,
         };
         let hashed_address1 = hash_address(&address1);
-        legacy_trie.insert(hashed_address1.as_bytes().to_vec(), account_state1.encode_to_vec()).unwrap();
+        legacy_trie
+            .insert(
+                hashed_address1.as_bytes().to_vec(),
+                account_state1.encode_to_vec(),
+            )
+            .unwrap();
 
         // Insert account 2
         let account_state2 = AccountState {
@@ -264,7 +311,12 @@ mod state_root_comparison {
             storage_root: *EMPTY_TRIE_HASH,
         };
         let hashed_address2 = hash_address(&address2);
-        legacy_trie.insert(hashed_address2.as_bytes().to_vec(), account_state2.encode_to_vec()).unwrap();
+        legacy_trie
+            .insert(
+                hashed_address2.as_bytes().to_vec(),
+                account_state2.encode_to_vec(),
+            )
+            .unwrap();
 
         let (legacy_state_root, _) = legacy_trie.collect_changes_since_last_hash();
         println!("Legacy State Root: {}", legacy_state_root);
@@ -297,12 +349,18 @@ mod state_root_comparison {
 
         // === COMPARISON ===
         println!("\n--- Comparison ---");
-        println!("State roots match: {}", legacy_state_root == ethrex_db_state_root_h256);
+        println!(
+            "State roots match: {}",
+            legacy_state_root == ethrex_db_state_root_h256
+        );
 
         if legacy_state_root != ethrex_db_state_root_h256 {
             println!("\nSTATE ROOT MISMATCH!");
         }
 
-        assert_eq!(legacy_state_root, ethrex_db_state_root_h256, "State roots must match for two accounts");
+        assert_eq!(
+            legacy_state_root, ethrex_db_state_root_h256,
+            "State roots must match for two accounts"
+        );
     }
 }

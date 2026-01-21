@@ -16,7 +16,7 @@
 //! - `chain` - Block management for unfinalized state
 //! - `merkle` - State root hash computation
 
-pub mod data;
-pub mod store;
 pub mod chain;
+pub mod data;
 pub mod merkle;
+pub mod store;

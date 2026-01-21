@@ -21,9 +21,9 @@ use crate::{
 };
 
 // ethrex_db imports for new storage backend
-use ethrex_db::store::PagedDb;
 use ethrex_db::chain::Blockchain;
 use ethrex_db::merkle::MerkleTrie;
+use ethrex_db::store::PagedDb;
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -181,22 +181,19 @@ impl SimpleTrie {
     }
 
     pub fn insert(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), StoreError> {
-        let mut trie = self.inner.lock()
-            .map_err(|_| StoreError::LockError)?;
+        let mut trie = self.inner.lock().map_err(|_| StoreError::LockError)?;
         trie.insert(&key, value);
         Ok(())
     }
 
     pub fn hash(&self) -> Result<H256, StoreError> {
-        let mut trie = self.inner.lock()
-            .map_err(|_| StoreError::LockError)?;
+        let mut trie = self.inner.lock().map_err(|_| StoreError::LockError)?;
         let hash_bytes = trie.root_hash();
         let hash = H256::from(hash_bytes);
         drop(trie); // Release lock before inserting into map
 
         // Register this trie in the store for later iteration
-        let mut tries = self.store_tries.lock()
-            .map_err(|_| StoreError::LockError)?;
+        let mut tries = self.store_tries.lock().map_err(|_| StoreError::LockError)?;
         tries.insert(hash, self.clone());
 
         Ok(hash)
@@ -205,13 +202,18 @@ impl SimpleTrie {
     pub fn iter(&self) -> impl Iterator<Item = (Vec<u8>, Vec<u8>)> + '_ {
         // Note: This requires holding the lock for the duration of iteration
         // For snap sync tests this is acceptable as they're single-threaded
-        let trie = self.inner.lock().expect("Lock should not be poisoned in tests");
+        let trie = self
+            .inner
+            .lock()
+            .expect("Lock should not be poisoned in tests");
         let items: Vec<_> = trie.iter().map(|(k, v)| (k.to_vec(), v.to_vec())).collect();
         items.into_iter()
     }
 
     pub fn db(&self) -> &dyn ethrex_trie::TrieDB {
-        unimplemented!("SimpleTrie.db() - State healing not yet implemented with ethrex_db. Use account range queries for snap sync tests.")
+        unimplemented!(
+            "SimpleTrie.db() - State healing not yet implemented with ethrex_db. Use account range queries for snap sync tests."
+        )
     }
 }
 
@@ -1329,8 +1331,14 @@ impl Store {
 
     /// Register a state_root → block_hash mapping for VmDatabase queries
     /// This should be called immediately after computing a block's state_root
-    pub fn register_state_root(&self, state_root: H256, block_hash: BlockHash) -> Result<(), StoreError> {
-        let mut state_root_to_block = self.state_root_to_block.lock()
+    pub fn register_state_root(
+        &self,
+        state_root: H256,
+        block_hash: BlockHash,
+    ) -> Result<(), StoreError> {
+        let mut state_root_to_block = self
+            .state_root_to_block
+            .lock()
             .map_err(|_| StoreError::LockError)?;
         state_root_to_block.insert(state_root, block_hash);
         Ok(())
@@ -1342,32 +1350,52 @@ impl Store {
             let block_hash = block.hash();
             let state_root = block.header.state_root;
 
-            println!("DEBUG [store_block_updates]: Storing state for block_hash={}, state_root={}", block_hash, state_root);
+            println!(
+                "DEBUG [store_block_updates]: Storing state for block_hash={}, state_root={}",
+                block_hash, state_root
+            );
 
             // Move pending state to block_states cache
-            let mut pending = self.pending_block_state.lock()
+            let mut pending = self
+                .pending_block_state
+                .lock()
                 .map_err(|_| StoreError::LockError)?;
 
             if let Some(state) = pending.take() {
-                println!("DEBUG [store_block_updates]: Moving pending state with {} accounts to block_states", state.len());
+                println!(
+                    "DEBUG [store_block_updates]: Moving pending state with {} accounts to block_states",
+                    state.len()
+                );
 
-                let mut block_states = self.block_states.lock()
+                let mut block_states = self
+                    .block_states
+                    .lock()
                     .map_err(|_| StoreError::LockError)?;
 
                 block_states.insert(block_hash, state);
 
                 // Register state_root -> block_hash mapping for VmDatabase queries
                 drop(block_states);
-                let mut state_root_to_block = self.state_root_to_block.lock()
+                let mut state_root_to_block = self
+                    .state_root_to_block
+                    .lock()
                     .map_err(|_| StoreError::LockError)?;
-                println!("DEBUG [store_block_updates]: Registering mapping: state_root={} -> block_hash={}", state_root, block_hash);
+                println!(
+                    "DEBUG [store_block_updates]: Registering mapping: state_root={} -> block_hash={}",
+                    state_root, block_hash
+                );
                 state_root_to_block.insert(state_root, block_hash);
                 drop(state_root_to_block);
 
                 tracing::debug!(
                     "Stored state for block {} with {} accounts, state_root {}",
                     block_hash,
-                    self.block_states.lock().unwrap().get(&block_hash).map(|s| s.len()).unwrap_or(0),
+                    self.block_states
+                        .lock()
+                        .unwrap()
+                        .get(&block_hash)
+                        .map(|s| s.len())
+                        .unwrap_or(0),
                     state_root
                 );
             } else {
@@ -1375,7 +1403,17 @@ impl Store {
             }
         }
 
-        self.apply_updates(update_batch)
+        // Get the last block's header before calling apply_updates
+        let last_block_header = update_batch.blocks.last().map(|b| b.header.clone());
+
+        self.apply_updates(update_batch)?;
+
+        // Update latest_block_header with the last stored block
+        if let Some(header) = last_block_header {
+            self.latest_block_header.update(header);
+        }
+
+        Ok(())
     }
 
     // TODO: LEGACY METHOD - Uses old trie layer infrastructure
@@ -1411,6 +1449,13 @@ impl Store {
                 let location_value = (block_number, block_hash, index as u64).encode_to_vec();
                 tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
             }
+
+            // Store canonical block hash mapping (block_number -> block_hash)
+            tx.put(
+                CANONICAL_BLOCK_HASHES,
+                &block_number.to_le_bytes(),
+                block_hash.as_bytes(),
+            )?;
         }
 
         // Store receipts
@@ -1444,15 +1489,17 @@ impl Store {
         let paged_db = match engine_type {
             EngineType::InMemory => {
                 // 10000 pages ≈ 40MB for in-memory testing
-                PagedDb::in_memory(10000)
-                    .map_err(|e| StoreError::Custom(format!("Failed to create in-memory PagedDb: {}", e)))?
+                PagedDb::in_memory(10000).map_err(|e| {
+                    StoreError::Custom(format!("Failed to create in-memory PagedDb: {}", e))
+                })?
             }
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
                 // For production, use persistent file-backed PagedDb
                 let ethrex_db_dir = db_path.join("ethrex_db");
-                std::fs::create_dir_all(&ethrex_db_dir)
-                    .map_err(|e| StoreError::Custom(format!("Failed to create ethrex_db directory: {}", e)))?;
+                std::fs::create_dir_all(&ethrex_db_dir).map_err(|e| {
+                    StoreError::Custom(format!("Failed to create ethrex_db directory: {}", e))
+                })?;
 
                 // PagedDb::open() expects a file path, not a directory
                 let ethrex_db_file = ethrex_db_dir.join("db.paged");
@@ -1468,12 +1515,8 @@ impl Store {
         // TODO: Migrate these to ethrex_db and remove this
         let legacy_backend: Arc<dyn StorageBackend> = match engine_type {
             #[cfg(feature = "rocksdb")]
-            EngineType::RocksDB => {
-                Arc::new(RocksDBBackend::open(path)?)
-            }
-            EngineType::InMemory => {
-                Arc::new(InMemoryBackend::open()?)
-            }
+            EngineType::RocksDB => Arc::new(RocksDBBackend::open(path)?),
+            EngineType::InMemory => Arc::new(InMemoryBackend::open()?),
         };
 
         Ok(Self {
@@ -1636,21 +1679,17 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
-        let hashed_address = hash_address_fixed(&address);
+        let blockchain = self.blockchain.lock().map_err(|_| StoreError::LockError)?;
+        let address_hash = H256::from(keccak_hash(address.to_fixed_bytes()));
 
-        let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
-            return Ok(None);
-        };
-
-        let account_state = AccountState::decode(&encoded_state)?;
-        Ok(Some(AccountInfo {
-            code_hash: account_state.code_hash,
-            balance: account_state.balance,
-            nonce: account_state.nonce,
-        }))
+        match blockchain.get_account(&block_hash, &address_hash) {
+            Some(account) => Ok(Some(AccountInfo {
+                nonce: account.nonce,
+                balance: account.balance,
+                code_hash: account.code_hash,
+            })),
+            None => Ok(None),
+        }
     }
 
     pub fn get_account_state_by_acc_hash(
@@ -1658,14 +1697,17 @@ impl Store {
         block_hash: BlockHash,
         account_hash: H256,
     ) -> Result<Option<AccountState>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
-        let Some(encoded_state) = state_trie.get(account_hash.as_bytes())? else {
-            return Ok(None);
-        };
-        let account_state = AccountState::decode(&encoded_state)?;
-        Ok(Some(account_state))
+        let blockchain = self.blockchain.lock().map_err(|_| StoreError::LockError)?;
+
+        match blockchain.get_account(&block_hash, &account_hash) {
+            Some(account) => Ok(Some(AccountState {
+                nonce: account.nonce,
+                balance: account.balance,
+                code_hash: account.code_hash,
+                storage_root: account.storage_root,
+            })),
+            None => Ok(None),
+        }
     }
 
     pub async fn get_fork_id(&self) -> Result<ForkId, StoreError> {
@@ -1755,72 +1797,51 @@ impl Store {
     pub fn apply_account_updates_batch(
         &self,
         parent_hash: BlockHash,
+        block_hash: BlockHash,
+        block_number: u64,
         account_updates: &[AccountUpdate],
     ) -> Result<Option<AccountUpdatesList>, StoreError> {
+        use ethrex_db::chain::WorldState;
+        use ethrex_db::store::{AccountData, StateTrie, StorageTrie};
         use std::collections::HashMap as StdHashMap;
 
-        // Get parent state trie (loads from cache and creates legacy Trie)
-        let mut state_trie = self.state_trie(parent_hash)?
-            .ok_or_else(|| StoreError::Custom(format!("Parent state trie not found for {}", parent_hash)))?;
-
-        // Get parent state from cache for tracking
-        // IMPORTANT: Force a deep clone to avoid modifying the cached parent state
+        // Get parent state from cache
         let parent_state: StdHashMap<Address, CachedAccountData> = {
-            let block_states = self.block_states.lock()
+            let block_states = self
+                .block_states
+                .lock()
                 .map_err(|_| StoreError::LockError)?;
             if let Some(cached_parent) = block_states.get(&parent_hash) {
-                // Manually deep clone to ensure parent state isn't modified
                 let mut cloned = StdHashMap::new();
                 for (addr, cached_data) in cached_parent.iter() {
-                    let new_cached = CachedAccountData {
-                        state: cached_data.state.clone(),
-                        storage: cached_data.storage.clone(),
-                    };
-                    cloned.insert(*addr, new_cached);
+                    cloned.insert(
+                        *addr,
+                        CachedAccountData {
+                            state: cached_data.state.clone(),
+                            storage: cached_data.storage.clone(),
+                        },
+                    );
                 }
-                println!("DEBUG [apply_account_updates_batch]: Deep cloned parent_state with {} accounts", cloned.len());
                 cloned
             } else {
-                println!("DEBUG [apply_account_updates_batch]: No parent state found, using empty");
                 StdHashMap::new()
             }
         };
 
-        // Delegate to the existing legacy method that handles storage roots correctly
-        let account_updates_list = self.apply_account_updates_from_trie_batch(
-            &mut state_trie,
-            account_updates,
-        )?;
+        // Build current state by applying updates
+        let mut current_state = parent_state.clone();
+        let mut code_updates = Vec::new();
 
-        // CRITICAL: Persist trie node updates to the in-memory backend
-        // This is necessary so that subsequent blocks can load parent storage tries
-        self.persist_trie_updates(&account_updates_list)?;
-
-        // Build updated state for caching
-        let mut current_state = parent_state;
         for update in account_updates {
             if update.removed {
                 current_state.remove(&update.address);
-            } else if let Some(info) = &update.info {
-                // Get updated account state from the trie
-                let hashed_address = hash_address_fixed(&update.address);
-                let account_state = if let Some(encoded) = state_trie.get(hashed_address.as_bytes())? {
-                    AccountState::decode(&encoded)?
-                } else {
-                    // Account was added, use info from update
-                    AccountState {
-                        nonce: info.nonce,
-                        balance: info.balance,
-                        code_hash: info.code_hash,
-                        storage_root: *EMPTY_TRIE_HASH,
-                    }
-                };
+            } else {
+                // Get existing account state or default
+                let existing = current_state.get(&update.address);
+                let existing_state = existing.map(|c| c.state.clone()).unwrap_or_default();
+                let mut storage = existing.map(|c| c.storage.clone()).unwrap_or_default();
 
-                // Build updated storage map
-                let mut storage = current_state.get(&update.address)
-                    .map(|cached| cached.storage.clone())
-                    .unwrap_or_default();
-
+                // Apply storage updates
                 for (key, value) in &update.added_storage {
                     if value.is_zero() {
                         storage.remove(key);
@@ -1829,40 +1850,158 @@ impl Store {
                     }
                 }
 
-                current_state.insert(update.address, CachedAccountData {
-                    state: account_state,
-                    storage,
-                });
+                // Update account info if provided, otherwise keep existing
+                let account_state = if let Some(info) = &update.info {
+                    // Collect code updates
+                    if let Some(code) = &update.code {
+                        code_updates.push((info.code_hash, code.clone()));
+                    }
+
+                    AccountState {
+                        nonce: info.nonce,
+                        balance: info.balance,
+                        code_hash: info.code_hash,
+                        storage_root: *EMPTY_TRIE_HASH, // Placeholder, computed below
+                    }
+                } else {
+                    // Keep existing account state, just update storage
+                    existing_state
+                };
+
+                current_state.insert(
+                    update.address,
+                    CachedAccountData {
+                        state: account_state,
+                        storage,
+                    },
+                );
             }
         }
 
-        // Store updated state in pending for later persistence
-        let mut pending = self.pending_block_state.lock()
-            .map_err(|_| StoreError::LockError)?;
-        *pending = Some(current_state);
+        // Compute state root using ethrex_db's StateTrie
+        let mut state_trie = StateTrie::new();
 
-        tracing::debug!(
-            "apply_account_updates_batch: Computed state root: {} from {} updates",
-            account_updates_list.state_trie_hash,
-            account_updates.len()
-        );
+        for (address, cached_data) in &current_state {
+            let address_bytes: [u8; 20] = address.to_fixed_bytes();
 
-        // DEBUG: Verify parent state wasn't modified
+            // Compute storage root for this account
+            let storage_root = if cached_data.storage.is_empty() {
+                ethrex_db::merkle::EMPTY_ROOT
+            } else {
+                let mut storage_trie = StorageTrie::new();
+                for (key, value) in &cached_data.storage {
+                    if !value.is_zero() {
+                        let key_bytes: [u8; 32] = key.to_fixed_bytes();
+                        let hashed_key = keccak_hash(key_bytes);
+                        let value_bytes = ethrex_common::utils::u256_to_big_endian(*value);
+                        storage_trie.set_by_hash(&hashed_key, value_bytes);
+                    }
+                }
+                storage_trie.root_hash()
+            };
+
+            let balance_bytes = ethrex_common::utils::u256_to_big_endian(cached_data.state.balance);
+            let account_data = AccountData {
+                nonce: cached_data.state.nonce,
+                balance: balance_bytes,
+                storage_root,
+                code_hash: cached_data.state.code_hash.to_fixed_bytes(),
+            };
+
+            state_trie.set_account(&address_bytes, account_data);
+        }
+
+        let state_trie_hash = H256::from(state_trie.root_hash());
+
+        // Update ethrex_db Blockchain with the new block state
         {
-            let block_states = self.block_states.lock()
-                .map_err(|_| StoreError::LockError)?;
-            if let Some(parent_state_check) = block_states.get(&parent_hash) {
-                println!("DEBUG [apply_account_updates_batch]: Checking if parent state was modified...");
-                for update in account_updates {
-                    if let Some(cached) = parent_state_check.get(&update.address) {
-                        println!("  Parent state for {}: balance={}, storage_len={}",
-                                 update.address, cached.state.balance, cached.storage.len());
+            let blockchain = self.blockchain.lock().map_err(|_| StoreError::LockError)?;
+
+            let mut new_block = blockchain
+                .start_new(parent_hash, block_hash, block_number)
+                .map_err(|e| StoreError::Custom(format!("Failed to start block: {}", e)))?;
+
+            // Apply account updates to the block
+            for update in account_updates {
+                let hashed_address = H256::from(keccak_hash(update.address.to_fixed_bytes()));
+
+                if update.removed {
+                    new_block.delete_account(&hashed_address);
+                } else if let Some(info) = &update.info {
+                    // Get storage root from our computed state
+                    let storage_root = if let Some(cached) = current_state.get(&update.address) {
+                        if cached.storage.is_empty() {
+                            H256::from(ethrex_db::merkle::EMPTY_ROOT)
+                        } else {
+                            let mut storage_trie = StorageTrie::new();
+                            for (key, value) in &cached.storage {
+                                if !value.is_zero() {
+                                    let key_bytes: [u8; 32] = key.to_fixed_bytes();
+                                    let hashed_key = keccak_hash(key_bytes);
+                                    let value_bytes =
+                                        ethrex_common::utils::u256_to_big_endian(*value);
+                                    storage_trie.set_by_hash(&hashed_key, value_bytes);
+                                }
+                            }
+                            H256::from(storage_trie.root_hash())
+                        }
+                    } else {
+                        H256::from(ethrex_db::merkle::EMPTY_ROOT)
+                    };
+
+                    let account = ethrex_db::chain::Account {
+                        nonce: info.nonce,
+                        balance: info.balance,
+                        code_hash: info.code_hash,
+                        storage_root,
+                    };
+                    new_block.set_account(hashed_address, account);
+
+                    // Set storage values
+                    for (key, value) in &update.added_storage {
+                        let hashed_key = H256::from(keccak_hash(key.to_fixed_bytes()));
+                        new_block.set_storage(hashed_address, hashed_key, *value);
                     }
                 }
             }
+
+            blockchain
+                .commit(new_block)
+                .map_err(|e| StoreError::Custom(format!("Failed to commit block: {}", e)))?;
         }
 
-        Ok(Some(account_updates_list))
+        // Update storage roots in current_state now that we've computed them
+        for (address, cached_data) in current_state.iter_mut() {
+            let storage_root = if cached_data.storage.is_empty() {
+                *EMPTY_TRIE_HASH
+            } else {
+                let mut storage_trie = StorageTrie::new();
+                for (key, value) in &cached_data.storage {
+                    if !value.is_zero() {
+                        let key_bytes: [u8; 32] = key.to_fixed_bytes();
+                        let hashed_key = keccak_hash(key_bytes);
+                        let value_bytes = ethrex_common::utils::u256_to_big_endian(*value);
+                        storage_trie.set_by_hash(&hashed_key, value_bytes);
+                    }
+                }
+                H256::from(storage_trie.root_hash())
+            };
+            cached_data.state.storage_root = storage_root;
+        }
+
+        // Store updated state in pending for later persistence
+        let mut pending = self
+            .pending_block_state
+            .lock()
+            .map_err(|_| StoreError::LockError)?;
+        *pending = Some(current_state);
+
+        Ok(Some(AccountUpdatesList {
+            state_trie_hash,
+            state_updates: Vec::new(),
+            storage_updates: Vec::new(),
+            code_updates,
+        }))
     }
 
     pub fn apply_account_updates_from_trie_batch<'a>(
@@ -2068,7 +2207,8 @@ impl Store {
         let blockchain = self.blockchain.lock().map_err(|_| StoreError::LockError)?;
 
         // Start genesis block (block number 0, no parent)
-        let mut genesis_block = blockchain.start_new(H256::zero(), genesis_hash, 0)
+        let mut genesis_block = blockchain
+            .start_new(H256::zero(), genesis_hash, 0)
             .map_err(|e| StoreError::Custom(format!("Failed to start genesis block: {}", e)))?;
 
         for (address, account) in &genesis_accounts {
@@ -2093,7 +2233,10 @@ impl Store {
             // DEBUG: Print encoded account for first address (do this before move)
             if genesis_accounts.iter().next().unwrap().0 == address {
                 let encoded_ethrex_db = account_state.encode();
-                println!("DEBUG: First account (ethrex_db encoding): {}", hex::encode(&encoded_ethrex_db));
+                println!(
+                    "DEBUG: First account (ethrex_db encoding): {}",
+                    hex::encode(&encoded_ethrex_db)
+                );
             }
 
             // Set account in genesis block
@@ -2110,18 +2253,23 @@ impl Store {
         }
 
         // Commit genesis block
-        blockchain.commit(genesis_block)
+        blockchain
+            .commit(genesis_block)
             .map_err(|e| StoreError::Custom(format!("Failed to commit genesis block: {}", e)))?;
 
         // IMPORTANT: Finalize genesis to update the state_trie
         // This applies all account/storage changes to the state_trie and calls root_hash()
         // Without this, state_root() returns the hash of the empty trie
-        blockchain.finalize(genesis_hash)
+        blockchain
+            .finalize(genesis_hash)
             .map_err(|e| StoreError::Custom(format!("Failed to finalize genesis block: {}", e)))?;
 
         // DEBUG: Get ethrex_db computed state root for comparison
         let ethrex_db_state_root = H256::from(blockchain.state_root());
-        println!("DEBUG: ethrex_db computed state root after genesis commit: {}", ethrex_db_state_root);
+        println!(
+            "DEBUG: ethrex_db computed state root after genesis commit: {}",
+            ethrex_db_state_root
+        );
         tracing::info!(
             "ethrex_db computed state root after genesis commit: {}",
             ethrex_db_state_root
@@ -2148,7 +2296,10 @@ impl Store {
         // CRITICAL: Build legacy tries for genesis and persist to backend
         // This is necessary so that block 1 can load parent storage tries
         let backend = self.backend.clone();
-        let trie_db = Box::new(BackendTrieDB::new_for_accounts(backend.clone(), Vec::new())?);
+        let trie_db = Box::new(BackendTrieDB::new_for_accounts(
+            backend.clone(),
+            Vec::new(),
+        )?);
         let mut state_trie = Trie::new(trie_db);
 
         let mut ret_storage_updates = Vec::new();
@@ -2168,7 +2319,8 @@ impl Store {
                     Trie::new(trie_db)
                 };
 
-                for (storage_key, storage_value) in &genesis_accounts.get(address).unwrap().storage {
+                for (storage_key, storage_value) in &genesis_accounts.get(address).unwrap().storage
+                {
                     if !storage_value.is_zero() {
                         let storage_key_h256 = H256::from(storage_key.to_big_endian());
                         let hashed_key = hash_key(&storage_key_h256);
@@ -2176,7 +2328,8 @@ impl Store {
                     }
                 }
 
-                let (storage_hash, storage_updates) = storage_trie.collect_changes_since_last_hash();
+                let (storage_hash, storage_updates) =
+                    storage_trie.collect_changes_since_last_hash();
                 ret_storage_updates.push((hashed_address, storage_updates));
                 storage_hash
             } else {
@@ -2190,28 +2343,37 @@ impl Store {
 
             // DEBUG: Print encoded account for first address
             if genesis_accounts.iter().next().unwrap().0 == address {
-                println!("DEBUG: First account (legacy encoding):   {}", hex::encode(&encoded_legacy));
+                println!(
+                    "DEBUG: First account (legacy encoding):   {}",
+                    hex::encode(&encoded_legacy)
+                );
             }
 
-            state_trie.insert(
-                hashed_address.as_bytes().to_vec(),
-                encoded_legacy,
-            )?;
+            state_trie.insert(hashed_address.as_bytes().to_vec(), encoded_legacy)?;
 
             // Build storage map for cached state
-            let storage = genesis_accounts.get(address).unwrap().storage.iter()
+            let storage = genesis_accounts
+                .get(address)
+                .unwrap()
+                .storage
+                .iter()
                 .map(|(k, v)| (H256::from(k.to_big_endian()), *v))
                 .collect();
 
             // Update cached state with legacy-computed storage root and storage values
-            corrected_genesis_state.insert(*address, CachedAccountData {
-                state: account_for_trie,
-                storage,
-            });
+            corrected_genesis_state.insert(
+                *address,
+                CachedAccountData {
+                    state: account_for_trie,
+                    storage,
+                },
+            );
         }
 
         // Replace genesis_state in cache with corrected version
-        let mut block_states = self.block_states.lock()
+        let mut block_states = self
+            .block_states
+            .lock()
             .map_err(|_| StoreError::LockError)?;
         block_states.insert(genesis_hash, corrected_genesis_state);
 
@@ -2222,10 +2384,21 @@ impl Store {
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
 
         println!("\n=== Genesis State Root Comparison ===");
-        println!("  Legacy trie:  {} (matches expected: {})", state_trie_hash, state_trie_hash == expected_state_root);
-        println!("  ethrex_db:    {} (matches expected: {})", ethrex_db_state_root, ethrex_db_state_root == expected_state_root);
+        println!(
+            "  Legacy trie:  {} (matches expected: {})",
+            state_trie_hash,
+            state_trie_hash == expected_state_root
+        );
+        println!(
+            "  ethrex_db:    {} (matches expected: {})",
+            ethrex_db_state_root,
+            ethrex_db_state_root == expected_state_root
+        );
         println!("  Expected:     {}", expected_state_root);
-        println!("  Legacy == ethrex_db: {}", state_trie_hash == ethrex_db_state_root);
+        println!(
+            "  Legacy == ethrex_db: {}",
+            state_trie_hash == ethrex_db_state_root
+        );
         println!("====================================\n");
 
         tracing::info!(
@@ -2244,7 +2417,9 @@ impl Store {
 
         // Register genesis state_root -> block_hash mapping for VmDatabase queries
         // Use the expected state_root from the genesis block header, not our computed one
-        let mut state_root_to_block = self.state_root_to_block.lock()
+        let mut state_root_to_block = self
+            .state_root_to_block
+            .lock()
             .map_err(|_| StoreError::LockError)?;
         state_root_to_block.insert(expected_state_root, genesis_hash);
         drop(state_root_to_block);
@@ -2397,11 +2572,9 @@ impl Store {
         // Store genesis accounts
         // Pass the expected genesis state_root from the test data
         let expected_state_root = genesis_block.header.state_root;
-        let _genesis_state_root = self.setup_genesis_state_trie(
-            genesis_hash,
-            genesis.alloc,
-            expected_state_root
-        ).await?;
+        let _genesis_state_root = self
+            .setup_genesis_state_trie(genesis_hash, genesis.alloc, expected_state_root)
+            .await?;
         // TODO: Re-enable state root verification once we compute it correctly with ethrex_db
         // debug_assert_eq!(genesis_state_root, genesis_block.header.state_root);
 
@@ -2434,9 +2607,36 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        match self.get_block_header(block_number)? {
-            Some(header) => self.get_storage_at_root(header.state_root, address, storage_key).await,
-            None => Ok(None),
+        let block_hash = match self.get_canonical_block_hash(block_number).await? {
+            Some(hash) => hash,
+            None => return Ok(None),
+        };
+
+        // Try block_states cache first (uses unhashed address and key)
+        {
+            let block_states = self
+                .block_states
+                .lock()
+                .map_err(|_| StoreError::LockError)?;
+            if let Some(state) = block_states.get(&block_hash) {
+                if let Some(cached) = state.get(&address) {
+                    if let Some(value) = cached.storage.get(&storage_key) {
+                        return Ok(Some(*value));
+                    }
+                    // Address exists but key doesn't - return 0
+                    return Ok(Some(U256::zero()));
+                }
+            }
+        }
+
+        // Fall back to blockchain (uses hashed address and key)
+        let blockchain = self.blockchain.lock().map_err(|_| StoreError::LockError)?;
+        let address_hash = H256::from(keccak_hash(address.to_fixed_bytes()));
+        let key_hash = H256::from(keccak_hash(storage_key.to_fixed_bytes()));
+
+        match blockchain.get_storage(&block_hash, &address_hash, &key_hash) {
+            Some(value) => Ok(Some(value)),
+            None => Ok(Some(U256::zero())),
         }
     }
 
@@ -2446,42 +2646,10 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        // Try trie-based approach first (for persisted state)
-        let account_hash = hash_address_fixed(&address);
-        let backend = self.backend.clone();
-        let trie_db = Box::new(BackendTrieDB::new_for_accounts(backend.clone(), Vec::new())?);
-        let state_trie = Trie::open(trie_db, state_root);
-
-        match state_trie.get(account_hash.as_bytes()) {
-            Ok(Some(encoded_account)) => {
-                // Account found in trie, read storage from storage trie
-                let account = AccountState::decode(&encoded_account)?;
-                let storage_root = account.storage_root;
-
-                let storage_trie_db = Box::new(BackendTrieDB::new_for_account_storage(
-                    backend,
-                    account_hash,
-                    Vec::new(),
-                )?);
-                let storage_trie = Trie::open(storage_trie_db, storage_root);
-
-                let hashed_key = hash_key_fixed(&storage_key);
-                return storage_trie
-                    .get(&hashed_key)?
-                    .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
-                    .transpose();
-            }
-            Ok(None) => {
-                // Account not in trie, return None
-                return Ok(None);
-            }
-            Err(_) => {
-                // Trie read failed, fall back to cache approach
-            }
-        }
-
-        // Fall back to cache-based approach (for pending/recent state)
-        let state_root_to_block = self.state_root_to_block.lock()
+        // Map state_root -> block_hash
+        let state_root_to_block = self
+            .state_root_to_block
+            .lock()
             .map_err(|_| StoreError::LockError)?;
 
         let block_hash = match state_root_to_block.get(&state_root) {
@@ -2491,21 +2659,16 @@ impl Store {
                 return Ok(Some(U256::zero()));
             }
         };
-
         drop(state_root_to_block);
 
-        let block_states = self.block_states.lock()
-            .map_err(|_| StoreError::LockError)?;
+        let blockchain = self.blockchain.lock().map_err(|_| StoreError::LockError)?;
+        let address_hash = H256::from(keccak_hash(address.to_fixed_bytes()));
+        let key_hash = H256::from(keccak_hash(storage_key.to_fixed_bytes()));
 
-        let state = block_states.get(&block_hash)
-            .ok_or_else(|| StoreError::Custom(format!("Block state for {} not found", block_hash)))?;
-
-        let cached_data = match state.get(&address) {
-            Some(data) => data,
-            None => return Ok(Some(U256::zero())),
-        };
-
-        Ok(Some(cached_data.storage.get(&storage_key).copied().unwrap_or(U256::zero())))
+        match blockchain.get_storage(&block_hash, &address_hash, &key_hash) {
+            Some(value) => Ok(Some(value)),
+            None => Ok(Some(U256::zero())),
+        }
     }
 
     pub fn get_chain_config(&self) -> ChainConfig {
@@ -2618,76 +2781,34 @@ impl Store {
         state_root: H256,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
-        // WORKAROUND: For system contract addresses, always load from trie to avoid cache pollution
-        // System contract addresses that should bypass cache:
-        const BEACON_ROOTS_ADDRESS: &str = "0x000f3df6d732807ef1319fb7b8bb8522d0beac02";
-        const HISTORY_STORAGE_ADDRESS: &str = "0x0000f90827f1c53a10cb7a02335b175320002935";
-        const WITHDRAWAL_REQUEST_ADDRESS: &str = "0x00000961ef480eb55e80d19ad83579a64c007002";
-        const CONSOLIDATION_REQUEST_ADDRESS: &str = "0x0000bbddc7ce488642fb579f8b00f3a590007251";
-
-        let addr_str = format!("{:?}", address).to_lowercase();
-        let is_system_contract = addr_str == BEACON_ROOTS_ADDRESS.to_lowercase()
-            || addr_str == HISTORY_STORAGE_ADDRESS.to_lowercase()
-            || addr_str == WITHDRAWAL_REQUEST_ADDRESS.to_lowercase()
-            || addr_str == CONSOLIDATION_REQUEST_ADDRESS.to_lowercase();
-
-        if is_system_contract {
-            println!("DEBUG [get_account_state_by_root]: System contract {}, loading from trie (bypassing cache)", address);
-            // Load directly from trie for system contracts by finding the block with this state root
-            let state_root_to_block_check = self.state_root_to_block.lock()
-                .map_err(|_| StoreError::LockError)?;
-            if let Some(block_hash) = state_root_to_block_check.get(&state_root) {
-                let block_hash = *block_hash;
-                drop(state_root_to_block_check);
-                let state_trie = self.state_trie(block_hash)?
-                    .ok_or_else(|| StoreError::Custom(format!("State trie not found for block {}", block_hash)))?;
-                return self.get_account_state_from_trie(&state_trie, address);
-            }
-            drop(state_root_to_block_check);
-            return Ok(None);
-        }
-
-        // Use state_root -> block_hash mapping to find the right block state
-        let state_root_to_block = self.state_root_to_block.lock()
+        // Map state_root -> block_hash
+        let state_root_to_block = self
+            .state_root_to_block
+            .lock()
             .map_err(|_| StoreError::LockError)?;
 
         let block_hash = match state_root_to_block.get(&state_root) {
-            Some(hash) => {
-                println!("DEBUG [get_account_state_by_root]: address={}, state_root={} -> block_hash={}",
-                         address, state_root, hash);
-                *hash
-            }
+            Some(hash) => *hash,
             None => {
                 drop(state_root_to_block);
-                println!("DEBUG [get_account_state_by_root]: address={}, state_root={} NOT FOUND in mapping",
-                         address, state_root);
-                // State root not found in mapping - this might be during execution
-                // before the mapping is registered. Return None for now.
-                // TODO: This is a workaround and should be fixed properly
                 return Ok(None);
             }
         };
-
         drop(state_root_to_block);
 
-        // Now get the block state
-        let block_states = self.block_states.lock()
-            .map_err(|_| StoreError::LockError)?;
+        // Query from ethrex_db
+        let blockchain = self.blockchain.lock().map_err(|_| StoreError::LockError)?;
+        let address_hash = H256::from(keccak_hash(address.to_fixed_bytes()));
 
-        let state = block_states.get(&block_hash)
-            .ok_or_else(|| StoreError::Custom(format!("Block state for {} not found", block_hash)))?;
-
-        // Get the account from the block state (extract the state field from CachedAccountData)
-        let result = state.get(&address).map(|cached| cached.state);
-
-        if let Some(account_state) = &result {
-            println!("DEBUG [get_account_state_by_root]: Found account - nonce={}, balance={}, storage_root={}",
-                     account_state.nonce, account_state.balance, account_state.storage_root);
-        } else {
-            println!("DEBUG [get_account_state_by_root]: Account NOT found in block state");
+        match blockchain.get_account(&block_hash, &address_hash) {
+            Some(account) => Ok(Some(AccountState {
+                nonce: account.nonce,
+                balance: account.balance,
+                code_hash: account.code_hash,
+                storage_root: account.storage_root,
+            })),
+            None => Ok(None),
         }
-
-        Ok(result)
     }
 
     pub fn get_account_state_from_trie(
@@ -2713,7 +2834,9 @@ impl Store {
         _address: Address,
         _storage_keys: &[H256],
     ) -> Result<Option<AccountProof>, StoreError> {
-        unimplemented!("Legacy get_account_proof - merkle proofs not yet implemented with ethrex_db")
+        unimplemented!(
+            "Legacy get_account_proof - merkle proofs not yet implemented with ethrex_db"
+        )
     }
 
     // Returns an iterator across all accounts in the state trie given by the state_root
@@ -2725,14 +2848,18 @@ impl Store {
         starting_address: H256,
     ) -> Result<impl Iterator<Item = (H256, AccountState)>, StoreError> {
         // Get the trie from our snap sync test trie cache
-        let tries = self.snap_sync_tries.lock()
+        let tries = self
+            .snap_sync_tries
+            .lock()
             .map_err(|_| StoreError::LockError)?;
 
-        let trie = tries.get(&state_root)
-            .ok_or_else(|| StoreError::Custom(format!("Trie not found for root {:?}", state_root)))?;
+        let trie = tries.get(&state_root).ok_or_else(|| {
+            StoreError::Custom(format!("Trie not found for root {:?}", state_root))
+        })?;
 
         // Collect all accounts from the trie that are >= starting_address
-        let mut accounts: Vec<(H256, AccountState)> = trie.iter()
+        let mut accounts: Vec<(H256, AccountState)> = trie
+            .iter()
             .filter_map(|(key, value)| {
                 // Key is the hashed address (32 bytes)
                 if key.len() != 32 {
@@ -2861,7 +2988,9 @@ impl Store {
     pub fn open_direct_state_trie(&self, _state_root: H256) -> Result<SimpleTrie, StoreError> {
         // For snap sync tests, create a new empty trie that will register itself
         // when hash() is called
-        Ok(SimpleTrie::new_with_store(Arc::clone(&self.snap_sync_tries)))
+        Ok(SimpleTrie::new_with_store(Arc::clone(
+            &self.snap_sync_tries,
+        )))
     }
 
     // TODO: LEGACY METHOD - Replace with ethrex_db
@@ -2879,8 +3008,8 @@ impl Store {
         // Create a legacy trie using the backend for this storage root
         let trie_db = Box::new(BackendTrieDB::new_for_account_storage(
             self.backend.clone(),
-            account_hash,          // address_prefix
-            Vec::new(),            // last_written (not used for reads)
+            account_hash, // address_prefix
+            Vec::new(),   // last_written (not used for reads)
         )?);
         Ok(Trie::open(trie_db, storage_root))
     }
@@ -3045,13 +3174,11 @@ impl Store {
         let address_hash = H256::from(keccak_hash(address.to_fixed_bytes()));
 
         match blockchain.get_account(&block_hash, &address_hash) {
-            Some(account) => {
-                Ok(Some(AccountInfo {
-                    nonce: account.nonce,
-                    balance: account.balance,
-                    code_hash: account.code_hash,
-                }))
-            }
+            Some(account) => Ok(Some(AccountInfo {
+                nonce: account.nonce,
+                balance: account.balance,
+                code_hash: account.code_hash,
+            })),
             None => {
                 // Block not in hot storage
                 // TODO: Implement fallback to PagedDb cold storage
@@ -3181,7 +3308,8 @@ impl Store {
         };
 
         // Create AccountData for the state trie
-        let balance_bytes: [u8; 32] = ethrex_common::utils::u256_to_big_endian(account_info.balance);
+        let balance_bytes: [u8; 32] =
+            ethrex_common::utils::u256_to_big_endian(account_info.balance);
 
         let account_data = AccountData {
             nonce: account_info.nonce,
@@ -3212,7 +3340,8 @@ impl Store {
         let blockchain = self.blockchain.lock().map_err(|_| StoreError::LockError)?;
 
         // Start new block (creates COW state from parent)
-        let mut block = blockchain.start_new(parent_hash, block_hash, block_number)
+        let mut block = blockchain
+            .start_new(parent_hash, block_hash, block_number)
             .map_err(|e| StoreError::Custom(format!("Failed to start new block: {}", e)))?;
 
         // Apply all account updates
@@ -3221,7 +3350,8 @@ impl Store {
         }
 
         // Commit block (stores in blockchain's hot storage)
-        blockchain.commit(block)
+        blockchain
+            .commit(block)
             .map_err(|e| StoreError::Custom(format!("Failed to commit block: {}", e)))?;
 
         Ok(())
@@ -3248,8 +3378,9 @@ impl Store {
         }
 
         // Get account info (or create default for new accounts)
-        let account_info = update.info.as_ref()
-            .ok_or_else(|| StoreError::Custom("AccountUpdate has no info but not marked as removed".to_string()))?;
+        let account_info = update.info.as_ref().ok_or_else(|| {
+            StoreError::Custom("AccountUpdate has no info but not marked as removed".to_string())
+        })?;
 
         // Create ethrex_db Account
         let account = ethrex_db::chain::Account {
@@ -3288,13 +3419,11 @@ impl Store {
     ///
     /// This persists the block's state to PagedDb and frees the COW memory.
     /// Should be called once a block is considered final/canonical.
-    pub async fn finalize_block_ethrex_db(
-        &self,
-        block_hash: H256,
-    ) -> Result<(), StoreError> {
+    pub async fn finalize_block_ethrex_db(&self, block_hash: H256) -> Result<(), StoreError> {
         let blockchain = self.blockchain.lock().map_err(|_| StoreError::LockError)?;
 
-        blockchain.finalize(block_hash)
+        blockchain
+            .finalize(block_hash)
             .map_err(|e| StoreError::Custom(format!("Failed to finalize block: {}", e)))
     }
 
@@ -3310,12 +3439,14 @@ impl Store {
     ) -> Result<(), StoreError> {
         let blockchain = self.blockchain.lock().map_err(|_| StoreError::LockError)?;
 
-        blockchain.fork_choice_update(head, safe, finalized)
+        blockchain
+            .fork_choice_update(head, safe, finalized)
             .map_err(|e| StoreError::Custom(format!("Fork choice update failed: {}", e)))?;
 
         // Auto-finalize if specified
         if let Some(finalized_hash) = finalized {
-            blockchain.finalize(finalized_hash)
+            blockchain
+                .finalize(finalized_hash)
                 .map_err(|e| StoreError::Custom(format!("Failed to finalize block: {}", e)))?;
         }
 

@@ -6,15 +6,15 @@
 //!
 //! Run with: cargo bench --bench trie_comparison
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 // ethrex_db
-use ethrex_db::merkle::{MerkleTrie, keccak256};
+use ethrex_db::merkle::{keccak256, MerkleTrie};
 
 // ethrex-trie
-use ethrex_trie::{Trie as EthrexTrie, TrieError, Nibbles};
+use ethrex_trie::{Nibbles, Trie as EthrexTrie, TrieError};
 
 // cita_trie
 use cita_trie::{MemoryDB, PatriciaTrie, Trie as CitaTrie};
@@ -185,17 +185,13 @@ fn bench_root_hash(c: &mut Criterion) {
             let _ = ethrex_trie.insert(key.to_vec(), value.clone());
         }
 
-        group.bench_with_input(
-            BenchmarkId::new("ethrex_db", size),
-            &(),
-            |b, _| b.iter(|| ethrex_db_trie.root_hash()),
-        );
+        group.bench_with_input(BenchmarkId::new("ethrex_db", size), &(), |b, _| {
+            b.iter(|| ethrex_db_trie.root_hash())
+        });
 
-        group.bench_with_input(
-            BenchmarkId::new("ethrex_trie", size),
-            &(),
-            |b, _| b.iter(|| ethrex_trie.hash()),
-        );
+        group.bench_with_input(BenchmarkId::new("ethrex_trie", size), &(), |b, _| {
+            b.iter(|| ethrex_trie.hash())
+        });
     }
 
     group.finish();

@@ -1,9 +1,9 @@
 //! Integration tests for ethrex_db.
 
+use ethrex_db::chain::{Account, Blockchain, WorldState};
 use ethrex_db::data::{NibblePath, SlottedArray};
-use ethrex_db::store::{PagedDb, PageType, CommitOptions};
-use ethrex_db::chain::{Blockchain, Account, WorldState};
-use ethrex_db::merkle::{MerkleTrie, keccak256, EMPTY_ROOT};
+use ethrex_db::merkle::{keccak256, MerkleTrie, EMPTY_ROOT};
+use ethrex_db::store::{CommitOptions, PageType, PagedDb};
 use primitive_types::{H256, U256};
 
 #[test]
@@ -16,11 +16,9 @@ fn test_full_workflow() {
 
     // Create a block
     let parent_hash = blockchain.last_finalized_hash();
-    let mut block = blockchain.start_new(
-        parent_hash,
-        H256::repeat_byte(0x01),
-        1,
-    ).unwrap();
+    let mut block = blockchain
+        .start_new(parent_hash, H256::repeat_byte(0x01), 1)
+        .unwrap();
 
     // Add account changes
     let address = H256::repeat_byte(0xAB);
@@ -44,9 +42,18 @@ fn test_merkle_trie_with_account_data() {
 
     // Simulate account state
     let accounts = vec![
-        (H256::repeat_byte(0x01), Account::with_balance(U256::from(100))),
-        (H256::repeat_byte(0x02), Account::with_balance(U256::from(200))),
-        (H256::repeat_byte(0x03), Account::with_balance(U256::from(300))),
+        (
+            H256::repeat_byte(0x01),
+            Account::with_balance(U256::from(100)),
+        ),
+        (
+            H256::repeat_byte(0x02),
+            Account::with_balance(U256::from(200)),
+        ),
+        (
+            H256::repeat_byte(0x03),
+            Account::with_balance(U256::from(300)),
+        ),
     ];
 
     for (address, account) in &accounts {
@@ -131,11 +138,9 @@ fn test_parallel_blocks() {
     // Create multiple blocks from same parent (simulating parallel execution)
     let mut blocks = Vec::new();
     for i in 0..3 {
-        let block = blockchain.start_new(
-            parent_hash,
-            H256::from_low_u64_be(i as u64 + 1),
-            1,
-        ).unwrap();
+        let block = blockchain
+            .start_new(parent_hash, H256::from_low_u64_be(i as u64 + 1), 1)
+            .unwrap();
         blocks.push(block);
     }
 
@@ -225,7 +230,9 @@ fn test_e2e_multi_block_chain() {
     // Build a chain of 10 blocks
     for block_num in 1..=10 {
         let block_hash = H256::from_low_u64_be(block_num as u64);
-        let mut block = blockchain.start_new(prev_hash, block_hash, block_num).unwrap();
+        let mut block = blockchain
+            .start_new(prev_hash, block_hash, block_num)
+            .unwrap();
 
         // Add some account activity in each block
         let address = H256::from_low_u64_be(block_num as u64 * 1000);
@@ -250,11 +257,13 @@ fn test_e2e_account_balance_transfers() {
     let charlie = H256::repeat_byte(0xCC);
 
     // Block 1: Initialize accounts
-    let mut block1 = blockchain.start_new(
-        blockchain.last_finalized_hash(),
-        H256::from_low_u64_be(1),
-        1,
-    ).unwrap();
+    let mut block1 = blockchain
+        .start_new(
+            blockchain.last_finalized_hash(),
+            H256::from_low_u64_be(1),
+            1,
+        )
+        .unwrap();
 
     block1.set_account(alice, Account::with_balance(U256::from(1000)));
     block1.set_account(bob, Account::with_balance(U256::from(500)));
@@ -264,17 +273,17 @@ fn test_e2e_account_balance_transfers() {
     blockchain.commit(block1).unwrap();
 
     // Block 2: Alice sends 200 to Bob
-    let mut block2 = blockchain.start_new(block1_hash, H256::from_low_u64_be(2), 2).unwrap();
+    let mut block2 = blockchain
+        .start_new(block1_hash, H256::from_low_u64_be(2), 2)
+        .unwrap();
     block2.set_account(alice, Account::with_balance(U256::from(800)));
     block2.set_account(bob, Account::with_balance(U256::from(700)));
     blockchain.commit(block2).unwrap();
 
     // Block 3: Bob sends 100 to Charlie
-    let mut block3 = blockchain.start_new(
-        H256::from_low_u64_be(2),
-        H256::from_low_u64_be(3),
-        3,
-    ).unwrap();
+    let mut block3 = blockchain
+        .start_new(H256::from_low_u64_be(2), H256::from_low_u64_be(3), 3)
+        .unwrap();
     block3.set_account(bob, Account::with_balance(U256::from(600)));
     block3.set_account(charlie, Account::with_balance(U256::from(100)));
     blockchain.commit(block3).unwrap();
@@ -291,11 +300,13 @@ fn test_e2e_contract_storage_operations() {
     let contract_addr = H256::repeat_byte(0xCC);
 
     // Deploy contract with initial storage
-    let mut block1 = blockchain.start_new(
-        blockchain.last_finalized_hash(),
-        H256::from_low_u64_be(1),
-        1,
-    ).unwrap();
+    let mut block1 = blockchain
+        .start_new(
+            blockchain.last_finalized_hash(),
+            H256::from_low_u64_be(1),
+            1,
+        )
+        .unwrap();
 
     // Contract account
     let mut contract = Account::with_balance(U256::zero());
@@ -312,11 +323,9 @@ fn test_e2e_contract_storage_operations() {
     blockchain.commit(block1).unwrap();
 
     // Update some storage slots
-    let mut block2 = blockchain.start_new(
-        H256::from_low_u64_be(1),
-        H256::from_low_u64_be(2),
-        2,
-    ).unwrap();
+    let mut block2 = blockchain
+        .start_new(H256::from_low_u64_be(1), H256::from_low_u64_be(2), 2)
+        .unwrap();
 
     // Update slots 0, 5, and 9
     block2.set_storage(contract_addr, H256::from_low_u64_be(0), U256::from(999));
@@ -422,28 +431,44 @@ fn test_e2e_fork_choice_simulation() {
     let genesis_hash = blockchain.last_finalized_hash();
 
     // Block 1 (canonical)
-    let mut block1 = blockchain.start_new(genesis_hash, H256::from_low_u64_be(1), 1).unwrap();
-    block1.set_account(H256::repeat_byte(0x01), Account::with_balance(U256::from(100)));
+    let mut block1 = blockchain
+        .start_new(genesis_hash, H256::from_low_u64_be(1), 1)
+        .unwrap();
+    block1.set_account(
+        H256::repeat_byte(0x01),
+        Account::with_balance(U256::from(100)),
+    );
     blockchain.commit(block1).unwrap();
 
     // Block 2A and 2B (competing blocks from block 1)
     let block1_hash = H256::from_low_u64_be(1);
 
-    let mut block2a = blockchain.start_new(block1_hash, H256::from_low_u64_be(0x2A), 2).unwrap();
-    block2a.set_account(H256::repeat_byte(0x02), Account::with_balance(U256::from(200)));
+    let mut block2a = blockchain
+        .start_new(block1_hash, H256::from_low_u64_be(0x2A), 2)
+        .unwrap();
+    block2a.set_account(
+        H256::repeat_byte(0x02),
+        Account::with_balance(U256::from(200)),
+    );
     blockchain.commit(block2a).unwrap();
 
-    let mut block2b = blockchain.start_new(block1_hash, H256::from_low_u64_be(0x2B), 2).unwrap();
-    block2b.set_account(H256::repeat_byte(0x02), Account::with_balance(U256::from(300)));
+    let mut block2b = blockchain
+        .start_new(block1_hash, H256::from_low_u64_be(0x2B), 2)
+        .unwrap();
+    block2b.set_account(
+        H256::repeat_byte(0x02),
+        Account::with_balance(U256::from(300)),
+    );
     blockchain.commit(block2b).unwrap();
 
     // Block 3A (extends 2A)
-    let mut block3a = blockchain.start_new(
-        H256::from_low_u64_be(0x2A),
-        H256::from_low_u64_be(0x3A),
-        3,
-    ).unwrap();
-    block3a.set_account(H256::repeat_byte(0x03), Account::with_balance(U256::from(400)));
+    let mut block3a = blockchain
+        .start_new(H256::from_low_u64_be(0x2A), H256::from_low_u64_be(0x3A), 3)
+        .unwrap();
+    block3a.set_account(
+        H256::repeat_byte(0x03),
+        Account::with_balance(U256::from(400)),
+    );
     blockchain.commit(block3a).unwrap();
 
     // We now have a fork: genesis -> 1 -> 2A -> 3A
@@ -472,9 +497,7 @@ fn test_e2e_trie_proof_data() {
     let root = trie.root_hash();
 
     // Collect all entries via iteration
-    let iter_entries: Vec<_> = trie.iter()
-        .map(|(k, v)| (k.to_vec(), v.to_vec()))
-        .collect();
+    let iter_entries: Vec<_> = trie.iter().map(|(k, v)| (k.to_vec(), v.to_vec())).collect();
 
     assert_eq!(iter_entries.len(), 50);
 
@@ -503,11 +526,13 @@ fn test_e2e_account_nonce_tracking() {
     let sender = H256::repeat_byte(0xAA);
 
     // Initial account state
-    let mut block1 = blockchain.start_new(
-        blockchain.last_finalized_hash(),
-        H256::from_low_u64_be(1),
-        1,
-    ).unwrap();
+    let mut block1 = blockchain
+        .start_new(
+            blockchain.last_finalized_hash(),
+            H256::from_low_u64_be(1),
+            1,
+        )
+        .unwrap();
 
     let mut account = Account::with_balance(U256::from(10000));
     account.nonce = 0;
@@ -515,11 +540,9 @@ fn test_e2e_account_nonce_tracking() {
     blockchain.commit(block1).unwrap();
 
     // Simulate 5 transactions in block 2
-    let mut block2 = blockchain.start_new(
-        H256::from_low_u64_be(1),
-        H256::from_low_u64_be(2),
-        2,
-    ).unwrap();
+    let mut block2 = blockchain
+        .start_new(H256::from_low_u64_be(1), H256::from_low_u64_be(2), 2)
+        .unwrap();
 
     let mut account = Account::with_balance(U256::from(9500)); // Spent some
     account.nonce = 5; // 5 transactions
@@ -527,11 +550,9 @@ fn test_e2e_account_nonce_tracking() {
     blockchain.commit(block2).unwrap();
 
     // Simulate 3 more transactions in block 3
-    let mut block3 = blockchain.start_new(
-        H256::from_low_u64_be(2),
-        H256::from_low_u64_be(3),
-        3,
-    ).unwrap();
+    let mut block3 = blockchain
+        .start_new(H256::from_low_u64_be(2), H256::from_low_u64_be(3), 3)
+        .unwrap();
 
     let mut account = Account::with_balance(U256::from(9200));
     account.nonce = 8; // 5 + 3 transactions
@@ -624,7 +645,10 @@ fn test_e2e_mixed_key_lengths() {
 
     // Verify all
     assert_eq!(trie.get(&[0x01]), Some(b"short1".as_slice()));
-    assert_eq!(trie.get(&[0x01, 0x02, 0x03, 0x04]), Some(b"medium1".as_slice()));
+    assert_eq!(
+        trie.get(&[0x01, 0x02, 0x03, 0x04]),
+        Some(b"medium1".as_slice())
+    );
     assert_eq!(trie.get(&long_key1), Some(b"long1".as_slice()));
 
     // Remove and verify
@@ -716,7 +740,9 @@ fn test_e2e_state_persistence() {
     let genesis_hash = blockchain.last_finalized_hash();
 
     // Block 1: Create two accounts
-    let mut block1 = blockchain.start_new(genesis_hash, H256::from_low_u64_be(1), 1).unwrap();
+    let mut block1 = blockchain
+        .start_new(genesis_hash, H256::from_low_u64_be(1), 1)
+        .unwrap();
     let addr1 = H256::repeat_byte(0x01);
     let addr2 = H256::repeat_byte(0x02);
     block1.set_account(addr1, Account::with_balance(U256::from(1000)));
@@ -724,13 +750,17 @@ fn test_e2e_state_persistence() {
     blockchain.commit(block1).unwrap();
 
     // Block 2: Update account 1, add storage to account 2
-    let mut block2 = blockchain.start_new(H256::from_low_u64_be(1), H256::from_low_u64_be(2), 2).unwrap();
+    let mut block2 = blockchain
+        .start_new(H256::from_low_u64_be(1), H256::from_low_u64_be(2), 2)
+        .unwrap();
     block2.set_account(addr1, Account::with_balance(U256::from(900)));
     block2.set_storage(addr2, H256::repeat_byte(0xAA), U256::from(42));
     blockchain.commit(block2).unwrap();
 
     // Block 3: More storage changes
-    let mut block3 = blockchain.start_new(H256::from_low_u64_be(2), H256::from_low_u64_be(3), 3).unwrap();
+    let mut block3 = blockchain
+        .start_new(H256::from_low_u64_be(2), H256::from_low_u64_be(3), 3)
+        .unwrap();
     block3.set_storage(addr2, H256::repeat_byte(0xBB), U256::from(100));
     block3.set_storage(addr2, H256::repeat_byte(0xCC), U256::from(200));
     blockchain.commit(block3).unwrap();
@@ -768,7 +798,9 @@ fn test_e2e_incremental_finalization() {
     // Create 5 blocks
     let mut prev_hash = genesis_hash;
     for i in 1..=5 {
-        let mut block = blockchain.start_new(prev_hash, H256::from_low_u64_be(i), i).unwrap();
+        let mut block = blockchain
+            .start_new(prev_hash, H256::from_low_u64_be(i), i)
+            .unwrap();
         let addr = H256::from_low_u64_be(i * 100);
         block.set_account(addr, Account::with_balance(U256::from(i * 1000)));
         blockchain.commit(block).unwrap();

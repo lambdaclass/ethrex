@@ -1,7 +1,7 @@
 //! Merkle trie node types.
 
-use tiny_keccak::{Hasher, Keccak};
 use super::rlp_encode::RlpEncoder;
+use tiny_keccak::{Hasher, Keccak};
 
 /// Hash size (Keccak-256).
 pub const HASH_SIZE: usize = 32;
@@ -112,7 +112,10 @@ impl Node {
 
     /// Creates an extension node with a hash child.
     pub fn extension(path: Vec<u8>, child: [u8; HASH_SIZE]) -> Self {
-        Node::Extension { path, child: ChildRef::Hash(child) }
+        Node::Extension {
+            path,
+            child: ChildRef::Hash(child),
+        }
     }
 
     /// Creates an extension node with a ChildRef.
@@ -124,10 +127,22 @@ impl Node {
     pub fn branch() -> Self {
         Node::Branch {
             children: Box::new([
-                ChildRef::Empty, ChildRef::Empty, ChildRef::Empty, ChildRef::Empty,
-                ChildRef::Empty, ChildRef::Empty, ChildRef::Empty, ChildRef::Empty,
-                ChildRef::Empty, ChildRef::Empty, ChildRef::Empty, ChildRef::Empty,
-                ChildRef::Empty, ChildRef::Empty, ChildRef::Empty, ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
             ]),
             value: None,
         }
@@ -265,10 +280,8 @@ pub fn keccak256(data: &[u8]) -> [u8; HASH_SIZE] {
 
 /// The empty trie root hash (keccak of RLP empty string).
 pub const EMPTY_ROOT: [u8; HASH_SIZE] = [
-    0x56, 0xe8, 0x1f, 0x17, 0x1b, 0xcc, 0x55, 0xa6,
-    0xff, 0x83, 0x45, 0xe6, 0x92, 0xc0, 0xf8, 0x6e,
-    0x5b, 0x48, 0xe0, 0x1b, 0x99, 0x6c, 0xad, 0xc0,
-    0x01, 0x62, 0x2f, 0xb5, 0xe3, 0x63, 0xb4, 0x21,
+    0x56, 0xe8, 0x1f, 0x17, 0x1b, 0xcc, 0x55, 0xa6, 0xff, 0x83, 0x45, 0xe6, 0x92, 0xc0, 0xf8, 0x6e,
+    0x5b, 0x48, 0xe0, 0x1b, 0x99, 0x6c, 0xad, 0xc0, 0x01, 0x62, 0x2f, 0xb5, 0xe3, 0x63, 0xb4, 0x21,
 ];
 
 #[cfg(test)]

@@ -9,7 +9,7 @@ use tracing::warn;
 
 use crate::data::{NibblePath, SlottedArray, PAGE_SIZE};
 use crate::merkle::{keccak256, MerkleTrie, EMPTY_ROOT};
-use crate::store::{DbAddress, PageType, LeafPage, DataPage, BatchContext, PagedDb, DbError};
+use crate::store::{BatchContext, DataPage, DbAddress, DbError, LeafPage, PageType, PagedDb};
 
 /// Standalone trie that persists to PagedDb on commit.
 ///
@@ -58,7 +58,11 @@ impl PersistentTrie {
         let mut i = 0;
         while i < path.len() {
             let high = path.get(i);
-            let low = if i + 1 < path.len() { path.get(i + 1) } else { 0 };
+            let low = if i + 1 < path.len() {
+                path.get(i + 1)
+            } else {
+                0
+            };
             bytes.push((high << 4) | low);
             i += 2;
         }
@@ -85,7 +89,10 @@ impl PersistentTrie {
     ///
     /// Optimized for snap sync - skips redundant hashing in bloom filter
     /// since keys are already keccak256 hashes.
-    pub fn insert_batch_prehashed(&mut self, entries: impl IntoIterator<Item = ([u8; 32], Vec<u8>)>) {
+    pub fn insert_batch_prehashed(
+        &mut self,
+        entries: impl IntoIterator<Item = ([u8; 32], Vec<u8>)>,
+    ) {
         let entries: Vec<_> = entries.into_iter().collect();
         for (key, value) in &entries {
             self.pending.insert(key.to_vec(), Some(value.clone()));
@@ -205,13 +212,17 @@ impl StateTrie {
     /// Gets or creates a storage trie for an account.
     pub fn storage_trie(&mut self, address: &[u8; 20]) -> &mut StorageTrie {
         let key = keccak256(address);
-        self.storage_tries.entry(key).or_insert_with(StorageTrie::new)
+        self.storage_tries
+            .entry(key)
+            .or_insert_with(StorageTrie::new)
     }
 
     /// Gets or creates a storage trie for an account using a pre-hashed address.
     /// Used by snap sync which already has hashed addresses.
     pub fn storage_trie_by_hash(&mut self, address_hash: &[u8; 32]) -> &mut StorageTrie {
-        self.storage_tries.entry(*address_hash).or_insert_with(StorageTrie::new)
+        self.storage_tries
+            .entry(*address_hash)
+            .or_insert_with(StorageTrie::new)
     }
 
     /// Gets an account by address.
@@ -223,12 +234,18 @@ impl StateTrie {
     /// Gets an account by pre-hashed address.
     /// Used by snap sync which already has hashed addresses.
     pub fn get_account_by_hash(&self, address_hash: &[u8; 32]) -> Option<AccountData> {
-        self.trie.get(address_hash).map(|data| AccountData::decode(&data))
+        self.trie
+            .get(address_hash)
+            .map(|data| AccountData::decode(&data))
     }
 
     /// Gets a storage value for an account using pre-hashed keys.
     /// Returns None if the account or storage slot doesn't exist.
-    pub fn get_storage_by_hash(&self, address_hash: &[u8; 32], slot_hash: &[u8; 32]) -> Option<[u8; 32]> {
+    pub fn get_storage_by_hash(
+        &self,
+        address_hash: &[u8; 32],
+        slot_hash: &[u8; 32],
+    ) -> Option<[u8; 32]> {
         self.storage_tries.get(address_hash)?.get_by_hash(slot_hash)
     }
 
@@ -257,10 +274,13 @@ impl StateTrie {
     /// - Skips redundant keccak256 in bloom filter (keys are already hashes)
     /// - Batches bloom filter updates for better cache locality
     /// - Pre-reserves HashMap capacity
-    pub fn set_accounts_batch(&mut self, accounts: impl IntoIterator<Item = ([u8; 32], AccountData)>) {
-        let entries = accounts.into_iter().map(|(hash, account)| {
-            (hash, account.encode())
-        });
+    pub fn set_accounts_batch(
+        &mut self,
+        accounts: impl IntoIterator<Item = ([u8; 32], AccountData)>,
+    ) {
+        let entries = accounts
+            .into_iter()
+            .map(|(hash, account)| (hash, account.encode()));
         self.trie.insert_batch_prehashed(entries);
     }
 
@@ -377,12 +397,38 @@ impl StorageTrie {
     /// Gets a storage value using a pre-hashed slot key.
     /// Used by snap sync which already has hashed keys.
     pub fn get_by_hash(&self, slot_hash: &[u8; 32]) -> Option<[u8; 32]> {
-        self.trie.get(slot_hash).map(|v| {
+        self.trie.get(slot_hash).map(|rlp_encoded| {
+            // RLP-decode the storage value
+            let decoded = Self::rlp_decode_storage_value(&rlp_encoded);
             let mut arr = [0u8; 32];
-            let len = v.len().min(32);
-            arr[32 - len..].copy_from_slice(&v[v.len() - len..]);
+            let len = decoded.len().min(32);
+            arr[32 - len..].copy_from_slice(&decoded);
             arr
         })
+    }
+
+    /// RLP-decodes a storage value.
+    fn rlp_decode_storage_value(encoded: &[u8]) -> Vec<u8> {
+        if encoded.is_empty() {
+            return vec![];
+        }
+
+        let first = encoded[0];
+        if first < 0x80 {
+            // Single byte value < 0x80
+            vec![first]
+        } else if first <= 0xb7 {
+            // Short string: length is (first - 0x80)
+            let len = (first - 0x80) as usize;
+            if len + 1 <= encoded.len() {
+                encoded[1..1 + len].to_vec()
+            } else {
+                encoded.to_vec()
+            }
+        } else {
+            // Long string (shouldn't happen for 32-byte values)
+            encoded.to_vec()
+        }
     }
 
     /// Sets a storage value.
@@ -455,9 +501,12 @@ impl StorageTrie {
     /// - Batches bloom filter updates for better cache locality
     /// - Pre-reserves HashMap capacity
     pub fn set_batch_by_hash(&mut self, entries: impl IntoIterator<Item = ([u8; 32], [u8; 32])>) {
-        let trie_entries: Vec<_> = entries.into_iter().filter_map(|(slot_hash, value)| {
-            Self::rlp_encode_storage_value(&value).map(|rlp_value| (slot_hash, rlp_value))
-        }).collect();
+        let trie_entries: Vec<_> = entries
+            .into_iter()
+            .filter_map(|(slot_hash, value)| {
+                Self::rlp_encode_storage_value(&value).map(|rlp_value| (slot_hash, rlp_value))
+            })
+            .collect();
         self.trie.insert_batch_prehashed(trie_entries);
     }
 
@@ -495,10 +544,9 @@ pub struct AccountData {
 impl AccountData {
     /// Empty account code hash (keccak256 of empty bytes).
     pub const EMPTY_CODE_HASH: [u8; 32] = [
-        0xc5, 0xd2, 0x46, 0x01, 0x86, 0xf7, 0x23, 0x3c,
-        0x92, 0x7e, 0x7d, 0xb2, 0xdc, 0xc7, 0x03, 0xc0,
-        0xe5, 0x00, 0xb6, 0x53, 0xca, 0x82, 0x27, 0x3b,
-        0x7b, 0xfa, 0xd8, 0x04, 0x5d, 0x85, 0xa4, 0x70,
+        0xc5, 0xd2, 0x46, 0x01, 0x86, 0xf7, 0x23, 0x3c, 0x92, 0x7e, 0x7d, 0xb2, 0xdc, 0xc7, 0x03,
+        0xc0, 0xe5, 0x00, 0xb6, 0x53, 0xca, 0x82, 0x27, 0x3b, 0x7b, 0xfa, 0xd8, 0x04, 0x5d, 0x85,
+        0xa4, 0x70,
     ];
 
     /// Creates a new empty account.
@@ -519,7 +567,7 @@ impl AccountData {
     /// This encoding MUST match the legacy AccountState RLP encoding byte-for-byte
     /// to ensure state root hashes match between ethrex_db and legacy trie systems.
     pub fn encode(&self) -> Vec<u8> {
-        use ethereum_types::{U256, H256};
+        use ethereum_types::{H256, U256};
         use ethrex_rlp::structs::Encoder;
 
         // Convert fields to types matching AccountState
@@ -730,7 +778,11 @@ impl PagedStateTrie {
         })
     }
 
-    fn load_from_data_page(db: &PagedDb, page: &crate::store::Page, state: &mut StateTrie) -> Result<(), DbError> {
+    fn load_from_data_page(
+        db: &PagedDb,
+        page: &crate::store::Page,
+        state: &mut StateTrie,
+    ) -> Result<(), DbError> {
         let data_page = DataPage::wrap(page.clone());
 
         // Iterate through all buckets
@@ -765,7 +817,11 @@ impl PagedStateTrie {
         Ok(())
     }
 
-    fn load_from_state_root_page(db: &PagedDb, page: &crate::store::Page, state: &mut StateTrie) -> Result<(), DbError> {
+    fn load_from_state_root_page(
+        db: &PagedDb,
+        page: &crate::store::Page,
+        state: &mut StateTrie,
+    ) -> Result<(), DbError> {
         // StateRoot page layout:
         // - First 4 bytes: address of accounts trie root
         // - Remaining: list of (address_hash, storage_trie_addr) pairs
@@ -828,7 +884,10 @@ impl PagedStateTrie {
         let _root_hash = self.state.root_hash();
 
         // Collect all account entries (clone to avoid borrow issues)
-        let entries: Vec<(Vec<u8>, Vec<u8>)> = self.state.trie.iter()
+        let entries: Vec<(Vec<u8>, Vec<u8>)> = self
+            .state
+            .trie
+            .iter()
             .map(|(k, v)| (k.to_vec(), v.to_vec()))
             .collect();
 
@@ -868,7 +927,11 @@ impl PagedStateTrie {
         Self::save_with_fanout_static(&mut self.root_addr, batch, &entries)
     }
 
-    fn save_with_fanout_static(root_addr: &mut Option<DbAddress>, batch: &mut BatchContext, entries: &[(Vec<u8>, Vec<u8>)]) -> Result<DbAddress, DbError> {
+    fn save_with_fanout_static(
+        root_addr: &mut Option<DbAddress>,
+        batch: &mut BatchContext,
+        entries: &[(Vec<u8>, Vec<u8>)],
+    ) -> Result<DbAddress, DbError> {
         // Group entries by first byte (256 buckets)
         let mut buckets: Vec<Vec<(&[u8], &[u8])>> = vec![Vec::new(); 256];
 
@@ -928,7 +991,10 @@ impl PagedStateTrie {
         Ok(addr)
     }
 
-    fn save_bucket_multi_page_static(batch: &mut BatchContext, entries: &[(&[u8], &[u8])]) -> Result<DbAddress, DbError> {
+    fn save_bucket_multi_page_static(
+        batch: &mut BatchContext,
+        entries: &[(&[u8], &[u8])],
+    ) -> Result<DbAddress, DbError> {
         // Simple approach: just create multiple leaf pages and link them
         // In a production implementation, this would use a proper tree structure
         let mut first_addr = DbAddress::NULL;
@@ -1005,7 +1071,10 @@ impl PagedStateTrie {
 
     /// Batch insert accounts using pre-hashed addresses.
     /// More efficient than individual inserts for bulk operations like snap sync.
-    pub fn set_accounts_batch(&mut self, accounts: impl IntoIterator<Item = ([u8; 32], AccountData)>) {
+    pub fn set_accounts_batch(
+        &mut self,
+        accounts: impl IntoIterator<Item = ([u8; 32], AccountData)>,
+    ) {
         self.state.set_accounts_batch(accounts);
     }
 
@@ -1022,7 +1091,11 @@ impl PagedStateTrie {
 
     /// Gets a storage value for an account using pre-hashed keys.
     /// Returns None if the account or storage slot doesn't exist.
-    pub fn get_storage_by_hash(&self, address_hash: &[u8; 32], slot_hash: &[u8; 32]) -> Option<[u8; 32]> {
+    pub fn get_storage_by_hash(
+        &self,
+        address_hash: &[u8; 32],
+        slot_hash: &[u8; 32],
+    ) -> Option<[u8; 32]> {
         self.state.get_storage_by_hash(address_hash, slot_hash)
     }
 
@@ -1067,7 +1140,8 @@ impl PagedStateTrie {
     /// Used after storage healing to set EMPTY_TRIE_HASH for accounts
     /// that had no storage returned during healing.
     pub fn update_account_storage_root(&mut self, address_hash: &[u8; 32], storage_root: [u8; 32]) {
-        self.state.update_account_storage_root(address_hash, storage_root);
+        self.state
+            .update_account_storage_root(address_hash, storage_root);
     }
 
     /// Debug: dumps the first N accounts for inspection.
@@ -1166,8 +1240,15 @@ mod tests {
         assert_eq!(decoded.balance[31], 100);
         // Critical: verify EMPTY_ROOT and EMPTY_CODE_HASH roundtrip correctly
         // (slim encoding encodes these as 0x80, decode must restore original values)
-        assert_eq!(decoded.storage_root, EMPTY_ROOT, "storage_root should decode to EMPTY_ROOT");
-        assert_eq!(decoded.code_hash, AccountData::EMPTY_CODE_HASH, "code_hash should decode to EMPTY_CODE_HASH");
+        assert_eq!(
+            decoded.storage_root, EMPTY_ROOT,
+            "storage_root should decode to EMPTY_ROOT"
+        );
+        assert_eq!(
+            decoded.code_hash,
+            AccountData::EMPTY_CODE_HASH,
+            "code_hash should decode to EMPTY_CODE_HASH"
+        );
 
         // Verify re-encoding produces identical bytes (idempotent roundtrip)
         let re_encoded = decoded.encode();
@@ -1189,7 +1270,10 @@ mod tests {
         let encoded = account.encode();
         // Full encoding: storage_root and code_hash are always 32 bytes each
         // Expected length: ~70 bytes (RLP list header + nonce + balance + 32 + 32)
-        assert!(encoded.len() >= 66, "Full encoding should include 32-byte hashes");
+        assert!(
+            encoded.len() >= 66,
+            "Full encoding should include 32-byte hashes"
+        );
 
         let decoded = AccountData::decode(&encoded);
         assert_eq!(decoded.storage_root, EMPTY_ROOT);
@@ -1197,7 +1281,10 @@ mod tests {
 
         // Re-encode and verify idempotency
         let re_encoded = decoded.encode();
-        assert_eq!(encoded, re_encoded, "full encoding roundtrip should be idempotent");
+        assert_eq!(
+            encoded, re_encoded,
+            "full encoding roundtrip should be idempotent"
+        );
     }
 
     #[test]
@@ -1231,32 +1318,51 @@ mod tests {
         // Value 127 = 0x7f (single byte < 0x80, encodes as itself)
         value[31] = 127;
         let encoded = StorageTrie::rlp_encode_storage_value(&value).unwrap();
-        assert_eq!(encoded, vec![0x7f], "Value 127 should encode as single byte");
+        assert_eq!(
+            encoded,
+            vec![0x7f],
+            "Value 127 should encode as single byte"
+        );
 
         // Value 128 = 0x80 (single byte >= 0x80, needs prefix)
         value[31] = 128;
         let encoded = StorageTrie::rlp_encode_storage_value(&value).unwrap();
-        assert_eq!(encoded, vec![0x81, 0x80], "Value 128 should have length prefix");
+        assert_eq!(
+            encoded,
+            vec![0x81, 0x80],
+            "Value 128 should have length prefix"
+        );
 
         // Value 255 = 0xff (single byte >= 0x80, needs prefix)
         value[31] = 255;
         let encoded = StorageTrie::rlp_encode_storage_value(&value).unwrap();
-        assert_eq!(encoded, vec![0x81, 0xff], "Value 255 should have length prefix");
+        assert_eq!(
+            encoded,
+            vec![0x81, 0xff],
+            "Value 255 should have length prefix"
+        );
 
         // Value 256 = 0x0100 (2 bytes)
         value[31] = 0;
         value[30] = 1;
         let encoded = StorageTrie::rlp_encode_storage_value(&value).unwrap();
-        assert_eq!(encoded, vec![0x82, 0x01, 0x00], "Value 256 should encode as 2 bytes with prefix");
+        assert_eq!(
+            encoded,
+            vec![0x82, 0x01, 0x00],
+            "Value 256 should encode as 2 bytes with prefix"
+        );
 
         // Zero value = deletion (returns None)
         let value = [0u8; 32];
-        assert!(StorageTrie::rlp_encode_storage_value(&value).is_none(), "Zero value should return None");
+        assert!(
+            StorageTrie::rlp_encode_storage_value(&value).is_none(),
+            "Zero value should return None"
+        );
     }
 
     #[test]
     fn test_paged_state_trie_basic() {
-        use crate::store::{PagedDb, CommitOptions};
+        use crate::store::{CommitOptions, PagedDb};
 
         let mut db = PagedDb::in_memory(1000).unwrap();
         let mut trie = PagedStateTrie::new();
@@ -1300,7 +1406,7 @@ mod tests {
 
     #[test]
     fn test_paged_state_trie_save_load() {
-        use crate::store::{PagedDb, CommitOptions};
+        use crate::store::{CommitOptions, PagedDb};
 
         let mut db = PagedDb::in_memory(1000).unwrap();
         let root_addr;

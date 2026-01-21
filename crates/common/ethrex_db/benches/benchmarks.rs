@@ -2,13 +2,13 @@
 //!
 //! Run with: cargo bench
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use rand::prelude::*;
 
-use ethrex_db::data::{NibblePath, SlottedArray};
-use ethrex_db::merkle::{MerkleTrie, keccak256};
-use ethrex_db::store::{PagedDb, CommitOptions, PageType, StateTrie, StorageTrie, AccountData};
 use ethrex_db::chain::Blockchain;
+use ethrex_db::data::{NibblePath, SlottedArray};
+use ethrex_db::merkle::{keccak256, MerkleTrie};
+use ethrex_db::store::{AccountData, CommitOptions, PageType, PagedDb, StateTrie, StorageTrie};
 use primitive_types::{H160, H256, U256};
 
 /// Generate random bytes
@@ -29,9 +29,7 @@ fn bench_nibble_path(c: &mut Criterion) {
 
     // Get nibble
     let path = NibblePath::from_bytes(&data);
-    group.bench_function("get_nibble", |b| {
-        b.iter(|| path.get(black_box(30)))
-    });
+    group.bench_function("get_nibble", |b| b.iter(|| path.get(black_box(30))));
 
     // Common prefix
     let path2 = NibblePath::from_bytes(&random_bytes(32));
@@ -40,9 +38,7 @@ fn bench_nibble_path(c: &mut Criterion) {
     });
 
     // Slice
-    group.bench_function("slice_from", |b| {
-        b.iter(|| path.slice_from(black_box(10)))
-    });
+    group.bench_function("slice_from", |b| b.iter(|| path.slice_from(black_box(10))));
 
     group.finish();
 }
@@ -131,17 +127,13 @@ fn bench_simd_comparison(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("scalar", key_size),
             &(haystack.clone(), needle.clone()),
-            |b, (h, n)| {
-                b.iter(|| scalar_starts_with(black_box(h), black_box(n)))
-            },
+            |b, (h, n)| b.iter(|| scalar_starts_with(black_box(h), black_box(n))),
         );
 
         group.bench_with_input(
             BenchmarkId::new("simd", key_size),
             &(haystack, needle),
-            |b, (h, n)| {
-                b.iter(|| simd_starts_with(black_box(h), black_box(n)))
-            },
+            |b, (h, n)| b.iter(|| simd_starts_with(black_box(h), black_box(n))),
         );
     }
 
@@ -170,7 +162,9 @@ fn bench_slotted_array_lookup(c: &mut Criterion) {
         // Fill array with 100 entries
         let mut arr = SlottedArray::new();
         for i in 0..100u32 {
-            let key_bytes: Vec<u8> = (0..*key_size).map(|j| ((i as u8).wrapping_add(j))).collect();
+            let key_bytes: Vec<u8> = (0..*key_size)
+                .map(|j| ((i as u8).wrapping_add(j)))
+                .collect();
             let key = NibblePath::from_bytes(&key_bytes);
             let value = [i as u8; 32];
             arr.try_insert(&key, &value);
@@ -183,9 +177,7 @@ fn bench_slotted_array_lookup(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("get_key_size", key_size),
             &(arr, lookup_key),
-            |b, (arr, key)| {
-                b.iter(|| arr.get(black_box(key)))
-            },
+            |b, (arr, key)| b.iter(|| arr.get(black_box(key))),
         );
     }
 
@@ -210,7 +202,9 @@ fn bench_merkle_trie(c: &mut Criterion) {
     for size in [10, 100, 1000].iter() {
         group.throughput(Throughput::Elements(*size as u64));
         group.bench_with_input(BenchmarkId::new("insert_batch", size), size, |b, &size| {
-            let keys: Vec<_> = (0..size).map(|i: usize| keccak256(&i.to_be_bytes())).collect();
+            let keys: Vec<_> = (0..size)
+                .map(|i: usize| keccak256(&i.to_be_bytes()))
+                .collect();
             let values: Vec<_> = (0..size).map(|i: usize| vec![i as u8; 64]).collect();
 
             b.iter(|| {
@@ -229,9 +223,7 @@ fn bench_merkle_trie(c: &mut Criterion) {
         let key = keccak256(&i.to_be_bytes());
         trie.insert(&key, vec![i as u8; 64]);
     }
-    group.bench_function("root_hash_100", |b| {
-        b.iter(|| trie.root_hash())
-    });
+    group.bench_function("root_hash_100", |b| b.iter(|| trie.root_hash()));
 
     // Get
     let lookup_key = keccak256(&50u32.to_be_bytes());
@@ -248,7 +240,9 @@ fn bench_parallel_merkle(c: &mut Criterion) {
 
     for size in [100, 1000, 10000].iter() {
         // Create a trie with many entries
-        let keys: Vec<_> = (0..*size).map(|i: u32| keccak256(&i.to_be_bytes())).collect();
+        let keys: Vec<_> = (0..*size)
+            .map(|i: u32| keccak256(&i.to_be_bytes()))
+            .collect();
         let values: Vec<_> = (0..*size).map(|i: u32| vec![i as u8; 64]).collect();
 
         // Sequential root hash
@@ -312,24 +306,28 @@ fn bench_state_trie(c: &mut Criterion) {
     // Account batch insert
     for size in [10, 100, 1000].iter() {
         group.throughput(Throughput::Elements(*size as u64));
-        group.bench_with_input(BenchmarkId::new("set_accounts_batch", size), size, |b, &size| {
-            let addresses: Vec<_> = (0..size)
-                .map(|i| {
-                    let mut addr = [0u8; 20];
-                    addr[..4].copy_from_slice(&(i as u32).to_be_bytes());
-                    addr
-                })
-                .collect();
-            let account = AccountData::empty();
+        group.bench_with_input(
+            BenchmarkId::new("set_accounts_batch", size),
+            size,
+            |b, &size| {
+                let addresses: Vec<_> = (0..size)
+                    .map(|i| {
+                        let mut addr = [0u8; 20];
+                        addr[..4].copy_from_slice(&(i as u32).to_be_bytes());
+                        addr
+                    })
+                    .collect();
+                let account = AccountData::empty();
 
-            b.iter(|| {
-                let mut state = StateTrie::new();
-                for addr in &addresses {
-                    state.set_account(addr, account.clone());
-                }
-                state
-            })
-        });
+                b.iter(|| {
+                    let mut state = StateTrie::new();
+                    for addr in &addresses {
+                        state.set_account(addr, account.clone());
+                    }
+                    state
+                })
+            },
+        );
     }
 
     // Root hash with accounts
@@ -339,9 +337,7 @@ fn bench_state_trie(c: &mut Criterion) {
         addr[..4].copy_from_slice(&(i as u32).to_be_bytes());
         state.set_account(&addr, AccountData::empty());
     }
-    group.bench_function("root_hash_100_accounts", |b| {
-        b.iter(|| state.root_hash())
-    });
+    group.bench_function("root_hash_100_accounts", |b| b.iter(|| state.root_hash()));
 
     group.finish();
 }
@@ -468,7 +464,12 @@ fn bench_page_cache(c: &mut Criterion) {
 
     // Report cache stats
     let (hits, misses) = db.cache_stats();
-    println!("Cache hits: {}, misses: {}, hit rate: {:.1}%", hits, misses, db.cache_hit_rate());
+    println!(
+        "Cache hits: {}, misses: {}, hit rate: {:.1}%",
+        hits,
+        misses,
+        db.cache_hit_rate()
+    );
 
     group.finish();
 }

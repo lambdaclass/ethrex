@@ -11,12 +11,12 @@
 //! - No adversarial input (snap sync data is verified)
 
 use hashbrown::HashMap;
-use rustc_hash::FxBuildHasher;
 use rayon::prelude::*;
+use rustc_hash::FxBuildHasher;
 use thiserror::Error;
 
-use super::node::{Node, NodeHash, HASH_SIZE, EMPTY_ROOT, keccak256, ChildRef};
 use super::bloom::BloomFilter;
+use super::node::{keccak256, ChildRef, Node, NodeHash, EMPTY_ROOT, HASH_SIZE};
 
 /// Type alias for our fast HashMap with FxHash
 type FastHashMap<K, V> = HashMap<K, V, FxBuildHasher>;
@@ -121,7 +121,10 @@ impl MerkleTrie {
     /// - Pre-reserves HashMap capacity
     ///
     /// **~2x faster than `insert_batch` for pre-hashed keys.**
-    pub fn insert_batch_prehashed(&mut self, entries: impl IntoIterator<Item = ([u8; 32], Vec<u8>)>) {
+    pub fn insert_batch_prehashed(
+        &mut self,
+        entries: impl IntoIterator<Item = ([u8; 32], Vec<u8>)>,
+    ) {
         // Collect entries to know the count for capacity reservation
         let entries: Vec<_> = entries.into_iter().collect();
 
@@ -129,7 +132,8 @@ impl MerkleTrie {
         self.data.reserve(entries.len());
 
         // Batch update bloom filter with all keys first (better cache locality)
-        let keys: Vec<&[u8; 32]> = entries.iter()
+        let keys: Vec<&[u8; 32]> = entries
+            .iter()
             .filter(|(_, v)| !v.is_empty())
             .map(|(k, _)| k)
             .collect();
@@ -188,7 +192,10 @@ impl MerkleTrie {
 
     /// Returns Bloom filter statistics.
     pub fn bloom_stats(&self) -> (usize, f64) {
-        (self.bloom.count(), self.bloom.estimated_false_positive_rate())
+        (
+            self.bloom.count(),
+            self.bloom.estimated_false_positive_rate(),
+        )
     }
 
     /// Computes and returns the root hash.
@@ -209,7 +216,8 @@ impl MerkleTrie {
         }
 
         // Convert keys to nibble paths in parallel using rayon
-        let mut entries: Vec<(Vec<u8>, Vec<u8>)> = self.data
+        let mut entries: Vec<(Vec<u8>, Vec<u8>)> = self
+            .data
             .par_iter()
             .map(|(k, v)| {
                 let nibbles = key_to_nibbles(k);
@@ -230,7 +238,11 @@ impl MerkleTrie {
     /// This implementation properly handles inline nodes per Ethereum's MPT spec:
     /// - If a child node's RLP encoding is < 32 bytes, it's embedded inline
     /// - If >= 32 bytes, the keccak256 hash is stored instead
-    fn build_node_iterative(&self, entries: &[(Vec<u8>, Vec<u8>)], start_depth: usize) -> [u8; HASH_SIZE] {
+    fn build_node_iterative(
+        &self,
+        entries: &[(Vec<u8>, Vec<u8>)],
+        start_depth: usize,
+    ) -> [u8; HASH_SIZE] {
         if entries.is_empty() {
             return EMPTY_ROOT;
         }
@@ -315,7 +327,12 @@ impl MerkleTrie {
 
         while let Some(work) = work_stack.pop() {
             match work {
-                WorkItem::Process { entries_start, entries_end, depth, result_idx } => {
+                WorkItem::Process {
+                    entries_start,
+                    entries_end,
+                    depth,
+                    result_idx,
+                } => {
                     let work_entries = &entries[entries_start..entries_end];
 
                     if work_entries.is_empty() {
@@ -337,7 +354,8 @@ impl MerkleTrie {
 
                     if common_prefix > 0 {
                         // Extension node - need to compute child first, then finalize
-                        let prefix: Vec<u8> = work_entries[0].0[depth..depth + common_prefix].to_vec();
+                        let prefix: Vec<u8> =
+                            work_entries[0].0[depth..depth + common_prefix].to_vec();
                         let child_result_idx = next_result_idx;
                         next_result_idx += 1;
 
@@ -423,21 +441,43 @@ impl MerkleTrie {
                     }
                 }
 
-                WorkItem::FinalizeExtension { prefix, child_result_idx, result_idx } => {
-                    let child_result = results[child_result_idx].as_ref().unwrap_or(&NodeResult::Empty);
+                WorkItem::FinalizeExtension {
+                    prefix,
+                    child_result_idx,
+                    result_idx,
+                } => {
+                    let child_result = results[child_result_idx]
+                        .as_ref()
+                        .unwrap_or(&NodeResult::Empty);
                     // Extension node with proper inline handling
                     let child_ref = child_result.to_child_ref();
                     let node = Node::extension_with_child_ref(prefix, child_ref);
                     results[result_idx] = Some(NodeResult::Encoded(node.encode()));
                 }
 
-                WorkItem::FinalizeBranch { child_result_indices, value, result_idx } => {
+                WorkItem::FinalizeBranch {
+                    child_result_indices,
+                    value,
+                    result_idx,
+                } => {
                     // Build children with proper inline handling
                     let mut children: Box<[ChildRef; 16]> = Box::new([
-                        ChildRef::Empty, ChildRef::Empty, ChildRef::Empty, ChildRef::Empty,
-                        ChildRef::Empty, ChildRef::Empty, ChildRef::Empty, ChildRef::Empty,
-                        ChildRef::Empty, ChildRef::Empty, ChildRef::Empty, ChildRef::Empty,
-                        ChildRef::Empty, ChildRef::Empty, ChildRef::Empty, ChildRef::Empty,
+                        ChildRef::Empty,
+                        ChildRef::Empty,
+                        ChildRef::Empty,
+                        ChildRef::Empty,
+                        ChildRef::Empty,
+                        ChildRef::Empty,
+                        ChildRef::Empty,
+                        ChildRef::Empty,
+                        ChildRef::Empty,
+                        ChildRef::Empty,
+                        ChildRef::Empty,
+                        ChildRef::Empty,
+                        ChildRef::Empty,
+                        ChildRef::Empty,
+                        ChildRef::Empty,
+                        ChildRef::Empty,
                     ]);
 
                     for (i, idx_opt) in child_result_indices.iter().enumerate() {
@@ -454,7 +494,10 @@ impl MerkleTrie {
             }
         }
 
-        results[0].as_ref().map(|r| r.to_hash()).unwrap_or(EMPTY_ROOT)
+        results[0]
+            .as_ref()
+            .map(|r| r.to_hash())
+            .unwrap_or(EMPTY_ROOT)
     }
 
     /// Builds a trie node from sorted entries at the given nibble depth.
@@ -484,10 +527,22 @@ impl MerkleTrie {
 
         // Create branch node with proper inline handling
         let mut children: Box<[ChildRef; 16]> = Box::new([
-            ChildRef::Empty, ChildRef::Empty, ChildRef::Empty, ChildRef::Empty,
-            ChildRef::Empty, ChildRef::Empty, ChildRef::Empty, ChildRef::Empty,
-            ChildRef::Empty, ChildRef::Empty, ChildRef::Empty, ChildRef::Empty,
-            ChildRef::Empty, ChildRef::Empty, ChildRef::Empty, ChildRef::Empty,
+            ChildRef::Empty,
+            ChildRef::Empty,
+            ChildRef::Empty,
+            ChildRef::Empty,
+            ChildRef::Empty,
+            ChildRef::Empty,
+            ChildRef::Empty,
+            ChildRef::Empty,
+            ChildRef::Empty,
+            ChildRef::Empty,
+            ChildRef::Empty,
+            ChildRef::Empty,
+            ChildRef::Empty,
+            ChildRef::Empty,
+            ChildRef::Empty,
+            ChildRef::Empty,
         ]);
         let mut branch_value: Option<Vec<u8>> = None;
 
@@ -584,7 +639,8 @@ impl MerkleTrie {
         }
 
         // Convert keys to nibble paths
-        let mut entries: Vec<(Vec<u8>, &[u8])> = self.data
+        let mut entries: Vec<(Vec<u8>, &[u8])> = self
+            .data
             .iter()
             .map(|(k, v)| {
                 let nibbles = key_to_nibbles(k);
@@ -662,10 +718,22 @@ impl MerkleTrie {
                 .collect();
 
             let mut children: Box<[ChildRef; 16]> = Box::new([
-                ChildRef::Empty, ChildRef::Empty, ChildRef::Empty, ChildRef::Empty,
-                ChildRef::Empty, ChildRef::Empty, ChildRef::Empty, ChildRef::Empty,
-                ChildRef::Empty, ChildRef::Empty, ChildRef::Empty, ChildRef::Empty,
-                ChildRef::Empty, ChildRef::Empty, ChildRef::Empty, ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
             ]);
             for (i, child_ref) in child_refs.into_iter().enumerate() {
                 children[i] = child_ref;
@@ -674,10 +742,22 @@ impl MerkleTrie {
         } else {
             // Sequential computation for small branches
             let mut children: Box<[ChildRef; 16]> = Box::new([
-                ChildRef::Empty, ChildRef::Empty, ChildRef::Empty, ChildRef::Empty,
-                ChildRef::Empty, ChildRef::Empty, ChildRef::Empty, ChildRef::Empty,
-                ChildRef::Empty, ChildRef::Empty, ChildRef::Empty, ChildRef::Empty,
-                ChildRef::Empty, ChildRef::Empty, ChildRef::Empty, ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
+                ChildRef::Empty,
             ]);
             for (i, group) in groups.iter().enumerate() {
                 if !group.is_empty() {
@@ -765,10 +845,7 @@ pub enum ProofNode {
         child: [u8; HASH_SIZE],
     },
     /// Leaf node with path and value.
-    Leaf {
-        path: Vec<u8>,
-        value: Vec<u8>,
-    },
+    Leaf { path: Vec<u8>, value: Vec<u8> },
 }
 
 /// A Merkle proof for a key-value inclusion.
@@ -802,7 +879,8 @@ impl MerkleTrie {
         }
 
         // Convert keys to nibble paths
-        let mut entries: Vec<(Vec<u8>, &[u8])> = self.data
+        let mut entries: Vec<(Vec<u8>, &[u8])> = self
+            .data
             .iter()
             .map(|(k, v)| {
                 let nibbles = key_to_nibbles(k);

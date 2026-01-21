@@ -9,4 +9,4 @@ mod world_state;
 
 pub use block::{Block, BlockId};
 pub use blockchain::{Blockchain, BlockchainError};
-pub use world_state::{WorldState, ReadOnlyWorldState, Account};
+pub use world_state::{Account, ReadOnlyWorldState, WorldState};

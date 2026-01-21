@@ -328,14 +328,20 @@ mod basic_trie_tests {
     #[test]
     fn test_single_item() {
         let mut trie = MerkleTrie::new();
-        trie.insert(b"A", b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_vec());
+        trie.insert(
+            b"A",
+            b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_vec(),
+        );
         // The exact root depends on the implementation
         // Just verify it's not EMPTY_ROOT and is deterministic
         let root1 = trie.root_hash();
         assert_ne!(root1, EMPTY_ROOT);
 
         let mut trie2 = MerkleTrie::new();
-        trie2.insert(b"A", b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_vec());
+        trie2.insert(
+            b"A",
+            b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_vec(),
+        );
         assert_eq!(trie2.root_hash(), root1);
     }
 
@@ -602,7 +608,7 @@ mod account_rlp_tests {
     /// This is the format stored in the state trie
     fn rlp_encode_account(
         nonce: u64,
-        balance: &[u8],     // Big-endian, leading zeros trimmed
+        balance: &[u8], // Big-endian, leading zeros trimmed
         storage_root: &[u8; 32],
         code_hash: &[u8; 32],
     ) -> Vec<u8> {
@@ -627,14 +633,10 @@ mod account_rlp_tests {
     #[test]
     fn test_empty_account() {
         // Empty account: nonce=0, balance=0, storageRoot=EMPTY_ROOT, codeHash=EMPTY_CODE
-        let empty_code_hash = hex!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
+        let empty_code_hash =
+            hex!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
 
-        let encoded = rlp_encode_account(
-            0,
-            &[0u8; 32],
-            &EMPTY_ROOT,
-            &empty_code_hash,
-        );
+        let encoded = rlp_encode_account(0, &[0u8; 32], &EMPTY_ROOT, &empty_code_hash);
 
         // Verify it's a valid RLP list
         assert!(encoded[0] >= 0xc0);
@@ -652,17 +654,13 @@ mod account_rlp_tests {
     /// Test encoding of account with balance
     #[test]
     fn test_account_with_balance() {
-        let empty_code_hash = hex!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
+        let empty_code_hash =
+            hex!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
 
         // 1 ETH = 10^18 wei = 0x0de0b6b3a7640000
         let balance = hex!("0de0b6b3a7640000");
 
-        let encoded = rlp_encode_account(
-            0,
-            &balance,
-            &EMPTY_ROOT,
-            &empty_code_hash,
-        );
+        let encoded = rlp_encode_account(0, &balance, &EMPTY_ROOT, &empty_code_hash);
 
         // Should be slightly larger due to balance bytes
         assert!(encoded.len() > 68 + 2); // At least header + balance bytes
@@ -671,7 +669,8 @@ mod account_rlp_tests {
     /// Test that accounts with same data produce same encoding
     #[test]
     fn test_account_encoding_deterministic() {
-        let empty_code_hash = hex!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
+        let empty_code_hash =
+            hex!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
         let balance = hex!("0de0b6b3a7640000");
 
         let encoded1 = rlp_encode_account(5, &balance, &EMPTY_ROOT, &empty_code_hash);
@@ -730,7 +729,8 @@ mod mainnet_tests {
     #[test]
     fn test_genesis_structure() {
         let mut trie = MerkleTrie::new();
-        let empty_code_hash = hex!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
+        let empty_code_hash =
+            hex!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
 
         // Add a few accounts with known balances from genesis
         // Address: 0x0000000000000000000000000000000000000001 (precompile)
@@ -758,7 +758,8 @@ mod mainnet_tests {
     #[test]
     fn test_precompile_accounts() {
         let mut trie = MerkleTrie::new();
-        let empty_code_hash = hex!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
+        let empty_code_hash =
+            hex!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
 
         // Precompile addresses 1-9 all have 1 wei balance in genesis
         for i in 1u8..=9 {
@@ -786,7 +787,8 @@ mod mainnet_tests {
     #[test]
     fn test_large_balance_account() {
         let mut trie = MerkleTrie::new();
-        let empty_code_hash = hex!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
+        let empty_code_hash =
+            hex!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
 
         // A genesis account with ~11,901.4844 ETH
         // Address: 0x3e65303043928403f8a1a2ca4954386e6f39008c
@@ -1044,10 +1046,10 @@ mod eth_foundation_tests {
         let mut trie = MerkleTrie::new();
 
         // From test vector (hex-decoded keys)
-        trie.insert(&hex!("646f"), b"verb".to_vec());      // "do"
+        trie.insert(&hex!("646f"), b"verb".to_vec()); // "do"
         trie.insert(&hex!("686f727365"), b"stallion".to_vec()); // "horse"
-        trie.insert(&hex!("646f6765"), b"coin".to_vec());  // "doge"
-        trie.insert(&hex!("646f67"), b"puppy".to_vec());   // "dog"
+        trie.insert(&hex!("646f6765"), b"coin".to_vec()); // "doge"
+        trie.insert(&hex!("646f67"), b"puppy".to_vec()); // "dog"
 
         // Expected root from ethereum/tests
         // Note: This may differ if our implementation differs in details
@@ -1080,16 +1082,16 @@ mod eth_foundation_tests {
 
         // Key-value pairs from the "jeff" test
         trie.insert(
-            &hex!("6b6579316161"),  // "key1aa"
-            hex!("0123456789012345678901234567890123456789012345678901234567890123456789").to_vec()
+            &hex!("6b6579316161"), // "key1aa"
+            hex!("0123456789012345678901234567890123456789012345678901234567890123456789").to_vec(),
         );
         trie.insert(
-            &hex!("6b657932bb"),  // "key2bb"
-            b"aval3".to_vec()
+            &hex!("6b657932bb"), // "key2bb"
+            b"aval3".to_vec(),
         );
         trie.insert(
-            &hex!("6b657933cc"),  // "key3cc"
-            b"aval3".to_vec()
+            &hex!("6b657933cc"), // "key3cc"
+            b"aval3".to_vec(),
         );
 
         // All values retrievable

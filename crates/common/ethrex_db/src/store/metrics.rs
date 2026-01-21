@@ -173,10 +173,16 @@ impl MetricsSnapshot {
             page_reads: self.page_reads.saturating_sub(other.page_reads),
             page_writes: self.page_writes.saturating_sub(other.page_writes),
             cow_operations: self.cow_operations.saturating_sub(other.cow_operations),
-            batches_committed: self.batches_committed.saturating_sub(other.batches_committed),
+            batches_committed: self
+                .batches_committed
+                .saturating_sub(other.batches_committed),
             batches_aborted: self.batches_aborted.saturating_sub(other.batches_aborted),
-            snapshots_created: self.snapshots_created.saturating_sub(other.snapshots_created),
-            snapshots_restored: self.snapshots_restored.saturating_sub(other.snapshots_restored),
+            snapshots_created: self
+                .snapshots_created
+                .saturating_sub(other.snapshots_created),
+            snapshots_restored: self
+                .snapshots_restored
+                .saturating_sub(other.snapshots_restored),
             bytes_written: self.bytes_written.saturating_sub(other.bytes_written),
             bytes_read: self.bytes_read.saturating_sub(other.bytes_read),
         }
@@ -206,7 +212,12 @@ impl std::fmt::Display for MetricsSnapshot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Database Metrics:")?;
         writeln!(f, "  Pages allocated:  {}", self.pages_allocated)?;
-        writeln!(f, "  Pages reused:     {} ({:.1}%)", self.pages_reused, self.reuse_rate() * 100.0)?;
+        writeln!(
+            f,
+            "  Pages reused:     {} ({:.1}%)",
+            self.pages_reused,
+            self.reuse_rate() * 100.0
+        )?;
         writeln!(f, "  Pages abandoned:  {}", self.pages_abandoned)?;
         writeln!(f, "  Page reads:       {}", self.page_reads)?;
         writeln!(f, "  Page writes:      {}", self.page_writes)?;
@@ -215,8 +226,18 @@ impl std::fmt::Display for MetricsSnapshot {
         writeln!(f, "  Batches aborted:  {}", self.batches_aborted)?;
         writeln!(f, "  Snapshots created: {}", self.snapshots_created)?;
         writeln!(f, "  Snapshots restored: {}", self.snapshots_restored)?;
-        writeln!(f, "  Bytes written:    {} ({:.2} KB)", self.bytes_written, self.bytes_written as f64 / 1024.0)?;
-        writeln!(f, "  Bytes read:       {} ({:.2} KB)", self.bytes_read, self.bytes_read as f64 / 1024.0)?;
+        writeln!(
+            f,
+            "  Bytes written:    {} ({:.2} KB)",
+            self.bytes_written,
+            self.bytes_written as f64 / 1024.0
+        )?;
+        writeln!(
+            f,
+            "  Bytes read:       {} ({:.2} KB)",
+            self.bytes_read,
+            self.bytes_read as f64 / 1024.0
+        )?;
         Ok(())
     }
 }

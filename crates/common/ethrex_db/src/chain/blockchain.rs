@@ -11,7 +11,7 @@ use thiserror::Error;
 
 use super::block::{Block, BlockId};
 use super::world_state::Account;
-use crate::store::{PagedDb, DbError, PagedStateTrie, AccountData, CommitOptions};
+use crate::store::{AccountData, CommitOptions, DbError, PagedDb, PagedStateTrie};
 
 /// Blockchain errors.
 #[derive(Error, Debug)]
@@ -148,10 +148,7 @@ impl Blockchain {
         batch.set_state_root(state_root_addr);
 
         // Update block metadata
-        batch.set_metadata(
-            block_number as u32,
-            block_hash.as_fixed_bytes(),
-        );
+        batch.set_metadata(block_number as u32, block_hash.as_fixed_bytes());
 
         batch.commit(CommitOptions::FlushDataOnly)?;
 
@@ -181,10 +178,7 @@ impl Blockchain {
 
         // Update block metadata in DB only (not in memory)
         // This allows recovery from the checkpoint on restart
-        batch.set_metadata(
-            block_number as u32,
-            block_hash.as_fixed_bytes(),
-        );
+        batch.set_metadata(block_number as u32, block_hash.as_fixed_bytes());
 
         batch.commit(CommitOptions::FlushDataOnly)?;
 
@@ -209,14 +203,23 @@ impl Blockchain {
     ///
     /// This supports parallel block creation - multiple blocks can be created
     /// on top of the same parent concurrently.
-    pub fn start_new(&self, parent_hash: H256, block_hash: H256, block_number: u64) -> Result<Block> {
+    pub fn start_new(
+        &self,
+        parent_hash: H256,
+        block_hash: H256,
+        block_number: u64,
+    ) -> Result<Block> {
         // Check if parent exists (either finalized or committed)
         let finalized_hash = *self.last_finalized_hash.read().unwrap();
         let finalized_number = *self.last_finalized.read().unwrap();
 
         // Special case: genesis block (block 0) with parent H256::zero()
         // on an empty blockchain (finalized at block 0, hash zero)
-        if block_number == 0 && parent_hash == H256::zero() && finalized_hash == H256::zero() && finalized_number == 0 {
+        if block_number == 0
+            && parent_hash == H256::zero()
+            && finalized_hash == H256::zero()
+            && finalized_number == 0
+        {
             return Ok(Block::new(block_number, block_hash, parent_hash));
         }
 
@@ -273,21 +276,59 @@ impl Blockchain {
     }
 
     /// Gets an account from the specified block.
+    /// Walks up the chain of committed blocks, then falls back to finalized state.
     pub fn get_account(&self, block_hash: &H256, address: &H256) -> Option<Account> {
         let blocks = self.blocks_by_hash.read().unwrap();
-        if let Some(committed) = blocks.get(block_hash) {
-            return committed.block.get_account(address);
+        let finalized_hash = *self.last_finalized_hash.read().unwrap();
+
+        let mut current_hash = *block_hash;
+
+        // Walk up the chain of committed blocks
+        while current_hash != finalized_hash && current_hash != H256::zero() {
+            if let Some(committed) = blocks.get(&current_hash) {
+                // Check if account is in this block's local changes
+                if let Some(account_opt) = committed.block.get_local_account(address) {
+                    return account_opt;
+                }
+                // Move to parent
+                current_hash = committed.block.parent_hash;
+            } else {
+                // Block not found in committed - might be already finalized
+                break;
+            }
         }
-        None
+        drop(blocks);
+
+        // Fall back to finalized state
+        self.get_finalized_account_by_hash(address.as_fixed_bytes())
     }
 
     /// Gets a storage value from the specified block.
+    /// Walks up the chain of committed blocks, then falls back to finalized state.
     pub fn get_storage(&self, block_hash: &H256, address: &H256, key: &H256) -> Option<U256> {
         let blocks = self.blocks_by_hash.read().unwrap();
-        if let Some(committed) = blocks.get(block_hash) {
-            return committed.block.get_storage(address, key);
+        let finalized_hash = *self.last_finalized_hash.read().unwrap();
+
+        let mut current_hash = *block_hash;
+
+        // Walk up the chain of committed blocks
+        while current_hash != finalized_hash && current_hash != H256::zero() {
+            if let Some(committed) = blocks.get(&current_hash) {
+                // Check if storage is in this block's local changes
+                if let Some(value) = committed.block.get_local_storage(address, key) {
+                    return Some(value);
+                }
+                // Move to parent
+                current_hash = committed.block.parent_hash;
+            } else {
+                // Block not found in committed - might be already finalized
+                break;
+            }
         }
-        None
+        drop(blocks);
+
+        // Fall back to finalized state
+        self.get_finalized_storage_by_hash(address.as_fixed_bytes(), key.as_fixed_bytes())
     }
 
     /// Finalizes blocks up to the given hash.
@@ -303,7 +344,8 @@ impl Blockchain {
         // Find the block
         let block_number = {
             let blocks = self.blocks_by_hash.read().unwrap();
-            let block = blocks.get(&block_hash)
+            let block = blocks
+                .get(&block_hash)
                 .ok_or(BlockchainError::BlockNotFound(block_hash))?;
             block.block.number()
         };
@@ -316,7 +358,8 @@ impl Blockchain {
         {
             let blocks = self.blocks_by_hash.read().unwrap();
             while current_hash != finalized_hash {
-                let block = blocks.get(&current_hash)
+                let block = blocks
+                    .get(&current_hash)
                     .ok_or(BlockchainError::BlockNotFound(current_hash))?;
                 to_finalize.push(current_hash);
                 current_hash = block.block.parent_hash;
@@ -438,11 +481,16 @@ impl Blockchain {
     /// Used by snap sync which already has hashed addresses.
     pub fn get_finalized_account_by_hash(&self, address_hash: &[u8; 32]) -> Option<Account> {
         let trie = self.state_trie.read().unwrap();
-        trie.get_account_by_hash(address_hash).map(|data| data_to_account(&data))
+        trie.get_account_by_hash(address_hash)
+            .map(|data| data_to_account(&data))
     }
 
     /// Gets a storage value from finalized state using pre-hashed keys.
-    pub fn get_finalized_storage_by_hash(&self, address_hash: &[u8; 32], slot_hash: &[u8; 32]) -> Option<U256> {
+    pub fn get_finalized_storage_by_hash(
+        &self,
+        address_hash: &[u8; 32],
+        slot_hash: &[u8; 32],
+    ) -> Option<U256> {
         let trie = self.state_trie.read().unwrap();
         trie.get_storage_by_hash(address_hash, slot_hash)
             .map(|bytes| U256::from_big_endian(&bytes))
@@ -511,11 +559,9 @@ mod tests {
         let blockchain = create_test_blockchain();
         let parent_hash = blockchain.last_finalized_hash();
 
-        let block = blockchain.start_new(
-            parent_hash,
-            H256::repeat_byte(0x01),
-            1,
-        ).unwrap();
+        let block = blockchain
+            .start_new(parent_hash, H256::repeat_byte(0x01), 1)
+            .unwrap();
 
         assert_eq!(block.number(), 1);
         assert_eq!(block.parent_hash, parent_hash);
@@ -526,11 +572,9 @@ mod tests {
         let blockchain = create_test_blockchain();
         let parent_hash = blockchain.last_finalized_hash();
 
-        let block = blockchain.start_new(
-            parent_hash,
-            H256::repeat_byte(0x01),
-            1,
-        ).unwrap();
+        let block = blockchain
+            .start_new(parent_hash, H256::repeat_byte(0x01), 1)
+            .unwrap();
 
         blockchain.commit(block).unwrap();
         assert_eq!(blockchain.committed_count(), 1);
@@ -542,17 +586,13 @@ mod tests {
         let parent_hash = blockchain.last_finalized_hash();
 
         // Create two blocks with the same parent
-        let block1 = blockchain.start_new(
-            parent_hash,
-            H256::repeat_byte(0x01),
-            1,
-        ).unwrap();
+        let block1 = blockchain
+            .start_new(parent_hash, H256::repeat_byte(0x01), 1)
+            .unwrap();
 
-        let block2 = blockchain.start_new(
-            parent_hash,
-            H256::repeat_byte(0x02),
-            1,
-        ).unwrap();
+        let block2 = blockchain
+            .start_new(parent_hash, H256::repeat_byte(0x02), 1)
+            .unwrap();
 
         blockchain.commit(block1).unwrap();
         blockchain.commit(block2).unwrap();
@@ -565,11 +605,9 @@ mod tests {
         let blockchain = create_test_blockchain();
         let parent_hash = blockchain.last_finalized_hash();
 
-        let block = blockchain.start_new(
-            parent_hash,
-            H256::repeat_byte(0x01),
-            1,
-        ).unwrap();
+        let block = blockchain
+            .start_new(parent_hash, H256::repeat_byte(0x01), 1)
+            .unwrap();
         let block_hash = block.hash();
 
         blockchain.commit(block).unwrap();

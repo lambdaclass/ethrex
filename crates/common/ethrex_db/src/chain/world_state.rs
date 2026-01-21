@@ -46,7 +46,7 @@ impl Account {
     ///
     /// Format: RLP([nonce, balance, storage_root, code_hash])
     pub fn encode(&self) -> Vec<u8> {
-        use ethereum_types::{U256 as EthU256, H256 as EthH256};
+        use ethereum_types::{H256 as EthH256, U256 as EthU256};
         use ethrex_rlp::structs::Encoder;
 
         // Convert primitive_types to ethereum_types for RLP encoding
@@ -70,8 +70,8 @@ impl Account {
     /// This MUST match the legacy AccountState RLP decoding to ensure
     /// compatibility between ethrex_db and legacy trie systems.
     pub fn decode(data: &[u8]) -> Option<Self> {
+        use ethereum_types::{H256 as EthH256, U256 as EthU256};
         use ethrex_rlp::structs::Decoder;
-        use ethereum_types::{U256 as EthU256, H256 as EthH256};
 
         // Decode RLP list: [nonce, balance, storage_root, code_hash]
         let decoder = Decoder::new(data).ok()?;
@@ -79,7 +79,8 @@ impl Account {
         // Decode fields (each decode_field returns (value, updated_decoder))
         let (nonce, decoder): (u64, _) = decoder.decode_field("nonce").ok()?;
         let (balance_eth, decoder): (EthU256, _) = decoder.decode_field("balance").ok()?;
-        let (storage_root_eth, decoder): (EthH256, _) = decoder.decode_field("storage_root").ok()?;
+        let (storage_root_eth, decoder): (EthH256, _) =
+            decoder.decode_field("storage_root").ok()?;
         let (code_hash_eth, _): (EthH256, _) = decoder.decode_field("code_hash").ok()?;
 
         // Convert ethereum_types back to primitive_types

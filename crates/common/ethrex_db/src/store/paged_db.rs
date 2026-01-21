@@ -157,13 +157,23 @@ impl PagedDb {
             batch_id: AtomicU32::new(batch_id),
             block_number_atomic: AtomicU32::new(block_number),
             state_root_atomic: AtomicU32::new(state_root.raw()),
-            block_hash_low: AtomicU64::new(u64::from_le_bytes(block_hash[0..8].try_into().unwrap())),
-            block_hash_mid1: AtomicU64::new(u64::from_le_bytes(block_hash[8..16].try_into().unwrap())),
-            block_hash_mid2: AtomicU64::new(u64::from_le_bytes(block_hash[16..24].try_into().unwrap())),
-            block_hash_high: AtomicU64::new(u64::from_le_bytes(block_hash[24..32].try_into().unwrap())),
+            block_hash_low: AtomicU64::new(u64::from_le_bytes(
+                block_hash[0..8].try_into().unwrap(),
+            )),
+            block_hash_mid1: AtomicU64::new(u64::from_le_bytes(
+                block_hash[8..16].try_into().unwrap(),
+            )),
+            block_hash_mid2: AtomicU64::new(u64::from_le_bytes(
+                block_hash[16..24].try_into().unwrap(),
+            )),
+            block_hash_high: AtomicU64::new(u64::from_le_bytes(
+                block_hash[24..32].try_into().unwrap(),
+            )),
             root: RwLock::new(root),
             max_pages,
-            page_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
+            page_cache: Mutex::new(LruCache::new(
+                NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap(),
+            )),
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
         };
@@ -195,7 +205,9 @@ impl PagedDb {
             block_hash_high: AtomicU64::new(0),
             root: RwLock::new(root),
             max_pages: pages,
-            page_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
+            page_cache: Mutex::new(LruCache::new(
+                NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap(),
+            )),
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
         };
@@ -381,8 +393,10 @@ impl PagedDb {
 
         // Update atomics
         self.batch_id.store(snapshot.batch_id, Ordering::Release);
-        self.block_number_atomic.store(snapshot.block_number, Ordering::Release);
-        self.state_root_atomic.store(snapshot.state_root.raw(), Ordering::Release);
+        self.block_number_atomic
+            .store(snapshot.block_number, Ordering::Release);
+        self.state_root_atomic
+            .store(snapshot.state_root.raw(), Ordering::Release);
         self.block_hash_low.store(
             u64::from_le_bytes(snapshot.block_hash[0..8].try_into().unwrap()),
             Ordering::Release,
@@ -464,9 +478,12 @@ impl PagedDb {
         let root = RootPage::wrap(page);
 
         // Update state
-        self.batch_id.store(root.page().header().batch_id, Ordering::Release);
-        self.block_number_atomic.store(root.block_number(), Ordering::Release);
-        self.state_root_atomic.store(root.state_root().raw(), Ordering::Release);
+        self.batch_id
+            .store(root.page().header().batch_id, Ordering::Release);
+        self.block_number_atomic
+            .store(root.block_number(), Ordering::Release);
+        self.state_root_atomic
+            .store(root.state_root().raw(), Ordering::Release);
         let block_hash = root.block_hash();
         self.block_hash_low.store(
             u64::from_le_bytes(block_hash[0..8].try_into().unwrap()),
@@ -598,7 +615,8 @@ impl<'a> BatchContext<'a> {
                 let abandoned_head = root.abandoned_head();
                 if !abandoned_head.is_null() {
                     // Try to pop from the abandoned page list
-                    if let Some(addr) = self.try_pop_from_abandoned_list(&mut root, abandoned_head) {
+                    if let Some(addr) = self.try_pop_from_abandoned_list(&mut root, abandoned_head)
+                    {
                         addr
                     } else {
                         // Allocate new page
@@ -629,7 +647,11 @@ impl<'a> BatchContext<'a> {
     }
 
     /// Tries to pop a page address from the abandoned page linked list.
-    fn try_pop_from_abandoned_list(&self, root: &mut RootPage, head_addr: DbAddress) -> Option<DbAddress> {
+    fn try_pop_from_abandoned_list(
+        &self,
+        root: &mut RootPage,
+        head_addr: DbAddress,
+    ) -> Option<DbAddress> {
         use super::AbandonedPage;
 
         let reorg_depth = root.reorg_depth();
@@ -785,12 +807,15 @@ impl<'a> BatchContext<'a> {
 
                     if !added {
                         // Save current abandoned page if exists
-                        if let (Some(ap), Some(ap_addr)) = (current_abandoned.take(), current_abandoned_addr.take()) {
+                        if let (Some(ap), Some(ap_addr)) =
+                            (current_abandoned.take(), current_abandoned_addr.take())
+                        {
                             // Write the abandoned page to mmap
                             let mut mmap = self.db.mmap.lock();
                             let offset = ap_addr.file_offset() as usize;
                             if offset + PAGE_SIZE <= mmap.len() {
-                                mmap[offset..offset + PAGE_SIZE].copy_from_slice(ap.into_page().as_bytes());
+                                mmap[offset..offset + PAGE_SIZE]
+                                    .copy_from_slice(ap.into_page().as_bytes());
                             }
                         }
 
@@ -838,12 +863,28 @@ impl<'a> BatchContext<'a> {
         self.db.write_root_internal()?;
 
         // Update atomics for lock-free readers (after root is written)
-        self.db.block_number_atomic.store(block_number, Ordering::Release);
-        self.db.state_root_atomic.store(state_root.raw(), Ordering::Release);
-        self.db.block_hash_low.store(u64::from_le_bytes(block_hash[0..8].try_into().unwrap()), Ordering::Release);
-        self.db.block_hash_mid1.store(u64::from_le_bytes(block_hash[8..16].try_into().unwrap()), Ordering::Release);
-        self.db.block_hash_mid2.store(u64::from_le_bytes(block_hash[16..24].try_into().unwrap()), Ordering::Release);
-        self.db.block_hash_high.store(u64::from_le_bytes(block_hash[24..32].try_into().unwrap()), Ordering::Release);
+        self.db
+            .block_number_atomic
+            .store(block_number, Ordering::Release);
+        self.db
+            .state_root_atomic
+            .store(state_root.raw(), Ordering::Release);
+        self.db.block_hash_low.store(
+            u64::from_le_bytes(block_hash[0..8].try_into().unwrap()),
+            Ordering::Release,
+        );
+        self.db.block_hash_mid1.store(
+            u64::from_le_bytes(block_hash[8..16].try_into().unwrap()),
+            Ordering::Release,
+        );
+        self.db.block_hash_mid2.store(
+            u64::from_le_bytes(block_hash[16..24].try_into().unwrap()),
+            Ordering::Release,
+        );
+        self.db.block_hash_high.store(
+            u64::from_le_bytes(block_hash[24..32].try_into().unwrap()),
+            Ordering::Release,
+        );
 
         // Flush based on options
         match options {
@@ -1002,7 +1043,10 @@ mod tests {
             addr
         };
 
-        assert_ne!(addr1, addr2, "Abandoned page should not be reused before reorg depth");
+        assert_ne!(
+            addr1, addr2,
+            "Abandoned page should not be reused before reorg depth"
+        );
     }
 
     #[test]

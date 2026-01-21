@@ -98,7 +98,8 @@ impl RlpEncoder {
             let extra = header_len - 1;
             let old_len = self.buffer.len();
             self.buffer.resize(old_len + extra, 0);
-            self.buffer.copy_within(start_pos + 1..old_len, start_pos + header_len);
+            self.buffer
+                .copy_within(start_pos + 1..old_len, start_pos + header_len);
 
             self.buffer[start_pos] = 0xf7 + len_bytes.len() as u8;
             self.buffer[start_pos + 1..start_pos + header_len].copy_from_slice(&len_bytes);
@@ -163,9 +164,17 @@ impl RlpEncoder {
     pub fn encode_nibbles(&mut self, nibbles: &[u8], is_leaf: bool) {
         let odd = nibbles.len() % 2 == 1;
         let prefix = if is_leaf {
-            if odd { 0x3 } else { 0x2 }
+            if odd {
+                0x3
+            } else {
+                0x2
+            }
         } else {
-            if odd { 0x1 } else { 0x0 }
+            if odd {
+                0x1
+            } else {
+                0x0
+            }
         };
 
         let mut encoded = Vec::with_capacity((nibbles.len() + 2) / 2);

@@ -1,7 +1,7 @@
 //! Block abstraction for managing state changes.
 
-use std::collections::HashMap;
 use primitive_types::{H256, U256};
+use std::collections::HashMap;
 
 use super::world_state::{Account, ReadOnlyWorldState, WorldState};
 
@@ -80,6 +80,16 @@ impl Block {
     /// Returns an iterator over all storage changes.
     pub fn storage_changes(&self) -> impl Iterator<Item = (&H256, &HashMap<H256, U256>)> {
         self.storage.iter()
+    }
+
+    /// Gets an account from this block's local changes only (not checking parent).
+    pub fn get_local_account(&self, address: &H256) -> Option<Option<Account>> {
+        self.accounts.get(address).cloned()
+    }
+
+    /// Gets a storage value from this block's local changes only (not checking parent).
+    pub fn get_local_storage(&self, address: &H256, key: &H256) -> Option<U256> {
+        self.storage.get(address)?.get(key).copied()
     }
 
     /// Applies this block's changes to another world state.

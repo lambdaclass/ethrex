@@ -808,6 +808,8 @@ impl L1Committer {
                 let account_updates_list = checkpoint_store
                     .apply_account_updates_batch(
                         potential_batch_block.header.parent_hash,
+                        potential_batch_block.hash(),
+                        potential_batch_block.header.number,
                         &account_updates,
                     )?
                     .ok_or(CommitterError::FailedToGetInformationFromStorage(

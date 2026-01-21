@@ -2,8 +2,8 @@
 //!
 //! This example demonstrates the core API for managing Ethereum state.
 
-use ethrex_db::store::{AccountData, StateTrie, StorageTrie};
 use ethrex_db::merkle::{keccak256, EMPTY_ROOT};
+use ethrex_db::store::{AccountData, StateTrie, StorageTrie};
 
 fn main() {
     println!("=== ethrex_db Basic Usage ===\n");
@@ -44,7 +44,10 @@ fn main() {
 
     let mut storage = StorageTrie::new();
     println!("Created empty storage trie");
-    println!("Empty storage root: 0x{}\n", hex::encode(storage.root_hash()));
+    println!(
+        "Empty storage root: 0x{}\n",
+        hex::encode(storage.root_hash())
+    );
 
     // Set some storage values
     let slot_0 = [0u8; 32];
