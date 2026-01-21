@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-01-21
+
+- Optimize `debug_executionWitness` by pre-serializing RPC format at storage time [#5956](https://github.com/lambdaclass/ethrex/pull/5956)
+
 ### 2026-01-20
 
 - Remove `ethrex-threadpool` crate and move `ThreadPool` to `ethrex-trie` [#5925](https://github.com/lambdaclass/ethrex/pull/5925)

@@ -5,7 +5,6 @@ use crate::{
         CallError, GetBlobBaseFeeRequestError, GetEthConfigError, GetPeerCountError,
         GetWitnessError, TxPoolContentError,
     },
-    debug::execution_witness::RpcExecutionWitness,
     eth::client::EthConfigResponse,
     mempool::MempoolContent,
     types::{
@@ -25,7 +24,10 @@ use errors::{
 };
 use ethrex_common::{
     Address, H256, U256,
-    types::{AuthorizationTupleEntry, BlobsBundle, Block, GenericTransaction, TxKind},
+    types::{
+        AuthorizationTupleEntry, BlobsBundle, Block, GenericTransaction, TxKind,
+        block_execution_witness::RpcExecutionWitness,
+    },
     utils::decode_hex,
 };
 use ethrex_rlp::decode::RLPDecode;
