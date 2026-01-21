@@ -322,7 +322,7 @@ impl Blockchain {
             let warm_handle = std::thread::Builder::new()
                 .name("block_executor_warmer".to_string())
                 .spawn_scoped(s, move || {
-                    let _ = LEVM::warm_block(block, store, vm_type);
+                    let _ = LEVM::preheat_block(block, store, vm_type);
                 })
                 .expect("Failed to spawn block_executor warmer thread");
             let max_queue_length_ref = &mut max_queue_length;

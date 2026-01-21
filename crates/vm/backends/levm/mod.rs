@@ -196,7 +196,10 @@ impl LEVM {
         Ok(BlockExecutionResult { receipts, requests })
     }
 
-    pub fn warm_block(
+    /// Pre-executes transactions in a block to warm up caches.
+    /// Note: Named "preheat" instead of "warm" to avoid BOLT optimization false positives.
+    /// BOLT's split function detection regex matches ".warm" in mangled Rust symbols.
+    pub fn preheat_block(
         block: &Block,
         store: Arc<dyn Database>,
         vm_type: VMType,
