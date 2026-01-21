@@ -65,9 +65,9 @@ async fn test_schema_tables() -> Result<()> {
             ("batch_prover_input", "prover_version") => "TEXT",
             ("batch_prover_input", "prover_input") => "BLOB",
             _ => {
-                return Err(anyhow::Error::msg(format!(
-                    "unexpected attribute {name} in table {table}"
-                )));
+                return Err(anyhow::Error::msg(
+                    "unexpected attribute {name} in table {table}",
+                ));
             }
         };
         assert_eq!(given_type, expected_type);
