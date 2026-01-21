@@ -79,12 +79,17 @@ pub enum NodeType {
         prefix: Option<Nibbles>,
         /// Reference to the child. If None, then the child is pruned.
         child_index: Option<usize>,
+        /// Hash of pruned child (used when child_index is None and we don't have encoded data)
+        pruned_child_hash: Option<NodeHash>,
     },
     Branch {
         /// Reference to the children.
         /// - If None, then there is no child for that choice.
         /// - If Some(None), then there is a child but its pruned.
         children_indices: [Option<Option<usize>>; 16],
+        /// Hashes of pruned children (used when we don't have encoded data).
+        /// Only populated for indices where children_indices[i] == Some(None).
+        pruned_children_hashes: Option<Box<[Option<NodeHash>; 16]>>,
     },
 }
 
@@ -224,7 +229,10 @@ impl EncodedTrie {
                         let mut children_indices = [None; 16];
                         children_indices[new_leaf_choice_idx] = Some(Some(new_leaf_index));
                         children_indices[self_choice_idx] = Some(Some(new_self_index));
-                        self.put_node(NodeType::Branch { children_indices })
+                        self.put_node(NodeType::Branch {
+                            children_indices,
+                            pruned_children_hashes: None,
+                        })
                     };
 
                     if match_index == 0 {
@@ -234,6 +242,7 @@ impl EncodedTrie {
                         Ok(self.put_node(NodeType::Extension {
                             prefix: Some(path.slice(0, match_index)),
                             child_index: Some(branch_index),
+                            pruned_child_hash: None,
                         }))
                     }
                 }
@@ -254,6 +263,7 @@ impl EncodedTrie {
                         NodeType::Extension {
                             prefix: None,
                             child_index: Some(new_child_index),
+                            pruned_child_hash: None,
                         },
                     )?)
                 } else if match_index == 0 {
@@ -265,35 +275,45 @@ impl EncodedTrie {
                         let mut children_indices = [None; 16];
                         children_indices[prefix.at(0)] = Some(child_index);
                         if child_index.is_some() {
-                            self.put_node(NodeType::Branch { children_indices })
+                            self.put_node(NodeType::Branch {
+                                children_indices,
+                                pruned_children_hashes: None,
+                            })
                         } else {
-                            // pruned child, we must make its hash available by encoding the branch
-                            // TODO: hacky
+                            // pruned child, store its hash directly
                             let child_hash = self.get_extension_encoded_child_hash(self_index)?;
-                            let mut children_hashes = [None; 16];
-                            children_hashes[prefix.at(0)] = Some(child_hash);
-                            let encoded = encode_branch(children_hashes);
-                            self.put_node_encoded(NodeType::Branch { children_indices }, encoded)
+                            let mut pruned_hashes: Box<[Option<NodeHash>; 16]> =
+                                Box::new([None; 16]);
+                            pruned_hashes[prefix.at(0)] = Some(child_hash);
+                            self.put_node(NodeType::Branch {
+                                children_indices,
+                                pruned_children_hashes: Some(pruned_hashes),
+                            })
                         }
                     } else {
                         // New extension with self_node as a child
-                        let handle = NodeType::Extension {
-                            prefix: Some(prefix.offset(1)),
-                            child_index,
-                        };
                         let new_node_index = if child_index.is_some() {
-                            self.put_node(handle)
+                            self.put_node(NodeType::Extension {
+                                prefix: Some(prefix.offset(1)),
+                                child_index,
+                                pruned_child_hash: None,
+                            })
                         } else {
-                            // pruned child, we must make its hash available by encoding the branch
-                            // TODO: hacky
+                            // pruned child, store its hash directly
                             let child_hash = self.get_extension_encoded_child_hash(self_index)?;
-                            let encoded = encode_extension(&prefix.offset(1), child_hash);
-                            self.put_node_encoded(handle, encoded)
+                            self.put_node(NodeType::Extension {
+                                prefix: Some(prefix.offset(1)),
+                                child_index,
+                                pruned_child_hash: Some(child_hash),
+                            })
                         };
                         {
                             let mut children_indices = [None; 16];
                             children_indices[prefix.at(0)] = Some(Some(new_node_index));
-                            self.put_node(NodeType::Branch { children_indices })
+                            self.put_node(NodeType::Branch {
+                                children_indices,
+                                pruned_children_hashes: None,
+                            })
                         }
                     };
                     self.insert_inner(branch_index, path, value)
@@ -303,6 +323,7 @@ impl EncodedTrie {
                         NodeType::Extension {
                             prefix: Some(prefix.offset(match_index)),
                             child_index,
+                            pruned_child_hash: None,
                         },
                     )?;
                     let new_node_index =
@@ -310,11 +331,13 @@ impl EncodedTrie {
                     Ok(self.put_node(NodeType::Extension {
                         prefix: Some(prefix.slice(0, match_index)),
                         child_index: Some(new_node_index),
+                        pruned_child_hash: None,
                     }))
                 }
             }
             NodeType::Branch {
                 mut children_indices,
+                ..
             } => {
                 let choice = path
                     .next_choice()
@@ -329,7 +352,10 @@ impl EncodedTrie {
                     Some(Some(index)) => self.insert_inner(index, path, value)?,
                 };
                 children_indices[choice] = Some(Some(new_child_index));
-                self.override_node(self_index, NodeType::Branch { children_indices })
+                self.override_node(self_index, NodeType::Branch {
+                    children_indices,
+                    pruned_children_hashes: None,
+                })
             }
         }
     }
@@ -381,6 +407,7 @@ impl EncodedTrie {
                         let handle = NodeType::Extension {
                             prefix: Some(prefix),
                             child_index: Some(new_child_index),
+                            pruned_child_hash: None,
                         };
                         self.put_node(handle)
                     }
@@ -390,6 +417,7 @@ impl EncodedTrie {
                         let handle = NodeType::Extension {
                             prefix: Some(prefix),
                             child_index,
+                            pruned_child_hash: None,
                         };
                         self.override_node(index, handle)?
                     }
@@ -407,6 +435,7 @@ impl EncodedTrie {
             }
             NodeType::Branch {
                 mut children_indices,
+                ..
             } => {
                 let choice = path
                     .next_choice()
@@ -449,6 +478,7 @@ impl EncodedTrie {
                                 let handle = NodeType::Extension {
                                     prefix: Some(prefix),
                                     child_index: Some(child_index),
+                                    pruned_child_hash: None,
                                 };
                                 Ok(Some(self.put_node(handle)))
                             }
@@ -457,13 +487,17 @@ impl EncodedTrie {
                                 let handle = NodeType::Extension {
                                     prefix: Some(prefix),
                                     child_index: Some(child_idx),
+                                    pruned_child_hash: None,
                                 };
                                 Ok(Some(self.put_node(handle)))
                             }
                         }
                     }
                     _ => {
-                        let handle = NodeType::Branch { children_indices };
+                        let handle = NodeType::Branch {
+                            children_indices,
+                            pruned_children_hashes: None,
+                        };
                         self.override_node(index, handle).map(Some)
                     }
                 }
@@ -568,10 +602,12 @@ impl EncodedTrie {
                 NodeType::Extension {
                     prefix: original_prefix,
                     child_index: original_child_index,
+                    pruned_child_hash: original_pruned_hash,
                 },
                 NodeType::Extension {
                     prefix: override_prefix,
                     child_index: override_child_index,
+                    pruned_child_hash: override_pruned_hash,
                 },
             ) => {
                 if let Some(override_prefix) = override_prefix {
@@ -580,16 +616,24 @@ impl EncodedTrie {
                 if let Some(override_child_index) = override_child_index {
                     *original_child_index = Some(override_child_index);
                 }
+                if override_pruned_hash.is_some() {
+                    *original_pruned_hash = override_pruned_hash;
+                }
             }
             (
                 NodeType::Branch {
                     children_indices: original_children_indices,
+                    pruned_children_hashes: original_pruned_hashes,
                 },
                 NodeType::Branch {
                     children_indices: override_children_indices,
+                    pruned_children_hashes: override_pruned_hashes,
                 },
             ) => {
                 *original_children_indices = override_children_indices;
+                if override_pruned_hashes.is_some() {
+                    *original_pruned_hashes = override_pruned_hashes;
+                }
             }
             _ => unreachable!(),
         }
@@ -617,7 +661,9 @@ impl EncodedTrie {
             let (child_index, children_indices) = match &trie.nodes[index].node_type {
                 NodeType::Leaf { .. } => (None, None),
                 NodeType::Extension { child_index, .. } => (*child_index, None),
-                NodeType::Branch { children_indices } => (None, Some(*children_indices)),
+                NodeType::Branch {
+                    children_indices, ..
+                } => (None, Some(*children_indices)),
             };
 
             if let Some(child_index) = child_index {
@@ -643,7 +689,9 @@ impl EncodedTrie {
                         }
                     }
                 }
-                NodeType::Branch { children_indices } => {
+                NodeType::Branch {
+                    children_indices, ..
+                } => {
                     let encoded_items = trie.get_encoded_items(index)?;
                     for (i, child_index) in children_indices
                         .iter()
@@ -686,7 +734,9 @@ impl EncodedTrie {
             let (child_index, children_indices) = match &trie.nodes[index].node_type {
                 NodeType::Leaf { .. } => (None, None),
                 NodeType::Extension { child_index, .. } => (*child_index, None),
-                NodeType::Branch { children_indices } => (None, Some(*children_indices)),
+                NodeType::Branch {
+                    children_indices, ..
+                } => (None, Some(*children_indices)),
             };
 
             if let Some(child_index) = child_index {
@@ -713,23 +763,36 @@ impl EncodedTrie {
                 NodeType::Extension {
                     prefix,
                     child_index,
-                } => match (prefix, child_index) {
-                    (None, None) => Some(trie.hash_encoded_data(index)?),
-                    (_, Some(child_index)) => {
+                    pruned_child_hash,
+                } => match (prefix, child_index, pruned_child_hash) {
+                    (None, None, None) => Some(trie.hash_encoded_data(index)?),
+                    (_, Some(child_index), _) => {
                         // recurse to calculate the child hash and re-encode
                         let child_hash = trie.get_hash(*child_index)?;
                         let prefix = trie.get_extension_data(index)?;
                         let encoded = encode_extension(&prefix, child_hash);
                         Some(NodeHash::from_encoded(&encoded))
                     }
-                    (Some(prefix), None) => {
+                    (Some(prefix), None, Some(child_hash)) => {
+                        // use stored pruned child hash
+                        let encoded = encode_extension(prefix, *child_hash);
+                        Some(NodeHash::from_encoded(&encoded))
+                    }
+                    (Some(prefix), None, None) => {
                         // get encoded child hash and re-encode
                         let child_hash = trie.get_extension_encoded_child_hash(index)?;
                         let encoded = encode_extension(prefix, child_hash);
                         Some(NodeHash::from_encoded(&encoded))
                     }
+                    (None, None, Some(_)) => {
+                        // This shouldn't happen - pruned hash without prefix override
+                        Some(trie.hash_encoded_data(index)?)
+                    }
                 },
-                NodeType::Branch { children_indices } => {
+                NodeType::Branch {
+                    children_indices,
+                    pruned_children_hashes,
+                } => {
                     let mut any_pruned = false;
                     for child_index in children_indices.iter().flatten() {
                         if child_index.is_none() {
@@ -740,7 +803,13 @@ impl EncodedTrie {
                     let mut children_hashes: [Option<NodeHash>; 16] = [None; 16];
 
                     if any_pruned {
-                        let encoded_items = trie.get_encoded_items(index)?;
+                        // Try to use stored pruned hashes first, fall back to encoded data
+                        let encoded_items = if pruned_children_hashes.is_none() {
+                            Some(trie.get_encoded_items(index)?)
+                        } else {
+                            None
+                        };
+
                         for (i, child) in children_indices.iter().enumerate() {
                             let Some(child_index) = child else {
                                 // no child for this index
@@ -749,8 +818,12 @@ impl EncodedTrie {
 
                             if let Some(child_index) = child_index {
                                 children_hashes[i] = trie.get_hash(*child_index).map(Some)?;
-                            } else {
-                                children_hashes[i] = Some(decode_child(encoded_items[i]))
+                            } else if let Some(pruned_hashes) = pruned_children_hashes {
+                                // Use stored pruned hash
+                                children_hashes[i] = pruned_hashes[i];
+                            } else if let Some(items) = &encoded_items {
+                                // Fall back to decoding from encoded data
+                                children_hashes[i] = Some(decode_child(items[i]))
                             }
                         }
                     } else {
@@ -995,7 +1068,10 @@ impl TryFrom<&EthrexTrieNode> for EncodedTrie {
                             _ => children_indices[i] = Some(None),
                         }
                     }
-                    NodeType::Branch { children_indices }
+                    NodeType::Branch {
+                        children_indices,
+                        pruned_children_hashes: None,
+                    }
                 }
                 EthrexTrieNode::Extension(node) => {
                     let mut child_index = None;
@@ -1014,6 +1090,7 @@ impl TryFrom<&EthrexTrieNode> for EncodedTrie {
                     NodeType::Extension {
                         prefix: None,
                         child_index,
+                        pruned_child_hash: None,
                     }
                 }
                 EthrexTrieNode::Leaf(_) => NodeType::Leaf {
