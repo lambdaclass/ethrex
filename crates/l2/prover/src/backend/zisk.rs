@@ -1,7 +1,7 @@
 use std::{
     io::ErrorKind,
     process::{Command, Stdio},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use ethrex_l2_common::prover::{BatchProof, ProofFormat};
@@ -48,23 +48,8 @@ impl ZiskBackend {
         Ok(())
     }
 
-}
-
-impl ProverBackend for ZiskBackend {
-    type ProofOutput = ZiskProveOutput;
-    type SerializedInput = ();
-
-    fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {
-        let input_bytes =
-            rkyv::to_bytes::<rkyv::rancor::Error>(input).map_err(BackendError::serialization)?;
-        std::fs::write(INPUT_PATH, input_bytes.as_slice()).map_err(BackendError::serialization)?;
-        Ok(())
-    }
-
-    fn execute(&self, input: ProgramInput) -> Result<(), BackendError> {
-        Self::write_elf_file()?;
-        self.serialize_input(&input)?;
-
+    /// Execute assuming input is already serialized to INPUT_PATH.
+    fn execute_core(&self) -> Result<(), BackendError> {
         let args = vec!["--elf", ELF_PATH, "--inputs", INPUT_PATH];
         let output = Command::new("ziskemu")
             .args(args)
@@ -83,14 +68,8 @@ impl ProverBackend for ZiskBackend {
         Ok(())
     }
 
-    fn prove(
-        &self,
-        input: ProgramInput,
-        format: ProofFormat,
-    ) -> Result<Self::ProofOutput, BackendError> {
-        Self::write_elf_file()?;
-        Self::serialize_input(&input)?;
-
+    /// Prove assuming input is already serialized to INPUT_PATH.
+    fn prove_core(&self, format: ProofFormat) -> Result<ZiskProveOutput, BackendError> {
         let static_args = vec![
             "prove",
             "--elf",
@@ -128,14 +107,52 @@ impl ProverBackend for ZiskBackend {
 
         Ok(ZiskProveOutput(proof_bytes))
     }
+}
+
+impl ProverBackend for ZiskBackend {
+    type ProofOutput = ZiskProveOutput;
+    type SerializedInput = ();
+
+    fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {
+        let input_bytes =
+            rkyv::to_bytes::<rkyv::rancor::Error>(input).map_err(BackendError::serialization)?;
+        std::fs::write(INPUT_PATH, input_bytes.as_slice()).map_err(BackendError::serialization)?;
+        Ok(())
+    }
+
+    fn execute(&self, input: ProgramInput) -> Result<(), BackendError> {
+        Self::write_elf_file()?;
+        self.serialize_input(&input)?;
+        self.execute_core()
+    }
+
+    fn prove(
+        &self,
+        input: ProgramInput,
+        format: ProofFormat,
+    ) -> Result<Self::ProofOutput, BackendError> {
+        Self::write_elf_file()?;
+        self.serialize_input(&input)?;
+        self.prove_core(format)
+    }
+
+    fn execute_timed(&self, input: ProgramInput) -> Result<Duration, BackendError> {
+        Self::write_elf_file()?;
+        self.serialize_input(&input)?;
+        let start = Instant::now();
+        self.execute_core()?;
+        Ok(start.elapsed())
+    }
 
     fn prove_timed(
         &self,
         input: ProgramInput,
         format: ProofFormat,
     ) -> Result<(Self::ProofOutput, Duration), BackendError> {
-        // ZisK reports its own timing in result.json, so we override the default implementation
-        let proof = self.prove(input, format)?;
+        // ZisK reports its own timing in result.json, so we use that instead of measuring
+        Self::write_elf_file()?;
+        self.serialize_input(&input)?;
+        let proof = self.prove_core(format)?;
 
         #[derive(serde::Deserialize)]
         struct ZisKResult {

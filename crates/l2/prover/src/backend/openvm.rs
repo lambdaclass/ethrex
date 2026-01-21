@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use ethrex_l2_common::prover::{BatchProof, ProofFormat};
 use guest_program::input::ProgramInput;
 use openvm_continuations::verifier::internal::types::VmStarkProof;
@@ -23,6 +25,36 @@ impl OpenVmBackend {
     pub fn new() -> Self {
         Self
     }
+
+    /// Execute using already-serialized input.
+    fn execute_with_stdin(&self, stdin: StdIn) -> Result<(), BackendError> {
+        let sdk = Sdk::standard();
+        sdk.execute(PROGRAM_ELF, stdin)
+            .map_err(BackendError::execution)?;
+        Ok(())
+    }
+
+    /// Prove using already-serialized input.
+    fn prove_with_stdin(
+        &self,
+        stdin: StdIn,
+        format: ProofFormat,
+    ) -> Result<OpenVmProveOutput, BackendError> {
+        let sdk = Sdk::standard();
+        let proof = match format {
+            ProofFormat::Compressed => {
+                let (proof, _) = sdk.prove(PROGRAM_ELF, stdin).map_err(BackendError::proving)?;
+                OpenVmProveOutput::Compressed(proof)
+            }
+            ProofFormat::Groth16 => {
+                let proof = sdk
+                    .prove_evm(PROGRAM_ELF, stdin)
+                    .map_err(BackendError::proving)?;
+                OpenVmProveOutput::Groth16(proof)
+            }
+        };
+        Ok(proof)
+    }
 }
 
 impl ProverBackend for OpenVmBackend {
@@ -37,13 +69,8 @@ impl ProverBackend for OpenVmBackend {
     }
 
     fn execute(&self, input: ProgramInput) -> Result<(), BackendError> {
-        let sdk = Sdk::standard();
         let stdin = self.serialize_input(&input)?;
-
-        sdk.execute(PROGRAM_ELF, stdin)
-            .map_err(BackendError::execution)?;
-
-        Ok(())
+        self.execute_with_stdin(stdin)
     }
 
     fn prove(
@@ -51,25 +78,8 @@ impl ProverBackend for OpenVmBackend {
         input: ProgramInput,
         format: ProofFormat,
     ) -> Result<Self::ProofOutput, BackendError> {
-        let sdk = Sdk::standard();
         let stdin = self.serialize_input(&input)?;
-
-        let proof = match format {
-            ProofFormat::Compressed => {
-                let (proof, _) = sdk
-                    .prove(PROGRAM_ELF, stdin)
-                    .map_err(BackendError::proving)?;
-                OpenVmProveOutput::Compressed(proof)
-            }
-            ProofFormat::Groth16 => {
-                let proof = sdk
-                    .prove_evm(PROGRAM_ELF, stdin)
-                    .map_err(BackendError::proving)?;
-                OpenVmProveOutput::Groth16(proof)
-            }
-        };
-
-        Ok(proof)
+        self.prove_with_stdin(stdin, format)
     }
 
     fn verify(&self, _proof: &Self::ProofOutput) -> Result<(), BackendError> {
@@ -86,5 +96,23 @@ impl ProverBackend for OpenVmBackend {
         Err(BackendError::not_implemented(
             "to_batch_proof is not implemented for OpenVM backend",
         ))
+    }
+
+    fn execute_timed(&self, input: ProgramInput) -> Result<Duration, BackendError> {
+        let stdin = self.serialize_input(&input)?;
+        let start = Instant::now();
+        self.execute_with_stdin(stdin)?;
+        Ok(start.elapsed())
+    }
+
+    fn prove_timed(
+        &self,
+        input: ProgramInput,
+        format: ProofFormat,
+    ) -> Result<(Self::ProofOutput, Duration), BackendError> {
+        let stdin = self.serialize_input(&input)?;
+        let start = Instant::now();
+        let proof = self.prove_with_stdin(stdin, format)?;
+        Ok((proof, start.elapsed()))
     }
 }

@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
@@ -58,6 +60,29 @@ impl Risc0Backend {
         selector_seal.extend_from_slice(groth16_receipt.seal.as_ref());
         Ok(selector_seal)
     }
+
+    /// Execute using already-serialized input.
+    fn execute_with_env(&self, env: ExecutorEnv<'_>) -> Result<(), BackendError> {
+        let executor = default_executor();
+        executor
+            .execute(env, ZKVM_RISC0_PROGRAM_ELF)
+            .map_err(BackendError::execution)?;
+        Ok(())
+    }
+
+    /// Prove using already-serialized input.
+    fn prove_with_env(
+        &self,
+        env: ExecutorEnv<'_>,
+        format: ProofFormat,
+    ) -> Result<Receipt, BackendError> {
+        let prover = default_prover();
+        let prover_opts = Self::convert_format(format);
+        let prove_info = prover
+            .prove_with_opts(env, ZKVM_RISC0_PROGRAM_ELF, &prover_opts)
+            .map_err(BackendError::proving)?;
+        Ok(prove_info.receipt)
+    }
 }
 
 impl ProverBackend for Risc0Backend {
@@ -74,13 +99,7 @@ impl ProverBackend for Risc0Backend {
 
     fn execute(&self, input: ProgramInput) -> Result<(), BackendError> {
         let env = self.serialize_input(&input)?;
-        let executor = default_executor();
-
-        executor
-            .execute(env, ZKVM_RISC0_PROGRAM_ELF)
-            .map_err(BackendError::execution)?;
-
-        Ok(())
+        self.execute_with_env(env)
     }
 
     fn prove(
@@ -88,23 +107,8 @@ impl ProverBackend for Risc0Backend {
         input: ProgramInput,
         format: ProofFormat,
     ) -> Result<Self::ProofOutput, BackendError> {
-        let mut stdout = Vec::new();
-
-        let bytes = rkyv::to_bytes::<RkyvError>(&input).map_err(BackendError::serialization)?;
-        let env = ExecutorEnv::builder()
-            .stdout(&mut stdout)
-            .write_slice(bytes.as_slice())
-            .build()
-            .map_err(BackendError::execution)?;
-
-        let prover = default_prover();
-        let prover_opts = Self::convert_format(format);
-
-        let prove_info = prover
-            .prove_with_opts(env, ZKVM_RISC0_PROGRAM_ELF, &prover_opts)
-            .map_err(BackendError::proving)?;
-
-        Ok(prove_info.receipt)
+        let env = self.serialize_input(&input)?;
+        self.prove_with_env(env, format)
     }
 
     fn verify(&self, proof: &Self::ProofOutput) -> Result<(), BackendError> {
@@ -130,5 +134,23 @@ impl ProverBackend for Risc0Backend {
         };
 
         Ok(batch_proof)
+    }
+
+    fn execute_timed(&self, input: ProgramInput) -> Result<Duration, BackendError> {
+        let env = self.serialize_input(&input)?;
+        let start = Instant::now();
+        self.execute_with_env(env)?;
+        Ok(start.elapsed())
+    }
+
+    fn prove_timed(
+        &self,
+        input: ProgramInput,
+        format: ProofFormat,
+    ) -> Result<(Self::ProofOutput, Duration), BackendError> {
+        let env = self.serialize_input(&input)?;
+        let start = Instant::now();
+        let proof = self.prove_with_env(env, format)?;
+        Ok((proof, start.elapsed()))
     }
 }
