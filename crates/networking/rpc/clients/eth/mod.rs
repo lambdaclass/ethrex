@@ -319,7 +319,10 @@ impl EthClient {
                 ))?;
                 u64::from_str_radix(res, 16)
             }
-            .map_err(RpcRequestError::ParseIntError)
+            .map_err(|e| RpcRequestError::ParseIntError {
+                method: "eth_estimateGas".to_string(),
+                source: e,
+            })
             .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method: "eth_estimateGas".to_string(),
@@ -404,7 +407,10 @@ impl EthClient {
                     ))?,
                 16,
             )
-            .map_err(RpcRequestError::ParseIntError)
+            .map_err(|e| RpcRequestError::ParseIntError {
+                method: "eth_getTransactionCount".to_string(),
+                source: e,
+            })
             .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method: "eth_getTransactionCount".to_string(),
@@ -461,8 +467,12 @@ impl EthClient {
         let encoded_block = decode_hex(&encoded_block?)
             .map_err(|e| EthClientError::Custom(format!("Failed to decode hex: {e}")))?;
 
-        let block = Block::decode_unfinished(&encoded_block)
-            .map_err(|e| RpcRequestError::RLPDecodeError(e.to_string()))?;
+        let block = Block::decode_unfinished(&encoded_block).map_err(|e| {
+            RpcRequestError::RLPDecodeError {
+                method: "debug_getRawBlock".to_string(),
+                message: e.to_string(),
+            }
+        })?;
         Ok(block.0)
     }
 
@@ -553,7 +563,10 @@ impl EthClient {
                     .map_err(EthClientError::from)?,
             )
             .map(Into::into)
-            .map_err(RpcRequestError::HexError)
+            .map_err(|e| RpcRequestError::HexError {
+                method: "eth_getCode".to_string(),
+                source: e,
+            })
             .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method: "eth_getCode".to_string(),
@@ -608,7 +621,10 @@ impl EthClient {
                     .trim_start_matches("0x"),
                 16,
             )
-            .map_err(RpcRequestError::ParseIntError)?),
+            .map_err(|e| RpcRequestError::ParseIntError {
+                method: "eth_blobBaseFee".to_string(),
+                source: e,
+            })?),
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method: "eth_blobBaseFee".to_string(),
                 message: error_response.error.message,

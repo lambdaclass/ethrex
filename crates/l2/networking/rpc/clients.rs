@@ -61,7 +61,10 @@ pub async fn get_batch_number(client: &EthClient) -> Result<u64, EthClientError>
                 .strip_prefix("0x")
                 .unwrap_or(&batch_number_hex);
             u64::from_str_radix(hex_str, 16)
-                .map_err(RpcRequestError::ParseIntError)
+                .map_err(|e| RpcRequestError::ParseIntError {
+                    method: "ethrex_batchNumber".to_string(),
+                    source: e,
+                })
                 .map_err(EthClientError::from)
         }
         RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {

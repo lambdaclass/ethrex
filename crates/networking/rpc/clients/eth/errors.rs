@@ -2,8 +2,6 @@ use crate::utils::RpcRequest;
 use ethrex_common::{FromStrRadixErr, types::transaction::GenericTransactionError};
 
 /// A single error type for all RPC request failures.
-/// This consolidates the previously duplicated error types (GetGasPriceError,
-/// GetBlockNumberError, etc.) into one reusable type.
 #[derive(Debug, thiserror::Error)]
 pub enum RpcRequestError {
     #[error("{method}: {source}")]
@@ -13,12 +11,18 @@ pub enum RpcRequestError {
     },
     #[error("{method}: {message}")]
     RPCError { method: String, message: String },
-    #[error("{0}")]
-    ParseIntError(#[from] std::num::ParseIntError),
-    #[error("{0}")]
-    HexError(#[from] hex::FromHexError),
-    #[error("{0}")]
-    RLPDecodeError(String),
+    #[error("{method}: {source}")]
+    ParseIntError {
+        method: String,
+        source: std::num::ParseIntError,
+    },
+    #[error("{method}: {source}")]
+    HexError {
+        method: String,
+        source: hex::FromHexError,
+    },
+    #[error("{method}: {message}")]
+    RLPDecodeError { method: String, message: String },
     #[error("{0}")]
     Custom(String),
 }
