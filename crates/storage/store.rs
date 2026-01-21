@@ -2546,7 +2546,11 @@ impl Store {
                 let blockchain = blockchain_ref.0.write().map_err(|_| {
                     StoreError::Custom("Failed to acquire write lock on ethrex_db blockchain".into())
                 })?;
-                // Call ethrex_db's fork_choice_update which handles finalization
+
+                // Get the count of hot blocks before finalization for logging
+                let hot_blocks_before = blockchain.committed_count();
+
+                // Call ethrex_db's fork_choice_update which handles finalization and pruning
                 blockchain
                     .fork_choice_update(head_hash, safe.and_then(|n| {
                         new_canonical_blocks
@@ -2555,7 +2559,16 @@ impl Store {
                             .map(|(_, h)| *h)
                             .or_else(|| self.get_canonical_block_hash_sync(n).ok().flatten())
                     }), Some(hash))
-                    .map_err(|e| StoreError::Custom(format!("ethrex_db fork_choice_update failed: {}", e)))?;
+                    .map_err(|e| {
+                        tracing::error!(
+                            "ethrex_db fork_choice_update failed at block {}: {}",
+                            finalized_number,
+                            e
+                        );
+                        StoreError::Custom(format!("ethrex_db fork_choice_update failed: {}", e))
+                    })?;
+
+                let hot_blocks_after = blockchain.committed_count();
 
                 // Verify state root after finalization
                 if let Some(expected) = expected_state_root {
@@ -2574,12 +2587,19 @@ impl Store {
                             expected, computed_h256
                         )));
                     }
-                    tracing::debug!(
-                        "ethrex_db state root verified at block {}: {:?}",
+                    tracing::info!(
+                        "ethrex_db: Finalized block {} (state root: {:?}, hot blocks: {} -> {})",
                         finalized_number,
-                        computed_h256
+                        computed_h256,
+                        hot_blocks_before,
+                        hot_blocks_after
                     );
                 }
+            } else {
+                tracing::warn!(
+                    "ethrex_db: Could not find hash for finalized block {}, skipping finalization",
+                    finalized_number
+                );
             }
         }
 
