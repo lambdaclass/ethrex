@@ -2378,6 +2378,64 @@ impl Store {
         self.ethrex_blockchain.as_ref()
     }
 
+    /// Returns the finalized state root from ethrex_db.
+    ///
+    /// This computes the Merkle root of the finalized state trie. The result
+    /// should match the state_root in the last finalized block header.
+    ///
+    /// Returns None if not using ethrex_db backend.
+    #[cfg(feature = "ethrex-db")]
+    pub fn get_finalized_state_root_ethrex_db(&self) -> Result<Option<H256>, StoreError> {
+        if let Some(blockchain_ref) = &self.ethrex_blockchain {
+            let blockchain = blockchain_ref.0.write().map_err(|_| {
+                StoreError::Custom("Failed to acquire write lock on ethrex_db blockchain".into())
+            })?;
+            let root = blockchain.state_root();
+            Ok(Some(H256::from(root)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Returns the last finalized block number from ethrex_db.
+    ///
+    /// Returns None if not using ethrex_db backend.
+    #[cfg(feature = "ethrex-db")]
+    pub fn get_finalized_block_number_ethrex_db(&self) -> Result<Option<BlockNumber>, StoreError> {
+        if let Some(blockchain_ref) = &self.ethrex_blockchain {
+            let blockchain = blockchain_ref.0.read().map_err(|_| {
+                StoreError::Custom("Failed to acquire read lock on ethrex_db blockchain".into())
+            })?;
+            Ok(Some(blockchain.last_finalized_number()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Verifies that ethrex_db's finalized state root matches the expected value.
+    ///
+    /// This is useful for sanity checks after syncing or recovering from a crash.
+    /// Returns Ok(true) if roots match, Ok(false) if they don't match,
+    /// or an error if the check couldn't be performed.
+    #[cfg(feature = "ethrex-db")]
+    pub fn verify_ethrex_db_state_root(&self, expected: H256) -> Result<bool, StoreError> {
+        if let Some(computed) = self.get_finalized_state_root_ethrex_db()? {
+            let matches = computed == expected;
+            if !matches {
+                tracing::warn!(
+                    "ethrex_db state root verification failed: expected {:?}, computed {:?}",
+                    expected,
+                    computed
+                );
+            }
+            Ok(matches)
+        } else {
+            Err(StoreError::Custom(
+                "ethrex_db backend not available for state root verification".into(),
+            ))
+        }
+    }
+
     /// Persists the current state trie to ethrex_db during snap-sync.
     ///
     /// This should be called after snap-sync completes to persist the state trie
@@ -2480,6 +2538,11 @@ impl Store {
                 .or_else(|| self.get_canonical_block_hash_sync(finalized_number).ok().flatten());
 
             if let Some(hash) = finalized_hash {
+                // Get expected state root from block header before finalization
+                let expected_state_root = self
+                    .load_block_header_by_hash(hash)?
+                    .map(|h| h.state_root);
+
                 let blockchain = blockchain_ref.0.write().map_err(|_| {
                     StoreError::Custom("Failed to acquire write lock on ethrex_db blockchain".into())
                 })?;
@@ -2493,6 +2556,30 @@ impl Store {
                             .or_else(|| self.get_canonical_block_hash_sync(n).ok().flatten())
                     }), Some(hash))
                     .map_err(|e| StoreError::Custom(format!("ethrex_db fork_choice_update failed: {}", e)))?;
+
+                // Verify state root after finalization
+                if let Some(expected) = expected_state_root {
+                    let computed_root = blockchain.state_root();
+                    let computed_h256 = H256::from(computed_root);
+                    if computed_h256 != expected {
+                        tracing::error!(
+                            "ethrex_db state root mismatch after finalization! \
+                             Expected: {:?}, Computed: {:?}, Block: {}",
+                            expected,
+                            computed_h256,
+                            finalized_number
+                        );
+                        return Err(StoreError::Custom(format!(
+                            "ethrex_db state root mismatch: expected {:?}, got {:?}",
+                            expected, computed_h256
+                        )));
+                    }
+                    tracing::debug!(
+                        "ethrex_db state root verified at block {}: {:?}",
+                        finalized_number,
+                        computed_h256
+                    );
+                }
             }
         }
 
