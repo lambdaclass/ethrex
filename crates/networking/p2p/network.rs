@@ -261,7 +261,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
  Headers     {headers_downloaded:>13}               -      {headers_progress_bar} {headers_percentage:>5.1}%
  Accounts    {account_leaves_downloaded:>13}   {account_leaves_inserted:>13}      {accounts_progress_bar} {account_leaves_inserted_percentage:>5.1}%
  Storage     {storage_leaves_downloaded:>13}   {storage_leaves_inserted:>13}      {storage_progress_bar} {storage_leaves_inserted_percentage:>5.1}%
- Bytecodes   {bytecodes_downloaded:>13}               -                       0.0%
+ Bytecodes   {bytecodes_downloaded:>13}               -                           -
 ───────────────────────────────────────────────────────────────────────
  Healing: {healed_accounts} accounts │ {healed_storages} storages │ throttle: {heal_current_throttle}
 ───────────────────────────────────────────────────────────────────────"#
