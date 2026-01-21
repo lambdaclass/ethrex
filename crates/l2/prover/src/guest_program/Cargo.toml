@@ -18,7 +18,6 @@ ethrex-crypto = { path = "../../../../common/crypto", default-features = false }
 ethrex-blockchain = { path = "../../../../blockchain/", default-features = false }
 ethrex-vm = { path = "../../../../vm", default-features = false }
 ethrex-rlp = { path = "../../../../common/rlp", default-features = false }
-ethrex-storage = { path = "../../../../storage", default-features = false }
 ethrex-trie = { path = "../../../../common/trie", default-features = false }
 ethrex-l2-common = { path = "../../../common", default-features = false }
 
