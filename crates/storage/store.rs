@@ -254,6 +254,11 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Contract code updates (code hash -> bytecode).
     pub code_updates: Vec<(H256, Code)>,
+    /// Raw account updates for ethrex_db backend.
+    /// Contains the original account updates from execution, needed because
+    /// ethrex_db stores raw account data directly rather than trie nodes.
+    #[cfg(feature = "ethrex-db")]
+    pub raw_account_updates: Option<Vec<AccountUpdate>>,
 }
 
 /// Storage trie updates grouped by account address hash.
@@ -1242,7 +1247,170 @@ impl Store {
     }
 
     pub fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if let Some(blockchain_ref) = &self.ethrex_blockchain {
+            return self.store_block_updates_ethrex_db(update_batch, blockchain_ref);
+        }
+
         self.apply_updates(update_batch)
+    }
+
+    /// Store block updates using the ethrex_db backend.
+    ///
+    /// This method routes state writes through ethrex_db's native Block/Blockchain
+    /// API instead of the trie layer cache. Block metadata (headers, bodies,
+    /// receipts, code) is still stored in RocksDB for compatibility.
+    #[cfg(feature = "ethrex-db")]
+    fn store_block_updates_ethrex_db(
+        &self,
+        update_batch: UpdateBatch,
+        blockchain_ref: &BlockchainRef,
+    ) -> Result<(), StoreError> {
+
+        let raw_updates = update_batch.raw_account_updates.as_ref().ok_or_else(|| {
+            StoreError::Custom("ethrex_db requires raw account updates".into())
+        })?;
+
+        let blockchain = blockchain_ref
+            .0
+            .write()
+            .map_err(|_| StoreError::Custom("Blockchain lock poisoned".into()))?;
+
+        // Process each block
+        for block in &update_batch.blocks {
+            let parent_hash =
+                primitive_types::H256::from_slice(block.header.parent_hash.as_bytes());
+            let block_hash = primitive_types::H256::from_slice(block.hash().as_bytes());
+            let block_number = block.header.number;
+
+            // Create new block in ethrex_db
+            let mut ethrex_block = blockchain
+                .start_new(parent_hash, block_hash, block_number)
+                .map_err(|e| StoreError::Custom(format!("Failed to start new block: {e}")))?;
+
+            // Apply account updates to the block
+            for update in raw_updates {
+                Self::apply_account_update_to_block(&mut ethrex_block, update)?;
+            }
+
+            // Commit block to hot storage
+            blockchain
+                .commit(ethrex_block)
+                .map_err(|e| StoreError::Custom(format!("Failed to commit block: {e}")))?;
+        }
+
+        drop(blockchain); // Release lock before metadata writes
+
+        // Store metadata in RocksDB auxiliary storage
+        self.store_block_metadata_auxiliary(&update_batch)?;
+
+        Ok(())
+    }
+
+    /// Apply a single account update to an ethrex_db Block.
+    #[cfg(feature = "ethrex-db")]
+    fn apply_account_update_to_block(
+        block: &mut ethrex_db::chain::Block,
+        update: &AccountUpdate,
+    ) -> Result<(), StoreError> {
+        use ethrex_db::chain::{Account as EthrexDbAccount, ReadOnlyWorldState, WorldState};
+
+        // Hash the address for ethrex_db (uses H256 hashed addresses)
+        let addr_hash = primitive_types::H256::from(keccak_hash(update.address.as_bytes()));
+
+        if update.removed {
+            block.delete_account(&addr_hash);
+            return Ok(());
+        }
+
+        // Handle storage clearing if account was destroyed and recreated
+        if update.removed_storage {
+            // Clear all storage for this account
+            // Note: ethrex_db's Block doesn't have a clear_storage method,
+            // so we rely on delete_account to clear storage, then re-add the account
+            block.delete_account(&addr_hash);
+        }
+
+        // Set account info if present
+        if let Some(info) = &update.info {
+            // Get existing account to preserve storage_root if not changing storage
+            let existing_storage_root = block
+                .get_account(&addr_hash)
+                .map(|a| a.storage_root)
+                .unwrap_or_else(|| primitive_types::H256::from(EMPTY_TRIE_HASH.0));
+
+            let account = EthrexDbAccount {
+                nonce: info.nonce,
+                balance: info.balance,
+                storage_root: existing_storage_root,
+                code_hash: primitive_types::H256::from(info.code_hash.0),
+            };
+
+            block.set_account(addr_hash, account);
+        }
+
+        // Apply storage updates
+        for (slot, value) in &update.added_storage {
+            let slot_hash = primitive_types::H256::from(keccak_hash(slot.as_bytes()));
+            block.set_storage(addr_hash, slot_hash, *value);
+        }
+
+        Ok(())
+    }
+
+    /// Store block metadata (headers, bodies, receipts, code) in RocksDB.
+    /// Used by ethrex_db backend to maintain compatibility with existing queries.
+    #[cfg(feature = "ethrex-db")]
+    fn store_block_metadata_auxiliary(
+        &self,
+        update_batch: &UpdateBatch,
+    ) -> Result<(), StoreError> {
+        let db = self.backend.clone();
+        let mut tx = db.begin_write()?;
+
+        // Store block headers, bodies, and transaction locations
+        for block in &update_batch.blocks {
+            let block_number = block.header.number;
+            let block_hash = block.hash();
+            let hash_key = block_hash.encode_to_vec();
+
+            let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
+            tx.put(HEADERS, &hash_key, header_value_rlp.bytes())?;
+
+            let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
+            tx.put(BODIES, &hash_key, body_value.bytes())?;
+
+            tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
+
+            for (index, transaction) in block.body.transactions.iter().enumerate() {
+                let tx_hash = transaction.hash();
+                // Key: tx_hash + block_hash
+                let mut composite_key = Vec::with_capacity(64);
+                composite_key.extend_from_slice(tx_hash.as_bytes());
+                composite_key.extend_from_slice(block_hash.as_bytes());
+                let location_value = (block_number, block_hash, index as u64).encode_to_vec();
+                tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
+            }
+        }
+
+        // Store receipts
+        for (block_hash, receipts) in &update_batch.receipts {
+            for (index, receipt) in receipts.iter().enumerate() {
+                let key = (*block_hash, index as u64).encode_to_vec();
+                let value = receipt.encode_to_vec();
+                tx.put(RECEIPTS, &key, &value)?;
+            }
+        }
+
+        // Store code updates
+        for (code_hash, code) in &update_batch.code_updates {
+            let buf = encode_code(code);
+            tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
+        }
+
+        tx.commit()?;
+
+        Ok(())
     }
 
     fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {

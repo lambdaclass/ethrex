@@ -90,3 +90,5 @@ rocksdb = []
 metrics = ["ethrex-blockchain/metrics"]
 
 l2 = ["guest_program/l2"]
+
+ethrex-db = ["ethrex-blockchain/ethrex-db", "ethrex-storage/ethrex-db"]
