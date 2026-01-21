@@ -1,14 +1,15 @@
 use crate::{
     metrics::{CurrentStepValue, METRICS},
-    peer_handler::{MAX_RESPONSE_BYTES, PeerHandler, RequestStorageTrieNodes},
+    peer_handler::{PeerHandler, RequestStorageTrieNodes},
     rlpx::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
         snap::{GetTrieNodes, TrieNodes},
     },
-    sync::{
-        AccountStorageRoots, SyncError,
-        state_healing::{SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE},
+    snap::constants::{
+        MAX_IN_FLIGHT_REQUESTS, MAX_RESPONSE_BYTES, SHOW_PROGRESS_INTERVAL_DURATION,
+        STORAGE_BATCH_SIZE,
     },
+    sync::{AccountStorageRoots, SyncError},
     utils::current_unix_time,
 };
 
@@ -31,8 +32,6 @@ use tokio::{
 };
 use tracing::{debug, trace};
 
-const MAX_IN_FLIGHT_REQUESTS: u32 = 77;
-
 /// This struct stores the metadata we need when we request a node
 #[derive(Debug, Clone)]
 pub struct NodeResponse {
@@ -44,7 +43,7 @@ pub struct NodeResponse {
 
 /// This struct stores the metadata we need when we store a node in the memory bank before storing
 #[derive(Debug, Clone)]
-pub struct MembatchEntry {
+pub struct StorageHealingQueueEntry {
     /// What this node is
     node_response: NodeResponse,
     /// How many missing children this node has
@@ -52,10 +51,10 @@ pub struct MembatchEntry {
     missing_children_count: usize,
 }
 
-/// The membatch key represents the account path and the storage path
-type MembatchKey = (Nibbles, Nibbles);
+/// The healing queue key represents the account path and the storage path
+type StorageHealingQueueKey = (Nibbles, Nibbles);
 
-type Membatch = HashMap<MembatchKey, MembatchEntry>;
+pub type StorageHealingQueue = HashMap<StorageHealingQueueKey, StorageHealingQueueEntry>;
 
 #[derive(Debug, Clone)]
 pub struct InflightRequest {
@@ -74,7 +73,7 @@ pub struct StorageHealer {
     /// Arc<dyn> to the db, clone freely
     store: Store,
     /// Memory of everything stored
-    membatch: Membatch,
+    healing_queue: StorageHealingQueue,
     /// With this we track how many requests are inflight to our peer
     /// This allows us to know if one is wildly out of time
     requests: HashMap<u64, InflightRequest>,
@@ -116,13 +115,13 @@ pub struct NodeRequest {
 /// - If we are missing a node, we queue to download them.
 /// - When a node is downloaded:
 ///    - if it has no missing children, we store it in the db
-///    - if the node has missing childre, we store it in our membatch, wchich is preserved between calls
+///    - if the node has missing childre, we store it in our healing_queue, wchich is preserved between calls
 pub async fn heal_storage_trie(
     state_root: H256,
     storage_accounts: &AccountStorageRoots,
     peers: &mut PeerHandler,
     store: Store,
-    membatch: Membatch,
+    healing_queue: StorageHealingQueue,
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
 ) -> Result<bool, SyncError> {
@@ -136,7 +135,7 @@ pub async fn heal_storage_trie(
         last_update: Instant::now(),
         download_queue,
         store,
-        membatch,
+        healing_queue,
         requests: HashMap::new(),
         staleness_timestamp,
         state_root,
@@ -238,7 +237,7 @@ pub async fn heal_storage_trie(
 
         if is_stale {
             db_joinset.join_all().await;
-            state.membatch = HashMap::new();
+            state.healing_queue = HashMap::new();
             return Ok(false);
         }
 
@@ -286,7 +285,7 @@ pub async fn heal_storage_trie(
                     &mut nodes_from_peer,
                     &mut state.download_queue,
                     &state.store,
-                    &mut state.membatch,
+                    &mut state.healing_queue,
                     &mut state.leafs_healed,
                     global_leafs_healed,
                     &mut state.roots_healed,
@@ -501,7 +500,7 @@ fn process_node_responses(
     node_processing_queue: &mut Vec<NodeResponse>,
     download_queue: &mut VecDeque<NodeRequest>,
     store: &Store,
-    membatch: &mut Membatch,
+    healing_queue: &mut StorageHealingQueue,
     leafs_healed: &mut usize,
     global_leafs_healed: &mut u64,
     roots_healed: &mut usize,
@@ -531,21 +530,23 @@ fn process_node_responses(
 
         if missing_children_count == 0 {
             // We flush to the database this node
-            commit_node(&node_response, membatch, roots_healed, to_write).inspect_err(|err| {
-                debug!(
-                    error=?err,
-                    ?node_response,
-                    "Error in commit_node"
-                )
-            })?;
+            commit_node(&node_response, healing_queue, roots_healed, to_write).inspect_err(
+                |err| {
+                    debug!(
+                        error=?err,
+                        ?node_response,
+                        "Error in commit_node"
+                    )
+                },
+            )?;
         } else {
             let key = (
                 node_response.node_request.acc_path.clone(),
                 node_response.node_request.storage_path.clone(),
             );
-            membatch.insert(
+            healing_queue.insert(
                 key,
-                MembatchEntry {
+                StorageHealingQueueEntry {
                     node_response: node_response.clone(),
                     missing_children_count,
                 },
@@ -673,7 +674,7 @@ pub fn determine_missing_children(
 
 fn commit_node(
     node: &NodeResponse,
-    membatch: &mut Membatch,
+    healing_queue: &mut StorageHealingQueue,
     roots_healed: &mut usize,
     to_write: &mut HashMap<H256, Vec<(Nibbles, Node)>>,
 ) -> Result<(), StoreError> {
@@ -698,21 +699,21 @@ fn commit_node(
         node.node_request.parent.clone(),
     );
 
-    let mut parent_entry = membatch
+    let mut parent_entry = healing_queue
         .remove(&parent_key)
-        .expect("We are missing the parent from the membatch!");
+        .expect("We are missing the parent from the healing_queue!");
 
     parent_entry.missing_children_count -= 1;
 
     if parent_entry.missing_children_count == 0 {
         commit_node(
             &parent_entry.node_response,
-            membatch,
+            healing_queue,
             roots_healed,
             to_write,
         )
     } else {
-        membatch.insert(parent_key, parent_entry);
+        healing_queue.insert(parent_key, parent_entry);
         Ok(())
     }
 }

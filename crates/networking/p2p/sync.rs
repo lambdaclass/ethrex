@@ -1,21 +1,21 @@
 mod code_collector;
-mod state_healing;
-mod storage_healing;
+mod healing;
 
-use crate::peer_handler::{BlockRequestOrder, PeerHandlerError, SNAP_LIMIT};
+use crate::peer_handler::{BlockRequestOrder, PeerHandler, PeerHandlerError};
 use crate::peer_table::PeerTableError;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
+use crate::snap::constants::{
+    BYTECODE_CHUNK_SIZE, EXECUTE_BATCH_SIZE_DEFAULT, MAX_BLOCK_BODIES_TO_REQUEST,
+    MAX_HEADER_FETCH_ATTEMPTS, MIN_FULL_BLOCKS, MISSING_SLOTS_PERCENTAGE, SECONDS_PER_BLOCK,
+    SNAP_LIMIT,
+};
 use crate::sync::code_collector::CodeHashCollector;
-use crate::sync::state_healing::heal_state_trie_wrap;
-use crate::sync::storage_healing::heal_storage_trie;
+use crate::sync::healing::{heal_state_trie_wrap, heal_storage_trie};
 use crate::utils::{
     current_unix_time, delete_leaves_folder, get_account_state_snapshots_dir,
     get_account_storages_snapshots_dir, get_code_hashes_snapshots_dir,
 };
-use crate::{
-    metrics::METRICS,
-    peer_handler::{MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
-};
+use crate::metrics::METRICS;
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 #[cfg(not(feature = "rocksdb"))]
 use ethrex_common::U256;
@@ -46,24 +46,6 @@ use std::{
 use tokio::{sync::mpsc::error::SendError, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
-
-/// The minimum amount of blocks from the head that we want to full sync during a snap sync
-const MIN_FULL_BLOCKS: u64 = 10_000;
-/// Amount of blocks to execute in a single batch during FullSync
-const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
-/// Amount of seconds between blocks
-const SECONDS_PER_BLOCK: u64 = 12;
-
-/// Bytecodes to downloader per batch
-const BYTECODE_CHUNK_SIZE: usize = 50_000;
-
-/// We assume this amount of slots are missing a block to adjust our timestamp
-/// based update pivot algorithm. This is also used to try to find "safe" blocks in the chain
-/// that are unlikely to be re-orged.
-const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
-
-/// Maximum attempts before giving up on header downloads during syncing
-const MAX_HEADER_FETCH_ATTEMPTS: u64 = 100;
 
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
