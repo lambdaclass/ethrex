@@ -22,14 +22,6 @@ impl Risc0Backend {
         Self
     }
 
-    fn serialize_input(input: &ProgramInput) -> Result<ExecutorEnv<'static>, BackendError> {
-        let bytes = rkyv::to_bytes::<RkyvError>(input).map_err(BackendError::serialization)?;
-        ExecutorEnv::builder()
-            .write_slice(bytes.as_slice())
-            .build()
-            .map_err(BackendError::execution)
-    }
-
     fn convert_format(format: ProofFormat) -> ProverOpts {
         match format {
             ProofFormat::Compressed => ProverOpts::succinct(),
@@ -70,9 +62,18 @@ impl Risc0Backend {
 
 impl ProverBackend for Risc0Backend {
     type ProofOutput = Receipt;
+    type SerializedInput = ExecutorEnv<'static>;
+
+    fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {
+        let bytes = rkyv::to_bytes::<RkyvError>(input).map_err(BackendError::serialization)?;
+        ExecutorEnv::builder()
+            .write_slice(bytes.as_slice())
+            .build()
+            .map_err(BackendError::execution)
+    }
 
     fn execute(&self, input: ProgramInput) -> Result<(), BackendError> {
-        let env = Self::serialize_input(&input)?;
+        let env = self.serialize_input(&input)?;
         let executor = default_executor();
 
         executor

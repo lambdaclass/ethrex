@@ -23,21 +23,22 @@ impl OpenVmBackend {
     pub fn new() -> Self {
         Self
     }
+}
 
-    fn serialize_input(input: &ProgramInput) -> Result<StdIn, BackendError> {
+impl ProverBackend for OpenVmBackend {
+    type ProofOutput = OpenVmProveOutput;
+    type SerializedInput = StdIn;
+
+    fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {
         let mut stdin = StdIn::default();
         let bytes = rkyv::to_bytes::<Error>(input).map_err(BackendError::serialization)?;
         stdin.write_bytes(bytes.as_slice());
         Ok(stdin)
     }
-}
-
-impl ProverBackend for OpenVmBackend {
-    type ProofOutput = OpenVmProveOutput;
 
     fn execute(&self, input: ProgramInput) -> Result<(), BackendError> {
         let sdk = Sdk::standard();
-        let stdin = Self::serialize_input(&input)?;
+        let stdin = self.serialize_input(&input)?;
 
         sdk.execute(PROGRAM_ELF, stdin)
             .map_err(BackendError::execution)?;
@@ -51,7 +52,7 @@ impl ProverBackend for OpenVmBackend {
         format: ProofFormat,
     ) -> Result<Self::ProofOutput, BackendError> {
         let sdk = Sdk::standard();
-        let stdin = Self::serialize_input(&input)?;
+        let stdin = self.serialize_input(&input)?;
 
         let proof = match format {
             ProofFormat::Compressed => {

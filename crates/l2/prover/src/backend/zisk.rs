@@ -48,20 +48,22 @@ impl ZiskBackend {
         Ok(())
     }
 
-    fn serialize_input(input: &ProgramInput) -> Result<(), BackendError> {
+}
+
+impl ProverBackend for ZiskBackend {
+    type ProofOutput = ZiskProveOutput;
+    type SerializedInput = ();
+
+    fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {
         let input_bytes =
             rkyv::to_bytes::<rkyv::rancor::Error>(input).map_err(BackendError::serialization)?;
         std::fs::write(INPUT_PATH, input_bytes.as_slice()).map_err(BackendError::serialization)?;
         Ok(())
     }
-}
-
-impl ProverBackend for ZiskBackend {
-    type ProofOutput = ZiskProveOutput;
 
     fn execute(&self, input: ProgramInput) -> Result<(), BackendError> {
         Self::write_elf_file()?;
-        Self::serialize_input(&input)?;
+        self.serialize_input(&input)?;
 
         let args = vec!["--elf", ELF_PATH, "--inputs", INPUT_PATH];
         let output = Command::new("ziskemu")

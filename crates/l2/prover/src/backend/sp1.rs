@@ -93,13 +93,6 @@ impl Sp1Backend {
         PROVER_SETUP.get_or_init(|| init_prover_setup(None))
     }
 
-    fn serialize_input(input: &ProgramInput) -> Result<SP1Stdin, BackendError> {
-        let mut stdin = SP1Stdin::new();
-        let bytes = rkyv::to_bytes::<Error>(input).map_err(BackendError::serialization)?;
-        stdin.write_slice(bytes.as_slice());
-        Ok(stdin)
-    }
-
     fn convert_format(format: ProofFormat) -> SP1ProofMode {
         match format {
             ProofFormat::Compressed => SP1ProofMode::Compressed,
@@ -119,9 +112,17 @@ impl Sp1Backend {
 
 impl ProverBackend for Sp1Backend {
     type ProofOutput = Sp1ProveOutput;
+    type SerializedInput = SP1Stdin;
+
+    fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {
+        let mut stdin = SP1Stdin::new();
+        let bytes = rkyv::to_bytes::<Error>(input).map_err(BackendError::serialization)?;
+        stdin.write_slice(bytes.as_slice());
+        Ok(stdin)
+    }
 
     fn execute(&self, input: ProgramInput) -> Result<(), BackendError> {
-        let stdin = Self::serialize_input(&input)?;
+        let stdin = self.serialize_input(&input)?;
         let setup = self.get_setup();
 
         setup
@@ -137,7 +138,7 @@ impl ProverBackend for Sp1Backend {
         input: ProgramInput,
         format: ProofFormat,
     ) -> Result<Self::ProofOutput, BackendError> {
-        let stdin = Self::serialize_input(&input)?;
+        let stdin = self.serialize_input(&input)?;
         let setup = self.get_setup();
         let sp1_format = Self::convert_format(format);
 

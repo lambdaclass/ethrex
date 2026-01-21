@@ -34,6 +34,15 @@ impl ExecBackend {
 
 impl ProverBackend for ExecBackend {
     type ProofOutput = ProgramOutput;
+    type SerializedInput = ();
+
+    fn serialize_input(
+        &self,
+        _input: &ProgramInput,
+    ) -> Result<Self::SerializedInput, BackendError> {
+        // ExecBackend doesn't serialize - it passes input directly to execution_program
+        Ok(())
+    }
 
     fn execute(&self, input: ProgramInput) -> Result<(), BackendError> {
         let now = std::time::Instant::now();
