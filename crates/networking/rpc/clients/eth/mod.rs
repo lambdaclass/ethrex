@@ -1,10 +1,6 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    clients::eth::errors::{
-        CallError, GetBlobBaseFeeRequestError, GetEthConfigError, GetPeerCountError,
-        GetWitnessError, TxPoolContentError,
-    },
     debug::execution_witness::RpcExecutionWitness,
     eth::client::EthConfigResponse,
     mempool::MempoolContent,
@@ -17,12 +13,7 @@ use crate::{
     utils::{RpcErrorResponse, RpcRequest, RpcSuccessResponse},
 };
 use bytes::Bytes;
-use errors::{
-    EstimateGasError, EthClientError, GetBalanceError, GetBlockByHashError, GetBlockByNumberError,
-    GetBlockNumberError, GetCodeError, GetGasPriceError, GetLogsError, GetMaxPriorityFeeError,
-    GetNonceError, GetRawBlockError, GetTransactionByHashError, GetTransactionReceiptError,
-    SendRawTransactionError,
-};
+use errors::{EthClientError, RpcRequestError};
 use ethrex_common::{
     Address, H256, U256,
     types::{AuthorizationTupleEntry, BlobsBundle, Block, GenericTransaction, TxKind},
@@ -215,10 +206,10 @@ impl EthClient {
 
         match self.send_request_to_all(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(SendRawTransactionError::SerdeJSONError)
+                .map_err(RpcRequestError::SerdeJSONError)
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(SendRawTransactionError::RPCError(error_response.error.message).into())
+                Err(RpcRequestError::RPCError(error_response.error.message).into())
             }
         }
     }
@@ -283,16 +274,16 @@ impl EthClient {
         match self.send_request(request).await? {
             RpcResponse::Success(result) => {
                 let res = serde_json::from_value::<String>(result.result)
-                    .map_err(EstimateGasError::SerdeJSONError)?;
-                let res = res.get(2..).ok_or(EstimateGasError::Custom(
+                    .map_err(RpcRequestError::SerdeJSONError)?;
+                let res = res.get(2..).ok_or(RpcRequestError::Custom(
                     "Failed to slice index response in estimate_gas".to_owned(),
                 ))?;
                 u64::from_str_radix(res, 16)
             }
-            .map_err(EstimateGasError::ParseIntError)
+            .map_err(RpcRequestError::ParseIntError)
             .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(EstimateGasError::RPCError(error_response.error.message).into())
+                Err(RpcRequestError::RPCError(error_response.error.message).into())
             }
         }
     }
@@ -332,10 +323,10 @@ impl EthClient {
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(CallError::SerdeJSONError)
+                .map_err(RpcRequestError::SerdeJSONError)
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(CallError::RPCError(error_response.error.message).into())
+                Err(RpcRequestError::RPCError(error_response.error.message).into())
             }
         }
     }
@@ -345,10 +336,10 @@ impl EthClient {
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(GetMaxPriorityFeeError::SerdeJSONError)
+                .map_err(RpcRequestError::SerdeJSONError)
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(GetMaxPriorityFeeError::RPCError(error_response.error.message).into())
+                Err(RpcRequestError::RPCError(error_response.error.message).into())
             }
         }
     }
@@ -358,10 +349,10 @@ impl EthClient {
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(GetGasPriceError::SerdeJSONError)
+                .map_err(RpcRequestError::SerdeJSONError)
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(GetGasPriceError::RPCError(error_response.error.message).into())
+                Err(RpcRequestError::RPCError(error_response.error.message).into())
             }
         }
     }
@@ -386,17 +377,17 @@ impl EthClient {
         match self.send_request(request).await? {
             RpcResponse::Success(result) => u64::from_str_radix(
                 serde_json::from_value::<String>(result.result)
-                    .map_err(GetNonceError::SerdeJSONError)?
+                    .map_err(RpcRequestError::SerdeJSONError)?
                     .get(2..)
                     .ok_or(EthClientError::Custom(
                         "Failed to deserialize get_nonce request".to_owned(),
                     ))?,
                 16,
             )
-            .map_err(GetNonceError::ParseIntError)
+            .map_err(RpcRequestError::ParseIntError)
             .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(GetNonceError::RPCError(error_response.error.message).into())
+                Err(RpcRequestError::RPCError(error_response.error.message).into())
             }
         }
     }
@@ -406,10 +397,10 @@ impl EthClient {
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(GetBlockNumberError::SerdeJSONError)
+                .map_err(RpcRequestError::SerdeJSONError)
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(GetBlockNumberError::RPCError(error_response.error.message).into())
+                Err(RpcRequestError::RPCError(error_response.error.message).into())
             }
         }
     }
@@ -420,10 +411,10 @@ impl EthClient {
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(GetBlockByHashError::SerdeJSONError)
+                .map_err(RpcRequestError::SerdeJSONError)
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(GetBlockByHashError::RPCError(error_response.error.message).into())
+                Err(RpcRequestError::RPCError(error_response.error.message).into())
             }
         }
     }
@@ -433,10 +424,10 @@ impl EthClient {
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(GetPeerCountError::SerdeJSONError)
+                .map_err(RpcRequestError::SerdeJSONError)
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(GetPeerCountError::RPCError(error_response.error.message).into())
+                Err(RpcRequestError::RPCError(error_response.error.message).into())
             }
         }
     }
@@ -453,10 +444,10 @@ impl EthClient {
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(GetBlockByNumberError::SerdeJSONError)
+                .map_err(RpcRequestError::SerdeJSONError)
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(GetBlockByNumberError::RPCError(error_response.error.message).into())
+                Err(RpcRequestError::RPCError(error_response.error.message).into())
             }
         }
     }
@@ -466,10 +457,10 @@ impl EthClient {
 
         let encoded_block: Result<String, _> = match self.send_request(request).await? {
             RpcResponse::Success(result) => {
-                serde_json::from_value(result.result).map_err(GetRawBlockError::SerdeJSONError)
+                serde_json::from_value(result.result).map_err(RpcRequestError::SerdeJSONError)
             }
             RpcResponse::Error(error_response) => {
-                Err(GetRawBlockError::RPCError(error_response.error.message))
+                Err(RpcRequestError::RPCError(error_response.error.message))
             }
         };
 
@@ -477,7 +468,7 @@ impl EthClient {
             .map_err(|e| EthClientError::Custom(format!("Failed to decode hex: {e}")))?;
 
         let block = Block::decode_unfinished(&encoded_block)
-            .map_err(|e| GetRawBlockError::RLPDecodeError(e.to_string()))?;
+            .map_err(|e| RpcRequestError::RLPDecodeError(e.to_string()))?;
         Ok(block.0)
     }
 
@@ -500,10 +491,10 @@ impl EthClient {
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(GetLogsError::SerdeJSONError)
+                .map_err(RpcRequestError::SerdeJSONError)
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(GetLogsError::RPCError(error_response.error.message).into())
+                Err(RpcRequestError::RPCError(error_response.error.message).into())
             }
         }
     }
@@ -517,10 +508,10 @@ impl EthClient {
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(GetTransactionReceiptError::SerdeJSONError)
+                .map_err(RpcRequestError::SerdeJSONError)
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(GetTransactionReceiptError::RPCError(error_response.error.message).into())
+                Err(RpcRequestError::RPCError(error_response.error.message).into())
             }
         }
     }
@@ -535,10 +526,10 @@ impl EthClient {
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(GetBalanceError::SerdeJSONError)
+                .map_err(RpcRequestError::SerdeJSONError)
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(GetBalanceError::RPCError(error_response.error.message).into())
+                Err(RpcRequestError::RPCError(error_response.error.message).into())
             }
         }
     }
@@ -558,10 +549,10 @@ impl EthClient {
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(GetBalanceError::SerdeJSONError)
+                .map_err(RpcRequestError::SerdeJSONError)
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(GetBalanceError::RPCError(error_response.error.message).into())
+                Err(RpcRequestError::RPCError(error_response.error.message).into())
             }
         }
     }
@@ -571,10 +562,10 @@ impl EthClient {
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(GetBalanceError::SerdeJSONError)
+                .map_err(RpcRequestError::SerdeJSONError)
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(GetBalanceError::RPCError(error_response.error.message).into())
+                Err(RpcRequestError::RPCError(error_response.error.message).into())
             }
         }
     }
@@ -584,10 +575,10 @@ impl EthClient {
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(GetEthConfigError::SerdeJSONError)
+                .map_err(RpcRequestError::SerdeJSONError)
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(GetEthConfigError::RPCError(error_response.error.message).into())
+                Err(RpcRequestError::RPCError(error_response.error.message).into())
             }
         }
     }
@@ -609,14 +600,14 @@ impl EthClient {
                             .map(ToString::to_string)
                             .unwrap_or(hex_str)
                     })
-                    .map_err(GetCodeError::SerdeJSONError)
+                    .map_err(RpcRequestError::SerdeJSONError)
                     .map_err(EthClientError::from)?,
             )
             .map(Into::into)
-            .map_err(GetCodeError::NotHexError)
+            .map_err(RpcRequestError::HexError)
             .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(GetCodeError::RPCError(error_response.error.message).into())
+                Err(RpcRequestError::RPCError(error_response.error.message).into())
             }
         }
     }
@@ -630,10 +621,10 @@ impl EthClient {
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(GetTransactionByHashError::SerdeJSONError)
+                .map_err(RpcRequestError::SerdeJSONError)
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(GetTransactionByHashError::RPCError(error_response.error.message).into())
+                Err(RpcRequestError::RPCError(error_response.error.message).into())
             }
         }
     }
@@ -655,10 +646,10 @@ impl EthClient {
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(GetWitnessError::SerdeJSONError)
+                .map_err(RpcRequestError::SerdeJSONError)
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(GetWitnessError::RPCError(error_response.error.message).into())
+                Err(RpcRequestError::RPCError(error_response.error.message).into())
             }
         }
     }
@@ -668,10 +659,10 @@ impl EthClient {
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(TxPoolContentError::SerdeJSONError)
+                .map_err(RpcRequestError::SerdeJSONError)
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                Err(TxPoolContentError::RPCError(error_response.error.message).into())
+                Err(RpcRequestError::RPCError(error_response.error.message).into())
             }
         }
     }
@@ -683,13 +674,13 @@ impl EthClient {
         match self.send_request(request).await? {
             RpcResponse::Success(result) => Ok(u64::from_str_radix(
                 serde_json::from_value::<String>(result.result)
-                    .map_err(GetBlobBaseFeeRequestError::SerdeJSONError)?
+                    .map_err(RpcRequestError::SerdeJSONError)?
                     .trim_start_matches("0x"),
                 16,
             )
-            .map_err(GetBlobBaseFeeRequestError::ParseIntError)?),
+            .map_err(RpcRequestError::ParseIntError)?),
             RpcResponse::Error(error_response) => {
-                Err(GetBlobBaseFeeRequestError::RPCError(error_response.error.message).into())
+                Err(RpcRequestError::RPCError(error_response.error.message).into())
             }
         }
     }
