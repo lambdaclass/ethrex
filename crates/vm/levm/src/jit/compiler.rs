@@ -13,6 +13,7 @@
 
 use crate::jit::context::{JitContext, JitExitReason};
 use crate::jit::executable::{ExecutableBuffer, ExecutableError};
+use crate::jit::persistence::{JitOpcodeId, SerializedJitCode, SerializedOp};
 use crate::jit::stencils::{
     RelocKind, Stencil, STENCIL_ADD, STENCIL_EQ, STENCIL_GAS, STENCIL_GT, STENCIL_ISZERO,
     STENCIL_JUMPDEST, STENCIL_LT, STENCIL_MUL, STENCIL_PC, STENCIL_POP, STENCIL_PUSH,
@@ -58,6 +59,8 @@ struct CompiledOp {
     func: StencilFn,
     /// Size of this instruction in bytecode (1 for most, 2-33 for PUSH)
     size: usize,
+    /// Opcode identifier for serialization
+    opcode_id: JitOpcodeId,
 }
 
 /// Function signature for stencil functions
@@ -79,6 +82,12 @@ pub struct JitCode {
     push_values: Vec<Option<ethrex_common::U256>>,
 }
 
+// SAFETY: JitCode contains function pointers which are just memory addresses
+// pointing to static code, and ExecutableBuffer is also thread-safe.
+// The data structures (Vecs) are standard and thread-safe.
+unsafe impl Send for JitCode {}
+unsafe impl Sync for JitCode {}
+
 impl JitCode {
     /// Get the number of bytecode instructions
     pub fn len(&self) -> usize {
@@ -98,6 +107,71 @@ impl JitCode {
     /// Get the push value for a PUSH instruction at the given PC
     pub fn get_push_value(&self, pc: usize) -> Option<ethrex_common::U256> {
         self.push_values.get(pc).copied().flatten()
+    }
+
+    /// Serialize this JitCode to a format suitable for storage.
+    pub fn serialize(&self) -> Result<SerializedJitCode, JitError> {
+        let ops = self
+            .ops
+            .iter()
+            .map(|op| {
+                op.as_ref().map(|compiled_op| SerializedOp {
+                    opcode_id: compiled_op.opcode_id,
+                    size: compiled_op.size.try_into().unwrap_or(u8::MAX),
+                })
+            })
+            .collect();
+
+        let push_values = self
+            .push_values
+            .iter()
+            .map(|opt| opt.map(|v| v.to_big_endian()))
+            .collect();
+
+        Ok(SerializedJitCode {
+            ops,
+            valid_jumpdests: self.valid_jumpdests.clone(),
+            push_values,
+        })
+    }
+
+    /// Deserialize JitCode from serialized format.
+    ///
+    /// This reconstructs the function pointer table from the opcode IDs.
+    pub fn deserialize(serialized: &SerializedJitCode) -> Result<Self, JitError> {
+        use ethrex_common::U256;
+
+        let ops = serialized
+            .ops
+            .iter()
+            .map(|opt| {
+                opt.as_ref().map(|sop| {
+                    let func = opcode_id_to_fn(sop.opcode_id);
+                    CompiledOp {
+                        func,
+                        size: sop.size.into(),
+                        opcode_id: sop.opcode_id,
+                    }
+                })
+            })
+            .collect();
+
+        let push_values = serialized
+            .push_values
+            .iter()
+            .map(|opt| opt.map(|bytes| U256::from_big_endian(&bytes)))
+            .collect();
+
+        // Create a minimal executable buffer (we don't use it after deserialization)
+        let buffer = ExecutableBuffer::new(4096)?;
+
+        Ok(Self {
+            ops,
+            buffer,
+            push_offsets: vec![None; serialized.ops.len()],
+            valid_jumpdests: serialized.valid_jumpdests.clone(),
+            push_values,
+        })
     }
 }
 
@@ -158,156 +232,158 @@ impl JitCompiler {
             #[allow(clippy::indexing_slicing)]
             let opcode = bytecode[pc];
 
-            let (func, size): (StencilFn, usize) = match opcode {
+            let (func, size, opcode_id): (StencilFn, usize, JitOpcodeId) = match opcode {
                 // STOP
-                0x00 => (get_stencil_fn(&STENCIL_STOP), 1),
+                0x00 => (get_stencil_fn(&STENCIL_STOP), 1, JitOpcodeId::Stop),
 
                 // ADD
-                0x01 => (get_stencil_fn(&STENCIL_ADD), 1),
+                0x01 => (get_stencil_fn(&STENCIL_ADD), 1, JitOpcodeId::Add),
 
                 // MUL
-                0x02 => (get_stencil_fn(&STENCIL_MUL), 1),
+                0x02 => (get_stencil_fn(&STENCIL_MUL), 1, JitOpcodeId::Mul),
 
                 // SUB
-                0x03 => (get_stencil_fn(&STENCIL_SUB), 1),
+                0x03 => (get_stencil_fn(&STENCIL_SUB), 1, JitOpcodeId::Sub),
 
                 // DIV
-                0x04 => (stencil_div_wrapper, 1),
+                0x04 => (stencil_div_wrapper, 1, JitOpcodeId::Div),
 
                 // SDIV
-                0x05 => (stencil_sdiv_wrapper, 1),
+                0x05 => (stencil_sdiv_wrapper, 1, JitOpcodeId::Sdiv),
 
                 // MOD
-                0x06 => (stencil_mod_wrapper, 1),
+                0x06 => (stencil_mod_wrapper, 1, JitOpcodeId::Mod),
 
                 // SMOD
-                0x07 => (stencil_smod_wrapper, 1),
+                0x07 => (stencil_smod_wrapper, 1, JitOpcodeId::Smod),
 
                 // ADDMOD
-                0x08 => (stencil_addmod_wrapper, 1),
+                0x08 => (stencil_addmod_wrapper, 1, JitOpcodeId::Addmod),
 
                 // MULMOD
-                0x09 => (stencil_mulmod_wrapper, 1),
+                0x09 => (stencil_mulmod_wrapper, 1, JitOpcodeId::Mulmod),
 
                 // EXP
-                0x0a => (stencil_exp_wrapper, 1),
+                0x0a => (stencil_exp_wrapper, 1, JitOpcodeId::Exp),
 
                 // SIGNEXTEND
-                0x0b => (stencil_signextend_wrapper, 1),
+                0x0b => (stencil_signextend_wrapper, 1, JitOpcodeId::Signextend),
 
                 // LT
-                0x10 => (get_stencil_fn(&STENCIL_LT), 1),
+                0x10 => (get_stencil_fn(&STENCIL_LT), 1, JitOpcodeId::Lt),
 
                 // GT
-                0x11 => (get_stencil_fn(&STENCIL_GT), 1),
+                0x11 => (get_stencil_fn(&STENCIL_GT), 1, JitOpcodeId::Gt),
 
                 // EQ
-                0x14 => (get_stencil_fn(&STENCIL_EQ), 1),
+                0x14 => (get_stencil_fn(&STENCIL_EQ), 1, JitOpcodeId::Eq),
 
                 // ISZERO
-                0x15 => (get_stencil_fn(&STENCIL_ISZERO), 1),
+                0x15 => (get_stencil_fn(&STENCIL_ISZERO), 1, JitOpcodeId::Iszero),
 
                 // AND
-                0x16 => (stencil_and_wrapper, 1),
+                0x16 => (stencil_and_wrapper, 1, JitOpcodeId::And),
 
                 // OR
-                0x17 => (stencil_or_wrapper, 1),
+                0x17 => (stencil_or_wrapper, 1, JitOpcodeId::Or),
 
                 // XOR
-                0x18 => (stencil_xor_wrapper, 1),
+                0x18 => (stencil_xor_wrapper, 1, JitOpcodeId::Xor),
 
                 // NOT
-                0x19 => (stencil_not_wrapper, 1),
+                0x19 => (stencil_not_wrapper, 1, JitOpcodeId::Not),
 
                 // BYTE
-                0x1a => (stencil_byte_wrapper, 1),
+                0x1a => (stencil_byte_wrapper, 1, JitOpcodeId::Byte),
 
                 // SHL
-                0x1b => (stencil_shl_wrapper, 1),
+                0x1b => (stencil_shl_wrapper, 1, JitOpcodeId::Shl),
 
                 // SHR
-                0x1c => (stencil_shr_wrapper, 1),
+                0x1c => (stencil_shr_wrapper, 1, JitOpcodeId::Shr),
 
                 // SAR
-                0x1d => (stencil_sar_wrapper, 1),
+                0x1d => (stencil_sar_wrapper, 1, JitOpcodeId::Sar),
 
                 // ADDRESS
-                0x30 => (stencil_address_wrapper, 1),
+                0x30 => (stencil_address_wrapper, 1, JitOpcodeId::Address),
 
                 // CALLER
-                0x33 => (stencil_caller_wrapper, 1),
+                0x33 => (stencil_caller_wrapper, 1, JitOpcodeId::Caller),
 
                 // CALLVALUE
-                0x34 => (stencil_callvalue_wrapper, 1),
+                0x34 => (stencil_callvalue_wrapper, 1, JitOpcodeId::Callvalue),
 
                 // CALLDATALOAD
-                0x35 => (stencil_calldataload_wrapper, 1),
+                0x35 => (stencil_calldataload_wrapper, 1, JitOpcodeId::Calldataload),
 
                 // CALLDATASIZE
-                0x36 => (stencil_calldatasize_wrapper, 1),
+                0x36 => (stencil_calldatasize_wrapper, 1, JitOpcodeId::Calldatasize),
 
                 // CODESIZE
-                0x38 => (stencil_codesize_wrapper, 1),
+                0x38 => (stencil_codesize_wrapper, 1, JitOpcodeId::Codesize),
 
                 // POP
-                0x50 => (get_stencil_fn(&STENCIL_POP), 1),
+                0x50 => (get_stencil_fn(&STENCIL_POP), 1, JitOpcodeId::Pop),
 
                 // MLOAD
-                0x51 => (stencil_mload_wrapper, 1),
+                0x51 => (stencil_mload_wrapper, 1, JitOpcodeId::Mload),
 
                 // MSTORE
-                0x52 => (stencil_mstore_wrapper, 1),
+                0x52 => (stencil_mstore_wrapper, 1, JitOpcodeId::Mstore),
 
                 // MSTORE8
-                0x53 => (stencil_mstore8_wrapper, 1),
+                0x53 => (stencil_mstore8_wrapper, 1, JitOpcodeId::Mstore8),
 
                 // SLOAD
-                0x54 => (stencil_sload_wrapper, 1),
+                0x54 => (stencil_sload_wrapper, 1, JitOpcodeId::Sload),
 
                 // SSTORE
-                0x55 => (stencil_sstore_wrapper, 1),
+                0x55 => (stencil_sstore_wrapper, 1, JitOpcodeId::Sstore),
 
                 // MSIZE
-                0x59 => (stencil_msize_wrapper, 1),
+                0x59 => (stencil_msize_wrapper, 1, JitOpcodeId::Msize),
 
                 // PC
-                0x58 => (get_stencil_fn(&STENCIL_PC), 1),
+                0x58 => (get_stencil_fn(&STENCIL_PC), 1, JitOpcodeId::Pc),
 
                 // GAS
-                0x5a => (get_stencil_fn(&STENCIL_GAS), 1),
+                0x5a => (get_stencil_fn(&STENCIL_GAS), 1, JitOpcodeId::Gas),
 
                 // JUMP
-                0x56 => (stencil_jump_wrapper, 1),
+                0x56 => (stencil_jump_wrapper, 1, JitOpcodeId::Jump),
 
                 // JUMPI
-                0x57 => (stencil_jumpi_wrapper, 1),
+                0x57 => (stencil_jumpi_wrapper, 1, JitOpcodeId::Jumpi),
 
                 // JUMPDEST
                 0x5b => {
                     valid_jumpdests[pc] = true;
-                    (get_stencil_fn(&STENCIL_JUMPDEST), 1)
+                    (get_stencil_fn(&STENCIL_JUMPDEST), 1, JitOpcodeId::Jumpdest)
                 }
 
                 // DUP1 - DUP16
                 0x80..=0x8f => {
                     let depth = usize::from(opcode - 0x80 + 1); // 1-16
-                    (get_dup_wrapper(depth), 1)
+                    let dup_id = get_dup_opcode_id(depth);
+                    (get_dup_wrapper(depth), 1, dup_id)
                 }
 
                 // SWAP1 - SWAP16
                 0x90..=0x9f => {
                     let depth = usize::from(opcode - 0x90 + 1); // 1-16
-                    (get_swap_wrapper(depth), 1)
+                    let swap_id = get_swap_opcode_id(depth);
+                    (get_swap_wrapper(depth), 1, swap_id)
                 }
 
                 // RETURN
-                0xf3 => (stencil_return_wrapper, 1),
+                0xf3 => (stencil_return_wrapper, 1, JitOpcodeId::Return),
 
                 // REVERT
-                0xfd => (stencil_revert_wrapper, 1),
+                0xfd => (stencil_revert_wrapper, 1, JitOpcodeId::Revert),
 
                 // INVALID
-                0xfe => (stencil_invalid_wrapper, 1),
+                0xfe => (stencil_invalid_wrapper, 1, JitOpcodeId::Invalid),
 
                 // PUSH1 - PUSH32
                 0x60..=0x7f => {
@@ -329,14 +405,14 @@ impl JitCompiler {
                     let value = ethrex_common::U256::from_big_endian(&padded);
                     push_values[pc] = Some(value);
 
-                    (stencil_push_wrapper, n.saturating_add(1))
+                    (stencil_push_wrapper, n.saturating_add(1), JitOpcodeId::Push)
                 }
 
                 // Unsupported opcode
                 _ => return Err(JitError::UnsupportedOpcode(opcode)),
             };
 
-            ops[pc] = Some(CompiledOp { func, size });
+            ops[pc] = Some(CompiledOp { func, size, opcode_id });
             pc = pc.saturating_add(size);
         }
 
@@ -378,6 +454,92 @@ fn get_stencil_fn(stencil: &'static Stencil) -> StencilFn {
         _ if std::ptr::eq(stencil, &STENCIL_EQ) => stencil_eq_wrapper,
         _ if std::ptr::eq(stencil, &STENCIL_ISZERO) => stencil_iszero_wrapper,
         _ => stencil_stop_wrapper, // fallback
+    }
+}
+
+/// Convert an opcode ID to its corresponding wrapper function.
+///
+/// Used during deserialization to reconstruct the function pointer table.
+fn opcode_id_to_fn(id: JitOpcodeId) -> StencilFn {
+    match id {
+        JitOpcodeId::Stop => stencil_stop_wrapper,
+        JitOpcodeId::Add => stencil_add_wrapper,
+        JitOpcodeId::Mul => stencil_mul_wrapper,
+        JitOpcodeId::Sub => stencil_sub_wrapper,
+        JitOpcodeId::Div => stencil_div_wrapper,
+        JitOpcodeId::Sdiv => stencil_sdiv_wrapper,
+        JitOpcodeId::Mod => stencil_mod_wrapper,
+        JitOpcodeId::Smod => stencil_smod_wrapper,
+        JitOpcodeId::Addmod => stencil_addmod_wrapper,
+        JitOpcodeId::Mulmod => stencil_mulmod_wrapper,
+        JitOpcodeId::Exp => stencil_exp_wrapper,
+        JitOpcodeId::Signextend => stencil_signextend_wrapper,
+        JitOpcodeId::Lt => stencil_lt_wrapper,
+        JitOpcodeId::Gt => stencil_gt_wrapper,
+        JitOpcodeId::Eq => stencil_eq_wrapper,
+        JitOpcodeId::Iszero => stencil_iszero_wrapper,
+        JitOpcodeId::And => stencil_and_wrapper,
+        JitOpcodeId::Or => stencil_or_wrapper,
+        JitOpcodeId::Xor => stencil_xor_wrapper,
+        JitOpcodeId::Not => stencil_not_wrapper,
+        JitOpcodeId::Byte => stencil_byte_wrapper,
+        JitOpcodeId::Shl => stencil_shl_wrapper,
+        JitOpcodeId::Shr => stencil_shr_wrapper,
+        JitOpcodeId::Sar => stencil_sar_wrapper,
+        JitOpcodeId::Address => stencil_address_wrapper,
+        JitOpcodeId::Caller => stencil_caller_wrapper,
+        JitOpcodeId::Callvalue => stencil_callvalue_wrapper,
+        JitOpcodeId::Calldataload => stencil_calldataload_wrapper,
+        JitOpcodeId::Calldatasize => stencil_calldatasize_wrapper,
+        JitOpcodeId::Codesize => stencil_codesize_wrapper,
+        JitOpcodeId::Pop => stencil_pop_wrapper,
+        JitOpcodeId::Mload => stencil_mload_wrapper,
+        JitOpcodeId::Mstore => stencil_mstore_wrapper,
+        JitOpcodeId::Mstore8 => stencil_mstore8_wrapper,
+        JitOpcodeId::Sload => stencil_sload_wrapper,
+        JitOpcodeId::Sstore => stencil_sstore_wrapper,
+        JitOpcodeId::Jump => stencil_jump_wrapper,
+        JitOpcodeId::Jumpi => stencil_jumpi_wrapper,
+        JitOpcodeId::Pc => stencil_pc_wrapper,
+        JitOpcodeId::Msize => stencil_msize_wrapper,
+        JitOpcodeId::Gas => stencil_gas_wrapper,
+        JitOpcodeId::Jumpdest => stencil_jumpdest_wrapper,
+        JitOpcodeId::Push => stencil_push_wrapper,
+        JitOpcodeId::Dup1 => stencil_dup1_wrapper,
+        JitOpcodeId::Dup2 => stencil_dup2_wrapper,
+        JitOpcodeId::Dup3 => stencil_dup3_wrapper,
+        JitOpcodeId::Dup4 => stencil_dup4_wrapper,
+        JitOpcodeId::Dup5 => stencil_dup5_wrapper,
+        JitOpcodeId::Dup6 => stencil_dup6_wrapper,
+        JitOpcodeId::Dup7 => stencil_dup7_wrapper,
+        JitOpcodeId::Dup8 => stencil_dup8_wrapper,
+        JitOpcodeId::Dup9 => stencil_dup9_wrapper,
+        JitOpcodeId::Dup10 => stencil_dup10_wrapper,
+        JitOpcodeId::Dup11 => stencil_dup11_wrapper,
+        JitOpcodeId::Dup12 => stencil_dup12_wrapper,
+        JitOpcodeId::Dup13 => stencil_dup13_wrapper,
+        JitOpcodeId::Dup14 => stencil_dup14_wrapper,
+        JitOpcodeId::Dup15 => stencil_dup15_wrapper,
+        JitOpcodeId::Dup16 => stencil_dup16_wrapper,
+        JitOpcodeId::Swap1 => stencil_swap1_wrapper,
+        JitOpcodeId::Swap2 => stencil_swap2_wrapper,
+        JitOpcodeId::Swap3 => stencil_swap3_wrapper,
+        JitOpcodeId::Swap4 => stencil_swap4_wrapper,
+        JitOpcodeId::Swap5 => stencil_swap5_wrapper,
+        JitOpcodeId::Swap6 => stencil_swap6_wrapper,
+        JitOpcodeId::Swap7 => stencil_swap7_wrapper,
+        JitOpcodeId::Swap8 => stencil_swap8_wrapper,
+        JitOpcodeId::Swap9 => stencil_swap9_wrapper,
+        JitOpcodeId::Swap10 => stencil_swap10_wrapper,
+        JitOpcodeId::Swap11 => stencil_swap11_wrapper,
+        JitOpcodeId::Swap12 => stencil_swap12_wrapper,
+        JitOpcodeId::Swap13 => stencil_swap13_wrapper,
+        JitOpcodeId::Swap14 => stencil_swap14_wrapper,
+        JitOpcodeId::Swap15 => stencil_swap15_wrapper,
+        JitOpcodeId::Swap16 => stencil_swap16_wrapper,
+        JitOpcodeId::Return => stencil_return_wrapper,
+        JitOpcodeId::Revert => stencil_revert_wrapper,
+        JitOpcodeId::Invalid => stencil_invalid_wrapper,
     }
 }
 
@@ -424,6 +586,52 @@ fn get_swap_wrapper(depth: usize) -> StencilFn {
         15 => stencil_swap15_wrapper,
         16 => stencil_swap16_wrapper,
         _ => stencil_stop_wrapper,
+    }
+}
+
+/// Get the JitOpcodeId for a DUP instruction (1-16)
+fn get_dup_opcode_id(depth: usize) -> JitOpcodeId {
+    match depth {
+        1 => JitOpcodeId::Dup1,
+        2 => JitOpcodeId::Dup2,
+        3 => JitOpcodeId::Dup3,
+        4 => JitOpcodeId::Dup4,
+        5 => JitOpcodeId::Dup5,
+        6 => JitOpcodeId::Dup6,
+        7 => JitOpcodeId::Dup7,
+        8 => JitOpcodeId::Dup8,
+        9 => JitOpcodeId::Dup9,
+        10 => JitOpcodeId::Dup10,
+        11 => JitOpcodeId::Dup11,
+        12 => JitOpcodeId::Dup12,
+        13 => JitOpcodeId::Dup13,
+        14 => JitOpcodeId::Dup14,
+        15 => JitOpcodeId::Dup15,
+        16 => JitOpcodeId::Dup16,
+        _ => JitOpcodeId::Dup1, // fallback
+    }
+}
+
+/// Get the JitOpcodeId for a SWAP instruction (1-16)
+fn get_swap_opcode_id(depth: usize) -> JitOpcodeId {
+    match depth {
+        1 => JitOpcodeId::Swap1,
+        2 => JitOpcodeId::Swap2,
+        3 => JitOpcodeId::Swap3,
+        4 => JitOpcodeId::Swap4,
+        5 => JitOpcodeId::Swap5,
+        6 => JitOpcodeId::Swap6,
+        7 => JitOpcodeId::Swap7,
+        8 => JitOpcodeId::Swap8,
+        9 => JitOpcodeId::Swap9,
+        10 => JitOpcodeId::Swap10,
+        11 => JitOpcodeId::Swap11,
+        12 => JitOpcodeId::Swap12,
+        13 => JitOpcodeId::Swap13,
+        14 => JitOpcodeId::Swap14,
+        15 => JitOpcodeId::Swap15,
+        16 => JitOpcodeId::Swap16,
+        _ => JitOpcodeId::Swap1, // fallback
     }
 }
 

@@ -24,14 +24,21 @@
 //! - **Deployment code (initcode)**: Interpreted only
 //! - **Runtime code**: JIT-compiled on deployment, stored in cache, executed from cache
 
+pub mod cache;
 pub mod compiler;
 pub mod context;
 pub mod executable;
+pub mod persistence;
 pub mod stencils;
 
-pub use compiler::{JitCode, JitCompiler, execute_jit};
+pub use cache::{
+    JitCache, init_global_cache, load_jit_code, take_dirty_entries, with_global_cache,
+    with_global_cache_mut,
+};
+pub use compiler::{JitCode, JitCompiler, JitError, execute_jit};
 pub use context::{JitContext, JitExitReason};
 pub use executable::ExecutableBuffer;
+pub use persistence::{JitOpcodeId, SerializedJitCode};
 
 #[cfg(test)]
 mod tests {

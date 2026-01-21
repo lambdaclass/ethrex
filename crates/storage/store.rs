@@ -7,7 +7,7 @@ use crate::{
         tables::{
             ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
             CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS,
-            INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS, SNAP_STATE,
+            INVALID_CHAINS, JIT_COMPILED_CODE, MISC_VALUES, PENDING_BLOCKS, RECEIPTS, SNAP_STATE,
             STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
@@ -710,6 +710,26 @@ impl Store {
         let hash_key = code.hash.0.to_vec();
         let buf = encode_code(&code);
         self.write_async(ACCOUNT_CODES, hash_key, buf).await
+    }
+
+    /// Get JIT compiled code by code hash.
+    ///
+    /// Returns the raw serialized bytes if the code has been JIT compiled and cached.
+    /// The caller (VM) is responsible for deserializing the bytes.
+    pub fn get_jit_code(&self, code_hash: H256) -> Result<Option<Vec<u8>>, StoreError> {
+        let bytes = self
+            .backend
+            .begin_read()?
+            .get(JIT_COMPILED_CODE, code_hash.as_bytes())?;
+        Ok(bytes)
+    }
+
+    /// Store JIT compiled code by code hash.
+    ///
+    /// The caller (VM) is responsible for serializing the JIT code to bytes.
+    pub async fn add_jit_code(&self, code_hash: H256, data: Vec<u8>) -> Result<(), StoreError> {
+        let hash_key = code_hash.0.to_vec();
+        self.write_async(JIT_COMPILED_CODE, hash_key, data).await
     }
 
     /// Clears all checkpoint data created during the last snap sync

@@ -87,6 +87,11 @@ pub const STORAGE_FLATKEYVALUE: &str = "storage_flatkeyvalue";
 
 pub const MISC_VALUES: &str = "misc_values";
 
+/// JIT compiled code column family: [`Vec<u8>`] => [`Vec<u8>`]
+/// - [`Vec<u8>`] = `code_hash.as_bytes().to_vec()` (H256 of the original bytecode)
+/// - [`Vec<u8>`] = Serialized JitCode (bincode-encoded SerializedJitCode)
+pub const JIT_COMPILED_CODE: &str = "jit_compiled_code";
+
 /// Execution witnesses column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = Composite key
 ///    ```rust,no_run
@@ -97,7 +102,7 @@ pub const MISC_VALUES: &str = "misc_values";
 /// - [`Vec<u8>`] = `serde_json::to_vec(&witness)`
 pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 
-pub const TABLES: [&str; 18] = [
+pub const TABLES: [&str; 19] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     BODIES,
@@ -116,4 +121,5 @@ pub const TABLES: [&str; 18] = [
     STORAGE_FLATKEYVALUE,
     MISC_VALUES,
     EXECUTION_WITNESSES,
+    JIT_COMPILED_CODE,
 ];
