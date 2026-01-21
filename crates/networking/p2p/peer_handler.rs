@@ -41,27 +41,13 @@ use std::{
     time::{Duration, SystemTime},
 };
 use tracing::{debug, error, info, trace, warn};
-pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
-pub const PEER_SELECT_RETRY_ATTEMPTS: u32 = 3;
-pub const REQUEST_RETRY_ATTEMPTS: u32 = 5;
-pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
-pub const HASH_MAX: H256 = H256([0xFF; 32]);
 
-pub const MAX_HEADER_CHUNK: u64 = 500_000;
-
-// How much we store in memory of request_account_range and request_storage_ranges
-// before we dump it into the file. This tunes how much memory ethrex uses during
-// the first steps of snap sync
-pub const RANGE_FILE_CHUNK_SIZE: usize = 1024 * 1024 * 64; // 64MB
-pub const SNAP_LIMIT: usize = 128;
-
-// Request as many as 128 block bodies per request
-// this magic number is not part of the protocol and is taken from geth, see:
-// https://github.com/ethereum/go-ethereum/blob/2585776aabbd4ae9b00050403b42afb0cee968ec/eth/downloader/downloader.go#L42-L43
-//
-// Note: We noticed that while bigger values are supported
-// increasing them may be the cause of peers disconnection
-pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
+// Re-export constants from snap::constants for backward compatibility
+pub use crate::snap::constants::{
+    HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_CHUNK, MAX_RESPONSE_BYTES,
+    PEER_REPLY_TIMEOUT, PEER_SELECT_RETRY_ATTEMPTS, RANGE_FILE_CHUNK_SIZE, REQUEST_RETRY_ATTEMPTS,
+    SNAP_LIMIT,
+};
 
 /// An abstraction over the [Kademlia] containing logic to make requests to peers
 #[derive(Debug, Clone)]
