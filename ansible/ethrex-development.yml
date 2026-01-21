@@ -274,6 +274,9 @@
           command:
             cmd: make promtail
             chdir: "{{ monitoring_stack_dir }}"
+          environment:
+            LOKI_URL: "http://ethrex-grafana:3100"
+            ETHREX_LOGS_DIR: "/var/log/ethrex"
 
         - name: Remove monitoring stack repository locally
           file:
