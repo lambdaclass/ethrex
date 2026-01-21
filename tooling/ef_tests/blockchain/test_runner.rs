@@ -22,7 +22,7 @@ use ethrex_prover_lib::{BackendType, ExecBackend, ProverBackend};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmError;
-use ethrex_guest_program::ProgramInput;
+use ethrex_prover_lib::zkvm::ProgramInput;
 use regex::Regex;
 
 pub fn parse_and_execute(
@@ -412,8 +412,6 @@ async fn re_run_stateless(
     let program_input = ProgramInput {
         blocks,
         execution_witness,
-        elasticity_multiplier: ethrex_common::types::ELASTICITY_MULTIPLIER,
-        ..Default::default()
     };
 
     let execute_result = match backend_type {
