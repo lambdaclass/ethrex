@@ -18,15 +18,12 @@ use ethrex_rpc::{
     EthClient,
     clients::{
         EthClientError,
-        eth::{
-            RpcResponse,
-            errors::{
-                GetBaseFeeVaultAddressError, GetBatchByNumberError, GetBatchNumberError,
-                GetMessageProofError,
-            },
+        eth::errors::{
+            GetBaseFeeVaultAddressError, GetBatchByNumberError, GetBatchNumberError,
+            GetMessageProofError,
         },
     },
-    utils::RpcRequest,
+    utils::{RpcRequest, RpcResponse},
 };
 use hex;
 use serde_json::json;
