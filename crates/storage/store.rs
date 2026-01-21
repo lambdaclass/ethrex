@@ -80,6 +80,12 @@ pub const MAX_WITNESSES: u64 = 128;
 const DB_COMMIT_THRESHOLD: usize = 128;
 const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 
+/// Maximum number of blocks to keep in hot storage (unfinalized state).
+/// This matches Ethereum's BLOCKHASH opcode limit (256 blocks).
+/// Blocks older than this are automatically finalized when using ethrex_db backend.
+#[cfg(feature = "ethrex-db")]
+pub const HISTORY_DEPTH: u64 = 256;
+
 /// Control messages for the FlatKeyValue generator
 #[derive(Debug, PartialEq)]
 enum FKVGeneratorControlMessage {
@@ -1758,8 +1764,8 @@ impl Store {
 
             let finalized_number = blockchain.last_finalized_number();
 
-            if queried_block_number <= finalized_number {
-                // Block is finalized, query finalized state
+            if queried_block_number == finalized_number {
+                // Block is exactly the finalized block, query finalized state
                 let addr_bytes: [u8; 20] = address.0;
                 if let Some(account) = blockchain.get_finalized_account(&addr_bytes) {
                     return Ok(Some(AccountInfo {
@@ -1768,6 +1774,16 @@ impl Store {
                         code_hash: H256::from(account.code_hash.0),
                     }));
                 }
+                return Ok(None);
+            }
+
+            // Block is older than finalized - we don't have historical state
+            if queried_block_number < finalized_number {
+                return Err(StoreError::StateBeyondHistoryDepth {
+                    block: queried_block_number,
+                    head: finalized_number + HISTORY_DEPTH, // Approximate head
+                    max_depth: HISTORY_DEPTH,
+                });
             }
         }
 
@@ -2322,14 +2338,24 @@ impl Store {
 
             let finalized_number = blockchain.last_finalized_number();
 
-            if queried_block_number <= finalized_number {
-                // Block is finalized, query finalized state
+            if queried_block_number == finalized_number {
+                // Block is exactly the finalized block, query finalized state
                 if let Some(value) = blockchain.get_finalized_storage_by_hash(
                     addr_hash.as_fixed_bytes(),
                     slot_hash.as_fixed_bytes(),
                 ) {
                     return Ok(Some(value));
                 }
+                return Ok(None);
+            }
+
+            // Block is older than finalized - we don't have historical state
+            if queried_block_number < finalized_number {
+                return Err(StoreError::StateBeyondHistoryDepth {
+                    block: queried_block_number,
+                    head: finalized_number + HISTORY_DEPTH, // Approximate head
+                    max_depth: HISTORY_DEPTH,
+                });
             }
         }
 
@@ -2527,79 +2553,106 @@ impl Store {
 
         // If using ethrex_db backend, finalize state in ethrex_db's Blockchain
         #[cfg(feature = "ethrex-db")]
-        if let Some(blockchain_ref) = &self.ethrex_blockchain
-            && let Some(finalized_number) = finalized
-        {
-            // Find the finalized block hash from new_canonical_blocks or from storage
-            let finalized_hash = new_canonical_blocks
-                .iter()
-                .find(|(num, _)| *num == finalized_number)
-                .map(|(_, hash)| *hash)
-                .or_else(|| self.get_canonical_block_hash_sync(finalized_number).ok().flatten());
+        if let Some(blockchain_ref) = &self.ethrex_blockchain {
+            // Determine the effective finalized block number.
+            // If the head is more than HISTORY_DEPTH blocks ahead of the last finalized,
+            // we auto-finalize to maintain bounded history.
+            let auto_finalize_to = if head_number > HISTORY_DEPTH {
+                Some(head_number - HISTORY_DEPTH)
+            } else {
+                None
+            };
 
-            if let Some(hash) = finalized_hash {
-                // Get expected state root from block header before finalization
-                let expected_state_root = self
-                    .load_block_header_by_hash(hash)?
-                    .map(|h| h.state_root);
+            // Use the maximum of caller-provided finalized and auto-finalize threshold
+            let effective_finalized = match (finalized, auto_finalize_to) {
+                (Some(f), Some(a)) => Some(f.max(a)),
+                (Some(f), None) => Some(f),
+                (None, Some(a)) => Some(a),
+                (None, None) => None,
+            };
 
-                let blockchain = blockchain_ref.0.write().map_err(|_| {
-                    StoreError::Custom("Failed to acquire write lock on ethrex_db blockchain".into())
-                })?;
-
-                // Get the count of hot blocks before finalization for logging
-                let hot_blocks_before = blockchain.committed_count();
-
-                // Call ethrex_db's fork_choice_update which handles finalization and pruning
-                blockchain
-                    .fork_choice_update(head_hash, safe.and_then(|n| {
-                        new_canonical_blocks
-                            .iter()
-                            .find(|(num, _)| *num == n)
-                            .map(|(_, h)| *h)
-                            .or_else(|| self.get_canonical_block_hash_sync(n).ok().flatten())
-                    }), Some(hash))
-                    .map_err(|e| {
-                        tracing::error!(
-                            "ethrex_db fork_choice_update failed at block {}: {}",
-                            finalized_number,
-                            e
-                        );
-                        StoreError::Custom(format!("ethrex_db fork_choice_update failed: {}", e))
-                    })?;
-
-                let hot_blocks_after = blockchain.committed_count();
-
-                // Verify state root after finalization
-                if let Some(expected) = expected_state_root {
-                    let computed_root = blockchain.state_root();
-                    let computed_h256 = H256::from(computed_root);
-                    if computed_h256 != expected {
-                        tracing::error!(
-                            "ethrex_db state root mismatch after finalization! \
-                             Expected: {:?}, Computed: {:?}, Block: {}",
-                            expected,
-                            computed_h256,
-                            finalized_number
-                        );
-                        return Err(StoreError::Custom(format!(
-                            "ethrex_db state root mismatch: expected {:?}, got {:?}",
-                            expected, computed_h256
-                        )));
-                    }
-                    tracing::info!(
-                        "ethrex_db: Finalized block {} (state root: {:?}, hot blocks: {} -> {})",
+            if let Some(finalized_number) = effective_finalized {
+                // Log if we're auto-finalizing due to history depth
+                if auto_finalize_to.is_some() && finalized.map_or(true, |f| f < finalized_number) {
+                    tracing::debug!(
+                        "ethrex_db: Auto-finalizing to block {} (head: {}, history_depth: {})",
                         finalized_number,
-                        computed_h256,
-                        hot_blocks_before,
-                        hot_blocks_after
+                        head_number,
+                        HISTORY_DEPTH
                     );
                 }
-            } else {
-                tracing::warn!(
-                    "ethrex_db: Could not find hash for finalized block {}, skipping finalization",
-                    finalized_number
-                );
+
+                // Find the finalized block hash from new_canonical_blocks or from storage
+                let finalized_hash = new_canonical_blocks
+                    .iter()
+                    .find(|(num, _)| *num == finalized_number)
+                    .map(|(_, hash)| *hash)
+                    .or_else(|| self.get_canonical_block_hash_sync(finalized_number).ok().flatten());
+
+                if let Some(hash) = finalized_hash {
+                    // Get expected state root from block header before finalization
+                    let expected_state_root = self
+                        .load_block_header_by_hash(hash)?
+                        .map(|h| h.state_root);
+
+                    let blockchain = blockchain_ref.0.write().map_err(|_| {
+                        StoreError::Custom("Failed to acquire write lock on ethrex_db blockchain".into())
+                    })?;
+
+                    // Get the count of hot blocks before finalization for logging
+                    let hot_blocks_before = blockchain.committed_count();
+
+                    // Call ethrex_db's fork_choice_update which handles finalization and pruning
+                    blockchain
+                        .fork_choice_update(head_hash, safe.and_then(|n| {
+                            new_canonical_blocks
+                                .iter()
+                                .find(|(num, _)| *num == n)
+                                .map(|(_, h)| *h)
+                                .or_else(|| self.get_canonical_block_hash_sync(n).ok().flatten())
+                        }), Some(hash))
+                        .map_err(|e| {
+                            tracing::error!(
+                                "ethrex_db fork_choice_update failed at block {}: {}",
+                                finalized_number,
+                                e
+                            );
+                            StoreError::Custom(format!("ethrex_db fork_choice_update failed: {}", e))
+                        })?;
+
+                    let hot_blocks_after = blockchain.committed_count();
+
+                    // Verify state root after finalization
+                    if let Some(expected) = expected_state_root {
+                        let computed_root = blockchain.state_root();
+                        let computed_h256 = H256::from(computed_root);
+                        if computed_h256 != expected {
+                            tracing::error!(
+                                "ethrex_db state root mismatch after finalization! \
+                                 Expected: {:?}, Computed: {:?}, Block: {}",
+                                expected,
+                                computed_h256,
+                                finalized_number
+                            );
+                            return Err(StoreError::Custom(format!(
+                                "ethrex_db state root mismatch: expected {:?}, got {:?}",
+                                expected, computed_h256
+                            )));
+                        }
+                        tracing::info!(
+                            "ethrex_db: Finalized block {} (state root: {:?}, hot blocks: {} -> {})",
+                            finalized_number,
+                            computed_h256,
+                            hot_blocks_before,
+                            hot_blocks_after
+                        );
+                    }
+                } else {
+                    tracing::warn!(
+                        "ethrex_db: Could not find hash for finalized block {}, skipping finalization",
+                        finalized_number
+                    );
+                }
             }
         }
 
@@ -2712,7 +2765,8 @@ impl Store {
 
             let finalized_number = blockchain.last_finalized_number();
 
-            if queried_block_number <= finalized_number {
+            if queried_block_number == finalized_number {
+                // Block is exactly the finalized block, query finalized state
                 let addr_bytes: [u8; 20] = address.0;
                 if let Some(account) = blockchain.get_finalized_account(&addr_bytes) {
                     return Ok(Some(AccountState {
@@ -2722,6 +2776,16 @@ impl Store {
                         code_hash: H256::from(account.code_hash.0),
                     }));
                 }
+                return Ok(None);
+            }
+
+            // Block is older than finalized - we don't have historical state
+            if queried_block_number < finalized_number {
+                return Err(StoreError::StateBeyondHistoryDepth {
+                    block: queried_block_number,
+                    head: finalized_number + HISTORY_DEPTH, // Approximate head
+                    max_depth: HISTORY_DEPTH,
+                });
             }
         }
 

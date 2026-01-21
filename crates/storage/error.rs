@@ -48,4 +48,10 @@ pub enum StoreError {
     NotFoundDBVersion { expected: u64 },
     #[error("Incompatible DB Version: found v{found}, expected v{expected}")]
     IncompatibleDBVersion { found: u64, expected: u64 },
+    #[error("State not available: block {block} is beyond history depth (head: {head}, max depth: {max_depth}). Only finalized state and recent unfinalized blocks are available.")]
+    StateBeyondHistoryDepth {
+        block: u64,
+        head: u64,
+        max_depth: u64,
+    },
 }

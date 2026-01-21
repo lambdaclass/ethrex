@@ -76,6 +76,9 @@ pub mod utils;
 pub use layering::apply_prefix;
 pub use store::{AccountUpdatesList, EngineType, Store, UpdateBatch, hash_address, hash_key};
 
+#[cfg(feature = "ethrex-db")]
+pub use store::HISTORY_DEPTH;
+
 /// Store Schema Version, must be updated on any breaking change.
 ///
 /// An upgrade to a newer schema version invalidates currently stored data,

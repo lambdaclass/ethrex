@@ -656,3 +656,29 @@ fn test_nonexistent_code_returns_none() {
 
     assert!(result.is_none(), "Non-existent code should return None");
 }
+
+/// Test that HISTORY_DEPTH constant is correctly exported.
+#[test]
+fn test_history_depth_constant() {
+    use ethrex_storage::HISTORY_DEPTH;
+
+    // HISTORY_DEPTH should be 256, matching Ethereum's BLOCKHASH opcode limit
+    assert_eq!(HISTORY_DEPTH, 256);
+}
+
+/// Test that StateBeyondHistoryDepth error is properly formatted.
+#[test]
+fn test_state_beyond_history_depth_error() {
+    use ethrex_storage::error::StoreError;
+
+    let error = StoreError::StateBeyondHistoryDepth {
+        block: 100,
+        head: 500,
+        max_depth: 256,
+    };
+
+    let error_msg = error.to_string();
+    assert!(error_msg.contains("100"), "Error should mention queried block");
+    assert!(error_msg.contains("500"), "Error should mention head block");
+    assert!(error_msg.contains("256"), "Error should mention max depth");
+}
