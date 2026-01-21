@@ -31,5 +31,11 @@ pub const ZKVM_ZISK_PROGRAM_ELF: &[u8] = &[];
 pub const ZKVM_RISC0_PROGRAM_ELF: &[u8] = &[0];
 #[cfg(any(clippy, not(feature = "risc0")))]
 pub const ZKVM_RISC0_PROGRAM_ID: [u32; 8] = [0_u32; 8];
+// risc0-build generates constants named after the crate (ETHREX_GUEST_RISC0_ELF, ETHREX_GUEST_RISC0_ID)
+// We include them and re-export with our expected names
 #[cfg(all(not(clippy), feature = "risc0"))]
 include!(concat!(env!("OUT_DIR"), "/methods.rs"));
+#[cfg(all(not(clippy), feature = "risc0"))]
+pub use self::ETHREX_GUEST_RISC0_ELF as ZKVM_RISC0_PROGRAM_ELF;
+#[cfg(all(not(clippy), feature = "risc0"))]
+pub use self::ETHREX_GUEST_RISC0_ID as ZKVM_RISC0_PROGRAM_ID;
