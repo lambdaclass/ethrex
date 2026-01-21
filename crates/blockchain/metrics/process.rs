@@ -1,14 +1,10 @@
 use prometheus::{Encoder, IntGauge, Registry, TextEncoder};
-use std::{
-    fs, io,
-    path::{Path, PathBuf},
-    sync::{LazyLock, OnceLock},
-};
+use std::sync::{LazyLock, OnceLock};
 
 use crate::MetricsError;
 
 pub static METRICS_PROCESS: LazyLock<MetricsProcess> = LazyLock::new(MetricsProcess::default);
-static DATADIR_PATH: OnceLock<PathBuf> = OnceLock::new();
+static SIZE_ESTIMATOR: OnceLock<Box<dyn Fn() -> u64 + Send + Sync>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct MetricsProcess;
@@ -42,9 +38,8 @@ impl MetricsProcess {
                 })?;
         }
 
-        if let Some(path) = DATADIR_PATH.get()
-            && let Ok(size) = directory_size(path)
-        {
+        if let Some(estimator) = SIZE_ESTIMATOR.get() {
+            let size = estimator();
             let gauge = IntGauge::new(
                 "datadir_size_bytes",
                 "Total size in bytes consumed by the configured datadir.",
@@ -69,36 +64,10 @@ impl MetricsProcess {
     }
 }
 
-pub fn set_datadir_path(path: PathBuf) {
-    let _ = DATADIR_PATH.set(path);
-}
-
-fn directory_size(root: &Path) -> io::Result<u64> {
-    let mut total = 0;
-    let mut stack = vec![root.to_path_buf()];
-
-    while let Some(path) = stack.pop() {
-        let entries = match fs::read_dir(&path) {
-            Ok(entries) => entries,
-            Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
-            Err(err) => return Err(err),
-        };
-
-        for entry in entries {
-            let entry = entry?;
-            let metadata = match entry.metadata() {
-                Ok(metadata) => metadata,
-                Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
-                Err(err) => return Err(err),
-            };
-
-            if metadata.is_dir() {
-                stack.push(entry.path());
-            } else {
-                total += metadata.len();
-            }
-        }
-    }
-
-    Ok(total)
+/// Sets the size estimator function used to report datadir size metrics.
+///
+/// The estimator should return the approximate size in bytes of the datadir.
+/// This is typically backed by the storage layer's `estimate_disk_size()` method.
+pub fn set_size_estimator(estimator: Box<dyn Fn() -> u64 + Send + Sync>) {
+    let _ = SIZE_ESTIMATOR.set(estimator);
 }

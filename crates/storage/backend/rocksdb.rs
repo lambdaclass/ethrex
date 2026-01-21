@@ -10,20 +10,24 @@ use crate::api::{
 use crate::error::StoreError;
 use rocksdb::DBWithThreadMode;
 use rocksdb::checkpoint::Checkpoint;
+use rocksdb::properties::{LIVE_SST_FILES_SIZE, SIZE_ALL_MEM_TABLES};
 use rocksdb::{
     BlockBasedOptions, ColumnFamilyDescriptor, MultiThreaded, Options, SnapshotWithThreadMode,
     WriteBatch,
 };
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::fs;
 use tracing::{info, warn};
 
 /// RocksDB backend
 #[derive(Debug)]
 pub struct RocksDBBackend {
-    /// Optimistric transaction database
+    /// Optimistic transaction database
     db: Arc<DBWithThreadMode<MultiThreaded>>,
+    /// Path to the database directory
+    path: PathBuf,
 }
 
 impl RocksDBBackend {
@@ -199,7 +203,10 @@ impl RocksDBBackend {
                         warn!("Failed to drop column family '{}': {}", cf_name, e));
             }
         }
-        Ok(Self { db: Arc::new(db) })
+        Ok(Self {
+            db: Arc::new(db),
+            path: path.as_ref().to_path_buf(),
+        })
     }
 }
 
@@ -271,6 +278,33 @@ impl StorageBackend for RocksDBBackend {
         })?;
 
         Ok(())
+    }
+
+    fn estimate_disk_size(&self) -> Result<u64, StoreError> {
+        let mut total: u64 = 0;
+
+        // Sum SST file sizes and memtable sizes across all column families
+        for table in TABLES {
+            let Some(cf) = self.db.cf_handle(table) else {
+                continue;
+            };
+
+            // Live SST files size (O(1) lookup)
+            if let Ok(Some(size)) = self.db.property_int_value_cf(&cf, LIVE_SST_FILES_SIZE) {
+                total = total.saturating_add(size);
+            }
+
+            // Memtables size (active + unflushed + pinned)
+            if let Ok(Some(size)) = self.db.property_int_value_cf(&cf, SIZE_ALL_MEM_TABLES) {
+                total = total.saturating_add(size);
+            }
+        }
+
+        // Add sizes of non-SST files (WAL, MANIFEST, LOG, etc.)
+        // We iterate the directory but only stat files that aren't .sst or .blob
+        total = total.saturating_add(non_sst_files_size(&self.path));
+
+        Ok(total)
     }
 }
 
@@ -391,4 +425,34 @@ impl Drop for RocksDBLocked {
             ));
         }
     }
+}
+
+/// Returns the total size of non-SST files in the RocksDB directory.
+/// This includes WAL files (.log), MANIFEST, LOG, CURRENT, LOCK, OPTIONS, etc.
+/// We skip .sst and .blob files since those are already counted via RocksDB properties.
+fn non_sst_files_size(path: &Path) -> u64 {
+    let entries = match fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(_) => return 0,
+    };
+
+    let mut total: u64 = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+
+        // Skip files already counted by RocksDB properties
+        if name.ends_with(".sst") || name.ends_with(".blob") {
+            continue;
+        }
+
+        // Only stat non-SST files (WAL, MANIFEST, LOG, etc.)
+        if let Ok(meta) = entry.metadata() {
+            if meta.is_file() {
+                total = total.saturating_add(meta.len());
+            }
+        }
+    }
+
+    total
 }

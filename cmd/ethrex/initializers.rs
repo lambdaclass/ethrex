@@ -162,9 +162,15 @@ pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
     } else {
         #[cfg(feature = "rocksdb")]
         let engine_type = EngineType::RocksDB;
+        let store = Store::new(datadir, engine_type)?;
         #[cfg(feature = "metrics")]
-        ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
-        Store::new(datadir, engine_type)
+        {
+            let store_clone = store.clone();
+            ethrex_metrics::process::set_size_estimator(Box::new(move || {
+                store_clone.estimate_disk_size().unwrap_or(0)
+            }));
+        }
+        Ok(store)
     }
 }
 

@@ -249,6 +249,11 @@ pub struct AccountUpdatesList {
 }
 
 impl Store {
+    /// Returns an estimate of the disk space used by this store in bytes.
+    pub fn estimate_disk_size(&self) -> Result<u64, StoreError> {
+        self.backend.estimate_disk_size()
+    }
+
     /// Add a block in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
     pub async fn add_block(&self, block: Block) -> Result<(), StoreError> {

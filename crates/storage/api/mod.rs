@@ -51,6 +51,15 @@ pub trait StorageBackend: Debug + Send + Sync {
     // TODO: remove this and provide historic data via diff-layers
     /// Creates a checkpoint of the current database state at the specified path.
     fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
+
+    /// Returns an estimate of the disk space used by this storage backend in bytes.
+    ///
+    /// This is intended for metrics and should be efficient (O(1) or O(num_tables)).
+    /// The estimate may not include all overhead files (WAL, MANIFEST, etc.) - callers
+    /// should account for those separately if needed.
+    fn estimate_disk_size(&self) -> Result<u64, StoreError> {
+        Ok(0)
+    }
 }
 
 /// Read-only transaction interface.
