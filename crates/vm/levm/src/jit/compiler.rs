@@ -10,14 +10,17 @@
 //! when stencils chain via tail jumps.
 
 #![allow(unsafe_op_in_unsafe_fn)]
+#![expect(unsafe_code, reason = "JIT compiler requires unsafe for FFI stencil wrappers")]
 
 use crate::jit::context::{JitContext, JitExitReason};
 use crate::jit::executable::{ExecutableBuffer, ExecutableError};
+use crate::jit::guarded_stack::GuardedStack;
 use crate::jit::persistence::{JitOpcodeId, SerializedJitCode, SerializedOp};
+#[allow(unused_imports)]
+use crate::jit::signal_handler::{jit_setjmp, register_jit_context, unregister_jit_context};
 use crate::jit::stencils::{
-    RelocKind, Stencil, STENCIL_ADD, STENCIL_EQ, STENCIL_GAS, STENCIL_GT, STENCIL_ISZERO,
-    STENCIL_JUMPDEST, STENCIL_LT, STENCIL_MUL, STENCIL_PC, STENCIL_POP, STENCIL_PUSH,
-    STENCIL_STOP, STENCIL_SUB,
+    Stencil, STENCIL_ADD, STENCIL_EQ, STENCIL_GAS, STENCIL_GT, STENCIL_ISZERO, STENCIL_JUMPDEST,
+    STENCIL_LT, STENCIL_MUL, STENCIL_PC, STENCIL_POP, STENCIL_PUSH, STENCIL_STOP, STENCIL_SUB,
 };
 
 /// Error type for JIT compilation
@@ -656,21 +659,21 @@ unsafe extern "C" fn stencil_push_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack overflow check
-    if ctx.stack_offset == 0 {
-        ctx.exit_reason = JitExitReason::StackOverflow as u32;
-        return;
-    }
-
     // Push the value (set by execute_jit before calling this wrapper)
-    ctx.stack_offset -= 1;
-    *ctx.stack_values.add(ctx.stack_offset) = ctx.push_value;
+    // Stack overflow is detected by guard page - writing to guard triggers SIGSEGV
+    if ctx.use_mirroring {
+        // Mirrored write for large page systems
+        ctx.push_ptr_mirrored(ctx.push_value);
+    } else {
+        // Single write for small page systems
+        ctx.stack_top = ctx.stack_top.sub(1);
+        *ctx.stack_top = ctx.push_value;
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_add_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -682,28 +685,32 @@ unsafe extern "C" fn stencil_add_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack underflow check
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    // Stack underflow check (need 2 items)
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop two values
-    let a: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let b: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
+    let a: U256 = *ctx.stack_top;
+    let b: U256 = *ctx.stack_top.add(1);
 
     // Compute sum
     let result = a.overflowing_add(b).0;
 
-    // Push result
-    ctx.stack_offset += 1;
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Pop 2, push 1 -> move stack_top up by 1
+    ctx.stack_top = ctx.stack_top.add(1);
+    *ctx.stack_top = result;
+
+    // Update mirror pointer (opposite direction)
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(1);
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_sub_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -714,23 +721,29 @@ unsafe extern "C" fn stencil_sub_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    // Stack underflow check (need 2 items)
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
-    let a: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let b: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
+    let a: U256 = *ctx.stack_top;
+    let b: U256 = *ctx.stack_top.add(1);
     let result = a.overflowing_sub(b).0;
 
-    ctx.stack_offset += 1;
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Pop 2, push 1
+    ctx.stack_top = ctx.stack_top.add(1);
+    *ctx.stack_top = result;
+
+    // Update mirror pointer (opposite direction)
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(1);
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_mul_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -741,23 +754,30 @@ unsafe extern "C" fn stencil_mul_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    // Stack underflow check (need 2 items)
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
-    let a: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let b: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
+    let a: U256 = *ctx.stack_top;
+    let b: U256 = *ctx.stack_top.add(1);
     let result = a.overflowing_mul(b).0;
 
-    ctx.stack_offset += 1;
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Pop 2, push 1
+    ctx.stack_top = ctx.stack_top.add(1);
+    *ctx.stack_top = result;
+
+    // Update mirror pointer (opposite direction)
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(1);
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_pop_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
+    use ethrex_common::U256;
 
     let ctx = &mut *ctx;
 
@@ -767,12 +787,16 @@ unsafe extern "C" fn stencil_pop_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    if ctx.stack_offset > STACK_LIMIT - 1 {
+    // Stack underflow check (need 1 item)
+    if ctx.stack_top.add(1) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
-    ctx.stack_offset += 1;
+    ctx.stack_top = ctx.stack_top.add(1);
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(1);
+    }
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
@@ -791,7 +815,6 @@ unsafe extern "C" fn stencil_jumpdest_wrapper(ctx: *mut JitContext) {
 }
 
 unsafe extern "C" fn stencil_pc_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -803,21 +826,19 @@ unsafe extern "C" fn stencil_pc_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack overflow check
-    if ctx.stack_offset == 0 {
-        ctx.exit_reason = JitExitReason::StackOverflow as u32;
-        return;
+    // Push PC value - overflow detected by guard page
+    let value = U256::from(ctx.pc as u64);
+    if ctx.use_mirroring {
+        ctx.push_ptr_mirrored(value);
+    } else {
+        ctx.stack_top = ctx.stack_top.sub(1);
+        *ctx.stack_top = value;
     }
-
-    // Push PC value
-    ctx.stack_offset -= 1;
-    *ctx.stack_values.add(ctx.stack_offset) = U256::from(ctx.pc as u64);
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_gas_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -829,21 +850,19 @@ unsafe extern "C" fn stencil_gas_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack overflow check
-    if ctx.stack_offset == 0 {
-        ctx.exit_reason = JitExitReason::StackOverflow as u32;
-        return;
+    // Push remaining gas - overflow detected by guard page
+    let value = U256::from(ctx.gas_remaining as u64);
+    if ctx.use_mirroring {
+        ctx.push_ptr_mirrored(value);
+    } else {
+        ctx.stack_top = ctx.stack_top.sub(1);
+        *ctx.stack_top = value;
     }
-
-    // Push remaining gas
-    ctx.stack_offset -= 1;
-    *ctx.stack_values.add(ctx.stack_offset) = U256::from(ctx.gas_remaining as u64);
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_lt_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -855,28 +874,32 @@ unsafe extern "C" fn stencil_lt_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack underflow check
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    // Stack underflow check (need 2 items)
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop two values
-    let a: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let b: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
+    let a: U256 = *ctx.stack_top;
+    let b: U256 = *ctx.stack_top.add(1);
 
     // Compute result
     let result = if a < b { U256::from(1u64) } else { U256::zero() };
 
-    // Push result
-    ctx.stack_offset += 1;
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Pop 2, push 1
+    ctx.stack_top = ctx.stack_top.add(1);
+    *ctx.stack_top = result;
+
+    // Update mirror pointer (opposite direction)
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(1);
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_gt_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -888,28 +911,32 @@ unsafe extern "C" fn stencil_gt_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack underflow check
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    // Stack underflow check (need 2 items)
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop two values
-    let a: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let b: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
+    let a: U256 = *ctx.stack_top;
+    let b: U256 = *ctx.stack_top.add(1);
 
     // Compute result
     let result = if a > b { U256::from(1u64) } else { U256::zero() };
 
-    // Push result
-    ctx.stack_offset += 1;
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Pop 2, push 1
+    ctx.stack_top = ctx.stack_top.add(1);
+    *ctx.stack_top = result;
+
+    // Update mirror pointer (opposite direction)
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(1);
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_eq_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -921,28 +948,32 @@ unsafe extern "C" fn stencil_eq_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack underflow check
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    // Stack underflow check (need 2 items)
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop two values
-    let a: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let b: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
+    let a: U256 = *ctx.stack_top;
+    let b: U256 = *ctx.stack_top.add(1);
 
     // Compute result
     let result = if a == b { U256::from(1u64) } else { U256::zero() };
 
-    // Push result
-    ctx.stack_offset += 1;
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Pop 2, push 1
+    ctx.stack_top = ctx.stack_top.add(1);
+    *ctx.stack_top = result;
+
+    // Update mirror pointer (opposite direction)
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(1);
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_iszero_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -954,26 +985,25 @@ unsafe extern "C" fn stencil_iszero_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack underflow check
-    if ctx.stack_offset > STACK_LIMIT - 1 {
+    // Stack underflow check (need 1 item)
+    if ctx.stack_top.add(1) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop value
-    let a: U256 = *ctx.stack_values.add(ctx.stack_offset);
+    let a: U256 = *ctx.stack_top;
 
     // Compute result
     let result = if a.is_zero() { U256::from(1u64) } else { U256::zero() };
 
-    // Overwrite top (pop 1, push 1)
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Overwrite top (pop 1, push 1 = no pointer change)
+    *ctx.stack_top = result;
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_jump_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -985,15 +1015,20 @@ unsafe extern "C" fn stencil_jump_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack underflow check
-    if ctx.stack_offset > STACK_LIMIT - 1 {
+    // Stack underflow check (need 1 item)
+    if ctx.stack_top.add(1) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop destination
-    let dest: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    ctx.stack_offset += 1;
+    let dest: U256 = *ctx.stack_top;
+    ctx.stack_top = ctx.stack_top.add(1);
+
+    // Update mirror pointer (opposite direction)
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(1);
+    }
 
     // Check if destination fits in usize
     if dest > U256::from(usize::MAX) {
@@ -1009,7 +1044,6 @@ unsafe extern "C" fn stencil_jump_wrapper(ctx: *mut JitContext) {
 }
 
 unsafe extern "C" fn stencil_jumpi_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -1022,15 +1056,20 @@ unsafe extern "C" fn stencil_jumpi_wrapper(ctx: *mut JitContext) {
     }
 
     // Stack underflow check (need 2 items)
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop destination and condition
-    let dest: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let cond: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
-    ctx.stack_offset += 2;
+    let dest: U256 = *ctx.stack_top;
+    let cond: U256 = *ctx.stack_top.add(1);
+    ctx.stack_top = ctx.stack_top.add(2);
+
+    // Update mirror pointer (opposite direction, 2 pops)
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(2);
+    }
 
     // If condition is zero, don't jump (continue to next instruction)
     if cond.is_zero() {
@@ -1055,7 +1094,6 @@ unsafe extern "C" fn stencil_jumpi_wrapper(ctx: *mut JitContext) {
 macro_rules! define_dup_wrapper {
     ($name:ident, $depth:expr) => {
         unsafe extern "C" fn $name(ctx: *mut JitContext) {
-            use crate::constants::STACK_LIMIT;
             use ethrex_common::U256;
 
             let ctx = &mut *ctx;
@@ -1068,23 +1106,21 @@ macro_rules! define_dup_wrapper {
             }
 
             // Stack underflow check (need depth items)
-            if ctx.stack_offset > STACK_LIMIT - $depth {
+            if ctx.stack_top.add($depth) as *const U256 > ctx.stack_limit {
                 ctx.exit_reason = JitExitReason::StackUnderflow as u32;
                 return;
             }
 
-            // Stack overflow check
-            if ctx.stack_offset == 0 {
-                ctx.exit_reason = JitExitReason::StackOverflow as u32;
-                return;
-            }
-
             // Get the value at depth - 1 from top (0-indexed)
-            let value: U256 = *ctx.stack_values.add(ctx.stack_offset + $depth - 1);
+            let value: U256 = *ctx.stack_top.add($depth - 1);
 
-            // Push it
-            ctx.stack_offset -= 1;
-            *ctx.stack_values.add(ctx.stack_offset) = value;
+            // Push it - overflow detected by guard page
+            if ctx.use_mirroring {
+                ctx.push_ptr_mirrored(value);
+            } else {
+                ctx.stack_top = ctx.stack_top.sub(1);
+                *ctx.stack_top = value;
+            }
 
             ctx.exit_reason = JitExitReason::Continue as u32;
         }
@@ -1112,7 +1148,6 @@ define_dup_wrapper!(stencil_dup16_wrapper, 16);
 macro_rules! define_swap_wrapper {
     ($name:ident, $depth:expr) => {
         unsafe extern "C" fn $name(ctx: *mut JitContext) {
-            use crate::constants::STACK_LIMIT;
             use ethrex_common::U256;
 
             let ctx = &mut *ctx;
@@ -1125,20 +1160,17 @@ macro_rules! define_swap_wrapper {
             }
 
             // Stack underflow check (need depth + 1 items)
-            if ctx.stack_offset > STACK_LIMIT - ($depth + 1) {
+            if ctx.stack_top.add($depth + 1) as *const U256 > ctx.stack_limit {
                 ctx.exit_reason = JitExitReason::StackUnderflow as u32;
                 return;
             }
 
             // Swap top with element at depth
-            let top_idx = ctx.stack_offset;
-            let swap_idx = ctx.stack_offset + $depth;
+            let top: U256 = *ctx.stack_top;
+            let other: U256 = *ctx.stack_top.add($depth);
 
-            let top: U256 = *ctx.stack_values.add(top_idx);
-            let other: U256 = *ctx.stack_values.add(swap_idx);
-
-            *ctx.stack_values.add(top_idx) = other;
-            *ctx.stack_values.add(swap_idx) = top;
+            *ctx.stack_top = other;
+            *ctx.stack_top.add($depth) = top;
 
             ctx.exit_reason = JitExitReason::Continue as u32;
         }
@@ -1165,7 +1197,6 @@ define_swap_wrapper!(stencil_swap16_wrapper, 16);
 // Bitwise operation wrappers
 
 unsafe extern "C" fn stencil_and_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -1177,28 +1208,32 @@ unsafe extern "C" fn stencil_and_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack underflow check
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    // Stack underflow check (need 2 items)
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop two values
-    let a: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let b: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
+    let a: U256 = *ctx.stack_top;
+    let b: U256 = *ctx.stack_top.add(1);
 
     // Compute result
     let result = a & b;
 
-    // Push result (net: pop 2, push 1 = pop 1)
-    ctx.stack_offset += 1;
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Pop 2, push 1
+    ctx.stack_top = ctx.stack_top.add(1);
+    *ctx.stack_top = result;
+
+    // Update mirror pointer
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(1);
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_or_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -1210,28 +1245,32 @@ unsafe extern "C" fn stencil_or_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack underflow check
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    // Stack underflow check (need 2 items)
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop two values
-    let a: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let b: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
+    let a: U256 = *ctx.stack_top;
+    let b: U256 = *ctx.stack_top.add(1);
 
     // Compute result
     let result = a | b;
 
-    // Push result
-    ctx.stack_offset += 1;
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Pop 2, push 1
+    ctx.stack_top = ctx.stack_top.add(1);
+    *ctx.stack_top = result;
+
+    // Update mirror pointer
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(1);
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_xor_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -1243,28 +1282,32 @@ unsafe extern "C" fn stencil_xor_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack underflow check
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    // Stack underflow check (need 2 items)
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop two values
-    let a: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let b: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
+    let a: U256 = *ctx.stack_top;
+    let b: U256 = *ctx.stack_top.add(1);
 
     // Compute result
     let result = a ^ b;
 
-    // Push result
-    ctx.stack_offset += 1;
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Pop 2, push 1
+    ctx.stack_top = ctx.stack_top.add(1);
+    *ctx.stack_top = result;
+
+    // Update mirror pointer
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(1);
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_not_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -1276,26 +1319,25 @@ unsafe extern "C" fn stencil_not_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack underflow check
-    if ctx.stack_offset > STACK_LIMIT - 1 {
+    // Stack underflow check (need 1 item)
+    if ctx.stack_top.add(1) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop value
-    let a: U256 = *ctx.stack_values.add(ctx.stack_offset);
+    let a: U256 = *ctx.stack_top;
 
     // Compute result (bitwise NOT)
     let result = !a;
 
-    // Overwrite top
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Overwrite top (pop 1, push 1 = no pointer change)
+    *ctx.stack_top = result;
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_byte_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -1307,15 +1349,15 @@ unsafe extern "C" fn stencil_byte_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack underflow check
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    // Stack underflow check (need 2 items)
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop two values: byte index and value
-    let byte_index: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let value: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
+    let byte_index: U256 = *ctx.stack_top;
+    let value: U256 = *ctx.stack_top.add(1);
 
     // Compute result
     let result = if byte_index < U256::from(32u64) {
@@ -1327,15 +1369,19 @@ unsafe extern "C" fn stencil_byte_wrapper(ctx: *mut JitContext) {
         U256::zero()
     };
 
-    // Push result
-    ctx.stack_offset += 1;
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Pop 2, push 1
+    ctx.stack_top = ctx.stack_top.add(1);
+    *ctx.stack_top = result;
+
+    // Update mirror pointer
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(1);
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_shl_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -1347,15 +1393,15 @@ unsafe extern "C" fn stencil_shl_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack underflow check
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    // Stack underflow check (need 2 items)
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop two values: shift and value
-    let shift: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let value: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
+    let shift: U256 = *ctx.stack_top;
+    let value: U256 = *ctx.stack_top.add(1);
 
     // Compute result
     let result = if shift < U256::from(256u64) {
@@ -1364,15 +1410,19 @@ unsafe extern "C" fn stencil_shl_wrapper(ctx: *mut JitContext) {
         U256::zero()
     };
 
-    // Push result
-    ctx.stack_offset += 1;
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Pop 2, push 1
+    ctx.stack_top = ctx.stack_top.add(1);
+    *ctx.stack_top = result;
+
+    // Update mirror pointer
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(1);
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_shr_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -1384,15 +1434,15 @@ unsafe extern "C" fn stencil_shr_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack underflow check
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    // Stack underflow check (need 2 items)
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop two values: shift and value
-    let shift: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let value: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
+    let shift: U256 = *ctx.stack_top;
+    let value: U256 = *ctx.stack_top.add(1);
 
     // Compute result
     let result = if shift < U256::from(256u64) {
@@ -1401,15 +1451,19 @@ unsafe extern "C" fn stencil_shr_wrapper(ctx: *mut JitContext) {
         U256::zero()
     };
 
-    // Push result
-    ctx.stack_offset += 1;
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Pop 2, push 1
+    ctx.stack_top = ctx.stack_top.add(1);
+    *ctx.stack_top = result;
+
+    // Update mirror pointer
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(1);
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_sar_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -1421,15 +1475,15 @@ unsafe extern "C" fn stencil_sar_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack underflow check
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    // Stack underflow check (need 2 items)
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop two values: shift and value
-    let shift: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let value: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
+    let shift: U256 = *ctx.stack_top;
+    let value: U256 = *ctx.stack_top.add(1);
 
     // Check if value is negative (most significant bit is 1)
     let is_negative = value.bit(255);
@@ -1448,9 +1502,14 @@ unsafe extern "C" fn stencil_sar_wrapper(ctx: *mut JitContext) {
         U256::zero()
     };
 
-    // Push result
-    ctx.stack_offset += 1;
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Pop 2, push 1
+    ctx.stack_top = ctx.stack_top.add(1);
+    *ctx.stack_top = result;
+
+    // Update mirror pointer
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(1);
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
@@ -1458,7 +1517,6 @@ unsafe extern "C" fn stencil_sar_wrapper(ctx: *mut JitContext) {
 // Additional arithmetic wrappers
 
 unsafe extern "C" fn stencil_div_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -1470,28 +1528,32 @@ unsafe extern "C" fn stencil_div_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack underflow check
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    // Stack underflow check (need 2 items)
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop two values: dividend and divisor
-    let dividend: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let divisor: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
+    let dividend: U256 = *ctx.stack_top;
+    let divisor: U256 = *ctx.stack_top.add(1);
 
     // Compute result (0 if divisor is 0)
     let result = dividend.checked_div(divisor).unwrap_or(U256::zero());
 
-    // Push result
-    ctx.stack_offset += 1;
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Pop 2, push 1
+    ctx.stack_top = ctx.stack_top.add(1);
+    *ctx.stack_top = result;
+
+    // Update mirror pointer
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(1);
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_mod_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -1503,28 +1565,32 @@ unsafe extern "C" fn stencil_mod_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack underflow check
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    // Stack underflow check (need 2 items)
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop two values: dividend and divisor
-    let dividend: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let divisor: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
+    let dividend: U256 = *ctx.stack_top;
+    let divisor: U256 = *ctx.stack_top.add(1);
 
     // Compute result (0 if divisor is 0)
     let result = dividend.checked_rem(divisor).unwrap_or(U256::zero());
 
-    // Push result
-    ctx.stack_offset += 1;
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Pop 2, push 1
+    ctx.stack_top = ctx.stack_top.add(1);
+    *ctx.stack_top = result;
+
+    // Update mirror pointer
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(1);
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_sdiv_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -1536,15 +1602,15 @@ unsafe extern "C" fn stencil_sdiv_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack underflow check
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    // Stack underflow check (need 2 items)
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop two values: dividend and divisor
-    let dividend: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let divisor: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
+    let dividend: U256 = *ctx.stack_top;
+    let divisor: U256 = *ctx.stack_top.add(1);
 
     // Handle signed division
     let result = if divisor.is_zero() || dividend.is_zero() {
@@ -1569,15 +1635,19 @@ unsafe extern "C" fn stencil_sdiv_wrapper(ctx: *mut JitContext) {
         }
     };
 
-    // Push result
-    ctx.stack_offset += 1;
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Pop 2, push 1
+    ctx.stack_top = ctx.stack_top.add(1);
+    *ctx.stack_top = result;
+
+    // Update mirror pointer
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(1);
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_smod_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -1589,15 +1659,15 @@ unsafe extern "C" fn stencil_smod_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack underflow check
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    // Stack underflow check (need 2 items)
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop two values: dividend and divisor
-    let dividend: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let divisor: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
+    let dividend: U256 = *ctx.stack_top;
+    let divisor: U256 = *ctx.stack_top.add(1);
 
     // Handle signed modulo
     let result = if divisor.is_zero() || dividend.is_zero() {
@@ -1622,9 +1692,14 @@ unsafe extern "C" fn stencil_smod_wrapper(ctx: *mut JitContext) {
         }
     };
 
-    // Push result
-    ctx.stack_offset += 1;
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Pop 2, push 1
+    ctx.stack_top = ctx.stack_top.add(1);
+    *ctx.stack_top = result;
+
+    // Update mirror pointer
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(1);
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
@@ -1632,7 +1707,6 @@ unsafe extern "C" fn stencil_smod_wrapper(ctx: *mut JitContext) {
 // Extended arithmetic wrappers
 
 unsafe extern "C" fn stencil_addmod_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
     use ethrex_common::U512;
 
@@ -1646,15 +1720,15 @@ unsafe extern "C" fn stencil_addmod_wrapper(ctx: *mut JitContext) {
     }
 
     // Stack underflow check (need 3 values)
-    if ctx.stack_offset > STACK_LIMIT - 3 {
+    if ctx.stack_top.add(3) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop three values: augend, addend, modulus
-    let augend: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let addend: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
-    let modulus: U256 = *ctx.stack_values.add(ctx.stack_offset + 2);
+    let augend: U256 = *ctx.stack_top;
+    let addend: U256 = *ctx.stack_top.add(1);
+    let modulus: U256 = *ctx.stack_top.add(2);
 
     let result = if modulus.is_zero() {
         U256::zero()
@@ -1667,14 +1741,18 @@ unsafe extern "C" fn stencil_addmod_wrapper(ctx: *mut JitContext) {
     };
 
     // Pop 3, push 1 -> net change is +2
-    ctx.stack_offset += 2;
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    ctx.stack_top = ctx.stack_top.add(2);
+    *ctx.stack_top = result;
+
+    // Update mirror pointer (net change 2)
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(2);
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_mulmod_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -1687,15 +1765,15 @@ unsafe extern "C" fn stencil_mulmod_wrapper(ctx: *mut JitContext) {
     }
 
     // Stack underflow check (need 3 values)
-    if ctx.stack_offset > STACK_LIMIT - 3 {
+    if ctx.stack_top.add(3) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop three values: multiplicand, multiplier, modulus
-    let multiplicand: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let multiplier: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
-    let modulus: U256 = *ctx.stack_values.add(ctx.stack_offset + 2);
+    let multiplicand: U256 = *ctx.stack_top;
+    let multiplier: U256 = *ctx.stack_top.add(1);
+    let modulus: U256 = *ctx.stack_top.add(2);
 
     let result = if modulus.is_zero() || multiplicand.is_zero() || multiplier.is_zero() {
         U256::zero()
@@ -1708,27 +1786,31 @@ unsafe extern "C" fn stencil_mulmod_wrapper(ctx: *mut JitContext) {
     };
 
     // Pop 3, push 1 -> net change is +2
-    ctx.stack_offset += 2;
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    ctx.stack_top = ctx.stack_top.add(2);
+    *ctx.stack_top = result;
+
+    // Update mirror pointer (net change 2)
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(2);
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_exp_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
 
     // Stack underflow check first (need 2 values)
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop two values: base, exponent
-    let base: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let exponent: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
+    let base: U256 = *ctx.stack_top;
+    let exponent: U256 = *ctx.stack_top.add(1);
 
     // Gas calculation: 10 + 50 * byte_size_of_exponent
     // byte_size = ceil((256 - leading_zeros) / 8)
@@ -1749,15 +1831,19 @@ unsafe extern "C" fn stencil_exp_wrapper(ctx: *mut JitContext) {
     // Compute base^exponent mod 2^256
     let result = base.overflowing_pow(exponent).0;
 
-    // Pop 2, push 1 -> net change is +1
-    ctx.stack_offset += 1;
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Pop 2, push 1
+    ctx.stack_top = ctx.stack_top.add(1);
+    *ctx.stack_top = result;
+
+    // Update mirror pointer
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(1);
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_signextend_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -1770,14 +1856,14 @@ unsafe extern "C" fn stencil_signextend_wrapper(ctx: *mut JitContext) {
     }
 
     // Stack underflow check (need 2 values)
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop two values: byte_size_minus_one, value_to_extend
-    let byte_size_minus_one: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let value_to_extend: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
+    let byte_size_minus_one: U256 = *ctx.stack_top;
+    let value_to_extend: U256 = *ctx.stack_top.add(1);
 
     let result = if byte_size_minus_one > U256::from(31u64) {
         // If byte index > 31, result is unchanged
@@ -1797,9 +1883,14 @@ unsafe extern "C" fn stencil_signextend_wrapper(ctx: *mut JitContext) {
         }
     };
 
-    // Pop 2, push 1 -> net change is +1
-    ctx.stack_offset += 1;
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Pop 2, push 1
+    ctx.stack_top = ctx.stack_top.add(1);
+    *ctx.stack_top = result;
+
+    // Update mirror pointer
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(1);
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
@@ -1818,33 +1909,31 @@ unsafe extern "C" fn stencil_msize_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack overflow check
-    if ctx.stack_offset == 0 {
-        ctx.exit_reason = JitExitReason::StackOverflow as u32;
-        return;
+    // Push memory size - overflow detected by guard page
+    let value = U256::from(ctx.memory_size);
+    if ctx.use_mirroring {
+        ctx.push_ptr_mirrored(value);
+    } else {
+        ctx.stack_top = ctx.stack_top.sub(1);
+        *ctx.stack_top = value;
     }
-
-    // Push memory size (always a multiple of 32)
-    ctx.stack_offset -= 1;
-    *ctx.stack_values.add(ctx.stack_offset) = U256::from(ctx.memory_size);
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_mload_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
 
     // Stack underflow check (need 1 value: offset)
-    if ctx.stack_offset > STACK_LIMIT - 1 {
+    if ctx.stack_top.add(1) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop offset
-    let offset: U256 = *ctx.stack_values.add(ctx.stack_offset);
+    let offset: U256 = *ctx.stack_top;
 
     // Convert to usize
     let offset_usize: usize = match offset.try_into() {
@@ -1881,7 +1970,8 @@ unsafe extern "C" fn stencil_mload_wrapper(ctx: *mut JitContext) {
 
     // Check if memory expansion is needed beyond capacity
     if required_end > ctx.memory_capacity {
-        // Exit to interpreter to handle memory expansion
+        // Restore gas and exit to interpreter to handle memory expansion
+        ctx.gas_remaining += gas_cost;
         ctx.exit_reason = JitExitReason::ExitToInterpreter as u32;
         return;
     }
@@ -1904,28 +1994,32 @@ unsafe extern "C" fn stencil_mload_wrapper(ctx: *mut JitContext) {
 
     let result = U256::from_big_endian(&word);
 
-    // Replace top of stack with result
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Replace top of stack with result (pop 1, push 1 = no pointer change)
+    *ctx.stack_top = result;
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_mstore_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
 
     // Stack underflow check (need 2 values: offset, value)
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop offset and value
-    let offset: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let value: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
-    ctx.stack_offset += 2;
+    let offset: U256 = *ctx.stack_top;
+    let value: U256 = *ctx.stack_top.add(1);
+    ctx.stack_top = ctx.stack_top.add(2);
+
+    // Update mirror pointer
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(2);
+    }
 
     // Convert offset to usize
     let offset_usize: usize = match offset.try_into() {
@@ -1960,8 +2054,12 @@ unsafe extern "C" fn stencil_mstore_wrapper(ctx: *mut JitContext) {
 
     // Check if memory expansion is needed beyond capacity
     if required_end > ctx.memory_capacity {
-        // Restore stack and exit to interpreter
-        ctx.stack_offset -= 2;
+        // Restore stack, gas, and exit to interpreter
+        ctx.stack_top = ctx.stack_top.sub(2);
+        if ctx.use_mirroring {
+            ctx.stack_mirror = ctx.stack_mirror.add(2);
+        }
+        ctx.gas_remaining += gas_cost;
         ctx.exit_reason = JitExitReason::ExitToInterpreter as u32;
         return;
     }
@@ -1985,21 +2083,25 @@ unsafe extern "C" fn stencil_mstore_wrapper(ctx: *mut JitContext) {
 }
 
 unsafe extern "C" fn stencil_mstore8_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
 
     // Stack underflow check (need 2 values: offset, value)
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop offset and value
-    let offset: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let value: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
-    ctx.stack_offset += 2;
+    let offset: U256 = *ctx.stack_top;
+    let value: U256 = *ctx.stack_top.add(1);
+    ctx.stack_top = ctx.stack_top.add(2);
+
+    // Update mirror pointer
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(2);
+    }
 
     // Convert offset to usize
     let offset_usize: usize = match offset.try_into() {
@@ -2034,8 +2136,12 @@ unsafe extern "C" fn stencil_mstore8_wrapper(ctx: *mut JitContext) {
 
     // Check if memory expansion is needed beyond capacity
     if required_end > ctx.memory_capacity {
-        // Restore stack and exit to interpreter
-        ctx.stack_offset -= 2;
+        // Restore stack, gas, and exit to interpreter
+        ctx.stack_top = ctx.stack_top.sub(2);
+        if ctx.use_mirroring {
+            ctx.stack_mirror = ctx.stack_mirror.add(2);
+        }
+        ctx.gas_remaining += gas_cost;
         ctx.exit_reason = JitExitReason::ExitToInterpreter as u32;
         return;
     }
@@ -2068,19 +2174,18 @@ unsafe extern "C" fn stencil_address_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack overflow check
-    if ctx.stack_offset == 0 {
-        ctx.exit_reason = JitExitReason::StackOverflow as u32;
-        return;
-    }
-
     // Convert 20-byte address to U256 (left-pad with zeros)
     let mut bytes = [0u8; 32];
     bytes[12..32].copy_from_slice(&ctx.address);
-    let address = U256::from_big_endian(&bytes);
+    let value = U256::from_big_endian(&bytes);
 
-    ctx.stack_offset -= 1;
-    *ctx.stack_values.add(ctx.stack_offset) = address;
+    // Push - overflow detected by guard page
+    if ctx.use_mirroring {
+        ctx.push_ptr_mirrored(value);
+    } else {
+        ctx.stack_top = ctx.stack_top.sub(1);
+        *ctx.stack_top = value;
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
@@ -2097,19 +2202,18 @@ unsafe extern "C" fn stencil_caller_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack overflow check
-    if ctx.stack_offset == 0 {
-        ctx.exit_reason = JitExitReason::StackOverflow as u32;
-        return;
-    }
-
     // Convert 20-byte address to U256 (left-pad with zeros)
     let mut bytes = [0u8; 32];
     bytes[12..32].copy_from_slice(&ctx.caller);
-    let caller = U256::from_big_endian(&bytes);
+    let value = U256::from_big_endian(&bytes);
 
-    ctx.stack_offset -= 1;
-    *ctx.stack_values.add(ctx.stack_offset) = caller;
+    // Push - overflow detected by guard page
+    if ctx.use_mirroring {
+        ctx.push_ptr_mirrored(value);
+    } else {
+        ctx.stack_top = ctx.stack_top.sub(1);
+        *ctx.stack_top = value;
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
@@ -2124,14 +2228,14 @@ unsafe extern "C" fn stencil_callvalue_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack overflow check
-    if ctx.stack_offset == 0 {
-        ctx.exit_reason = JitExitReason::StackOverflow as u32;
-        return;
+    // Push - overflow detected by guard page
+    let value = ctx.callvalue;
+    if ctx.use_mirroring {
+        ctx.push_ptr_mirrored(value);
+    } else {
+        ctx.stack_top = ctx.stack_top.sub(1);
+        *ctx.stack_top = value;
     }
-
-    ctx.stack_offset -= 1;
-    *ctx.stack_values.add(ctx.stack_offset) = ctx.callvalue;
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
@@ -2148,14 +2252,14 @@ unsafe extern "C" fn stencil_calldatasize_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack overflow check
-    if ctx.stack_offset == 0 {
-        ctx.exit_reason = JitExitReason::StackOverflow as u32;
-        return;
+    // Push - overflow detected by guard page
+    let value = U256::from(ctx.calldata_len);
+    if ctx.use_mirroring {
+        ctx.push_ptr_mirrored(value);
+    } else {
+        ctx.stack_top = ctx.stack_top.sub(1);
+        *ctx.stack_top = value;
     }
-
-    ctx.stack_offset -= 1;
-    *ctx.stack_values.add(ctx.stack_offset) = U256::from(ctx.calldata_len);
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
@@ -2172,20 +2276,19 @@ unsafe extern "C" fn stencil_codesize_wrapper(ctx: *mut JitContext) {
         return;
     }
 
-    // Stack overflow check
-    if ctx.stack_offset == 0 {
-        ctx.exit_reason = JitExitReason::StackOverflow as u32;
-        return;
+    // Push - overflow detected by guard page
+    let value = U256::from(ctx.bytecode_len);
+    if ctx.use_mirroring {
+        ctx.push_ptr_mirrored(value);
+    } else {
+        ctx.stack_top = ctx.stack_top.sub(1);
+        *ctx.stack_top = value;
     }
-
-    ctx.stack_offset -= 1;
-    *ctx.stack_values.add(ctx.stack_offset) = U256::from(ctx.bytecode_len);
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
 
 unsafe extern "C" fn stencil_calldataload_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
@@ -2198,13 +2301,13 @@ unsafe extern "C" fn stencil_calldataload_wrapper(ctx: *mut JitContext) {
     }
 
     // Stack underflow check (need 1 value)
-    if ctx.stack_offset > STACK_LIMIT - 1 {
+    if ctx.stack_top.add(1) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop offset
-    let offset: U256 = *ctx.stack_values.add(ctx.stack_offset);
+    let offset: U256 = *ctx.stack_top;
 
     // Load 32 bytes from calldata, zero-padded
     let mut word = [0u8; 32];
@@ -2221,8 +2324,8 @@ unsafe extern "C" fn stencil_calldataload_wrapper(ctx: *mut JitContext) {
 
     let result = U256::from_big_endian(&word);
 
-    // Replace top of stack with result
-    *ctx.stack_values.add(ctx.stack_offset) = result;
+    // Replace top of stack with result (pop 1, push 1 = no pointer change)
+    *ctx.stack_top = result;
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
@@ -2230,12 +2333,12 @@ unsafe extern "C" fn stencil_calldataload_wrapper(ctx: *mut JitContext) {
 // Storage operation wrappers - these exit to interpreter for state access
 
 unsafe extern "C" fn stencil_sload_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
+    use ethrex_common::U256;
 
     let ctx = &mut *ctx;
 
     // Stack underflow check (need 1 value: key)
-    if ctx.stack_offset > STACK_LIMIT - 1 {
+    if ctx.stack_top.add(1) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
@@ -2247,12 +2350,12 @@ unsafe extern "C" fn stencil_sload_wrapper(ctx: *mut JitContext) {
 }
 
 unsafe extern "C" fn stencil_sstore_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
+    use ethrex_common::U256;
 
     let ctx = &mut *ctx;
 
     // Stack underflow check (need 2 values: key, value)
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
@@ -2268,64 +2371,130 @@ unsafe extern "C" fn stencil_sstore_wrapper(ctx: *mut JitContext) {
 // System operation wrappers
 
 unsafe extern "C" fn stencil_return_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
 
     // Stack underflow check (need 2 values: offset, size)
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop offset and size
-    let offset: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let size: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
-    ctx.stack_offset += 2;
+    let offset: U256 = *ctx.stack_top;
+    let size: U256 = *ctx.stack_top.add(1);
 
-    // Convert to usize (saturating at max if overflow)
-    let offset_usize: usize = offset.try_into().unwrap_or(usize::MAX);
-    let size_usize: usize = size.try_into().unwrap_or(usize::MAX);
+    // If size is 0, no memory access needed - just return
+    if size.is_zero() {
+        ctx.stack_top = ctx.stack_top.add(2);
+        if ctx.use_mirroring {
+            ctx.stack_mirror = ctx.stack_mirror.sub(2);
+        }
+        ctx.return_offset = 0;
+        ctx.return_size = 0;
+        ctx.exit_reason = JitExitReason::Return as u32;
+        return;
+    }
 
-    // Store return offset and size
+    // Convert to usize - if overflow, exit to interpreter
+    let offset_usize: usize = match offset.try_into() {
+        Ok(o) => o,
+        Err(_) => {
+            // Offset too large - exit to interpreter to handle error
+            ctx.exit_reason = JitExitReason::ExitToInterpreter as u32;
+            return;
+        }
+    };
+    let size_usize: usize = match size.try_into() {
+        Ok(s) => s,
+        Err(_) => {
+            // Size too large - exit to interpreter to handle error
+            ctx.exit_reason = JitExitReason::ExitToInterpreter as u32;
+            return;
+        }
+    };
+
+    // Calculate required memory end
+    let required_end = offset_usize.saturating_add(size_usize);
+
+    // If memory expansion needed beyond capacity, exit to interpreter
+    if required_end > ctx.memory_capacity || required_end > ctx.memory_size {
+        // Restore stack and exit to interpreter to handle memory expansion
+        ctx.exit_reason = JitExitReason::ExitToInterpreter as u32;
+        return;
+    }
+
+    ctx.stack_top = ctx.stack_top.add(2);
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(2);
+    }
     ctx.return_offset = offset_usize;
     ctx.return_size = size_usize;
-
-    // Note: Gas for memory expansion will be handled by interpreter
-    // when it processes the return. For now we just record the location.
-
     ctx.exit_reason = JitExitReason::Return as u32;
 }
 
 unsafe extern "C" fn stencil_revert_wrapper(ctx: *mut JitContext) {
-    use crate::constants::STACK_LIMIT;
     use ethrex_common::U256;
 
     let ctx = &mut *ctx;
 
     // Stack underflow check (need 2 values: offset, size)
-    if ctx.stack_offset > STACK_LIMIT - 2 {
+    if ctx.stack_top.add(2) as *const U256 > ctx.stack_limit {
         ctx.exit_reason = JitExitReason::StackUnderflow as u32;
         return;
     }
 
     // Pop offset and size
-    let offset: U256 = *ctx.stack_values.add(ctx.stack_offset);
-    let size: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
-    ctx.stack_offset += 2;
+    let offset: U256 = *ctx.stack_top;
+    let size: U256 = *ctx.stack_top.add(1);
 
-    // Convert to usize (saturating at max if overflow)
-    let offset_usize: usize = offset.try_into().unwrap_or(usize::MAX);
-    let size_usize: usize = size.try_into().unwrap_or(usize::MAX);
+    // If size is 0, no memory access needed - just revert
+    if size.is_zero() {
+        ctx.stack_top = ctx.stack_top.add(2);
+        if ctx.use_mirroring {
+            ctx.stack_mirror = ctx.stack_mirror.sub(2);
+        }
+        ctx.return_offset = 0;
+        ctx.return_size = 0;
+        ctx.exit_reason = JitExitReason::Revert as u32;
+        return;
+    }
 
-    // Store return offset and size
+    // Convert to usize - if overflow, exit to interpreter
+    let offset_usize: usize = match offset.try_into() {
+        Ok(o) => o,
+        Err(_) => {
+            // Offset too large - exit to interpreter to handle error
+            ctx.exit_reason = JitExitReason::ExitToInterpreter as u32;
+            return;
+        }
+    };
+    let size_usize: usize = match size.try_into() {
+        Ok(s) => s,
+        Err(_) => {
+            // Size too large - exit to interpreter to handle error
+            ctx.exit_reason = JitExitReason::ExitToInterpreter as u32;
+            return;
+        }
+    };
+
+    // Calculate required memory end
+    let required_end = offset_usize.saturating_add(size_usize);
+
+    // If memory expansion needed beyond capacity, exit to interpreter
+    if required_end > ctx.memory_capacity || required_end > ctx.memory_size {
+        // Restore stack and exit to interpreter to handle memory expansion
+        ctx.exit_reason = JitExitReason::ExitToInterpreter as u32;
+        return;
+    }
+
+    ctx.stack_top = ctx.stack_top.add(2);
+    if ctx.use_mirroring {
+        ctx.stack_mirror = ctx.stack_mirror.sub(2);
+    }
     ctx.return_offset = offset_usize;
     ctx.return_size = size_usize;
-
-    // Note: Gas for memory expansion will be handled by interpreter
-    // when it processes the revert. For now we just record the location.
-
     ctx.exit_reason = JitExitReason::Revert as u32;
 }
 
@@ -2337,6 +2506,68 @@ unsafe extern "C" fn stencil_revert_wrapper(ctx: *mut JitContext) {
 /// - `code` must be valid JIT-compiled code
 /// - `ctx` must be a valid JitContext with proper pointers
 pub unsafe fn execute_jit(code: &JitCode, ctx: &mut JitContext) -> JitExitReason {
+    execute_jit_inner(code, ctx)
+}
+
+/// Execute JIT-compiled code with a guarded stack for stack overflow/underflow detection.
+///
+/// When a guarded stack is provided, stack faults are detected via SIGSEGV
+/// on guard page access, which is more efficient than per-operation checks.
+///
+/// For large page sizes (>8KB), mirrored writes are enabled to ensure guard
+/// page faults work correctly even when the stack data doesn't span page
+/// boundaries.
+///
+/// # Safety
+///
+/// Same requirements as `execute_jit`, plus:
+/// - `guarded_stack` must remain valid during execution
+/// - ctx.stack_values must point into the guarded_stack
+/// - Signal handler must be installed via `install_signal_handler()` first
+#[allow(dead_code)]
+pub unsafe fn execute_jit_with_guard(
+    code: &JitCode,
+    ctx: &mut JitContext,
+    guarded_stack: &GuardedStack,
+) -> JitExitReason {
+    // Set up guard regions (both HIGH and LOW)
+    guarded_stack.register_active();
+
+    // Enable mirroring if needed for large page systems
+    ctx.use_mirroring = guarded_stack.use_mirroring();
+
+    // Initialize mirror pointer based on current stack state
+    ctx.sync_stack_mirror();
+
+    // Register context for signal handler
+    register_jit_context(ctx);
+
+    // Set up setjmp for stack fault recovery
+    let jmp_result = jit_setjmp(&mut ctx.jmp_buf);
+
+    if jmp_result != 0 {
+        // Returned via longjmp from signal handler
+        guarded_stack.unregister_active();
+        unregister_jit_context();
+
+        // Return the appropriate exit reason (already set by signal handler)
+        return ctx.exit_reason();
+    }
+
+    // Normal execution path
+    let result = execute_jit_inner(code, ctx);
+
+    // Clean up
+    guarded_stack.unregister_active();
+    GuardedStack::clear_overflow();
+    GuardedStack::clear_underflow();
+    unregister_jit_context();
+
+    result
+}
+
+/// Inner execution loop - separated to ensure cleanup happens on all paths.
+unsafe fn execute_jit_inner(code: &JitCode, ctx: &mut JitContext) -> JitExitReason {
     let mut pc = 0;
 
     loop {

@@ -545,6 +545,7 @@ impl<'a> VM<'a> {
 
         // Build JitContext from CallFrame
         // SAFETY: We ensure the CallFrame outlives this JitContext usage
+        #[expect(unsafe_code, reason = "JIT execution requires unsafe FFI calls")]
         let mut jit_ctx = unsafe {
             JitContext::from_call_frame(
                 &mut self.current_call_frame,
@@ -554,6 +555,7 @@ impl<'a> VM<'a> {
         };
 
         // Execute JIT code
+        #[expect(unsafe_code, reason = "JIT execution requires unsafe FFI calls")]
         let exit_reason = unsafe { execute_jit(jit_code, &mut jit_ctx) };
 
         // Write back state to CallFrame

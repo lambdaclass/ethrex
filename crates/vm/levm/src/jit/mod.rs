@@ -28,7 +28,9 @@ pub mod cache;
 pub mod compiler;
 pub mod context;
 pub mod executable;
+pub mod guarded_stack;
 pub mod persistence;
+pub mod signal_handler;
 pub mod stencils;
 
 pub use cache::{
@@ -38,7 +40,9 @@ pub use cache::{
 pub use compiler::{JitCode, JitCompiler, JitError, execute_jit};
 pub use context::{JitContext, JitExitReason};
 pub use executable::ExecutableBuffer;
+pub use guarded_stack::GuardedStack;
 pub use persistence::{JitOpcodeId, SerializedJitCode};
+pub use signal_handler::install_signal_handler;
 
 #[cfg(test)]
 mod tests {
@@ -73,9 +77,24 @@ mod tests {
             calldata.as_ptr()
         };
 
+        let stack_ptr = stack_values.as_mut_ptr();
+        // Calculate mirror pointer: mirror points to opposite end of stack
+        let stack_mirror = if stack_offset >= STACK_LIMIT {
+            // Empty stack: mirror points before stack_values (into HIGH guard)
+            unsafe { stack_ptr.sub(1) }
+        } else {
+            // Non-empty: mirror at opposite position
+            unsafe { stack_ptr.add(STACK_LIMIT - 1 - stack_offset) }
+        };
         JitContext {
-            stack_values: stack_values.as_mut_ptr(),
+            stack_values: stack_ptr,
             stack_offset,
+            // Pointer-based stack access
+            stack_top: unsafe { stack_ptr.add(stack_offset) },
+            stack_limit: unsafe { stack_ptr.add(STACK_LIMIT) as *const U256 },
+            // Mirror pointer (disabled by default in tests)
+            stack_mirror,
+            use_mirroring: false,
             gas_remaining: gas,
             memory_ptr: std::ptr::null_mut(),
             memory_size: 0,
@@ -95,6 +114,56 @@ mod tests {
             callvalue: U256::from(1000u64),  // 1000 wei
             calldata_ptr,
             calldata_len: calldata.len(),
+            jmp_buf: Default::default(),
+            exit_callback: None,
+        }
+    }
+
+    /// Helper to create a test JitContext with memory allocated
+    fn make_test_ctx_with_memory<'a>(
+        stack_values: &mut [U256; STACK_LIMIT],
+        stack_offset: usize,
+        gas: i64,
+        bytecode: &[u8],
+        memory: &'a mut [u8],
+    ) -> JitContext {
+        let stack_ptr = stack_values.as_mut_ptr();
+        // Calculate mirror pointer: mirror points to opposite end of stack
+        let stack_mirror = if stack_offset >= STACK_LIMIT {
+            // Empty stack: mirror points before stack_values (into HIGH guard)
+            unsafe { stack_ptr.sub(1) }
+        } else {
+            // Non-empty: mirror at opposite position
+            unsafe { stack_ptr.add(STACK_LIMIT - 1 - stack_offset) }
+        };
+        JitContext {
+            stack_values: stack_ptr,
+            stack_offset,
+            // Pointer-based stack access
+            stack_top: unsafe { stack_ptr.add(stack_offset) },
+            stack_limit: unsafe { stack_ptr.add(STACK_LIMIT) as *const U256 },
+            // Mirror pointer (disabled by default in tests)
+            stack_mirror,
+            use_mirroring: false,
+            gas_remaining: gas,
+            memory_ptr: memory.as_mut_ptr(),
+            memory_size: memory.len(),
+            memory_capacity: memory.len(),
+            pc: 0,
+            bytecode: bytecode.as_ptr(),
+            bytecode_len: bytecode.len(),
+            jump_table: std::ptr::null(),
+            vm_ptr: std::ptr::null_mut(),
+            exit_reason: 0,
+            return_offset: 0,
+            return_size: 0,
+            push_value: U256::zero(),
+            // Environment data with test values
+            address: [0x11; 20],
+            caller: [0x22; 20],
+            callvalue: U256::from(1000u64),
+            calldata_ptr: [].as_ptr(),
+            calldata_len: 0,
             jmp_buf: Default::default(),
             exit_callback: None,
         }
@@ -142,7 +211,7 @@ mod tests {
 
         assert_eq!(exit_reason, JitExitReason::Stop, "Should exit with STOP");
         assert_eq!(ctx.gas_remaining, 97, "ADD consumes 3 gas");
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Stack should have 1 item");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Stack should have 1 item");
         assert_eq!(stack_values[STACK_LIMIT - 1], U256::from(5u64), "2 + 3 = 5");
     }
 
@@ -171,7 +240,7 @@ mod tests {
 
         assert_eq!(exit_reason, JitExitReason::Stop, "Should exit with STOP");
         assert_eq!(ctx.gas_remaining, 92, "SUB(3) + MUL(5) = 8 gas");
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Stack should have 1 item");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Stack should have 1 item");
         assert_eq!(stack_values[STACK_LIMIT - 1], U256::from(14u64), "(10-3)*2 = 14");
     }
 
@@ -195,7 +264,7 @@ mod tests {
 
         assert_eq!(exit_reason, JitExitReason::Stop, "Should exit with STOP");
         assert_eq!(ctx.gas_remaining, 98, "POP consumes 2 gas");
-        assert_eq!(ctx.stack_offset, STACK_LIMIT, "Stack should be empty");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT, "Stack should be empty");
     }
 
     /// Test: JUMPDEST (just charges gas, no-op)
@@ -487,7 +556,7 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop, "Should exit with STOP after loop");
-        assert_eq!(ctx.stack_offset, STACK_LIMIT, "Stack should be empty after POP");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT, "Stack should be empty after POP");
 
         // Gas calculation:
         // First iteration (counter=3): JUMPDEST(1) + DUP1(3) + ISZERO(3) + PUSH1(3) + JUMPI(10) + PUSH1(3) + SWAP1(3) + SUB(3) + PUSH1(3) + JUMP(8) = 40
@@ -516,8 +585,8 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
-        assert_eq!(stack_values[ctx.stack_offset], U256::from(0x0fu64), "0xFF AND 0x0F = 0x0F");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::from(0x0fu64), "0xFF AND 0x0F = 0x0F");
     }
 
     /// Test: OR opcode
@@ -537,8 +606,8 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
-        assert_eq!(stack_values[ctx.stack_offset], U256::from(0xffu64), "0xF0 OR 0x0F = 0xFF");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::from(0xffu64), "0xF0 OR 0x0F = 0xFF");
     }
 
     /// Test: XOR opcode
@@ -558,8 +627,8 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
-        assert_eq!(stack_values[ctx.stack_offset], U256::from(0x0fu64), "0xFF XOR 0xF0 = 0x0F");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::from(0x0fu64), "0xFF XOR 0xF0 = 0x0F");
     }
 
     /// Test: NOT opcode
@@ -579,8 +648,8 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
-        assert_eq!(stack_values[ctx.stack_offset], U256::MAX, "NOT 0 = MAX");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::MAX, "NOT 0 = MAX");
     }
 
     /// Test: BYTE opcode
@@ -600,8 +669,8 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
-        assert_eq!(stack_values[ctx.stack_offset], U256::from(0xabu64), "BYTE(31, 0xAB) = 0xAB");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::from(0xabu64), "BYTE(31, 0xAB) = 0xAB");
     }
 
     /// Test: SHL opcode
@@ -621,8 +690,8 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
-        assert_eq!(stack_values[ctx.stack_offset], U256::from(16u64), "1 << 4 = 16");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::from(16u64), "1 << 4 = 16");
     }
 
     /// Test: SHR opcode
@@ -642,8 +711,8 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
-        assert_eq!(stack_values[ctx.stack_offset], U256::from(1u64), "16 >> 4 = 1");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::from(1u64), "16 >> 4 = 1");
     }
 
     /// Test: SAR opcode (arithmetic shift right)
@@ -669,9 +738,9 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
         // SAR on MAX (negative in 2's complement) should give MAX (sign extension fills with 1s)
-        assert_eq!(stack_values[ctx.stack_offset], U256::MAX, "SAR(4, MAX) = MAX");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::MAX, "SAR(4, MAX) = MAX");
     }
 
     /// Test: MSIZE opcode
@@ -693,8 +762,8 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
-        assert_eq!(stack_values[ctx.stack_offset], U256::zero(), "MSIZE should be 0");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::zero(), "MSIZE should be 0");
     }
 
     /// Test: DIV opcode (unsigned division)
@@ -714,8 +783,8 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
-        assert_eq!(stack_values[ctx.stack_offset], U256::from(3u64), "10 / 3 = 3");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::from(3u64), "10 / 3 = 3");
     }
 
     /// Test: DIV by zero returns zero
@@ -735,8 +804,8 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
-        assert_eq!(stack_values[ctx.stack_offset], U256::zero(), "10 / 0 = 0");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::zero(), "10 / 0 = 0");
     }
 
     /// Test: SDIV opcode (signed division)
@@ -763,10 +832,10 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
         // -10 / 3 = -3 (truncate toward zero)
         let neg_3 = U256::MAX - U256::from(2u64); // -3 in two's complement
-        assert_eq!(stack_values[ctx.stack_offset], neg_3, "-10 / 3 = -3");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], neg_3, "-10 / 3 = -3");
     }
 
     /// Test: MOD opcode (unsigned modulo)
@@ -786,8 +855,8 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
-        assert_eq!(stack_values[ctx.stack_offset], U256::from(1u64), "10 % 3 = 1");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::from(1u64), "10 % 3 = 1");
     }
 
     /// Test: MOD by zero returns zero
@@ -807,8 +876,8 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
-        assert_eq!(stack_values[ctx.stack_offset], U256::zero(), "10 % 0 = 0");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::zero(), "10 % 0 = 0");
     }
 
     /// Test: SMOD opcode (signed modulo)
@@ -835,10 +904,10 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
         // -10 % 3 = -1 (sign follows dividend)
         let neg_1 = U256::MAX; // -1 in two's complement
-        assert_eq!(stack_values[ctx.stack_offset], neg_1, "-10 % 3 = -1");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], neg_1, "-10 % 3 = -1");
     }
 
     /// Test: ADDMOD opcode
@@ -858,8 +927,8 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
-        assert_eq!(stack_values[ctx.stack_offset], U256::from(4u64), "(10 + 10) % 8 = 4");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::from(4u64), "(10 + 10) % 8 = 4");
     }
 
     /// Test: ADDMOD with modulus 0 returns 0
@@ -879,8 +948,8 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
-        assert_eq!(stack_values[ctx.stack_offset], U256::zero(), "(10 + 10) % 0 = 0");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::zero(), "(10 + 10) % 0 = 0");
     }
 
     /// Test: MULMOD opcode
@@ -900,8 +969,8 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
-        assert_eq!(stack_values[ctx.stack_offset], U256::from(4u64), "(10 * 10) % 8 = 4");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::from(4u64), "(10 * 10) % 8 = 4");
     }
 
     /// Test: EXP opcode (exponentiation)
@@ -921,8 +990,8 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
-        assert_eq!(stack_values[ctx.stack_offset], U256::from(8u64), "2^3 = 8");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::from(8u64), "2^3 = 8");
     }
 
     /// Test: EXP with larger exponent
@@ -942,8 +1011,8 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
-        assert_eq!(stack_values[ctx.stack_offset], U256::from(1024u64), "2^10 = 1024");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::from(1024u64), "2^10 = 1024");
     }
 
     /// Test: SIGNEXTEND opcode
@@ -965,8 +1034,8 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
-        assert_eq!(stack_values[ctx.stack_offset], U256::MAX, "SIGNEXTEND(0, 0xFF) = -1");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::MAX, "SIGNEXTEND(0, 0xFF) = -1");
     }
 
     /// Test: SIGNEXTEND with positive value
@@ -988,8 +1057,8 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
-        assert_eq!(stack_values[ctx.stack_offset], U256::from(0x7fu64), "SIGNEXTEND(0, 0x7F) = 0x7F");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::from(0x7fu64), "SIGNEXTEND(0, 0x7F) = 0x7F");
     }
 
     /// Test: ADDRESS opcode
@@ -1009,10 +1078,10 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
         // Test address is [0x11; 20]
         let expected = U256::from_big_endian(&[0u8; 12].into_iter().chain([0x11u8; 20]).collect::<Vec<_>>());
-        assert_eq!(stack_values[ctx.stack_offset], expected, "ADDRESS should return test address");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], expected, "ADDRESS should return test address");
     }
 
     /// Test: CALLER opcode
@@ -1032,10 +1101,10 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
         // Test caller is [0x22; 20]
         let expected = U256::from_big_endian(&[0u8; 12].into_iter().chain([0x22u8; 20]).collect::<Vec<_>>());
-        assert_eq!(stack_values[ctx.stack_offset], expected, "CALLER should return test caller");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], expected, "CALLER should return test caller");
     }
 
     /// Test: CALLVALUE opcode
@@ -1055,9 +1124,9 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
         // Test callvalue is 1000
-        assert_eq!(stack_values[ctx.stack_offset], U256::from(1000u64), "CALLVALUE should return 1000");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::from(1000u64), "CALLVALUE should return 1000");
     }
 
     /// Test: CALLDATASIZE opcode
@@ -1079,8 +1148,8 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
-        assert_eq!(stack_values[ctx.stack_offset], U256::from(4u64), "CALLDATASIZE should return 4");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::from(4u64), "CALLDATASIZE should return 4");
     }
 
     /// Test: CODESIZE opcode
@@ -1100,8 +1169,8 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
-        assert_eq!(stack_values[ctx.stack_offset], U256::from(2u64), "CODESIZE should return 2");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::from(2u64), "CODESIZE should return 2");
     }
 
     /// Test: CALLDATALOAD opcode
@@ -1125,9 +1194,9 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
         let expected = U256::from_big_endian(&calldata);
-        assert_eq!(stack_values[ctx.stack_offset], expected, "CALLDATALOAD should load first 32 bytes");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], expected, "CALLDATALOAD should load first 32 bytes");
     }
 
     /// Test: CALLDATALOAD with out-of-bounds offset returns zeros
@@ -1149,8 +1218,8 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
-        assert_eq!(stack_values[ctx.stack_offset], U256::zero(), "CALLDATALOAD OOB should return 0");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::zero(), "CALLDATALOAD OOB should return 0");
     }
 
     /// Test: RETURN opcode
@@ -1165,14 +1234,16 @@ mod tests {
         let mut stack_values: Box<[U256; STACK_LIMIT]> =
             vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
 
-        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+        // Allocate memory for the return data
+        let mut memory = vec![0u8; 64];
+        let mut ctx = make_test_ctx_with_memory(&mut stack_values, STACK_LIMIT, 100, &bytecode, &mut memory);
 
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Return);
         assert_eq!(ctx.return_offset, 0, "Return offset should be 0");
         assert_eq!(ctx.return_size, 32, "Return size should be 32");
-        assert_eq!(ctx.stack_offset, STACK_LIMIT, "Stack should be empty after RETURN pops args");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT, "Stack should be empty after RETURN pops args");
     }
 
     /// Test: RETURN with zero size
@@ -1208,14 +1279,16 @@ mod tests {
         let mut stack_values: Box<[U256; STACK_LIMIT]> =
             vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
 
-        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 100, &bytecode);
+        // Allocate memory for the revert data
+        let mut memory = vec![0u8; 32];
+        let mut ctx = make_test_ctx_with_memory(&mut stack_values, STACK_LIMIT, 100, &bytecode, &mut memory);
 
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Revert);
         assert_eq!(ctx.return_offset, 0, "Revert offset should be 0");
         assert_eq!(ctx.return_size, 4, "Revert size should be 4");
-        assert_eq!(ctx.stack_offset, STACK_LIMIT, "Stack should be empty after REVERT pops args");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT, "Stack should be empty after REVERT pops args");
     }
 
     /// Test: MSTORE and MLOAD round-trip
@@ -1234,9 +1307,15 @@ mod tests {
         // Allocate memory for the test
         let mut memory = vec![0u8; 64];
 
+        // Use helper but with memory_size=0 to test expansion
+        let stack_ptr = stack_values.as_mut_ptr();
         let mut ctx = JitContext {
-            stack_values: stack_values.as_mut_ptr(),
+            stack_values: stack_ptr,
             stack_offset: STACK_LIMIT,
+            stack_top: unsafe { stack_ptr.add(STACK_LIMIT) },
+            stack_limit: unsafe { stack_ptr.add(STACK_LIMIT) as *const U256 },
+            stack_mirror: unsafe { stack_ptr.sub(1) },
+            use_mirroring: false,
             gas_remaining: 1000,
             memory_ptr: memory.as_mut_ptr(),
             memory_size: 0,
@@ -1262,10 +1341,10 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
         // The value 0x42 is stored as a 32-byte big-endian word at offset 0
         // When loaded back, it should be 0x42 (padded to 256 bits)
-        assert_eq!(stack_values[ctx.stack_offset], U256::from(0x42u64), "MLOAD should return stored value");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::from(0x42u64), "MLOAD should return stored value");
         assert_eq!(ctx.memory_size, 32, "Memory size should be 32 after MSTORE");
     }
 
@@ -1284,9 +1363,14 @@ mod tests {
 
         let mut memory = vec![0u8; 64];
 
+        let stack_ptr = stack_values.as_mut_ptr();
         let mut ctx = JitContext {
-            stack_values: stack_values.as_mut_ptr(),
+            stack_values: stack_ptr,
             stack_offset: STACK_LIMIT,
+            stack_top: unsafe { stack_ptr.add(STACK_LIMIT) },
+            stack_limit: unsafe { stack_ptr.add(STACK_LIMIT) as *const U256 },
+            stack_mirror: unsafe { stack_ptr.sub(1) },
+            use_mirroring: false,
             gas_remaining: 1000,
             memory_ptr: memory.as_mut_ptr(),
             memory_size: 0,
@@ -1312,10 +1396,10 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack");
         // 0xAB stored at byte 0 means the 32-byte word starting at 0 is 0xAB000...000
         let expected = U256::from(0xABu64) << 248; // 0xAB in the most significant byte
-        assert_eq!(stack_values[ctx.stack_offset], expected, "MSTORE8 should store byte at MSB position");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], expected, "MSTORE8 should store byte at MSB position");
     }
 
     /// Test: Memory expansion tracking
@@ -1333,9 +1417,14 @@ mod tests {
 
         let mut memory = vec![0u8; 128];
 
+        let stack_ptr = stack_values.as_mut_ptr();
         let mut ctx = JitContext {
-            stack_values: stack_values.as_mut_ptr(),
+            stack_values: stack_ptr,
             stack_offset: STACK_LIMIT,
+            stack_top: unsafe { stack_ptr.add(STACK_LIMIT) },
+            stack_limit: unsafe { stack_ptr.add(STACK_LIMIT) as *const U256 },
+            stack_mirror: unsafe { stack_ptr.sub(1) },
+            use_mirroring: false,
             gas_remaining: 1000,
             memory_ptr: memory.as_mut_ptr(),
             memory_size: 0,
@@ -1361,10 +1450,10 @@ mod tests {
         let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
 
         assert_eq!(exit_reason, JitExitReason::Stop);
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack (MSIZE result)");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Should have one value on stack (MSIZE result)");
         // Memory size should be 96 (64 + 32 = 96, next 32-byte boundary)
         assert_eq!(ctx.memory_size, 96, "Memory size should be 96 after MSTORE at offset 64");
-        assert_eq!(stack_values[ctx.stack_offset], U256::from(96u64), "MSIZE should return 96");
+        assert_eq!(stack_values[ctx.stack_offset_from_ptr()], U256::from(96u64), "MSIZE should return 96");
     }
 
     /// Test: SLOAD exits to interpreter (requires state access)
@@ -1386,7 +1475,7 @@ mod tests {
         // SLOAD should exit to interpreter for state access
         assert_eq!(exit_reason, JitExitReason::ExitToInterpreter);
         // Stack should still have the key on it (SLOAD doesn't consume it when exiting)
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Stack should have key");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 1, "Stack should have key");
     }
 
     /// Test: SSTORE exits to interpreter (requires state access)
@@ -1408,6 +1497,6 @@ mod tests {
         // SSTORE should exit to interpreter for state access
         assert_eq!(exit_reason, JitExitReason::ExitToInterpreter);
         // Stack should still have both key and value (SSTORE doesn't consume when exiting)
-        assert_eq!(ctx.stack_offset, STACK_LIMIT - 2, "Stack should have key and value");
+        assert_eq!(ctx.stack_offset_from_ptr(), STACK_LIMIT - 2, "Stack should have key and value");
     }
 }

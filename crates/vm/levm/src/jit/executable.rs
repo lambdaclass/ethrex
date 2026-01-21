@@ -129,6 +129,7 @@ impl ExecutableBuffer {
         }
 
         // Copy the bytes
+        #[expect(unsafe_code, reason = "Raw pointer write to executable buffer")]
         unsafe {
             std::ptr::copy_nonoverlapping(
                 stencil.bytes.as_ptr(),
@@ -159,6 +160,7 @@ impl ExecutableBuffer {
             return Err(ExecutableError::BufferTooSmall);
         }
 
+        #[expect(unsafe_code, reason = "Raw pointer write to executable buffer")]
         unsafe {
             std::ptr::copy_nonoverlapping(
                 bytes.as_ptr(),
@@ -209,6 +211,7 @@ impl ExecutableBuffer {
 
             // Patch based on architecture and relocation size
             #[cfg(target_arch = "x86_64")]
+            #[expect(unsafe_code, reason = "Raw pointer write for relocation patching")]
             unsafe {
                 match pending.reloc.size {
                     4 => {
@@ -229,6 +232,7 @@ impl ExecutableBuffer {
             }
 
             #[cfg(target_arch = "aarch64")]
+            #[expect(unsafe_code, reason = "Raw pointer write for relocation patching")]
             unsafe {
                 // ARM64 branch instructions use 26-bit signed offset, shifted left by 2
                 // BL encoding: 1001 01xx xxxx xxxx xxxx xxxx xxxx xxxx (0x9400_0000)
@@ -279,6 +283,7 @@ impl ExecutableBuffer {
             return Err(ExecutableError::InvalidRelocation);
         }
 
+        #[expect(unsafe_code, reason = "Raw pointer write for immediate patching")]
         unsafe {
             std::ptr::copy_nonoverlapping(
                 value.as_ptr(),
@@ -308,6 +313,7 @@ impl ExecutableBuffer {
     /// The buffer must have been made executable and the offset must
     /// point to valid code.
     #[allow(clippy::as_conversions)]
+    #[expect(unsafe_code, reason = "Returns function pointer from executable buffer")]
     pub unsafe fn get_function<F>(&self, offset: usize) -> Option<F>
     where
         F: Copy,
@@ -317,6 +323,7 @@ impl ExecutableBuffer {
         }
 
         // SAFETY: Caller guarantees offset points to valid code
+        #[expect(unsafe_code, reason = "Transmute pointer to function type")]
         unsafe {
             let ptr = self.ptr.as_ptr().add(offset);
             Some(std::mem::transmute_copy(&ptr))
@@ -329,6 +336,7 @@ impl ExecutableBuffer {
     fn allocate(size: usize) -> Result<NonNull<u8>, ExecutableError> {
         use libc::{MAP_ANON, MAP_PRIVATE, PROT_READ, PROT_WRITE};
 
+        #[expect(unsafe_code, reason = "libc::mmap call for memory allocation")]
         let ptr = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
@@ -353,6 +361,7 @@ impl ExecutableBuffer {
         use libc::{PROT_EXEC, PROT_READ};
 
         #[allow(clippy::as_conversions)]
+        #[expect(unsafe_code, reason = "libc::mprotect call to make memory executable")]
         let result = unsafe { libc::mprotect(ptr as *mut libc::c_void, size, PROT_READ | PROT_EXEC) };
 
         if result != 0 {
@@ -365,6 +374,7 @@ impl ExecutableBuffer {
     #[cfg(unix)]
     fn deallocate(ptr: *mut u8, size: usize) {
         #[allow(clippy::as_conversions)]
+        #[expect(unsafe_code, reason = "libc::munmap call to free memory")]
         unsafe {
             libc::munmap(ptr as *mut libc::c_void, size);
         }
@@ -392,4 +402,5 @@ impl Drop for ExecutableBuffer {
 }
 
 // ExecutableBuffer is Send but not Sync (can be moved between threads but not shared)
+#[expect(unsafe_code, reason = "ExecutableBuffer can be safely moved between threads")]
 unsafe impl Send for ExecutableBuffer {}
