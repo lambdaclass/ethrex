@@ -26,7 +26,7 @@ pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), Strin
         } => match (batch_number, input) {
             (Some(batch_number), Some(input)) => {
                 #[cfg(feature = "l2")]
-                let program_input = ProgramInput {
+                let input = ProgramInput {
                     blocks: input.blocks,
                     execution_witness: input.execution_witness,
                     elasticity_multiplier: input.elasticity_multiplier,
@@ -35,11 +35,11 @@ pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), Strin
                     fee_configs: input.fee_configs,
                 };
                 #[cfg(not(feature = "l2"))]
-                let program_input = ProgramInput {
+                let input = ProgramInput {
                     blocks: input.blocks,
                     execution_witness: input.execution_witness,
                 };
-                Ok((batch_number, program_input))
+                Ok((batch_number, input))
             }
             _ => Err("No blocks to prove.".to_owned()),
         },
