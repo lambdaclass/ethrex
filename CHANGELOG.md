@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-01-21
+
+- Use fastbloom as the bloom filter [#5968](https://github.com/lambdaclass/ethrex/pull/5968)
+
 ### 2026-01-19
 
 - Prewarm cache by executing in parallel [#5906](https://github.com/lambdaclass/ethrex/pull/5906)
