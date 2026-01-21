@@ -1,0 +1,17 @@
+[package]
+name = "ethrex-guest-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ethrex-common = { path = "../../common", default-features = false }
+ethrex-vm = { path = "../../vm", default-features = false }
+ethrex-blockchain = { path = "../../blockchain", default-features = false }
+thiserror.workspace = true
+
+[features]
+default = []
+# When this feature is enabled, the cycles used in the code inside the
+# report_cycles! macro will be reported to stdout when running inside SP1 zkVM.
+sp1-cycles = []

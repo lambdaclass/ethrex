@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use clap::ValueEnum;
 use ethrex_l2_common::prover::{BatchProof, ProofFormat};
-use guest_program::input::ProgramInput;
+use crate::zkvm::ProgramInput;
 use serde::{Deserialize, Serialize};
 
 pub mod error;

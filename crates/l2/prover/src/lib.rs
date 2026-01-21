@@ -1,6 +1,7 @@
 pub mod backend;
 pub mod config;
 pub mod prover;
+pub mod zkvm;
 
 use config::ProverConfig;
 use tracing::warn;

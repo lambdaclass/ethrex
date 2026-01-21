@@ -22,7 +22,7 @@ use ethrex_prover_lib::{BackendType, ExecBackend, ProverBackend};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmError;
-use guest_program::input::ProgramInput;
+use ethrex_guest_program::ProgramInput;
 use regex::Regex;
 
 pub fn parse_and_execute(

@@ -4,7 +4,7 @@ use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
 };
-use guest_program::{ZKVM_SP1_PROGRAM_ELF, input::ProgramInput};
+use crate::zkvm::{ZKVM_SP1_PROGRAM_ELF, ProgramInput};
 use rkyv::rancor::Error;
 use sp1_prover::components::CpuProverComponents;
 #[cfg(not(feature = "gpu"))]

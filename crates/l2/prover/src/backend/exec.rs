@@ -6,7 +6,7 @@ use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofCalldata, ProofFormat, ProverType},
 };
-use guest_program::{input::ProgramInput, output::ProgramOutput};
+use crate::zkvm::{ProgramInput, ProgramOutput, execution_program};
 
 use crate::backend::{BackendError, ProverBackend};
 
@@ -22,9 +22,8 @@ impl ExecBackend {
         Self
     }
 
-    /// Core execution - runs the guest program directly.
-    fn execute_core(input: ProgramInput) -> Result<ProgramOutput, BackendError> {
-        guest_program::execution::execution_program(input).map_err(BackendError::execution)
+    fn run_execution_program(input: ProgramInput) -> Result<ProgramOutput, BackendError> {
+        execution_program(input).map_err(BackendError::execution)
     }
 
     fn to_calldata() -> ProofCalldata {
@@ -48,7 +47,11 @@ impl ProverBackend for ExecBackend {
     }
 
     fn execute(&self, input: ProgramInput) -> Result<(), BackendError> {
-        Self::execute_core(input)?;
+        let now = std::time::Instant::now();
+        Self::run_execution_program(input)?;
+        let elapsed = now.elapsed();
+
+        info!("Successfully executed program in {:.2?}", elapsed);
         Ok(())
     }
 
@@ -58,7 +61,7 @@ impl ProverBackend for ExecBackend {
         _format: ProofFormat,
     ) -> Result<Self::ProofOutput, BackendError> {
         warn!("\"exec\" prover backend generates no proof, only executes");
-        Self::execute_core(input)
+        Self::run_execution_program(input)
     }
 
     fn verify(&self, _proof: &Self::ProofOutput) -> Result<(), BackendError> {
@@ -76,7 +79,7 @@ impl ProverBackend for ExecBackend {
 
     fn execute_timed(&self, input: ProgramInput) -> Result<Duration, BackendError> {
         let start = Instant::now();
-        Self::execute_core(input)?;
+        Self::run_execution_program(input)?;
         let elapsed = start.elapsed();
         info!("Successfully executed program in {:.2?}", elapsed);
         Ok(elapsed)

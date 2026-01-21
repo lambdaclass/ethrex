@@ -8,10 +8,12 @@ members = [
   "crates/common/rlp",
   "crates/common/trie",
   "crates/common/crypto",
+  "crates/ethrex-guest/common",
+  "crates/ethrex-guest/l1",
+  "crates/ethrex-guest/l2",
   "crates/l2/",
   "crates/l2/common",
   "crates/l2/prover",
-  "crates/l2/prover/src/guest_program",
   "crates/l2/sdk",
   "crates/l2/sdk/contract_utils",
   "crates/l2/storage",
@@ -35,6 +37,8 @@ version = "9.0.0"
 edition = "2024"
 authors = ["LambdaClass"]
 documentation = "https://docs.ethrex.xyz"
+license = "MIT"
+rust-version = "1.85"
 
 [profile.dev]
 debug = 2
@@ -70,6 +74,9 @@ ethrex-l2-common = { path = "./crates/l2/common" }
 ethrex-sdk = { path = "./crates/l2/sdk" }
 ethrex-prover = { path = "./crates/l2/prover" }
 ethrex-storage-rollup = { path = "./crates/l2/storage" }
+ethrex-guest-common = { path = "./crates/ethrex-guest/common" }
+ethrex-guest-program = { path = "./crates/ethrex-guest/l1" }
+ethrex-guest-l2 = { path = "./crates/ethrex-guest/l2" }
 ethrex = { path = "./cmd/ethrex" }
 ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
 

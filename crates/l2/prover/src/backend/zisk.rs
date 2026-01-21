@@ -5,7 +5,7 @@ use std::{
 };
 
 use ethrex_l2_common::prover::{BatchProof, ProofFormat};
-use guest_program::{ZKVM_ZISK_PROGRAM_ELF, input::ProgramInput};
+use crate::zkvm::{ZKVM_ZISK_PROGRAM_ELF, ProgramInput};
 
 use crate::backend::{BackendError, ProverBackend};
 

@@ -19,7 +19,7 @@ use ethrex_rpc::{
     clients::{EthClientError, eth::errors::EstimateGasError},
 };
 use ethrex_storage_rollup::StoreRollup;
-use guest_program::{ZKVM_RISC0_PROGRAM_VK, ZKVM_SP1_PROGRAM_ELF};
+use crate::zkvm::{ZKVM_RISC0_PROGRAM_VK, ZKVM_SP1_PROGRAM_ELF};
 use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, send_after,

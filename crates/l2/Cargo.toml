@@ -58,8 +58,7 @@ tabwriter = "1.4.1"
 color-eyre = "0.6.5"
 axum.workspace = true
 
-guest_program = { path = "./prover/src/guest_program/" }
-
+ethrex-guest-l2 = { workspace = true }
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.7" }
@@ -82,11 +81,11 @@ redundant_clone = "warn"
 [features]
 default = ["l2"]
 
-sp1 = ["guest_program/sp1"]
-risc0 = ["guest_program/risc0"]
+sp1 = []
+risc0 = []
 
 rocksdb = []
 
 metrics = ["ethrex-blockchain/metrics"]
 
-l2 = ["guest_program/l2"]
+l2 = []

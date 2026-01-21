@@ -1,0 +1,12 @@
+[package]
+name = "ethrex-guest-program"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ethrex-guest-common.workspace = true
+ethrex-common = { path = "../../common", default-features = false }
+ethrex-vm = { path = "../../vm", default-features = false }
+rkyv = { version = "0.8.10", default-features = false, features = ["std", "unaligned"] }
+serde = { version = "1.0", default-features = false, features = ["derive"] }

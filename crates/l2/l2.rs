@@ -3,6 +3,7 @@ pub mod errors;
 pub mod monitor;
 pub mod sequencer;
 pub mod utils;
+pub mod zkvm;
 
 pub use based::block_fetcher::BlockFetcher;
 pub use sequencer::configs::{
