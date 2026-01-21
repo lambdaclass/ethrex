@@ -1529,7 +1529,9 @@ impl Store {
                 let backend = EthrexDbBackend::open(path)?;
                 let blockchain = BlockchainRef(backend.blockchain());
                 let backend = Arc::new(backend);
-                let mut store = Self::from_backend(backend.clone(), db_path, DB_COMMIT_THRESHOLD)?;
+
+                // Use specialized initialization that skips TrieLayerCache workers
+                let mut store = Self::from_backend_ethrex_db(backend.clone(), db_path)?;
                 store.ethrex_blockchain = Some(blockchain);
 
                 // Mark FlatKeyValue generation as complete for ethrex_db backend.
@@ -1541,7 +1543,7 @@ impl Store {
                     tx.commit()?;
                     *store.last_computed_flatkeyvalue.lock().map_err(|_| StoreError::LockError)? = vec![0xff; 64];
                 }
-                info!("ethrex_db backend: FlatKeyValue generation skipped (using native PagedStateTrie)");
+                info!("ethrex_db backend: Initialized without TrieLayerCache workers (using native state management)");
 
                 Ok(store)
             }
@@ -1653,6 +1655,42 @@ impl Store {
         store.background_threads = Arc::new(ThreadList {
             list: background_threads,
         });
+        Ok(store)
+    }
+
+    /// Initialize Store for ethrex_db backend without TrieLayerCache workers.
+    ///
+    /// This method creates a Store that bypasses the traditional trie caching layer
+    /// because ethrex_db has its own state management (PagedStateTrie + Blockchain).
+    /// The TrieLayerCache is created but kept empty, and no background workers are spawned.
+    #[cfg(feature = "ethrex-db")]
+    fn from_backend_ethrex_db(
+        backend: Arc<dyn StorageBackend>,
+        db_path: PathBuf,
+    ) -> Result<Self, StoreError> {
+        debug!("Initializing Store for ethrex_db (no TrieLayerCache workers)");
+
+        // Create channels that won't be used but are required for the struct
+        let (fkv_tx, _fkv_rx) = std::sync::mpsc::sync_channel(1);
+        let (trie_upd_tx, _trie_upd_rx) = std::sync::mpsc::sync_channel(1);
+
+        // Use 0 commit threshold since TrieLayerCache won't be used
+        let trie_cache = Arc::new(Mutex::new(Arc::new(TrieLayerCache::new(0))));
+
+        let store = Self {
+            db_path,
+            backend,
+            ethrex_blockchain: None, // Will be set by caller
+            chain_config: Default::default(),
+            latest_block_header: Default::default(),
+            trie_cache,
+            flatkeyvalue_control_tx: fkv_tx,
+            trie_update_worker_tx: trie_upd_tx,
+            last_computed_flatkeyvalue: Arc::new(Mutex::new(vec![0xff; 64])), // Mark as complete
+            account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
+            background_threads: Arc::new(ThreadList { list: Vec::new() }), // No background threads
+        };
+
         Ok(store)
     }
 

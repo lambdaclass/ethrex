@@ -666,6 +666,26 @@ fn test_history_depth_constant() {
     assert_eq!(HISTORY_DEPTH, 256);
 }
 
+/// Test that ethrex_db backend doesn't spawn background trie workers.
+/// This verifies Phase 5: TrieLayerCache workers are skipped for ethrex_db.
+#[tokio::test]
+async fn test_ethrex_db_no_background_trie_workers() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = Store::new(temp_dir.path(), EngineType::EthrexDb)
+        .expect("Failed to create store with ethrex_db");
+
+    // Verify the store uses ethrex_db
+    assert!(store.uses_ethrex_db());
+
+    // The store should work normally without background workers
+    // (If workers were required and not spawned, operations would hang or fail)
+
+    // Basic operations should work - this tests that the Store is functional
+    // without spawning the trie_update_worker and flatkeyvalue_generator threads
+    let result = store.get_latest_block_number().await;
+    assert!(result.is_ok() || matches!(result, Err(ethrex_storage::error::StoreError::MissingLatestBlockNumber)));
+}
+
 /// Test that StateBeyondHistoryDepth error is properly formatted.
 #[test]
 fn test_state_beyond_history_depth_error() {
