@@ -5,7 +5,9 @@ use crate::{
     gas_cost::{self, max_message_call_gas},
     memory::calculate_memory_size,
     precompiles,
-    utils::{address_to_word, word_to_address, *},
+    utils::{
+        address_to_word, create_eth_transfer_log, create_selfdestruct_log, word_to_address, *,
+    },
     vm::VM,
 };
 use bytes::Bytes;
@@ -560,18 +562,44 @@ impl<'a> VM<'a> {
         if self.env.config.fork >= Fork::Cancun {
             self.transfer(to, beneficiary, balance)?;
 
+            // EIP-7708: Emit transfer log if nonzero value sent to different address
+            if self.env.config.fork >= Fork::Glamsterdam && !balance.is_zero() && to != beneficiary
+            {
+                let log = create_eth_transfer_log(to, beneficiary, balance);
+                self.substate.add_log(log);
+            }
+
             // Selfdestruct is executed in the same transaction as the contract was created
             if self.substate.is_account_created(&to) {
                 // If target is the same as the contract calling, Ether will be burnt.
                 self.get_account_mut(to)?.info.balance = U256::zero();
 
                 self.substate.add_selfdestruct(to);
+
+                // EIP-7708: Emit selfdestruct log when contract is destroyed
+                if self.env.config.fork >= Fork::Glamsterdam {
+                    let log = create_selfdestruct_log(to, balance);
+                    self.substate.add_log(log);
+                }
             }
         } else {
             self.increase_account_balance(beneficiary, balance)?;
             self.get_account_mut(to)?.info.balance = U256::zero();
 
+            // EIP-7708: Emit transfer log if nonzero value sent to different address
+            if self.env.config.fork >= Fork::Glamsterdam && !balance.is_zero() && to != beneficiary
+            {
+                let log = create_eth_transfer_log(to, beneficiary, balance);
+                self.substate.add_log(log);
+            }
+
             self.substate.add_selfdestruct(to);
+
+            // EIP-7708: Emit selfdestruct log when contract is destroyed
+            if self.env.config.fork >= Fork::Glamsterdam {
+                let log = create_selfdestruct_log(to, balance);
+                self.substate.add_log(log);
+            }
         }
 
         self.tracer
@@ -702,6 +730,12 @@ impl<'a> VM<'a> {
         self.increment_account_nonce(new_address)?; // 0 -> 1
         self.transfer(deployer, new_address, value)?;
 
+        // EIP-7708: Emit transfer log for nonzero-value CREATE/CREATE2
+        if self.env.config.fork >= Fork::Glamsterdam && !value.is_zero() {
+            let log = create_eth_transfer_log(deployer, new_address, value);
+            self.substate.add_log(log);
+        }
+
         self.substate.push_backup();
         self.substate.add_created_account(new_address); // Mostly for SELFDESTRUCT during initcode.
 
@@ -804,6 +838,12 @@ impl<'a> VM<'a> {
             // Transfer value from caller to callee.
             if should_transfer_value && ctx_result.is_success() {
                 self.transfer(msg_sender, to, value)?;
+
+                // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE
+                if self.env.config.fork >= Fork::Glamsterdam && !value.is_zero() {
+                    let log = create_eth_transfer_log(msg_sender, to, value);
+                    self.substate.add_log(log);
+                }
             }
 
             self.tracer.exit_context(&ctx_result, false)?;
@@ -835,6 +875,12 @@ impl<'a> VM<'a> {
             // Transfer value from caller to callee.
             if should_transfer_value {
                 self.transfer(msg_sender, to, value)?;
+
+                // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE
+                if self.env.config.fork >= Fork::Glamsterdam && !value.is_zero() {
+                    let log = create_eth_transfer_log(msg_sender, to, value);
+                    self.substate.add_log(log);
+                }
             }
 
             self.substate.push_backup();

@@ -4,7 +4,7 @@ use crate::{
     errors::{ContextResult, InternalError, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::hook::Hook,
-    utils::*,
+    utils::{create_eth_transfer_log, *},
     vm::VM,
 };
 
@@ -483,7 +483,17 @@ pub fn deduct_caller(
 /// Transfer msg_value to transaction recipient
 pub fn transfer_value(vm: &mut VM<'_>) -> Result<(), VMError> {
     if !vm.is_create()? {
-        vm.increase_account_balance(vm.current_call_frame.to, vm.current_call_frame.msg_value)?;
+        let value = vm.current_call_frame.msg_value;
+        let to = vm.current_call_frame.to;
+
+        vm.increase_account_balance(to, value)?;
+
+        // EIP-7708: Emit transfer log for nonzero-value transactions
+        if vm.env.config.fork >= Fork::Glamsterdam && !value.is_zero() {
+            let from = vm.env.origin;
+            let log = create_eth_transfer_log(from, to, value);
+            vm.substate.add_log(log);
+        }
     }
     Ok(())
 }

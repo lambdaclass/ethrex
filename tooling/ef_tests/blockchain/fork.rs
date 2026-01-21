@@ -70,23 +70,59 @@ lazy_static! {
         ..*OSAKA_CONFIG
     };
 
+    pub static ref BPO1_CONFIG: ChainConfig = ChainConfig {
+        bpo1_time: Some(0),
+        ..*OSAKA_CONFIG
+    };
+
     pub static ref BPO1_TO_BPO2_AT_15K_CONFIG: ChainConfig = ChainConfig {
         bpo1_time: Some(0),
         bpo2_time: Some(0x3a98),
         ..*OSAKA_CONFIG
     };
 
-    pub static ref BPO2_TO_BPO3_AT_15K_CONFIG: ChainConfig = ChainConfig {
+    pub static ref BPO2_CONFIG: ChainConfig = ChainConfig {
+        bpo1_time: Some(0),
         bpo2_time: Some(0),
+        ..*OSAKA_CONFIG
+    };
+
+    pub static ref BPO2_TO_GLAMSTERDAM_AT_15K_CONFIG: ChainConfig = ChainConfig {
+        bpo1_time: Some(0),
+        bpo2_time: Some(0),
+        glamsterdam_time: Some(0x3a98),
+        ..*OSAKA_CONFIG
+    };
+
+    pub static ref GLAMSTERDAM_CONFIG: ChainConfig = ChainConfig {
+        bpo1_time: Some(0),
+        bpo2_time: Some(0),
+        glamsterdam_time: Some(0),
+        ..*OSAKA_CONFIG
+    };
+
+    pub static ref GLAMSTERDAM_TO_BPO3_AT_15K_CONFIG: ChainConfig = ChainConfig {
+        bpo1_time: Some(0),
+        bpo2_time: Some(0),
+        glamsterdam_time: Some(0),
         bpo3_time: Some(0x3a98),
         ..*OSAKA_CONFIG
     };
+
     pub static ref BPO3_TO_BPO4_AT_15K_CONFIG: ChainConfig = ChainConfig {
+        bpo1_time: Some(0),
+        bpo2_time: Some(0),
+        glamsterdam_time: Some(0),
         bpo3_time: Some(0),
         bpo4_time: Some(0x3a98),
         ..*OSAKA_CONFIG
     };
+
     pub static ref BPO4_TO_BPO5_AT_15K_CONFIG: ChainConfig = ChainConfig {
+        bpo1_time: Some(0),
+        bpo2_time: Some(0),
+        glamsterdam_time: Some(0),
+        bpo3_time: Some(0),
         bpo4_time: Some(0),
         bpo5_time: Some(0x3a98),
         ..*OSAKA_CONFIG
@@ -127,8 +163,12 @@ pub enum Fork {
     PragueToOsakaAtTime15k,
     Osaka,
     OsakaToBPO1AtTime15k,
+    BPO1,
     BPO1ToBPO2AtTime15k,
-    BPO2ToBPO3AtTime15k,
+    BPO2,
+    BPO2ToGlamsterdamAtTime15k,
+    Glamsterdam,
+    GlamsterdamToBPO3AtTime15k,
     BPO3ToBPO4AtTime15k,
     BPO4ToBPO5AtTime15k,
 }
@@ -146,8 +186,12 @@ impl Fork {
             Fork::PragueToOsakaAtTime15k => &PRAGUE_TO_OSAKA_AT_15K_CONFIG,
             Fork::Osaka => &OSAKA_CONFIG,
             Fork::OsakaToBPO1AtTime15k => &OSAKA_TO_BPO1_AT_15K_CONFIG,
+            Fork::BPO1 => &BPO1_CONFIG,
             Fork::BPO1ToBPO2AtTime15k => &BPO1_TO_BPO2_AT_15K_CONFIG,
-            Fork::BPO2ToBPO3AtTime15k => &BPO2_TO_BPO3_AT_15K_CONFIG,
+            Fork::BPO2 => &BPO2_CONFIG,
+            Fork::BPO2ToGlamsterdamAtTime15k => &BPO2_TO_GLAMSTERDAM_AT_15K_CONFIG,
+            Fork::Glamsterdam => &GLAMSTERDAM_CONFIG,
+            Fork::GlamsterdamToBPO3AtTime15k => &GLAMSTERDAM_TO_BPO3_AT_15K_CONFIG,
             Fork::BPO3ToBPO4AtTime15k => &BPO3_TO_BPO4_AT_15K_CONFIG,
             Fork::BPO4ToBPO5AtTime15k => &BPO4_TO_BPO5_AT_15K_CONFIG,
             _ => {
