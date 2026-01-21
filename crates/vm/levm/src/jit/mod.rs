@@ -1359,4 +1359,48 @@ mod tests {
         assert_eq!(ctx.memory_size, 96, "Memory size should be 96 after MSTORE at offset 64");
         assert_eq!(stack_values[ctx.stack_offset], U256::from(96u64), "MSIZE should return 96");
     }
+
+    /// Test: SLOAD exits to interpreter (requires state access)
+    #[test]
+    fn test_sload_exits_to_interpreter() {
+        // PUSH1 0 (key), SLOAD, STOP
+        let bytecode = [0x60, 0x00, 0x54, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 1000, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        // SLOAD should exit to interpreter for state access
+        assert_eq!(exit_reason, JitExitReason::ExitToInterpreter);
+        // Stack should still have the key on it (SLOAD doesn't consume it when exiting)
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Stack should have key");
+    }
+
+    /// Test: SSTORE exits to interpreter (requires state access)
+    #[test]
+    fn test_sstore_exits_to_interpreter() {
+        // PUSH1 0x42 (value), PUSH1 0 (key), SSTORE, STOP
+        let bytecode = [0x60, 0x42, 0x60, 0x00, 0x55, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut ctx = make_test_ctx(&mut stack_values, STACK_LIMIT, 1000, &bytecode);
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        // SSTORE should exit to interpreter for state access
+        assert_eq!(exit_reason, JitExitReason::ExitToInterpreter);
+        // Stack should still have both key and value (SSTORE doesn't consume when exiting)
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 2, "Stack should have key and value");
+    }
 }

@@ -261,6 +261,12 @@ impl JitCompiler {
                 // MSTORE8
                 0x53 => (stencil_mstore8_wrapper, 1),
 
+                // SLOAD
+                0x54 => (stencil_sload_wrapper, 1),
+
+                // SSTORE
+                0x55 => (stencil_sstore_wrapper, 1),
+
                 // MSIZE
                 0x59 => (stencil_msize_wrapper, 1),
 
@@ -2011,6 +2017,44 @@ unsafe extern "C" fn stencil_calldataload_wrapper(ctx: *mut JitContext) {
     *ctx.stack_values.add(ctx.stack_offset) = result;
 
     ctx.exit_reason = JitExitReason::Continue as u32;
+}
+
+// Storage operation wrappers - these exit to interpreter for state access
+
+unsafe extern "C" fn stencil_sload_wrapper(ctx: *mut JitContext) {
+    use crate::constants::STACK_LIMIT;
+
+    let ctx = &mut *ctx;
+
+    // Stack underflow check (need 1 value: key)
+    if ctx.stack_offset > STACK_LIMIT - 1 {
+        ctx.exit_reason = JitExitReason::StackUnderflow as u32;
+        return;
+    }
+
+    // SLOAD requires state access - exit to interpreter
+    // The interpreter will handle gas calculation (which depends on warm/cold access)
+    // and the actual storage read
+    ctx.exit_reason = JitExitReason::ExitToInterpreter as u32;
+}
+
+unsafe extern "C" fn stencil_sstore_wrapper(ctx: *mut JitContext) {
+    use crate::constants::STACK_LIMIT;
+
+    let ctx = &mut *ctx;
+
+    // Stack underflow check (need 2 values: key, value)
+    if ctx.stack_offset > STACK_LIMIT - 2 {
+        ctx.exit_reason = JitExitReason::StackUnderflow as u32;
+        return;
+    }
+
+    // SSTORE requires state access - exit to interpreter
+    // The interpreter will handle:
+    // - Gas calculation (complex: depends on warm/cold, current/new values)
+    // - Static context check
+    // - Actual storage write
+    ctx.exit_reason = JitExitReason::ExitToInterpreter as u32;
 }
 
 // System operation wrappers
