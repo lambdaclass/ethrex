@@ -28,4 +28,3 @@ ethrex-guest-program = { path = "../../l1", default-features = false }
 
 [features]
 l2 = []
-default = ["l2"]

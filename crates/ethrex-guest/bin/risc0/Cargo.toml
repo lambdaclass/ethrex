@@ -50,4 +50,3 @@ substrate-bn = { git = "https://github.com/risc0/paritytech-bn", tag = "v0.6.0-r
 
 [features]
 l2 = []
-default = ["l2"]

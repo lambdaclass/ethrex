@@ -10,3 +10,30 @@ ethrex-common = { path = "../../common", default-features = false }
 ethrex-vm = { path = "../../vm", default-features = false }
 rkyv = { version = "0.8.10", default-features = false, features = ["std", "unaligned"] }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
+
+[build-dependencies]
+hex = "0.4.3"
+risc0-build = { version = "=3.0.3", optional = true }
+risc0-zkvm = { version = "=3.0.3", optional = true, features = ["getrandom"] }
+sp1-build = { version = "=5.0.8", optional = true }
+sp1-sdk = { version = "=5.0.8", optional = true }
+openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", package = "openvm-sdk", optional = true, features = [
+    "evm-prove",
+    "parallel",
+] }
+bincode = "1.3"
+serde = { version = "1.0", features = ["derive"] }
+
+[features]
+default = []
+# prover backends
+risc0 = ["dep:risc0-zkvm", "dep:risc0-build"]
+sp1 = ["dep:sp1-sdk", "dep:sp1-build"]
+zisk = []
+openvm = ["dep:openvm-sdk"]
+l2 = []
+# temporary feature until we fix cargo-zisk setup-rom from failing in the CI
+ci = []
+
+[package.metadata.risc0]
+methods = ["../bin/risc0"]

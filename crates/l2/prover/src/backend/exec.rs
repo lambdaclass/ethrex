@@ -1,6 +1,4 @@
-use std::time::{Duration, Instant};
-
-use tracing::{info, warn};
+use tracing::warn;
 
 use crate::zkvm::{ProgramInput, ProgramOutput, execution_program};
 use ethrex_l2_common::{
@@ -47,11 +45,7 @@ impl ProverBackend for ExecBackend {
     }
 
     fn execute(&self, input: ProgramInput) -> Result<(), BackendError> {
-        let now = std::time::Instant::now();
         Self::run_execution_program(input)?;
-        let elapsed = now.elapsed();
-
-        info!("Successfully executed program in {:.2?}", elapsed);
         Ok(())
     }
 
@@ -75,13 +69,5 @@ impl ProverBackend for ExecBackend {
         _format: ProofFormat,
     ) -> Result<BatchProof, BackendError> {
         Ok(BatchProof::ProofCalldata(Self::to_calldata()))
-    }
-
-    fn execute_timed(&self, input: ProgramInput) -> Result<Duration, BackendError> {
-        let start = Instant::now();
-        Self::run_execution_program(input)?;
-        let elapsed = start.elapsed();
-        info!("Successfully executed program in {:.2?}", elapsed);
-        Ok(elapsed)
     }
 }

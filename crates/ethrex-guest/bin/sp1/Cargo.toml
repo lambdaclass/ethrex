@@ -41,4 +41,3 @@ bls12_381 = { git = "https://github.com/lambdaclass/bls12_381-patch/", branch = 
 
 [features]
 l2 = ["sp1-zkvm/embedded"]
-default = ["l2"]

@@ -13,5 +13,5 @@ thiserror.workspace = true
 [features]
 default = []
 # When this feature is enabled, the cycles used in the code inside the
-# report_cycles! macro will be reported to stdout when running inside SP1 zkVM.
+# report_cycles function will be reported to stdout when running inside SP1 zkVM.
 sp1-cycles = []

@@ -34,4 +34,3 @@ kzg-rs = { git = "https://github.com/0xPolygonHermez/zisk-patch-kzg/", tag = "pa
 
 [features]
 l2 = []
-default = ["l2"]

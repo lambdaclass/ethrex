@@ -50,13 +50,13 @@ fn build_risc0_program() {
     let image_id = built_guests[0].image_id;
 
     // this errs if the dir already exists, so we don't handle an error.
-    let _ = std::fs::create_dir("../../ethrex-guest/bin/risc0/out");
+    let _ = std::fs::create_dir("../bin/risc0/out");
 
-    std::fs::write("../../ethrex-guest/bin/risc0/out/riscv32im-risc0-elf", &elf)
+    std::fs::write("../bin/risc0/out/riscv32im-risc0-elf", &elf)
         .expect("could not write Risc0 elf to file");
 
     std::fs::write(
-        "../../ethrex-guest/bin/risc0/out/riscv32im-risc0-vk",
+        "../bin/risc0/out/riscv32im-risc0-vk",
         format!("0x{}\n", hex::encode(image_id.as_bytes())),
     )
     .expect("could not write Risc0 vk to file");
@@ -74,9 +74,9 @@ fn build_sp1_program() {
     };
 
     sp1_build::build_program_with_args(
-        "../../ethrex-guest/bin/sp1",
+        "../bin/sp1",
         sp1_build::BuildArgs {
-            output_directory: Some("../../ethrex-guest/bin/sp1/out".to_string()),
+            output_directory: Some("../bin/sp1/out".to_string()),
             elf_name: Some("riscv32im-succinct-zkvm-elf".to_string()),
             features,
             docker: option_env!("PROVER_REPRODUCIBLE_BUILD").is_some(),
@@ -88,18 +88,18 @@ fn build_sp1_program() {
 
     // Get verification key
     // ref: https://github.com/succinctlabs/sp1/blob/dev/crates/cli/src/commands/vkey.rs
-    let elf = std::fs::read("../../ethrex-guest/bin/sp1/out/riscv32im-succinct-zkvm-elf")
+    let elf = std::fs::read("../bin/sp1/out/riscv32im-succinct-zkvm-elf")
         .expect("could not read SP1 elf file");
     let prover = ProverClient::from_env();
     let (_, vk) = prover.setup(&elf);
 
     std::fs::write(
-        "../../ethrex-guest/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254",
+        "../bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254",
         format!("{}\n", vk.vk.bytes32()),
     )
     .expect("could not write SP1 vk-bn254 to file");
     std::fs::write(
-        "../../ethrex-guest/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32",
+        "../bin/sp1/out/riscv32im-succinct-zkvm-vk-u32",
         format!("0x{}\n", hex::encode(vk.vk.hash_bytes())),
     )
     .expect("could not write SP1 vk-u32 to file");
@@ -128,7 +128,7 @@ fn build_zisk_program() {
         ])
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
-        .current_dir("../../ethrex-guest/bin/zisk");
+        .current_dir("../bin/zisk");
     #[cfg(not(feature = "ci"))]
     {
         setup_command
@@ -142,7 +142,7 @@ fn build_zisk_program() {
             ])
             .stdout(std::process::Stdio::inherit())
             .stderr(std::process::Stdio::inherit())
-            .current_dir("../../ethrex-guest/bin/zisk");
+            .current_dir("../bin/zisk");
     }
 
     println!("{build_command:?}");
@@ -177,11 +177,11 @@ fn build_zisk_program() {
         panic!("Failed to setup compiled guest program with zisk toolchain");
     }
 
-    let _ = std::fs::create_dir("../../ethrex-guest/bin/zisk/out");
+    let _ = std::fs::create_dir("../bin/zisk/out");
 
     std::fs::copy(
-        "../../ethrex-guest/bin/zisk/target/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk",
-        "../../ethrex-guest/bin/zisk/out/riscv64ima-zisk-elf",
+        "../bin/zisk/target/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk",
+        "../bin/zisk/out/riscv64ima-zisk-elf",
     )
     .expect("could not copy Zisk elf to output directory");
 }
@@ -200,7 +200,7 @@ fn build_openvm_program() {
         .arg("--no-transpile")
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
-        .current_dir("../../ethrex-guest/bin/openvm")
+        .current_dir("../bin/openvm")
         .status()
         .expect("failed to execute cargo openvm build");
 
@@ -209,9 +209,9 @@ fn build_openvm_program() {
     }
 
     let elf_src = Path::new(
-        "../../ethrex-guest/bin/openvm/target/riscv32im-risc0-zkvm-elf/release/ethrex-guest-openvm",
+        "../bin/openvm/target/riscv32im-risc0-zkvm-elf/release/ethrex-guest-openvm",
     );
-    let elf_dst = Path::new("../../ethrex-guest/bin/openvm/out/riscv32im-openvm-elf");
+    let elf_dst = Path::new("../bin/openvm/out/riscv32im-openvm-elf");
 
     if let Some(parent) = elf_dst.parent() {
         fs::create_dir_all(parent).expect("failed to create destination dir");
