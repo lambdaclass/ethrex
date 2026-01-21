@@ -2,7 +2,7 @@ mod error;
 mod execution;
 
 pub use error::ExecutionError;
-pub use execution::{BlockExecutionResult, execute_blocks};
+pub use execution::{BatchExecutionResult, execute_blocks};
 
 /// Report cycles used in a code block when running inside SP1 zkVM.
 ///

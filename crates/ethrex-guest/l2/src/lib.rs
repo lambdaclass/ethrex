@@ -11,4 +11,4 @@ pub use output::ProgramOutput;
 pub use program::execution_program;
 
 // Re-export common types for convenience
-pub use ethrex_guest_common::{BlockExecutionResult, ExecutionError, execute_blocks};
+pub use ethrex_guest_common::{BatchExecutionResult, ExecutionError, execute_blocks};

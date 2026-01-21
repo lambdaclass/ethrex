@@ -1,4 +1,4 @@
-use ethrex_guest_common::{BlockExecutionResult, ExecutionError, execute_blocks};
+use ethrex_guest_common::{BatchExecutionResult, ExecutionError, execute_blocks};
 use ethrex_l2_common::messages::get_balance_diffs;
 use ethrex_vm::{Evm, GuestProgramStateWrapper};
 
@@ -23,7 +23,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, L2Executi
     } = input;
 
     // Execute blocks using the common execution logic
-    let BlockExecutionResult {
+    let BatchExecutionResult {
         receipts,
         initial_state_hash,
         final_state_hash,

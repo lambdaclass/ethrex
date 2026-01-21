@@ -10,7 +10,7 @@ use crate::error::ExecutionError;
 use crate::report_cycles;
 
 /// Result of executing a batch of blocks.
-pub struct BlockExecutionResult {
+pub struct BatchExecutionResult {
     /// Receipts for each block (outer vec) and each transaction (inner vec).
     pub receipts: Vec<Vec<Receipt>>,
     /// Initial state trie root hash.
@@ -41,7 +41,7 @@ pub fn execute_blocks<F>(
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
     vm_factory: F,
-) -> Result<BlockExecutionResult, ExecutionError>
+) -> Result<BatchExecutionResult, ExecutionError>
 where
     F: Fn(&GuestProgramStateWrapper, usize) -> Result<Evm, ExecutionError>,
 {
@@ -175,7 +175,7 @@ where
 
     let last_block_hash = last_block.header.hash();
 
-    Ok(BlockExecutionResult {
+    Ok(BatchExecutionResult {
         receipts: acc_receipts,
         initial_state_hash,
         final_state_hash,
