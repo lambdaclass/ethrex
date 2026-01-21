@@ -1403,15 +1403,11 @@ impl Store {
             }
         }
 
-        // Get the last block's header before calling apply_updates
-        let last_block_header = update_batch.blocks.last().map(|b| b.header.clone());
-
         self.apply_updates(update_batch)?;
 
-        // Update latest_block_header with the last stored block
-        if let Some(header) = last_block_header {
-            self.latest_block_header.update(header);
-        }
+        // NOTE: Do NOT update latest_block_header here!
+        // The latest block header should only be updated through forkchoice_update()
+        // when a block becomes canonical, not when it's initially added via add_block().
 
         Ok(())
     }
@@ -1450,12 +1446,9 @@ impl Store {
                 tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
             }
 
-            // Store canonical block hash mapping (block_number -> block_hash)
-            tx.put(
-                CANONICAL_BLOCK_HASHES,
-                &block_number.to_le_bytes(),
-                block_hash.as_bytes(),
-            )?;
+            // NOTE: Do NOT set canonical block hash mapping here!
+            // Blocks should only become canonical through apply_fork_choice(),
+            // not when they're initially added via add_block().
         }
 
         // Store receipts
@@ -1794,6 +1787,40 @@ impl Store {
         Ok(())
     }
 
+    /// Applies account updates in a batch and commits the resulting block to ethrex_db.
+    ///
+    /// This method:
+    /// 1. Loads the parent block's state from cache
+    /// 2. Applies the account updates to build the new state
+    /// 3. Computes storage roots for each modified account
+    /// 4. Creates an ethrex_db Block with the state changes
+    /// 5. Commits the block to ethrex_db's hot storage
+    ///
+    /// # Idempotency
+    ///
+    /// This method is idempotent - calling it multiple times with the same block hash
+    /// is safe. The first call commits the block to ethrex_db, subsequent calls are no-ops.
+    ///
+    /// This behavior is intentional and necessary because:
+    /// - During payload building (`finalize_payload`), we need to compute the state root
+    ///   and commit the block to persist state changes
+    /// - During block processing (`add_block`), we also need to ensure the block is committed
+    /// - Both code paths may call this method for the same block, which is safe due to idempotency
+    ///
+    /// This restores the behavior from the legacy trie-based system where calling
+    /// `apply_account_updates_batch()` multiple times was safe.
+    ///
+    /// # Arguments
+    ///
+    /// * `parent_hash` - Hash of the parent block whose state will be used as the base
+    /// * `block_hash` - Hash of the block being created/committed
+    /// * `block_number` - Block number
+    /// * `account_updates` - Slice of account updates to apply
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(AccountUpdatesList)` containing the computed state trie hash and other info,
+    /// or `None` if the parent state was not found in cache.
     pub fn apply_account_updates_batch(
         &self,
         parent_hash: BlockHash,

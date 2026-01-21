@@ -252,9 +252,9 @@ impl Blockchain {
         let mut blocks_by_hash = self.blocks_by_hash.write().unwrap();
         let mut blocks_by_number = self.blocks_by_number.write().unwrap();
 
-        // Check for duplicates
+        // Check for duplicates - if already committed, this is idempotent (no-op)
         if blocks_by_hash.contains_key(&hash) {
-            return Err(BlockchainError::BlockExists(hash));
+            return Ok(());
         }
 
         // Add to hash index
