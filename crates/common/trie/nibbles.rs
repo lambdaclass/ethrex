@@ -129,6 +129,55 @@ impl Nibbles {
             .count()
     }
 
+    /// Fast common prefix count using word-sized comparisons.
+    ///
+    /// This is optimized for longer nibble sequences where comparing
+    /// 8 bytes at a time can significantly reduce iterations.
+    #[inline]
+    pub fn count_prefix_fast(&self, other: &Nibbles) -> usize {
+        let min_len = self.data.len().min(other.data.len());
+        let mut i = 0;
+
+        // Compare 8 bytes at a time when possible
+        while i + 8 <= min_len {
+            // SAFETY: We've verified i + 8 <= min_len, so both slices are valid
+            let a = u64::from_ne_bytes(
+                self.data[i..i + 8]
+                    .try_into()
+                    .expect("slice is exactly 8 bytes"),
+            );
+            let b = u64::from_ne_bytes(
+                other.data[i..i + 8]
+                    .try_into()
+                    .expect("slice is exactly 8 bytes"),
+            );
+            if a != b {
+                // Find first differing byte within the u64
+                // XOR gives non-zero bits where bytes differ
+                let diff = a ^ b;
+                // Count leading zero bytes (each byte = 8 bits)
+                #[allow(clippy::as_conversions)]
+                let leading_same = (diff.to_be().leading_zeros() / 8) as usize;
+                return i + leading_same;
+            }
+            i += 8;
+        }
+
+        // Handle remaining bytes one at a time
+        while i < min_len && self.data[i] == other.data[i] {
+            i += 1;
+        }
+        i
+    }
+
+    /// Pre-allocates capacity for additional nibbles.
+    ///
+    /// Useful when building nibbles incrementally to avoid repeated allocations.
+    #[inline]
+    pub fn reserve(&mut self, additional: usize) {
+        self.data.reserve(additional);
+    }
+
     /// Removes and returns the first nibble
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<u8> {

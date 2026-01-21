@@ -114,6 +114,17 @@ impl LEVM {
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
+        // Pre-compute block-level values once (Environment reuse optimization)
+        let chain_config = db.store.get_chain_config()?;
+        let block_excess_blob_gas = block.header.excess_blob_gas.map(U256::from);
+        let config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+        let base_blob_fee_per_gas = get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?;
+        let base_fee = block.header.base_fee_per_gas.unwrap_or_default();
+
+        // Create reusable Environment with block-level fields
+        let mut env =
+            Environment::from_block_header(&block.header, &chain_config, base_blob_fee_per_gas);
+
         // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
@@ -129,14 +140,19 @@ impl LEVM {
                 )));
             }
 
-            let report = Self::execute_tx_in_block(
+            // Fill tx-specific fields, reusing the Environment's Vec allocation
+            let gas_price = calculate_gas_price_for_tx(tx, base_fee, &vm_type)?;
+            env.fill_from_tx(tx, tx_sender, gas_price);
+
+            let (report, returned_env) = Self::execute_tx_with_reusable_env(
                 tx,
                 tx_sender,
-                &block.header,
+                env,
                 db,
                 vm_type,
                 &mut shared_stack_pool,
             )?;
+            env = returned_env;
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
                 tx_since_last_flush = 0;
@@ -334,6 +350,27 @@ impl LEVM {
         let result = vm.execute().map_err(VMError::into);
         std::mem::swap(&mut vm.stack_pool, stack_pool);
         result
+    }
+
+    /// Like execute_tx_in_block but allows reusing the Environment across transactions.
+    /// Returns both the execution result and the Environment for reuse.
+    fn execute_tx_with_reusable_env(
+        tx: &Transaction,
+        _tx_sender: Address,
+        env: Environment,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        stack_pool: &mut Vec<Stack>,
+    ) -> Result<(ExecutionReport, Environment), EvmError> {
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
+
+        std::mem::swap(&mut vm.stack_pool, stack_pool);
+        let result = vm.execute().map_err(VMError::into);
+        std::mem::swap(&mut vm.stack_pool, stack_pool);
+
+        // Take the Environment back from the VM for reuse
+        let env = vm.take_env();
+        result.map(|report| (report, env))
     }
 
     pub fn undo_last_tx(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {

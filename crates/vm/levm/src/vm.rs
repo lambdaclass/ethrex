@@ -697,6 +697,16 @@ impl<'a> VM<'a> {
 
         Ok(report)
     }
+
+    /// Takes ownership of the Environment from the VM.
+    ///
+    /// This allows reusing the Environment across multiple transactions,
+    /// avoiding repeated allocations (especially for `tx_blob_hashes`).
+    /// Call this after `execute()` to retrieve the Environment for reuse.
+    #[inline]
+    pub fn take_env(self) -> Environment {
+        self.env
+    }
 }
 
 impl Substate {

@@ -1,6 +1,6 @@
 use ethrex_common::{
     Address, H256, U256,
-    types::{BlockHeader, ChainConfig, Fork, ForkBlobSchedule},
+    types::{BlockHeader, ChainConfig, Fork, ForkBlobSchedule, Transaction},
 };
 
 use crate::constants::{
@@ -40,6 +40,70 @@ pub struct Environment {
     pub block_gas_limit: u64,
     pub is_privileged: bool,
     pub fee_token: Option<Address>,
+}
+
+impl Environment {
+    /// Creates an Environment with block-level fields populated.
+    /// Transaction-level fields are set to defaults and should be filled
+    /// using `fill_from_tx` for each transaction in the block.
+    ///
+    /// This allows reusing a single Environment instance across all transactions
+    /// in a block, avoiding repeated allocations (especially for `tx_blob_hashes`).
+    pub fn from_block_header(
+        header: &BlockHeader,
+        chain_config: &ChainConfig,
+        base_blob_fee_per_gas: U256,
+    ) -> Self {
+        let config = EVMConfig::new_from_chain_config(chain_config, header);
+        Self {
+            // Block-level fields
+            config,
+            block_number: header.number.into(),
+            coinbase: header.coinbase,
+            timestamp: header.timestamp.into(),
+            prev_randao: Some(header.prev_randao),
+            chain_id: chain_config.chain_id.into(),
+            base_fee_per_gas: header.base_fee_per_gas.unwrap_or_default().into(),
+            base_blob_fee_per_gas,
+            block_excess_blob_gas: header.excess_blob_gas.map(U256::from),
+            block_blob_gas_used: header.blob_gas_used.map(U256::from),
+            block_gas_limit: header.gas_limit,
+            difficulty: header.difficulty,
+            // Transaction-level fields (defaults, will be filled by fill_from_tx)
+            origin: Address::default(),
+            gas_limit: 0,
+            gas_price: U256::zero(),
+            tx_blob_hashes: Vec::new(),
+            tx_max_priority_fee_per_gas: None,
+            tx_max_fee_per_gas: None,
+            tx_max_fee_per_blob_gas: None,
+            tx_nonce: 0,
+            is_privileged: false,
+            fee_token: None,
+        }
+    }
+
+    /// Fills transaction-specific fields, reusing the existing `tx_blob_hashes` Vec allocation.
+    ///
+    /// This method should be called for each transaction when reusing an Environment
+    /// created with `from_block_header`.
+    #[inline]
+    pub fn fill_from_tx(&mut self, tx: &Transaction, sender: Address, gas_price: U256) {
+        self.origin = sender;
+        self.gas_limit = tx.gas_limit();
+        self.gas_price = gas_price;
+        self.tx_nonce = tx.nonce();
+
+        // Reuse Vec allocation: clear and extend instead of creating new Vec
+        self.tx_blob_hashes.clear();
+        self.tx_blob_hashes.extend(tx.blob_versioned_hashes());
+
+        self.tx_max_priority_fee_per_gas = tx.max_priority_fee().map(U256::from);
+        self.tx_max_fee_per_gas = tx.max_fee_per_gas().map(U256::from);
+        self.tx_max_fee_per_blob_gas = tx.max_fee_per_blob_gas();
+        self.is_privileged = matches!(tx, Transaction::PrivilegedL2Transaction(_));
+        self.fee_token = tx.fee_token();
+    }
 }
 
 /// This struct holds special configuration variables specific to the

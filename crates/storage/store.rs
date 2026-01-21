@@ -14,6 +14,7 @@ use crate::{
     apply_prefix,
     backend::in_memory::InMemoryBackend,
     error::StoreError,
+    keys::{TransactionLocationKey, WitnessKey},
     layering::{TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
     trie::{BackendTrieDB, BackendTrieDBLocked},
@@ -278,12 +279,13 @@ impl Store {
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     let tx_hash = transaction.hash();
-                    // Key: tx_hash + block_hash
-                    let mut composite_key = Vec::with_capacity(64);
-                    composite_key.extend_from_slice(tx_hash.as_bytes());
-                    composite_key.extend_from_slice(block_hash.as_bytes());
+                    let composite_key = TransactionLocationKey::new(tx_hash, block_hash);
                     let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                    tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
+                    tx.put(
+                        TRANSACTION_LOCATIONS,
+                        composite_key.as_ref(),
+                        &location_value,
+                    )?;
                 }
             }
             tx.commit()
@@ -529,13 +531,15 @@ impl Store {
         index: Index,
     ) -> Result<(), StoreError> {
         // FIXME: Use dupsort table
-        let mut composite_key = Vec::with_capacity(64);
-        composite_key.extend_from_slice(transaction_hash.as_bytes());
-        composite_key.extend_from_slice(block_hash.as_bytes());
+        let composite_key = TransactionLocationKey::new(transaction_hash, block_hash);
         let location_value = (block_number, block_hash, index).encode_to_vec();
 
-        self.write_async(TRANSACTION_LOCATIONS, composite_key, location_value)
-            .await
+        self.write_async(
+            TRANSACTION_LOCATIONS,
+            composite_key.as_ref().to_vec(),
+            location_value,
+        )
+        .await
     }
 
     /// Store transaction locations in batch (one db transaction for all)
@@ -546,11 +550,9 @@ impl Store {
         let batch_items: Vec<_> = locations
             .iter()
             .map(|(tx_hash, block_number, block_hash, index)| {
-                let mut composite_key = Vec::with_capacity(64);
-                composite_key.extend_from_slice(tx_hash.as_bytes());
-                composite_key.extend_from_slice(block_hash.as_bytes());
+                let composite_key = TransactionLocationKey::new(*tx_hash, *block_hash);
                 let location_value = (*block_number, *block_hash, *index).encode_to_vec();
-                (composite_key, location_value)
+                (composite_key.as_ref().to_vec(), location_value)
             })
             .collect();
 
@@ -1276,12 +1278,13 @@ impl Store {
 
             for (index, transaction) in block.body.transactions.iter().enumerate() {
                 let tx_hash = transaction.hash();
-                // Key: tx_hash + block_hash
-                let mut composite_key = Vec::with_capacity(64);
-                composite_key.extend_from_slice(tx_hash.as_bytes());
-                composite_key.extend_from_slice(block_hash.as_bytes());
+                let composite_key = TransactionLocationKey::new(tx_hash, block_hash);
                 let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
+                tx.put(
+                    TRANSACTION_LOCATIONS,
+                    composite_key.as_ref(),
+                    &location_value,
+                )?;
             }
         }
 
@@ -1786,10 +1789,7 @@ impl Store {
 
     // Key format: block_number (8 bytes, big-endian) + block_hash (32 bytes)
     fn make_witness_key(block_number: u64, block_hash: &BlockHash) -> Vec<u8> {
-        let mut composite_key = Vec::with_capacity(8 + 32);
-        composite_key.extend_from_slice(&block_number.to_be_bytes());
-        composite_key.extend_from_slice(block_hash.as_bytes());
-        composite_key
+        WitnessKey::new(block_number, block_hash).as_ref().to_vec()
     }
 
     pub fn store_witness(

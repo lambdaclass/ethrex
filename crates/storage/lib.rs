@@ -67,6 +67,7 @@
 pub mod api;
 pub mod backend;
 pub mod error;
+pub mod keys;
 mod layering;
 pub mod rlp;
 pub mod store;

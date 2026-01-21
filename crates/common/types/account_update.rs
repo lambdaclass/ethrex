@@ -49,4 +49,27 @@ impl AccountUpdate {
             self.added_storage.insert(key, value);
         }
     }
+
+    /// Merges multiple AccountUpdates for the same account into one.
+    ///
+    /// Pre-allocates storage capacity based on the iterator size hint
+    /// to minimize reallocations during merging.
+    ///
+    /// Returns `None` if the iterator is empty.
+    pub fn merge_batch(updates: impl IntoIterator<Item = Self>) -> Option<Self> {
+        let mut iter = updates.into_iter();
+        let mut result = iter.next()?;
+
+        // Pre-allocate based on iterator size hint
+        let (lower, upper) = iter.size_hint();
+        // Estimate ~4 storage entries per update on average
+        result
+            .added_storage
+            .reserve(upper.unwrap_or(lower).saturating_mul(4));
+
+        for update in iter {
+            result.merge(update);
+        }
+        Some(result)
+    }
 }
