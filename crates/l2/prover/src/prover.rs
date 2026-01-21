@@ -1,4 +1,7 @@
-use crate::{backend::Backend, config::ProverConfig, prove, to_batch_proof};
+use crate::{
+    backend::{BackendType, ExecBackend, ProverBackend},
+    config::ProverConfig,
+};
 use ethrex_l2::sequencer::{proof_coordinator::ProofData, utils::get_git_commit_hash};
 use ethrex_l2_common::prover::{BatchProof, ProofFormat};
 use guest_program::input::ProgramInput;
@@ -12,8 +15,40 @@ use tracing::{debug, error, info, warn};
 use url::Url;
 
 pub async fn start_prover(config: ProverConfig) {
-    let prover_worker = Prover::new(config);
-    prover_worker.start().await;
+    match config.backend {
+        BackendType::Exec => {
+            let prover = Prover::new(ExecBackend::new(), &config);
+            prover.start().await;
+        }
+        #[cfg(feature = "sp1")]
+        BackendType::SP1 => {
+            use crate::backend::sp1::{PROVER_SETUP, Sp1Backend, init_prover_setup};
+            #[cfg(feature = "gpu")]
+            PROVER_SETUP.get_or_init(|| init_prover_setup(config.sp1_server.clone()));
+            #[cfg(not(feature = "gpu"))]
+            PROVER_SETUP.get_or_init(|| init_prover_setup(None));
+            let prover = Prover::new(Sp1Backend::new(), &config);
+            prover.start().await;
+        }
+        #[cfg(feature = "risc0")]
+        BackendType::RISC0 => {
+            use crate::backend::Risc0Backend;
+            let prover = Prover::new(Risc0Backend::new(), &config);
+            prover.start().await;
+        }
+        #[cfg(feature = "zisk")]
+        BackendType::ZisK => {
+            use crate::backend::ZiskBackend;
+            let prover = Prover::new(ZiskBackend::new(), &config);
+            prover.start().await;
+        }
+        #[cfg(feature = "openvm")]
+        BackendType::OpenVM => {
+            use crate::backend::OpenVmBackend;
+            let prover = Prover::new(OpenVmBackend::new(), &config);
+            prover.start().await;
+        }
+    }
 }
 
 struct ProverData {
@@ -22,34 +57,24 @@ struct ProverData {
     format: ProofFormat,
 }
 
-struct Prover {
-    backend: Backend,
+struct Prover<B: ProverBackend> {
+    backend: B,
     proof_coordinator_endpoints: Vec<Url>,
     proving_time_ms: u64,
     commit_hash: String,
-    #[cfg(all(feature = "sp1", feature = "gpu"))]
-    sp1_server: Option<Url>,
 }
 
-impl Prover {
-    pub fn new(cfg: ProverConfig) -> Self {
+impl<B: ProverBackend> Prover<B> {
+    pub fn new(backend: B, cfg: &ProverConfig) -> Self {
         Self {
-            backend: cfg.backend,
-            proof_coordinator_endpoints: cfg.proof_coordinators,
+            backend,
+            proof_coordinator_endpoints: cfg.proof_coordinators.clone(),
             proving_time_ms: cfg.proving_time_ms,
             commit_hash: get_git_commit_hash(),
-            #[cfg(all(feature = "sp1", feature = "gpu"))]
-            sp1_server: cfg.sp1_server,
         }
     }
 
     pub async fn start(&self) {
-        #[cfg(all(feature = "sp1", feature = "gpu"))]
-        {
-            use crate::backend::sp1::{PROVER_SETUP, init_prover_setup};
-            PROVER_SETUP.get_or_init(|| init_prover_setup(self.sp1_server.clone()));
-        }
-
         info!(
             "Prover started for {:?}",
             self.proof_coordinator_endpoints
@@ -72,9 +97,11 @@ impl Prover {
 
                 // If we get the input
                 // Generate the Proof
-                let Ok(batch_proof) = prove(self.backend, prover_data.input, prover_data.format)
-                    .and_then(|output| to_batch_proof(output, prover_data.format))
-                    .inspect_err(|e| error!("{}", e.to_string()))
+                let Ok(batch_proof) = self
+                    .backend
+                    .prove(prover_data.input, prover_data.format)
+                    .and_then(|output| self.backend.to_batch_proof(output, prover_data.format))
+                    .inspect_err(|e| error!("{e}"))
                 else {
                     continue;
                 };
