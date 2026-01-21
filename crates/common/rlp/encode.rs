@@ -163,59 +163,26 @@ impl RLPEncode for u8 {
     }
 }
 
-impl RLPEncode for u16 {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        impl_encode(self.to_be_bytes(), buf);
-    }
-    #[inline]
-    fn length(&self) -> usize {
-        impl_length_integers(self.checked_ilog2().unwrap_or(0), (self & 0xff) as u8)
-    }
+/// Macro to implement RLPEncode for integer types (u16, u32, u64, usize, u128).
+/// u8 is handled separately because it uses `*self` instead of `(self & 0xff) as u8`.
+macro_rules! impl_rlp_encode_uint {
+    ($($ty:ty),+) => {
+        $(
+            impl RLPEncode for $ty {
+                fn encode(&self, buf: &mut dyn BufMut) {
+                    impl_encode(self.to_be_bytes(), buf);
+                }
+
+                #[inline]
+                fn length(&self) -> usize {
+                    impl_length_integers(self.checked_ilog2().unwrap_or(0), (self & 0xff) as u8)
+                }
+            }
+        )+
+    };
 }
 
-impl RLPEncode for u32 {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        impl_encode(self.to_be_bytes(), buf);
-    }
-
-    #[inline]
-    fn length(&self) -> usize {
-        impl_length_integers(self.checked_ilog2().unwrap_or(0), (self & 0xff) as u8)
-    }
-}
-
-impl RLPEncode for u64 {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        impl_encode(self.to_be_bytes(), buf);
-    }
-
-    #[inline]
-    fn length(&self) -> usize {
-        impl_length_integers(self.checked_ilog2().unwrap_or(0), (self & 0xff) as u8)
-    }
-}
-
-impl RLPEncode for usize {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        impl_encode(self.to_be_bytes(), buf);
-    }
-
-    #[inline]
-    fn length(&self) -> usize {
-        impl_length_integers(self.checked_ilog2().unwrap_or(0), (self & 0xff) as u8)
-    }
-}
-
-impl RLPEncode for u128 {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        impl_encode(self.to_be_bytes(), buf);
-    }
-
-    #[inline]
-    fn length(&self) -> usize {
-        impl_length_integers(self.checked_ilog2().unwrap_or(0), (self & 0xff) as u8)
-    }
-}
+impl_rlp_encode_uint!(u16, u32, u64, usize, u128);
 
 impl RLPEncode for () {
     fn encode(&self, buf: &mut dyn BufMut) {
@@ -497,93 +464,34 @@ impl RLPEncode for Bytes {
 
 // encoding for Ethereum types
 
-impl RLPEncode for ethereum_types::H32 {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        self.as_bytes().encode(buf)
-    }
+/// Macro to implement RLPEncode for Ethereum byte-wrapper types that have an `as_bytes()` method.
+macro_rules! impl_rlp_encode_bytes_wrapper {
+    ($($ty:ty),+) => {
+        $(
+            impl RLPEncode for $ty {
+                fn encode(&self, buf: &mut dyn BufMut) {
+                    self.as_bytes().encode(buf)
+                }
 
-    #[inline]
-    fn length(&self) -> usize {
-        RLPEncode::length(self.as_bytes())
-    }
+                #[inline]
+                fn length(&self) -> usize {
+                    RLPEncode::length(self.as_bytes())
+                }
+            }
+        )+
+    };
 }
 
-impl RLPEncode for ethereum_types::H64 {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        self.as_bytes().encode(buf)
-    }
-
-    #[inline]
-    fn length(&self) -> usize {
-        RLPEncode::length(self.as_bytes())
-    }
-}
-
-impl RLPEncode for ethereum_types::H128 {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        self.as_bytes().encode(buf)
-    }
-
-    #[inline]
-    fn length(&self) -> usize {
-        RLPEncode::length(self.as_bytes())
-    }
-}
-
-impl RLPEncode for ethereum_types::Address {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        self.as_bytes().encode(buf)
-    }
-
-    #[inline]
-    fn length(&self) -> usize {
-        RLPEncode::length(self.as_bytes())
-    }
-}
-
-impl RLPEncode for ethereum_types::H256 {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        self.as_bytes().encode(buf)
-    }
-
-    #[inline]
-    fn length(&self) -> usize {
-        RLPEncode::length(self.as_bytes())
-    }
-}
-
-impl RLPEncode for ethereum_types::H264 {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        self.as_bytes().encode(buf)
-    }
-
-    #[inline]
-    fn length(&self) -> usize {
-        RLPEncode::length(self.as_bytes())
-    }
-}
-
-impl RLPEncode for ethereum_types::H512 {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        self.as_bytes().encode(buf)
-    }
-
-    #[inline]
-    fn length(&self) -> usize {
-        RLPEncode::length(self.as_bytes())
-    }
-}
-
-impl RLPEncode for ethereum_types::Signature {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        self.as_bytes().encode(buf)
-    }
-
-    #[inline]
-    fn length(&self) -> usize {
-        RLPEncode::length(self.as_bytes())
-    }
-}
+impl_rlp_encode_bytes_wrapper!(
+    ethereum_types::H32,
+    ethereum_types::H64,
+    ethereum_types::H128,
+    ethereum_types::Address,
+    ethereum_types::H256,
+    ethereum_types::H264,
+    ethereum_types::H512,
+    ethereum_types::Signature
+);
 
 impl RLPEncode for ethereum_types::Bloom {
     fn encode(&self, buf: &mut dyn BufMut) {

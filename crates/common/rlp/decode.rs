@@ -76,45 +76,23 @@ impl RLPDecode for u8 {
     }
 }
 
-impl RLPDecode for u16 {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (bytes, rest) = decode_bytes(rlp)?;
-        let padded_bytes = static_left_pad(bytes)?;
-        Ok((u16::from_be_bytes(padded_bytes), rest))
-    }
+/// Macro to implement RLPDecode for integer types (u16, u32, u64, usize, u128).
+/// u8 is handled separately because it has special cases for single bytes.
+macro_rules! impl_rlp_decode_uint {
+    ($($ty:ty),+) => {
+        $(
+            impl RLPDecode for $ty {
+                fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+                    let (bytes, rest) = decode_bytes(rlp)?;
+                    let padded_bytes = static_left_pad(bytes)?;
+                    Ok((<$ty>::from_be_bytes(padded_bytes), rest))
+                }
+            }
+        )+
+    };
 }
 
-impl RLPDecode for u32 {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (bytes, rest) = decode_bytes(rlp)?;
-        let padded_bytes = static_left_pad(bytes)?;
-        Ok((u32::from_be_bytes(padded_bytes), rest))
-    }
-}
-
-impl RLPDecode for u64 {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (bytes, rest) = decode_bytes(rlp)?;
-        let padded_bytes = static_left_pad(bytes)?;
-        Ok((u64::from_be_bytes(padded_bytes), rest))
-    }
-}
-
-impl RLPDecode for usize {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (bytes, rest) = decode_bytes(rlp)?;
-        let padded_bytes = static_left_pad(bytes)?;
-        Ok((usize::from_be_bytes(padded_bytes), rest))
-    }
-}
-
-impl RLPDecode for u128 {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (bytes, rest) = decode_bytes(rlp)?;
-        let padded_bytes = static_left_pad(bytes)?;
-        Ok((u128::from_be_bytes(padded_bytes), rest))
-    }
-}
+impl_rlp_decode_uint!(u16, u32, u64, usize, u128);
 
 // Decodes a slice of bytes of a fixed size. If you want to decode a list of elements,
 // you should use the Vec<T> implementation (for elements of the same type),
@@ -144,61 +122,31 @@ impl RLPDecode for BytesMut {
     }
 }
 
-impl RLPDecode for H32 {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
-        Ok((H32(value), rest))
-    }
+/// Macro to implement RLPDecode for Ethereum fixed-size hash types.
+/// Takes pairs of (type, constructor) to handle cases like Address -> H160.
+macro_rules! impl_rlp_decode_hash {
+    ($($ty:ty => $constructor:ident),+) => {
+        $(
+            impl RLPDecode for $ty {
+                fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+                    let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
+                    Ok(($constructor(value), rest))
+                }
+            }
+        )+
+    };
 }
 
-impl RLPDecode for H64 {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
-        Ok((H64(value), rest))
-    }
-}
-
-impl RLPDecode for H128 {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
-        Ok((H128(value), rest))
-    }
-}
-
-impl RLPDecode for H256 {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
-        Ok((H256(value), rest))
-    }
-}
-
-impl RLPDecode for H264 {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
-        Ok((H264(value), rest))
-    }
-}
-
-impl RLPDecode for Address {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
-        Ok((H160(value), rest))
-    }
-}
-
-impl RLPDecode for H512 {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
-        Ok((H512(value), rest))
-    }
-}
-
-impl RLPDecode for Signature {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
-        Ok((H520(value), rest))
-    }
-}
+impl_rlp_decode_hash!(
+    H32 => H32,
+    H64 => H64,
+    H128 => H128,
+    H256 => H256,
+    H264 => H264,
+    Address => H160,
+    H512 => H512,
+    Signature => H520
+);
 
 impl RLPDecode for U256 {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
