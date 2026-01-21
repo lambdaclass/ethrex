@@ -8,6 +8,7 @@ pub mod rkyv_utils;
 mod rlp;
 #[cfg(test)]
 mod test_utils;
+pub mod threadpool;
 mod trie_iter;
 pub mod trie_sorted;
 mod verify_range;
@@ -22,6 +23,7 @@ use std::sync::{Arc, Mutex};
 pub use self::db::{InMemoryTrieDB, TrieDB};
 pub use self::logger::{TrieLogger, TrieWitness};
 pub use self::nibbles::Nibbles;
+pub use self::threadpool::ThreadPool;
 pub use self::verify_range::verify_range;
 pub use self::{
     node::{Node, NodeRef},
