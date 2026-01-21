@@ -3550,7 +3550,6 @@ dependencies = [
  "ethrex-rlp 9.0.0",
  "ethrex-storage 9.0.0",
  "ethrex-storage-rollup",
- "ethrex-threadpool",
  "ethrex-trie 9.0.0",
  "futures",
  "hex",
@@ -3778,13 +3777,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethrex-threadpool"
-version = "9.0.0"
-dependencies = [
- "crossbeam 0.8.4",
-]
-
-[[package]]
 name = "ethrex-trie"
 version = "1.0.0"
 source = "git+https://github.com/lambdaclass/ethrex?tag=v1.0.0#a976db3e20acb441b930e1afd156586f222e8f79"
@@ -3816,7 +3808,6 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-crypto",
  "ethrex-rlp 9.0.0",
- "ethrex-threadpool",
  "hex",
  "lazy_static",
  "rkyv",
