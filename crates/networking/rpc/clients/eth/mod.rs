@@ -209,10 +209,7 @@ impl EthClient {
         let method = request.method.clone();
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(|e| RpcRequestError::SerdeJSONError {
-                    method: method.clone(),
-                    source: e,
-                })
+                .map_err(|e| RpcRequestError::SerdeJSONError { method, source: e })
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method,
@@ -230,10 +227,7 @@ impl EthClient {
         let method = request.method.clone();
         match self.send_request_to_all(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(|e| RpcRequestError::SerdeJSONError {
-                    method: method.clone(),
-                    source: e,
-                })
+                .map_err(|e| RpcRequestError::SerdeJSONError { method, source: e })
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method,
