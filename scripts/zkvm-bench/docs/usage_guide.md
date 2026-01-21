@@ -113,9 +113,9 @@ Implement **ONE** optimization at a time.
 | Symptom | Action |
 |---------|--------|
 | Crypto function in top 10 | Check if patch exists, add/fix it |
-| `memcpy` > 15% | Look for excessive cloning in hot paths |
-| Serialization > 10% | Consider lazy deserialization or caching |
-| Single function > 20% | Deep dive into that function's implementation |
+| too many `memcpy` | Look for unnecesary memory allocation in hot paths |
+| too many serialization calls | Consider lazy deserialization or caching |
+| single function too expensive | Deep dive into that function's implementation |
 
 **Priority:** Patches > Algorithm Changes > Memory Layout > Micro-optimizations.
 
@@ -145,6 +145,14 @@ bin/profile-zisk.sh <input_file> [output_dir] [top_roi] [description] [elf_path]
 # Profile SP1
 bin/profile-sp1.sh <input_file> [output_dir] [sample_rate] [description]
 ```
+
+## Input Caveats
+
+1. **Block data availability is time-limited** — Non-archival nodes prune historical block data after a short window. Once pruned, you can no longer generate input for that block via RPC. Generate inputs promptly after identifying target blocks, or use an archival node.
+
+2. **Witness structure changes invalidate inputs** — Structural changes to the `ExecutionWitness` type (field additions, removals, type changes) will break deserialization of previously generated inputs. When switching branches or commits with witness changes, regenerate inputs.
+
+3. **Filenames include commit hash** — Both inputs and profiles include the git commit hash in their filenames (e.g., `ethrex_mainnet_23769082_a1b2c3d_input.bin`, `stats_20250121_143022_a1b2c3d_baseline.txt`). This helps track which code version generated each file and makes it easier to identify stale inputs after witness changes.
 
 ## Safety Rules
 

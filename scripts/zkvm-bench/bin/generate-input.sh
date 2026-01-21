@@ -50,20 +50,29 @@ fi
 
 mkdir -p "$OUTPUT_DIR"
 
-# Check if input already exists
-EXPECTED_OUTPUT="$OUTPUT_DIR/ethrex_mainnet_${BLOCK}_input.bin"
-if [ -f "$EXPECTED_OUTPUT" ]; then
-    echo "Input already exists: $EXPECTED_OUTPUT"
+# Get git commit hash (short form)
+COMMIT_HASH=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
+# Output filename includes commit hash to track witness version
+OUTPUT_FILE="$OUTPUT_DIR/ethrex_mainnet_${BLOCK}_${COMMIT_HASH}_input.bin"
+
+# Check if input already exists for this commit
+if [ -f "$OUTPUT_FILE" ]; then
+    echo "Input already exists: $OUTPUT_FILE"
     echo "Delete it to regenerate."
     exit 0
 fi
 
 echo "Generating input for block $BLOCK..."
 echo "RPC: $RPC_URL"
-echo "Output: $OUTPUT_DIR"
+echo "Commit: $COMMIT_HASH"
+echo "Output: $OUTPUT_FILE"
 echo ""
 
 cd "$ETHREX_REPLAY_PATH"
+
+# ethrex-replay generates a fixed filename, rename afterward
+TEMP_OUTPUT="$OUTPUT_DIR/ethrex_mainnet_${BLOCK}_input.bin"
 
 cargo run -r -p ethrex-replay -- \
     generate-input \
@@ -71,5 +80,10 @@ cargo run -r -p ethrex-replay -- \
     --rpc-url "$RPC_URL" \
     --output-dir "$OUTPUT_DIR"
 
+# Rename to include commit hash
+if [ -f "$TEMP_OUTPUT" ]; then
+    mv "$TEMP_OUTPUT" "$OUTPUT_FILE"
+fi
+
 echo ""
-echo "Input generated: $OUTPUT_DIR/ethrex_mainnet_${BLOCK}_input.bin"
+echo "Input generated: $OUTPUT_FILE"

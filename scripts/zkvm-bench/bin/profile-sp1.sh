@@ -50,19 +50,23 @@ fi
 mkdir -p "$OUTPUT_DIR"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
-# Add description to filename if provided
+# Get git commit hash (short form)
+COMMIT_HASH=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
+# Build filename: stats_<timestamp>_<commit>_<description>.txt
 if [ -n "$DESCRIPTION" ]; then
     # Sanitize description: lowercase, replace spaces with underscores, remove special chars
     SANITIZED=$(echo "$DESCRIPTION" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -cd '[:alnum:]_')
-    STATS_FILE="$OUTPUT_DIR/stats_${TIMESTAMP}_${SANITIZED}.txt"
+    STATS_FILE="$OUTPUT_DIR/stats_${TIMESTAMP}_${COMMIT_HASH}_${SANITIZED}.txt"
 else
-    STATS_FILE="$OUTPUT_DIR/stats_$TIMESTAMP.txt"
+    STATS_FILE="$OUTPUT_DIR/stats_${TIMESTAMP}_${COMMIT_HASH}.txt"
 fi
 
 echo "Profiling SP1 execution..."
 echo "Block: $BLOCK"
 echo "RPC: $RPC_URL"
 echo "Output: $STATS_FILE"
+echo "Commit: $COMMIT_HASH"
 if [ -n "$DESCRIPTION" ]; then
     echo "Description: $DESCRIPTION"
 fi

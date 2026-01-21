@@ -26,8 +26,11 @@ INPUT_DIR := $(SCRIPT_DIR)/inputs
 PROFILE_DIR := $(SCRIPT_DIR)/profiles/$(ZKVM)
 GUEST_DIR := $(REPO_ROOT)/crates/l2/prover/src/guest_program/src
 
-# Derived paths
-INPUT_FILE := $(INPUT_DIR)/ethrex_mainnet_$(BLOCK)_input.bin
+# Git commit hash for filenames
+COMMIT_HASH := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
+# Derived paths (includes commit hash)
+INPUT_FILE := $(INPUT_DIR)/ethrex_mainnet_$(BLOCK)_$(COMMIT_HASH)_input.bin
 
 # ELF paths
 ZISK_ELF := $(GUEST_DIR)/zisk/target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program
@@ -62,6 +65,8 @@ help:
 	@echo "  RPC_URL  - RPC endpoint (default: http://localhost:8545)"
 	@echo "  TOP_ROI  - Top functions to show (default: 25)"
 	@echo "  TITLE    - Short description for profile filename"
+	@echo ""
+	@echo "Note: Filenames include git commit hash for traceability."
 	@echo ""
 	@echo "Examples:"
 	@echo "  make bench ZKVM=zisk BLOCK=23769082 RPC_URL=\$$ALCHEMY_URL"
