@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-01-20
+
+- Remove `ethrex-threadpool` crate and move `ThreadPool` to `ethrex-trie` [#5925](https://github.com/lambdaclass/ethrex/pull/5925)
+
 ### 2026-01-19
 
 - Use FxHashset for access lists [#5864](https://github.com/lambdaclass/ethrex/pull/5864)
@@ -13,6 +17,7 @@
 
 ### 2026-01-13
 
+- Remove needless allocs in CALLDATACOPY/CODECOPY/EXTCODECOPY [#5810](https://github.com/lambdaclass/ethrex/pull/5810)
 - Inline common opcodes [#5761](https://github.com/lambdaclass/ethrex/pull/5761)
 - Improve ecrecover precompile by removing heap allocs and conversions [#5709](https://github.com/lambdaclass/ethrex/pull/5709)
 
