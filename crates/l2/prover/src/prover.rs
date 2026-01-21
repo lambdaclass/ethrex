@@ -148,19 +148,23 @@ impl<B: ProverBackend> Prover<B> {
         };
 
         info!(%endpoint, "Received Response for batch_number: {batch_number}");
+        #[cfg(feature = "l2")]
+        let program_input = ProgramInput {
+            blocks: input.blocks,
+            execution_witness: input.execution_witness,
+            elasticity_multiplier: input.elasticity_multiplier,
+            blob_commitment: input.blob_commitment,
+            blob_proof: input.blob_proof,
+            fee_configs: input.fee_configs,
+        };
+        #[cfg(not(feature = "l2"))]
+        let program_input = ProgramInput {
+            blocks: input.blocks,
+            execution_witness: input.execution_witness,
+        };
         Ok(Some(ProverData {
             batch_number,
-            input: ProgramInput {
-                blocks: input.blocks,
-                execution_witness: input.execution_witness,
-                elasticity_multiplier: input.elasticity_multiplier,
-                #[cfg(feature = "l2")]
-                blob_commitment: input.blob_commitment,
-                #[cfg(feature = "l2")]
-                blob_proof: input.blob_proof,
-                #[cfg(feature = "l2")]
-                fee_configs: input.fee_configs,
-            },
+            input: program_input,
             format,
         }))
     }
