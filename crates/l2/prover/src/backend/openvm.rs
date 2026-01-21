@@ -43,7 +43,9 @@ impl OpenVmBackend {
         let sdk = Sdk::standard();
         let proof = match format {
             ProofFormat::Compressed => {
-                let (proof, _) = sdk.prove(PROGRAM_ELF, stdin).map_err(BackendError::proving)?;
+                let (proof, _) = sdk
+                    .prove(PROGRAM_ELF, stdin)
+                    .map_err(BackendError::proving)?;
                 OpenVmProveOutput::Compressed(proof)
             }
             ProofFormat::Groth16 => {
