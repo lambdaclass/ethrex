@@ -405,3 +405,127 @@ fn test_multi_block_chain() {
     assert_eq!(alice_final.nonce, 1);
     assert_eq!(bob_final.balance, U256::from(100u64));
 }
+
+/// Test that stale blocks are pruned after finalization via fork_choice_update.
+/// This verifies the prune_stale_blocks() functionality.
+#[test]
+fn test_prune_stale_blocks_after_finalization() {
+    let db = PagedDb::in_memory(1000).expect("Failed to create database");
+    let blockchain = Blockchain::new(db);
+
+    let genesis_hash = blockchain.last_finalized_hash();
+
+    // Create a fork: block1 and block1_alt both have genesis as parent
+    let block1_hash = H256::repeat_byte(0x01);
+    let block1_alt_hash = H256::repeat_byte(0xA1);
+
+    let block1 = blockchain
+        .start_new(genesis_hash, block1_hash, 1)
+        .expect("Failed to create block 1");
+    let block1_alt = blockchain
+        .start_new(genesis_hash, block1_alt_hash, 1)
+        .expect("Failed to create block 1 alt");
+
+    blockchain.commit(block1).expect("Failed to commit block 1");
+    blockchain
+        .commit(block1_alt)
+        .expect("Failed to commit block 1 alt");
+
+    // Both blocks should exist
+    assert_eq!(blockchain.committed_count(), 2);
+    assert!(blockchain.get_block(&block1_hash).is_some());
+    assert!(blockchain.get_block(&block1_alt_hash).is_some());
+
+    // Build further on block1 (the winning chain)
+    let block2_hash = H256::repeat_byte(0x02);
+    let block2 = blockchain
+        .start_new(block1_hash, block2_hash, 2)
+        .expect("Failed to create block 2");
+    blockchain.commit(block2).expect("Failed to commit block 2");
+
+    assert_eq!(blockchain.committed_count(), 3);
+
+    // Finalize block1 via fork_choice_update (this calls prune_stale_blocks internally)
+    blockchain
+        .fork_choice_update(block2_hash, None, Some(block1_hash))
+        .expect("Fork choice update should succeed");
+
+    // Verify finalization
+    assert_eq!(blockchain.last_finalized_number(), 1);
+    assert_eq!(blockchain.last_finalized_hash(), block1_hash);
+
+    // block1 is finalized (moved to cold storage), block1_alt should be pruned
+    // Only block2 should remain in hot storage
+    assert_eq!(blockchain.committed_count(), 1);
+
+    // The stale block1_alt should no longer be retrievable
+    assert!(blockchain.get_block(&block1_alt_hash).is_none());
+
+    // block2 should still be in hot storage
+    assert!(blockchain.get_block(&block2_hash).is_some());
+}
+
+/// Test that multiple stale forks are pruned after finalization.
+#[test]
+fn test_prune_multiple_stale_forks() {
+    let db = PagedDb::in_memory(1000).expect("Failed to create database");
+    let blockchain = Blockchain::new(db);
+
+    let genesis_hash = blockchain.last_finalized_hash();
+
+    // Create the main chain: block1 -> block2
+    let block1_hash = H256::repeat_byte(0x01);
+    let block2_hash = H256::repeat_byte(0x02);
+
+    let block1 = blockchain
+        .start_new(genesis_hash, block1_hash, 1)
+        .expect("Failed to create block 1");
+    blockchain.commit(block1).expect("Failed to commit block 1");
+
+    let block2 = blockchain
+        .start_new(block1_hash, block2_hash, 2)
+        .expect("Failed to create block 2");
+    blockchain.commit(block2).expect("Failed to commit block 2");
+
+    // Create multiple forks at different heights
+    // Fork at genesis level
+    let fork_at_1a = H256::repeat_byte(0xA1);
+    let fork_at_1b = H256::repeat_byte(0xB1);
+    let fork1a = blockchain
+        .start_new(genesis_hash, fork_at_1a, 1)
+        .expect("Failed to create fork 1a");
+    let fork1b = blockchain
+        .start_new(genesis_hash, fork_at_1b, 1)
+        .expect("Failed to create fork 1b");
+    blockchain.commit(fork1a).expect("Failed to commit fork 1a");
+    blockchain.commit(fork1b).expect("Failed to commit fork 1b");
+
+    // Fork at block1 level
+    let fork_at_2a = H256::repeat_byte(0xA2);
+    let fork2a = blockchain
+        .start_new(block1_hash, fork_at_2a, 2)
+        .expect("Failed to create fork 2a");
+    blockchain.commit(fork2a).expect("Failed to commit fork 2a");
+
+    // Total: 5 blocks in hot storage
+    assert_eq!(blockchain.committed_count(), 5);
+
+    // Finalize block2 via fork_choice_update
+    blockchain
+        .fork_choice_update(block2_hash, None, Some(block2_hash))
+        .expect("Fork choice update should succeed");
+
+    // Verify finalization
+    assert_eq!(blockchain.last_finalized_number(), 2);
+    assert_eq!(blockchain.last_finalized_hash(), block2_hash);
+
+    // All blocks at or below finalized height (except the finalized chain) should be pruned
+    // The finalized block (block2) is moved to cold storage
+    // No blocks should remain in hot storage
+    assert_eq!(blockchain.committed_count(), 0);
+
+    // Stale forks should be pruned
+    assert!(blockchain.get_block(&fork_at_1a).is_none());
+    assert!(blockchain.get_block(&fork_at_1b).is_none());
+    assert!(blockchain.get_block(&fork_at_2a).is_none());
+}
