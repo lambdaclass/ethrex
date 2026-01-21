@@ -1,4 +1,5 @@
 use ethrex_common::H256;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -58,6 +59,60 @@ impl TrieLayerCache {
     fn create_filter() -> Result<qfilter::Filter, qfilter::Error> {
         qfilter::Filter::new_resizeable(1_000_000, 100_000_000, 0.02)
             .inspect_err(|e| tracing::warn!("could not create trie layering bloom filter {e}"))
+    }
+
+    /// Creates a resizeable quotient filter with the specified initial capacity.
+    fn create_filter_with_capacity(initial_capacity: u64) -> Result<qfilter::Filter, qfilter::Error> {
+        qfilter::Filter::new_resizeable(initial_capacity, 100_000_000, 0.02)
+            .inspect_err(|e| tracing::warn!("could not create trie layering bloom filter {e}"))
+    }
+
+    /// Merges two filters into a new one sized for both (with 20% headroom).
+    fn merge_filters(
+        a: qfilter::Filter,
+        b: qfilter::Filter,
+    ) -> Result<qfilter::Filter, qfilter::Error> {
+        let combined_len = a.len().saturating_add(b.len());
+        // 20% headroom
+        let capacity = (combined_len * 12 / 10).clamp(1_000, 100_000_000);
+        let mut result = Self::create_filter_with_capacity(capacity)?;
+        result.merge(false, &a)?;
+        result.merge(false, &b)?;
+        Ok(result)
+    }
+
+    /// Parallel tree reduction of filters: pairs up filters and merges them in parallel
+    /// at each level until one remains. Returns `None` if merging fails or input is empty.
+    fn reduce_filters(filters: Vec<qfilter::Filter>) -> Option<qfilter::Filter> {
+        if filters.is_empty() {
+            return None;
+        }
+        if filters.len() == 1 {
+            return filters.into_iter().next();
+        }
+
+        let mut current = filters;
+        while current.len() > 1 {
+            // Pair up filters and merge in parallel
+            let pairs: Vec<_> = current.chunks(2).map(|chunk| chunk.to_vec()).collect();
+
+            current = pairs
+                .into_par_iter()
+                .filter_map(|pair| {
+                    if pair.len() == 2 {
+                        let mut iter = pair.into_iter();
+                        let a = iter.next().expect("pair has 2 elements");
+                        let b = iter.next().expect("pair has 2 elements");
+                        Self::merge_filters(a, b).ok()
+                    } else {
+                        // Odd one out, pass through
+                        pair.into_iter().next()
+                    }
+                })
+                .collect();
+        }
+
+        current.into_iter().next()
     }
 
     pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
@@ -149,28 +204,61 @@ impl TrieLayerCache {
     }
 
     /// Rebuilds the global bloom filter by inserting all keys from all layers.
+    ///
+    /// Uses a divide-and-conquer parallel strategy:
+    /// 1. Partitions keys into N buckets (based on available threads)
+    /// 2. Builds N sub-filters in parallel, one per bucket
+    /// 3. Merges filters using parallel tree reduction until one remains
     pub fn rebuild_bloom(&mut self) {
-        let Ok(mut new_global_filter) = Self::create_filter() else {
+        // Collect all keys from all layers
+        let all_keys: Vec<&Vec<u8>> = self
+            .layers
+            .values()
+            .flat_map(|layer| layer.nodes.keys())
+            .collect();
+
+        if all_keys.is_empty() {
+            self.bloom = Self::create_filter().ok();
+            return;
+        }
+
+        // Determine bucket count based on available parallelism
+        let num_buckets = rayon::current_num_threads().max(1);
+        let bucket_size = all_keys.len().div_ceil(num_buckets);
+
+        // Build sub-filters in parallel (one per bucket)
+        let sub_filters: Vec<Option<qfilter::Filter>> = all_keys
+            .chunks(bucket_size)
+            .collect::<Vec<_>>()
+            .into_par_iter()
+            .map(|bucket| {
+                let capacity = ((bucket.len() as u64) * 12 / 10).clamp(1_000, 100_000_000);
+                let mut filter = Self::create_filter_with_capacity(capacity).ok()?;
+                for key in bucket {
+                    if filter.insert(*key).is_err() {
+                        return None;
+                    }
+                }
+                Some(filter)
+            })
+            .collect();
+
+        // Check for failures
+        if sub_filters.iter().any(|f| f.is_none()) {
             tracing::warn!(
-                "TrieLayerCache: rebuild_bloom could not create new filter. Poisoning bloom."
+                "TrieLayerCache: rebuild_bloom sub-filter creation failed. Poisoning bloom."
             );
             self.bloom = None;
             return;
-        };
-
-        for layer in self.layers.values() {
-            for path in layer.nodes.keys() {
-                if let Err(qfilter::Error::CapacityExceeded) = new_global_filter.insert(path) {
-                    tracing::warn!(
-                        "TrieLayerCache: rebuild_bloom capacity exceeded. Poisoning bloom."
-                    );
-                    self.bloom = None;
-                    return;
-                }
-            }
         }
 
-        self.bloom = Some(new_global_filter);
+        let filters: Vec<qfilter::Filter> = sub_filters.into_iter().flatten().collect();
+
+        // Parallel tree reduction
+        self.bloom = Self::reduce_filters(filters);
+        if self.bloom.is_none() {
+            tracing::warn!("TrieLayerCache: rebuild_bloom merge failed. Poisoning bloom.");
+        }
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
