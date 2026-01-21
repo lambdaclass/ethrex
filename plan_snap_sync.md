@@ -10,8 +10,8 @@ The Snap Sync implementation spans ~6,500 lines across 7 files. This plan provid
 |-------|--------|------------|
 | Phase 1: Foundation | Completed | Low |
 | Phase 2: Protocol Layer | Completed | Medium |
-| Phase 3: Healing Unification | In Progress | Medium-High |
-| Phase 4: Sync Orchestration | Pending | High |
+| Phase 3: Healing Unification | Completed | Medium-High |
+| Phase 4: Sync Orchestration | Completed | High |
 | Phase 5: Error Handling | Pending | Medium |
 
 ## Files Involved
@@ -27,15 +27,24 @@ The Snap Sync implementation spans ~6,500 lines across 7 files. This plan provid
 | `crates/networking/p2p/sync/code_collector.rs` | 102 | Bytecode collection |
 | `crates/networking/p2p/peer_handler.rs` | 2,074 | Client-side snap requests (~800 lines snap-related) |
 
-### New Structure (After Phases 1-2)
+### New Structure (After Phases 1-4)
 | File | Purpose |
 |------|---------|
 | `crates/networking/p2p/snap/mod.rs` | Snap module re-exports |
 | `crates/networking/p2p/snap/server.rs` | Server-side request processing |
+| `crates/networking/p2p/snap/client.rs` | Client-side snap request methods (~1,439 lines) |
 | `crates/networking/p2p/snap/constants.rs` | Centralized protocol constants |
 | `crates/networking/p2p/rlpx/snap/mod.rs` | Protocol message re-exports |
 | `crates/networking/p2p/rlpx/snap/messages.rs` | Message struct definitions |
 | `crates/networking/p2p/rlpx/snap/codec.rs` | RLPxMessage implementations |
+| `crates/networking/p2p/sync/mod.rs` | Sync orchestration (~285 lines) |
+| `crates/networking/p2p/sync/full.rs` | Full sync implementation (~260 lines) |
+| `crates/networking/p2p/sync/snap_sync.rs` | Snap sync implementation (~1,100 lines) |
+| `crates/networking/p2p/sync/healing/mod.rs` | Healing module re-exports |
+| `crates/networking/p2p/sync/healing/types.rs` | Shared healing types |
+| `crates/networking/p2p/sync/healing/state.rs` | State healing (~420 lines) |
+| `crates/networking/p2p/sync/healing/storage.rs` | Storage healing (~530 lines) |
+| `crates/networking/p2p/peer_handler.rs` | ETH protocol requests (~670 lines) |
 | `crates/networking/p2p/tests/snap_server_tests.rs` | Snap server tests |
 
 ---

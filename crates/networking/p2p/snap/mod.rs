@@ -1,14 +1,17 @@
 //! Snap Sync Protocol Implementation
 //!
-//! This module contains the server-side snap sync request processing.
+//! This module contains the snap sync protocol implementation including
+//! server-side request processing and client-side request methods.
 //! The snap protocol enables fast state synchronization by requesting
 //! account ranges, storage ranges, bytecodes, and trie nodes.
 //!
 //! ## Module Structure
 //!
 //! - `server`: Server-side request processing functions
+//! - `client`: Client-side request methods for PeerHandler
 //! - `constants`: Protocol constants and configuration values
 
+pub mod client;
 pub mod constants;
 mod server;
 
@@ -16,6 +19,12 @@ mod server;
 pub use server::{
     process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
     process_trie_nodes_request,
+};
+
+// Re-export client types
+pub use client::{
+    DumpError, RequestMetadata, RequestStateTrieNodesError, RequestStorageTrieNodes,
+    SnapClientError,
 };
 
 // Re-export crate-internal helper functions

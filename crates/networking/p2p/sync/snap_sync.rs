@@ -366,8 +366,7 @@ pub async fn snap_sync(
                         &mut pivot_header,
                         store.clone(),
                     )
-                    .await
-                    .map_err(SyncError::PeerHandler)?;
+                    .await?;
             } else {
                 for (acc_hash, (maybe_root, old_intervals)) in
                     storage_accounts.accounts_with_storage_root.iter()
@@ -506,8 +505,7 @@ pub async fn snap_sync(
                     );
                     let bytecodes = peers
                         .request_bytecodes(&code_hashes_to_download)
-                        .await
-                        .map_err(SyncError::PeerHandler)?
+                        .await?
                         .ok_or(SyncError::BytecodesNotFound)?;
 
                     store
@@ -531,8 +529,7 @@ pub async fn snap_sync(
     if !code_hashes_to_download.is_empty() {
         let bytecodes = peers
             .request_bytecodes(&code_hashes_to_download)
-            .await
-            .map_err(SyncError::PeerHandler)?
+            .await?
             .ok_or(SyncError::BytecodesNotFound)?;
         store
             .write_account_code_batch(
