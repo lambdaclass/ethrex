@@ -10,3 +10,13 @@ pub struct ProgramInput {
     /// Database containing all the data necessary to execute.
     pub execution_witness: ExecutionWitness,
 }
+
+impl ProgramInput {
+    /// Creates a new ProgramInput with the given blocks and execution witness.
+    pub fn new(blocks: Vec<Block>, execution_witness: ExecutionWitness) -> Self {
+        Self {
+            blocks,
+            execution_witness,
+        }
+    }
+}
