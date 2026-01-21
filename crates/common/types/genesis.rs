@@ -303,7 +303,7 @@ pub enum Fork {
     Cancun = 17,
     Prague = 18,
     Osaka = 19,
-    BPO1 = 20,
+    Amsterdam = 20,
     BPO2 = 21,
     BPO3 = 22,
     BPO4 = 23,
@@ -333,7 +333,7 @@ impl From<Fork> for &str {
             Fork::Cancun => "Cancun",
             Fork::Prague => "Prague",
             Fork::Osaka => "Osaka",
-            Fork::BPO1 => "BPO1",
+            Fork::Amsterdam => "BPO1",
             Fork::BPO2 => "BPO2",
             Fork::BPO3 => "BPO3",
             Fork::BPO4 => "BPO4",
@@ -430,7 +430,7 @@ impl ChainConfig {
         } else if self.is_bpo2_activated(block_timestamp) {
             Fork::BPO2
         } else if self.is_bpo1_activated(block_timestamp) {
-            Fork::BPO1
+            Fork::Amsterdam
         } else if self.is_osaka_activated(block_timestamp) {
             Fork::Osaka
         } else if self.is_prague_activated(block_timestamp) {
@@ -482,7 +482,7 @@ impl ChainConfig {
         } else if self.is_bpo1_activated(block_timestamp) && self.bpo2_time.is_some() {
             Some(Fork::BPO2)
         } else if self.is_osaka_activated(block_timestamp) && self.bpo1_time.is_some() {
-            Some(Fork::BPO1)
+            Some(Fork::Amsterdam)
         } else if self.is_prague_activated(block_timestamp) && self.osaka_time.is_some() {
             Some(Fork::Osaka)
         } else if self.is_cancun_activated(block_timestamp) && self.prague_time.is_some() {
@@ -508,7 +508,7 @@ impl ChainConfig {
         } else if self.bpo2_time.is_some() {
             Fork::BPO2
         } else if self.bpo1_time.is_some() {
-            Fork::BPO1
+            Fork::Amsterdam
         } else if self.osaka_time.is_some() {
             Fork::Osaka
         } else if self.prague_time.is_some() {
@@ -525,7 +525,7 @@ impl ChainConfig {
             Fork::Cancun => self.cancun_time,
             Fork::Prague => self.prague_time,
             Fork::Osaka => self.osaka_time,
-            Fork::BPO1 => self.bpo1_time,
+            Fork::Amsterdam => self.bpo1_time,
             Fork::BPO2 => self.bpo2_time,
             Fork::BPO3 => self.bpo3_time,
             Fork::BPO4 => self.bpo4_time,
@@ -552,7 +552,7 @@ impl ChainConfig {
             Fork::Cancun => Some(self.blob_schedule.cancun),
             Fork::Prague => Some(self.blob_schedule.prague),
             Fork::Osaka => Some(self.blob_schedule.osaka),
-            Fork::BPO1 => Some(self.blob_schedule.bpo1),
+            Fork::Amsterdam => Some(self.blob_schedule.bpo1),
             Fork::BPO2 => Some(self.blob_schedule.bpo2),
             Fork::BPO3 => self.blob_schedule.bpo3,
             Fork::BPO4 => self.blob_schedule.bpo4,
