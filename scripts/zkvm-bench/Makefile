@@ -102,14 +102,15 @@ build:
 	@$(BIN_DIR)/build.sh $(ZKVM)
 
 .PHONY: profile
-profile: _check-block _check-input
+profile: _check-block
 	@mkdir -p $(PROFILE_DIR)
 	@echo "Profiling $(ZKVM) execution for block $(BLOCK)..."
 	@echo ""
 ifeq ($(ZKVM),zisk)
+	@$(MAKE) _check-input
 	@$(BIN_DIR)/profile-zisk.sh $(INPUT_FILE) $(PROFILE_DIR) $(TOP_ROI) "$(TITLE)"
 else ifeq ($(ZKVM),sp1)
-	@$(BIN_DIR)/profile-sp1.sh $(INPUT_FILE) $(PROFILE_DIR) 100 "$(TITLE)"
+	@$(BIN_DIR)/profile-sp1.sh $(BLOCK) $(PROFILE_DIR) $(RPC_URL) "$(TITLE)"
 else
 	@echo "Error: Unknown ZKVM=$(ZKVM). Use 'zisk' or 'sp1'."
 	@exit 1

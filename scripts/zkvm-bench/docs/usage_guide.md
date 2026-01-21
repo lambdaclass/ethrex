@@ -16,6 +16,8 @@ Unlike host machine optimization (minimize wall-clock time), zkVM optimization f
 4. **Avoid unnecessary allocations** - Cloning, RLP encoding overhead
 5. **No branch prediction penalty** - Control flow is cheaper than on CPUs
 
+`zkvm_landscape.md` contains more information on this topic.
+
 ## Patch Utilization Context
 
 Patches replace standard crypto crates with zkVM-optimized versions that call precompiles. This is the single most impactful optimization.
@@ -98,12 +100,12 @@ Implement **ONE** optimization at a time.
    ```
 
 4. **Evaluate:**
-   - **Improvement**: Keep change, update baseline.
+   - **Improvement**: Keep change, update baseline, commit each optimization with a detailed message.
    - **Regression**: Revert.
 
 ### Phase 5: Report
 
-1. Update `scripts/zkvm-bench/logbook.md`.
+1. Update `scripts/zkvm-bench/logbook.md`, even if the optimization failed to yield a performance gain (explain why in this case).
 2. Create a report in `scripts/zkvm-bench/reports/` if deep analysis is needed.
 
 ## Decision Framework
