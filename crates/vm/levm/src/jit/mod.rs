@@ -1210,4 +1210,153 @@ mod tests {
         assert_eq!(ctx.return_size, 4, "Revert size should be 4");
         assert_eq!(ctx.stack_offset, STACK_LIMIT, "Stack should be empty after REVERT pops args");
     }
+
+    /// Test: MSTORE and MLOAD round-trip
+    #[test]
+    fn test_mstore_mload() {
+        // PUSH1 0x42, PUSH1 0, MSTORE, PUSH1 0, MLOAD, STOP
+        // Store 0x42 at offset 0, then load it back
+        let bytecode = [0x60, 0x42, 0x60, 0x00, 0x52, 0x60, 0x00, 0x51, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        // Allocate memory for the test
+        let mut memory = vec![0u8; 64];
+
+        let mut ctx = JitContext {
+            stack_values: stack_values.as_mut_ptr(),
+            stack_offset: STACK_LIMIT,
+            gas_remaining: 1000,
+            memory_ptr: memory.as_mut_ptr(),
+            memory_size: 0,
+            memory_capacity: memory.len(),
+            pc: 0,
+            bytecode: bytecode.as_ptr(),
+            bytecode_len: bytecode.len(),
+            jump_table: std::ptr::null(),
+            vm_ptr: std::ptr::null_mut(),
+            exit_reason: 0,
+            return_offset: 0,
+            return_size: 0,
+            push_value: U256::zero(),
+            address: [0x11; 20],
+            caller: [0x22; 20],
+            callvalue: U256::from(1000u64),
+            calldata_ptr: std::ptr::null(),
+            calldata_len: 0,
+            jmp_buf: Default::default(),
+            exit_callback: None,
+        };
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        // The value 0x42 is stored as a 32-byte big-endian word at offset 0
+        // When loaded back, it should be 0x42 (padded to 256 bits)
+        assert_eq!(stack_values[ctx.stack_offset], U256::from(0x42u64), "MLOAD should return stored value");
+        assert_eq!(ctx.memory_size, 32, "Memory size should be 32 after MSTORE");
+    }
+
+    /// Test: MSTORE8 stores a single byte
+    #[test]
+    fn test_mstore8() {
+        // PUSH1 0xAB, PUSH1 0, MSTORE8, PUSH1 0, MLOAD, STOP
+        // Store byte 0xAB at offset 0, then load 32 bytes starting at 0
+        let bytecode = [0x60, 0xAB, 0x60, 0x00, 0x53, 0x60, 0x00, 0x51, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut memory = vec![0u8; 64];
+
+        let mut ctx = JitContext {
+            stack_values: stack_values.as_mut_ptr(),
+            stack_offset: STACK_LIMIT,
+            gas_remaining: 1000,
+            memory_ptr: memory.as_mut_ptr(),
+            memory_size: 0,
+            memory_capacity: memory.len(),
+            pc: 0,
+            bytecode: bytecode.as_ptr(),
+            bytecode_len: bytecode.len(),
+            jump_table: std::ptr::null(),
+            vm_ptr: std::ptr::null_mut(),
+            exit_reason: 0,
+            return_offset: 0,
+            return_size: 0,
+            push_value: U256::zero(),
+            address: [0x11; 20],
+            caller: [0x22; 20],
+            callvalue: U256::from(1000u64),
+            calldata_ptr: std::ptr::null(),
+            calldata_len: 0,
+            jmp_buf: Default::default(),
+            exit_callback: None,
+        };
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack");
+        // 0xAB stored at byte 0 means the 32-byte word starting at 0 is 0xAB000...000
+        let expected = U256::from(0xABu64) << 248; // 0xAB in the most significant byte
+        assert_eq!(stack_values[ctx.stack_offset], expected, "MSTORE8 should store byte at MSB position");
+    }
+
+    /// Test: Memory expansion tracking
+    #[test]
+    fn test_memory_expansion() {
+        // PUSH1 0x42, PUSH1 64, MSTORE, MSIZE, STOP
+        // Store at offset 64, which requires 96 bytes (next multiple of 32 after 64+32)
+        let bytecode = [0x60, 0x42, 0x60, 0x40, 0x52, 0x59, 0x00];
+
+        let compiler = JitCompiler::new();
+        let code = compiler.compile(&bytecode).expect("Failed to compile");
+
+        let mut stack_values: Box<[U256; STACK_LIMIT]> =
+            vec![U256::zero(); STACK_LIMIT].into_boxed_slice().try_into().unwrap();
+
+        let mut memory = vec![0u8; 128];
+
+        let mut ctx = JitContext {
+            stack_values: stack_values.as_mut_ptr(),
+            stack_offset: STACK_LIMIT,
+            gas_remaining: 1000,
+            memory_ptr: memory.as_mut_ptr(),
+            memory_size: 0,
+            memory_capacity: memory.len(),
+            pc: 0,
+            bytecode: bytecode.as_ptr(),
+            bytecode_len: bytecode.len(),
+            jump_table: std::ptr::null(),
+            vm_ptr: std::ptr::null_mut(),
+            exit_reason: 0,
+            return_offset: 0,
+            return_size: 0,
+            push_value: U256::zero(),
+            address: [0x11; 20],
+            caller: [0x22; 20],
+            callvalue: U256::from(1000u64),
+            calldata_ptr: std::ptr::null(),
+            calldata_len: 0,
+            jmp_buf: Default::default(),
+            exit_callback: None,
+        };
+
+        let exit_reason = unsafe { compiler::execute_jit(&code, &mut ctx) };
+
+        assert_eq!(exit_reason, JitExitReason::Stop);
+        assert_eq!(ctx.stack_offset, STACK_LIMIT - 1, "Should have one value on stack (MSIZE result)");
+        // Memory size should be 96 (64 + 32 = 96, next 32-byte boundary)
+        assert_eq!(ctx.memory_size, 96, "Memory size should be 96 after MSTORE at offset 64");
+        assert_eq!(stack_values[ctx.stack_offset], U256::from(96u64), "MSIZE should return 96");
+    }
 }

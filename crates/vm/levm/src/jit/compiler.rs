@@ -249,11 +249,20 @@ impl JitCompiler {
                 // CODESIZE
                 0x38 => (stencil_codesize_wrapper, 1),
 
-                // MSIZE
-                0x59 => (stencil_msize_wrapper, 1),
-
                 // POP
                 0x50 => (get_stencil_fn(&STENCIL_POP), 1),
+
+                // MLOAD
+                0x51 => (stencil_mload_wrapper, 1),
+
+                // MSTORE
+                0x52 => (stencil_mstore_wrapper, 1),
+
+                // MSTORE8
+                0x53 => (stencil_mstore8_wrapper, 1),
+
+                // MSIZE
+                0x59 => (stencil_msize_wrapper, 1),
 
                 // PC
                 0x58 => (get_stencil_fn(&STENCIL_PC), 1),
@@ -1604,6 +1613,229 @@ unsafe extern "C" fn stencil_msize_wrapper(ctx: *mut JitContext) {
     // Push memory size (always a multiple of 32)
     ctx.stack_offset -= 1;
     *ctx.stack_values.add(ctx.stack_offset) = U256::from(ctx.memory_size);
+
+    ctx.exit_reason = JitExitReason::Continue as u32;
+}
+
+unsafe extern "C" fn stencil_mload_wrapper(ctx: *mut JitContext) {
+    use crate::constants::STACK_LIMIT;
+    use ethrex_common::U256;
+
+    let ctx = &mut *ctx;
+
+    // Stack underflow check (need 1 value: offset)
+    if ctx.stack_offset > STACK_LIMIT - 1 {
+        ctx.exit_reason = JitExitReason::StackUnderflow as u32;
+        return;
+    }
+
+    // Pop offset
+    let offset: U256 = *ctx.stack_values.add(ctx.stack_offset);
+
+    // Convert to usize
+    let offset_usize: usize = match offset.try_into() {
+        Ok(o) => o,
+        Err(_) => {
+            // Offset too large - exit to interpreter to handle error
+            ctx.exit_reason = JitExitReason::ExitToInterpreter as u32;
+            return;
+        }
+    };
+
+    // Calculate required memory end (offset + 32)
+    let required_end = offset_usize.saturating_add(32);
+
+    // Calculate gas cost (3 + memory expansion cost)
+    // Memory expansion cost = (words^2 / 512) + (3 * words)
+    let current_words = ctx.memory_size.div_ceil(32) as u64;
+    let new_words = required_end.div_ceil(32) as u64;
+
+    let gas_cost = if new_words <= current_words {
+        3i64 // Just static cost
+    } else {
+        let current_cost = current_words * current_words / 512 + 3 * current_words;
+        let new_cost = new_words * new_words / 512 + 3 * new_words;
+        let expansion = new_cost.saturating_sub(current_cost);
+        3i64 + expansion as i64
+    };
+
+    ctx.gas_remaining -= gas_cost;
+    if ctx.gas_remaining < 0 {
+        ctx.exit_reason = JitExitReason::OutOfGas as u32;
+        return;
+    }
+
+    // Check if memory expansion is needed beyond capacity
+    if required_end > ctx.memory_capacity {
+        // Exit to interpreter to handle memory expansion
+        ctx.exit_reason = JitExitReason::ExitToInterpreter as u32;
+        return;
+    }
+
+    // Update memory size if needed
+    if required_end > ctx.memory_size {
+        ctx.memory_size = required_end;
+    }
+
+    // Load 32 bytes from memory
+    let mut word = [0u8; 32];
+    if !ctx.memory_ptr.is_null() && offset_usize < ctx.memory_size {
+        let available = ctx.memory_size.saturating_sub(offset_usize).min(32);
+        std::ptr::copy_nonoverlapping(
+            ctx.memory_ptr.add(offset_usize),
+            word.as_mut_ptr(),
+            available,
+        );
+    }
+
+    let result = U256::from_big_endian(&word);
+
+    // Replace top of stack with result
+    *ctx.stack_values.add(ctx.stack_offset) = result;
+
+    ctx.exit_reason = JitExitReason::Continue as u32;
+}
+
+unsafe extern "C" fn stencil_mstore_wrapper(ctx: *mut JitContext) {
+    use crate::constants::STACK_LIMIT;
+    use ethrex_common::U256;
+
+    let ctx = &mut *ctx;
+
+    // Stack underflow check (need 2 values: offset, value)
+    if ctx.stack_offset > STACK_LIMIT - 2 {
+        ctx.exit_reason = JitExitReason::StackUnderflow as u32;
+        return;
+    }
+
+    // Pop offset and value
+    let offset: U256 = *ctx.stack_values.add(ctx.stack_offset);
+    let value: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
+    ctx.stack_offset += 2;
+
+    // Convert offset to usize
+    let offset_usize: usize = match offset.try_into() {
+        Ok(o) => o,
+        Err(_) => {
+            ctx.exit_reason = JitExitReason::ExitToInterpreter as u32;
+            return;
+        }
+    };
+
+    // Calculate required memory end (offset + 32)
+    let required_end = offset_usize.saturating_add(32);
+
+    // Calculate gas cost (3 + memory expansion cost)
+    let current_words = ctx.memory_size.div_ceil(32) as u64;
+    let new_words = required_end.div_ceil(32) as u64;
+
+    let gas_cost = if new_words <= current_words {
+        3i64
+    } else {
+        let current_cost = current_words * current_words / 512 + 3 * current_words;
+        let new_cost = new_words * new_words / 512 + 3 * new_words;
+        let expansion = new_cost.saturating_sub(current_cost);
+        3i64 + expansion as i64
+    };
+
+    ctx.gas_remaining -= gas_cost;
+    if ctx.gas_remaining < 0 {
+        ctx.exit_reason = JitExitReason::OutOfGas as u32;
+        return;
+    }
+
+    // Check if memory expansion is needed beyond capacity
+    if required_end > ctx.memory_capacity {
+        // Restore stack and exit to interpreter
+        ctx.stack_offset -= 2;
+        ctx.exit_reason = JitExitReason::ExitToInterpreter as u32;
+        return;
+    }
+
+    // Update memory size if needed
+    if required_end > ctx.memory_size {
+        ctx.memory_size = required_end;
+    }
+
+    // Store 32 bytes to memory
+    if !ctx.memory_ptr.is_null() {
+        let word = value.to_big_endian();
+        std::ptr::copy_nonoverlapping(
+            word.as_ptr(),
+            ctx.memory_ptr.add(offset_usize),
+            32,
+        );
+    }
+
+    ctx.exit_reason = JitExitReason::Continue as u32;
+}
+
+unsafe extern "C" fn stencil_mstore8_wrapper(ctx: *mut JitContext) {
+    use crate::constants::STACK_LIMIT;
+    use ethrex_common::U256;
+
+    let ctx = &mut *ctx;
+
+    // Stack underflow check (need 2 values: offset, value)
+    if ctx.stack_offset > STACK_LIMIT - 2 {
+        ctx.exit_reason = JitExitReason::StackUnderflow as u32;
+        return;
+    }
+
+    // Pop offset and value
+    let offset: U256 = *ctx.stack_values.add(ctx.stack_offset);
+    let value: U256 = *ctx.stack_values.add(ctx.stack_offset + 1);
+    ctx.stack_offset += 2;
+
+    // Convert offset to usize
+    let offset_usize: usize = match offset.try_into() {
+        Ok(o) => o,
+        Err(_) => {
+            ctx.exit_reason = JitExitReason::ExitToInterpreter as u32;
+            return;
+        }
+    };
+
+    // Calculate required memory end (offset + 1)
+    let required_end = offset_usize.saturating_add(1);
+
+    // Calculate gas cost (3 + memory expansion cost)
+    let current_words = ctx.memory_size.div_ceil(32) as u64;
+    let new_words = required_end.div_ceil(32) as u64;
+
+    let gas_cost = if new_words <= current_words {
+        3i64
+    } else {
+        let current_cost = current_words * current_words / 512 + 3 * current_words;
+        let new_cost = new_words * new_words / 512 + 3 * new_words;
+        let expansion = new_cost.saturating_sub(current_cost);
+        3i64 + expansion as i64
+    };
+
+    ctx.gas_remaining -= gas_cost;
+    if ctx.gas_remaining < 0 {
+        ctx.exit_reason = JitExitReason::OutOfGas as u32;
+        return;
+    }
+
+    // Check if memory expansion is needed beyond capacity
+    if required_end > ctx.memory_capacity {
+        // Restore stack and exit to interpreter
+        ctx.stack_offset -= 2;
+        ctx.exit_reason = JitExitReason::ExitToInterpreter as u32;
+        return;
+    }
+
+    // Update memory size if needed
+    if required_end > ctx.memory_size {
+        ctx.memory_size = required_end;
+    }
+
+    // Store lowest byte to memory
+    if !ctx.memory_ptr.is_null() {
+        let byte = value.low_u64() as u8;
+        *ctx.memory_ptr.add(offset_usize) = byte;
+    }
 
     ctx.exit_reason = JitExitReason::Continue as u32;
 }
