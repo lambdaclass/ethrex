@@ -1,6 +1,6 @@
 # ethrex
 
-Minimalist, stable, modular and fast implementation of the Ethereum protocol in Rust.
+Minimalist, stable, modular, fast, and ZK native implementation of the Ethereum protocol in Rust.
 
 [![Telegram Chat][tg-badge]][tg-url]
 [![license](https://img.shields.io/github/license/lambdaclass/ethrex)](/LICENSE)
@@ -18,6 +18,22 @@ This client supports running in two different modes:
 
 * **ethrex L1** - As a regular Ethereum execution client
 * **ethrex L2** - As a multi-prover ZK-Rollup (supporting SP1, RISC Zero and TEEs), where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security. Support for based sequencing is currently in the works.
+
+## Why ZK-Native?
+
+ethrex was built from the ground up with zero-knowledge proving in mind. This isn't a feature bolted onto an existing client—it's a core design principle that shapes how we structure execution, state management, and our entire architecture.
+
+**For L1 node operators:**
+- Integrations with multiple zkVMs (SP1, RISC Zero, ZisK, OpenVM) allow you to prove Ethereum block execution
+- ZK-optimized data structures reduce proving overhead
+- Lightweight codebase means less complexity when running alongside provers
+
+**For L2 builders:**
+- Multi-prover ZK-Rollup architecture supports SP1, RISC Zero, and TEEs out of the box
+- Proof aggregation through [Aligned Layer](https://alignedlayer.com/) integration
+- Same execution client for L1 and L2 means consistent behavior and easier debugging
+
+See our [zkVM integrations documentation](https://docs.ethrex.xyz/zkvm-integrations.html) for details on supported proving backends.
 
 ## Philosophy
 

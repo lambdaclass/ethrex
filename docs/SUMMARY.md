@@ -2,6 +2,7 @@
 
 # Introduction
 
+- [Overview](./landing.md)
 - [Getting started](./getting-started/README.md)
   - [Hardware requirements](./getting-started/hardware_requirements.md)
   - [Installation](./getting-started/installation/README.md)
@@ -126,6 +127,13 @@
 # Roadmap
 
 - [Roadmap](../ROADMAP.md)
+
+# Why ethrex
+
+- [zkVM Integrations](./zkvm-integrations.md)
+- [Benchmark Comparisons](./l2/bench/zkvm_comparison.md)
+  - [Prover Performance](./l2/bench/prover_performance.md)
+- [Case Studies](./case-studies.md)
 
 # Other resources
 
