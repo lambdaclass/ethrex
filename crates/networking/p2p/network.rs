@@ -274,14 +274,14 @@ pub async fn periodically_show_peer_stats_during_syncing(
 ───────────────────────────────────────────────────────────────────────
  SNAP SYNC │ {elapsed} │ {peer_number} peers │ {current_step} │ {head_short}
 ───────────────────────────────────────────────────────────────────────
- Headers Downloaded      {headers_downloaded:>13}       {headers_percentage:>5.1}%       {headers_per_second} headers/s
- Accounts Downloaded     {account_leaves_downloaded:>13}                    {accounts_per_second} accounts/s
- Accounts Inserted       {account_leaves_inserted:>13}
- Storage Downloaded      {storage_leaves_downloaded:>13}                    {storage_per_second} storage slots/s
- Storage Inserted        {storage_leaves_inserted:>13}
- Healing: {healed_accounts} accounts
- Healing: {healed_storages} storages
- Bytecodes Downloaded    {bytecodes_downloaded:>13}                    {bytecodes_per_second} bytecodes/s
+ 1. Headers Downloaded      {headers_downloaded:>13}       {headers_percentage:>5.1}%       {headers_per_second} headers/s
+ 2. Accounts Downloaded     {account_leaves_downloaded:>13}                    {accounts_per_second} accounts/s
+ 3. Accounts Inserted       {account_leaves_inserted:>13}
+ 4. Storage Downloaded      {storage_leaves_downloaded:>13}                    {storage_per_second} storage slots/s
+ 5. Storage Inserted        {storage_leaves_inserted:>13}
+ 6. Healing: {healed_accounts} accounts
+ 7. Healing: {healed_storages} storages
+ 8. Bytecodes Downloaded    {bytecodes_downloaded:>13}                    {bytecodes_per_second} bytecodes/s
 ───────────────────────────────────────────────────────────────────────"#
             );
         }
