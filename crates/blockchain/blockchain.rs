@@ -54,22 +54,23 @@ use ::tracing::{debug, info, instrument, trace, warn};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
-use ethrex_common::constants::{
-    EMPTY_TRIE_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, MIN_BASE_FEE_PER_BLOB_GAS,
-};
+use ethrex_common::constants::{EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
+
+// Re-export stateless validation functions for backwards compatibility
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
-use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
     AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code,
-    EIP4844Transaction, Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root,
-    validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
-    validate_pre_cancun_header_fields,
+    EIP4844Transaction, Receipt, Transaction, WrappedEIP4844Transaction,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H160, H256, TrieLogger};
+pub use ethrex_common::{
+    get_total_blob_gas, validate_block, validate_gas_used, validate_receipts_root,
+    validate_requests_hash,
+};
 use ethrex_metrics::metrics;
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
@@ -86,7 +87,7 @@ use mempool::Mempool;
 use payload::PayloadOrTask;
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{
     Arc, Mutex, RwLock,
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -939,15 +940,24 @@ impl Blockchain {
             // Gather account updates
             let account_updates = vm.get_state_transitions()?;
 
-            for account_update in &account_updates {
-                touched_account_storage_slots.insert(
-                    account_update.address,
-                    account_update
-                        .added_storage
-                        .keys()
-                        .cloned()
-                        .collect::<Vec<H256>>(),
-                );
+            let mut state_accessed = logger
+                .state_accessed
+                .lock()
+                .map_err(|_e| {
+                    ChainError::WitnessGeneration("Failed to execute with witness".to_string())
+                })?
+                .clone();
+
+            // Deduplicate storage keys while preserving access order
+            for keys in state_accessed.values_mut() {
+                let mut seen = HashSet::new();
+                keys.retain(|k| seen.insert(*k));
+            }
+
+            for (account, acc_keys) in state_accessed.iter() {
+                let slots: &mut Vec<H256> =
+                    touched_account_storage_slots.entry(*account).or_default();
+                slots.extend(acc_keys.iter().copied());
             }
 
             // Get the used block hashes from the logger
@@ -974,14 +984,7 @@ impl Blockchain {
 
             // Access all the accounts from the initial trie
             // Record all the storage nodes for the initial state
-            for (account, acc_keys) in logger
-                .state_accessed
-                .lock()
-                .map_err(|_e| {
-                    ChainError::WitnessGeneration("Failed to execute with witness".to_string())
-                })?
-                .iter()
-            {
+            for (account, acc_keys) in state_accessed.iter() {
                 // Access the account from the state trie to record the nodes used to access it
                 trie.get(&hash_address(account)).map_err(|_e| {
                     ChainError::WitnessGeneration("Failed to access account from trie".to_string())
@@ -2161,31 +2164,6 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
     Ok(evm)
 }
 
-pub fn validate_requests_hash(
-    header: &BlockHeader,
-    chain_config: &ChainConfig,
-    requests: &[Requests],
-) -> Result<(), ChainError> {
-    if !chain_config.is_prague_activated(header.timestamp) {
-        return Ok(());
-    }
-
-    let encoded_requests: Vec<EncodedRequests> = requests.iter().map(|r| r.encode()).collect();
-    let computed_requests_hash = compute_requests_hash(&encoded_requests);
-    let valid = header
-        .requests_hash
-        .map(|requests_hash| requests_hash == computed_requests_hash)
-        .unwrap_or(false);
-
-    if !valid {
-        return Err(ChainError::InvalidBlock(
-            InvalidBlockError::RequestsHashMismatch,
-        ));
-    }
-
-    Ok(())
-}
-
 /// Performs post-execution checks
 pub fn validate_state_root(
     block_header: &BlockHeader,
@@ -2197,21 +2175,6 @@ pub fn validate_state_root(
     } else {
         Err(ChainError::InvalidBlock(
             InvalidBlockError::StateRootMismatch,
-        ))
-    }
-}
-
-pub fn validate_receipts_root(
-    block_header: &BlockHeader,
-    receipts: &[Receipt],
-) -> Result<(), ChainError> {
-    let receipts_root = compute_receipts_root(receipts);
-
-    if receipts_root == block_header.receipts_root {
-        Ok(())
-    } else {
-        Err(ChainError::InvalidBlock(
-            InvalidBlockError::ReceiptsRootMismatch,
         ))
     }
 }
@@ -2240,51 +2203,6 @@ pub fn find_parent_header(
     }
 }
 
-/// Performs pre-execution validation of the block's header values in reference to the parent_header
-/// Verifies that blob gas fields in the header are correct in reference to the block's body.
-/// If a block passes this check, execution will still fail with execute_block when a transaction runs out of gas
-///
-/// Note that this doesn't validate that the transactions or withdrawals root of the header matches the body
-/// contents, since we assume the caller already did it. And, in any case, that wouldn't invalidate the block header.
-pub fn validate_block(
-    block: &Block,
-    parent_header: &BlockHeader,
-    chain_config: &ChainConfig,
-    elasticity_multiplier: u64,
-) -> Result<(), ChainError> {
-    // Verify initial header validity against parent
-    validate_block_header(&block.header, parent_header, elasticity_multiplier)
-        .map_err(InvalidBlockError::from)?;
-
-    if chain_config.is_osaka_activated(block.header.timestamp) {
-        let block_rlp_size = block.length();
-        if block_rlp_size > MAX_RLP_BLOCK_SIZE as usize {
-            return Err(error::ChainError::InvalidBlock(
-                InvalidBlockError::MaximumRlpSizeExceeded(
-                    MAX_RLP_BLOCK_SIZE,
-                    block_rlp_size as u64,
-                ),
-            ));
-        }
-    }
-    if chain_config.is_prague_activated(block.header.timestamp) {
-        validate_prague_header_fields(&block.header, parent_header, chain_config)
-            .map_err(InvalidBlockError::from)?;
-        verify_blob_gas_usage(block, chain_config)?;
-        if chain_config.is_osaka_activated(block.header.timestamp) {
-            verify_transaction_max_gas_limit(block)?;
-        }
-    } else if chain_config.is_cancun_activated(block.header.timestamp) {
-        validate_cancun_header_fields(&block.header, parent_header, chain_config)
-            .map_err(InvalidBlockError::from)?;
-        verify_blob_gas_usage(block, chain_config)?;
-    } else {
-        validate_pre_cancun_header_fields(&block.header).map_err(InvalidBlockError::from)?
-    }
-
-    Ok(())
-}
-
 pub async fn is_canonical(
     store: &Store,
     block_number: BlockNumber,
@@ -2294,82 +2212,6 @@ pub async fn is_canonical(
         Some(hash) if hash == block_hash => Ok(true),
         _ => Ok(false),
     }
-}
-
-pub fn validate_gas_used(
-    receipts: &[Receipt],
-    block_header: &BlockHeader,
-) -> Result<(), ChainError> {
-    if let Some(last) = receipts.last()
-        && last.cumulative_gas_used != block_header.gas_used
-    {
-        return Err(ChainError::InvalidBlock(
-            InvalidBlockError::GasUsedMismatch(last.cumulative_gas_used, block_header.gas_used),
-        ));
-    }
-    Ok(())
-}
-
-// Perform validations over the block's blob gas usage.
-// Must be called only if the block has cancun activated
-fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), ChainError> {
-    let mut blob_gas_used = 0_u32;
-    let mut blobs_in_block = 0_u32;
-    let max_blob_number_per_block = config
-        .get_fork_blob_schedule(block.header.timestamp)
-        .map(|schedule| schedule.max)
-        .ok_or(ChainError::Custom("Provided block fork is invalid".into()))?;
-    let max_blob_gas_per_block = max_blob_number_per_block * GAS_PER_BLOB;
-
-    for transaction in block.body.transactions.iter() {
-        if let Transaction::EIP4844Transaction(tx) = transaction {
-            blob_gas_used += get_total_blob_gas(tx);
-            blobs_in_block += tx.blob_versioned_hashes.len() as u32;
-        }
-    }
-    if blob_gas_used > max_blob_gas_per_block {
-        return Err(ChainError::InvalidBlock(
-            InvalidBlockError::ExceededMaxBlobGasPerBlock,
-        ));
-    }
-    if blobs_in_block > max_blob_number_per_block {
-        return Err(ChainError::InvalidBlock(
-            InvalidBlockError::ExceededMaxBlobNumberPerBlock,
-        ));
-    }
-    if block
-        .header
-        .blob_gas_used
-        .is_some_and(|header_blob_gas_used| header_blob_gas_used != blob_gas_used as u64)
-    {
-        return Err(ChainError::InvalidBlock(
-            InvalidBlockError::BlobGasUsedMismatch,
-        ));
-    }
-    Ok(())
-}
-
-// Perform validations over the block's gas usage.
-// Must be called only if the block has osaka activated
-// as specified in https://eips.ethereum.org/EIPS/eip-7825
-fn verify_transaction_max_gas_limit(block: &Block) -> Result<(), ChainError> {
-    for transaction in block.body.transactions.iter() {
-        if transaction.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP {
-            return Err(ChainError::InvalidBlock(
-                InvalidBlockError::InvalidTransaction(format!(
-                    "Transaction gas limit exceeds maximum. Transaction hash: {}, transaction gas limit: {}",
-                    transaction.hash(),
-                    transaction.gas_limit()
-                )),
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// Calculates the blob gas required by a transaction
-pub fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
-    GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u32
 }
 
 /// Collapses a root branch node into an extension or leaf node if it has only one valid child.

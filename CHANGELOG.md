@@ -8,6 +8,10 @@
 
 ## Perf
 
+### 2026-01-20
+
+- Remove `ethrex-threadpool` crate and move `ThreadPool` to `ethrex-trie` [#5925](https://github.com/lambdaclass/ethrex/pull/5925)
+
 ### 2026-01-19
 
 - Use FxHashset for access lists [#5864](https://github.com/lambdaclass/ethrex/pull/5864)
