@@ -1,12 +1,12 @@
 use std::time::{Duration, Instant};
 
+use ethrex_guest_program::{
+    input::ProgramInput,
+    methods::{ZKVM_RISC0_PROGRAM_ELF, ZKVM_RISC0_PROGRAM_ID},
+};
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
-};
-use guest_program::{
-    input::ProgramInput,
-    methods::{ZKVM_RISC0_PROGRAM_ELF, ZKVM_RISC0_PROGRAM_ID},
 };
 use risc0_zkvm::{
     ExecutorEnv, InnerReceipt, ProverOpts, Receipt, default_executor, default_prover,
