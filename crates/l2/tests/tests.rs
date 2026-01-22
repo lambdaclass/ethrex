@@ -219,6 +219,12 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         private_keys.pop().unwrap(),
     ));
 
+    set.spawn(test_erc20_withdraw_l1_address_mismatch(
+        l1_client.clone(),
+        l2_client.clone(),
+        private_keys.pop().unwrap(),
+    ));
+
     while let Some(res) = set.join_next().await {
         let fees_details = res??;
         acc_priority_fees += fees_details.priority_fees;
@@ -760,6 +766,211 @@ async fn test_erc20_roundtrip(
     let l2_final_balance = test_balance_of(&l2_client, token_l2, rich_address).await;
     assert_eq!(initial_balance, l1_final_balance);
     assert!(l2_final_balance.is_zero());
+    Ok(deploy_fees + approve_fees + withdraw_fees)
+}
+
+/// Tests that withdrawERC20 reverts when the provided L1 address doesn't match the token's l1Address()
+/// 1. Deploys an ERC20 token on L1 and L2
+/// 2. Deposits tokens from L1 to L2
+/// 3. Attempts to withdraw with a mismatched L1 address
+/// 4. Verifies that the transaction reverts
+async fn test_erc20_withdraw_l1_address_mismatch(
+    l1_client: EthClient,
+    l2_client: EthClient,
+    rich_wallet_private_key: SecretKey,
+) -> Result<FeesDetails> {
+    let token_amount: U256 = U256::from(100);
+
+    let rich_wallet_signer: Signer = LocalSigner::new(rich_wallet_private_key).into();
+    let rich_address = rich_wallet_signer.address();
+
+    let init_code_l1 = hex::decode(std::fs::read(
+        "../../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin",
+    )?)?;
+
+    println!("test_erc20_withdraw_l1_address_mismatch: Deploying ERC20 token on L1");
+    let token_l1 = test_deploy_l1(&l1_client, &init_code_l1, &rich_wallet_private_key).await?;
+
+    let contracts_path = Path::new("contracts");
+
+    get_contract_dependencies(contracts_path);
+    let remappings = [(
+        "@openzeppelin/contracts",
+        contracts_path
+            .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
+    )];
+    compile_contract(
+        contracts_path,
+        &contracts_path.join("src/example/L2ERC20.sol"),
+        false,
+        false,
+        Some(&remappings),
+        &[contracts_path],
+        None,
+    )?;
+    let init_code_l2_inner = hex::decode(String::from_utf8(std::fs::read(
+        "contracts/solc_out/TestTokenL2.bin",
+    )?)?)?;
+    let init_code_l2 = [
+        init_code_l2_inner,
+        vec![0u8; 12],
+        token_l1.to_fixed_bytes().to_vec(),
+    ]
+    .concat();
+
+    let (token_l2, deploy_fees) = test_deploy(
+        &l2_client,
+        &init_code_l2,
+        &rich_wallet_private_key,
+        "test_erc20_withdraw_l1_address_mismatch",
+    )
+    .await?;
+
+    println!("test_erc20_withdraw_l1_address_mismatch: token l1={token_l1:x}, l2={token_l2:x}");
+
+    // Mint and approve tokens on L1
+    test_send(
+        &l1_client,
+        &rich_wallet_private_key,
+        token_l1,
+        "freeMint()",
+        &[],
+        "test_erc20_withdraw_l1_address_mismatch",
+    )
+    .await?;
+    test_send(
+        &l1_client,
+        &rich_wallet_private_key,
+        token_l1,
+        "approve(address,uint256)",
+        &[Value::Address(bridge_address()?), Value::Uint(token_amount)],
+        "test_erc20_withdraw_l1_address_mismatch",
+    )
+    .await?;
+
+    println!("test_erc20_withdraw_l1_address_mismatch: Depositing ERC20 token from L1 to L2");
+    let deposit_tx = deposit_erc20(
+        token_l1,
+        token_l2,
+        token_amount,
+        rich_address,
+        &rich_wallet_signer,
+        &l1_client,
+    )
+    .await
+    .unwrap();
+
+    let res = wait_for_transaction_receipt(deposit_tx, &l1_client, 10)
+        .await
+        .unwrap();
+    assert!(res.receipt.status);
+
+    let l2_receipt = wait_for_l2_deposit_receipt(&res, &l1_client, &l2_client)
+        .await
+        .unwrap();
+    assert!(l2_receipt.receipt.status);
+
+    let l2_balance = test_balance_of(&l2_client, token_l2, rich_address).await;
+    assert_eq!(l2_balance, token_amount);
+
+    println!("test_erc20_withdraw_l1_address_mismatch: Approving L2 bridge to spend tokens");
+    let approve_receipt = test_send(
+        &l2_client,
+        &rich_wallet_private_key,
+        token_l2,
+        "approve(address,uint256)",
+        &[
+            Value::Address(COMMON_BRIDGE_L2_ADDRESS),
+            Value::Uint(token_amount),
+        ],
+        "test_erc20_withdraw_l1_address_mismatch",
+    )
+    .await?;
+
+    // Build a dummy tx to calculate its encoded size (needed for fee calculation)
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        data: Bytes::from(encode_calldata(
+            "approve(address,uint256)",
+            &[
+                Value::Address(COMMON_BRIDGE_L2_ADDRESS),
+                Value::Uint(token_amount),
+            ],
+        )?),
+        ..Default::default()
+    });
+    let transaction_size: u64 = tx.encode_to_vec().len().try_into().unwrap();
+    let approve_fees = get_fees_details_l2(&approve_receipt, &l2_client, transaction_size).await?;
+
+    // Use a wrong L1 address (not matching token_l2's l1Address())
+    let wrong_token_l1 = Address::random();
+    println!(
+        "test_erc20_withdraw_l1_address_mismatch: Attempting withdrawal with wrong L1 address {wrong_token_l1:x}"
+    );
+
+    let signature = "withdrawERC20(address,address,address,uint256)";
+    let data = [
+        Value::Address(wrong_token_l1), // Wrong L1 address
+        Value::Address(token_l2),
+        Value::Address(rich_address),
+        Value::Uint(token_amount),
+    ];
+
+    // Verify the revert reason using eth_call before sending the transaction
+    let calldata: Bytes = encode_calldata(signature, &data)?.into();
+    let call_result = l2_client
+        .call(
+            COMMON_BRIDGE_L2_ADDRESS,
+            calldata.clone(),
+            Overrides {
+                from: Some(rich_address),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(
+        call_result.is_err(),
+        "Expected eth_call to fail due to L1 address mismatch"
+    );
+    let error_message = call_result.unwrap_err().to_string();
+    assert!(
+        error_message.contains("L1 address mismatch"),
+        "Expected revert reason to contain 'L1 address mismatch', got: {error_message}"
+    );
+
+    let withdraw_receipt = test_send(
+        &l2_client,
+        &rich_wallet_private_key,
+        COMMON_BRIDGE_L2_ADDRESS,
+        signature,
+        &data,
+        "test_erc20_withdraw_l1_address_mismatch",
+    )
+    .await?;
+
+    // The transaction should revert
+    assert!(
+        !withdraw_receipt.receipt.status,
+        "Expected withdrawal to revert due to L1 address mismatch, but it succeeded"
+    );
+
+    // Calculate withdraw fees (reverted txs still pay gas).
+    // Build a dummy tx to calculate its encoded size (needed for fee calculation).
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        data: calldata,
+        ..Default::default()
+    });
+    let transaction_size: u64 = tx.encode_to_vec().len().try_into().unwrap();
+    let withdraw_fees =
+        get_fees_details_l2(&withdraw_receipt, &l2_client, transaction_size).await?;
+
+    // Verify that the user's L2 balance is unchanged (tokens were not burned)
+    let l2_balance_after = test_balance_of(&l2_client, token_l2, rich_address).await;
+    assert_eq!(
+        l2_balance_after, token_amount,
+        "L2 balance should be unchanged after failed withdrawal"
+    );
+
+    println!("test_erc20_withdraw_l1_address_mismatch: Withdrawal correctly reverted");
     Ok(deploy_fees + approve_fees + withdraw_fees)
 }
 
