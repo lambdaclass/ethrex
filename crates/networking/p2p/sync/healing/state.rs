@@ -403,9 +403,9 @@ pub fn node_missing_children(
     node: &Node,
     path: &Nibbles,
     trie_state: &dyn TrieDB,
-) -> Result<(u64, Vec<RequestMetadata>), TrieError> {
+) -> Result<(usize, Vec<RequestMetadata>), TrieError> {
     let mut paths: Vec<RequestMetadata> = Vec::new();
-    let mut missing_children_count = 0_u64;
+    let mut missing_children_count: usize = 0;
     match &node {
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
