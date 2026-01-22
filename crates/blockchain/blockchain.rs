@@ -87,7 +87,7 @@ use mempool::Mempool;
 use payload::PayloadOrTask;
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{
     Arc, Mutex, RwLock,
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -940,15 +940,24 @@ impl Blockchain {
             // Gather account updates
             let account_updates = vm.get_state_transitions()?;
 
-            for account_update in &account_updates {
-                touched_account_storage_slots.insert(
-                    account_update.address,
-                    account_update
-                        .added_storage
-                        .keys()
-                        .cloned()
-                        .collect::<Vec<H256>>(),
-                );
+            let mut state_accessed = logger
+                .state_accessed
+                .lock()
+                .map_err(|_e| {
+                    ChainError::WitnessGeneration("Failed to execute with witness".to_string())
+                })?
+                .clone();
+
+            // Deduplicate storage keys while preserving access order
+            for keys in state_accessed.values_mut() {
+                let mut seen = HashSet::new();
+                keys.retain(|k| seen.insert(*k));
+            }
+
+            for (account, acc_keys) in state_accessed.iter() {
+                let slots: &mut Vec<H256> =
+                    touched_account_storage_slots.entry(*account).or_default();
+                slots.extend(acc_keys.iter().copied());
             }
 
             // Get the used block hashes from the logger
@@ -975,14 +984,7 @@ impl Blockchain {
 
             // Access all the accounts from the initial trie
             // Record all the storage nodes for the initial state
-            for (account, acc_keys) in logger
-                .state_accessed
-                .lock()
-                .map_err(|_e| {
-                    ChainError::WitnessGeneration("Failed to execute with witness".to_string())
-                })?
-                .iter()
-            {
+            for (account, acc_keys) in state_accessed.iter() {
                 // Access the account from the state trie to record the nodes used to access it
                 trie.get(&hash_address(account)).map_err(|_e| {
                     ChainError::WitnessGeneration("Failed to access account from trie".to_string())
