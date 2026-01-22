@@ -38,7 +38,7 @@ This is a WIP document and it requires better descriptions; it's supposed to be 
 | Inline Hot Opcodes | 0 | In Progress | Opcodes call a function in a jump table when some of the most used ones could perform better being inlined instead |
 | Test ECPairing libraries | 0 | Pending | Benchmark arkworks pairing in levm|
 | PGO/BOLT | 0 | Pending | Try out both [PGO](https://doc.rust-lang.org/beta/rustc/profile-guided-optimization.html) and [BOLT](https://github.com/llvm/llvm-project/tree/main/bolt) to see if we can improve perf |
-| Use an arena allocator for substate tracking | 0 | Pending | Substates are currently a linked list allocated through boxing. Consider using an arena allocator (e.g. bumpalo) for them |
+| Use an arena allocator for substate tracking | 5 | Rejected | Tried bumpalo arena allocator for substates; no performance improvement observed [#5791](https://github.com/lambdaclass/ethrex/pull/5791) |
 | ruint | 0 | Pending | Try out [ruint](https://github.com/recmo/uint) as the `U256` library to see if it improves performance. Part of SIMD initiative |
 | Nibbles | 1 | Pending | Nibbles are currently stored as a byte (`u8`), when they could be stored compactly as actual nibbles in memory and reduce by half their representation size |
 | RLP Duplication | 1 | Pending | Check whether we are encoding/decoding something twice (clearly unnecessary) |
