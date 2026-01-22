@@ -205,15 +205,43 @@ pub async fn periodically_show_peer_stats_during_syncing(
             } else {
                 (headers_downloaded as f64 / headers_to_download as f64) * 100.0
             };
+            let elapsed_secs = start.elapsed().as_secs();
+            let headers_per_second = if elapsed_secs == 0 {
+                0
+            } else {
+                headers_downloaded / elapsed_secs
+            };
 
             // Account leaves metrics
             let account_leaves_downloaded =
                 METRICS.downloaded_account_tries.load(Ordering::Relaxed);
             let account_leaves_inserted = METRICS.account_tries_inserted.load(Ordering::Relaxed);
+            let accounts_per_second =
+                if let Some(start_time) = *METRICS.account_tries_download_start_time.lock().await {
+                    let elapsed_secs = start_time.elapsed().map(|d| d.as_secs()).unwrap_or(0);
+                    if elapsed_secs == 0 {
+                        0
+                    } else {
+                        account_leaves_downloaded / elapsed_secs
+                    }
+                } else {
+                    0
+                };
 
             // Storage leaves metrics
             let storage_leaves_downloaded = METRICS.storage_leaves_downloaded.get();
             let storage_leaves_inserted = METRICS.storage_leaves_inserted.get();
+            let storage_per_second =
+                if let Some(start_time) = *METRICS.storage_tries_download_start_time.lock().await {
+                    let elapsed_secs = start_time.elapsed().map(|d| d.as_secs()).unwrap_or(0);
+                    if elapsed_secs == 0 {
+                        0
+                    } else {
+                        storage_leaves_downloaded / elapsed_secs
+                    }
+                } else {
+                    0
+                };
 
             // Healing metrics
             let healed_accounts = METRICS
@@ -231,6 +259,17 @@ pub async fn periodically_show_peer_stats_during_syncing(
 
             // Bytecode metrics
             let bytecodes_downloaded = METRICS.downloaded_bytecodes.load(Ordering::Relaxed);
+            let bytecodes_per_second =
+                if let Some(start_time) = *METRICS.bytecode_download_start_time.lock().await {
+                    let elapsed_secs = start_time.elapsed().map(|d| d.as_secs()).unwrap_or(0);
+                    if elapsed_secs == 0 {
+                        0
+                    } else {
+                        bytecodes_downloaded / elapsed_secs
+                    }
+                } else {
+                    0
+                };
 
             // Truncate hash to first 6 hex chars
             let head_short = format!("{:x}", current_header_hash);
@@ -241,12 +280,12 @@ pub async fn periodically_show_peer_stats_during_syncing(
 ───────────────────────────────────────────────────────────────────────
  SNAP SYNC │ {elapsed} │ {peer_number} peers │ {current_step} │ {head_short}
 ───────────────────────────────────────────────────────────────────────
- Headers Downloaded      {headers_downloaded:>13}       {headers_percentage:>5.1}%
- Accounts Downloaded     {account_leaves_downloaded:>13}
+ Headers Downloaded      {headers_downloaded:>13}       {headers_percentage:>5.1}%    {headers_per_second} h/s
+ Accounts Downloaded     {account_leaves_downloaded:>13}                    {accounts_per_second} a/s
  Accounts Inserted       {account_leaves_inserted:>13}
- Storage Downloaded      {storage_leaves_downloaded:>13}
+ Storage Downloaded      {storage_leaves_downloaded:>13}                    {storage_per_second} s/s
  Storage Inserted        {storage_leaves_inserted:>13}
- Bytecodes Downloaded    {bytecodes_downloaded:>13}
+ Bytecodes Downloaded    {bytecodes_downloaded:>13}                    {bytecodes_per_second} b/s
 ───────────────────────────────────────────────────────────────────────
  Healing: {healed_accounts} accounts │ {healed_storages} storages │ throttle: {heal_current_throttle}
 ───────────────────────────────────────────────────────────────────────"#
