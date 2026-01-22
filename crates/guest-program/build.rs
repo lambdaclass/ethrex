@@ -60,6 +60,20 @@ fn build_risc0_program() {
         format!("0x{}\n", hex::encode(image_id.as_bytes())),
     )
     .expect("could not write Risc0 vk to file");
+
+    // Write a custom methods.rs with the expected constant names for backward compatibility
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
+    let methods_path = std::path::Path::new(&out_dir).join("risc0_methods.rs");
+    let elf_path = std::fs::canonicalize("./bin/risc0/out/riscv32im-risc0-elf")
+        .expect("could not canonicalize risc0 elf path");
+    let escaped_elf_path = elf_path.to_string_lossy().replace('\\', "\\\\");
+
+    let methods_content = format!(
+        r#"pub const ZKVM_RISC0_PROGRAM_ELF: &[u8] = include_bytes!("{escaped_elf_path}");
+pub const ZKVM_RISC0_PROGRAM_ID: [u32; 8] = {image_id:?};
+"#
+    );
+    std::fs::write(&methods_path, methods_content).expect("could not write risc0_methods.rs");
 }
 
 #[cfg(all(not(clippy), feature = "sp1"))]
