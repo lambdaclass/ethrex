@@ -280,12 +280,12 @@ pub async fn periodically_show_peer_stats_during_syncing(
 ───────────────────────────────────────────────────────────────────────
  SNAP SYNC │ {elapsed} │ {peer_number} peers │ {current_step} │ {head_short}
 ───────────────────────────────────────────────────────────────────────
- Headers Downloaded      {headers_downloaded:>13}       {headers_percentage:>5.1}%    {headers_per_second} h/s
- Accounts Downloaded     {account_leaves_downloaded:>13}                    {accounts_per_second} a/s
+ Headers Downloaded      {headers_downloaded:>13}       {headers_percentage:>5.1}%       {headers_per_second} headers/s
+ Accounts Downloaded     {account_leaves_downloaded:>13}                    {accounts_per_second} accounts/s
  Accounts Inserted       {account_leaves_inserted:>13}
- Storage Downloaded      {storage_leaves_downloaded:>13}                    {storage_per_second} s/s
+ Storage Downloaded      {storage_leaves_downloaded:>13}                    {storage_per_second} storage slots/s
  Storage Inserted        {storage_leaves_inserted:>13}
- Bytecodes Downloaded    {bytecodes_downloaded:>13}                    {bytecodes_per_second} b/s
+ Bytecodes Downloaded    {bytecodes_downloaded:>13}                    {bytecodes_per_second} bytecodes/s
 ───────────────────────────────────────────────────────────────────────
  Healing: {healed_accounts} accounts │ {healed_storages} storages │ throttle: {heal_current_throttle}
 ───────────────────────────────────────────────────────────────────────"#
