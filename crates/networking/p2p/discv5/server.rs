@@ -3,7 +3,8 @@ use crate::{
         codec::Discv5Codec,
         messages::{
             DISTANCES_PER_FIND_NODE_MSG, FindNodeMessage, Handshake, Message, NodesMessage,
-            Ordinary, Packet, PacketCodecError, PacketTrait as _, PingMessage, PongMessage,
+            Ordinary, Packet, PacketCodecError, PacketHeader, PacketTrait as _, PingMessage,
+            PongMessage, WhoAreYou,
         },
         session::{build_challenge_data, create_id_signature, derive_session_keys},
     },
@@ -46,6 +47,10 @@ const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12
 pub const INITIAL_LOOKUP_INTERVAL_MS: f64 = 100.0; // 10 per second
 pub const LOOKUP_INTERVAL_MS: f64 = 600.0; // 100 per minute
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
+/// Timeout for pending messages awaiting WhoAreYou response.
+/// Per spec, good timeout is 500ms for single requests, 1s for handshakes.
+/// Using 2s to be conservative.
+const MESSAGE_CACHE_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, thiserror::Error)]
 pub enum DiscoveryServerError {
@@ -177,9 +182,6 @@ impl DiscoveryServer {
         packet: Packet,
         addr: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
-        // TODO: check enr-seq to decide if we have to send the ENR in the handshake.
-        // (https://github.com/lambdaclass/ethrex/issues/5777)
-        // let whoareyou = WhoAreYou::decode(&packet)?;
         let nonce = packet.header.nonce;
         let Some((node, message, _)) = self.messages_by_nonce.swap_remove(&nonce) else {
             tracing::trace!("Received unexpected WhoAreYou packet. Ignoring it");
@@ -225,10 +227,13 @@ impl DiscoveryServer {
         self.peer_table
             .set_session_info(node.node_id(), session)
             .await?;
-        self.send_handshake(&message, signature, &ephemeral_pubkey, &node)
-            .await?;
 
-        Ok(())
+        // Check enr-seq to decide if we have to send the local ENR in the handshake.
+        let whoareyou = WhoAreYou::decode(&packet)?;
+        let record = (self.local_node_record.seq != whoareyou.enr_seq)
+            .then(|| self.local_node_record.clone());
+        self.send_handshake(&message, signature, &ephemeral_pubkey, &node, record)
+            .await
     }
 
     async fn revalidate(&mut self) -> Result<(), DiscoveryServerError> {
@@ -383,12 +388,13 @@ impl DiscoveryServer {
         signature: Signature,
         eph_pubkey: &[u8],
         node: &Node,
+        record: Option<NodeRecord>,
     ) -> Result<(), DiscoveryServerError> {
         let handshake = Handshake {
             src_id: self.local_node.node_id(),
             id_signature: signature.serialize_compact().to_vec(),
             eph_pubkey: eph_pubkey.to_vec(),
-            record: Some(self.local_node_record.clone()),
+            record,
             message: message.clone(),
         };
         let encrypt_key = self
@@ -428,6 +434,21 @@ impl DiscoveryServer {
         nonce[..4].copy_from_slice(&counter.to_be_bytes());
         rng.fill_bytes(&mut nonce[4..]);
         nonce
+    }
+
+    /// Remove stale entries from the messages_by_nonce cache.
+    /// Called periodically to prevent unbounded growth.
+    fn cleanup_message_cache(&mut self) {
+        let now = Instant::now();
+        let before = self.messages_by_nonce.len();
+        self.messages_by_nonce
+            .retain(|_nonce, (_node, _message, timestamp)| {
+                now.duration_since(*timestamp) < MESSAGE_CACHE_TIMEOUT
+            });
+        let removed = before - self.messages_by_nonce.len();
+        if removed > 0 {
+            trace!("Cleaned up {} stale entries from message cache", removed);
+        }
     }
 
     async fn handle_message(&mut self, ordinary: Ordinary) -> Result<(), DiscoveryServerError> {
@@ -533,6 +554,7 @@ impl GenServer for DiscoveryServer {
                     .prune()
                     .await
                     .inspect_err(|e| error!(err=?e, "Error Pruning peer table"));
+                self.cleanup_message_cache();
             }
             Self::CastMsg::Shutdown => return CastResponse::Stop,
         }
