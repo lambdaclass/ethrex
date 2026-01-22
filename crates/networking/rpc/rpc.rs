@@ -47,7 +47,7 @@ use crate::{eth, mempool};
 use axum::extract::ws::WebSocket;
 use axum::extract::{DefaultBodyLimit, State, WebSocketUpgrade};
 use axum::response::IntoResponse;
-use axum::{Json, Router, http::StatusCode, http::header, routing::post};
+use axum::{Router, http::StatusCode, http::header, routing::post};
 use axum_extra::{
     TypedHeader,
     headers::{Authorization, authorization::Bearer},
@@ -537,27 +537,42 @@ pub async fn shutdown_signal() {
 async fn handle_http_request(
     State(service_context): State<RpcApiContext>,
     body: String,
-) -> Result<Json<Value>, StatusCode> {
-    let res = match serde_json::from_str::<RpcRequestWrapper>(&body) {
+) -> impl IntoResponse {
+    let bytes = handle_http_request_inner(service_context, body).await;
+    ([(header::CONTENT_TYPE, "application/json")], bytes)
+}
+
+async fn handle_http_request_inner(service_context: RpcApiContext, body: String) -> Vec<u8> {
+    // Start timing before JSON parsing to capture full request duration
+    let start = Instant::now();
+
+    match serde_json::from_str::<RpcRequestWrapper>(&body) {
         Ok(RpcRequestWrapper::Single(request)) => {
+            let method = request.method.as_str();
             let res = map_http_requests(&request, service_context).await;
-            rpc_response(request.id, res).map_err(|_| StatusCode::BAD_REQUEST)?
+            let bytes = rpc_response_bytes(request.id, res).unwrap_or_default();
+
+            // Record full request duration for single request
+            record_full_rpc_duration("rpc", method, start);
+            bytes
         }
         Ok(RpcRequestWrapper::Multiple(requests)) => {
             let mut responses = Vec::new();
             for req in requests {
                 let res = map_http_requests(&req, service_context.clone()).await;
-                responses.push(rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?);
+                responses.push(rpc_response(req.id, res).unwrap_or_default());
             }
-            serde_json::to_value(responses).map_err(|_| StatusCode::BAD_REQUEST)?
+            // For batch requests, record as "batch" since there are multiple methods
+            let bytes = serde_json::to_vec(&responses).unwrap_or_default();
+            record_full_rpc_duration("rpc", "batch", start);
+            bytes
         }
-        Err(_) => rpc_response(
+        Err(_) => rpc_response_bytes(
             RpcRequestId::String("".to_string()),
             Err(RpcErr::BadParams("Invalid request body".to_string())),
         )
-        .map_err(|_| StatusCode::BAD_REQUEST)?,
-    };
-    Ok(Json(res))
+        .unwrap_or_default(),
+    }
 }
 
 pub async fn handle_authrpc_request(
@@ -617,10 +632,8 @@ async fn handle_websocket(mut socket: WebSocket, state: State<RpcApiContext>) {
         };
 
         // ok-clone: increase arc reference count
-        let Ok(response) = handle_http_request(state.clone(), body)
-            .await
-            .map(|res| res.to_string())
-        else {
+        let response_bytes = handle_http_request_inner(state.0.clone(), body).await;
+        let Ok(response) = String::from_utf8(response_bytes) else {
             return;
         };
 
