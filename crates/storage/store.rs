@@ -38,6 +38,7 @@ use ethrex_rlp::{
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
 use ethrex_trie::{Node, NodeRLP};
 use lru::LruCache;
+use parking_lot::RwLock;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -46,7 +47,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex, RwLock,
+        Arc, Mutex,
         mpsc::{SyncSender, TryRecvError, sync_channel},
     },
     thread::JoinHandle,
@@ -2301,11 +2302,7 @@ impl Store {
     pub fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper {
             state_root,
-            inner: self
-                .trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            inner: self.trie_cache.read().clone(),
             db: Box::new(BackendTrieDB::new_for_accounts(
                 self.backend.clone(),
                 self.last_written()?,
@@ -2334,11 +2331,7 @@ impl Store {
     pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper {
             state_root,
-            inner: self
-                .trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            inner: self.trie_cache.read().clone(),
             db: Box::new(state_trie_locked_backend(
                 self.backend.as_ref(),
                 self.last_written()?,
@@ -2358,11 +2351,7 @@ impl Store {
     ) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper {
             state_root,
-            inner: self
-                .trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            inner: self.trie_cache.read().clone(),
             db: Box::new(BackendTrieDB::new_for_storages(
                 self.backend.clone(),
                 self.last_written()?,
@@ -2399,11 +2388,7 @@ impl Store {
     ) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper {
             state_root,
-            inner: self
-                .trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            inner: self.trie_cache.read().clone(),
             db: Box::new(state_trie_locked_backend(
                 self.backend.as_ref(),
                 self.last_written()?,
@@ -2571,14 +2556,11 @@ fn apply_trie_updates(
         .chain(account_updates)
         .collect();
     // Read-Copy-Update the trie cache with a new layer.
-    let trie = trie_cache
-        .read()
-        .map_err(|_| StoreError::LockError)?
-        .clone();
+    let trie = trie_cache.read().clone();
     let mut trie_mut = (*trie).clone();
     trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
     let trie = Arc::new(trie_mut);
-    *trie_cache.write().map_err(|_| StoreError::LockError)? = trie.clone();
+    *trie_cache.write() = trie.clone();
     // Update finished, signal block processing.
     result_sender
         .send(Ok(()))
@@ -2643,7 +2625,7 @@ fn apply_trie_updates(
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
     result?;
     // Phase 3: update diff layers with the removal of bottom layer.
-    *trie_cache.write().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
+    *trie_cache.write() = Arc::new(trie_mut);
     Ok(())
 }
 
