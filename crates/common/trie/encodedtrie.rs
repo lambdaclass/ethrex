@@ -652,7 +652,7 @@ impl EncodedTrie {
                 NodeType::Branch {
                     children_indices, ..
                 } => {
-                    let encoded_items = trie.get_encoded_items(index)?;
+                    let encoded_items = trie.get_branch_encoded_items(index)?;
                     for (i, child_index) in children_indices
                         .iter()
                         .enumerate()
@@ -751,7 +751,7 @@ impl EncodedTrie {
                     let mut children_hashes: [Option<NodeHash>; 16] = [None; 16];
 
                     if any_pruned {
-                        let encoded_items = trie.get_encoded_items(index)?;
+                        let encoded_items = trie.get_branch_encoded_items(index)?;
                         for (i, child) in children_indices.iter().enumerate() {
                             let Some(child_index) = child else {
                                 // no child for this index
@@ -917,6 +917,25 @@ impl EncodedTrie {
         let (item0, decoder) = decoder.get_encoded_item_ref()?;
         let (item1, _) = decoder.get_encoded_item_ref()?;
         Ok((item0, item1))
+    }
+
+    /// Gets exactly 17 encoded items for branch nodes without Vec allocation.
+    /// Avoids Vec allocation by returning a fixed-size array.
+    #[inline]
+    pub fn get_branch_encoded_items(&self, index: usize) -> Result<[&[u8]; 17], RLPDecodeError> {
+        let node = &self.nodes[index];
+        let encoded_range = node.encoded_range.expect("could not get encoded range");
+        let data = &self.encoded_data[encoded_range.0..encoded_range.1];
+
+        let mut items: [&[u8]; 17] = [&[]; 17];
+        let mut decoder = Decoder::new(data)?;
+
+        for item in items.iter_mut() {
+            let (decoded_item, new_decoder) = decoder.get_encoded_item_ref()?;
+            *item = decoded_item;
+            decoder = new_decoder;
+        }
+        Ok(items)
     }
 }
 
