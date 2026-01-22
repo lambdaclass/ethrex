@@ -573,6 +573,7 @@ mod tests {
         peer_table::PeerTable,
         types::{Node, NodeRecord},
     };
+    use ethrex_storage::Store;
     use rand::{SeedableRng, rngs::StdRng};
     use secp256k1::SecretKey;
     use std::sync::Arc;
@@ -591,7 +592,11 @@ mod tests {
             local_node_record,
             signer,
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:30303").await.unwrap()),
-            peer_table: PeerTable::spawn(10),
+            peer_table: PeerTable::spawn(
+                10,
+                Store::new("temp.db", ethrex_storage::EngineType::InMemory)
+                    .expect("Failed to start Storage Engine"),
+            ),
             initial_lookup_interval: 1000.0,
             counter: 0,
             messages_by_nonce: Default::default(),
