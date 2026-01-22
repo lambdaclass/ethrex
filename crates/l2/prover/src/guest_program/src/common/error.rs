@@ -1,5 +1,5 @@
-use ethrex_blockchain::error::ChainError;
 use ethrex_common::types::block_execution_witness::GuestProgramStateError;
+use ethrex_common::InvalidBlockError;
 use ethrex_vm::EvmError;
 
 /// Errors that can occur during stateless block execution.
@@ -8,13 +8,13 @@ use ethrex_vm::EvmError;
 #[derive(Debug, thiserror::Error)]
 pub enum ExecutionError {
     #[error("Block validation error: {0}")]
-    BlockValidation(ChainError),
+    BlockValidation(InvalidBlockError),
     #[error("Gas validation error: {0}")]
-    GasValidation(ChainError),
+    GasValidation(InvalidBlockError),
     #[error("Requests root validation error: {0}")]
-    RequestsRootValidation(ChainError),
+    RequestsRootValidation(InvalidBlockError),
     #[error("Receipts validation error: {0}")]
-    ReceiptsRootValidation(ChainError),
+    ReceiptsRootValidation(InvalidBlockError),
     #[error("EVM error: {0}")]
     Evm(#[from] EvmError),
     #[error("Batch has no blocks")]
