@@ -2910,7 +2910,6 @@ version = "9.0.0"
 dependencies = [
  "bincode",
  "bytes",
- "ethrex-blockchain",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-l2-common",
