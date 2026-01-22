@@ -13,8 +13,35 @@ This logbook tracks all optimization attempts, their results, and key learnings.
 | 2026-01-20 | 05 | Avoid NodeType Clone in authenticate/hash        | -0.79% (-3.9M)      | ✅ Kept      | 7e1e94a |
 | 2026-01-20 | 06 | Inline H256 RLP encoding (skip trait overhead)   | -0.71% (-3.54M)     | ✅ Kept      | e1906b2 |
 | 2026-01-20 | 07 | Specialized get_two_encoded_items                | -0.19% (-967k)      | ✅ Kept      | 81600cb |
+| 2026-01-22 | 08 | Array-based get_branch_encoded_items             | +0.52% (+3.4M)      | ❌ Reverted  | 05729a9 |
+| 2026-01-22 | 09 | Pre-compute code hashes on host                  | N/A                 | 🚫 Invalid  | N/A     |
 
 ## Detailed Entries
+
+### 09. Pre-compute Code Hashes on Host
+- **Date:** 2026-01-22
+- **Goal:** Avoid keccak256 hashing of contract bytecode in guest by pre-computing on host.
+- **Analysis:** **This optimization is fundamentally insecure.** The zkVM proof must cryptographically prove `keccak256(code) == account.code_hash` to bind execution to actual on-chain code. Pre-computing the hash on the host would allow an attacker to:
+  1. Provide malicious bytecode that doesn't match real on-chain account
+  2. Provide fake pre-computed hash
+  3. Generate "valid" proof of execution with **wrong code**
+- **Key Insight:** Not all host-side pre-computation is valid. Cryptographic verification that binds witness data to on-chain state must happen in the guest.
+- **Status:** Not Implemented (Security issue - breaks proof soundness).
+
+### 08. Array-based get_branch_encoded_items
+- **Date:** 2026-01-22
+- **Goal:** Avoid Vec allocation when decoding branch nodes by using fixed-size array `[&[u8]; 17]`.
+- **Change:** Added `get_branch_encoded_items()` returning `[&[u8]; 17]` instead of `Vec<&[u8]>` for branch nodes. Updated call sites in `authenticate::recursive` and `hash::recursive`.
+- **Results:**
+  - Total steps: 641,671,652 → 645,029,609 (+0.52%, +3.4M steps) **REGRESSION**
+  - authenticate cost: +2.29%
+  - memcpy calls: 921,521 → 955,939 (+34,418 calls, +3.7%)
+  - memcpy cost: 13.5B → 14.0B (+0.5B)
+- **Why it failed:** The fixed-size array `[&[u8]; 17]` initialization and filling is less efficient than Vec in this context. The array likely incurs stack copying overhead that outweighs the heap allocation cost of Vec. The compiler optimizes Vec::with_capacity(17) better than manual array initialization.
+- **Key Insight:** Not all heap allocations are bad in zkVM context. Vec's allocator overhead can be less than stack array copying when the data structure is passed around or stored temporarily.
+- **Status:** Reverted.
+- **Profile:** Block 24291039, baseline: `stats_20260122_115717_f5524c2d7_baseline.txt`, optimized: `stats_20260122_120222_05729a9bc_p3_branch_items.txt`
+- **Branch:** opt/p3-branch-items
 
 ### 07. Specialized get_two_encoded_items for Leaf/Extension
 - **Date:** 2026-01-20
