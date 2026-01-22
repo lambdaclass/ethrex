@@ -6,6 +6,8 @@ use std::{fmt, sync::Arc};
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
+const BLOOM_SIZE: usize = 1_000_000;
+
 #[derive(Debug, Clone)]
 struct TrieLayer {
     nodes: FxHashMap<Vec<u8>, Vec<u8>>,
@@ -42,7 +44,7 @@ impl fmt::Debug for TrieLayerCache {
 impl Default for TrieLayerCache {
     fn default() -> Self {
         Self {
-            bloom: Self::create_filter(1_000_000),
+            bloom: Self::create_filter(BLOOM_SIZE),
             last_id: 0,
             layers: Default::default(),
             commit_threshold: 128,
@@ -53,7 +55,7 @@ impl Default for TrieLayerCache {
 impl TrieLayerCache {
     pub fn new(commit_threshold: usize) -> Self {
         Self {
-            bloom: Self::create_filter(1_000_000),
+            bloom: Self::create_filter(BLOOM_SIZE),
             last_id: 0,
             layers: Default::default(),
             commit_threshold,
@@ -64,7 +66,7 @@ impl TrieLayerCache {
         // 2% false positive rate, using FxHash for fast hashing
         AtomicBloomFilter::with_false_pos(0.02)
             .hasher(FxBuildHasher)
-            .expected_items(expected_items.max(1_000_000))
+            .expected_items(expected_items.max(BLOOM_SIZE))
     }
 
     pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
@@ -152,7 +154,7 @@ impl TrieLayerCache {
         // Pre-compute total keys for optimal filter sizing
         let total_keys: usize = self.layers.values().map(|layer| layer.nodes.len()).sum();
 
-        let filter = Self::create_filter(total_keys.max(1_000_000));
+        let filter = Self::create_filter(total_keys.max(BLOOM_SIZE));
 
         // Parallel insertion - AtomicBloomFilter allows concurrent insert via &self
         self.layers.par_iter().for_each(|(_, layer)| {
