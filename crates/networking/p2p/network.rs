@@ -205,31 +205,15 @@ pub async fn periodically_show_peer_stats_during_syncing(
             } else {
                 (headers_downloaded as f64 / headers_to_download as f64) * 100.0
             };
-            let headers_progress_bar = format_progress_bar(headers_percentage);
 
             // Account leaves metrics
             let account_leaves_downloaded =
                 METRICS.downloaded_account_tries.load(Ordering::Relaxed);
             let account_leaves_inserted = METRICS.account_tries_inserted.load(Ordering::Relaxed);
-            let account_leaves_inserted_percentage = if account_leaves_downloaded != 0 {
-                (account_leaves_inserted as f64 / account_leaves_downloaded as f64) * 100.0
-            } else {
-                0.0
-            };
-            let accounts_progress_bar = format_progress_bar(account_leaves_inserted_percentage);
 
             // Storage leaves metrics
             let storage_leaves_downloaded = METRICS.storage_leaves_downloaded.get();
             let storage_leaves_inserted = METRICS.storage_leaves_inserted.get();
-            let storage_leaves_inserted_percentage = if storage_leaves_downloaded != 0 {
-                storage_leaves_inserted as f64 / storage_leaves_downloaded as f64 * 100.0
-            } else {
-                0.0
-            };
-            // We round up because of the accounts whose slots get downloaded and then not used
-            let storage_leaves_inserted_percentage =
-                (storage_leaves_inserted_percentage * 10.0).round() / 10.0;
-            let storage_progress_bar = format_progress_bar(storage_leaves_inserted_percentage);
 
             // Healing metrics
             let healed_accounts = METRICS
@@ -257,11 +241,14 @@ pub async fn periodically_show_peer_stats_during_syncing(
 ───────────────────────────────────────────────────────────────────────
  SNAP SYNC │ {elapsed} │ {peer_number} peers │ {current_step} │ {head_short}
 ───────────────────────────────────────────────────────────────────────
-               Downloaded        Inserted             Progress
- Headers     {headers_downloaded:>13}               -      {headers_progress_bar} {headers_percentage:>5.1}%
- Accounts    {account_leaves_downloaded:>13}   {account_leaves_inserted:>13}      {accounts_progress_bar} {account_leaves_inserted_percentage:>5.1}%
- Storage     {storage_leaves_downloaded:>13}   {storage_leaves_inserted:>13}      {storage_progress_bar} {storage_leaves_inserted_percentage:>5.1}%
- Bytecodes   {bytecodes_downloaded:>13}               -                           -
+ Headers Downloaded      {headers_downloaded:>13}       {headers_percentage:>5.1}%
+ Headers Inserted                    -
+ Accounts Downloaded     {account_leaves_downloaded:>13}
+ Accounts Inserted       {account_leaves_inserted:>13}
+ Storage Downloaded      {storage_leaves_downloaded:>13}
+ Storage Inserted        {storage_leaves_inserted:>13}
+ Bytecodes Downloaded    {bytecodes_downloaded:>13}
+ Bytecodes Inserted                  -
 ───────────────────────────────────────────────────────────────────────
  Healing: {healed_accounts} accounts │ {healed_storages} storages │ throttle: {heal_current_throttle}
 ───────────────────────────────────────────────────────────────────────"#
@@ -304,10 +291,3 @@ fn format_duration(duration: Duration) -> String {
     format!("{hours:02}:{minutes:02}:{seconds:02}")
 }
 
-fn format_progress_bar(percentage: f64) -> String {
-    const BAR_WIDTH: usize = 16;
-    let filled = ((percentage / 100.0) * BAR_WIDTH as f64).round() as usize;
-    let filled = filled.min(BAR_WIDTH);
-    let empty = BAR_WIDTH - filled;
-    format!("{}{}", "█".repeat(filled), " ".repeat(empty))
-}
