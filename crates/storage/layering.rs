@@ -1,4 +1,5 @@
 use ethrex_common::H256;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -150,27 +151,28 @@ impl TrieLayerCache {
 
     /// Rebuilds the global bloom filter by inserting all keys from all layers.
     pub fn rebuild_bloom(&mut self) {
-        let Ok(mut new_global_filter) = Self::create_filter() else {
-            tracing::warn!(
-                "TrieLayerCache: rebuild_bloom could not create new filter. Poisoning bloom."
-            );
-            self.bloom = None;
-            return;
-        };
-
-        for layer in self.layers.values() {
-            for path in layer.nodes.keys() {
-                if let Err(qfilter::Error::CapacityExceeded) = new_global_filter.insert(path) {
-                    tracing::warn!(
-                        "TrieLayerCache: rebuild_bloom capacity exceeded. Poisoning bloom."
-                    );
-                    self.bloom = None;
-                    return;
+        self.bloom = self
+            .layers
+            .par_iter()
+            .map(|(_, layer)| {
+                let mut filter = Self::create_filter()?;
+                for path in layer.nodes.keys() {
+                    filter.insert(path)?;
                 }
-            }
-        }
-
-        self.bloom = Some(new_global_filter);
+                Ok(filter)
+            })
+            .reduce_with(|f1, f2| {
+                let mut filter = f1?;
+                filter.merge(false, &f2?)?;
+                Ok(filter)
+            })
+            .map(|res| {
+                res.inspect_err(|err: &qfilter::Error| {
+                    tracing::error!("Failed to create bloom filter: {err:?}");
+                })
+                .ok()
+            })
+            .flatten();
     }
 
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
