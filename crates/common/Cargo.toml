@@ -41,6 +41,9 @@ default = ["secp256k1"]
 c-kzg = ["ethrex-crypto/c-kzg"]
 secp256k1 = ["dep:secp256k1"]
 
+# zkVM target features for optimized code paths
+zisk = []
+sp1 = []
 risc0 = ["ethrex-crypto/risc0"]
 sp1 = []
 zisk = []
