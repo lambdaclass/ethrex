@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Contributing to the Documentation - Ethrex</title>
+        <title>Benchmark Comparisons - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -12,33 +12,33 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="favicon.svg">
-        <link rel="shortcut icon" href="favicon.png">
-        <link rel="stylesheet" href="css/variables.css">
-        <link rel="stylesheet" href="css/general.css">
-        <link rel="stylesheet" href="css/chrome.css">
-        <link rel="stylesheet" href="css/print.css" media="print">
+        <link rel="icon" href="../../favicon.svg">
+        <link rel="shortcut icon" href="../../favicon.png">
+        <link rel="stylesheet" href="../../css/variables.css">
+        <link rel="stylesheet" href="../../css/general.css">
+        <link rel="stylesheet" href="../../css/chrome.css">
+        <link rel="stylesheet" href="../../css/print.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="fonts/fonts.css">
+        <link rel="stylesheet" href="../../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="highlight-css" href="highlight.css">
-        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
-        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+        <link rel="stylesheet" id="highlight-css" href="../../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
 
 
         <!-- Provide site root and default themes to javascript -->
         <script>
-            const path_to_root = "";
+            const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc.js"></script>
+        <script src="../../toc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -102,7 +102,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
             </noscript>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -137,7 +137,7 @@
                     <h1 class="menu-title">Ethrex</h1>
 
                     <div class="right-buttons">
-                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
                         <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
@@ -237,56 +237,117 @@
 }
 
 </style>
-<h1 id="contributing-to-the-documentation"><a class="header" href="#contributing-to-the-documentation">Contributing to the Documentation</a></h1>
-<p>We welcome contributions to the documentation! If you want to help improve or expand the docs, please follow these guidelines:</p>
-<h2 id="how-to-edit-the-docs"><a class="header" href="#how-to-edit-the-docs">How to Edit the Docs</a></h2>
+<h1 id="zkvm-comparison"><a class="header" href="#zkvm-comparison">zkVM Comparison</a></h1>
+<p>This page provides benchmark comparisons between ethrex and other implementations, along with a feature matrix for supported zkVM backends.</p>
+<h2 id="ethrex-vs-rsp-sp1"><a class="header" href="#ethrex-vs-rsp-sp1">ethrex vs RSP (SP1)</a></h2>
+<p>RSP (RISC Zero/SP1 Prover) is Succinct's implementation for proving Ethereum blocks. Here's how ethrex compares on mainnet blocks:</p>
+<div class="table-wrapper"><table><thead><tr><th>Block</th><th>Gas Used</th><th>ethrex (SP1)</th><th>RSP</th><th>Difference</th></tr></thead><tbody>
+<tr><td>23769082</td><td>7.9M</td><td>2m 23s</td><td>1m 27s</td><td>+63%</td></tr>
+<tr><td>23769083</td><td>44.9M</td><td>12m 24s</td><td>7m 49s</td><td>+59%</td></tr>
+<tr><td>23769084</td><td>27.1M</td><td>8m 40s</td><td>Failed</td><td>—</td></tr>
+<tr><td>23769085</td><td>22.2M</td><td>6m 40s</td><td>Failed</td><td>—</td></tr>
+<tr><td>23769086</td><td>28.4M</td><td>7m 36s</td><td>4m 45s</td><td>+60%</td></tr>
+<tr><td>23769087</td><td>17.5M</td><td>6m 02s</td><td>Failed</td><td>—</td></tr>
+<tr><td>23769088</td><td>17.5M</td><td>4m 50s</td><td>2m 59s</td><td>+61%</td></tr>
+<tr><td>23769089</td><td>23.9M</td><td>8m 14s</td><td>4m 44s</td><td>+74%</td></tr>
+<tr><td>23769090</td><td>24.2M</td><td>8m 11s</td><td>4m 40s</td><td>+75%</td></tr>
+<tr><td>23769091</td><td>24.4M</td><td>7m 02s</td><td>Failed</td><td>—</td></tr>
+<tr><td>23769092</td><td>21.7M</td><td>6m 35s</td><td>4m 01s</td><td>+64%</td></tr>
+</tbody></table>
+</div><div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>RSP failed on several blocks with <code>block gas used mismatch</code> errors. ethrex successfully proved all blocks.</p>
+</div>
+<p><strong>Hardware:</strong></p>
 <ul>
-<li>
-<p>All documentation lives in this <code>docs/</code> directory and its subfolders.</p>
-</li>
-<li>
-<p>The documentation is written in Markdown and rendered using <a href="https://rust-lang.github.io/mdBook/">mdBook</a>.</p>
-</li>
-<li>
-<p>To preview your changes locally, <a href="#documentation-dependencies">install the dependencies</a> and run:</p>
-<pre><code class="language-sh">make docs-serve
+<li>ethrex: AMD EPYC 7713 64-Core, 128GB RAM, RTX 4090</li>
+<li>RSP: AMD EPYC 7F72 24-Core, 64GB RAM, RTX 4090</li>
+</ul>
+<h2 id="zkvm-backend-comparison"><a class="header" href="#zkvm-backend-comparison">zkVM Backend Comparison</a></h2>
+<p>ethrex supports multiple zkVM backends with varying features and maturity levels:</p>
+<div class="table-wrapper"><table><thead><tr><th>Feature</th><th>SP1</th><th>RISC Zero</th><th>ZisK</th><th>OpenVM</th></tr></thead><tbody>
+<tr><td><strong>Status</strong></td><td>Production</td><td>Production</td><td>Experimental</td><td>Experimental</td></tr>
+<tr><td><strong>GPU Acceleration</strong></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td><strong>L2 Prover</strong></td><td>✓</td><td>✓</td><td>Planned</td><td>Planned</td></tr>
+<tr><td><strong>Proof Aggregation</strong></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+</tbody></table>
+</div>
+<h3 id="precompile-support"><a class="header" href="#precompile-support">Precompile Support</a></h3>
+<p>ZK proving of Ethereum precompiles varies by backend:</p>
+<div class="table-wrapper"><table><thead><tr><th>Precompile</th><th>SP1</th><th>RISC Zero</th><th>ZisK</th></tr></thead><tbody>
+<tr><td>ecrecover</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>SHA256</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>RIPEMD160</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>identity</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>modexp</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>ecAdd</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>ecMul</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>ecPairing</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>blake2f</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>KZG point evaluation</td><td>✓</td><td>⚠️</td><td>⚠️</td></tr>
+<tr><td>BLS12-381</td><td>✓</td><td>⚠️</td><td>✓</td></tr>
+<tr><td>P256 verify</td><td>✓</td><td>✓</td><td>⚠️</td></tr>
+</tbody></table>
+</div>
+<p>Legend: ✓ = Supported with patches, ⚠️ = Limited or requires unstable features</p>
+<h2 id="optimization-impact"><a class="header" href="#optimization-impact">Optimization Impact</a></h2>
+<p>ethrex has undergone significant optimization for zkVM proving:</p>
+<div class="table-wrapper"><table><thead><tr><th>Optimization</th><th>Impact</th><th>Description</th></tr></thead><tbody>
+<tr><td>Jumpdest analysis</td><td>-15% cycles</td><td>Optimized jump destination validation</td></tr>
+<tr><td>Trie caching</td><td>-50% hash calls</td><td>Cache initial node hashes during trie construction</td></tr>
+<tr><td>Trie hashing</td><td>-75% trie cycles</td><td>Improved traversal and RLP encoding</td></tr>
+<tr><td>Trie operations</td><td>-93% get/insert cycles</td><td>Eliminated unnecessary node cloning</td></tr>
+<tr><td>Serialized tries</td><td>-22% total cycles</td><td>Pre-serialize resolved tries, skip decoding</td></tr>
+<tr><td>ecPairing patch</td><td>-10% total cycles</td><td>138k → 6k cycles per operation</td></tr>
+<tr><td>ecMul patch</td><td>-10% total cycles</td><td>Accelerated scalar multiplication</td></tr>
+</tbody></table>
+</div>
+<p>See <a href="./prover_performance.html">prover_performance.md</a> for detailed optimization history.</p>
+<h2 id="reproduction-instructions"><a class="header" href="#reproduction-instructions">Reproduction Instructions</a></h2>
+<h3 id="ethrex-benchmarks"><a class="header" href="#ethrex-benchmarks">ethrex Benchmarks</a></h3>
+<ol>
+<li>Clone <a href="https://github.com/lambdaclass/ethrex-replay">ethrex-replay</a></li>
+<li>Run the prover:</li>
+</ol>
+<pre><code class="language-bash">cargo r -r -F "sp1,gpu" -p ethrex-replay -- blocks \
+  --action prove \
+  --zkvm sp1 \
+  --from 23769082 \
+  --to 23769092 \
+  --rpc-url &lt;RPC_WITH_DEBUG_EXECUTIONWITNESS&gt;
 </code></pre>
-<p>This will start a local server and open the docs in your browser.</p>
-</li>
-</ul>
-<h2 id="adding-or-editing-content"><a class="header" href="#adding-or-editing-content">Adding or Editing Content</a></h2>
-<ul>
-<li>To add a new page, create a new <code>.md</code> file in the appropriate subdirectory and add a link to it in <code>SUMMARY.md</code>.</li>
-<li>To edit an existing page, simply modify the relevant <code>.md</code> file.</li>
-<li>For style and formatting, try to keep a consistent tone and structure with the rest of the documentation.</li>
-</ul>
-<h2 id="documentation-dependencies"><a class="header" href="#documentation-dependencies">Documentation dependencies</a></h2>
-<p>We use some mdBook preprocessors and backends for extra features:</p>
-<ul>
-<li><a href="https://github.com/lambdalisue/rs-mdbook-alerts"><code>mdbook-alerts</code></a> for custom markdown syntax.</li>
-<li><a href="https://github.com/badboy/mdbook-mermaid"><code>mdbook-mermaid</code></a> for diagrams.</li>
-<li><a href="https://github.com/Michael-F-Bryan/mdbook-linkcheck"><code>mdbook-linkcheck</code></a> for checking broken links (optional).</li>
-</ul>
-<p>You can install mdBook and all dependencies with:</p>
-<pre><code class="language-sh">make docs-deps
+<h3 id="rsp-benchmarks"><a class="header" href="#rsp-benchmarks">RSP Benchmarks</a></h3>
+<ol>
+<li>Clone <a href="https://github.com/succinctlabs/rsp">rsp</a></li>
+<li>Run with CUDA:</li>
+</ol>
+<pre><code class="language-bash">SP1_PROVER=cuda cargo r -r \
+  --manifest-path bin/host/Cargo.toml \
+  --block-number &lt;BLOCK&gt; \
+  --rpc-url &lt;RPC&gt; \
+  --prove
 </code></pre>
-<h2 id="submitting-changes"><a class="header" href="#submitting-changes">Submitting Changes</a></h2>
-<ul>
-<li>Please open a Pull Request with your proposed changes.</li>
-<li>If you are adding new content, update <code>SUMMARY.md</code> so it appears in the navigation.</li>
-<li>If you have questions, open an issue or ask in the community chat.</li>
-</ul>
-<p>Thank you for helping improve the documentation!</p>
+<h2 id="hardware-recommendations"><a class="header" href="#hardware-recommendations">Hardware Recommendations</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Use Case</th><th>Minimum</th><th>Recommended</th></tr></thead><tbody>
+<tr><td>Development</td><td>32GB RAM, 8 cores</td><td>64GB RAM, 16 cores</td></tr>
+<tr><td>Production (CPU)</td><td>64GB RAM, 32 cores</td><td>128GB RAM, 64 cores</td></tr>
+<tr><td>Production (GPU)</td><td>64GB RAM, RTX 3090</td><td>128GB RAM, RTX 4090</td></tr>
+</tbody></table>
+</div>
+<p>GPU proving is significantly faster and recommended for production workloads. All modern NVIDIA GPUs with 24GB+ VRAM are supported.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="case-studies.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../zkvm-integrations.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="lectures.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../l2/bench/prover_performance.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -296,11 +357,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="case-studies.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../zkvm-integrations.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="lectures.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../l2/bench/prover_performance.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
@@ -315,17 +376,17 @@
         </script>
 
 
-        <script src="elasticlunr.min.js"></script>
-        <script src="mark.min.js"></script>
-        <script src="searcher.js"></script>
+        <script src="../../elasticlunr.min.js"></script>
+        <script src="../../mark.min.js"></script>
+        <script src="../../searcher.js"></script>
 
-        <script src="clipboard.min.js"></script>
-        <script src="highlight.js"></script>
-        <script src="book.js"></script>
+        <script src="../../clipboard.min.js"></script>
+        <script src="../../highlight.js"></script>
+        <script src="../../book.js"></script>
 
         <!-- Custom JS scripts -->
-        <script src="mermaid.min.js"></script>
-        <script src="mermaid-init.js"></script>
+        <script src="../../mermaid.min.js"></script>
+        <script src="../../mermaid-init.js"></script>
 
 
     </div>

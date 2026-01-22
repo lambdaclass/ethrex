@@ -238,6 +238,133 @@
 }
 
 </style>
+<h1 id="ethrex"><a class="header" href="#ethrex">ethrex</a></h1>
+<p>ethrex is a minimalist, stable, modular, fast, and ZK native Ethereum client built from the ground up with zero-knowledge proving in mind. Whether you're running an L1 node or building an L2, ethrex provides the foundation for verifiable Ethereum execution.</p>
+<h2 id="why-ethrex"><a class="header" href="#why-ethrex">Why ethrex?</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Feature</th><th>Description</th></tr></thead><tbody>
+<tr><td><strong>Minimalist</strong></td><td>~100k lines of Rust vs 500k+ in mature clients. Less code means fewer bugs and faster iteration.</td></tr>
+<tr><td><strong>Multi-prover</strong></td><td>Support for SP1, RISC Zero, ZisK, OpenVM, and TEEs. Choose the proving backend that fits your needs.</td></tr>
+<tr><td><strong>Unified L1/L2</strong></td><td>Same execution client for mainnet nodes and L2 rollups. Consistent behavior across layers.</td></tr>
+<tr><td><strong>ZK-Optimized</strong></td><td>Data structures and algorithms designed to minimize proving overhead from day one.</td></tr>
+</tbody></table>
+</div>
+<h2 id="zkvm-integrations"><a class="header" href="#zkvm-integrations">zkVM Integrations</a></h2>
+<p>ethrex integrates with multiple zero-knowledge virtual machines, giving you flexibility in how you prove Ethereum execution.</p>
+<div class="table-wrapper"><table><thead><tr><th>zkVM</th><th>Organization</th><th>L1 Support</th><th>L2 Support</th><th>Status</th></tr></thead><tbody>
+<tr><td><strong>SP1</strong></td><td>Succinct</td><td>✓</td><td>✓</td><td>Production</td></tr>
+<tr><td><strong>RISC Zero</strong></td><td>RISC Zero</td><td>✓</td><td>✓</td><td>Production</td></tr>
+<tr><td><strong>ZisK</strong></td><td>Polygon</td><td>✓</td><td>Planned</td><td>Experimental</td></tr>
+<tr><td><strong>OpenVM</strong></td><td>Axiom</td><td>✓</td><td>Planned</td><td>Experimental</td></tr>
+<tr><td><strong>TEE (TDX)</strong></td><td>Intel</td><td>—</td><td>✓</td><td>Production</td></tr>
+</tbody></table>
+</div><div class="mdbook-alerts mdbook-alerts-tip">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  tip
+</p>
+<p>For L2 deployments, you can run multiple provers simultaneously for redundancy. See <a href="./l2/deployment/prover/multi-prover.html">multi-prover deployment</a>.</p>
+</div>
+<h2 id="quick-start"><a class="header" href="#quick-start">Quick Start</a></h2>
+<p><strong>Run an L1 node:</strong></p>
+<pre><code class="language-bash"># Install ethrex
+cargo install ethrex
+
+# Start syncing mainnet
+ethrex --network mainnet
+</code></pre>
+<p><strong>Deploy an L2:</strong></p>
+<pre><code class="language-bash"># See the full deployment guide
+# https://docs.ethrex.xyz/l2/deployment/overview.html
+</code></pre>
+<h2 id="architecture-highlights"><a class="header" href="#architecture-highlights">Architecture Highlights</a></h2>
+<p>ethrex's architecture is optimized for both traditional execution and ZK proving:</p>
+<ul>
+<li><strong>Stateless execution</strong> - Block execution can run with only the necessary witness data, enabling efficient proving</li>
+<li><strong>Modular VM (LEVM)</strong> - Our EVM implementation is designed for clarity and easy auditing</li>
+<li><strong>Optimized tries</strong> - Merkle Patricia Trie operations are tuned to reduce zkVM cycle counts</li>
+<li><strong>Precompile patches</strong> - Cryptographic operations use zkVM-accelerated implementations when available</li>
+</ul>
+<h2 id="learn-more"><a class="header" href="#learn-more">Learn More</a></h2>
+<ul>
+<li><a href="./zkvm-integrations.html">zkVM Integrations</a> - Detailed guide to supported proving backends</li>
+<li><a href="./l2/bench/zkvm_comparison.html">Benchmark Comparisons</a> - Performance data vs other implementations</li>
+<li><a href="./case-studies.html">Case Studies</a> - How teams are using ethrex</li>
+<li><a href="./l1/architecture/overview.html">Architecture Overview</a> - Deep dive into ethrex internals</li>
+</ul>
+<h2 id="get-involved"><a class="header" href="#get-involved">Get Involved</a></h2>
+<ul>
+<li><a href="https://github.com/lambdaclass/ethrex">GitHub</a> - Star us, open issues, contribute</li>
+<li><a href="https://t.me/ethrex_client">Telegram</a> - Join the community chat</li>
+<li><a href="https://blog.lambdaclass.com/">Blog</a> - Technical deep dives and updates</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
 <h1 id="getting-started"><a class="header" href="#getting-started">Getting started</a></h1>
 <p>Ethrex is a minimalist, stable, modular and fast implementation of the Ethereum protocol in <a href="https://www.rust-lang.org/">Rust</a>.
 The client supports running in two different modes:</p>
@@ -15867,7 +15994,7 @@ Here they mention two different solutions that we have to implement in order to 
 
 </style>
 <h1 id="cli-commands"><a class="header" href="#cli-commands">CLI Commands</a></h1>
-<h2 id="ethrex"><a class="header" href="#ethrex">ethrex</a></h2>
+<h2 id="ethrex-1"><a class="header" href="#ethrex-1">ethrex</a></h2>
 <!-- BEGIN_CLI_HELP -->
 <pre><code>ethrex Execution client
 
@@ -16905,6 +17032,827 @@ Long-term research directions and second-order ideas are intentionally out of sc
 <tr><td>Archive node</td><td>—</td><td>Pending</td><td>Allow archive node mode</td></tr>
 </tbody></table>
 </div><div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="zkvm-integrations-1"><a class="header" href="#zkvm-integrations-1">zkVM Integrations</a></h1>
+<p>ethrex integrates with multiple zero-knowledge virtual machines (zkVMs), giving you flexibility in how you prove Ethereum execution. This page provides an overview of each integration, its status, and links to deployment documentation.</p>
+<h2 id="integration-overview"><a class="header" href="#integration-overview">Integration Overview</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>zkVM</th><th>Organization</th><th>Status</th><th>L1 Proving</th><th>L2 Prover</th><th>Documentation</th></tr></thead><tbody>
+<tr><td><strong>SP1</strong></td><td>Succinct</td><td>Production</td><td>✓</td><td>✓</td><td><a href="./l2/deployment/prover/sp1.html">SP1 Prover Guide</a></td></tr>
+<tr><td><strong>RISC Zero</strong></td><td>RISC Zero</td><td>Production</td><td>✓</td><td>✓</td><td><a href="./l2/deployment/prover/risc0.html">RISC0 Prover Guide</a></td></tr>
+<tr><td><strong>ZisK</strong></td><td>Polygon</td><td>Experimental</td><td>✓</td><td>Planned</td><td>Coming soon</td></tr>
+<tr><td><strong>OpenVM</strong></td><td>Axiom</td><td>Experimental</td><td>✓</td><td>Planned</td><td>Coming soon</td></tr>
+<tr><td><strong>TEE (TDX)</strong></td><td>Intel</td><td>Production</td><td>—</td><td>✓</td><td><a href="./l2/deployment/prover/tee.html">TDX Prover Guide</a></td></tr>
+</tbody></table>
+</div>
+<h2 id="sp1-succinct"><a class="header" href="#sp1-succinct">SP1 (Succinct)</a></h2>
+<p><a href="https://docs.succinct.xyz/">SP1</a> is a zkVM developed by Succinct Labs that enables efficient proving of arbitrary Rust programs.</p>
+<p><strong>Status:</strong> Production-ready for both L1 proving and L2 prover deployments.</p>
+<p><strong>Key Features:</strong></p>
+<ul>
+<li>GPU acceleration via CUDA</li>
+<li>Proof aggregation support</li>
+<li>Extensive precompile patches for Ethereum operations</li>
+<li>Active development and community support</li>
+</ul>
+<p><strong>Integration Details:</strong></p>
+<ul>
+<li>ethrex uses SP1's precompile patches for optimized cryptographic operations</li>
+<li>Supports both CPU and GPU proving modes</li>
+<li>Compatible with Aligned Layer for proof aggregation</li>
+</ul>
+<p><strong>Get Started:</strong></p>
+<ul>
+<li><a href="./l2/deployment/prover/sp1.html">Run an ethrex SP1 prover</a></li>
+<li><a href="https://docs.succinct.xyz/">SP1 Documentation</a></li>
+</ul>
+<h2 id="risc-zero"><a class="header" href="#risc-zero">RISC Zero</a></h2>
+<p><a href="https://dev.risczero.com/">RISC Zero</a> is a zkVM built on the RISC-V architecture, providing a general-purpose proving environment.</p>
+<p><strong>Status:</strong> Production-ready for both L1 proving and L2 prover deployments.</p>
+<p><strong>Key Features:</strong></p>
+<ul>
+<li>GPU acceleration support</li>
+<li>Bonsai proving network for distributed proving</li>
+<li>Strong developer tooling and documentation</li>
+</ul>
+<p><strong>Integration Details:</strong></p>
+<ul>
+<li>ethrex integrates with risc0-ethereum for optimized trie operations</li>
+<li>Supports CUDA acceleration for faster proving</li>
+<li>Some precompiles (Keccak, BLS12-381) require the "unstable" feature flag</li>
+</ul>
+<p><strong>Get Started:</strong></p>
+<ul>
+<li><a href="./l2/deployment/prover/risc0.html">Run an ethrex RISC0 prover</a></li>
+<li><a href="https://dev.risczero.com/">RISC Zero Documentation</a></li>
+</ul>
+<h2 id="zisk-polygon"><a class="header" href="#zisk-polygon">ZisK (Polygon)</a></h2>
+<p><a href="https://0xpolygonhermez.github.io/zisk/">ZisK</a> is Polygon's zkVM designed for high-performance proving with GPU acceleration.</p>
+<p><strong>Status:</strong> Experimental. L1 proving is functional; L2 integration is planned.</p>
+<p><strong>Key Features:</strong></p>
+<ul>
+<li>Native GPU support with custom CUDA kernels</li>
+<li>Unique MODEXP precompile implementation</li>
+<li>Optimized for high-throughput proving</li>
+</ul>
+<p><strong>Integration Details:</strong></p>
+<ul>
+<li>ethrex supports ZisK for L1 block proving via ethrex-replay</li>
+<li>Most Ethereum precompiles are supported with patches</li>
+<li>P256 verification is not yet available (no patch exists)</li>
+</ul>
+<p><strong>Current Limitations:</strong></p>
+<ul>
+<li>L2 prover integration is not yet complete</li>
+<li>Requires manual installation from source for GPU support</li>
+</ul>
+<h2 id="openvm-axiom"><a class="header" href="#openvm-axiom">OpenVM (Axiom)</a></h2>
+<p><a href="https://book.openvm.dev/">OpenVM</a> is Axiom's modular zkVM framework designed for flexibility and extensibility.</p>
+<p><strong>Status:</strong> Experimental. Initial integration for L1 proving.</p>
+<p><strong>Key Features:</strong></p>
+<ul>
+<li>Modular architecture for custom extensions</li>
+<li>Support for multiple proving backends</li>
+<li>Designed for composability</li>
+</ul>
+<p><strong>Integration Details:</strong></p>
+<ul>
+<li>Basic integration for L1 block proving</li>
+<li>Precompile support is being expanded</li>
+<li>L2 prover integration is planned</li>
+</ul>
+<h2 id="tee-intel-tdx"><a class="header" href="#tee-intel-tdx">TEE (Intel TDX)</a></h2>
+<p>Intel Trust Domain Extensions (TDX) provides hardware-based trusted execution for block proving.</p>
+<p><strong>Status:</strong> Production-ready for L2 prover deployments.</p>
+<p><strong>Key Features:</strong></p>
+<ul>
+<li>Hardware-based security guarantees</li>
+<li>No cryptographic proving overhead</li>
+<li>Fast execution within trusted enclave</li>
+</ul>
+<p><strong>Integration Details:</strong></p>
+<ul>
+<li>Supported as an L2 prover option</li>
+<li>Can run alongside zkVM provers for redundancy</li>
+<li>Requires TDX-capable hardware</li>
+</ul>
+<p><strong>Get Started:</strong></p>
+<ul>
+<li><a href="./l2/deployment/prover/tee.html">Run an ethrex TDX prover</a></li>
+</ul>
+<h2 id="multi-prover-deployments"><a class="header" href="#multi-prover-deployments">Multi-Prover Deployments</a></h2>
+<p>ethrex supports running multiple provers simultaneously, providing redundancy and flexibility:</p>
+<pre><code>                    ┌─────────────┐
+                    │   ethrex    │
+                    │  Sequencer  │
+                    └──────┬──────┘
+                           │
+           ┌───────────────┼───────────────┐
+           │               │               │
+      ┌────┴────┐    ┌────┴────┐    ┌────┴────┐
+      │   SP1   │    │  RISC0  │    │   TDX   │
+      │ Prover  │    │ Prover  │    │ Prover  │
+      └────┬────┘    └────┬────┘    └────┬────┘
+           │               │               │
+           └───────────────┼───────────────┘
+                           │
+                    ┌──────┴──────┐
+                    │   Aligned   │
+                    │    Layer    │
+                    └─────────────┘
+</code></pre>
+<p>See <a href="./l2/deployment/prover/multi-prover.html">Multi-prover deployment guide</a> for configuration details.</p>
+<h2 id="ecosystem-integrations"><a class="header" href="#ecosystem-integrations">Ecosystem Integrations</a></h2>
+<h3 id="aligned-layer"><a class="header" href="#aligned-layer">Aligned Layer</a></h3>
+<p><a href="https://alignedlayer.com/">Aligned Layer</a> provides proof aggregation and verification services for ethrex L2 deployments.</p>
+<p><strong>Features:</strong></p>
+<ul>
+<li>Aggregates proofs from multiple zkVM backends</li>
+<li>Reduces L1 verification costs</li>
+<li>Supports SP1, RISC Zero, and other proof systems</li>
+</ul>
+<p><strong>Documentation:</strong> <a href="./l2/deployment/aligned.html">ethrex &lt;&gt; Aligned integration</a></p>
+<h2 id="choosing-a-zkvm"><a class="header" href="#choosing-a-zkvm">Choosing a zkVM</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Consideration</th><th>Recommendation</th></tr></thead><tbody>
+<tr><td><strong>Production L2</strong></td><td>SP1 or RISC Zero (most mature)</td></tr>
+<tr><td><strong>Maximum performance</strong></td><td>SP1 with GPU acceleration</td></tr>
+<tr><td><strong>Hardware security</strong></td><td>TEE (TDX)</td></tr>
+<tr><td><strong>Experimentation</strong></td><td>ZisK or OpenVM</td></tr>
+<tr><td><strong>Redundancy</strong></td><td>Multi-prover with SP1 + RISC Zero + TEE</td></tr>
+</tbody></table>
+</div>
+<h2 id="performance-comparison"><a class="header" href="#performance-comparison">Performance Comparison</a></h2>
+<p>See <a href="./l2/bench/zkvm_comparison.html">zkVM Comparison</a> for detailed benchmark data comparing proving times across backends.</p>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="zkvm-comparison"><a class="header" href="#zkvm-comparison">zkVM Comparison</a></h1>
+<p>This page provides benchmark comparisons between ethrex and other implementations, along with a feature matrix for supported zkVM backends.</p>
+<h2 id="ethrex-vs-rsp-sp1"><a class="header" href="#ethrex-vs-rsp-sp1">ethrex vs RSP (SP1)</a></h2>
+<p>RSP (RISC Zero/SP1 Prover) is Succinct's implementation for proving Ethereum blocks. Here's how ethrex compares on mainnet blocks:</p>
+<div class="table-wrapper"><table><thead><tr><th>Block</th><th>Gas Used</th><th>ethrex (SP1)</th><th>RSP</th><th>Difference</th></tr></thead><tbody>
+<tr><td>23769082</td><td>7.9M</td><td>2m 23s</td><td>1m 27s</td><td>+63%</td></tr>
+<tr><td>23769083</td><td>44.9M</td><td>12m 24s</td><td>7m 49s</td><td>+59%</td></tr>
+<tr><td>23769084</td><td>27.1M</td><td>8m 40s</td><td>Failed</td><td>—</td></tr>
+<tr><td>23769085</td><td>22.2M</td><td>6m 40s</td><td>Failed</td><td>—</td></tr>
+<tr><td>23769086</td><td>28.4M</td><td>7m 36s</td><td>4m 45s</td><td>+60%</td></tr>
+<tr><td>23769087</td><td>17.5M</td><td>6m 02s</td><td>Failed</td><td>—</td></tr>
+<tr><td>23769088</td><td>17.5M</td><td>4m 50s</td><td>2m 59s</td><td>+61%</td></tr>
+<tr><td>23769089</td><td>23.9M</td><td>8m 14s</td><td>4m 44s</td><td>+74%</td></tr>
+<tr><td>23769090</td><td>24.2M</td><td>8m 11s</td><td>4m 40s</td><td>+75%</td></tr>
+<tr><td>23769091</td><td>24.4M</td><td>7m 02s</td><td>Failed</td><td>—</td></tr>
+<tr><td>23769092</td><td>21.7M</td><td>6m 35s</td><td>4m 01s</td><td>+64%</td></tr>
+</tbody></table>
+</div><div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>RSP failed on several blocks with <code>block gas used mismatch</code> errors. ethrex successfully proved all blocks.</p>
+</div>
+<p><strong>Hardware:</strong></p>
+<ul>
+<li>ethrex: AMD EPYC 7713 64-Core, 128GB RAM, RTX 4090</li>
+<li>RSP: AMD EPYC 7F72 24-Core, 64GB RAM, RTX 4090</li>
+</ul>
+<h2 id="zkvm-backend-comparison"><a class="header" href="#zkvm-backend-comparison">zkVM Backend Comparison</a></h2>
+<p>ethrex supports multiple zkVM backends with varying features and maturity levels:</p>
+<div class="table-wrapper"><table><thead><tr><th>Feature</th><th>SP1</th><th>RISC Zero</th><th>ZisK</th><th>OpenVM</th></tr></thead><tbody>
+<tr><td><strong>Status</strong></td><td>Production</td><td>Production</td><td>Experimental</td><td>Experimental</td></tr>
+<tr><td><strong>GPU Acceleration</strong></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td><strong>L2 Prover</strong></td><td>✓</td><td>✓</td><td>Planned</td><td>Planned</td></tr>
+<tr><td><strong>Proof Aggregation</strong></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+</tbody></table>
+</div>
+<h3 id="precompile-support"><a class="header" href="#precompile-support">Precompile Support</a></h3>
+<p>ZK proving of Ethereum precompiles varies by backend:</p>
+<div class="table-wrapper"><table><thead><tr><th>Precompile</th><th>SP1</th><th>RISC Zero</th><th>ZisK</th></tr></thead><tbody>
+<tr><td>ecrecover</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>SHA256</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>RIPEMD160</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>identity</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>modexp</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>ecAdd</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>ecMul</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>ecPairing</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>blake2f</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>KZG point evaluation</td><td>✓</td><td>⚠️</td><td>⚠️</td></tr>
+<tr><td>BLS12-381</td><td>✓</td><td>⚠️</td><td>✓</td></tr>
+<tr><td>P256 verify</td><td>✓</td><td>✓</td><td>⚠️</td></tr>
+</tbody></table>
+</div>
+<p>Legend: ✓ = Supported with patches, ⚠️ = Limited or requires unstable features</p>
+<h2 id="optimization-impact"><a class="header" href="#optimization-impact">Optimization Impact</a></h2>
+<p>ethrex has undergone significant optimization for zkVM proving:</p>
+<div class="table-wrapper"><table><thead><tr><th>Optimization</th><th>Impact</th><th>Description</th></tr></thead><tbody>
+<tr><td>Jumpdest analysis</td><td>-15% cycles</td><td>Optimized jump destination validation</td></tr>
+<tr><td>Trie caching</td><td>-50% hash calls</td><td>Cache initial node hashes during trie construction</td></tr>
+<tr><td>Trie hashing</td><td>-75% trie cycles</td><td>Improved traversal and RLP encoding</td></tr>
+<tr><td>Trie operations</td><td>-93% get/insert cycles</td><td>Eliminated unnecessary node cloning</td></tr>
+<tr><td>Serialized tries</td><td>-22% total cycles</td><td>Pre-serialize resolved tries, skip decoding</td></tr>
+<tr><td>ecPairing patch</td><td>-10% total cycles</td><td>138k → 6k cycles per operation</td></tr>
+<tr><td>ecMul patch</td><td>-10% total cycles</td><td>Accelerated scalar multiplication</td></tr>
+</tbody></table>
+</div>
+<p>See <a href="l2/bench/./prover_performance.html">prover_performance.md</a> for detailed optimization history.</p>
+<h2 id="reproduction-instructions"><a class="header" href="#reproduction-instructions">Reproduction Instructions</a></h2>
+<h3 id="ethrex-benchmarks"><a class="header" href="#ethrex-benchmarks">ethrex Benchmarks</a></h3>
+<ol>
+<li>Clone <a href="https://github.com/lambdaclass/ethrex-replay">ethrex-replay</a></li>
+<li>Run the prover:</li>
+</ol>
+<pre><code class="language-bash">cargo r -r -F "sp1,gpu" -p ethrex-replay -- blocks \
+  --action prove \
+  --zkvm sp1 \
+  --from 23769082 \
+  --to 23769092 \
+  --rpc-url &lt;RPC_WITH_DEBUG_EXECUTIONWITNESS&gt;
+</code></pre>
+<h3 id="rsp-benchmarks"><a class="header" href="#rsp-benchmarks">RSP Benchmarks</a></h3>
+<ol>
+<li>Clone <a href="https://github.com/succinctlabs/rsp">rsp</a></li>
+<li>Run with CUDA:</li>
+</ol>
+<pre><code class="language-bash">SP1_PROVER=cuda cargo r -r \
+  --manifest-path bin/host/Cargo.toml \
+  --block-number &lt;BLOCK&gt; \
+  --rpc-url &lt;RPC&gt; \
+  --prove
+</code></pre>
+<h2 id="hardware-recommendations"><a class="header" href="#hardware-recommendations">Hardware Recommendations</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Use Case</th><th>Minimum</th><th>Recommended</th></tr></thead><tbody>
+<tr><td>Development</td><td>32GB RAM, 8 cores</td><td>64GB RAM, 16 cores</td></tr>
+<tr><td>Production (CPU)</td><td>64GB RAM, 32 cores</td><td>128GB RAM, 64 cores</td></tr>
+<tr><td>Production (GPU)</td><td>64GB RAM, RTX 3090</td><td>128GB RAM, RTX 4090</td></tr>
+</tbody></table>
+</div>
+<p>GPU proving is significantly faster and recommended for production workloads. All modern NVIDIA GPUs with 24GB+ VRAM are supported.</p>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="ethrex-prover-performance"><a class="header" href="#ethrex-prover-performance">ethrex-prover performance</a></h1>
+<h2 id="latest-benchmarks-against-rsp"><a class="header" href="#latest-benchmarks-against-rsp">Latest benchmarks against rsp</a></h2>
+<ul>
+<li>ethrex commit: <code>42073248334a6f517c22bd7b8faf30787724d9da</code> (<a href="https://github.com/lambdaclass/ethrex/pull/5224/">#5224</a>)</li>
+<li>rsp commit: <code>2c5718029e7c0b24a34b011088fef221489fc714</code></li>
+</ul>
+<div class="table-wrapper"><table><thead><tr><th>Block (mainnet)</th><th>Gas Used</th><th>ethrex (SP1)</th><th>rsp</th><th>(ethrex - rsp) / rsp * 100%</th></tr></thead><tbody>
+<tr><td>23769082</td><td>7,949,562</td><td>02m 23s</td><td>01m 27s</td><td>63.2%</td></tr>
+<tr><td>23769083</td><td>44,943,006</td><td>12m 24s</td><td>07m 49s</td><td>58.7%</td></tr>
+<tr><td>23769084</td><td>27,075,543</td><td>08m 40s</td><td>Failed</td><td>-</td></tr>
+<tr><td>23769085</td><td>22,213,854</td><td>06m 40s</td><td>Failed</td><td>-</td></tr>
+<tr><td>23769086</td><td>28,364,699</td><td>07m 36s</td><td>04m 45s</td><td>60.0%</td></tr>
+<tr><td>23769087</td><td>17,523,985</td><td>06m 02s</td><td>Failed</td><td>-</td></tr>
+<tr><td>23769088</td><td>17,527,759</td><td>04m 50s</td><td>02m 59s</td><td>61.4%</td></tr>
+<tr><td>23769089</td><td>23,854,094</td><td>08m 14s</td><td>04m 44s</td><td>73.9%</td></tr>
+<tr><td>23769090</td><td>24,238,029</td><td>08m 11s</td><td>04m 40s</td><td>75.4%</td></tr>
+<tr><td>23769091</td><td>24,421,216</td><td>07m 02s</td><td>Failed</td><td>-</td></tr>
+<tr><td>23769092</td><td>21,714,227</td><td>06m 35s</td><td>04m 01s</td><td>64.3%</td></tr>
+</tbody></table>
+</div>
+<p><strong>Benchmark server hardware:</strong></p>
+<p>For ethrex:</p>
+<ul>
+<li>AMD EPYC 7713 64-Core Processor</li>
+<li>128 GB RAM</li>
+<li>RTX 4090 24 GB</li>
+</ul>
+<p>For rsp:</p>
+<ul>
+<li>AMD EPYC 7F72 24-Core Processor</li>
+<li>64 GB RAM</li>
+<li>RTX 4090 24 GB</li>
+</ul>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>rsp exited with a <code>block gas used mismatch</code> error on the failed cases</p>
+</div>
+<p><strong>How to reproduce for ethrex:</strong></p>
+<ol>
+<li>Clone <a href="https://github.com/lambdaclass/ethrex-replay">ethrex-replay</a>
+<ol>
+<li>Optionally, edit <code>Cargo.toml</code> to change the <code>ethrex</code> libraries to a specific branch/commit you want to benchmark.</li>
+<li>Run <code>cargo update</code> if you do change it.</li>
+</ol>
+</li>
+<li>Run <code>cargo r -r -F "sp1,gpu" -p ethrex-replay -- blocks --action prove --zkvm sp1 --from 23769082 --to 23769092 --rpc-url &lt;RPC&gt;</code>
+<ol>
+<li>For ethrex, an RPC endpoint that implements <code>debug_executionWitness</code> (like an ethrex or reth node) works best.</li>
+</ol>
+</li>
+</ol>
+<p><strong>How to reproduce for rsp:</strong></p>
+<ol>
+<li>Clone <a href="https://github.com/succinctlabs/rsp">rsp</a></li>
+<li>Make the following change so that we measure rsp's proving time the same way we measure it for ethrex (duration of the <code>prove()</code> call), you can then grep the stdout for <code>proving_time</code>:</li>
+</ol>
+<pre><code class="language-bash">        diff --git a/crates/executor/host/src/full_executor.rs b/crates/executor/host/src/full_executor.rs
+    index 99a0478..d42a1d2 100644
+    --- a/crates/executor/host/src/full_executor.rs
+    +++ b/crates/executor/host/src/full_executor.rs
+    @@ -123,6 +123,7 @@ pub trait BlockExecutor&lt;C: ExecutorComponents&gt; {
+                 .map_err(|err| eyre::eyre!("{err}"))??;
+    
+                 let proving_duration = proving_start.elapsed();
+    +            println!("proving time: {}", proving_duration.as_secs());
+                 let proof_bytes = bincode::serialize(&amp;proof.proof).unwrap();
+    
+                 hooks
+</code></pre>
+<ol start="3">
+<li>Run <code>SP1_PROVER=cuda cargo r -r --manifest-path bin/host/Cargo.toml --block-number &lt;BLOCK NUMBER&gt; --rpc-url &lt;RPC&gt; --prove</code>
+<ol>
+<li>For rsp, an alchemy RPC endpoint works best.</li>
+</ol>
+</li>
+</ol>
+<h2 id="optimizations"><a class="header" href="#optimizations">Optimizations</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Name</th><th>PR</th><th>tl;dr</th></tr></thead><tbody>
+<tr><td>jumpdest opt.</td><td>https://github.com/lambdaclass/ethrex/pull/4608</td><td>Cuts 15% total zkvm cycles</td></tr>
+<tr><td>trie opt. 1</td><td>https://github.com/lambdaclass/ethrex/pull/4648</td><td>Halves trie hashing calls</td></tr>
+<tr><td>trie opt. 2</td><td>https://github.com/lambdaclass/ethrex/pull/4723</td><td>Trie hashing zkVM cycles reduced 1/4, faster than risc0-trie</td></tr>
+<tr><td>trie opt. 3</td><td>https://github.com/lambdaclass/ethrex/pull/4763</td><td>Trie <code>get</code> and <code>insert</code> ops. reduced cycles by 1/14.</td></tr>
+<tr><td>trie opt. 4</td><td>https://github.com/lambdaclass/ethrex/pull/5224</td><td>Serialize resolved tries and removes decoding, 22% total cycles reduced</td></tr>
+<tr><td>ecpairing precompile</td><td>https://github.com/lambdaclass/ethrex/pull/4809</td><td>Reduced ecpairing cycles from 138k to 6k (10% total proving cycles gone)</td></tr>
+<tr><td>ecmul precompile</td><td>https://github.com/lambdaclass/ethrex/pull/5133</td><td>Reduces another 10% of total cycles</td></tr>
+</tbody></table>
+</div>
+<p>Trie operations are one of the most expensive in our prover right now. We are using <a href="https://github.com/risc0/risc0-ethereum/tree/main/crates/trie">risc0-trie</a> as a fast zkVM trie reference to optimize our own. <a href="l2/bench/prover_performance.html#ethrex-trie-optimization-for-zkvm">ethrex-trie optimization for zkvm</a> see for a detailed exploration of our trie vs risc0’s.</p>
+<h3 id="detailed-proving-times-sp1"><a class="header" href="#detailed-proving-times-sp1">Detailed proving times (SP1)</a></h3>
+<p>Benchmark server hardware:</p>
+<ul>
+<li>AMD EPYC 7713 64-Core Processor</li>
+<li>128 GB RAM</li>
+<li>RTX 4090 24 GB</li>
+</ul>
+<h3 id="absolute-times"><a class="header" href="#absolute-times">Absolute times</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Block (Mainnet)</th><th>Gas</th><th>ethrex main (<code>70fc63</code>)</th><th>ethrex (jumpdest opt.)</th><th>ethrex (ecpairing precompile)</th><th>ethrex (trie opt1.)</th><th>ethrex (trie opt2.)</th><th>ethrex (trie opt3.)</th><th>ethrex (trie opt1. + trie opt2. + trie opt3.)</th><th>ethrex (all opts, our trie)</th><th>ethrex (risc0_trie)</th><th>rsp main (<code>9a7048</code>)</th></tr></thead><tbody>
+<tr><td>23426993</td><td>35.7M</td><td>20m 40s</td><td>20m 04s</td><td>20m 10s</td><td>20m 12s</td><td>19m 31s</td><td>17m 20s</td><td>16m 24s</td><td>14m 38s</td><td>14m 32s</td><td>08m 39s</td></tr>
+<tr><td>23426994</td><td>20.7M</td><td>13m 24s</td><td>12m 55s</td><td>12m 32s</td><td>13m 08s</td><td>12m 48s</td><td>11m 31s</td><td>10m 53s</td><td>09m 18s</td><td>10m 04s</td><td>05m 39s</td></tr>
+<tr><td>23426995</td><td>16.6M</td><td>10m 14s</td><td>09m 54s</td><td>09m 56s</td><td>09m 56s</td><td>09m 52s</td><td>08m 39s</td><td>08m 06s</td><td>07m 20s</td><td>07m 19s</td><td>04m 33s</td></tr>
+<tr><td>23426996</td><td>22.5M</td><td>16m 58s</td><td>16m 37s</td><td>15m 48s</td><td>16m 50s</td><td>15m 42s</td><td>14m 44s</td><td>14m 08s</td><td>12m 25s</td><td>12m 59s</td><td>06m 39s</td></tr>
+</tbody></table>
+</div>
+<h3 id="relative-improvement-vs-ethrex-main-opt---basebase--100"><a class="header" href="#relative-improvement-vs-ethrex-main-opt---basebase--100">Relative improvement vs ethrex main (<code>(opt - base)/base * 100</code>)</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Block (Mainnet)</th><th>Gas</th><th>ethrex (jumpdest opt.)</th><th>ethrex (ecpairing precompile)</th><th>ethrex (trie opt1.)</th><th>ethrex (trie opt2.)</th><th>ethrex (trie opt3.)</th><th>ethrex (trie opt1+2+3)</th><th>ethrex (all opts, our trie)</th><th>ethrex (risc0_trie)</th></tr></thead><tbody>
+<tr><td>23426993</td><td>35.7M</td><td>-2.9%</td><td>-2.4%</td><td>-2.3%</td><td>-5.6%</td><td>-16.1%</td><td>-20.6%</td><td>-29.2%</td><td>-29.7%</td></tr>
+<tr><td>23426994</td><td>20.7M</td><td>-3.6%</td><td>-6.5%</td><td>-2.0%</td><td>-4.5%</td><td>-14.1%</td><td>-18.8%</td><td>-30.6%</td><td>-24.9%</td></tr>
+<tr><td>23426995</td><td>16.6M</td><td>-3.3%</td><td>-2.9%</td><td>-2.9%</td><td>-3.6%</td><td>-15.5%</td><td>-20.8%</td><td>-28.3%</td><td>-28.5%</td></tr>
+<tr><td>23426996</td><td>22.5M</td><td>-2.1%</td><td>-6.9%</td><td>-0.8%</td><td>-7.5%</td><td>-13.2%</td><td>-16.7%</td><td>-26.8%</td><td>-23.5%</td></tr>
+</tbody></table>
+</div>
+<h3 id="relative-to-rsp-main-opt---rsp--rsp--100"><a class="header" href="#relative-to-rsp-main-opt---rsp--rsp--100">Relative to RSP main (<code>(opt - rsp) / rsp * 100</code>)</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Block</th><th>Gas</th><th>ethrex main</th><th>ethrex (jumpdest opt.)</th><th>ethrex (ecpairing precompile)</th><th>ethrex (trie opt1.)</th><th>ethrex (trie opt2.)</th><th>ethrex (trie opt3.)</th><th>ethrex (trie opt1+2+3)</th><th>ethrex (all opts, our trie)</th><th>ethrex (risc0_trie)</th></tr></thead><tbody>
+<tr><td>23426993</td><td>35.7M</td><td>138.9%</td><td>132.0%</td><td>133.1%</td><td>133.5%</td><td>125.6%</td><td>100.4%</td><td>89.6%</td><td>69.2%</td><td>68.0%</td></tr>
+<tr><td>23426994</td><td>20.7M</td><td>137.2%</td><td>128.6%</td><td>121.8%</td><td>132.4%</td><td>126.5%</td><td>103.8%</td><td>92.6%</td><td>64.6%</td><td>78.2%</td></tr>
+<tr><td>23426995</td><td>16.6M</td><td>124.9%</td><td>117.6%</td><td>118.3%</td><td>118.3%</td><td>116.8%</td><td>90.1%</td><td>78.0%</td><td>61.2%</td><td>60.8%</td></tr>
+<tr><td>23426996</td><td>22.5M</td><td>155.1%</td><td>149.9%</td><td>137.6%</td><td>153.1%</td><td>136.1%</td><td>121.6%</td><td>112.5%</td><td>86.7%</td><td>95.2%</td></tr>
+</tbody></table>
+</div>
+<h1 id="ethrex-trie-optimization-for-zkvm"><a class="header" href="#ethrex-trie-optimization-for-zkvm">ethrex-trie optimization for zkvm</a></h1>
+<h1 id="overview-3"><a class="header" href="#overview-3">Overview</a></h1>
+<p>Using the risc0-trie we get the next perf. gains in cycle count over our ethrex-trie:</p>
+<ul>
+<li><code>rebuild_storage_trie()</code> 218.999 -&gt; 64.435 (x3.4)</li>
+<li><code>rebuild_state_trie()</code> 119.510 -&gt; 37.426 (x3.2)</li>
+<li><code>apply_account_updates()</code> 139.519 -&gt; 16.702 (x8.4)</li>
+<li><code>state_trie_root()</code> 63.482 -&gt; 17.276 (x3.7)</li>
+<li><code>validate_receipts_root()</code> 13.068 -&gt; 2.013 (x6.5)</li>
+</ul>
+<p>our goal is to have our trie perform as close as possible to risc0’s.</p>
+<h1 id="flamegraph-overview"><a class="header" href="#flamegraph-overview">Flamegraph overview</a></h1>
+<p>ethrex-trie (filtering for <code>ethrex_trie</code> functions)
+<img src="l2/bench/img/ethrex_trie_flamegraph.png" alt="alt text" /></p>
+<p>risc0-trie (filtering for <code>risc0_ethereum_trie</code> functions)
+<img src="l2/bench/img/risc0_trie_flamegraph.png" alt="alt text" /></p>
+<h1 id="optimizations-to-our-trie"><a class="header" href="#optimizations-to-our-trie">Optimizations to our trie</a></h1>
+<h2 id="1-caching-the-initial-node-hashes"><a class="header" href="#1-caching-the-initial-node-hashes">1. Caching the initial node hashes</a></h2>
+<p>https://github.com/lambdaclass/ethrex/pull/4648</p>
+<p>We were calculating all the hashes of the initial state trie (and storage) nodes, but we weren’t caching them when building the tries, so there was double hashing. https://github.com/lambdaclass/ethrex/pull/4648 fixes it by introducing a function to manually set the cached hash of a node, and caching whenever building a trie using <code>Trie::from_nodes</code> .</p>
+<p>Calls to <code>compute_hash</code> were reduced by half after those changes:</p>
+<p>before
+<img src="l2/bench/img/before_initial_hash_caching.png" alt="alt text" /></p>
+<p>after
+<img src="l2/bench/img/after_initial_hash_caching.png" alt="alt text" /></p>
+<p>although the total proving time didn’t change that much:</p>
+<p><img src="l2/bench/img/initial_hash_caching_prove_time.png" alt="alt text" /></p>
+<p>(proved with SP1 in <code>l2-gpu-3</code>, RTX 4090)</p>
+<h2 id="2-memcpy-calls-on-trie-hashing"><a class="header" href="#2-memcpy-calls-on-trie-hashing">2. <code>memcpy</code> calls on trie hashing</a></h2>
+<p>ethrex-trie:
+<img src="l2/bench/img/ethrex_trie_hashing.png" alt="alt text" /></p>
+<p>risc0-trie:
+<img src="l2/bench/img/risc0_trie_hashing.png" alt="alt text" /></p>
+<p>our <code>Node::compute_hash</code> is almost on par with risc0’s <code>Node::memoize</code> (hashes and caches the hash) but we have a big <code>memcpy</code> call that’s almost twice as long in cycles as the actual hashing.</p>
+<p>initially I thought this was an overhead of <code>OnceLock::initialize</code> because risc0 uses an <code>Option</code> to cache the hash, but apparently that’s not the case as I ran a small experiment in which I compared initialization cycles for both and got the next results:</p>
+<pre><code class="language-bash">Report cycle tracker: {"oncelock": 3830000, "option": 3670000}
+</code></pre>
+<details>
+<summary>Experiment code</summary>
+<pre><code>lib
+
+```rust
+use std::sync::OnceLock;
+
+pub struct OnceLockCache {
+    pub inner: OnceLock&lt;u128&gt;,
+}
+
+impl OnceLockCache {
+    pub fn init(&amp;self, inner: u128) {
+        println!("cycle-tracker-report-start: oncelock");
+        self.inner.get_or_init(|| compute_inner(inner));
+        println!("cycle-tracker-report-end: oncelock");
+    }
+}
+
+pub struct OptionCache {
+    pub inner: Option&lt;u128&gt;,
+}
+
+impl OptionCache {
+    pub fn init(&amp;mut self, inner: u128) {
+        println!("cycle-tracker-report-start: option");
+        self.inner = Some(compute_inner(inner));
+        println!("cycle-tracker-report-end: option");
+    }
+}
+
+pub fn compute_inner(inner: u128) -&gt; u128 {
+    inner.pow(2)
+}
+```
+
+guest program
+
+```rust
+#![no_main]
+sp1_zkvm::entrypoint!(main);
+
+use std::sync::OnceLock;
+
+use fibonacci_lib::{OnceLockCache, OptionCache};
+
+pub fn main() {
+    let mut oncelocks = Vec::with_capacity(10000);
+    let mut options = Vec::with_capacity(10000);
+
+    for i in (1 &lt;&lt; 64)..((1 &lt;&lt; 64) + 10000) {
+        let oncelock_cache = OnceLockCache {
+            inner: OnceLock::new(),
+        };
+        oncelock_cache.init(i);
+        oncelocks.push(oncelock_cache);
+    }
+
+    for i in (1 &lt;&lt; 64)..((1 &lt;&lt; 64) + 10000) {
+        let mut option_cache = OptionCache { inner: None };
+        option_cache.init(i);
+        options.push(option_cache);
+    }
+}
+```
+</code></pre>
+</details>
+<p>in the flamegraph it’s not clear where that <code>memcpy</code> is originating (any ideas?). The calls that are on top of it are <code>encode_bytes()</code> (from our RLP lib) and some <code>sha3</code> calls.</p>
+<blockquote>
+<p>Node hashing is composed of two operations: first the node is encoded into RLP, then we keccak hash the result.</p>
+</blockquote>
+<h3 id="rlp-encoding"><a class="header" href="#rlp-encoding">RLP Encoding</a></h3>
+<p>Our RLP lib uses a temp buffer to write encoded payloads to, and in the end it <code>finalize</code>s the encoding by writing the payload prefix (which contains a length) to an output buffer, plus the actual payload. This means we are allocating two buffers, initializing them, and copying bytes to both of them for each node that’s being encoded and hashed.</p>
+<p>First I tried preallocating the buffers (which are vecs) by estimating a node’s final RLP length.</p>
+<p>This was done in the <code>l2/opt_rlp_buffer</code>, this had an influence the <code>memcpy</code> length by reducing it almost 15%:</p>
+<p>then I tried to bypass our RLP encoder altogether by implementing a small and fast encoding for the <code>Branch</code> node only (which is the majoritarian node type), this reduced <code>memcpy</code>  further, 30% over <code>main</code>:</p>
+<p>I didn’t test implementing fast RLP for the other node types as I was expecting a bigger reduction in <code>memcpy</code> from <code>Branch</code> alone.</p>
+<h3 id="keccak"><a class="header" href="#keccak">Keccak</a></h3>
+<p>A difference between our trie and risc0’s is that they use the <code>tiny-keccak</code> crate instead of <code>sha3</code> as we do. I tried replacing it in our trie but the <code>memcpy</code> got bigger.</p>
+<p>Regarding memory, I also noticed that when hashing we are initializing a 32 byte array and writing the hash to it after. I wanted to test if this mattered so I experimented by creating an uninitialized buffer with <code>MaybeUninit</code> (unsafe rust) and writing the hash to it. This had no impact in <code>memcpy</code>'s length.</p>
+<p>Both changes are in the <code>l2/opt_keccak</code> branch.</p>
+<h3 id="final"><a class="header" href="#final">Final</a></h3>
+<p>At the end the problem was a combination of slow RLP encoding and that we did a preorder traversal while hashing a trie recursively. This was fixed in https://github.com/lambdaclass/ethrex/pull/4723.</p>
+<h2 id="3-node-cloning-in-noderefget_node"><a class="header" href="#3-node-cloning-in-noderefget_node">3. Node cloning in <code>NodeRef::get_node</code></a></h2>
+<p>Whenever we <code>get</code>, <code>insert</code> or <code>remove</code> from a trie we are calling <code>NodeRef::get_node</code> which clones the <code>Node</code> from memory and returns it, which means that for each operation over a trie we are cloning all the relevant nodes for that op.</p>
+<p>This is fixed in https://github.com/lambdaclass/ethrex/pull/4763 see that PR desc. for details</p>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="case-studies"><a class="header" href="#case-studies">Case Studies</a></h1>
+<p>This page showcases how teams are using ethrex in production and research environments.</p>
+<h2 id="why-teams-choose-ethrex"><a class="header" href="#why-teams-choose-ethrex">Why Teams Choose ethrex</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Value Proposition</th><th>Description</th></tr></thead><tbody>
+<tr><td><strong>Reduced Complexity</strong></td><td>~100k lines of Rust vs 500k+ in mature clients means faster audits and easier customization</td></tr>
+<tr><td><strong>Multi-prover Flexibility</strong></td><td>Switch between SP1, RISC Zero, ZisK, or TEEs without changing your deployment</td></tr>
+<tr><td><strong>ZK-First Architecture</strong></td><td>Optimized data structures that reduce proving costs from day one</td></tr>
+<tr><td><strong>Unified Codebase</strong></td><td>Same client for L1 nodes and L2 rollups simplifies operations</td></tr>
+<tr><td><strong>Active Development</strong></td><td>Rapid iteration with direct access to the development team</td></tr>
+</tbody></table>
+</div>
+<h2 id="featured-case-studies"><a class="header" href="#featured-case-studies">Featured Case Studies</a></h2>
+<p><em>Case studies are coming soon. If you're using ethrex and would like to share your experience, please reach out.</em></p>
+<!-- Template for future case studies:
+
+### [Company/Project Name]
+
+**Use Case:** [L1 Node / L2 Rollup / Research]
+
+**Challenge:**
+[Description of the problem they were trying to solve]
+
+**Solution:**
+[How ethrex helped solve it]
+
+**Results:**
+[Quantitative or qualitative outcomes]
+
+**Quote:**
+> "Quote from the team about their experience with ethrex"
+> — Name, Title at Company
+
+-->
+<h2 id="submit-your-case-study"><a class="header" href="#submit-your-case-study">Submit Your Case Study</a></h2>
+<p>We'd love to feature your experience with ethrex. Case studies help the community understand real-world applications and inspire new use cases.</p>
+<p><strong>What we're looking for:</strong></p>
+<ul>
+<li>L1 node operators running ethrex on mainnet or testnets</li>
+<li>L2 builders deploying rollups with ethrex</li>
+<li>Research teams using ethrex for ZK experimentation</li>
+<li>Developers integrating ethrex into their infrastructure</li>
+</ul>
+<p><strong>To submit:</strong></p>
+<ol>
+<li>Open an issue on <a href="https://github.com/lambdaclass/ethrex/issues">GitHub</a> with the label <code>case-study</code></li>
+<li>Include your use case, challenges, solutions, and results</li>
+<li>We'll work with you to write up the case study</li>
+</ol>
+<p><strong>Contact:</strong></p>
+<ul>
+<li>GitHub: <a href="https://github.com/lambdaclass/ethrex">lambdaclass/ethrex</a></li>
+<li>Telegram: <a href="https://t.me/ethrex_client">ethrex_client</a></li>
+<li>Email: hello@lambdaclass.com</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
   padding: 8px 16px;

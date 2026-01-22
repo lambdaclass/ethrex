@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Contributing to the Documentation - Ethrex</title>
+        <title>zkVM Integrations - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,56 +237,165 @@
 }
 
 </style>
-<h1 id="contributing-to-the-documentation"><a class="header" href="#contributing-to-the-documentation">Contributing to the Documentation</a></h1>
-<p>We welcome contributions to the documentation! If you want to help improve or expand the docs, please follow these guidelines:</p>
-<h2 id="how-to-edit-the-docs"><a class="header" href="#how-to-edit-the-docs">How to Edit the Docs</a></h2>
+<h1 id="zkvm-integrations"><a class="header" href="#zkvm-integrations">zkVM Integrations</a></h1>
+<p>ethrex integrates with multiple zero-knowledge virtual machines (zkVMs), giving you flexibility in how you prove Ethereum execution. This page provides an overview of each integration, its status, and links to deployment documentation.</p>
+<h2 id="integration-overview"><a class="header" href="#integration-overview">Integration Overview</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>zkVM</th><th>Organization</th><th>Status</th><th>L1 Proving</th><th>L2 Prover</th><th>Documentation</th></tr></thead><tbody>
+<tr><td><strong>SP1</strong></td><td>Succinct</td><td>Production</td><td>✓</td><td>✓</td><td><a href="./l2/deployment/prover/sp1.html">SP1 Prover Guide</a></td></tr>
+<tr><td><strong>RISC Zero</strong></td><td>RISC Zero</td><td>Production</td><td>✓</td><td>✓</td><td><a href="./l2/deployment/prover/risc0.html">RISC0 Prover Guide</a></td></tr>
+<tr><td><strong>ZisK</strong></td><td>Polygon</td><td>Experimental</td><td>✓</td><td>Planned</td><td>Coming soon</td></tr>
+<tr><td><strong>OpenVM</strong></td><td>Axiom</td><td>Experimental</td><td>✓</td><td>Planned</td><td>Coming soon</td></tr>
+<tr><td><strong>TEE (TDX)</strong></td><td>Intel</td><td>Production</td><td>—</td><td>✓</td><td><a href="./l2/deployment/prover/tee.html">TDX Prover Guide</a></td></tr>
+</tbody></table>
+</div>
+<h2 id="sp1-succinct"><a class="header" href="#sp1-succinct">SP1 (Succinct)</a></h2>
+<p><a href="https://docs.succinct.xyz/">SP1</a> is a zkVM developed by Succinct Labs that enables efficient proving of arbitrary Rust programs.</p>
+<p><strong>Status:</strong> Production-ready for both L1 proving and L2 prover deployments.</p>
+<p><strong>Key Features:</strong></p>
 <ul>
-<li>
-<p>All documentation lives in this <code>docs/</code> directory and its subfolders.</p>
-</li>
-<li>
-<p>The documentation is written in Markdown and rendered using <a href="https://rust-lang.github.io/mdBook/">mdBook</a>.</p>
-</li>
-<li>
-<p>To preview your changes locally, <a href="#documentation-dependencies">install the dependencies</a> and run:</p>
-<pre><code class="language-sh">make docs-serve
+<li>GPU acceleration via CUDA</li>
+<li>Proof aggregation support</li>
+<li>Extensive precompile patches for Ethereum operations</li>
+<li>Active development and community support</li>
+</ul>
+<p><strong>Integration Details:</strong></p>
+<ul>
+<li>ethrex uses SP1's precompile patches for optimized cryptographic operations</li>
+<li>Supports both CPU and GPU proving modes</li>
+<li>Compatible with Aligned Layer for proof aggregation</li>
+</ul>
+<p><strong>Get Started:</strong></p>
+<ul>
+<li><a href="./l2/deployment/prover/sp1.html">Run an ethrex SP1 prover</a></li>
+<li><a href="https://docs.succinct.xyz/">SP1 Documentation</a></li>
+</ul>
+<h2 id="risc-zero"><a class="header" href="#risc-zero">RISC Zero</a></h2>
+<p><a href="https://dev.risczero.com/">RISC Zero</a> is a zkVM built on the RISC-V architecture, providing a general-purpose proving environment.</p>
+<p><strong>Status:</strong> Production-ready for both L1 proving and L2 prover deployments.</p>
+<p><strong>Key Features:</strong></p>
+<ul>
+<li>GPU acceleration support</li>
+<li>Bonsai proving network for distributed proving</li>
+<li>Strong developer tooling and documentation</li>
+</ul>
+<p><strong>Integration Details:</strong></p>
+<ul>
+<li>ethrex integrates with risc0-ethereum for optimized trie operations</li>
+<li>Supports CUDA acceleration for faster proving</li>
+<li>Some precompiles (Keccak, BLS12-381) require the "unstable" feature flag</li>
+</ul>
+<p><strong>Get Started:</strong></p>
+<ul>
+<li><a href="./l2/deployment/prover/risc0.html">Run an ethrex RISC0 prover</a></li>
+<li><a href="https://dev.risczero.com/">RISC Zero Documentation</a></li>
+</ul>
+<h2 id="zisk-polygon"><a class="header" href="#zisk-polygon">ZisK (Polygon)</a></h2>
+<p><a href="https://0xpolygonhermez.github.io/zisk/">ZisK</a> is Polygon's zkVM designed for high-performance proving with GPU acceleration.</p>
+<p><strong>Status:</strong> Experimental. L1 proving is functional; L2 integration is planned.</p>
+<p><strong>Key Features:</strong></p>
+<ul>
+<li>Native GPU support with custom CUDA kernels</li>
+<li>Unique MODEXP precompile implementation</li>
+<li>Optimized for high-throughput proving</li>
+</ul>
+<p><strong>Integration Details:</strong></p>
+<ul>
+<li>ethrex supports ZisK for L1 block proving via ethrex-replay</li>
+<li>Most Ethereum precompiles are supported with patches</li>
+<li>P256 verification is not yet available (no patch exists)</li>
+</ul>
+<p><strong>Current Limitations:</strong></p>
+<ul>
+<li>L2 prover integration is not yet complete</li>
+<li>Requires manual installation from source for GPU support</li>
+</ul>
+<h2 id="openvm-axiom"><a class="header" href="#openvm-axiom">OpenVM (Axiom)</a></h2>
+<p><a href="https://book.openvm.dev/">OpenVM</a> is Axiom's modular zkVM framework designed for flexibility and extensibility.</p>
+<p><strong>Status:</strong> Experimental. Initial integration for L1 proving.</p>
+<p><strong>Key Features:</strong></p>
+<ul>
+<li>Modular architecture for custom extensions</li>
+<li>Support for multiple proving backends</li>
+<li>Designed for composability</li>
+</ul>
+<p><strong>Integration Details:</strong></p>
+<ul>
+<li>Basic integration for L1 block proving</li>
+<li>Precompile support is being expanded</li>
+<li>L2 prover integration is planned</li>
+</ul>
+<h2 id="tee-intel-tdx"><a class="header" href="#tee-intel-tdx">TEE (Intel TDX)</a></h2>
+<p>Intel Trust Domain Extensions (TDX) provides hardware-based trusted execution for block proving.</p>
+<p><strong>Status:</strong> Production-ready for L2 prover deployments.</p>
+<p><strong>Key Features:</strong></p>
+<ul>
+<li>Hardware-based security guarantees</li>
+<li>No cryptographic proving overhead</li>
+<li>Fast execution within trusted enclave</li>
+</ul>
+<p><strong>Integration Details:</strong></p>
+<ul>
+<li>Supported as an L2 prover option</li>
+<li>Can run alongside zkVM provers for redundancy</li>
+<li>Requires TDX-capable hardware</li>
+</ul>
+<p><strong>Get Started:</strong></p>
+<ul>
+<li><a href="./l2/deployment/prover/tee.html">Run an ethrex TDX prover</a></li>
+</ul>
+<h2 id="multi-prover-deployments"><a class="header" href="#multi-prover-deployments">Multi-Prover Deployments</a></h2>
+<p>ethrex supports running multiple provers simultaneously, providing redundancy and flexibility:</p>
+<pre><code>                    ┌─────────────┐
+                    │   ethrex    │
+                    │  Sequencer  │
+                    └──────┬──────┘
+                           │
+           ┌───────────────┼───────────────┐
+           │               │               │
+      ┌────┴────┐    ┌────┴────┐    ┌────┴────┐
+      │   SP1   │    │  RISC0  │    │   TDX   │
+      │ Prover  │    │ Prover  │    │ Prover  │
+      └────┬────┘    └────┬────┘    └────┬────┘
+           │               │               │
+           └───────────────┼───────────────┘
+                           │
+                    ┌──────┴──────┐
+                    │   Aligned   │
+                    │    Layer    │
+                    └─────────────┘
 </code></pre>
-<p>This will start a local server and open the docs in your browser.</p>
-</li>
-</ul>
-<h2 id="adding-or-editing-content"><a class="header" href="#adding-or-editing-content">Adding or Editing Content</a></h2>
+<p>See <a href="./l2/deployment/prover/multi-prover.html">Multi-prover deployment guide</a> for configuration details.</p>
+<h2 id="ecosystem-integrations"><a class="header" href="#ecosystem-integrations">Ecosystem Integrations</a></h2>
+<h3 id="aligned-layer"><a class="header" href="#aligned-layer">Aligned Layer</a></h3>
+<p><a href="https://alignedlayer.com/">Aligned Layer</a> provides proof aggregation and verification services for ethrex L2 deployments.</p>
+<p><strong>Features:</strong></p>
 <ul>
-<li>To add a new page, create a new <code>.md</code> file in the appropriate subdirectory and add a link to it in <code>SUMMARY.md</code>.</li>
-<li>To edit an existing page, simply modify the relevant <code>.md</code> file.</li>
-<li>For style and formatting, try to keep a consistent tone and structure with the rest of the documentation.</li>
+<li>Aggregates proofs from multiple zkVM backends</li>
+<li>Reduces L1 verification costs</li>
+<li>Supports SP1, RISC Zero, and other proof systems</li>
 </ul>
-<h2 id="documentation-dependencies"><a class="header" href="#documentation-dependencies">Documentation dependencies</a></h2>
-<p>We use some mdBook preprocessors and backends for extra features:</p>
-<ul>
-<li><a href="https://github.com/lambdalisue/rs-mdbook-alerts"><code>mdbook-alerts</code></a> for custom markdown syntax.</li>
-<li><a href="https://github.com/badboy/mdbook-mermaid"><code>mdbook-mermaid</code></a> for diagrams.</li>
-<li><a href="https://github.com/Michael-F-Bryan/mdbook-linkcheck"><code>mdbook-linkcheck</code></a> for checking broken links (optional).</li>
-</ul>
-<p>You can install mdBook and all dependencies with:</p>
-<pre><code class="language-sh">make docs-deps
-</code></pre>
-<h2 id="submitting-changes"><a class="header" href="#submitting-changes">Submitting Changes</a></h2>
-<ul>
-<li>Please open a Pull Request with your proposed changes.</li>
-<li>If you are adding new content, update <code>SUMMARY.md</code> so it appears in the navigation.</li>
-<li>If you have questions, open an issue or ask in the community chat.</li>
-</ul>
-<p>Thank you for helping improve the documentation!</p>
+<p><strong>Documentation:</strong> <a href="./l2/deployment/aligned.html">ethrex &lt;&gt; Aligned integration</a></p>
+<h2 id="choosing-a-zkvm"><a class="header" href="#choosing-a-zkvm">Choosing a zkVM</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Consideration</th><th>Recommendation</th></tr></thead><tbody>
+<tr><td><strong>Production L2</strong></td><td>SP1 or RISC Zero (most mature)</td></tr>
+<tr><td><strong>Maximum performance</strong></td><td>SP1 with GPU acceleration</td></tr>
+<tr><td><strong>Hardware security</strong></td><td>TEE (TDX)</td></tr>
+<tr><td><strong>Experimentation</strong></td><td>ZisK or OpenVM</td></tr>
+<tr><td><strong>Redundancy</strong></td><td>Multi-prover with SP1 + RISC Zero + TEE</td></tr>
+</tbody></table>
+</div>
+<h2 id="performance-comparison"><a class="header" href="#performance-comparison">Performance Comparison</a></h2>
+<p>See <a href="./l2/bench/zkvm_comparison.html">zkVM Comparison</a> for detailed benchmark data comparing proving times across backends.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="case-studies.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../ROADMAP.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="lectures.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="l2/bench/zkvm_comparison.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -296,11 +405,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="case-studies.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../ROADMAP.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="lectures.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="l2/bench/zkvm_comparison.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
