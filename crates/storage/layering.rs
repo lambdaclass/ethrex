@@ -7,6 +7,7 @@ use std::{fmt, sync::Arc};
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
 const BLOOM_SIZE: usize = 1_000_000;
+const FALSE_POSITIVE_RATE: f64 = 0.02;
 
 #[derive(Debug, Clone)]
 struct TrieLayer {
@@ -63,8 +64,7 @@ impl TrieLayerCache {
     }
 
     fn create_filter(expected_items: usize) -> AtomicBloomFilter<FxBuildHasher> {
-        // 2% false positive rate, using FxHash for fast hashing
-        AtomicBloomFilter::with_false_pos(0.02)
+        AtomicBloomFilter::with_false_pos(FALSE_POSITIVE_RATE)
             .hasher(FxBuildHasher)
             .expected_items(expected_items.max(BLOOM_SIZE))
     }
