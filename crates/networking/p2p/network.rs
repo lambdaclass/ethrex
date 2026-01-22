@@ -250,12 +250,6 @@ pub async fn periodically_show_peer_stats_during_syncing(
             let healed_storages = METRICS
                 .global_storage_tries_leafs_healed
                 .load(Ordering::Relaxed);
-            let heal_current_throttle =
-                if METRICS.healing_empty_try_recv.load(Ordering::Relaxed) == 0 {
-                    "Database"
-                } else {
-                    "Peers"
-                };
 
             // Bytecode metrics
             let bytecodes_downloaded = METRICS.downloaded_bytecodes.load(Ordering::Relaxed);
@@ -287,7 +281,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
  Storage Inserted        {storage_leaves_inserted:>13}
  Bytecodes Downloaded    {bytecodes_downloaded:>13}                    {bytecodes_per_second} bytecodes/s
 ───────────────────────────────────────────────────────────────────────
- Healing: {healed_accounts} accounts │ {healed_storages} storages │ throttle: {heal_current_throttle}
+ Healing: {healed_accounts} accounts │ {healed_storages} storages
 ───────────────────────────────────────────────────────────────────────"#
             );
         }
