@@ -264,7 +264,7 @@
               },
               "direction": "backward",
               "editorMode": "builder",
-              "expr": "{job=\"ethrex\"} |= ``",
+              "expr": "{job=\"ethrex\", instance=~\"$instance.*\"} |= ``",
               "queryType": "range",
               "refId": "A"
             }
