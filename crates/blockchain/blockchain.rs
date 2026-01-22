@@ -81,6 +81,7 @@ use ethrex_trie::node::{BranchNode, ExtensionNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
+use ethrex_vm::backends::{CachingDatabase, WarmingCache};
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
@@ -316,13 +317,27 @@ impl Blockchain {
         let queue_length_ref = &queue_length;
         let mut max_queue_length = 0;
 
+        // Create a shared warming cache for parallel pre-warming
+        // This cache is shared between warming workers AND the execution thread,
+        // so warmed state can be reused by sequential execution.
+        let warming_cache = WarmingCache::new();
+
+        // Wrap the store with CachingDatabase so both warming and execution
+        // can benefit from the shared cache
+        let original_store = vm.db.store.clone();
+        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> =
+            Arc::new(CachingDatabase::new(original_store, warming_cache.clone()));
+
+        // Replace the VM's store with the caching version
+        vm.db.store = caching_store.clone();
+
         let (execution_result, merkleization_result) = std::thread::scope(|s| {
-            let store = vm.db.store.clone();
             let vm_type = vm.vm_type;
             let warm_handle = std::thread::Builder::new()
                 .name("block_executor_warmer".to_string())
                 .spawn_scoped(s, move || {
-                    let _ = LEVM::warm_block(block, store, vm_type);
+                    // Warming uses the same caching store, sharing the WarmingCache with execution
+                    let _ = LEVM::warm_block(block, caching_store, vm_type);
                 })
                 .expect("Failed to spawn block_executor warmer thread");
             let max_queue_length_ref = &mut max_queue_length;
