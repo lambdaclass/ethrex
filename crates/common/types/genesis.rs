@@ -247,7 +247,7 @@ pub struct ChainConfig {
 
     pub bpo1_time: Option<u64>,
     pub bpo2_time: Option<u64>,
-    pub glamsterdam_time: Option<u64>,
+    pub amsterdam_time: Option<u64>,
     pub bpo3_time: Option<u64>,
     pub bpo4_time: Option<u64>,
     pub bpo5_time: Option<u64>,
@@ -306,7 +306,7 @@ pub enum Fork {
     Osaka = 19,
     BPO1 = 20,
     BPO2 = 21,
-    Glamsterdam = 22,
+    Amsterdam = 22,
     BPO3 = 23,
     BPO4 = 24,
     BPO5 = 25,
@@ -337,7 +337,7 @@ impl From<Fork> for &str {
             Fork::Osaka => "Osaka",
             Fork::BPO1 => "BPO1",
             Fork::BPO2 => "BPO2",
-            Fork::Glamsterdam => "Glamsterdam",
+            Fork::Amsterdam => "Amsterdam",
             Fork::BPO3 => "BPO3",
             Fork::BPO4 => "BPO4",
             Fork::BPO5 => "BPO5",
@@ -354,8 +354,8 @@ impl ChainConfig {
         self.bpo2_time.is_some_and(|time| time <= block_timestamp)
     }
 
-    pub fn is_glamsterdam_activated(&self, block_timestamp: u64) -> bool {
-        self.glamsterdam_time
+    pub fn is_amsterdam_activated(&self, block_timestamp: u64) -> bool {
+        self.amsterdam_time
             .is_some_and(|time| time <= block_timestamp)
     }
 
@@ -412,7 +412,7 @@ impl ChainConfig {
             ("Osaka", self.osaka_time),
             ("BPO1", self.bpo1_time),
             ("BPO2", self.bpo2_time),
-            ("Glamsterdam", self.glamsterdam_time),
+            ("Amsterdam", self.amsterdam_time),
         ];
 
         let active_forks: Vec<_> = post_merge_forks
@@ -438,8 +438,8 @@ impl ChainConfig {
             Fork::BPO4
         } else if self.is_bpo3_activated(block_timestamp) {
             Fork::BPO3
-        } else if self.is_glamsterdam_activated(block_timestamp) {
-            Fork::Glamsterdam
+        } else if self.is_amsterdam_activated(block_timestamp) {
+            Fork::Amsterdam
         } else if self.is_bpo2_activated(block_timestamp) {
             Fork::BPO2
         } else if self.is_bpo1_activated(block_timestamp) {
@@ -490,10 +490,10 @@ impl ChainConfig {
             Some(Fork::BPO5)
         } else if self.is_bpo3_activated(block_timestamp) && self.bpo4_time.is_some() {
             Some(Fork::BPO4)
-        } else if self.is_glamsterdam_activated(block_timestamp) && self.bpo3_time.is_some() {
+        } else if self.is_amsterdam_activated(block_timestamp) && self.bpo3_time.is_some() {
             Some(Fork::BPO3)
-        } else if self.is_bpo2_activated(block_timestamp) && self.glamsterdam_time.is_some() {
-            Some(Fork::Glamsterdam)
+        } else if self.is_bpo2_activated(block_timestamp) && self.amsterdam_time.is_some() {
+            Some(Fork::Amsterdam)
         } else if self.is_bpo1_activated(block_timestamp) && self.bpo2_time.is_some() {
             Some(Fork::BPO2)
         } else if self.is_osaka_activated(block_timestamp) && self.bpo1_time.is_some() {
@@ -520,8 +520,8 @@ impl ChainConfig {
             Fork::BPO4
         } else if self.bpo3_time.is_some() {
             Fork::BPO3
-        } else if self.glamsterdam_time.is_some() {
-            Fork::Glamsterdam
+        } else if self.amsterdam_time.is_some() {
+            Fork::Amsterdam
         } else if self.bpo2_time.is_some() {
             Fork::BPO2
         } else if self.bpo1_time.is_some() {
@@ -544,7 +544,7 @@ impl ChainConfig {
             Fork::Osaka => self.osaka_time,
             Fork::BPO1 => self.bpo1_time,
             Fork::BPO2 => self.bpo2_time,
-            Fork::Glamsterdam => self.glamsterdam_time,
+            Fork::Amsterdam => self.amsterdam_time,
             Fork::BPO3 => self.bpo3_time,
             Fork::BPO4 => self.bpo4_time,
             Fork::BPO5 => self.bpo5_time,
@@ -616,7 +616,7 @@ impl ChainConfig {
             self.osaka_time,
             self.bpo1_time,
             self.bpo2_time,
-            self.glamsterdam_time,
+            self.amsterdam_time,
             self.bpo3_time,
             self.bpo4_time,
             self.bpo5_time,

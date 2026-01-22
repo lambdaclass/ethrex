@@ -563,8 +563,7 @@ impl<'a> VM<'a> {
             self.transfer(to, beneficiary, balance)?;
 
             // EIP-7708: Emit transfer log if nonzero value sent to different address
-            if self.env.config.fork >= Fork::Glamsterdam && !balance.is_zero() && to != beneficiary
-            {
+            if self.env.config.fork >= Fork::Amsterdam && !balance.is_zero() && to != beneficiary {
                 let log = create_eth_transfer_log(to, beneficiary, balance);
                 self.substate.add_log(log);
             }
@@ -577,7 +576,7 @@ impl<'a> VM<'a> {
                 self.substate.add_selfdestruct(to);
 
                 // EIP-7708: Emit selfdestruct log when contract is destroyed
-                if self.env.config.fork >= Fork::Glamsterdam {
+                if self.env.config.fork >= Fork::Amsterdam {
                     let log = create_selfdestruct_log(to, balance);
                     self.substate.add_log(log);
                 }
@@ -587,8 +586,7 @@ impl<'a> VM<'a> {
             self.get_account_mut(to)?.info.balance = U256::zero();
 
             // EIP-7708: Emit transfer log if nonzero value sent to different address
-            if self.env.config.fork >= Fork::Glamsterdam && !balance.is_zero() && to != beneficiary
-            {
+            if self.env.config.fork >= Fork::Amsterdam && !balance.is_zero() && to != beneficiary {
                 let log = create_eth_transfer_log(to, beneficiary, balance);
                 self.substate.add_log(log);
             }
@@ -596,7 +594,7 @@ impl<'a> VM<'a> {
             self.substate.add_selfdestruct(to);
 
             // EIP-7708: Emit selfdestruct log when contract is destroyed
-            if self.env.config.fork >= Fork::Glamsterdam {
+            if self.env.config.fork >= Fork::Amsterdam {
                 let log = create_selfdestruct_log(to, balance);
                 self.substate.add_log(log);
             }
@@ -731,7 +729,7 @@ impl<'a> VM<'a> {
         self.transfer(deployer, new_address, value)?;
 
         // EIP-7708: Emit transfer log for nonzero-value CREATE/CREATE2
-        if self.env.config.fork >= Fork::Glamsterdam && !value.is_zero() {
+        if self.env.config.fork >= Fork::Amsterdam && !value.is_zero() {
             let log = create_eth_transfer_log(deployer, new_address, value);
             self.substate.add_log(log);
         }
@@ -840,7 +838,7 @@ impl<'a> VM<'a> {
                 self.transfer(msg_sender, to, value)?;
 
                 // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE
-                if self.env.config.fork >= Fork::Glamsterdam && !value.is_zero() {
+                if self.env.config.fork >= Fork::Amsterdam && !value.is_zero() {
                     let log = create_eth_transfer_log(msg_sender, to, value);
                     self.substate.add_log(log);
                 }
@@ -877,7 +875,7 @@ impl<'a> VM<'a> {
                 self.transfer(msg_sender, to, value)?;
 
                 // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE
-                if self.env.config.fork >= Fork::Glamsterdam && !value.is_zero() {
+                if self.env.config.fork >= Fork::Amsterdam && !value.is_zero() {
                     let log = create_eth_transfer_log(msg_sender, to, value);
                     self.substate.add_log(log);
                 }
