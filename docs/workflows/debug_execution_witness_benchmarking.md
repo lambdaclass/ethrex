@@ -2,6 +2,12 @@
 
 ## Overview
 
+An **execution witness** contains all the initial state values (state nodes, codes, storage keys, block headers) needed to execute a block without access to the full Ethereum state. This is essential for zkVM provers, as the entire state wouldn't fit in a zkVM program.
+
+The `debug_executionWitness` RPC endpoint returns the execution witness for a given block. For more details on execution witnesses and their role in proving, see the [Execution Witness documentation](../l2/fundamentals/execution_witness.md).
+
+## Purpose
+
 Testing `debug_executionWitness` latency improvements by running two servers in parallel:
 - **Baseline server**: main branch with `--precompute-witnesses` flag
 - **Test server**: PR branch with optimization and `--precompute-witnesses` flag
@@ -14,7 +20,7 @@ This workflow benchmarks any PR that aims to improve execution witness generatio
 
 1. **Baseline server hostname** - SSH alias or full hostname for the main branch server
 2. **Test server hostname** - SSH alias or full hostname for the PR branch server
-3. **Network** - Ethereum network to sync (e.g., hoodi, sepolia, holesky, mainnet)
+3. **Network** - Ethereum network to sync (e.g., hoodi, sepolia, mainnet)
 4. **PR number/branch** - The PR or branch being tested
 5. **Servers already synced?** - Skip sync steps if servers are already synced and running
 
@@ -41,7 +47,7 @@ Before starting the execution witness benchmark, I need the following informatio
 ### Lighthouse (Consensus Client)
 
 ```bash
-lighthouse bn --network <NETWORK> --execution-endpoint http://localhost:8551 --execution-jwt ~/secrets/jwt.hex --http --checkpoint-sync-url <CHECKPOINT_SYNC_URL> --purge-db-force
+lighthouse bn --network <NETWORK> --execution-endpoint http://localhost:8551 --execution-jwt ~/secrets/jwt.hex --http --checkpoint-sync-url <CHECKPOINT_SYNC_URL>
 ```
 
 **Checkpoint Sync URLs by Network:**
@@ -49,12 +55,12 @@ lighthouse bn --network <NETWORK> --execution-endpoint http://localhost:8551 --e
 |---------|---------------------|
 | hoodi | https://hoodi-checkpoint-sync.stakely.io |
 | sepolia | https://sepolia.checkpoint-sync.ethpandaops.io |
-| holesky | https://holesky.checkpoint-sync.ethpandaops.io |
 | mainnet | https://mainnet.checkpoint.sigp.io |
 
 **Notes:**
 - Will fail initially if ethrex is not running (expected behavior)
-- `--purge-db-force` clears lighthouse DB on start
+- **NEVER clear Lighthouse DB without explicit user approval** - ask first with full context
+- To clear DB (only with approval): add `--purge-db` for interactive confirmation or `--purge-db-force` to skip confirmation
 
 ### Ethrex (Execution Client)
 
@@ -81,7 +87,7 @@ cargo run --release --bin ethrex -- --http.addr 0.0.0.0 --network <NETWORK> --au
 ```bash
 ssh <server>
 tmux new -s lighthouse
-lighthouse bn --network <NETWORK> --execution-endpoint http://localhost:8551 --execution-jwt ~/secrets/jwt.hex --http --checkpoint-sync-url <CHECKPOINT_SYNC_URL> --purge-db-force
+lighthouse bn --network <NETWORK> --execution-endpoint http://localhost:8551 --execution-jwt ~/secrets/jwt.hex --http --checkpoint-sync-url <CHECKPOINT_SYNC_URL>
 # Detach: Ctrl+B, D
 ```
 
