@@ -1074,7 +1074,7 @@ pub async fn update_pivot(
         };
 
         let peer_score = peers.peer_table.get_score(&peer_id).await?;
-        info!(
+        debug!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
         let Some(pivot) = peers
@@ -1093,7 +1093,7 @@ pub async fn update_pivot(
 
         // Reward peer
         peers.peer_table.record_success(&peer_id).await?;
-        info!("Succesfully updated pivot");
+        debug!("Succesfully updated pivot");
         let block_headers = peers
             .request_block_headers(block_number + 1, pivot.hash())
             .await?
