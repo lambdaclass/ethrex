@@ -88,6 +88,10 @@ impl<'a> VM<'a> {
         //   - 0x5B, which corresponds to a JUMPDEST opcode.
         //   - 0x5F to 0x7F, which corresponds to PUSHx opcodes.
         //   - The extra 3 values (0x5C, 0x5D and 0x5E) are probably included to simplify decoding.
+        //
+        // This range is more restricted than the one in DUPN and SWAPN because this payload
+        // contains two values, and the decoded offsets would overlap. In other words, it avoids
+        // having two different EXCHANGE encodings for the exact same offsets.
         let relative_offset = {
             let byte = match relative_offset {
                 x if x <= 0x4F => x,
