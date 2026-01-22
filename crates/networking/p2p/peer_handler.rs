@@ -33,10 +33,7 @@ pub use crate::snap::constants::{
 };
 
 // Re-export snap client types for backward compatibility
-pub use crate::snap::{
-    DumpError, RequestMetadata, RequestStateTrieNodesError, RequestStorageTrieNodes,
-    SnapClientError,
-};
+pub use crate::snap::{DumpError, RequestMetadata, RequestStorageTrieNodesError, SnapError};
 
 /// An abstraction over the [Kademlia] containing logic to make requests to peers
 #[derive(Debug, Clone)]
@@ -665,6 +662,6 @@ pub enum PeerHandlerError {
     NoResponseFromPeer,
     #[error("Error in Peer Table: {0}")]
     PeerTableError(#[from] PeerTableError),
-    #[error("Snap client error: {0}")]
-    SnapClient(#[from] SnapClientError),
+    #[error("Snap error: {0}")]
+    Snap(#[from] SnapError),
 }

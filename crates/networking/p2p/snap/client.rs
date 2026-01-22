@@ -6,7 +6,7 @@
 use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_handler::PeerHandler,
-    peer_table::{PeerTable, PeerTableError},
+    peer_table::PeerTable,
     rlpx::{
         connection::server::PeerConnection,
         error::PeerConnectionError,
@@ -16,7 +16,7 @@ use crate::{
             GetStorageRanges, GetTrieNodes, StorageRanges, TrieNodes,
         },
     },
-    snap::{constants::*, encodable_to_proof},
+    snap::{constants::*, encodable_to_proof, error::SnapError},
     sync::{AccountStorageRoots, SnapBlockSyncState, block_is_stale, update_pivot},
     utils::{
         AccountsWithStorage, dump_accounts_to_file, dump_storages_to_file,
@@ -35,29 +35,14 @@ use ethrex_trie::{Node, verify_range};
 use crate::rlpx::message::Message as RLPxMessage;
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
-    io::ErrorKind,
-    path::{Path, PathBuf},
+    path::Path,
     sync::atomic::Ordering,
     time::{Duration, SystemTime},
 };
 use tracing::{debug, error, info, trace, warn};
 
-/// Error that occurs when dumping snapshots to disk
-pub struct DumpError {
-    pub path: PathBuf,
-    pub contents: Vec<u8>,
-    pub error: ErrorKind,
-}
-
-impl core::fmt::Debug for DumpError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("DumpError")
-            .field("path", &self.path)
-            .field("contents_len", &self.contents.len())
-            .field("error", &self.error)
-            .finish()
-    }
-}
+// Re-export DumpError from error module
+pub use super::error::DumpError;
 
 /// Metadata for requesting trie nodes
 #[derive(Debug, Clone)]
@@ -68,22 +53,13 @@ pub struct RequestMetadata {
     pub parent_path: Nibbles,
 }
 
-/// Error type for state trie node requests
+/// Error type for storage trie node requests (includes request ID for tracking)
 #[derive(Debug, thiserror::Error)]
-pub enum RequestStateTrieNodesError {
-    #[error("Send request error")]
-    RequestError(PeerConnectionError),
-    #[error("Invalid data")]
-    InvalidData,
-    #[error("Invalid Hash")]
-    InvalidHash,
-}
-
-/// Error type for storage trie node requests
-#[derive(Debug, thiserror::Error)]
-pub enum RequestStorageTrieNodes {
-    #[error("Send request error")]
-    RequestError(u64, PeerConnectionError),
+#[error("Storage trie node request {request_id} failed: {source}")]
+pub struct RequestStorageTrieNodesError {
+    pub request_id: u64,
+    #[source]
+    pub source: SnapError,
 }
 
 #[derive(Clone)]
@@ -105,36 +81,6 @@ struct StorageTask {
     end_hash: Option<H256>,
 }
 
-/// Errors specific to snap client operations
-#[derive(thiserror::Error, Debug)]
-pub enum SnapClientError {
-    #[error("Accounts state snapshots dir does not exist")]
-    NoStateSnapshotsDir,
-    #[error("Failed to create accounts state snapshots dir")]
-    CreateStateSnapshotsDir,
-    #[error("Failed to write account_state_snapshot chunk {0}")]
-    WriteStateSnapshotsDir(u64),
-    #[error("Accounts storage snapshots dir does not exist")]
-    NoStorageSnapshotsDir,
-    #[error("Failed to create accounts storage snapshots dir")]
-    CreateStorageSnapshotsDir,
-    #[error("Failed to write account_storages_snapshot chunk {0}")]
-    WriteStorageSnapshotsDir(u64),
-    #[error("No tasks in queue")]
-    NoTasks,
-    #[error("No account hashes")]
-    AccountHashes,
-    #[error("No account storages")]
-    NoAccountStorages,
-    #[error("No storage roots")]
-    NoStorageRoots,
-    #[error("Dumping snapshots to disk failed {0:?}")]
-    DumpError(DumpError),
-    #[error("Encountered an unexpected error. This is a bug {0}")]
-    UnrecoverableError(String),
-    #[error("Error in Peer Table: {0}")]
-    PeerTableError(#[from] PeerTableError),
-}
 
 /// Snap sync client methods for PeerHandler
 impl PeerHandler {
@@ -155,7 +101,7 @@ impl PeerHandler {
         account_state_snapshots_dir: &Path,
         pivot_header: &mut BlockHeader,
         block_sync_state: &mut SnapBlockSyncState,
-    ) -> Result<(), SnapClientError> {
+    ) -> Result<(), SnapError> {
         METRICS
             .current_step
             .set(CurrentStepValue::RequestingAccountRanges);
@@ -179,7 +125,7 @@ impl PeerHandler {
         // Modify the last chunk to include the limit
         let last_task = tasks_queue_not_started
             .back_mut()
-            .ok_or(SnapClientError::NoTasks)?;
+            .ok_or(SnapError::NoTasks)?;
         last_task.1 = limit;
 
         // 2) request the chunks from peers
@@ -214,10 +160,10 @@ impl PeerHandler {
                     .collect::<Vec<(H256, AccountState)>>();
 
                 if !std::fs::exists(account_state_snapshots_dir)
-                    .map_err(|_| SnapClientError::NoStateSnapshotsDir)?
+                    .map_err(|_| SnapError::SnapshotDir("State snapshots directory does not exist".to_string()))?
                 {
                     std::fs::create_dir_all(account_state_snapshots_dir)
-                        .map_err(|_| SnapClientError::CreateStateSnapshotsDir)?;
+                        .map_err(|_| SnapError::SnapshotDir("Failed to create state snapshots directory".to_string()))?;
                 }
 
                 let account_state_snapshots_dir_cloned = account_state_snapshots_dir.to_path_buf();
@@ -330,7 +276,7 @@ impl PeerHandler {
             .await
             .into_iter()
             .collect::<Result<Vec<()>, DumpError>>()
-            .map_err(SnapClientError::DumpError)?;
+            .map_err(SnapError::from)?;
 
         // TODO: This is repeated code, consider refactoring
         {
@@ -343,10 +289,10 @@ impl PeerHandler {
                 .collect::<Vec<(H256, AccountState)>>();
 
             if !std::fs::exists(account_state_snapshots_dir)
-                .map_err(|_| SnapClientError::NoStateSnapshotsDir)?
+                .map_err(|_| SnapError::SnapshotDir("State snapshots directory does not exist".to_string()))?
             {
                 std::fs::create_dir_all(account_state_snapshots_dir)
-                    .map_err(|_| SnapClientError::CreateStateSnapshotsDir)?;
+                    .map_err(|_| SnapError::SnapshotDir("Failed to create state snapshots directory".to_string()))?;
             }
 
             let path = get_account_state_snapshot_file(account_state_snapshots_dir, chunk_file);
@@ -357,7 +303,7 @@ impl PeerHandler {
                         err.error
                     )
                 })
-                .map_err(|_| SnapClientError::WriteStateSnapshotsDir(chunk_file))?;
+                .map_err(|_| SnapError::SnapshotDir(format!("Failed to write state snapshot chunk {}", chunk_file)))?;
         }
 
         METRICS
@@ -375,7 +321,7 @@ impl PeerHandler {
     pub async fn request_bytecodes(
         &mut self,
         all_bytecode_hashes: &[H256],
-    ) -> Result<Option<Vec<Bytes>>, SnapClientError> {
+    ) -> Result<Option<Vec<Bytes>>, SnapError> {
         METRICS
             .current_step
             .set(CurrentStepValue::RequestingBytecodes);
@@ -396,7 +342,7 @@ impl PeerHandler {
         // Modify the last chunk to include the limit
         let last_task = tasks_queue_not_started
             .back_mut()
-            .ok_or(SnapClientError::NoTasks)?;
+            .ok_or(SnapError::NoTasks)?;
         last_task.1 = all_bytecode_hashes.len();
 
         // 2) request the chunks from peers
@@ -573,7 +519,7 @@ impl PeerHandler {
         mut chunk_index: u64,
         pivot_header: &mut BlockHeader,
         store: Store,
-    ) -> Result<u64, SnapClientError> {
+    ) -> Result<u64, SnapError> {
         METRICS
             .current_step
             .set(CurrentStepValue::RequestingStorageRanges);
@@ -654,10 +600,10 @@ impl PeerHandler {
                 let snapshot = current_account_storages.into_values().collect::<Vec<_>>();
 
                 if !std::fs::exists(account_storages_snapshots_dir)
-                    .map_err(|_| SnapClientError::NoStorageSnapshotsDir)?
+                    .map_err(|_| SnapError::SnapshotDir("Storage snapshots directory does not exist".to_string()))?
                 {
                     std::fs::create_dir_all(account_storages_snapshots_dir)
-                        .map_err(|_| SnapClientError::CreateStorageSnapshotsDir)?;
+                        .map_err(|_| SnapError::SnapshotDir("Failed to create storage snapshots directory".to_string()))?;
                 }
                 let account_storages_snapshots_dir_cloned =
                     account_storages_snapshots_dir.to_path_buf();
@@ -671,7 +617,7 @@ impl PeerHandler {
                         .inspect_err(|err| {
                             error!("We found this error while dumping to file {err:?}")
                         })
-                        .map_err(SnapClientError::DumpError)?;
+                        .map_err(SnapError::from)?;
                 }
                 disk_joinset.spawn(async move {
                     let path = get_account_storages_snapshot_file(
@@ -701,7 +647,7 @@ impl PeerHandler {
                             let (_, old_intervals) = account_storage_roots
                                 .accounts_with_storage_root
                                 .get_mut(account)
-                                .ok_or(SnapClientError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+                                .ok_or(SnapError::InternalError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
 
                             if old_intervals.is_empty() {
                                 accounts_done.insert(*account, vec![]);
@@ -737,7 +683,7 @@ impl PeerHandler {
                             let acc_hash = accounts_by_root_hash[remaining_start].1[0];
                             let (_, old_intervals) = account_storage_roots
                                 .accounts_with_storage_root
-                                .get_mut(&acc_hash).ok_or(SnapClientError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+                                .get_mut(&acc_hash).ok_or(SnapError::InternalError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
                             for (old_start, end) in old_intervals {
                                 if end == &hash_end {
                                     *old_start = hash_start;
@@ -769,12 +715,12 @@ impl PeerHandler {
                             let (_, old_intervals) = account_storage_roots
                                 .accounts_with_storage_root
                                 .get_mut(&acc_hash)
-                                .ok_or(SnapClientError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+                                .ok_or(SnapError::InternalError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
                             old_intervals.remove(
                                 old_intervals
                                     .iter()
                                     .position(|(_old_start, end)| end == &hash_end)
-                                    .ok_or(SnapClientError::UnrecoverableError(
+                                    .ok_or(SnapError::InternalError(
                                         "Could not find an old interval that we were tracking"
                                             .to_owned(),
                                     ))?,
@@ -809,7 +755,7 @@ impl PeerHandler {
                         let slot_count = account_storages
                             .last()
                             .map(|v| v.len())
-                            .ok_or(SnapClientError::NoAccountStorages)?
+                            .ok_or(SnapError::NoAccountStorages)?
                             .max(1);
                         let storage_density = start_hash_u256 / slot_count;
 
@@ -846,7 +792,7 @@ impl PeerHandler {
                                 let (_, intervals) = account_storage_roots
                                     .accounts_with_storage_root
                                     .get_mut(&accounts_by_root_hash[remaining_start].1[0])
-                                    .ok_or(SnapClientError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+                                    .ok_or(SnapError::InternalError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
 
                                 for i in 0..chunk_count {
                                     let start_hash_u256 = start_hash_u256 + chunk_size * i;
@@ -882,7 +828,7 @@ impl PeerHandler {
                             let (_, intervals) = account_storage_roots
                                 .accounts_with_storage_root
                                 .get_mut(&accounts_by_root_hash[remaining_start].1[0])
-                                .ok_or(SnapClientError::UnrecoverableError("Trie to get the old download intervals for an account but did not find them".to_owned()))?;
+                                .ok_or(SnapError::InternalError("Trie to get the old download intervals for an account but did not find them".to_owned()))?;
 
                             for i in 0..chunk_count {
                                 let start_hash_u256 = start_hash_u256 + chunk_size * i;
@@ -1041,15 +987,15 @@ impl PeerHandler {
             let snapshot = current_account_storages.into_values().collect::<Vec<_>>();
 
             if !std::fs::exists(account_storages_snapshots_dir)
-                .map_err(|_| SnapClientError::NoStorageSnapshotsDir)?
+                .map_err(|_| SnapError::SnapshotDir("Storage snapshots directory does not exist".to_string()))?
             {
                 std::fs::create_dir_all(account_storages_snapshots_dir)
-                    .map_err(|_| SnapClientError::CreateStorageSnapshotsDir)?;
+                    .map_err(|_| SnapError::SnapshotDir("Failed to create storage snapshots directory".to_string()))?;
             }
             let path =
                 get_account_storages_snapshot_file(account_storages_snapshots_dir, chunk_index);
             dump_storages_to_file(&path, snapshot)
-                .map_err(|_| SnapClientError::WriteStorageSnapshotsDir(chunk_index))?;
+                .map_err(|_| SnapError::SnapshotDir(format!("Failed to write storage snapshot chunk {}", chunk_index)))?;
         }
         disk_joinset
             .join_all()
@@ -1060,7 +1006,7 @@ impl PeerHandler {
                     .inspect_err(|err| error!("We found this error while dumping to file {err:?}"))
             })
             .collect::<Result<Vec<()>, DumpError>>()
-            .map_err(SnapClientError::DumpError)?;
+            .map_err(SnapError::from)?;
 
         for (account_done, intervals) in accounts_done {
             if intervals.is_empty() {
@@ -1082,7 +1028,7 @@ impl PeerHandler {
         mut peer_table: PeerTable,
         state_root: H256,
         paths: Vec<RequestMetadata>,
-    ) -> Result<Vec<Node>, RequestStateTrieNodesError> {
+    ) -> Result<Vec<Node>, SnapError> {
         let expected_nodes = paths.len();
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
         // This is so we avoid penalizing peers due to requesting stale data
@@ -1112,20 +1058,18 @@ impl PeerHandler {
                 .iter()
                 .map(|node| Node::decode(node))
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| {
-                    RequestStateTrieNodesError::RequestError(PeerConnectionError::RLPDecodeError(e))
-                }),
-            Ok(other_msg) => Err(RequestStateTrieNodesError::RequestError(
+                .map_err(SnapError::from),
+            Ok(other_msg) => Err(SnapError::Protocol(
                 PeerConnectionError::UnexpectedResponse(
                     "TrieNodes".to_string(),
                     other_msg.to_string(),
                 ),
             )),
-            Err(other_err) => Err(RequestStateTrieNodesError::RequestError(other_err)),
+            Err(other_err) => Err(SnapError::Protocol(other_err)),
         }?;
 
         if nodes.is_empty() || nodes.len() > expected_nodes {
-            return Err(RequestStateTrieNodesError::InvalidData);
+            return Err(SnapError::InvalidData);
         }
 
         for (index, node) in nodes.iter().enumerate() {
@@ -1134,7 +1078,7 @@ impl PeerHandler {
                     "A peer is sending wrong data for the state trie node {:?}",
                     paths[index].path
                 );
-                return Err(RequestStateTrieNodesError::InvalidHash);
+                return Err(SnapError::InvalidHash);
             }
         }
 
@@ -1151,10 +1095,10 @@ impl PeerHandler {
         mut connection: PeerConnection,
         mut peer_table: PeerTable,
         get_trie_nodes: GetTrieNodes,
-    ) -> Result<TrieNodes, RequestStorageTrieNodes> {
+    ) -> Result<TrieNodes, RequestStorageTrieNodesError> {
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
         // This is so we avoid penalizing peers due to requesting stale data
-        let id = get_trie_nodes.id;
+        let request_id = get_trie_nodes.id;
         let request = RLPxMessage::GetTrieNodes(get_trie_nodes);
         match PeerHandler::make_request(
             &mut peer_table,
@@ -1166,14 +1110,17 @@ impl PeerHandler {
         .await
         {
             Ok(RLPxMessage::TrieNodes(trie_nodes)) => Ok(trie_nodes),
-            Ok(other_msg) => Err(RequestStorageTrieNodes::RequestError(
-                id,
-                PeerConnectionError::UnexpectedResponse(
+            Ok(other_msg) => Err(RequestStorageTrieNodesError {
+                request_id,
+                source: SnapError::Protocol(PeerConnectionError::UnexpectedResponse(
                     "TrieNodes".to_string(),
                     other_msg.to_string(),
-                ),
-            )),
-            Err(e) => Err(RequestStorageTrieNodes::RequestError(id, e)),
+                )),
+            }),
+            Err(e) => Err(RequestStorageTrieNodesError {
+                request_id,
+                source: SnapError::Protocol(e),
+            }),
         }
     }
 }
@@ -1187,7 +1134,7 @@ async fn request_account_range_worker(
     chunk_end: H256,
     state_root: H256,
     tx: tokio::sync::mpsc::Sender<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>,
-) -> Result<(), SnapClientError> {
+) -> Result<(), SnapError> {
     debug!(
         "Requesting account range from peer {peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
     );
@@ -1253,7 +1200,7 @@ async fn request_account_range_worker(
                         .await
                         .ok();
                     error!("Account hashes last failed, this shouldn't happen");
-                    return Err(SnapClientError::AccountHashes);
+                    return Err(SnapError::NoAccountHashes);
                 }
             };
             let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
@@ -1278,7 +1225,7 @@ async fn request_account_range_worker(
             .await
             .ok();
     }
-    Ok::<(), SnapClientError>(())
+    Ok::<(), SnapError>(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1291,7 +1238,7 @@ async fn request_storage_ranges_worker(
     chunk_account_hashes: Vec<H256>,
     chunk_storage_roots: Vec<H256>,
     tx: tokio::sync::mpsc::Sender<StorageTaskResult>,
-) -> Result<(), SnapClientError> {
+) -> Result<(), SnapError> {
     let start = task.start_index;
     let end = task.end_index;
     let start_hash = task.start_hash;
@@ -1366,7 +1313,7 @@ async fn request_storage_ranges_worker(
             None => {
                 tx.send(empty_task_result.clone()).await.ok();
                 error!("No storage root for account {i}");
-                return Err(SnapClientError::NoStorageRoots);
+                return Err(SnapError::NoStorageRoots);
             }
         };
 
@@ -1409,7 +1356,7 @@ async fn request_storage_ranges_worker(
             None => {
                 tx.send(empty_task_result.clone()).await.ok();
                 error!("No account storage found, this shouldn't happen");
-                return Err(SnapClientError::NoAccountStorages);
+                return Err(SnapError::NoAccountStorages);
             }
         };
         let (last_hash, _) = match last_account_storage.last() {
@@ -1417,7 +1364,7 @@ async fn request_storage_ranges_worker(
             None => {
                 tx.send(empty_task_result.clone()).await.ok();
                 error!("No last hash found, this shouldn't happen");
-                return Err(SnapClientError::NoAccountStorages);
+                return Err(SnapError::NoAccountStorages);
             }
         };
         let next_hash_u256 = U256::from_big_endian(&last_hash.0).saturating_add(1.into());
@@ -1435,5 +1382,5 @@ async fn request_storage_ranges_worker(
         remaining_hash_range: (remaining_start_hash, task.end_hash),
     };
     tx.send(task_result).await.ok();
-    Ok::<(), SnapClientError>(())
+    Ok::<(), SnapError>(())
 }

@@ -1,22 +1,21 @@
 use bytes::Bytes;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{Store, error::StoreError};
+use ethrex_storage::Store;
 
-use crate::rlpx::{
-    error::PeerConnectionError,
-    snap::{
-        AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges,
-        GetTrieNodes, StorageRanges, StorageSlot, TrieNodes,
-    },
+use crate::rlpx::snap::{
+    AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges,
+    GetTrieNodes, StorageRanges, StorageSlot, TrieNodes,
 };
 use ethrex_common::types::AccountStateSlimCodec;
+
+use super::error::SnapError;
 
 // Request Processing
 
 pub async fn process_account_range_request(
     request: GetAccountRange,
     store: Store,
-) -> Result<AccountRange, StoreError> {
+) -> Result<AccountRange, SnapError> {
     tokio::task::spawn_blocking(move || {
         let mut accounts = vec![];
         let mut bytes_used = 0;
@@ -40,13 +39,13 @@ pub async fn process_account_range_request(
         })
     })
     .await
-    .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    .map_err(|e| SnapError::TaskPanic(e.to_string()))?
 }
 
 pub async fn process_storage_ranges_request(
     request: GetStorageRanges,
     store: Store,
-) -> Result<StorageRanges, StoreError> {
+) -> Result<StorageRanges, SnapError> {
     tokio::task::spawn_blocking(move || {
         let mut slots = vec![];
         let mut proof = vec![];
@@ -102,13 +101,13 @@ pub async fn process_storage_ranges_request(
         })
     })
     .await
-    .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    .map_err(|e| SnapError::TaskPanic(e.to_string()))?
 }
 
 pub fn process_byte_codes_request(
     request: GetByteCodes,
     store: Store,
-) -> Result<ByteCodes, StoreError> {
+) -> Result<ByteCodes, SnapError> {
     let mut codes = vec![];
     let mut bytes_used = 0;
     for code_hash in request.hashes {
@@ -129,13 +128,13 @@ pub fn process_byte_codes_request(
 pub async fn process_trie_nodes_request(
     request: GetTrieNodes,
     store: Store,
-) -> Result<TrieNodes, PeerConnectionError> {
+) -> Result<TrieNodes, SnapError> {
     tokio::task::spawn_blocking(move || {
         let mut nodes = vec![];
         let mut remaining_bytes = request.bytes;
         for paths in request.paths {
             if paths.is_empty() {
-                return Err(PeerConnectionError::BadRequest(
+                return Err(SnapError::BadRequest(
                     "zero-item pathset requested".to_string(),
                 ));
             }
@@ -158,7 +157,7 @@ pub async fn process_trie_nodes_request(
         })
     })
     .await
-    .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    .map_err(|e| SnapError::TaskPanic(e.to_string()))?
 }
 
 // Helper method to convert proof to RLP-encodable format

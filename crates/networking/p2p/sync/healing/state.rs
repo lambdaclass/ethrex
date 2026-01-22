@@ -23,9 +23,9 @@ use tracing::{debug, trace};
 
 use crate::{
     metrics::{CurrentStepValue, METRICS},
-    peer_handler::{PeerHandler, RequestMetadata, RequestStateTrieNodesError},
+    peer_handler::{PeerHandler, RequestMetadata},
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
-    snap::constants::{NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION},
+    snap::{SnapError, constants::{NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION}},
     sync::{AccountStorageRoots, SyncError, code_collector::CodeHashCollector},
     utils::current_unix_time,
 };
@@ -101,7 +101,7 @@ async fn heal_state_trie(
     // channel to send the tasks to the peers
     let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
         H256,
-        Result<Vec<Node>, RequestStateTrieNodesError>,
+        Result<Vec<Node>, SnapError>,
         Vec<RequestMetadata>,
     )>(1000);
     // Contains both nodes and their corresponding paths to heal

@@ -237,8 +237,8 @@ pub enum SyncError {
     PeerTableError(#[from] PeerTableError),
     #[error("Missing fullsync batch")]
     MissingFullsyncBatch,
-    #[error("Snap client error: {0}")]
-    SnapClient(#[from] crate::snap::SnapClientError),
+    #[error("Snap error: {0}")]
+    Snap(#[from] crate::snap::SnapError),
 }
 
 impl SyncError {
@@ -264,7 +264,7 @@ impl SyncError {
             | SyncError::NoLatestCanonical
             | SyncError::PeerTableError(_)
             | SyncError::MissingFullsyncBatch
-            | SyncError::SnapClient(_) => false,
+            | SyncError::Snap(_) => false,
             SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)

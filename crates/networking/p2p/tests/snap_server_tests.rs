@@ -7,9 +7,9 @@ use std::str::FromStr;
 
 use ethrex_common::{BigEndianHash, H256, types::AccountStateSlimCodec};
 use ethrex_p2p::rlpx::snap::GetAccountRange;
-use ethrex_p2p::snap::process_account_range_request;
+use ethrex_p2p::snap::{process_account_range_request, SnapError};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_storage::{Store, EngineType, error::StoreError};
+use ethrex_storage::{Store, EngineType};
 use ethrex_trie::EMPTY_TRIE_HASH;
 
 use lazy_static::lazy_static;
@@ -33,7 +33,7 @@ lazy_static! {
 }
 
 #[tokio::test]
-async fn hive_account_range_a() -> Result<(), StoreError> {
+async fn hive_account_range_a() -> Result<(), SnapError> {
     let (store, root) = setup_initial_state()?;
     let request = GetAccountRange {
         id: 0,
@@ -55,7 +55,7 @@ async fn hive_account_range_a() -> Result<(), StoreError> {
 }
 
 #[tokio::test]
-async fn hive_account_range_b() -> Result<(), StoreError> {
+async fn hive_account_range_b() -> Result<(), SnapError> {
     let (store, root) = setup_initial_state()?;
     let request = GetAccountRange {
         id: 0,
@@ -77,7 +77,7 @@ async fn hive_account_range_b() -> Result<(), StoreError> {
 }
 
 #[tokio::test]
-async fn hive_account_range_c() -> Result<(), StoreError> {
+async fn hive_account_range_c() -> Result<(), SnapError> {
     let (store, root) = setup_initial_state()?;
     let request = GetAccountRange {
         id: 0,
@@ -99,7 +99,7 @@ async fn hive_account_range_c() -> Result<(), StoreError> {
 }
 
 #[tokio::test]
-async fn hive_account_range_d() -> Result<(), StoreError> {
+async fn hive_account_range_d() -> Result<(), SnapError> {
     let (store, root) = setup_initial_state()?;
     let request = GetAccountRange {
         id: 0,
@@ -117,7 +117,7 @@ async fn hive_account_range_d() -> Result<(), StoreError> {
 }
 
 #[tokio::test]
-async fn hive_account_range_e() -> Result<(), StoreError> {
+async fn hive_account_range_e() -> Result<(), SnapError> {
     let (store, root) = setup_initial_state()?;
     let request = GetAccountRange {
         id: 0,
@@ -135,7 +135,7 @@ async fn hive_account_range_e() -> Result<(), StoreError> {
 }
 
 #[tokio::test]
-async fn hive_account_range_f() -> Result<(), StoreError> {
+async fn hive_account_range_f() -> Result<(), SnapError> {
     // In this test, we request a range where startingHash is before the first available
     // account key, and limitHash is after. The server should return the first and second
     // account of the state (because the second account is the 'next available').
@@ -156,7 +156,7 @@ async fn hive_account_range_f() -> Result<(), StoreError> {
 }
 
 #[tokio::test]
-async fn hive_account_range_g() -> Result<(), StoreError> {
+async fn hive_account_range_g() -> Result<(), SnapError> {
     // Here we request range where both bounds are before the first available account key.
     // This should return the first account (even though it's out of bounds).
     let (store, root) = setup_initial_state()?;
@@ -176,7 +176,7 @@ async fn hive_account_range_g() -> Result<(), StoreError> {
 }
 
 #[tokio::test]
-async fn hive_account_range_h() -> Result<(), StoreError> {
+async fn hive_account_range_h() -> Result<(), SnapError> {
     // In this test, both startingHash and limitHash are zero.
     // The server should return the first available account.
     let (store, root) = setup_initial_state()?;
@@ -196,7 +196,7 @@ async fn hive_account_range_h() -> Result<(), StoreError> {
 }
 
 #[tokio::test]
-async fn hive_account_range_i() -> Result<(), StoreError> {
+async fn hive_account_range_i() -> Result<(), SnapError> {
     let (store, root) = setup_initial_state()?;
     let request = GetAccountRange {
         id: 0,
@@ -218,7 +218,7 @@ async fn hive_account_range_i() -> Result<(), StoreError> {
 }
 
 #[tokio::test]
-async fn hive_account_range_j() -> Result<(), StoreError> {
+async fn hive_account_range_j() -> Result<(), SnapError> {
     let (store, root) = setup_initial_state()?;
     let request = GetAccountRange {
         id: 0,
@@ -244,7 +244,7 @@ async fn hive_account_range_j() -> Result<(), StoreError> {
 // Non-sensical requests
 
 #[tokio::test]
-async fn hive_account_range_k() -> Result<(), StoreError> {
+async fn hive_account_range_k() -> Result<(), SnapError> {
     // In this test, the startingHash is the first available key, and limitHash is
     // a key before startingHash (wrong order). The server should return the first available key.
     let (store, root) = setup_initial_state()?;
@@ -264,7 +264,7 @@ async fn hive_account_range_k() -> Result<(), StoreError> {
 }
 
 #[tokio::test]
-async fn hive_account_range_m() -> Result<(), StoreError> {
+async fn hive_account_range_m() -> Result<(), SnapError> {
     // In this test, the startingHash is the first available key and limitHash is zero.
     // (wrong order). The server should return the first available key.
     let (store, root) = setup_initial_state()?;
@@ -285,7 +285,7 @@ async fn hive_account_range_m() -> Result<(), StoreError> {
 
 // Initial state setup for hive snap tests
 
-fn setup_initial_state() -> Result<(Store, H256), StoreError> {
+fn setup_initial_state() -> Result<(Store, H256), SnapError> {
     // We cannot process the old blocks that hive uses for the devp2p snap tests
     // So I copied the state from a geth execution of the test suite
 

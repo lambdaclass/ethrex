@@ -1,13 +1,16 @@
 use crate::{
     metrics::{CurrentStepValue, METRICS},
-    peer_handler::{PeerHandler, RequestStorageTrieNodes},
+    peer_handler::PeerHandler,
     rlpx::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
         snap::{GetTrieNodes, TrieNodes},
     },
-    snap::constants::{
-        MAX_IN_FLIGHT_REQUESTS, MAX_RESPONSE_BYTES, SHOW_PROGRESS_INTERVAL_DURATION,
-        STORAGE_BATCH_SIZE,
+    snap::{
+        RequestStorageTrieNodesError,
+        constants::{
+            MAX_IN_FLIGHT_REQUESTS, MAX_RESPONSE_BYTES, SHOW_PROGRESS_INTERVAL_DURATION,
+            STORAGE_BATCH_SIZE,
+        },
     },
     sync::{AccountStorageRoots, SyncError},
     utils::current_unix_time,
@@ -153,7 +156,7 @@ pub async fn heal_storage_trie(
     // TODO: think if this is a better way to receiver the data
     // Not in the state because it's not clonable
     let mut requests_task_joinset: JoinSet<
-        Result<u64, TrySendError<Result<TrieNodes, RequestStorageTrieNodes>>>,
+        Result<u64, TrySendError<Result<TrieNodes, RequestStorageTrieNodesError>>>,
     > = JoinSet::new();
 
     let mut nodes_to_write: HashMap<H256, Vec<(Nibbles, Node)>> = HashMap::new();
@@ -161,7 +164,7 @@ pub async fn heal_storage_trie(
 
     // channel to send the tasks to the peers
     let (task_sender, mut task_receiver) =
-        tokio::sync::mpsc::channel::<Result<TrieNodes, RequestStorageTrieNodes>>(1000);
+        tokio::sync::mpsc::channel::<Result<TrieNodes, RequestStorageTrieNodesError>>(1000);
 
     let mut logged_no_free_peers_count = 0;
 
@@ -294,8 +297,8 @@ pub async fn heal_storage_trie(
                 )
                 .expect("We shouldn't be getting store errors"); // TODO: if we have a store error we should stop
             }
-            Err(RequestStorageTrieNodes::RequestError(id, _err)) => {
-                let inflight_request = state.requests.remove(&id).expect("request disappeared");
+            Err(RequestStorageTrieNodesError { request_id, source: _err }) => {
+                let inflight_request = state.requests.remove(&request_id).expect("request disappeared");
                 state.failed_downloads += 1;
                 state
                     .download_queue
@@ -314,11 +317,11 @@ async fn ask_peers_for_nodes(
     download_queue: &mut VecDeque<NodeRequest>,
     requests: &mut HashMap<u64, InflightRequest>,
     requests_task_joinset: &mut JoinSet<
-        Result<u64, TrySendError<Result<TrieNodes, RequestStorageTrieNodes>>>,
+        Result<u64, TrySendError<Result<TrieNodes, RequestStorageTrieNodesError>>>,
     >,
     peers: &mut PeerHandler,
     state_root: H256,
-    task_sender: &Sender<Result<TrieNodes, RequestStorageTrieNodes>>,
+    task_sender: &Sender<Result<TrieNodes, RequestStorageTrieNodesError>>,
     logged_no_free_peers_count: &mut u32,
 ) {
     if (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
