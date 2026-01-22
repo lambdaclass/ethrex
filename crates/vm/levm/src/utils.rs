@@ -102,12 +102,31 @@ pub fn get_base_fee_per_blob_gas(
     evm_config: &EVMConfig,
 ) -> Result<U256, VMError> {
     let base_fee_update_fraction = evm_config.blob_schedule.base_fee_update_fraction;
-    fake_exponential(
-        MIN_BASE_FEE_PER_BLOB_GAS,
-        block_excess_blob_gas.unwrap_or_default(),
-        base_fee_update_fraction,
-    )
-    .map_err(|err| VMError::Internal(InternalError::FakeExponentialError(err)))
+    let excess_blob_gas = block_excess_blob_gas.unwrap_or_default();
+
+    #[cfg(any(feature = "zisk", feature = "sp1", feature = "risc0"))]
+    {
+        use ethrex_common::types::fake_exponential_i128;
+        // Use optimized i128 version for zkVM contexts
+        // Safe because excess_blob_gas fits in u64 for realistic values
+        // MIN_BASE_FEE_PER_BLOB_GAS is always 1
+        let excess_u64 = excess_blob_gas.low_u64();
+        Ok(U256::from(fake_exponential_i128(
+            1u64,
+            excess_u64,
+            base_fee_update_fraction,
+        )))
+    }
+
+    #[cfg(not(any(feature = "zisk", feature = "sp1", feature = "risc0")))]
+    {
+        fake_exponential(
+            MIN_BASE_FEE_PER_BLOB_GAS,
+            excess_blob_gas,
+            base_fee_update_fraction,
+        )
+        .map_err(|err| VMError::Internal(InternalError::FakeExponentialError(err)))
+    }
 }
 
 /// Gets the max blob gas cost for a transaction that a user is
