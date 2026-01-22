@@ -16,7 +16,7 @@ use ethrex_metrics::l2::metrics::METRICS;
 use ethrex_metrics::metrics;
 use ethrex_rpc::{
     EthClient,
-    clients::{EthClientError, eth::errors::EstimateGasError},
+    clients::{EthClientError, eth::errors::RpcRequestError},
 };
 use ethrex_storage_rollup::StoreRollup;
 use guest_program::{ZKVM_RISC0_PROGRAM_VK, ZKVM_SP1_PROGRAM_ELF};
@@ -410,20 +410,20 @@ impl L1ProofSender {
         let send_verify_tx_result =
             send_verify_tx(calldata, &self.eth_client, target_address, &self.signer).await;
 
-        if let Err(EthClientError::EstimateGasError(EstimateGasError::RPCError(error))) =
+        if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError { message, .. })) =
             send_verify_tx_result.as_ref()
         {
-            if error.contains("Invalid TDX proof") {
+            if message.contains("Invalid TDX proof") {
                 warn!("Deleting invalid TDX proof");
                 self.rollup_store
                     .delete_proof_by_batch_and_type(batch_number, ProverType::TDX)
                     .await?;
-            } else if error.contains("Invalid RISC0 proof") {
+            } else if message.contains("Invalid RISC0 proof") {
                 warn!("Deleting invalid RISC0 proof");
                 self.rollup_store
                     .delete_proof_by_batch_and_type(batch_number, ProverType::RISC0)
                     .await?;
-            } else if error.contains("Invalid SP1 proof") {
+            } else if message.contains("Invalid SP1 proof") {
                 warn!("Deleting invalid SP1 proof");
                 self.rollup_store
                     .delete_proof_by_batch_and_type(batch_number, ProverType::SP1)

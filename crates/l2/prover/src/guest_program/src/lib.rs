@@ -1,7 +1,38 @@
-pub mod execution;
-pub mod input;
+pub mod common;
+pub mod l1;
+pub mod l2;
 pub mod methods;
-pub mod output;
+
+// Backward-compatible re-exports based on feature flag.
+// The prover backend uses `guest_program::input::ProgramInput`, etc.
+// These re-exports allow existing code to work without changes.
+
+#[cfg(feature = "l2")]
+pub mod input {
+    pub use crate::l2::ProgramInput;
+}
+#[cfg(not(feature = "l2"))]
+pub mod input {
+    pub use crate::l1::ProgramInput;
+}
+
+#[cfg(feature = "l2")]
+pub mod output {
+    pub use crate::l2::ProgramOutput;
+}
+#[cfg(not(feature = "l2"))]
+pub mod output {
+    pub use crate::l1::ProgramOutput;
+}
+
+#[cfg(feature = "l2")]
+pub mod execution {
+    pub use crate::l2::execution_program;
+}
+#[cfg(not(feature = "l2"))]
+pub mod execution {
+    pub use crate::l1::execution_program;
+}
 
 // When running clippy, the ELFs are not built, so we define them empty.
 
