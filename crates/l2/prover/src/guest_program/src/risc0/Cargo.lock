@@ -332,17 +332,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
-name = "async-trait"
-version = "0.1.89"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.110",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1184,7 +1173,6 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
- "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
  "hex",
@@ -1241,30 +1229,6 @@ dependencies = [
  "snap",
  "thiserror",
  "tinyvec",
-]
-
-[[package]]
-name = "ethrex-storage"
-version = "9.0.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "bytes",
- "ethereum-types",
- "ethrex-common",
- "ethrex-crypto",
- "ethrex-rlp",
- "ethrex-trie",
- "hex",
- "lru",
- "qfilter",
- "rayon",
- "rustc-hash",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -1379,12 +1343,6 @@ name = "foldhash"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
-
-[[package]]
-name = "foldhash"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "foreign-types"
@@ -1520,7 +1478,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
  "allocator-api2",
- "foldhash 0.1.5",
+ "foldhash",
 ]
 
 [[package]]
@@ -1528,11 +1486,6 @@ name = "hashbrown"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5419bdc4f6a9207fbeba6d11b604d481addf78ecd10c11ad51e76c2f6482748d"
-dependencies = [
- "allocator-api2",
- "equivalent",
- "foldhash 0.2.0",
-]
 
 [[package]]
 name = "heck"
@@ -1926,15 +1879,6 @@ name = "log"
 version = "0.4.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
-
-[[package]]
-name = "lru"
-version = "0.16.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96051b46fc183dc9cd4a223960ef37b9af631b55191852a8274bfef064cda20f"
-dependencies = [
- "hashbrown 0.16.0",
-]
 
 [[package]]
 name = "malachite"
@@ -2456,15 +2400,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.110",
-]
-
-[[package]]
-name = "qfilter"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "746341cd2357c9a4df2d951522b4a8dd1ef553e543119899ad7bf87e938c8fbe"
-dependencies = [
- "xxhash-rust",
 ]
 
 [[package]]
@@ -3403,15 +3338,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
-name = "tokio"
-version = "1.48.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff360e02eab121e0bc37a2d3b4d4dc622e6eda3a8e5253d5435ecf5bd4c68408"
-dependencies = [
- "pin-project-lite",
-]
-
-[[package]]
 name = "toml_datetime"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3757,12 +3683,6 @@ checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
 dependencies = [
  "tap",
 ]
-
-[[package]]
-name = "xxhash-rust"
-version = "0.8.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
 
 [[package]]
 name = "yoke"
