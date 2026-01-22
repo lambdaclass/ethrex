@@ -242,13 +242,11 @@ pub async fn periodically_show_peer_stats_during_syncing(
  SNAP SYNC │ {elapsed} │ {peer_number} peers │ {current_step} │ {head_short}
 ───────────────────────────────────────────────────────────────────────
  Headers Downloaded      {headers_downloaded:>13}       {headers_percentage:>5.1}%
- Headers Inserted                    -
  Accounts Downloaded     {account_leaves_downloaded:>13}
  Accounts Inserted       {account_leaves_inserted:>13}
  Storage Downloaded      {storage_leaves_downloaded:>13}
  Storage Inserted        {storage_leaves_inserted:>13}
  Bytecodes Downloaded    {bytecodes_downloaded:>13}
- Bytecodes Inserted                  -
 ───────────────────────────────────────────────────────────────────────
  Healing: {healed_accounts} accounts │ {healed_storages} storages │ throttle: {heal_current_throttle}
 ───────────────────────────────────────────────────────────────────────"#
@@ -290,4 +288,3 @@ fn format_duration(duration: Duration) -> String {
     let seconds = total_seconds % 60;
     format!("{hours:02}:{minutes:02}:{seconds:02}")
 }
-
