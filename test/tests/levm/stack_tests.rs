@@ -386,5 +386,5 @@ fn test_exchange_coverage_valid_pairs() {
 
     // Total valid bytes: 80 in low range (0x00-0x4F) + 128 in high range (0x80-0xFF) = 208
     // But some might map to the same (n, m) pair
-    assert!(pairs.len() > 0, "Should have at least some valid pairs");
+    assert!(!pairs.is_empty(), "Should have at least some valid pairs");
 }
