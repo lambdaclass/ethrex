@@ -104,29 +104,12 @@ pub fn get_base_fee_per_blob_gas(
     let base_fee_update_fraction = evm_config.blob_schedule.base_fee_update_fraction;
     let excess_blob_gas = block_excess_blob_gas.unwrap_or_default();
 
-    #[cfg(any(feature = "zisk", feature = "sp1", feature = "risc0"))]
-    {
-        use ethrex_common::types::fake_exponential_i128;
-        // Use optimized i128 version for zkVM contexts
-        // Safe because excess_blob_gas fits in u64 for realistic values
-        // MIN_BASE_FEE_PER_BLOB_GAS is always 1
-        let excess_u64 = excess_blob_gas.low_u64();
-        Ok(U256::from(fake_exponential_i128(
-            1u64,
-            excess_u64,
-            base_fee_update_fraction,
-        )))
-    }
-
-    #[cfg(not(any(feature = "zisk", feature = "sp1", feature = "risc0")))]
-    {
-        fake_exponential(
-            MIN_BASE_FEE_PER_BLOB_GAS,
-            excess_blob_gas,
-            base_fee_update_fraction,
-        )
-        .map_err(|err| VMError::Internal(InternalError::FakeExponentialError(err)))
-    }
+    fake_exponential(
+        MIN_BASE_FEE_PER_BLOB_GAS,
+        excess_blob_gas,
+        base_fee_update_fraction,
+    )
+    .map_err(|err| VMError::Internal(InternalError::FakeExponentialError(err)))
 }
 
 /// Gets the max blob gas cost for a transaction that a user is
@@ -154,8 +137,7 @@ pub fn get_max_blob_gas_price(
 /// Calculate the actual blob gas cost.
 pub fn calculate_blob_gas_cost(
     tx_blob_hashes: &[H256],
-    block_excess_blob_gas: Option<U256>,
-    evm_config: &EVMConfig,
+    base_blob_fee_per_gas: U256,
 ) -> Result<U256, VMError> {
     let blobhash_amount: u64 = tx_blob_hashes
         .len()
@@ -166,11 +148,9 @@ pub fn calculate_blob_gas_cost(
         .checked_mul(BLOB_GAS_PER_BLOB)
         .unwrap_or_default();
 
-    let base_fee_per_blob_gas = get_base_fee_per_blob_gas(block_excess_blob_gas, evm_config)?;
-
     let blob_gas_used: U256 = blob_gas_used.into();
     let blob_fee: U256 = blob_gas_used
-        .checked_mul(base_fee_per_blob_gas)
+        .checked_mul(base_blob_fee_per_gas)
         .ok_or(InternalError::Overflow)?;
 
     Ok(blob_fee)

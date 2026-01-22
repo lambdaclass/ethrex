@@ -459,8 +459,7 @@ pub fn deduct_caller(
 
     let blob_gas_cost = calculate_blob_gas_cost(
         &vm.env.tx_blob_hashes,
-        vm.env.block_excess_blob_gas,
-        &vm.env.config,
+        vm.env.base_blob_fee_per_gas,
     )?;
 
     // The real cost to deduct is calculated as effective_gas_price * gas_limit + value + blob_gas_cost
