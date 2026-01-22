@@ -447,13 +447,12 @@ impl EncodedTrie {
                             NodeType::Extension { child_index, .. } => {
                                 let mut prefix = self.get_extension_data(child_idx)?;
                                 prefix.prepend(choice_idx as u8);
-                                let child_index = child_index
-                                    .expect("missing child of extension at remove for branch case");
+                                self.hashes[child_idx] = None;
                                 let handle = NodeType::Extension {
                                     prefix: Some(prefix),
-                                    child_index: Some(child_index),
+                                    child_index,
                                 };
-                                Ok(Some(self.put_node(handle)))
+                                self.override_node(child_idx, handle).map(Some)
                             }
                             NodeType::Branch { .. } => {
                                 let prefix = Nibbles::from_hex(vec![choice_idx as u8]);
