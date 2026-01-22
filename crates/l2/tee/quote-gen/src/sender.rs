@@ -24,19 +24,23 @@ pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), Strin
             input,
             ..
         } => match (batch_number, input) {
-            (Some(batch_number), Some(input)) => Ok((
-                batch_number,
-                ProgramInput {
+            (Some(batch_number), Some(input)) => {
+                #[cfg(feature = "l2")]
+                let input = ProgramInput {
                     blocks: input.blocks,
                     execution_witness: input.execution_witness,
                     elasticity_multiplier: input.elasticity_multiplier,
-                    #[cfg(feature = "l2")]
                     blob_commitment: input.blob_commitment,
-                    #[cfg(feature = "l2")]
                     blob_proof: input.blob_proof,
-                    fee_configs: Some(input.fee_configs),
-                },
-            )),
+                    fee_configs: input.fee_configs,
+                };
+                #[cfg(not(feature = "l2"))]
+                let input = ProgramInput {
+                    blocks: input.blocks,
+                    execution_witness: input.execution_witness,
+                };
+                Ok((batch_number, input))
+            }
             _ => Err("No blocks to prove.".to_owned()),
         },
         ProofData::NoBatchForVersion {

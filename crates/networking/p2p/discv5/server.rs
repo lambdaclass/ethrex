@@ -3,7 +3,8 @@ use crate::{
         codec::Discv5Codec,
         messages::{
             DISTANCES_PER_FIND_NODE_MSG, FindNodeMessage, Handshake, Message, NodesMessage,
-            Ordinary, Packet, PacketCodecError, PacketTrait as _, PingMessage, PongMessage,
+            Ordinary, Packet, PacketCodecError, PacketHeader, PacketTrait as _, PingMessage,
+            PongMessage, WhoAreYou,
         },
         session::{build_challenge_data, create_id_signature, derive_session_keys},
     },
@@ -177,9 +178,6 @@ impl DiscoveryServer {
         packet: Packet,
         addr: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
-        // TODO: check enr-seq to decide if we have to send the ENR in the handshake.
-        // (https://github.com/lambdaclass/ethrex/issues/5777)
-        // let whoareyou = WhoAreYou::decode(&packet)?;
         let nonce = packet.header.nonce;
         let Some((node, message, _)) = self.messages_by_nonce.swap_remove(&nonce) else {
             tracing::trace!("Received unexpected WhoAreYou packet. Ignoring it");
@@ -225,10 +223,13 @@ impl DiscoveryServer {
         self.peer_table
             .set_session_info(node.node_id(), session)
             .await?;
-        self.send_handshake(&message, signature, &ephemeral_pubkey, &node)
-            .await?;
 
-        Ok(())
+        // Check enr-seq to decide if we have to send the local ENR in the handshake.
+        let whoareyou = WhoAreYou::decode(&packet)?;
+        let record = (self.local_node_record.seq != whoareyou.enr_seq)
+            .then(|| self.local_node_record.clone());
+        self.send_handshake(&message, signature, &ephemeral_pubkey, &node, record)
+            .await
     }
 
     async fn revalidate(&mut self) -> Result<(), DiscoveryServerError> {
@@ -383,12 +384,13 @@ impl DiscoveryServer {
         signature: Signature,
         eph_pubkey: &[u8],
         node: &Node,
+        record: Option<NodeRecord>,
     ) -> Result<(), DiscoveryServerError> {
         let handshake = Handshake {
             src_id: self.local_node.node_id(),
             id_signature: signature.serialize_compact().to_vec(),
             eph_pubkey: eph_pubkey.to_vec(),
-            record: Some(self.local_node_record.clone()),
+            record,
             message: message.clone(),
         };
         let encrypt_key = self
@@ -573,6 +575,7 @@ mod tests {
         peer_table::PeerTable,
         types::{Node, NodeRecord},
     };
+    use ethrex_storage::Store;
     use rand::{SeedableRng, rngs::StdRng};
     use secp256k1::SecretKey;
     use std::sync::Arc;
@@ -591,7 +594,11 @@ mod tests {
             local_node_record,
             signer,
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:30303").await.unwrap()),
-            peer_table: PeerTable::spawn(10),
+            peer_table: PeerTable::spawn(
+                10,
+                Store::new("temp.db", ethrex_storage::EngineType::InMemory)
+                    .expect("Failed to start Storage Engine"),
+            ),
             initial_lookup_interval: 1000.0,
             counter: 0,
             messages_by_nonce: Default::default(),
