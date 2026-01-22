@@ -234,7 +234,15 @@ pub enum TxResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionReport {
     pub result: TxResult,
+    /// Gas used before refunds (for block-level accounting).
+    /// Pre-EIP-7778: This is the post-refund gas.
+    /// Post-EIP-7778: This is the pre-refund gas.
     pub gas_used: u64,
+    /// Gas spent after refunds (what the user actually pays).
+    /// This is always the post-refund gas value.
+    /// Pre-EIP-7778: Same as gas_used.
+    /// Post-EIP-7778: gas_used - refunds (capped).
+    pub gas_spent: u64,
     pub gas_refunded: u64,
     pub output: Bytes,
     pub logs: Vec<Log>,
@@ -249,7 +257,10 @@ impl ExecutionReport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextResult {
     pub result: TxResult,
+    /// Gas used before refunds (for block-level accounting).
     pub gas_used: u64,
+    /// Gas spent after refunds (what the user actually pays).
+    pub gas_spent: u64,
     pub output: Bytes,
 }
 

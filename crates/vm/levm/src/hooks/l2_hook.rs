@@ -103,13 +103,21 @@ fn finalize_non_privileged_execution(
         default_hook::undo_value_transfer(vm)?;
     }
 
+    // Save pre-refund gas for EIP-7778 block accounting
+    let gas_used_pre_refund = ctx_result.gas_used;
+
     let gas_refunded: u64 = default_hook::compute_gas_refunded(vm, ctx_result)?;
     let actual_gas_used =
-        default_hook::compute_actual_gas_used(vm, gas_refunded, ctx_result.gas_used)?;
+        default_hook::compute_actual_gas_used(vm, gas_refunded, gas_used_pre_refund)?;
 
     let mut l1_gas = calculate_l1_fee_gas(vm, &fee_config.l1_fee_config)?;
 
     let mut total_gas = actual_gas_used
+        .checked_add(l1_gas)
+        .ok_or(InternalError::Overflow)?;
+
+    // EIP-7778: Track pre-refund gas including L1 gas
+    let mut total_gas_pre_refund = gas_used_pre_refund
         .checked_add(l1_gas)
         .ok_or(InternalError::Overflow)?;
 
@@ -129,6 +137,7 @@ fn finalize_non_privileged_execution(
             .gas_limit
             .saturating_sub(actual_gas_used);
         total_gas = vm.current_call_frame.gas_limit;
+        total_gas_pre_refund = vm.current_call_frame.gas_limit;
     }
 
     default_hook::delete_self_destruct_accounts(vm)?;
@@ -157,7 +166,13 @@ fn finalize_non_privileged_execution(
     if use_fee_token {
         refund_sender_fee_token(vm, ctx_result, gas_refunded, total_gas, fee_token_ratio)?;
     } else {
-        default_hook::refund_sender(vm, ctx_result, gas_refunded, total_gas)?;
+        default_hook::refund_sender(
+            vm,
+            ctx_result,
+            gas_refunded,
+            total_gas,
+            total_gas_pre_refund,
+        )?;
     }
 
     pay_coinbase_l2(
@@ -679,18 +694,21 @@ fn refund_sender_fee_token(
     vm: &mut VM<'_>,
     ctx_result: &mut ContextResult,
     refunded_gas: u64,
-    actual_gas_used: u64,
+    gas_spent: u64,
     fee_token_ratio: u64,
 ) -> Result<(), VMError> {
-    // c. Update gas used and refunded.
-    ctx_result.gas_used = actual_gas_used;
     vm.substate.refunded_gas = refunded_gas;
 
-    // d. Finally, return unspent gas to the sender.
+    // For L2 fee token transactions, we don't have EIP-7778 separation
+    // Both gas_used and gas_spent are set to the same value
+    ctx_result.gas_used = gas_spent;
+    ctx_result.gas_spent = gas_spent;
+
+    // Return unspent gas to the sender.
     let gas_to_return = vm
         .env
         .gas_limit
-        .checked_sub(actual_gas_used)
+        .checked_sub(gas_spent)
         .ok_or(InternalError::Underflow)?;
 
     let erc20_return_amount = vm

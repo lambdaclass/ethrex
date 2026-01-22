@@ -58,6 +58,9 @@ impl LEVM {
     ) -> Result<BlockExecutionResult, EvmError> {
         Self::prepare_block(block, db, vm_type)?;
 
+        let chain_config = db.store.get_chain_config()?;
+        let fork = chain_config.fork(block.header.timestamp);
+
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
@@ -74,11 +77,21 @@ impl LEVM {
 
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
 
+            // EIP-7778: Block accounting uses gas_used (pre-refund for Amsterdam+)
             cumulative_gas_used += report.gas_used;
+
+            // EIP-7778: Set gas_spent for Amsterdam+ receipts
+            let gas_spent = if fork >= Fork::Amsterdam {
+                Some(report.gas_spent)
+            } else {
+                None
+            };
+
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
                 cumulative_gas_used,
+                gas_spent,
                 report.logs,
             );
 
@@ -108,6 +121,9 @@ impl LEVM {
         queue_length: &AtomicUsize,
     ) -> Result<BlockExecutionResult, EvmError> {
         Self::prepare_block(block, db, vm_type)?;
+
+        let chain_config = db.store.get_chain_config()?;
+        let fork = chain_config.fork(block.header.timestamp);
 
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
@@ -144,11 +160,21 @@ impl LEVM {
                 tx_since_last_flush += 1;
             }
 
+            // EIP-7778: Block accounting uses gas_used (pre-refund for Amsterdam+)
             cumulative_gas_used += report.gas_used;
+
+            // EIP-7778: Set gas_spent for Amsterdam+ receipts
+            let gas_spent = if fork >= Fork::Amsterdam {
+                Some(report.gas_spent)
+            } else {
+                None
+            };
+
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
                 cumulative_gas_used,
+                gas_spent,
                 report.logs,
             );
 
