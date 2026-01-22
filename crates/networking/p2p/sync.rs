@@ -736,8 +736,8 @@ impl Syncer {
             );
             *METRICS.account_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
-            info!("Original state root: {state_root:?}");
-            info!("Computed state root after request_account_rages: {computed_state_root:?}");
+            debug!("Original state root: {state_root:?}");
+            debug!("Computed state root after request_account_rages: {computed_state_root:?}");
 
             *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
             // We start downloading the storage leafs. To do so, we need to be sure that the storage root
@@ -812,7 +812,7 @@ impl Syncer {
                     storage_accounts.accounts_with_storage_root.clear();
                 }
 
-                info!(
+                debug!(
                     "Ended request_storage_ranges with {} accounts with storage root unchanged and not downloaded yet and with {} big/healed accounts",
                     storage_accounts.accounts_with_storage_root.len(),
                     // These accounts are marked as heals if they're a big account. This is
@@ -822,7 +822,7 @@ impl Syncer {
                 if !block_is_stale(&pivot_header) {
                     break;
                 }
-                info!("We stopped because of staleness, restarting loop");
+                debug!("We stopped because of staleness, restarting loop");
             }
             info!("Finished request_storage_ranges");
             *METRICS.storage_tries_download_end_time.lock().await = Some(SystemTime::now());
@@ -904,7 +904,7 @@ impl Syncer {
         let mut seen_code_hashes = HashSet::new();
         let mut code_hashes_to_download = Vec::new();
 
-        info!("Starting download code hashes from peers");
+        info!("Starting download bytecodes from peers");
         for entry in std::fs::read_dir(&code_hashes_dir)
             .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
         {
@@ -920,7 +920,7 @@ impl Syncer {
                     code_hashes_to_download.push(hash);
 
                     if code_hashes_to_download.len() >= BYTECODE_CHUNK_SIZE {
-                        info!(
+                        debug!(
                             "Starting bytecode download of {} hashes",
                             code_hashes_to_download.len()
                         );
@@ -967,6 +967,8 @@ impl Syncer {
                 )
                 .await?;
         }
+
+        info!("Finished download bytecodes from peers");
 
         std::fs::remove_dir_all(code_hashes_dir)
             .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?;
