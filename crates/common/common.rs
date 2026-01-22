@@ -14,8 +14,8 @@ pub mod rkyv_utils;
 pub mod tracing;
 pub mod utils;
 
-pub use errors::EcdsaError;
+pub use errors::{EcdsaError, InvalidBlockError};
 pub use validation::{
-    InvalidBlockError, get_total_blob_gas, validate_block, validate_gas_used,
-    validate_receipts_root, validate_requests_hash,
+    get_total_blob_gas, validate_block, validate_gas_used, validate_receipts_root,
+    validate_requests_hash,
 };

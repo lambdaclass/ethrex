@@ -4,45 +4,14 @@
 //! storage dependencies, making them suitable for use in zkVM guest programs.
 
 use crate::constants::{GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
+use crate::errors::InvalidBlockError;
 use crate::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use crate::types::{
-    Block, BlockHeader, ChainConfig, EIP4844Transaction, InvalidBlockBodyError,
-    InvalidBlockHeaderError, Receipt, compute_receipts_root, validate_block_header,
-    validate_cancun_header_fields, validate_prague_header_fields,
+    Block, BlockHeader, ChainConfig, EIP4844Transaction, Receipt, compute_receipts_root,
+    validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
     validate_pre_cancun_header_fields,
 };
 use ethrex_rlp::encode::RLPEncode;
-
-/// Errors that occur during block validation.
-///
-/// These are validation errors that don't require storage access to detect.
-#[derive(Debug, thiserror::Error)]
-pub enum InvalidBlockError {
-    #[error("Requests hash does not match the one in the header after executing")]
-    RequestsHashMismatch,
-    #[error("World State Root does not match the one in the header after executing")]
-    StateRootMismatch,
-    #[error("Receipts Root does not match the one in the header after executing")]
-    ReceiptsRootMismatch,
-    #[error("Invalid Header, validation failed pre-execution: {0}")]
-    InvalidHeader(#[from] InvalidBlockHeaderError),
-    #[error("Invalid Body, validation failed pre-execution: {0}")]
-    InvalidBody(#[from] InvalidBlockBodyError),
-    #[error("Exceeded MAX_BLOB_GAS_PER_BLOCK")]
-    ExceededMaxBlobGasPerBlock,
-    #[error("Exceeded MAX_BLOB_NUMBER_PER_BLOCK")]
-    ExceededMaxBlobNumberPerBlock,
-    #[error("Gas used doesn't match value in header. Used: {0}, Expected: {1}")]
-    GasUsedMismatch(u64, u64),
-    #[error("Blob gas used doesn't match value in header")]
-    BlobGasUsedMismatch,
-    #[error("Invalid transaction: {0}")]
-    InvalidTransaction(String),
-    #[error("Maximum block size exceeded: Maximum is {0} MiB, but block was {1} MiB")]
-    MaximumRlpSizeExceeded(u64, u64),
-    #[error("Invalid block fork")]
-    InvalidBlockFork,
-}
 
 /// Performs pre-execution validation of the block's header values in reference to the parent_header.
 /// Verifies that blob gas fields in the header are correct in reference to the block's body.
