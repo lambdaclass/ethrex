@@ -63,8 +63,7 @@ jobs:
           PERF_PROMETHEUS_RANGE: 24h
           PERF_PROMETHEUS_QUERY: >-
             label_replace(avg_over_time(gigagas{instance=~"ethrex-mainnet-1(:[0-9]+)?"}[24h]), "client", "ethrex", "", "")
-            or label_replace(avg_over_time(reth_engine_rpc_new_payload_gas_per_second{instance=~"reth-mainnet-1(:[0-9]+)?",quantile="0.5"}[24h]) / 1e9, "client", "reth", "", "")
-            or label_replace(avg_over_time(reth_engine_rpc_new_payload_gas_per_second{instance=~"reth-mainnet-1(:[0-9]+)?",quantile="0.999"}[24h]) / 1e9, "client", "reth", "", "")
+            or label_replace(rate(reth_consensus_engine_beacon_new_payload_gas_per_second_sum{instance=~"reth-mainnet-1(:[0-9]+)?"}[24h]) / rate(reth_consensus_engine_beacon_new_payload_gas_per_second_count{instance=~"reth-mainnet-1(:[0-9]+)?"}[24h]) / 1e9, "client", "reth", "", "")
             or label_replace(avg_over_time(nethermind_mgas_per_sec{instance=~"nethermind-mainnet-1(:[0-9]+)?"}[24h]) / 1000, "client", "nethermind", "", "")
             or label_replace(avg_over_time(chain_mgasps{instance=~"geth-mainnet-1(:[0-9]+)?",quantile="0.5"}[24h]) / 1000, "client", "geth", "", "")
             or label_replace(avg_over_time(chain_mgasps{instance=~"geth-mainnet-1(:[0-9]+)?",quantile="0.999"}[24h]) / 1000, "client", "geth", "", "")
