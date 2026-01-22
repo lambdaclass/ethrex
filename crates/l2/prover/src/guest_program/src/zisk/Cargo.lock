@@ -994,7 +994,7 @@ dependencies = [
  "substrate-bn",
  "thiserror",
  "walkdir",
- "ziskos",
+ "ziskos 0.15.0",
 ]
 
 [[package]]
@@ -1666,6 +1666,11 @@ dependencies = [
 name = "lib-c"
 version = "0.15.0"
 source = "git+https://github.com/0xPolygonHermez/zisk.git?tag=v0.15.0#b3ca745b80423c8123dc24f19039865a5bc8b074"
+
+[[package]]
+name = "lib-c"
+version = "0.16.0"
+source = "git+https://github.com/0xPolygonHermez/zisk.git?branch=feature%2Fpre-develop-0.16.0-stable#e4ac8bfe1cafe87cc95503530fcf297dbf1aea55"
 
 [[package]]
 name = "libc"
@@ -3330,7 +3335,26 @@ dependencies = [
  "cfg-if",
  "getrandom",
  "lazy_static",
- "lib-c",
+ "lib-c 0.15.0",
+ "num-bigint 0.4.6",
+ "num-integer",
+ "num-traits",
+ "rand",
+ "serde",
+ "static_assertions",
+ "tiny-keccak",
+]
+
+[[package]]
+name = "ziskos"
+version = "0.16.0"
+source = "git+https://github.com/0xPolygonHermez/zisk.git?branch=feature%2Fpre-develop-0.16.0-stable#e4ac8bfe1cafe87cc95503530fcf297dbf1aea55"
+dependencies = [
+ "bincode 2.0.1",
+ "cfg-if",
+ "getrandom",
+ "lazy_static",
+ "lib-c 0.16.0",
  "num-bigint 0.4.6",
  "num-integer",
  "num-traits",
@@ -3350,5 +3374,5 @@ dependencies = [
  "guest_program",
  "rkyv",
  "sha2",
- "ziskos",
+ "ziskos 0.16.0",
 ]
