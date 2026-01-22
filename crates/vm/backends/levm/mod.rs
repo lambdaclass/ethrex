@@ -58,6 +58,12 @@ impl LEVM {
     ) -> Result<BlockExecutionResult, EvmError> {
         Self::prepare_block(block, db, vm_type)?;
 
+        // Compute base blob fee once for the entire block
+        let chain_config = db.store.get_chain_config()?;
+        let config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+        let block_excess_blob_gas = block.header.excess_blob_gas.map(U256::from);
+        let base_blob_fee_per_gas = get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?;
+
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
@@ -72,7 +78,7 @@ impl LEVM {
                 )));
             }
 
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
+            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, base_blob_fee_per_gas)?;
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
@@ -109,6 +115,12 @@ impl LEVM {
     ) -> Result<BlockExecutionResult, EvmError> {
         Self::prepare_block(block, db, vm_type)?;
 
+        // Compute base blob fee once for the entire block
+        let chain_config = db.store.get_chain_config()?;
+        let config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+        let block_excess_blob_gas = block.header.excess_blob_gas.map(U256::from);
+        let base_blob_fee_per_gas = get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?;
+
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
         let mut receipts = Vec::new();
@@ -135,6 +147,7 @@ impl LEVM {
                 &block.header,
                 db,
                 vm_type,
+                base_blob_fee_per_gas,
                 &mut shared_stack_pool,
             )?;
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
@@ -203,6 +216,12 @@ impl LEVM {
     ) -> Result<(), EvmError> {
         let mut db = GeneralizedDatabase::new(store.clone());
 
+        // Compute base blob fee once for the entire block
+        let chain_config = db.store.get_chain_config()?;
+        let config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+        let block_excess_blob_gas = block.header.excess_blob_gas.map(U256::from);
+        let base_blob_fee_per_gas = get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?;
+
         block
             .body
             .get_transactions_with_sender()
@@ -220,6 +239,7 @@ impl LEVM {
                         &block.header,
                         &mut db,
                         vm_type,
+                        base_blob_fee_per_gas,
                         stack_pool,
                     );
                 },
@@ -261,6 +281,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &GeneralizedDatabase,
         vm_type: VMType,
+        base_blob_fee_per_gas: U256,
     ) -> Result<Environment, EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let gas_price: U256 = calculate_gas_price_for_tx(
@@ -281,7 +302,7 @@ impl LEVM {
             prev_randao: Some(block_header.prev_randao),
             chain_id: chain_config.chain_id.into(),
             base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
-            base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
+            base_blob_fee_per_gas,
             gas_price,
             block_excess_blob_gas,
             block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
@@ -308,8 +329,9 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        base_blob_fee_per_gas: U256,
     ) -> Result<ExecutionReport, EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type, base_blob_fee_per_gas)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         vm.execute().map_err(VMError::into)
@@ -325,9 +347,10 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        base_blob_fee_per_gas: U256,
         stack_pool: &mut Vec<Stack>,
     ) -> Result<ExecutionReport, EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type, base_blob_fee_per_gas)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         std::mem::swap(&mut vm.stack_pool, stack_pool);
