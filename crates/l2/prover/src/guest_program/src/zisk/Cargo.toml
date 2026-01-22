@@ -17,9 +17,6 @@ ethrex-vm = { path = "../../../../../../vm", default-features = false, features 
 ethrex-common = { path = "../../../../../../common", default-features = false, features = [
     "zisk",
 ] }
-ethrex-blockchain = { path = "../../../../../../blockchain", default-features = false, features = [
-    "zisk",
-] }
 
 [patch.crates-io]
 sha2 = { git = "https://github.com/0xPolygonHermez/zisk-patch-hashes.git", tag = "patch-sha2-0.10.9-zisk-0.15.0" }

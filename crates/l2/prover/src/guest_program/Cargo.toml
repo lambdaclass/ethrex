@@ -15,10 +15,8 @@ bytes.workspace = true
 
 ethrex-common = { path = "../../../../common/", default-features = false }
 ethrex-crypto = { path = "../../../../common/crypto", default-features = false }
-ethrex-blockchain = { path = "../../../../blockchain/", default-features = false }
 ethrex-vm = { path = "../../../../vm", default-features = false }
 ethrex-rlp = { path = "../../../../common/rlp", default-features = false }
-ethrex-storage = { path = "../../../../storage", default-features = false }
 ethrex-trie = { path = "../../../../common/trie", default-features = false }
 ethrex-l2-common = { path = "../../../common", default-features = false }
 
@@ -44,7 +42,6 @@ risc0 = ["dep:risc0-build", "dep:risc0-zkvm"]
 sp1 = ["dep:sp1-build", "dep:sp1-sdk"]
 zisk = [
     "ethrex-common/zisk",
-    "ethrex-blockchain/zisk",
     "ethrex-vm/zisk",
     "ethrex-l2-common/zisk",
 ]
@@ -53,7 +50,6 @@ l2 = []
 c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg"]
 secp256k1 = [
     "ethrex-common/secp256k1",
-    "ethrex-blockchain/secp256k1",
     "ethrex-vm/secp256k1",
     "ethrex-l2-common/secp256k1",
 ]

@@ -16,12 +16,10 @@ rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 guest_program = { path = "../../", features = ["sp1-cycles"] }
 
 ethrex-common = { path = "../../../../../../common", default-features = false }
-ethrex-storage = { path = "../../../../../../storage", default-features = false }
 ethrex-rlp = { path = "../../../../../../common/rlp" }
 ethrex-vm = { path = "../../../../../../vm", default-features = false, features = [
     "sp1",
 ] }
-ethrex-blockchain = { path = "../../../../../../blockchain", default-features = false }
 ethrex-l2-common = { path = "../../../../../common", default-features = false }
 
 [patch.crates-io]

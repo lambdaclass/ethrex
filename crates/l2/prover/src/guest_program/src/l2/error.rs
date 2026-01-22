@@ -1,4 +1,4 @@
-use ethrex_blockchain::error::ChainError;
+use ethrex_common::InvalidBlockError;
 use ethrex_common::types::BlobsBundleError;
 use ethrex_common::types::block_execution_witness::GuestProgramStateError;
 use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;
@@ -8,13 +8,13 @@ use ethrex_vm::EvmError;
 #[derive(Debug, thiserror::Error)]
 pub enum L2ExecutionError {
     #[error("Block validation error: {0}")]
-    BlockValidation(ChainError),
+    BlockValidation(InvalidBlockError),
     #[error("Gas validation error: {0}")]
-    GasValidation(ChainError),
+    GasValidation(InvalidBlockError),
     #[error("Requests root validation error: {0}")]
-    RequestsRootValidation(ChainError),
+    RequestsRootValidation(InvalidBlockError),
     #[error("Receipts validation error: {0}")]
-    ReceiptsRootValidation(ChainError),
+    ReceiptsRootValidation(InvalidBlockError),
     #[error("EVM error: {0}")]
     Evm(#[from] EvmError),
     #[error("Privileged transaction calculation error: {0}")]
