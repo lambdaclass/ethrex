@@ -36,9 +36,6 @@ k256.workspace = true
 
 secp256k1 = { workspace = true, optional = true }
 
-[dev-dependencies]
-hex-literal.workspace = true
-
 [features]
 default = ["secp256k1"]
 c-kzg = ["ethrex-crypto/c-kzg"]
