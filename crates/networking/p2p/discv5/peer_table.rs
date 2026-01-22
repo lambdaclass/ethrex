@@ -7,6 +7,7 @@ use crate::{
     types::{Node, NodeRecord},
     utils::distance,
 };
+use bytes::Bytes;
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use indexmap::{IndexMap, map::Entry};
@@ -45,9 +46,9 @@ pub struct Contact {
     /// The timestamp when the contact was last sent a ping.
     /// If None, the contact has never been pinged.
     pub validation_timestamp: Option<Instant>,
-    /// The hash of the last unacknowledged ping sent to this contact, or
+    /// The req_id of the last unacknowledged ping sent to this contact, or
     /// None if no ping was sent yet or it was already acknowledged.
-    pub ping_hash: Option<H256>,
+    pub ping_req_id: Option<Bytes>,
 
     /// The hash of the last unacknowledged ENRRequest sent to this contact, or
     /// None if no request was sent yet or it was already acknowledged.
@@ -74,12 +75,12 @@ impl Contact {
     }
 
     pub fn has_pending_ping(&self) -> bool {
-        self.ping_hash.is_some()
+        self.ping_req_id.is_some()
     }
 
-    pub fn record_ping_sent(&mut self, ping_hash: H256) {
+    pub fn record_ping_sent(&mut self, req_id: Bytes) {
         self.validation_timestamp = Some(Instant::now());
-        self.ping_hash = Some(ping_hash);
+        self.ping_req_id = Some(req_id);
     }
 
     pub fn record_enr_request_sent(&mut self, request_hash: H256) {
@@ -107,7 +108,7 @@ impl From<Node> for Contact {
         Self {
             node,
             validation_timestamp: None,
-            ping_hash: None,
+            ping_req_id: None,
             enr_request_hash: None,
             n_find_node_sent: 0,
             record: None,
@@ -297,31 +298,31 @@ impl PeerTable {
         Ok(())
     }
 
-    /// Record ping sent, store the ping hash for later check
+    /// Record ping sent, store the req_id for later check
     pub async fn record_ping_sent(
         &mut self,
         node_id: &H256,
-        hash: H256,
+        req_id: Bytes,
     ) -> Result<(), PeerTableError> {
         self.handle
             .cast(CastMessage::RecordPingSent {
                 node_id: *node_id,
-                hash,
+                req_id,
             })
             .await?;
         Ok(())
     }
 
-    /// Record a pong received. Check previously saved hash and reset it if it matches
+    /// Record a pong received. Check previously saved req_id and reset it if it matches
     pub async fn record_pong_received(
         &mut self,
         node_id: &H256,
-        ping_hash: H256,
+        req_id: Bytes,
     ) -> Result<(), PeerTableError> {
         self.handle
             .cast(CastMessage::RecordPongReceived {
                 node_id: *node_id,
-                ping_hash,
+                req_id,
             })
             .await?;
         Ok(())
@@ -985,11 +986,11 @@ enum CastMessage {
     },
     RecordPingSent {
         node_id: H256,
-        hash: H256,
+        req_id: Bytes,
     },
     RecordPongReceived {
         node_id: H256,
-        ping_hash: H256,
+        req_id: Bytes,
     },
     RecordEnrRequestSent {
         node_id: H256,
@@ -1270,21 +1271,22 @@ impl GenServer for PeerTableServer {
                     .entry(node_id)
                     .and_modify(|peer_data| peer_data.score = MIN_SCORE_CRITICAL);
             }
-            CastMessage::RecordPingSent { node_id, hash } => {
+            CastMessage::RecordPingSent { node_id, req_id } => {
                 self.contacts
                     .entry(node_id)
-                    .and_modify(|contact| contact.record_ping_sent(hash));
+                    .and_modify(|contact| contact.record_ping_sent(req_id));
             }
-            CastMessage::RecordPongReceived { node_id, ping_hash } => {
-                // If entry does not exist or hash does not match, ignore pong record
-                // Otherwise, reset ping_hash
+            CastMessage::RecordPongReceived { node_id, req_id } => {
+                // If entry does not exist or req_id does not match, ignore
+                // Otherwise, reset ping_req_id
                 self.contacts.entry(node_id).and_modify(|contact| {
                     if contact
-                        .ping_hash
-                        .map(|value| value == ping_hash)
+                        .ping_req_id
+                        .as_ref()
+                        .map(|value| *value == req_id)
                         .unwrap_or(false)
                     {
-                        contact.ping_hash = None
+                        contact.ping_req_id = None
                     }
                 });
             }
