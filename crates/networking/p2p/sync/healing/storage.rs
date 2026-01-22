@@ -114,11 +114,11 @@ pub struct NodeRequest {
 /// We receive a list of the counts that we want to save, we heal by chunks of accounts.
 /// We assume these accounts are not empty hash tries, but may or may not have their
 /// Algorithmic rules:
-/// - If a nodehash is present in the db, it and all of it's children are present in the db
+/// - If a nodehash is present in the db, it and all of its children are present in the db
 /// - If we are missing a node, we queue to download them.
 /// - When a node is downloaded:
 ///    - if it has no missing children, we store it in the db
-///    - if the node has missing childre, we store it in our healing_queue, wchich is preserved between calls
+///    - if the node has missing children, we store it in our healing_queue, which is preserved between calls
 pub async fn heal_storage_trie(
     state_root: H256,
     storage_accounts: &AccountStorageRoots,

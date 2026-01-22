@@ -319,7 +319,7 @@ async fn heal_state_trie(
         }
 
         if is_stale && nodes_to_heal.is_empty() && inflight_tasks == 0 {
-            debug!("Finisehd inflight tasks");
+            debug!("Finished inflight tasks");
             db_joinset.join_all().await;
             break;
         }
