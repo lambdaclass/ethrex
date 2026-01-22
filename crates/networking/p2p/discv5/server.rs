@@ -47,6 +47,10 @@ const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12
 pub const INITIAL_LOOKUP_INTERVAL_MS: f64 = 100.0; // 10 per second
 pub const LOOKUP_INTERVAL_MS: f64 = 600.0; // 100 per minute
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
+/// Timeout for pending messages awaiting WhoAreYou response.
+/// Per spec, good timeout is 500ms for single requests, 1s for handshakes.
+/// Using 2s to be conservative.
+const MESSAGE_CACHE_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, thiserror::Error)]
 pub enum DiscoveryServerError {
@@ -432,6 +436,21 @@ impl DiscoveryServer {
         nonce
     }
 
+    /// Remove stale entries from the messages_by_nonce cache.
+    /// Called periodically to prevent unbounded growth.
+    fn cleanup_message_cache(&mut self) {
+        let now = Instant::now();
+        let before = self.messages_by_nonce.len();
+        self.messages_by_nonce
+            .retain(|_nonce, (_node, _message, timestamp)| {
+                now.duration_since(*timestamp) < MESSAGE_CACHE_TIMEOUT
+            });
+        let removed = before - self.messages_by_nonce.len();
+        if removed > 0 {
+            trace!("Cleaned up {} stale entries from message cache", removed);
+        }
+    }
+
     async fn handle_message(&mut self, ordinary: Ordinary) -> Result<(), DiscoveryServerError> {
         // Ignore packets sent by ourselves
         if ordinary.src_id == self.local_node.node_id() {
@@ -535,6 +554,7 @@ impl GenServer for DiscoveryServer {
                     .prune()
                     .await
                     .inspect_err(|e| error!(err=?e, "Error Pruning peer table"));
+                self.cleanup_message_cache();
             }
             Self::CastMsg::Shutdown => return CastResponse::Stop,
         }
