@@ -254,7 +254,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
 ───────────────────────────────────────────────────────────────────────"#
             );
         }
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        tokio::time::sleep(Duration::from_secs(30)).await;
     }
 }
 
