@@ -279,9 +279,9 @@ pub async fn periodically_show_peer_stats_during_syncing(
  Accounts Inserted       {account_leaves_inserted:>13}
  Storage Downloaded      {storage_leaves_downloaded:>13}                    {storage_per_second} storage slots/s
  Storage Inserted        {storage_leaves_inserted:>13}
+ Healing: {healed_accounts} accounts
+ Healing: {healed_storages} storages
  Bytecodes Downloaded    {bytecodes_downloaded:>13}                    {bytecodes_per_second} bytecodes/s
-───────────────────────────────────────────────────────────────────────
- Healing: {healed_accounts} accounts │ {healed_storages} storages
 ───────────────────────────────────────────────────────────────────────"#
             );
         }
