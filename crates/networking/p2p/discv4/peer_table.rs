@@ -5,6 +5,7 @@ use crate::{
     types::{Node, NodeRecord},
 };
 use ethrex_common::{H256, U256};
+use ethrex_storage::Store;
 use indexmap::{IndexMap, map::Entry};
 use rand::seq::SliceRandom;
 use rustc_hash::FxHashSet;
@@ -154,7 +155,8 @@ pub struct PeerTable {
 }
 
 impl PeerTable {
-    pub fn spawn(target_peers: usize) -> PeerTable {
+    // It receives the store to maintain concistency with discv5 PeerTable
+    pub fn spawn(target_peers: usize, _store: Store) -> PeerTable {
         PeerTable {
             handle: PeerTableServer::new(target_peers).start(),
         }
@@ -686,6 +688,7 @@ impl PeerTableServer {
                 && !self.already_tried_peers.contains(&node_id)
                 && contact.knows_us
                 && !contact.unwanted
+                && contact.is_fork_id_valid != Some(false)
             {
                 self.already_tried_peers.insert(node_id);
 
@@ -701,11 +704,7 @@ impl PeerTableServer {
     fn get_contact_for_lookup(&self) -> Option<Contact> {
         self.contacts
             .values()
-            .filter(|c| {
-                c.n_find_node_sent < MAX_FIND_NODE_PER_PEER
-                    && !c.disposable
-                    && c.is_fork_id_valid != Some(false)
-            })
+            .filter(|c| c.n_find_node_sent < MAX_FIND_NODE_PER_PEER && !c.disposable)
             .collect::<Vec<_>>()
             .choose(&mut rand::rngs::OsRng)
             .cloned()
