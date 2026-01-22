@@ -4150,6 +4150,7 @@ dependencies = [
  "proptest",
  "rand 0.8.5",
  "rkyv",
+ "rustc-hash 2.1.1",
  "secp256k1",
  "serde_json",
  "tempfile",

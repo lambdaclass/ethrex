@@ -20,6 +20,7 @@ ethrex-storage.workspace = true
 ethrex-levm.workspace = true
 
 [dev-dependencies]
+rustc-hash.workspace = true
 hex.workspace = true
 hex-literal.workspace = true
 ethereum-types.workspace = true
