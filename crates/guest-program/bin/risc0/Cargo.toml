@@ -1,5 +1,5 @@
 [package]
-name = "ethrex-guest-risc0"
+name = "zkvm-risc0-program"
 version = "9.0.0"
 edition = "2024"
 

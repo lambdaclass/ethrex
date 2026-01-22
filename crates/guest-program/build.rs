@@ -43,7 +43,7 @@ fn build_risc0_program() {
     };
 
     let built_guests = embed_methods_with_options(std::collections::HashMap::from([(
-        "ethrex-guest-risc0",
+        "zkvm-risc0-program",
         guest_options,
     )]));
     let elf = built_guests[0].elf.clone();
