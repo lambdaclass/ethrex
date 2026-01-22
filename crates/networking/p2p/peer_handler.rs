@@ -277,7 +277,7 @@ impl PeerHandler {
 
         // 3) create tasks that will request a chunk of headers from a peer
 
-        info!("Starting to download block headers from peers");
+        debug!("Starting to download block headers from peers");
 
         *METRICS.headers_download_start_time.lock().await = Some(SystemTime::now());
 
@@ -394,7 +394,7 @@ impl PeerHandler {
 
         let elapsed = start_time.elapsed().unwrap_or_default();
 
-        info!(
+        debug!(
             "Downloaded all headers ({}) in {} seconds",
             ret.len(),
             format_duration(elapsed)
