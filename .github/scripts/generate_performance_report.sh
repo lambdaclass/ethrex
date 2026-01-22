@@ -58,6 +58,17 @@ get_version_by_instance() {
   ' <<<"$version_response" 2>/dev/null | head -1
 }
 
+# Truncate version string if longer than max length
+truncate_version() {
+  local version="$1"
+  local max_len="${2:-24}"
+  if [[ ${#version} -gt $max_len ]]; then
+    echo "${version:0:$((max_len-3))}..."
+  else
+    echo "$version"
+  fi
+}
+
 version_ethrex=$(get_version_by_instance "^ethrex-mainnet-1:")
 version_reth=$(get_version_by_instance "^reth-mainnet-1:")
 version_geth=$(get_version_by_instance "^geth-mainnet-1:")
@@ -66,6 +77,12 @@ version_nethermind=$(get_version_by_instance "^nethermind-mainnet-1:")
 : "${version_reth:=unknown}"
 : "${version_geth:=unknown}"
 : "${version_nethermind:=unknown}"
+
+# Truncated versions for Slack table display
+version_ethrex_short=$(truncate_version "$version_ethrex")
+version_reth_short=$(truncate_version "$version_reth")
+version_geth_short=$(truncate_version "$version_geth")
+version_nethermind_short=$(truncate_version "$version_nethermind")
 
 raw_series=()
 while IFS= read -r line; do
@@ -82,14 +99,13 @@ done < <(jq -r '
   ' <<<"$response")
 ethrex_value=""
 nether_value=""
-reth_p50=""
-reth_p999=""
+reth_value=""
 geth_p50=""
 geth_p999=""
-reth_host=""
 geth_host=""
 ethrex_host=""
 nether_host=""
+reth_host=""
 extra_lines=()
 slack_extra_lines=()
 for row in "${raw_series[@]}"; do
@@ -109,12 +125,8 @@ for row in "${raw_series[@]}"; do
       ethrex_value="$series_value"
       ethrex_host="$host"
       ;;
-    reth:p50)
-      reth_p50="$series_value"
-      reth_host="$host"
-      ;;
-    reth:p99.9)
-      reth_p999="$series_value"
+    reth:mean)
+      reth_value="$series_value"
       reth_host="$host"
       ;;
     geth:p50)
@@ -140,39 +152,39 @@ done
 
 header_text="Daily performance report (24-hour average)"
 
-# Generate text report for GitHub
+# Generate text report for GitHub/Telegram (full version on separate line)
 {
   echo "# ${header_text}"
   echo
   if [[ -n "$ethrex_value" ]]; then
-    printf "* ethrex: %.3f Ggas/s (mean)\n  %s (%s)\n" "$ethrex_value" "$ethrex_host" "$version_ethrex"
+    printf "• ethrex: %.3f Ggas/s (mean)\n  %s\n" "$ethrex_value" "$version_ethrex"
   fi
-  if [[ -n "$reth_p50" || -n "$reth_p999" ]]; then
-    printf "* reth: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)\n  %s (%s)\n" "${reth_p50:-0}" "${reth_p999:-0}" "$reth_host" "$version_reth"
+  if [[ -n "$reth_value" ]]; then
+    printf "• reth: %.3f Ggas/s (mean)\n  %s\n" "$reth_value" "$version_reth"
   fi
   if [[ -n "$geth_p50" || -n "$geth_p999" ]]; then
-    printf "* geth: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)\n  %s (%s)\n" "${geth_p50:-0}" "${geth_p999:-0}" "$geth_host" "$version_geth"
+    printf "• geth: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)\n  %s\n" "${geth_p50:-0}" "${geth_p999:-0}" "$version_geth"
   fi
   if [[ -n "$nether_value" ]]; then
-    printf "* nethermind: %.3f Ggas/s (mean)\n  %s (%s)\n" "$nether_value" "$nether_host" "$version_nethermind"
+    printf "• nethermind: %.3f Ggas/s (mean)\n  %s\n" "$nether_value" "$version_nethermind"
   fi
 } >"${OUTPUT_DIR}/performance_report_github.txt"
 
-# Generate Slack message with code block table
+# Generate Slack message with code block table (truncated versions)
 slack_table='```'$'\n'
 slack_table+='Client       Version                  Performance'$'\n'
 slack_table+='-------------------------------------------------------'$'\n'
 if [[ -n "$ethrex_value" ]]; then
-  slack_table+=$(printf "%-12s %-24s %.3f Ggas/s (mean)" "ethrex" "$version_ethrex" "$ethrex_value")$'\n'
+  slack_table+=$(printf "%-12s %-24s %.3f Ggas/s (mean)" "ethrex" "$version_ethrex_short" "$ethrex_value")$'\n'
 fi
-if [[ -n "$reth_p50" || -n "$reth_p999" ]]; then
-  slack_table+=$(printf "%-12s %-24s %.3f Ggas/s (p50) / %.3f Ggas/s (p99.9)" "reth" "$version_reth" "${reth_p50:-0}" "${reth_p999:-0}")$'\n'
+if [[ -n "$reth_value" ]]; then
+  slack_table+=$(printf "%-12s %-24s %.3f Ggas/s (mean)" "reth" "$version_reth_short" "$reth_value")$'\n'
 fi
 if [[ -n "$geth_p50" || -n "$geth_p999" ]]; then
-  slack_table+=$(printf "%-12s %-24s %.3f Ggas/s (p50) / %.3f Ggas/s (p99.9)" "geth" "$version_geth" "${geth_p50:-0}" "${geth_p999:-0}")$'\n'
+  slack_table+=$(printf "%-12s %-24s %.3f Ggas/s (p50) / %.3f Ggas/s (p99.9)" "geth" "$version_geth_short" "${geth_p50:-0}" "${geth_p999:-0}")$'\n'
 fi
 if [[ -n "$nether_value" ]]; then
-  slack_table+=$(printf "%-12s %-24s %.3f Ggas/s (mean)" "nethermind" "$version_nethermind" "$nether_value")$'\n'
+  slack_table+=$(printf "%-12s %-24s %.3f Ggas/s (mean)" "nethermind" "$version_nethermind_short" "$nether_value")$'\n'
 fi
 slack_table+='```'
 
