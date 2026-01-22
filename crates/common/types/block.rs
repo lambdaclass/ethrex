@@ -437,12 +437,56 @@ pub fn calculate_base_fee_per_blob_gas(parent_excess_blob_gas: u64, update_fract
     if update_fraction == 0 {
         return U256::zero();
     }
-    fake_exponential(
-        U256::from(MIN_BASE_FEE_PER_BLOB_GAS),
-        U256::from(parent_excess_blob_gas),
-        update_fraction,
-    )
-    .unwrap_or_default()
+
+    #[cfg(any(feature = "zisk", feature = "sp1", feature = "risc0"))]
+    {
+        // Use optimized i128 version for zkVM contexts
+        // This is safe because parent_excess_blob_gas is u64 and MIN_BASE_FEE_PER_BLOB_GAS is 1
+        U256::from(fake_exponential_i128(
+            MIN_BASE_FEE_PER_BLOB_GAS,
+            parent_excess_blob_gas,
+            update_fraction,
+        ))
+    }
+
+    #[cfg(not(any(feature = "zisk", feature = "sp1", feature = "risc0")))]
+    {
+        fake_exponential(
+            U256::from(MIN_BASE_FEE_PER_BLOB_GAS),
+            U256::from(parent_excess_blob_gas),
+            update_fraction,
+        )
+        .unwrap_or_default()
+    }
+}
+
+/// Fast version of fake_exponential using i128 arithmetic for zkVM contexts.
+/// This is valid for small factor and numerator values (< i64::MAX).
+/// Used specifically for EIP-4844 blob gas calculation where:
+/// - factor = MIN_BASE_FEE_PER_BLOB_GAS (1)
+/// - numerator = parent_excess_blob_gas (u64, typically < 100M)
+/// - denominator = update_fraction (u64, ~8.8M for mainnet)
+#[cfg(any(feature = "zisk", feature = "sp1", feature = "risc0"))]
+pub fn fake_exponential_i128(factor: u64, numerator: u64, denominator: u64) -> u64 {
+    if denominator == 0 || numerator == 0 {
+        return factor;
+    }
+
+    let factor = factor as i128;
+    let numerator = numerator as i128;
+    let denominator = denominator as i128;
+
+    let mut output: i128 = 0;
+    let mut numerator_accum = factor * denominator;
+    let mut denominator_by_i = denominator;
+
+    while numerator_accum > 0 {
+        output += numerator_accum;
+        numerator_accum = (numerator_accum * numerator) / denominator_by_i;
+        denominator_by_i += denominator;
+    }
+
+    (output / denominator) as u64
 }
 
 /// Approximates factor * e ** (numerator / denominator) using Taylor expansion
@@ -1065,5 +1109,40 @@ mod test {
         );
         // With u64 this overflows
         assert!(thing.is_ok());
+    }
+
+    #[test]
+    #[cfg(any(feature = "zisk", feature = "sp1", feature = "risc0"))]
+    fn test_fake_exponential_i128_matches_u256() {
+        // Test that i128 version matches U256 version for typical EIP-4844 values
+        let test_cases = vec![
+            // (factor, numerator, denominator)
+            (1, 0, 8832827),           // Zero case
+            (1, 1000000, 8832827),     // 1M excess
+            (1, 10000000, 8832827),    // 10M excess
+            (1, 50000000, 8832827),    // 50M excess
+            (1, 100000000, 8832827),   // 100M excess
+            (1, 19251039, 20609697),   // From test case
+            (1, 3538944, 8832827),     // From test case
+        ];
+
+        for (factor, numerator, denominator) in test_cases {
+            let u256_result = fake_exponential(
+                U256::from(factor),
+                U256::from(numerator),
+                denominator,
+            )
+            .unwrap();
+            let i128_result = fake_exponential_i128(factor, numerator, denominator);
+
+            assert_eq!(
+                u256_result,
+                U256::from(i128_result),
+                "Mismatch for factor={}, numerator={}, denominator={}",
+                factor,
+                numerator,
+                denominator
+            );
+        }
     }
 }
