@@ -4,11 +4,12 @@
 //! storage dependencies, making them suitable for use in zkVM guest programs.
 
 use crate::constants::{GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
-use crate::types::requests::{compute_requests_hash, EncodedRequests, Requests};
+use crate::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use crate::types::{
-    compute_receipts_root, validate_block_header, validate_cancun_header_fields,
-    validate_prague_header_fields, validate_pre_cancun_header_fields, Block, BlockHeader,
-    ChainConfig, EIP4844Transaction, InvalidBlockBodyError, InvalidBlockHeaderError, Receipt,
+    Block, BlockHeader, ChainConfig, EIP4844Transaction, InvalidBlockBodyError,
+    InvalidBlockHeaderError, Receipt, compute_receipts_root, validate_block_header,
+    validate_cancun_header_fields, validate_prague_header_fields,
+    validate_pre_cancun_header_fields,
 };
 use ethrex_rlp::encode::RLPEncode;
 

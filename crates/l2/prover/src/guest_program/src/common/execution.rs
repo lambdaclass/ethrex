@@ -1,7 +1,7 @@
 use ethrex_common::types::block_execution_witness::{ExecutionWitness, GuestProgramState};
 use ethrex_common::types::{Block, Receipt};
 use ethrex_common::{
-    validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash, H256, U256,
+    H256, U256, validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
 };
 use ethrex_vm::{Evm, GuestProgramStateWrapper, VmDatabase};
 

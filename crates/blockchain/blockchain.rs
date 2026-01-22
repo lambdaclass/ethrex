@@ -57,10 +57,6 @@ use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
 
 // Re-export stateless validation functions for backwards compatibility
-pub use ethrex_common::{
-    get_total_blob_gas, validate_block, validate_gas_used, validate_receipts_root,
-    validate_requests_hash,
-};
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
@@ -71,6 +67,10 @@ use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H160, H256, TrieLogger};
+pub use ethrex_common::{
+    get_total_blob_gas, validate_block, validate_gas_used, validate_receipts_root,
+    validate_requests_hash,
+};
 use ethrex_metrics::metrics;
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
