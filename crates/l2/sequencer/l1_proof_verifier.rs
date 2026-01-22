@@ -16,7 +16,7 @@ use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::{calldata::encode_calldata, get_last_verified_batch, get_risc0_vk, get_sp1_vk};
 use ethrex_rpc::{
     EthClient,
-    clients::{EthClientError, eth::errors::EstimateGasError},
+    clients::{EthClientError, eth::errors::RpcRequestError},
 };
 use ethrex_storage_rollup::StoreRollup;
 use reqwest::Url;
@@ -241,9 +241,9 @@ impl L1ProofVerifier {
         let send_verify_tx_result =
             send_verify_tx(calldata, &self.eth_client, target_address, &self.l1_signer).await;
 
-        if let Err(EthClientError::EstimateGasError(EstimateGasError::RPCError(error))) =
+        if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError { message, .. })) =
             send_verify_tx_result.as_ref()
-            && error.contains("00m")
+            && message.contains("00m")
         // Invalid Aligned proof
         {
             warn!("Deleting invalid ALIGNED proof");
