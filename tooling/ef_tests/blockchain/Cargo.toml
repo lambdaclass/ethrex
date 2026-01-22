@@ -31,6 +31,7 @@ default = ["c-kzg"]
 c-kzg = ["ethrex-blockchain/c-kzg"]
 sp1 = ["guest_program/sp1", "ethrex-prover/sp1"]
 stateless = []
+l2 = ["guest_program/l2", "ethrex-prover/l2"]
 
 [[test]]
 name = "all"

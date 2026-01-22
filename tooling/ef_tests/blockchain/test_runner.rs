@@ -409,12 +409,7 @@ async fn re_run_stateless(
     // At this point witness is guaranteed to be Ok
     let execution_witness = witness.unwrap();
 
-    let program_input = ProgramInput {
-        blocks,
-        execution_witness,
-        elasticity_multiplier: ethrex_common::types::ELASTICITY_MULTIPLIER,
-        ..Default::default()
-    };
+    let program_input = ProgramInput::new(blocks, execution_witness);
 
     let execute_result = match backend_type {
         BackendType::Exec => ExecBackend::new().execute(program_input),
