@@ -193,7 +193,7 @@ impl PeerHandler {
 
         let sync_head_number_retrieval_start = SystemTime::now();
 
-        info!("Retrieving sync head block number from peers");
+        debug!("Retrieving sync head block number from peers");
 
         let mut retries = 1;
 
@@ -242,7 +242,7 @@ impl PeerHandler {
             .elapsed()
             .unwrap_or_default();
 
-        info!("Sync head block number retrieved");
+        debug!("Sync head block number retrieved");
 
         *METRICS.time_to_retrieve_sync_head_block.lock().await =
             Some(sync_head_number_retrieval_elapsed);
@@ -277,7 +277,7 @@ impl PeerHandler {
 
         // 3) create tasks that will request a chunk of headers from a peer
 
-        info!("Starting to download block headers from peers");
+        debug!("Starting to download block headers from peers");
 
         *METRICS.headers_download_start_time.lock().await = Some(SystemTime::now());
 
@@ -352,7 +352,7 @@ impl PeerHandler {
 
             let Some((startblock, chunk_limit)) = tasks_queue_not_started.pop_front() else {
                 if downloaded_count >= block_count {
-                    info!("All headers downloaded successfully");
+                    debug!("All headers downloaded successfully");
                     break;
                 }
 
@@ -395,7 +395,7 @@ impl PeerHandler {
         let elapsed = start_time.elapsed().unwrap_or_default();
 
         debug!(
-            "Downloaded {} headers in {} seconds",
+            "Downloaded all headers ({}) in {} seconds",
             ret.len(),
             format_duration(elapsed)
         );
@@ -413,7 +413,7 @@ impl PeerHandler {
 
             match downloaded_headers.cmp(&unique_headers.len()) {
                 std::cmp::Ordering::Equal => {
-                    info!("All downloaded headers are unique");
+                    debug!("All downloaded headers are unique");
                 }
                 std::cmp::Ordering::Greater => {
                     warn!(
@@ -655,7 +655,7 @@ impl PeerHandler {
         let (task_sender, mut task_receiver) =
             tokio::sync::mpsc::channel::<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>(1000);
 
-        info!("Starting to download account ranges from peers");
+        debug!("Starting to download account ranges from peers");
 
         *METRICS.account_tries_download_start_time.lock().await = Some(SystemTime::now());
 
@@ -755,7 +755,7 @@ impl PeerHandler {
 
             let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
                 if completed_tasks >= chunk_count {
-                    info!("All account ranges downloaded successfully");
+                    debug!("All account ranges downloaded successfully");
                     break;
                 }
                 continue;
@@ -764,7 +764,7 @@ impl PeerHandler {
             let tx = task_sender.clone();
 
             if block_is_stale(pivot_header) {
-                info!("request_account_range became stale, updating pivot");
+                debug!("request_account_range became stale, updating pivot");
                 *pivot_header = update_pivot(
                     pivot_header.number,
                     pivot_header.timestamp,
@@ -979,7 +979,7 @@ impl PeerHandler {
         }
         let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<TaskResult>(1000);
 
-        info!("Starting to download bytecodes from peers");
+        debug!("Starting to download bytecodes from peers");
 
         METRICS
             .bytecodes_to_download
@@ -1042,7 +1042,7 @@ impl PeerHandler {
 
             let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
                 if completed_tasks >= chunk_count {
-                    info!("All bytecodes downloaded successfully");
+                    debug!("All bytecodes downloaded successfully");
                     break;
                 }
                 continue;
@@ -1117,7 +1117,7 @@ impl PeerHandler {
         METRICS
             .downloaded_bytecodes
             .fetch_add(downloaded_count, Ordering::Relaxed);
-        info!(
+        debug!(
             "Finished downloading bytecodes, total bytecodes: {}",
             all_bytecode_hashes.len()
         );
@@ -1927,7 +1927,7 @@ impl PeerHandler {
             skip: 0,
             reverse: false,
         });
-        info!("get_block_header: requesting header with number {block_number}");
+        debug!("get_block_header: requesting header with number {block_number}");
         match PeerHandler::make_request(
             &mut self.peer_table,
             peer_id,
@@ -1951,10 +1951,10 @@ impl PeerHandler {
                 }
             }
             Ok(_other_msgs) => {
-                info!("Received unexpected message from peer");
+                debug!("Received unexpected message from peer");
             }
             Err(PeerConnectionError::Timeout) => {
-                info!("Timeout while waiting for sync head from peer");
+                debug!("Timeout while waiting for sync head from peer");
             }
             // TODO: we need to check, this seems a scenario where the peer channel does teardown
             // after we sent the backend message
