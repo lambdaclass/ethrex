@@ -1,5 +1,5 @@
 use ef_tests_blockchain::test_runner::parse_and_execute;
-use ethrex_prover_lib::backend::Backend;
+use ethrex_prover_lib::backend::BackendType;
 use std::path::Path;
 
 // Enable only one of `sp1` or `stateless` at a time.
@@ -33,11 +33,11 @@ const EXTRA_SKIPS: &[&str] = &[];
 
 // Select backend
 #[cfg(feature = "stateless")]
-const BACKEND: Option<Backend> = Some(Backend::Exec);
+const BACKEND: Option<BackendType> = Some(BackendType::Exec);
 #[cfg(feature = "sp1")]
-const BACKEND: Option<Backend> = Some(Backend::SP1);
+const BACKEND: Option<BackendType> = Some(BackendType::SP1);
 #[cfg(not(any(feature = "sp1", feature = "stateless")))]
-const BACKEND: Option<Backend> = None;
+const BACKEND: Option<BackendType> = None;
 
 fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
     // Compose the final skip list
