@@ -2,11 +2,11 @@ use std::time::{Duration, Instant};
 
 use tracing::{info, warn};
 
+use ethrex_guest_program::{input::ProgramInput, output::ProgramOutput};
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofCalldata, ProofFormat, ProverType},
 };
-use guest_program::{input::ProgramInput, output::ProgramOutput};
 
 use crate::backend::{BackendError, ProverBackend};
 
@@ -24,7 +24,7 @@ impl ExecBackend {
 
     /// Core execution - runs the guest program directly.
     fn execute_core(input: ProgramInput) -> Result<ProgramOutput, BackendError> {
-        guest_program::execution::execution_program(input).map_err(BackendError::execution)
+        ethrex_guest_program::execution::execution_program(input).map_err(BackendError::execution)
     }
 
     fn to_calldata() -> ProofCalldata {

@@ -1,9 +1,9 @@
 #![no_main]
 
 #[cfg(feature = "l2")]
-use guest_program::l2::{ProgramInput, execution_program};
+use ethrex_guest_program::l2::{ProgramInput, execution_program};
 #[cfg(not(feature = "l2"))]
-use guest_program::l1::{ProgramInput, execution_program};
+use ethrex_guest_program::l1::{ProgramInput, execution_program};
 
 use rkyv::rancor::Error;
 use sha2::{Digest, Sha256};

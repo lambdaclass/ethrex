@@ -1,12 +1,12 @@
 use std::time::{Duration, Instant};
 
+use ethrex_guest_program::{
+    input::ProgramInput,
+    methods::{ETHREX_GUEST_RISC0_ELF, ETHREX_GUEST_RISC0_ID},
+};
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
-};
-use guest_program::{
-    input::ProgramInput,
-    methods::{ZKVM_RISC0_PROGRAM_ELF, ZKVM_RISC0_PROGRAM_ID},
 };
 use risc0_zkvm::{
     ExecutorEnv, InnerReceipt, ProverOpts, Receipt, default_executor, default_prover,
@@ -65,7 +65,7 @@ impl Risc0Backend {
     fn execute_with_env(&self, env: ExecutorEnv<'_>) -> Result<(), BackendError> {
         let executor = default_executor();
         executor
-            .execute(env, ZKVM_RISC0_PROGRAM_ELF)
+            .execute(env, ETHREX_GUEST_RISC0_ELF)
             .map_err(BackendError::execution)?;
         Ok(())
     }
@@ -79,7 +79,7 @@ impl Risc0Backend {
         let prover = default_prover();
         let prover_opts = Self::convert_format(format);
         let prove_info = prover
-            .prove_with_opts(env, ZKVM_RISC0_PROGRAM_ELF, &prover_opts)
+            .prove_with_opts(env, ETHREX_GUEST_RISC0_ELF, &prover_opts)
             .map_err(BackendError::proving)?;
         Ok(prove_info.receipt)
     }
@@ -113,7 +113,7 @@ impl ProverBackend for Risc0Backend {
 
     fn verify(&self, proof: &Self::ProofOutput) -> Result<(), BackendError> {
         proof
-            .verify(ZKVM_RISC0_PROGRAM_ID)
+            .verify(ETHREX_GUEST_RISC0_ID)
             .map_err(BackendError::verification)?;
 
         Ok(())

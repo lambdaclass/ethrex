@@ -1,6 +1,6 @@
 [package]
 version = "9.0.0"
-name = "zkvm-openvm-program"
+name = "ethrex-guest-openvm"
 edition = "2024"
 
 [workspace]
@@ -15,15 +15,15 @@ openvm-ecc-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v1
 openvm-algebra-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v1.4.1" }
 rkyv = "0.8.10"
 
-ethrex-vm = { path = "../../../../../../vm", default-features = false, features = [
+ethrex-vm = { path = "../../../vm", default-features = false, features = [
     "openvm",
 ] }
-ethrex-common = { path = "../../../../../../common", default-features = false, features = [
+ethrex-common = { path = "../../../common", default-features = false, features = [
     "openvm",
 ] }
-ethrex-blockchain = { path = "../../../../../../blockchain", default-features = false }
+ethrex-blockchain = { path = "../../../blockchain", default-features = false }
 
-guest_program = { path = "../..", default-features = false }
+ethrex-guest-program = { path = "../..", default-features = false }
 
 [features]
-l2 = ["guest_program/l2"]
+l2 = ["ethrex-guest-program/l2"]

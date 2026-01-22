@@ -29,10 +29,10 @@ services:
       - ../../fixtures/genesis/l1.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l1.json
       - ../../fixtures/genesis/l2.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l2.json
       - ../../fixtures/keys/private_keys_l1.txt:${DOCKER_ETHREX_WORKDIR}/fixtures/keys/private_keys_l1.txt
-      - ./prover/src/guest_program/src/sp1/out/:${DOCKER_ETHREX_WORKDIR}/sp1_out
-      - ./prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32:${DOCKER_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk-u32
-      - ./prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254:${DOCKER_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk-bn254
-      - ./prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk:${DOCKER_ETHREX_WORKDIR}/riscv32im-risc0-vk
+      - ../guest-program/bin/sp1/out/:${DOCKER_ETHREX_WORKDIR}/sp1_out
+      - ../guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32:${DOCKER_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk-u32
+      - ../guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254:${DOCKER_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk-bn254
+      - ../guest-program/bin/risc0/out/riscv32im-risc0-vk:${DOCKER_ETHREX_WORKDIR}/riscv32im-risc0-vk
     environment:
       - ETHREX_ETH_RPC_URL=http://ethrex_l1:8545
       # NOTE: The paths in the env variables must match those

@@ -5,6 +5,7 @@ use std::{
 };
 
 use ethrex_common::{Address, U256};
+use ethrex_guest_program::{ZKVM_RISC0_PROGRAM_VK, ZKVM_SP1_PROGRAM_ELF};
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProverType},
@@ -19,7 +20,6 @@ use ethrex_rpc::{
     clients::{EthClientError, eth::errors::RpcRequestError},
 };
 use ethrex_storage_rollup::StoreRollup;
-use guest_program::{ZKVM_RISC0_PROGRAM_VK, ZKVM_SP1_PROGRAM_ELF};
 use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, send_after,

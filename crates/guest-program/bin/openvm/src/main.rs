@@ -1,7 +1,7 @@
 #[cfg(feature = "l2")]
-use guest_program::l2::{ProgramInput, execution_program};
+use ethrex_guest_program::l2::{ProgramInput, execution_program};
 #[cfg(not(feature = "l2"))]
-use guest_program::l1::{ProgramInput, execution_program};
+use ethrex_guest_program::l1::{ProgramInput, execution_program};
 
 use openvm_keccak256::keccak256;
 use rkyv::rancor::Error;

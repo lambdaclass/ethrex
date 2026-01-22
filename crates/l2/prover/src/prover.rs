@@ -2,9 +2,9 @@ use crate::{
     backend::{BackendType, ExecBackend, ProverBackend},
     config::ProverConfig,
 };
+use ethrex_guest_program::input::ProgramInput;
 use ethrex_l2::sequencer::{proof_coordinator::ProofData, utils::get_git_commit_hash};
 use ethrex_l2_common::prover::{BatchProof, ProofFormat};
-use guest_program::input::ProgramInput;
 use std::time::Duration;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},

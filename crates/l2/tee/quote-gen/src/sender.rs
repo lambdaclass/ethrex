@@ -1,4 +1,4 @@
-use guest_program::input::ProgramInput;
+use ethrex_guest_program::input::ProgramInput;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
