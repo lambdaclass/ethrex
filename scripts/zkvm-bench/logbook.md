@@ -15,8 +15,62 @@ This logbook tracks all optimization attempts, their results, and key learnings.
 | 2026-01-20 | 07 | Specialized get_two_encoded_items                | -0.19% (-967k)      | ✅ Kept      | 81600cb |
 | 2026-01-22 | 08 | Array-based get_branch_encoded_items             | +0.52% (+3.4M)      | ❌ Reverted  | 05729a9 |
 | 2026-01-22 | 09 | Pre-compute code hashes on host                  | N/A                 | 🚫 Invalid  | N/A     |
+| 2026-01-22 | 10 | i128 fast path for fake_exponential              | -6.68% (-42.9M)     | ✅ Kept      | 38c1aae |
+| 2026-01-22 | 11 | Block-level base blob fee caching                | -7.86% (-50.4M)     | ✅ Kept      | 40885a4 |
 
 ## Detailed Entries
+
+### 11. Block-Level Base Blob Fee Caching
+- **Date:** 2026-01-22
+- **Goal:** Replace i128 conditional compilation approach with block-level caching to reduce redundant `fake_exponential` calls from ~1536 per block to 1.
+- **Change:**
+  - Removed `fake_exponential_i128()` and all `#[cfg(any(feature = "zisk", feature = "sp1", feature = "risc0"))]` conditional compilation
+  - Modified `calculate_blob_gas_cost()` to accept pre-computed `base_blob_fee_per_gas` from Environment (eliminates ~768 calls/block)
+  - Compute `base_blob_fee_per_gas` once in `execute_block()`/`execute_block_pipeline()` before transaction loop (eliminates ~768 calls/block)
+  - Thread the value through `setup_env()`, `execute_tx()`, and `execute_tx_in_block()` functions
+  - Updated all call sites: `trace_tx_calls`, `warm_block`, `rerun_block`, Evm wrapper
+- **Results:**
+  - Total steps: 641,671,652 → 591,264,620 (-50.4M steps, **-7.86%**)
+  - Total cost: 72.8B → 68.1B (-4.7B, **-6.42%**)
+  - `LEVM::execute_tx` (382 calls): 38.9B → 34.3B (**-11.96%**)
+  - `LEVM::execute_block`: 41.2B → 36.6B (**-11.33%**)
+  - `VM::execute` (386 calls): 35.1B → 32.8B (**-6.70%**)
+  - memcpy calls: 921,521 → 832,937 (-88,584 calls, **-9.6%**)
+  - memcpy cost: 13.5B → 12.6B (-900M, **-6.7%**)
+  - Net code change: **-62 lines** (removed 130, added 68)
+- **Why it worked:** The base blob fee per gas is constant for all transactions in a block (determined by `parent_excess_blob_gas` and `base_fee_update_fraction`). Computing it once and reusing eliminates massive redundancy. Additionally, this is architecturally correct: block-level constants should be computed at block level.
+- **Key Insight:** The i128 approach (#10) still computed the value ~1536 times per block with conditional compilation complexity. This block-level approach is simpler, more maintainable, and more efficient. **Always consider call frequency reduction before micro-optimizations.**
+- **Comparison with #10:**
+  - i128 approach: -6.68%, conditional compilation, still ~1536 calls/block
+  - Block-level: **-7.86%**, no conditional compilation, **1 call/block**
+  - This supersedes #10 with better results and cleaner code
+- **Status:** Kept (exceeds target, supersedes #10).
+- **Profile:** Block 24291039, baseline: `stats_20260122_115717_f5524c2d7_baseline.txt`, optimized: `stats_20260122_154857_40885a49d_p2_block_level.txt`
+- **Branch:** opt/p2-fake-exp
+- **Commits:** 40885a49d (implementation), ef5f48343 (logbook)
+- **PR:** #6001
+
+### 10. i128 Fast Path for fake_exponential (EIP-4844 Blob Gas)
+- **Date:** 2026-01-22
+- **Goal:** Optimize EIP-4844 blob gas calculation by replacing U256 arithmetic with i128 for zkVM contexts.
+- **Change:**
+  - Added `fake_exponential_i128()` using native i128 arithmetic instead of U256
+  - Replaced U256 version in `calculate_base_fee_per_blob_gas()` in `block.rs` (block-level, 1 call/block)
+  - Replaced U256 version in `get_base_fee_per_blob_gas()` in `levm/utils.rs` (tx-level, ~769 calls/block)
+  - Gated with `#[cfg(any(feature = "zisk", feature = "sp1", feature = "risc0"))]`
+  - Added feature flags `zisk`, `sp1` to `ethrex-common/Cargo.toml`
+- **Results:**
+  - Total steps: 641,671,652 → 598,786,008 (-42.9M steps, **-6.68%**)
+  - LEVM execute_tx: **-9.98%** (main call site with 769 calls)
+  - memcpy calls: 921,521 → 833,469 (-88,052 calls, -9.6%)
+  - memcpy cost: 13.5B → 12.6B (-900M)
+  - Function disappeared from profile (fell below threshold), was consuming 50M+ steps before
+- **Why it worked:** i128 native arithmetic is much faster than U256 checked operations. The values fit comfortably in i128 for realistic blob gas (factor=1, numerator<100M, denominator~8.8M). Main impact was from levm's transaction-level calls.
+- **Key Insight:** Always check **all call sites** when optimizing a function. The block-level call gave minimal improvement (~55k steps), but the transaction-level call in levm provided the bulk of the savings.
+- **Status:** Kept (exceeds target).
+- **Profile:** Block 24291039, baseline: `stats_20260122_115717_f5524c2d7_baseline.txt`, optimized: `stats_20260122_124944_38c1aaeda_p2_fake_exp_final.txt`
+- **Branch:** opt/p2-fake-exp
+- **Commits:** 00b1c471e (block.rs), a683dd30e (Cargo.toml), 38c1aaeda (levm/utils.rs)
 
 ### 09. Pre-compute Code Hashes on Host
 - **Date:** 2026-01-22
@@ -71,7 +125,7 @@ This logbook tracks all optimization attempts, their results, and key learnings.
 - **Date:** 2026-01-20
 - **Goal:** Reduce `memcpy` overhead by avoiding cloning `NodeType` enum (which can be large) during recursive traversal in `authenticate` and `hash` functions.
 - **Change:** Modified `authenticate()` and `hash()` in `crates/common/trie/encodedtrie.rs` to inspect `node_type` by reference. Extracted child indices upfront to avoid borrowing conflicts.
-- **Results:** 
+- **Results:**
   - Total steps reduced by 3,980,560 (-0.79%).
   - `memcpy` calls reduced by 16,352.
   - `authenticate::recursive` cost reduced by 2.09%.
