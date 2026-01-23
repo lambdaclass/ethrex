@@ -1,0 +1,583 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Ethrex &lt;&gt; Aligned | Failure Recovery Guide - Ethrex</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../../favicon.svg">
+        <link rel="shortcut icon" href="../../favicon.png">
+        <link rel="stylesheet" href="../../css/variables.css">
+        <link rel="stylesheet" href="../../css/general.css">
+        <link rel="stylesheet" href="../../css/chrome.css">
+        <link rel="stylesheet" href="../../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="../../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../../toc.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Ethrex</h1>
+
+                    <div class="right-buttons">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="aligned-layer-failure-recovery-guide"><a class="header" href="#aligned-layer-failure-recovery-guide">Aligned Layer Failure Recovery Guide</a></h1>
+<p>This guide provides operators with procedures for handling various Aligned Layer failure scenarios when running ethrex L2 in Aligned mode.</p>
+<blockquote>
+<p><strong>SDK Version</strong>: This documentation is based on Aligned SDK revision <code>c60d7eb147edbdf12bb7a7c6e92ec178d9f8da23</code>.</p>
+</blockquote>
+<blockquote>
+<p><strong>WARNING</strong>: This document is intended to be iterated and improved with use and with ethrex and Aligned upgrades. If you encounter a scenario not covered here or find that a procedure needs adjustment, please contribute improvements.</p>
+</blockquote>
+<h2 id="table-of-contents"><a class="header" href="#table-of-contents">Table of Contents</a></h2>
+<ol>
+<li><a href="#understanding-the-aligned-integration">Understanding the Aligned Integration</a></li>
+<li><a href="#scenario-1-aligned-stops-then-recovers">Scenario 1: Aligned Stops Then Recovers</a></li>
+<li><a href="#scenario-2-aligned-loses-a-proof-before-verification">Scenario 2: Aligned Loses a Proof Before Verification</a></li>
+<li><a href="#scenario-3-aligned-permanent-shutdown">Scenario 3: Aligned Permanent Shutdown</a></li>
+<li><a href="#scenario-4-insufficient-batcher-balance">Scenario 4: Insufficient Batcher Balance</a></li>
+<li><a href="#scenario-5-proof-marked-as-invalid-by-aligned">Scenario 5: Proof Marked as Invalid by Aligned</a></li>
+<li><a href="#monitoring-and-detection">Monitoring and Detection</a></li>
+</ol>
+<hr />
+<h2 id="understanding-the-aligned-integration"><a class="header" href="#understanding-the-aligned-integration">Understanding the Aligned Integration</a></h2>
+<p>Before handling failures, understand the proof lifecycle in Aligned mode:</p>
+<pre><code>1. Prover generates compressed STARK proof
+2. L1ProofSender submits proof to Aligned Batcher (WebSocket)
+3. Aligned Batcher queues proof for aggregation
+4. Aligned Aggregator aggregates multiple proofs
+5. Aggregated proof is posted to L1 (AlignedProofAggregatorService)
+6. L1ProofVerifier polls for aggregation status
+7. Once aggregated, L1ProofVerifier calls verifyBatchesAligned() on OnChainProposer
+</code></pre>
+<p><strong>Key Components</strong>:</p>
+<ul>
+<li><strong>L1ProofSender</strong>: Submits proofs to Aligned Batcher</li>
+<li><strong>L1ProofVerifier</strong>: Polls Aligned for aggregation status and triggers on-chain verification</li>
+<li><strong>Aligned Batcher</strong>: Receives and queues proofs</li>
+<li><strong>Aligned Aggregator</strong>: Aggregates proofs and posts to L1</li>
+</ul>
+<hr />
+<h2 id="scenario-1-aligned-stops-then-recovers"><a class="header" href="#scenario-1-aligned-stops-then-recovers">Scenario 1: Aligned Stops Then Recovers</a></h2>
+<h3 id="symptoms"><a class="header" href="#symptoms">Symptoms</a></h3>
+<ul>
+<li>L1ProofSender logs show connection errors to Aligned Batcher</li>
+<li>Proofs are generated but not being sent</li>
+<li><code>AlignedGetNonceError</code> in logs (failed to get nonce from batcher)</li>
+<li><code>AlignedSubmitProofError</code> in logs (WebSocket connection to batcher failed)</li>
+</ul>
+<blockquote>
+<p><strong>Note</strong>: <code>AlignedFeeEstimateError</code> indicates your Ethereum RPC endpoints are failing, not Aligned. Fee estimation uses your configured <code>--eth.rpc-url</code> to query L1 gas prices.</p>
+</blockquote>
+<h3 id="impact"><a class="header" href="#impact">Impact</a></h3>
+<ul>
+<li>Proofs queue locally in the rollup store</li>
+<li>Batch verification on L1 stalls</li>
+<li>No data loss - proofs remain in local storage</li>
+</ul>
+<h3 id="recovery-steps"><a class="header" href="#recovery-steps">Recovery Steps</a></h3>
+<p><strong>No manual intervention required.</strong> The system handles this automatically:</p>
+<ol>
+<li><strong>L1ProofSender</strong> continuously retries sending proofs at the configured interval (<code>--proof-coordinator.send-interval</code>, default 30000ms)</li>
+<li>Once Aligned recovers, proofs will be submitted in order</li>
+<li><strong>L1ProofVerifier</strong> will resume polling and verification</li>
+</ol>
+<h3 id="what-to-monitor"><a class="header" href="#what-to-monitor">What to Monitor</a></h3>
+<h4 id="check-l1proofsender-status"><a class="header" href="#check-l1proofsender-status">Check L1ProofSender status</a></h4>
+<pre><code class="language-bash">curl -X GET http://localhost:5555/health | jq '.proof_sender'
+</code></pre>
+<h4 id="watch-logs-for-recovery"><a class="header" href="#watch-logs-for-recovery">Watch logs for recovery</a></h4>
+<pre><code># Look for: "Submitting proof to Aligned" followed by "Submitted proof to Aligned"
+</code></pre>
+<h3 id="configuration-tips"><a class="header" href="#configuration-tips">Configuration Tips</a></h3>
+<ul>
+<li>Consider increasing <code>--proof-coordinator.send-interval</code> during known Aligned maintenance windows to reduce log noise</li>
+</ul>
+<hr />
+<h2 id="scenario-2-aligned-loses-a-proof-before-verification"><a class="header" href="#scenario-2-aligned-loses-a-proof-before-verification">Scenario 2: Aligned Loses a Proof Before Verification</a></h2>
+<h3 id="symptoms-1"><a class="header" href="#symptoms-1">Symptoms</a></h3>
+<ul>
+<li>Proof was successfully submitted (logs show "Submitted proof to Aligned")</li>
+<li>L1ProofVerifier shows "Proof has not been aggregated by Aligned" for extended periods</li>
+<li>No aggregation event for the proof on Aligned's side</li>
+</ul>
+<h3 id="impact-1"><a class="header" href="#impact-1">Impact</a></h3>
+<ul>
+<li>Chain verification is blocked at the lost proof's batch number</li>
+<li>Proofs for subsequent batches continue to generate and queue</li>
+</ul>
+<h3 id="recovery-steps-1"><a class="header" href="#recovery-steps-1">Recovery Steps</a></h3>
+<h4 id="step-1-confirm-the-proof-is-lost"><a class="header" href="#step-1-confirm-the-proof-is-lost">Step 1: Confirm the Proof is Lost</a></h4>
+<p><strong>Check what batch the system thinks it sent:</strong></p>
+<pre><code class="language-sql">-- Check the latest sent batch pointer (SQL storage)
+SELECT batch FROM latest_sent WHERE _id = 0;
+</code></pre>
+<p><strong>Check if the proof exists locally:</strong></p>
+<pre><code class="language-sql">-- Check if proof exists in the rollup store (SQL storage)
+-- prover_type: 1 = RISC0, 2 = SP1
+SELECT batch, prover_type, length(proof) as proof_size
+FROM batch_proofs
+WHERE batch = &lt;BATCH_NUMBER&gt;;
+</code></pre>
+<p><strong>Check if Aligned has aggregated the proof:</strong></p>
+<p>The Aligned SDK provides <code>check_proof_verification()</code> which checks if a proof was aggregated on-chain. The L1ProofVerifier already uses this - if it keeps logging "has not yet been aggregated" for an extended period, the proof likely wasn't received by Aligned.</p>
+<blockquote>
+<p><strong>Note</strong>: The current SDK version (<code>c60d7eb</code>) only allows checking if a proof was <strong>aggregated</strong> (posted to L1), not if it's pending in the batcher queue. There's no API to check batcher queue status.</p>
+</blockquote>
+<p>If the proof exists locally, <code>latest_sent</code> shows the batch was sent, but Aligned hasn't aggregated it after an extended period, the proof was likely lost.</p>
+<h4 id="step-2-reset-the-latest-sent-batch-pointer"><a class="header" href="#step-2-reset-the-latest-sent-batch-pointer">Step 2: Reset the Latest Sent Batch Pointer</a></h4>
+<p>The proof still exists in the database - the system just thinks it was already sent. Reset the <code>latest_sent</code> value to make the L1ProofSender resend it:</p>
+<pre><code class="language-sql">-- Reset to the batch before the lost one (SQL storage)
+-- This will cause L1ProofSender to resend batch N on the next iteration
+UPDATE latest_sent SET batch = &lt;BATCH_NUMBER - 1&gt; WHERE _id = 0;
+</code></pre>
+<p>For example, if batch 5 was lost:</p>
+<pre><code class="language-sql">UPDATE latest_sent SET batch = 4 WHERE _id = 0;
+</code></pre>
+<blockquote>
+<p><strong>Note</strong>: It's safe to resend a proof even if Aligned didn't actually lose it. Aligned treats each submission with a different nonce as a separate entry, so the SDK will return <code>Ok</code> and queue the proof again. If the original proof was already aggregated, the L1ProofVerifier will find it when checking the commitment (which is deterministic based on vk + public inputs). The only downside is paying an extra aggregation fee for the duplicate submission.</p>
+</blockquote>
+<h4 id="step-3-wait-for-automatic-resend"><a class="header" href="#step-3-wait-for-automatic-resend">Step 3: Wait for Automatic Resend</a></h4>
+<p>Once the pointer is reset:</p>
+<ol>
+<li><strong>L1ProofSender</strong> will detect that batch N needs to be sent</li>
+<li>The existing proof will be retrieved from the database</li>
+<li>The proof will be resubmitted to Aligned</li>
+</ol>
+<p>No proof regeneration is needed since the proof data is still stored locally.</p>
+<h3 id="prevention"><a class="header" href="#prevention">Prevention</a></h3>
+<ul>
+<li>Monitor proof submission success rates</li>
+<li>Set up alerts for proofs stuck in "not aggregated" state for &gt;N minutes</li>
+<li>Keep the Aligned Batcher deposit funded (see Scenario 4)</li>
+</ul>
+<hr />
+<h2 id="scenario-3-aligned-permanent-shutdown"><a class="header" href="#scenario-3-aligned-permanent-shutdown">Scenario 3: Aligned Permanent Shutdown</a></h2>
+<h3 id="symptoms-2"><a class="header" href="#symptoms-2">Symptoms</a></h3>
+<ul>
+<li>Sustained inability to connect to Aligned Batcher</li>
+<li>Aligned team confirms permanent shutdown or migration</li>
+</ul>
+<h3 id="impact-2"><a class="header" href="#impact-2">Impact</a></h3>
+<ul>
+<li><strong>Critical</strong>: Batch verification on L1 is completely blocked</li>
+<li>Users cannot withdraw funds (withdrawals require batch verification)</li>
+<li>L2 can continue producing blocks but they won't be finalized</li>
+</ul>
+<h3 id="recovery-steps-2"><a class="header" href="#recovery-steps-2">Recovery Steps</a></h3>
+<p>This requires <strong>switching from Aligned mode to Standard mode</strong>.</p>
+<h4 id="step-1-stop-the-l2-node"><a class="header" href="#step-1-stop-the-l2-node">Step 1: Stop the L2 Node</a></h4>
+<ul>
+<li>Gracefully stop the sequencer</li>
+<li>This prevents new proofs from being generated in the wrong format</li>
+</ul>
+<h4 id="step-2-upgrade-onchainproposer-contract"><a class="header" href="#step-2-upgrade-onchainproposer-contract">Step 2: Upgrade OnChainProposer Contract</a></h4>
+<p>The OnChainProposer contract needs to be reconfigured through a timelock upgrade. See the <a href="./upgrades.html">Upgrades documentation</a> for the upgrade procedure.</p>
+<p><strong>Configuration changes:</strong></p>
+<ul>
+<li>Set <code>ALIGNED_MODE = false</code></li>
+<li>Enable the direct verifiers (<code>REQUIRE_SP1_PROOF</code>, <code>REQUIRE_RISC0_PROOF</code>)</li>
+<li>Set verifier contract addresses (<code>SP1_VERIFIER_ADDRESS</code>, <code>RISC0_VERIFIER_ADDRESS</code>)</li>
+</ul>
+<h4 id="step-3-clear-incompatible-proofs"><a class="header" href="#step-3-clear-incompatible-proofs">Step 3: Clear Incompatible Proofs</a></h4>
+<p>Proofs generated in Compressed format (for Aligned) are incompatible with Standard mode (Groth16). Delete all unverified proofs:</p>
+<pre><code class="language-sql">-- Get the last verified batch from L1 (check OnChainProposer.lastVerifiedBatch())
+-- Then delete all proofs for batches after that
+DELETE FROM batch_proofs WHERE batch &gt; &lt;LAST_VERIFIED_BATCH&gt;;
+</code></pre>
+<h4 id="step-4-restart-node-in-standard-mode"><a class="header" href="#step-4-restart-node-in-standard-mode">Step 4: Restart Node in Standard Mode</a></h4>
+<p>Update your node configuration to disable Aligned mode:</p>
+<pre><code class="language-bash"># Remove Aligned-specific flags
+ethrex l2 \
+  # ... other flags ...
+  # DO NOT include: --aligned
+  # DO NOT include: --aligned-network
+  # DO NOT include: --aligned.beacon-url
+</code></pre>
+<h4 id="step-5-regenerate-proofs-in-groth16-format"><a class="header" href="#step-5-regenerate-proofs-in-groth16-format">Step 5: Regenerate Proofs in Groth16 Format</a></h4>
+<ol>
+<li>Restart the prover(s) - they will automatically generate Groth16 proofs (since <code>--aligned</code> is not set)</li>
+<li>ProofCoordinator will request proofs starting from <code>lastVerifiedBatch + 1</code></li>
+<li>L1ProofSender will submit directly to OnChainProposer.verifyBatch()</li>
+</ol>
+<hr />
+<h2 id="scenario-4-insufficient-batcher-balance"><a class="header" href="#scenario-4-insufficient-batcher-balance">Scenario 4: Insufficient Batcher Balance</a></h2>
+<h3 id="symptoms-3"><a class="header" href="#symptoms-3">Symptoms</a></h3>
+<ul>
+<li>Proof submission fails with insufficient balance errors</li>
+<li>L1ProofSender logs show: <code>AlignedSubmitProofError</code> with message <code>Insufficient balance, address: 0x...</code></li>
+</ul>
+<p>The error from the Aligned SDK looks like:</p>
+<pre><code>Submit error: Insufficient balance, address: 0x&lt;YOUR_PROOF_SENDER_ADDRESS&gt;
+</code></pre>
+<h3 id="impact-3"><a class="header" href="#impact-3">Impact</a></h3>
+<ul>
+<li>New proofs cannot be submitted to Aligned</li>
+<li>Verification stalls for new batches</li>
+</ul>
+<h3 id="recovery-steps-3"><a class="header" href="#recovery-steps-3">Recovery Steps</a></h3>
+<h4 id="step-1-check-current-balance"><a class="header" href="#step-1-check-current-balance">Step 1: Check Current Balance</a></h4>
+<pre><code class="language-bash"># Using Aligned CLI
+aligned get-batcher-balance \
+  --network &lt;NETWORK&gt; \
+  --address &lt;PROOF_SENDER_ADDRESS&gt;
+</code></pre>
+<h4 id="step-2-deposit-more-funds"><a class="header" href="#step-2-deposit-more-funds">Step 2: Deposit More Funds</a></h4>
+<pre><code class="language-bash">aligned deposit-to-batcher \
+  --network &lt;NETWORK&gt; \
+  --private_key &lt;PROOF_SENDER_PRIVATE_KEY&gt; \
+  --rpc_url &lt;RPC_URL&gt; \
+  --amount &lt;DEPOSIT_AMOUNT&gt;
+</code></pre>
+<h3 id="prevention-1"><a class="header" href="#prevention-1">Prevention</a></h3>
+<ul>
+<li>Set up balance monitoring alerts (e.g., alert when balance drops below N ETH)</li>
+<li>Track proof submission costs over time to estimate burn rate and plan deposits accordingly</li>
+<li>Consider depositing a larger buffer to reduce maintenance frequency</li>
+</ul>
+<hr />
+<h2 id="scenario-5-proof-marked-as-invalid-by-aligned"><a class="header" href="#scenario-5-proof-marked-as-invalid-by-aligned">Scenario 5: Proof Marked as Invalid by Aligned</a></h2>
+<h3 id="symptoms-4"><a class="header" href="#symptoms-4">Symptoms</a></h3>
+<ul>
+<li>Logs show: "Proof is invalid, will be deleted"</li>
+<li>Aligned returns <code>InvalidProof</code> error during submission</li>
+</ul>
+<h3 id="impact-4"><a class="header" href="#impact-4">Impact</a></h3>
+<ul>
+<li>Invalid proof is automatically deleted from local storage</li>
+<li>Proof regeneration is triggered automatically</li>
+</ul>
+<h3 id="recovery-steps-4"><a class="header" href="#recovery-steps-4">Recovery Steps</a></h3>
+<p><strong>Automatic recovery</strong> - the system handles this:</p>
+<ol>
+<li>L1ProofSender detects <code>InvalidProof</code> error</li>
+<li>Proof is deleted from rollup store</li>
+<li>ProofCoordinator detects missing proof</li>
+<li>New proof is requested from prover</li>
+<li>Fresh proof is submitted</li>
+</ol>
+<h3 id="investigation"><a class="header" href="#investigation">Investigation</a></h3>
+<p>If proofs are repeatedly marked invalid:</p>
+<ol>
+<li><strong>Check prover version compatibility</strong>: Ensure prover ELF/VK matches the deployed contract</li>
+<li><strong>Verify public inputs</strong>: Mismatched batch data can cause invalid proofs</li>
+<li><strong>Check Aligned network</strong>: Ensure you're using the correct network (devnet/testnet/mainnet)</li>
+</ol>
+<hr />
+<h2 id="monitoring-and-detection"><a class="header" href="#monitoring-and-detection">Monitoring and Detection</a></h2>
+<h3 id="key-log-messages"><a class="header" href="#key-log-messages">Key Log Messages</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Message</th><th>Component</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>Sending batch proof(s) to Aligned Layer</code></td><td>L1ProofSender</td><td>Proof submission starting</td></tr>
+<tr><td><code>Submitted proof to Aligned</code></td><td>L1ProofSender</td><td>Proof sent successfully</td></tr>
+<tr><td><code>Proof is invalid, will be deleted</code></td><td>L1ProofSender</td><td>Aligned rejected the proof</td></tr>
+<tr><td><code>Failed to get nonce</code></td><td>L1ProofSender</td><td>Batcher connection issue</td></tr>
+<tr><td><code>Proof aggregated by Aligned</code></td><td>L1ProofVerifier</td><td>Aggregation confirmed</td></tr>
+<tr><td><code>has not yet been aggregated</code></td><td>L1ProofVerifier</td><td>Waiting for aggregation</td></tr>
+<tr><td><code>Batches verified in OnChainProposer</code></td><td>L1ProofVerifier</td><td>On-chain verification complete</td></tr>
+</tbody></table>
+</div>
+<h3 id="health-check-endpoint"><a class="header" href="#health-check-endpoint">Health Check Endpoint</a></h3>
+<pre><code class="language-bash">curl -X GET http://localhost:5555/health | jq
+</code></pre>
+<p>The response includes:</p>
+<ul>
+<li><code>proof_sender</code>: L1ProofSender status and configuration</li>
+<li><code>network</code>: Aligned network being used</li>
+<li><code>fee_estimate</code>: Fee estimation type (instant/default)</li>
+</ul>
+<h3 id="contract-error-codes"><a class="header" href="#contract-error-codes">Contract Error Codes</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Code</th><th>Meaning</th><th>Action</th></tr></thead><tbody>
+<tr><td><code>00h</code></td><td>Use verifyBatch instead</td><td>Contract not in Aligned mode</td></tr>
+<tr><td><code>00m</code></td><td>Invalid Aligned proof</td><td>Proof will be deleted and regenerated</td></tr>
+<tr><td><code>00y</code></td><td>AlignedProofAggregator call failed</td><td>Check aggregator contract address</td></tr>
+<tr><td><code>00z</code></td><td>Aligned proof verification failed</td><td>Merkle proof invalid</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="summary"><a class="header" href="#summary">Summary</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Scenario</th><th>Automatic Recovery</th><th>Manual Intervention</th></tr></thead><tbody>
+<tr><td>Aligned temporary outage</td><td>Yes</td><td>None needed</td></tr>
+<tr><td>Proof lost before verification</td><td>No</td><td>Reset <code>latest_sent</code> pointer to trigger resend</td></tr>
+<tr><td>Aligned permanent shutdown</td><td>No</td><td>Switch to Standard mode</td></tr>
+<tr><td>Insufficient batcher balance</td><td>No</td><td>Deposit funds</td></tr>
+<tr><td>Proof marked invalid</td><td>Yes</td><td>None needed</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="references"><a class="header" href="#references">References</a></h2>
+<ul>
+<li><a href="../fundamentals/ethrex_l2_aligned_integration.html">Aligned Layer Integration</a></li>
+<li><a href="./aligned.html">Running Ethrex in Aligned Mode</a></li>
+<li><a href="https://docs.alignedlayer.com/">Aligned Layer Documentation</a></li>
+<li><a href="./upgrades.html">Upgrades Guide</a></li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../l2/deployment/aligned.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../../l2/deployment/synchronous_composability_poc.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../l2/deployment/aligned.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../../l2/deployment/synchronous_composability_poc.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../../elasticlunr.min.js"></script>
+        <script src="../../mark.min.js"></script>
+        <script src="../../searcher.js"></script>
+
+        <script src="../../clipboard.min.js"></script>
+        <script src="../../highlight.js"></script>
+        <script src="../../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../../mermaid.min.js"></script>
+        <script src="../../mermaid-init.js"></script>
+
+
+    </div>
+    </body>
+</html>
