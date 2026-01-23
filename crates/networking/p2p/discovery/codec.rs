@@ -4,6 +4,7 @@
 //! happens in the multiplexer based on the keccak hash check.
 
 use bytes::BytesMut;
+use std::io::{Error, ErrorKind};
 use std::net::SocketAddr;
 use tokio_util::codec::{Decoder, Encoder};
 
@@ -48,7 +49,9 @@ impl Encoder<BytesMut> for DiscriminatingCodec {
     type Error = std::io::Error;
 
     fn encode(&mut self, _item: BytesMut, _dst: &mut BytesMut) -> Result<(), Self::Error> {
-        // We don't use this codec for sending - each protocol sends directly
-        Ok(())
+        Err(Error::new(
+            ErrorKind::Unsupported,
+            "DiscriminatingCodec is receive-only; each protocol handles its own encoding",
+        ))
     }
 }
