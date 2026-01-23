@@ -620,7 +620,16 @@ impl<'a> VM<'a> {
             }
 
             let result = match op_result {
-                Ok(OpcodeResult::Continue) => continue,
+                Ok(OpcodeResult::Continue) => {
+                    // Check gas once per iteration for opcodes using deduct_gas()
+                    if self.current_call_frame.gas_remaining < 0 {
+                        self.handle_opcode_error(
+                            crate::errors::ExceptionalHalt::OutOfGas.into(),
+                        )?
+                    } else {
+                        continue;
+                    }
+                }
                 Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
                 Err(error) => self.handle_opcode_error(error)?,
             };

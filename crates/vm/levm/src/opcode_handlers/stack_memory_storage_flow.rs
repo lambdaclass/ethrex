@@ -21,7 +21,7 @@ impl<'a> VM<'a> {
     // POP operation
     pub fn op_pop(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::POP)?;
+        current_call_frame.deduct_gas(gas_cost::POP);
         current_call_frame.stack.pop1()?;
         Ok(OpcodeResult::Continue)
     }
@@ -34,7 +34,7 @@ impl<'a> VM<'a> {
 
         let current_call_frame = &mut self.current_call_frame;
 
-        current_call_frame.increase_consumed_gas(gas_cost::TLOAD)?;
+        current_call_frame.deduct_gas(gas_cost::TLOAD);
 
         current_call_frame.stack.push(value)?;
         Ok(OpcodeResult::Continue)
@@ -45,7 +45,7 @@ impl<'a> VM<'a> {
         let (key, value, to) = {
             let current_call_frame = &mut self.current_call_frame;
 
-            current_call_frame.increase_consumed_gas(gas_cost::TSTORE)?;
+            current_call_frame.deduct_gas(gas_cost::TSTORE);
 
             if current_call_frame.is_static {
                 return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
@@ -231,7 +231,7 @@ impl<'a> VM<'a> {
     // MSIZE operation
     pub fn op_msize(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::MSIZE)?;
+        current_call_frame.deduct_gas(gas_cost::MSIZE);
         current_call_frame
             .stack
             .push(current_call_frame.memory.len().into())?;
@@ -241,10 +241,10 @@ impl<'a> VM<'a> {
     // GAS operation
     pub fn op_gas(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::GAS)?;
+        current_call_frame.deduct_gas(gas_cost::GAS);
 
-        let remaining_gas = current_call_frame.gas_remaining;
-        // Note: These are not consumed gas calculations, but are related, so I used this wrapping here
+        // Saturate to 0 if negative (out of gas case will be caught by main loop check)
+        let remaining_gas = current_call_frame.gas_remaining.max(0);
         current_call_frame.stack.push(remaining_gas.into())?;
 
         Ok(OpcodeResult::Continue)
@@ -280,7 +280,7 @@ impl<'a> VM<'a> {
     // JUMP operation
     pub fn op_jump(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::JUMP)?;
+        current_call_frame.deduct_gas(gas_cost::JUMP);
 
         let jump_address = current_call_frame.stack.pop1()?;
         Self::jump(current_call_frame, jump_address)?;
@@ -312,7 +312,7 @@ impl<'a> VM<'a> {
 
         #[expect(clippy::arithmetic_side_effects)]
         if Self::target_address_is_valid(call_frame, jump_address_u32) {
-            call_frame.increase_consumed_gas(gas_cost::JUMPDEST)?;
+            call_frame.deduct_gas(gas_cost::JUMPDEST);
             call_frame.pc = usize::try_from(jump_address_u32)
                 .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?
                 + 1;
@@ -326,8 +326,7 @@ impl<'a> VM<'a> {
     pub fn op_jumpi(&mut self) -> Result<OpcodeResult, VMError> {
         let [jump_address, condition] = *self.current_call_frame.stack.pop()?;
 
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::JUMPI)?;
+        self.current_call_frame.deduct_gas(gas_cost::JUMPI);
 
         if !condition.is_zero() {
             // Move the PC but don't increment it afterwards
@@ -339,8 +338,7 @@ impl<'a> VM<'a> {
 
     // JUMPDEST operation
     pub fn op_jumpdest(&mut self) -> Result<OpcodeResult, VMError> {
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::JUMPDEST)?;
+        self.current_call_frame.deduct_gas(gas_cost::JUMPDEST);
 
         Ok(OpcodeResult::Continue)
     }
@@ -348,7 +346,7 @@ impl<'a> VM<'a> {
     // PC operation
     pub fn op_pc(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::PC)?;
+        current_call_frame.deduct_gas(gas_cost::PC);
 
         current_call_frame
             .stack

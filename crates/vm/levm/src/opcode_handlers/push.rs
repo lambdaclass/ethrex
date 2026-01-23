@@ -13,7 +13,7 @@ impl<'a> VM<'a> {
     #[inline]
     pub fn op_push<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
         let call_frame = &mut self.current_call_frame;
-        call_frame.increase_consumed_gas(gas_cost::PUSHN)?;
+        call_frame.deduct_gas(gas_cost::PUSHN);
 
         // Check to avoid multiple checks.
         let Some(new_pc) = call_frame.pc.checked_add(N) else {
@@ -44,8 +44,7 @@ impl<'a> VM<'a> {
 
     // PUSH0
     pub fn op_push0(&mut self) -> Result<OpcodeResult, VMError> {
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::PUSH0)?;
+        self.current_call_frame.deduct_gas(gas_cost::PUSH0);
         self.current_call_frame.stack.push_zero()?;
         Ok(OpcodeResult::Continue)
     }

@@ -11,9 +11,8 @@ impl<'a> VM<'a> {
     // DUP operation
     #[inline]
     pub fn op_dup<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
-        // Increase the consumed gas
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::DUPN)?;
+        // Deduct gas (checked in main loop)
+        self.current_call_frame.deduct_gas(gas_cost::DUPN);
 
         // Duplicate the value at the specified depth
         self.current_call_frame.stack.dup::<N>()?;

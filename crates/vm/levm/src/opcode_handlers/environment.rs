@@ -14,7 +14,7 @@ impl<'a> VM<'a> {
     // ADDRESS operation
     pub fn op_address(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::ADDRESS)?;
+        current_call_frame.deduct_gas(gas_cost::ADDRESS);
 
         let addr = current_call_frame.to; // The recipient of the current call.
 
@@ -45,7 +45,7 @@ impl<'a> VM<'a> {
     pub fn op_origin(&mut self) -> Result<OpcodeResult, VMError> {
         let origin = self.env.origin;
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::ORIGIN)?;
+        current_call_frame.deduct_gas(gas_cost::ORIGIN);
 
         current_call_frame
             .stack
@@ -57,7 +57,7 @@ impl<'a> VM<'a> {
     // CALLER operation
     pub fn op_caller(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::CALLER)?;
+        current_call_frame.deduct_gas(gas_cost::CALLER);
 
         let caller = u256_from_big_endian_const(current_call_frame.msg_sender.to_fixed_bytes());
         current_call_frame.stack.push(caller)?;
@@ -68,7 +68,7 @@ impl<'a> VM<'a> {
     // CALLVALUE operation
     pub fn op_callvalue(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::CALLVALUE)?;
+        current_call_frame.deduct_gas(gas_cost::CALLVALUE);
 
         let callvalue = current_call_frame.msg_value;
 
@@ -80,7 +80,7 @@ impl<'a> VM<'a> {
     // CALLDATALOAD operation
     pub fn op_calldataload(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::CALLDATALOAD)?;
+        current_call_frame.deduct_gas(gas_cost::CALLDATALOAD);
 
         let calldata_size: U256 = current_call_frame.calldata.len().into();
 
@@ -122,7 +122,7 @@ impl<'a> VM<'a> {
     // CALLDATASIZE operation
     pub fn op_calldatasize(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::CALLDATASIZE)?;
+        current_call_frame.deduct_gas(gas_cost::CALLDATASIZE);
 
         current_call_frame
             .stack
@@ -176,7 +176,7 @@ impl<'a> VM<'a> {
     // CODESIZE operation
     pub fn op_codesize(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::CODESIZE)?;
+        current_call_frame.deduct_gas(gas_cost::CODESIZE);
 
         current_call_frame
             .stack
@@ -250,7 +250,7 @@ impl<'a> VM<'a> {
     pub fn op_gasprice(&mut self) -> Result<OpcodeResult, VMError> {
         let gas_price = self.env.gas_price;
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::GASPRICE)?;
+        current_call_frame.deduct_gas(gas_cost::GASPRICE);
 
         current_call_frame.stack.push(gas_price)?;
 
@@ -340,7 +340,7 @@ impl<'a> VM<'a> {
     // RETURNDATASIZE operation
     pub fn op_returndatasize(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::RETURNDATASIZE)?;
+        current_call_frame.deduct_gas(gas_cost::RETURNDATASIZE);
 
         current_call_frame
             .stack

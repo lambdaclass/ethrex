@@ -12,7 +12,7 @@ impl<'a> VM<'a> {
     #[inline]
     pub fn op_swap<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::SWAPN)?;
+        current_call_frame.deduct_gas(gas_cost::SWAPN);
 
         current_call_frame.stack.swap::<N>()?;
 

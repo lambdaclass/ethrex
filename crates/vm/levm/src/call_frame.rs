@@ -386,6 +386,25 @@ impl CallFrame {
         Ok(())
     }
 
+    /// Deducts gas without checking. Use with check_gas() at safe points.
+    /// This is optimized for the hot path where gas is almost always sufficient.
+    #[inline(always)]
+    #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
+    #[expect(clippy::arithmetic_side_effects, reason = "arithmetic checked at call site")]
+    pub fn deduct_gas(&mut self, gas: u64) {
+        self.gas_remaining -= gas as i64;
+    }
+
+    /// Check if we've run out of gas. Call after deduct_gas() at safe points.
+    #[inline(always)]
+    pub fn check_gas(&self) -> Result<(), ExceptionalHalt> {
+        if self.gas_remaining < 0 {
+            Err(ExceptionalHalt::OutOfGas)
+        } else {
+            Ok(())
+        }
+    }
+
     pub fn set_code(&mut self, code: Code) -> Result<(), VMError> {
         self.bytecode = code;
         Ok(())
