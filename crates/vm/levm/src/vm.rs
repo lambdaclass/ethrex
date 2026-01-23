@@ -5,6 +5,7 @@ use crate::{
     debug::DebugMode,
     environment::Environment,
     errors::{ContextResult, ExecutionReport, InternalError, OpcodeResult, VMError},
+    from_eth_u256,
     hooks::{
         backup_hook::BackupHook,
         hook::{Hook, get_hooks},
@@ -427,7 +428,7 @@ impl<'a> VM<'a> {
                 callee,
                 Address::default(), // Will be assigned at the end of prepare_execution
                 Code::default(),    // Will be assigned at the end of prepare_execution
-                tx.value(),
+                from_eth_u256(tx.value()),
                 tx.data().clone(),
                 false,
                 env.gas_limit,

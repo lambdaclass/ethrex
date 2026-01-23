@@ -1,4 +1,5 @@
-use ethrex_common::{H256, U256};
+use crate::U256;
+use ethrex_common::H256;
 use k256::elliptic_curve::bigint::Encoding;
 use p256::{
     FieldElement as P256FieldElement, NistP256,
@@ -9,8 +10,8 @@ use std::sync::LazyLock;
 pub const WORD_SIZE_IN_BYTES_USIZE: usize = 32;
 pub const WORD_SIZE_IN_BYTES_U64: u64 = 32;
 
-pub const SUCCESS: U256 = U256::one();
-pub const FAIL: U256 = U256::zero();
+pub const SUCCESS: U256 = U256::from_limbs([1, 0, 0, 0]);
+pub const FAIL: U256 = U256::ZERO;
 pub const WORD_SIZE: usize = 32;
 
 pub const STACK_LIMIT: usize = 1024;
@@ -38,11 +39,11 @@ pub const INIT_CODE_MAX_SIZE: usize = 49152;
 pub const EOF_PREFIX: u8 = 0xef;
 
 pub mod create_opcode {
-    use ethrex_common::U256;
+    use crate::U256;
 
-    pub const INIT_CODE_WORD_COST: U256 = U256([2, 0, 0, 0]);
-    pub const CODE_DEPOSIT_COST: U256 = U256([200, 0, 0, 0]);
-    pub const CREATE_BASE_COST: U256 = U256([32000, 0, 0, 0]);
+    pub const INIT_CODE_WORD_COST: U256 = U256::from_limbs([2, 0, 0, 0]);
+    pub const CODE_DEPOSIT_COST: U256 = U256::from_limbs([200, 0, 0, 0]);
+    pub const CREATE_BASE_COST: U256 = U256::from_limbs([32000, 0, 0, 0]);
 }
 
 pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01;
@@ -51,7 +52,7 @@ pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01;
 pub const TARGET_BLOB_GAS_PER_BLOCK: u32 = 393216; // TARGET_BLOB_NUMBER_PER_BLOCK * GAS_PER_BLOB
 pub const TARGET_BLOB_GAS_PER_BLOCK_PECTRA: u32 = 786432; // TARGET_BLOB_NUMBER_PER_BLOCK * GAS_PER_BLOB
 
-pub const MIN_BASE_FEE_PER_BLOB_GAS: U256 = U256::one();
+pub const MIN_BASE_FEE_PER_BLOB_GAS: U256 = U256::from_limbs([1, 0, 0, 0]);
 
 // WARNING: Do _not_ use the BLOB_BASE_FEE_UPDATE_FRACTION_* family of
 // constants as is. Use the `get_blob_base_fee_update_fraction_value`
@@ -69,13 +70,13 @@ pub const MAX_BLOB_COUNT_TX: usize = 6;
 pub const VALID_BLOB_PREFIXES: [u8; 2] = [0x01, 0x02];
 
 // Block constants
-pub const LAST_AVAILABLE_BLOCK_LIMIT: U256 = U256([256, 0, 0, 0]);
+pub const LAST_AVAILABLE_BLOCK_LIMIT: U256 = U256::from_limbs([256, 0, 0, 0]);
 
 // EIP7702 - EOA Load Code
 pub static SECP256K1_ORDER: LazyLock<U256> = LazyLock::new(||
         // we use the k256 crate instead of the secp256k1 because the latter is optional
         // while the former is not, this is to avoid a conditional compilation attribute.
-        U256::from_big_endian(&k256::Secp256k1::ORDER.to_be_bytes()));
+        U256::from_be_slice(&k256::Secp256k1::ORDER.to_be_bytes()));
 pub static SECP256K1_ORDER_OVER2: std::sync::LazyLock<U256> =
     LazyLock::new(|| *SECP256K1_ORDER / U256::from(2));
 pub const MAGIC: u8 = 0x05;

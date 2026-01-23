@@ -1,9 +1,9 @@
 use crate::{
+    U256,
     errors::{InternalError, OpcodeResult, VMError},
     gas_cost,
     vm::VM,
 };
-use ethrex_common::{U256, utils::u256_from_big_endian_const};
 
 // Push Operations
 // Opcodes: PUSH0, PUSH1 ... PUSH32
@@ -21,17 +21,14 @@ impl<'a> VM<'a> {
         };
 
         let value = if let Some(slice) = call_frame.bytecode.bytecode.get(call_frame.pc..new_pc) {
-            u256_from_big_endian_const(
-                // SAFETY: If the get succeeded, we got N elements so the cast is safe.
-                #[expect(unsafe_code)]
-                unsafe {
-                    *slice.as_ptr().cast::<[u8; N]>()
-                },
-            )
+            // Create a 32-byte buffer with zero padding on the left
+            let mut padded = [0u8; 32];
+            padded[32 - N..].copy_from_slice(slice);
+            U256::from_be_bytes(padded)
         } else {
             // NOTE: this isn't exactly correct, since a PUSHN with insufficient bytes should pad with zeros,
             // but if we're out of bytes, the next instruction will halt, discarding the stack anyway.
-            U256::zero()
+            U256::ZERO
         };
 
         call_frame.stack.push(value)?;

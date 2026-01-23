@@ -1,11 +1,11 @@
 use crate::{
+    U256,
     errors::{OpcodeResult, VMError},
     gas_cost,
     memory::calculate_memory_size,
     utils::size_offset_to_usize,
     vm::VM,
 };
-use ethrex_common::utils::u256_from_big_endian;
 use ethrex_crypto::keccak::keccak_hash;
 
 // KECCAK256 (1)
@@ -26,7 +26,7 @@ impl<'a> VM<'a> {
         )?)?;
 
         let hash = keccak_hash(current_call_frame.memory.load_range(offset, size)?);
-        current_call_frame.stack.push(u256_from_big_endian(&hash))?;
+        current_call_frame.stack.push(U256::from_be_slice(&hash))?;
 
         Ok(OpcodeResult::Continue)
     }

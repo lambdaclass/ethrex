@@ -2,6 +2,7 @@ use crate::{
     constants::*,
     errors::{ContextResult, ExceptionalHalt, InternalError, TxResult, VMError},
     gas_cost::CODE_DEPOSIT_COST,
+    to_eth_u256,
     vm::VM,
 };
 
@@ -119,7 +120,7 @@ impl<'a> VM<'a> {
             }));
         }
 
-        self.increase_account_balance(new_contract_address, self.current_call_frame.msg_value)?;
+        self.increase_account_balance(new_contract_address, to_eth_u256(self.current_call_frame.msg_value))?;
 
         self.increment_account_nonce(new_contract_address)?;
 

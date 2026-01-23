@@ -1,15 +1,12 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
+    U256,
     constants::{MEMORY_EXPANSION_QUOTIENT, WORD_SIZE_IN_BYTES_U64, WORD_SIZE_IN_BYTES_USIZE},
     errors::{ExceptionalHalt, InternalError, VMError},
 };
 use ExceptionalHalt::OutOfBounds;
 use bytes::Bytes;
-use ethrex_common::{
-    U256,
-    utils::{u256_from_big_endian_const, u256_to_big_endian},
-};
 
 /// A cheaply clonable callframe-shared memory buffer.
 ///
@@ -146,7 +143,7 @@ impl Memory {
     #[inline(always)]
     pub fn load_word(&mut self, offset: usize) -> Result<U256, VMError> {
         let value: [u8; 32] = self.load_range_const(offset)?;
-        Ok(u256_from_big_endian_const(value))
+        Ok(U256::from_be_bytes(value))
     }
 
     /// Stores the given data and data size at the given offset.
@@ -240,7 +237,7 @@ impl Memory {
             .ok_or(OutOfBounds)?;
 
         self.resize(new_size)?;
-        self.store(&u256_to_big_endian(word), offset, WORD_SIZE_IN_BYTES_USIZE)?;
+        self.store(&word.to_be_bytes::<32>(), offset, WORD_SIZE_IN_BYTES_USIZE)?;
         Ok(())
     }
 

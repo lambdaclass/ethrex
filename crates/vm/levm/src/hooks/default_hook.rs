@@ -2,8 +2,10 @@ use crate::{
     account::LevmAccount,
     constants::*,
     errors::{ContextResult, InternalError, TxValidationError, VMError},
+    from_eth_u256,
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::hook::Hook,
+    to_eth_u256,
     utils::*,
     vm::VM,
 };
@@ -150,11 +152,12 @@ impl Hook for DefaultHook {
 
 pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
     // In a create if Tx was reverted the account won't even exist by this point.
+    let msg_value = to_eth_u256(vm.current_call_frame.msg_value);
     if !vm.is_create()? {
-        vm.decrease_account_balance(vm.current_call_frame.to, vm.current_call_frame.msg_value)?;
+        vm.decrease_account_balance(vm.current_call_frame.to, msg_value)?;
     }
 
-    vm.increase_account_balance(vm.env.origin, vm.current_call_frame.msg_value)?;
+    vm.increase_account_balance(vm.env.origin, msg_value)?;
 
     Ok(())
 }
@@ -420,12 +423,14 @@ pub fn validate_gas_allowance(vm: &mut VM<'_>) -> Result<(), TxValidationError> 
 
 pub fn validate_sender_balance(vm: &mut VM<'_>, sender_balance: U256) -> Result<(), VMError> {
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
-    let value = vm.current_call_frame.msg_value;
+    let value = to_eth_u256(vm.current_call_frame.msg_value);
 
     // blob gas cost = max fee per blob gas * blob gas used
     // https://eips.ethereum.org/EIPS/eip-4844
-    let max_blob_gas_cost =
-        get_max_blob_gas_price(&vm.env.tx_blob_hashes, vm.env.tx_max_fee_per_blob_gas)?;
+    let max_blob_gas_cost = to_eth_u256(get_max_blob_gas_price(
+        &vm.env.tx_blob_hashes,
+        vm.env.tx_max_fee_per_blob_gas.map(from_eth_u256),
+    )?);
 
     // For the transaction to be valid the sender account has to have a balance >= gas_price * gas_limit + value if tx is type 0 and 1
     // balance >= max_fee_per_gas * gas_limit + value + blob_gas_cost if tx is type 2 or 3
@@ -455,13 +460,13 @@ pub fn deduct_caller(
     sender_address: Address,
 ) -> Result<(), VMError> {
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
-    let value = vm.current_call_frame.msg_value;
+    let value = to_eth_u256(vm.current_call_frame.msg_value);
 
-    let blob_gas_cost = calculate_blob_gas_cost(
+    let blob_gas_cost = to_eth_u256(calculate_blob_gas_cost(
         &vm.env.tx_blob_hashes,
-        vm.env.block_excess_blob_gas,
+        vm.env.block_excess_blob_gas.map(from_eth_u256),
         &vm.env.config,
-    )?;
+    )?);
 
     // The real cost to deduct is calculated as effective_gas_price * gas_limit + value + blob_gas_cost
     let up_front_cost = gas_limit_price_product
@@ -483,7 +488,7 @@ pub fn deduct_caller(
 /// Transfer msg_value to transaction recipient
 pub fn transfer_value(vm: &mut VM<'_>) -> Result<(), VMError> {
     if !vm.is_create()? {
-        vm.increase_account_balance(vm.current_call_frame.to, vm.current_call_frame.msg_value)?;
+        vm.increase_account_balance(vm.current_call_frame.to, to_eth_u256(vm.current_call_frame.msg_value))?;
     }
     Ok(())
 }

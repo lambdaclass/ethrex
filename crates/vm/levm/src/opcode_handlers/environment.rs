@@ -1,11 +1,12 @@
 use crate::{
+    U256,
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
+    from_eth_u256,
     gas_cost::{self},
     memory::calculate_memory_size,
-    utils::{size_offset_to_usize, u256_to_usize, word_to_address},
+    utils::{address_to_word, size_offset_to_usize, u256_to_usize, word_to_address},
     vm::VM,
 };
-use ethrex_common::{U256, utils::u256_from_big_endian_const};
 
 // Environmental Information (16)
 // Opcodes: ADDRESS, BALANCE, ORIGIN, CALLER, CALLVALUE, CALLDATALOAD, CALLDATASIZE, CALLDATACOPY, CODESIZE, CODECOPY, GASPRICE, EXTCODESIZE, EXTCODECOPY, RETURNDATASIZE, RETURNDATACOPY, EXTCODEHASH
@@ -18,9 +19,7 @@ impl<'a> VM<'a> {
 
         let addr = current_call_frame.to; // The recipient of the current call.
 
-        current_call_frame
-            .stack
-            .push(u256_from_big_endian_const(addr.to_fixed_bytes()))?;
+        current_call_frame.stack.push(address_to_word(addr))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -30,7 +29,7 @@ impl<'a> VM<'a> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
 
         let address_was_cold = !self.substate.add_accessed_address(address);
-        let account_balance = self.db.get_account(address)?.info.balance;
+        let account_balance = from_eth_u256(self.db.get_account(address)?.info.balance);
 
         let current_call_frame = &mut self.current_call_frame;
 
@@ -47,9 +46,7 @@ impl<'a> VM<'a> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::ORIGIN)?;
 
-        current_call_frame
-            .stack
-            .push(u256_from_big_endian_const(origin.to_fixed_bytes()))?;
+        current_call_frame.stack.push(address_to_word(origin))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -59,8 +56,7 @@ impl<'a> VM<'a> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::CALLER)?;
 
-        let caller = u256_from_big_endian_const(current_call_frame.msg_sender.to_fixed_bytes());
-        current_call_frame.stack.push(caller)?;
+        current_call_frame.stack.push(address_to_word(current_call_frame.msg_sender))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -82,7 +78,7 @@ impl<'a> VM<'a> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::CALLDATALOAD)?;
 
-        let calldata_size: U256 = current_call_frame.calldata.len().into();
+        let calldata_size: U256 = U256::from(current_call_frame.calldata.len());
 
         let offset = current_call_frame.stack.pop1()?;
 
@@ -112,7 +108,7 @@ impl<'a> VM<'a> {
             }
         }
 
-        let result = u256_from_big_endian_const(data);
+        let result = U256::from_be_bytes(data);
 
         current_call_frame.stack.push(result)?;
 
@@ -248,7 +244,7 @@ impl<'a> VM<'a> {
 
     // GASPRICE operation
     pub fn op_gasprice(&mut self) -> Result<OpcodeResult, VMError> {
-        let gas_price = self.env.gas_price;
+        let gas_price = from_eth_u256(self.env.gas_price);
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::GASPRICE)?;
 
@@ -262,7 +258,7 @@ impl<'a> VM<'a> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
         let address_was_cold = !self.substate.add_accessed_address(address);
         // FIXME: a bit wasteful to fetch the whole code just to get the length.
-        let account_code_length = self.db.get_account_code(address)?.bytecode.len().into();
+        let account_code_length = U256::from(self.db.get_account_code(address)?.bytecode.len());
 
         let current_call_frame = &mut self.current_call_frame;
 
@@ -408,7 +404,7 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        let hash = u256_from_big_endian_const(account_code_hash);
+        let hash = U256::from_be_bytes(account_code_hash);
         current_call_frame.stack.push(hash)?;
 
         Ok(OpcodeResult::Continue)

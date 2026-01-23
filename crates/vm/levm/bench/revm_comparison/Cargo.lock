@@ -1163,6 +1163,7 @@ dependencies = [
  "malachite",
  "p256",
  "ripemd",
+ "ruint",
  "rustc-hash",
  "secp256k1 0.30.0",
  "serde",

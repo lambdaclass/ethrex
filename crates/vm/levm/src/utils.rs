@@ -1,4 +1,5 @@
 use crate::{
+    U256, EthU256, from_eth_u256, to_eth_u256,
     EVMConfig, Environment,
     account::{AccountStatus, LevmAccount},
     call_frame::CallFrameBackup,
@@ -15,15 +16,15 @@ use crate::{
 use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H256, U256,
+    Address, H256,
     evm::calculate_create_address,
     types::{Account, Code, Fork, Transaction, fake_exponential, tx_fields::*},
-    utils::{keccak, u256_to_big_endian},
+    utils::keccak,
 };
-use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
+use ethrex_common::types::TxKind;
 use ethrex_rlp;
 use std::collections::HashMap;
-pub type Storage = HashMap<U256, H256>;
+pub type Storage = HashMap<U256, ethrex_common::H256>;
 
 // ================== Address related functions ======================
 /// Converts address (H160) to word (U256)
@@ -34,7 +35,7 @@ pub fn address_to_word(address: Address) -> U256 {
         *word_byte = *address_byte;
     }
 
-    u256_from_big_endian_const(word)
+    U256::from_be_bytes(word)
 }
 
 /// Calculates the address of a new contract using the CREATE2 opcode as follows
@@ -54,7 +55,7 @@ pub fn calculate_create2_address(
             [
                 &[0xff],
                 sender_address.as_bytes(),
-                &salt.to_big_endian(),
+                &salt.to_be_bytes::<32>(),
                 init_code_hash.as_bytes(),
             ]
             .concat(),
@@ -89,7 +90,7 @@ pub fn restore_cache_state(
             .ok_or(InternalError::AccountNotFound)?;
 
         for (key, value) in storage {
-            account.storage.insert(key, value);
+            account.storage.insert(key, to_eth_u256(value));
         }
     }
 
@@ -98,12 +99,12 @@ pub fn restore_cache_state(
 
 // ================= Blob hash related functions =====================
 pub fn get_base_fee_per_blob_gas(
-    block_excess_blob_gas: Option<U256>,
+    block_excess_blob_gas: Option<EthU256>,
     evm_config: &EVMConfig,
-) -> Result<U256, VMError> {
+) -> Result<EthU256, VMError> {
     let base_fee_update_fraction = evm_config.blob_schedule.base_fee_update_fraction;
     fake_exponential(
-        MIN_BASE_FEE_PER_BLOB_GAS,
+        to_eth_u256(MIN_BASE_FEE_PER_BLOB_GAS),
         block_excess_blob_gas.unwrap_or_default(),
         base_fee_update_fraction,
     )
@@ -127,7 +128,7 @@ pub fn get_max_blob_gas_price(
 
     let max_blob_gas_cost = tx_max_fee_per_blob_gas
         .unwrap_or_default()
-        .checked_mul(blob_gas_used.into())
+        .checked_mul(U256::from(blob_gas_used))
         .ok_or(InternalError::Overflow)?;
 
     Ok(max_blob_gas_cost)
@@ -147,9 +148,10 @@ pub fn calculate_blob_gas_cost(
         .checked_mul(BLOB_GAS_PER_BLOB)
         .unwrap_or_default();
 
-    let base_fee_per_blob_gas = get_base_fee_per_blob_gas(block_excess_blob_gas, evm_config)?;
+    let block_excess_blob_gas_eth = block_excess_blob_gas.map(to_eth_u256);
+    let base_fee_per_blob_gas = from_eth_u256(get_base_fee_per_blob_gas(block_excess_blob_gas_eth, evm_config)?);
 
-    let blob_gas_used: U256 = blob_gas_used.into();
+    let blob_gas_used: U256 = U256::from(blob_gas_used);
     let blob_fee: U256 = blob_gas_used
         .checked_mul(base_fee_per_blob_gas)
         .ok_or(InternalError::Overflow)?;
@@ -159,7 +161,7 @@ pub fn calculate_blob_gas_cost(
 
 // ==================== Word related functions =======================
 pub fn word_to_address(word: U256) -> Address {
-    Address::from_slice(&u256_to_big_endian(word)[12..])
+    Address::from_slice(&word.to_be_bytes::<32>()[12..])
 }
 
 // ================== EIP-7702 related functions =====================
@@ -202,13 +204,17 @@ pub fn eip7702_recover_address(
     use sha2::Digest;
     use sha3::Keccak256;
 
-    if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::zero() >= auth_tuple.s_signature {
+    let s_sig = from_eth_u256(auth_tuple.s_signature);
+    let r_sig = from_eth_u256(auth_tuple.r_signature);
+    let y_par = from_eth_u256(auth_tuple.y_parity);
+
+    if s_sig > *SECP256K1_ORDER_OVER2 || s_sig.is_zero() {
         return Ok(None);
     }
-    if auth_tuple.r_signature > *SECP256K1_ORDER || U256::zero() >= auth_tuple.r_signature {
+    if r_sig > *SECP256K1_ORDER || r_sig.is_zero() {
         return Ok(None);
     }
-    if auth_tuple.y_parity != U256::one() && auth_tuple.y_parity != U256::zero() {
+    if y_par != U256::from(1) && !y_par.is_zero() {
         return Ok(None);
     }
 
@@ -219,8 +225,8 @@ pub fn eip7702_recover_address(
     digest.update(rlp_buf);
 
     let bytes = [
-        auth_tuple.r_signature.to_big_endian(),
-        auth_tuple.s_signature.to_big_endian(),
+        r_sig.to_be_bytes::<32>(),
+        s_sig.to_be_bytes::<32>(),
     ]
     .concat();
 
@@ -266,13 +272,17 @@ pub fn eip7702_recover_address(
     use ethrex_crypto::keccak::keccak_hash;
     use ethrex_rlp::encode::RLPEncode;
 
-    if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::zero() >= auth_tuple.s_signature {
+    let s_sig = from_eth_u256(auth_tuple.s_signature);
+    let r_sig = from_eth_u256(auth_tuple.r_signature);
+    let y_par = from_eth_u256(auth_tuple.y_parity);
+
+    if s_sig > *SECP256K1_ORDER_OVER2 || s_sig.is_zero() {
         return Ok(None);
     }
-    if auth_tuple.r_signature > *SECP256K1_ORDER || U256::zero() >= auth_tuple.r_signature {
+    if r_sig > *SECP256K1_ORDER || r_sig.is_zero() {
         return Ok(None);
     }
-    if auth_tuple.y_parity != U256::one() && auth_tuple.y_parity != U256::zero() {
+    if y_par != U256::from(1) && !y_par.is_zero() {
         return Ok(None);
     }
 
@@ -284,8 +294,8 @@ pub fn eip7702_recover_address(
     let message = secp256k1::Message::from_digest(bytes);
 
     let bytes = [
-        auth_tuple.r_signature.to_big_endian(),
-        auth_tuple.s_signature.to_big_endian(),
+        r_sig.to_be_bytes::<32>(),
+        s_sig.to_be_bytes::<32>(),
     ]
     .concat();
 
@@ -596,10 +606,11 @@ pub fn account_to_levm_account(account: Account) -> (LevmAccount, Code) {
 /// This is generally used for memory offsets and sizes, 32 bits is more than enough for this purpose.
 #[expect(clippy::as_conversions)]
 pub fn u256_to_usize(val: U256) -> Result<usize, VMError> {
-    if val.0[0] > u32::MAX as u64 || val.0[1] != 0 || val.0[2] != 0 || val.0[3] != 0 {
+    let limbs = val.as_limbs();
+    if limbs[0] > u32::MAX as u64 || limbs[1] != 0 || limbs[2] != 0 || limbs[3] != 0 {
         return Err(VMError::ExceptionalHalt(ExceptionalHalt::VeryLargeNumber));
     }
-    Ok(val.0[0] as usize)
+    Ok(limbs[0] as usize)
 }
 
 /// Converts U256 size and offset to usize.

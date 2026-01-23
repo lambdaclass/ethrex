@@ -48,6 +48,7 @@ ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v0.15.0",
 bitvec = { version = "1.0.1", features = ["alloc"] }
 
 rustc-hash.workspace = true
+ruint = "1.12"
 
 [dev-dependencies]
 hex.workspace = true

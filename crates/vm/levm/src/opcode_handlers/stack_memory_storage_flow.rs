@@ -1,21 +1,21 @@
 use crate::{
+    U256,
     call_frame::CallFrame,
     constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
+    from_eth_u256,
     gas_cost::{self, SSTORE_STIPEND},
     memory::calculate_memory_size,
+    to_eth_u256,
     utils::u256_to_usize,
     vm::VM,
 };
-use ethrex_common::{
-    U256,
-    utils::{u256_to_big_endian, u256_to_h256},
-};
+use ethrex_common::H256;
 
 // Stack, Memory, Storage and Flow Operations (15)
 // Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
 
-pub const OUT_OF_BOUNDS: U256 = U256([u64::MAX, 0, 0, 0]);
+pub const OUT_OF_BOUNDS: U256 = U256::from_limbs([u64::MAX, 0, 0, 0]);
 
 impl<'a> VM<'a> {
     // POP operation
@@ -30,7 +30,7 @@ impl<'a> VM<'a> {
     pub fn op_tload(&mut self) -> Result<OpcodeResult, VMError> {
         let key = self.current_call_frame.stack.pop1()?;
         let to = self.current_call_frame.to;
-        let value = self.substate.get_transient(&to, &key);
+        let value = from_eth_u256(self.substate.get_transient(&to, &to_eth_u256(key)));
 
         let current_call_frame = &mut self.current_call_frame;
 
@@ -54,7 +54,7 @@ impl<'a> VM<'a> {
             let [key, value] = *current_call_frame.stack.pop()?;
             (key, value, current_call_frame.to)
         };
-        self.substate.set_transient(&to, &key, value);
+        self.substate.set_transient(&to, &to_eth_u256(key), to_eth_u256(value));
 
         Ok(OpcodeResult::Continue)
     }
@@ -84,7 +84,7 @@ impl<'a> VM<'a> {
         let [offset, value] = *self.current_call_frame.stack.pop()?;
 
         // This is only for debugging purposes of special solidity contracts that enable printing text on screen.
-        if self.debug_mode.enabled && self.debug_mode.handle_debug(offset, value)? {
+        if self.debug_mode.enabled && self.debug_mode.handle_debug(to_eth_u256(offset), to_eth_u256(value))? {
             return Ok(OpcodeResult::Continue);
         }
 
@@ -121,7 +121,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .memory
-            .store_data(offset, &u256_to_big_endian(value)[WORD_SIZE - 1..WORD_SIZE])?;
+            .store_data(offset, &value.to_be_bytes::<32>()[WORD_SIZE - 1..WORD_SIZE])?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -135,7 +135,7 @@ impl<'a> VM<'a> {
             (storage_slot_key, address)
         };
 
-        let storage_slot_key = u256_to_h256(storage_slot_key);
+        let storage_slot_key = H256(storage_slot_key.to_be_bytes::<32>());
 
         let (value, storage_slot_was_cold) = self.access_storage_slot(address, storage_slot_key)?;
 
@@ -143,7 +143,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.increase_consumed_gas(gas_cost::sload(storage_slot_was_cold)?)?;
 
-        current_call_frame.stack.push(value)?;
+        current_call_frame.stack.push(from_eth_u256(value))?;
         Ok(OpcodeResult::Continue)
     }
 
@@ -167,9 +167,13 @@ impl<'a> VM<'a> {
         }
 
         // Get current and original (pre-tx) values.
-        let key = u256_to_h256(storage_slot_key);
+        let key = H256(storage_slot_key.to_be_bytes::<32>());
         let (current_value, storage_slot_was_cold) = self.access_storage_slot(to, key)?;
         let original_value = self.get_original_storage(to, key)?;
+
+        // Convert to internal U256 for comparison with stack values
+        let current_value = from_eth_u256(current_value);
+        let original_value = from_eth_u256(original_value);
 
         // Gas Refunds
         // Sync gas refund with global env, ensuring consistency accross contexts.
@@ -186,8 +190,8 @@ impl<'a> VM<'a> {
                         .ok_or(InternalError::Overflow)?;
                 }
             } else {
-                if original_value != U256::zero() {
-                    if current_value == U256::zero() {
+                if !original_value.is_zero() {
+                    if current_value.is_zero() {
                         gas_refunds = gas_refunds
                             .checked_sub(remove_slot_cost)
                             .ok_or(InternalError::Underflow)?;
@@ -198,7 +202,7 @@ impl<'a> VM<'a> {
                     }
                 }
                 if new_storage_slot_value == original_value {
-                    if original_value == U256::zero() {
+                    if original_value.is_zero() {
                         gas_refunds = gas_refunds
                             .checked_add(restore_empty_slot_cost)
                             .ok_or(InternalError::Overflow)?;
@@ -222,7 +226,7 @@ impl<'a> VM<'a> {
             )?)?;
 
         if new_storage_slot_value != current_value {
-            self.update_account_storage(to, key, new_storage_slot_value, current_value)?;
+            self.update_account_storage(to, key, to_eth_u256(new_storage_slot_value), to_eth_u256(current_value))?;
         }
 
         Ok(OpcodeResult::Continue)
@@ -234,7 +238,7 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::MSIZE)?;
         current_call_frame
             .stack
-            .push(current_call_frame.memory.len().into())?;
+            .push(U256::from(current_call_frame.memory.len()))?;
         Ok(OpcodeResult::Continue)
     }
 
@@ -245,7 +249,7 @@ impl<'a> VM<'a> {
 
         let remaining_gas = current_call_frame.gas_remaining;
         // Note: These are not consumed gas calculations, but are related, so I used this wrapping here
-        current_call_frame.stack.push(remaining_gas.into())?;
+        current_call_frame.stack.push(U256::from(remaining_gas))?;
 
         Ok(OpcodeResult::Continue)
     }

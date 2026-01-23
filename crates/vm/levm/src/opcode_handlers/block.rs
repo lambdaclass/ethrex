@@ -1,11 +1,12 @@
 use crate::{
+    U256,
     constants::LAST_AVAILABLE_BLOCK_LIMIT,
     errors::{ExceptionalHalt, OpcodeResult, VMError},
+    from_eth_u256,
     gas_cost,
     utils::*,
     vm::VM,
 };
-use ethrex_common::utils::u256_from_big_endian_const;
 
 // Block Information (11)
 // Opcodes: BLOCKHASH, COINBASE, TIMESTAMP, NUMBER, PREVRANDAO, GASLIMIT, CHAINID, SELFBALANCE, BASEFEE, BLOBHASH, BLOBBASEFEE
@@ -13,7 +14,7 @@ use ethrex_common::utils::u256_from_big_endian_const;
 impl<'a> VM<'a> {
     // BLOCKHASH operation
     pub fn op_blockhash(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_block = self.env.block_number;
+        let current_block = from_eth_u256(self.env.block_number);
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::BLOCKHASH)?;
 
@@ -34,7 +35,7 @@ impl<'a> VM<'a> {
         let block_hash = self.db.store.get_block_hash(block_number)?;
         self.current_call_frame
             .stack
-            .push(u256_from_big_endian_const(block_hash.to_fixed_bytes()))?;
+            .push(U256::from_be_bytes(block_hash.to_fixed_bytes()))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -52,7 +53,7 @@ impl<'a> VM<'a> {
 
     // TIMESTAMP operation
     pub fn op_timestamp(&mut self) -> Result<OpcodeResult, VMError> {
-        let timestamp = self.env.timestamp;
+        let timestamp = from_eth_u256(self.env.timestamp);
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::TIMESTAMP)?;
 
@@ -63,7 +64,7 @@ impl<'a> VM<'a> {
 
     // NUMBER operation
     pub fn op_number(&mut self) -> Result<OpcodeResult, VMError> {
-        let block_number = self.env.block_number;
+        let block_number = from_eth_u256(self.env.block_number);
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::NUMBER)?;
 
@@ -76,8 +77,9 @@ impl<'a> VM<'a> {
     pub fn op_prevrandao(&mut self) -> Result<OpcodeResult, VMError> {
         // https://eips.ethereum.org/EIPS/eip-4399
         // After Paris the prev randao is the prev_randao (or current_random) field
-        let randao =
-            u256_from_big_endian_const(self.env.prev_randao.unwrap_or_default().to_fixed_bytes());
+        let randao = U256::from_be_bytes(
+            self.env.prev_randao.unwrap_or_default().to_fixed_bytes(),
+        );
 
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::PREVRANDAO)?;
@@ -92,14 +94,14 @@ impl<'a> VM<'a> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::GASLIMIT)?;
 
-        current_call_frame.stack.push(block_gas_limit.into())?;
+        current_call_frame.stack.push(U256::from(block_gas_limit))?;
 
         Ok(OpcodeResult::Continue)
     }
 
     // CHAINID operation
     pub fn op_chainid(&mut self) -> Result<OpcodeResult, VMError> {
-        let chain_id = self.env.chain_id;
+        let chain_id = from_eth_u256(self.env.chain_id);
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::CHAINID)?;
 
@@ -119,14 +121,14 @@ impl<'a> VM<'a> {
             .info
             .balance;
 
-        self.current_call_frame.stack.push(balance)?;
+        self.current_call_frame.stack.push(from_eth_u256(balance))?;
         Ok(OpcodeResult::Continue)
     }
 
     // BASEFEE operation
     pub fn op_basefee(&mut self) -> Result<OpcodeResult, VMError> {
         // https://eips.ethereum.org/EIPS/eip-3198
-        let base_fee_per_gas = self.env.base_fee_per_gas;
+        let base_fee_per_gas = from_eth_u256(self.env.base_fee_per_gas);
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::BASEFEE)?;
 
@@ -154,7 +156,7 @@ impl<'a> VM<'a> {
         //This should never fail because we check if the index fits above
         #[expect(unsafe_code, reason = "bounds checked beforehand already")]
         let blob_hash = unsafe { blob_hashes.get_unchecked(index) };
-        let hash = u256_from_big_endian_const(blob_hash.to_fixed_bytes());
+        let hash = U256::from_be_bytes(blob_hash.to_fixed_bytes());
 
         self.current_call_frame.stack.push(hash)?;
 
@@ -168,7 +170,7 @@ impl<'a> VM<'a> {
 
         self.current_call_frame
             .stack
-            .push(self.env.base_blob_fee_per_gas)?;
+            .push(from_eth_u256(self.env.base_blob_fee_per_gas))?;
 
         Ok(OpcodeResult::Continue)
     }

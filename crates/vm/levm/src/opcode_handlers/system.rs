@@ -2,9 +2,11 @@ use crate::{
     call_frame::CallFrame,
     constants::{FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
+    from_eth_u256,
     gas_cost::{self, max_message_call_gas},
     memory::calculate_memory_size,
     precompiles,
+    to_eth_u256,
     utils::{address_to_word, word_to_address, *},
     vm::VM,
 };
@@ -104,11 +106,11 @@ impl<'a> VM<'a> {
         let is_static = callframe.is_static;
         let data = self.get_calldata(args_offset, args_size)?;
 
-        self.tracer.enter(CALL, from, to, value, gas_limit, &data);
+        self.tracer.enter(CALL, from, to, to_eth_u256(value), gas_limit, &data);
 
         self.generic_call(
             gas_limit,
-            value,
+            to_eth_u256(value),
             from,
             to,
             code_address,
@@ -202,11 +204,11 @@ impl<'a> VM<'a> {
         let data = self.get_calldata(args_offset, args_size)?;
 
         self.tracer
-            .enter(CALLCODE, from, code_address, value, gas_limit, &data);
+            .enter(CALLCODE, from, code_address, to_eth_u256(value), gas_limit, &data);
 
         self.generic_call(
             gas_limit,
-            value,
+            to_eth_u256(value),
             from,
             to,
             code_address,
@@ -320,11 +322,11 @@ impl<'a> VM<'a> {
 
         // In this trace the `from` is the current contract, we don't want the `from` to be, for example, the EOA that sent the transaction
         self.tracer
-            .enter(DELEGATECALL, to, code_address, value, gas_limit, &data);
+            .enter(DELEGATECALL, to, code_address, to_eth_u256(value), gas_limit, &data);
 
         self.generic_call(
             gas_limit,
-            value,
+            to_eth_u256(value),
             from,
             to,
             code_address,
@@ -455,7 +457,7 @@ impl<'a> VM<'a> {
         )?)?;
 
         self.generic_create(
-            value_in_wei_to_send,
+            to_eth_u256(value_in_wei_to_send),
             code_offset_in_memory,
             code_size_in_memory,
             None,
@@ -485,10 +487,10 @@ impl<'a> VM<'a> {
         )?)?;
 
         self.generic_create(
-            value_in_wei_to_send,
+            to_eth_u256(value_in_wei_to_send),
             code_offset_in_memory,
             code_size_in_memory,
-            Some(salt),
+            Some(to_eth_u256(salt)),
         )
     }
 
@@ -553,7 +555,7 @@ impl<'a> VM<'a> {
             .increase_consumed_gas(gas_cost::selfdestruct(
                 target_account_is_cold,
                 target_account_is_empty,
-                balance,
+                from_eth_u256(balance),
             )?)?;
 
         // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
@@ -624,7 +626,7 @@ impl<'a> VM<'a> {
 
         // Calculate create address
         let new_address = match salt {
-            Some(salt) => calculate_create2_address(deployer, &code, salt)?,
+            Some(salt) => calculate_create2_address(deployer, &code, from_eth_u256(salt))?,
             None => calculate_create_address(deployer, deployer_nonce),
         };
 
@@ -684,7 +686,7 @@ impl<'a> VM<'a> {
             new_address,
             // SAFETY: init code hash is never used
             Code::from_bytecode_unchecked(code, H256::zero()),
-            value,
+            from_eth_u256(value),
             Bytes::new(),
             false,
             gas_limit,
@@ -818,7 +820,7 @@ impl<'a> VM<'a> {
                 to,
                 code_address,
                 bytecode,
-                value,
+                from_eth_u256(value),
                 calldata,
                 is_static,
                 gas_limit,

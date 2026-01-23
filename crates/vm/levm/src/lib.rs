@@ -64,6 +64,51 @@
 //! }
 //! ```
 
+// =============================================================================
+// Internal U256/U512 Types
+// =============================================================================
+//
+// LEVM uses ruint internally for 256-bit arithmetic operations. This provides
+// better performance for the hot paths in EVM execution (arithmetic, stack
+// operations, memory access) compared to ethereum_types::U256.
+//
+// At boundaries where LEVM interfaces with ethrex_common (which uses
+// ethereum_types::U256), we convert using from_eth_u256() and to_eth_u256().
+// These conversions are essentially zero-cost since both types share the same
+// memory layout (4 x u64 limbs in little-endian order).
+
+/// Internal 256-bit unsigned integer type based on ruint.
+/// Used for all EVM arithmetic and stack operations within LEVM.
+pub type U256 = ruint::Uint<256, 4>;
+
+/// Internal 512-bit unsigned integer type based on ruint.
+/// Used for intermediate results in multiplication operations (e.g., MULMOD).
+pub type U512 = ruint::Uint<512, 8>;
+
+/// Type alias for ethrex_common's U256 (ethereum_types based).
+/// Used at crate boundaries when interfacing with external code.
+pub type EthU256 = ethrex_common::U256;
+
+/// Convert from ethrex_common::U256 to internal ruint U256.
+///
+/// This is a zero-cost conversion as both types have identical memory layouts.
+/// Use this when receiving U256 values from external code (e.g., transaction
+/// values, block data, storage reads).
+#[inline]
+pub fn from_eth_u256(v: EthU256) -> U256 {
+    U256::from_limbs(v.0)
+}
+
+/// Convert from internal ruint U256 to ethrex_common::U256.
+///
+/// This is a zero-cost conversion as both types have identical memory layouts.
+/// Use this when returning U256 values to external code (e.g., storage writes,
+/// balance updates, public API returns).
+#[inline]
+pub fn to_eth_u256(v: U256) -> EthU256 {
+    ethrex_common::U256(*v.as_limbs())
+}
+
 pub mod call_frame;
 pub mod constants;
 pub mod db;

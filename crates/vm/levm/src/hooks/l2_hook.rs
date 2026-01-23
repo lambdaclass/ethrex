@@ -1,9 +1,11 @@
 use crate::{
+    U256 as InternalU256,
     constants::POST_OSAKA_GAS_LIMIT_CAP,
     db::gen_db::GeneralizedDatabase,
     errors::{ContextResult, ExecutionReport, InternalError, TxValidationError, VMError},
     hooks::{DefaultHook, default_hook, hook::Hook},
     opcodes::Opcode,
+    to_eth_u256,
     tracing::LevmCallTracer,
     vm::{VM, VMType},
 };
@@ -329,7 +331,7 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
     // since they must always be accepted, and an error would mark them as invalid
     // Instead, we make them revert by inserting a revert2
     if sender_address != COMMON_BRIDGE_L2_ADDRESS {
-        let value = vm.current_call_frame.msg_value;
+        let value = to_eth_u256(vm.current_call_frame.msg_value);
         if value > sender_balance {
             tx_should_fail = true;
         } else {
@@ -389,7 +391,7 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
     if tx_should_fail {
         // If the transaction failed some validation, but it must still be included
         // To prevent it from taking effect, we force it to revert
-        vm.current_call_frame.msg_value = U256::zero();
+        vm.current_call_frame.msg_value = InternalU256::ZERO;
         vm.current_call_frame.set_code(Code {
             hash: H256::zero(),
             bytecode: vec![Opcode::INVALID.into()].into(),
@@ -530,7 +532,7 @@ pub fn deduct_caller_fee_token(
 ) -> Result<(), VMError> {
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice (in ERC20) + value
     let sender_address = vm.env.origin;
-    let value = vm.current_call_frame.msg_value;
+    let value = to_eth_u256(vm.current_call_frame.msg_value);
 
     // First, try to deduct the value sent
     vm.decrease_account_balance(sender_address, value)

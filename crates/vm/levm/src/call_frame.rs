@@ -1,4 +1,5 @@
 use crate::{
+    U256,
     account::LevmAccount,
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
@@ -7,12 +8,12 @@ use crate::{
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::{Address, U256};
+use ethrex_common::Address;
 use ethrex_common::{H256, types::Code};
 use std::{collections::HashMap, fmt, hint::assert_unchecked};
 
 /// [`u64`]s that make up a [`U256`]
-const U64_PER_U256: usize = U256::MAX.0.len();
+const U64_PER_U256: usize = U256::LIMBS;
 
 #[derive(Clone, PartialEq, Eq)]
 /// The EVM uses a stack-based architecture and does not use registers like some other VMs.
@@ -86,8 +87,8 @@ impl Stack {
         #[expect(unsafe_code, reason = "next_offset == self.offset - 1 >= 0")]
         unsafe {
             std::ptr::copy_nonoverlapping(
-                value.0.as_ptr(),
-                self.values.get_unchecked_mut(next_offset).0.as_mut_ptr(),
+                value.as_limbs().as_ptr(),
+                self.values.get_unchecked_mut(next_offset).as_limbs_mut().as_mut_ptr(),
                 U64_PER_U256,
             );
         }
@@ -112,7 +113,7 @@ impl Stack {
             *self
                 .values
                 .get_unchecked_mut(next_offset)
-                .0
+                .as_limbs_mut()
                 .as_mut_ptr()
                 .cast() = [0u64; U64_PER_U256];
         }
@@ -183,8 +184,8 @@ impl Stack {
         #[expect(unsafe_code, reason = "index < size, offset-1 >= 0")]
         unsafe {
             std::ptr::copy_nonoverlapping(
-                self.values.get_unchecked_mut(index).0.as_mut_ptr(),
-                self.values.get_unchecked_mut(self.offset).0.as_mut_ptr(),
+                self.values.get_unchecked_mut(index).as_limbs_mut().as_mut_ptr(),
+                self.values.get_unchecked_mut(self.offset).as_limbs_mut().as_mut_ptr(),
                 U64_PER_U256,
             );
         }
@@ -195,7 +196,7 @@ impl Stack {
 impl Default for Stack {
     fn default() -> Self {
         Self {
-            values: Box::new([U256::zero(); STACK_LIMIT]),
+            values: Box::new([U256::ZERO; STACK_LIMIT]),
             offset: STACK_LIMIT,
         }
     }

@@ -5,7 +5,7 @@ use crate::{
     utils::size_offset_to_usize,
     vm::VM,
 };
-use ethrex_common::{H256, U256, types::Log};
+use ethrex_common::{H256, types::Log};
 
 // Logging Operations (5)
 // Opcodes: LOG0 ... LOG4
@@ -24,7 +24,7 @@ impl<'a> VM<'a> {
         let topics = current_call_frame
             .stack
             .pop::<N_TOPICS>()?
-            .map(|topic| H256(U256::to_big_endian(&topic)));
+            .map(|topic| H256(topic.to_be_bytes::<32>()));
 
         let new_memory_size = calculate_memory_size(offset, size)?;
 

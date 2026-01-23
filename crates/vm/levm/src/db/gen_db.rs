@@ -13,6 +13,7 @@ use crate::account::LevmAccount;
 use crate::call_frame::CallFrameBackup;
 use crate::errors::InternalError;
 use crate::errors::VMError;
+use crate::from_eth_u256;
 use crate::utils::account_to_levm_account;
 use crate::utils::restore_cache_state;
 use crate::vm::VM;
@@ -416,7 +417,7 @@ impl<'a> VM<'a> {
         to: Address,
         value: U256,
     ) -> Result<(), InternalError> {
-        if value != U256::zero() {
+        if !value.is_zero() {
             self.decrease_account_balance(from, value)?;
             self.increase_account_balance(to, value)?;
         }
@@ -537,7 +538,7 @@ impl<'a> VM<'a> {
             .entry(address)
             .or_default()
             .entry(key)
-            .or_insert(current_value);
+            .or_insert(from_eth_u256(current_value));
 
         Ok(())
     }
