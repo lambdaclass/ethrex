@@ -3723,6 +3723,7 @@ dependencies = [
  "fastbloom",
  "hex",
  "lru 0.16.2",
+ "parking_lot 0.12.5",
  "rayon",
  "rocksdb",
  "rustc-hash 2.1.1",

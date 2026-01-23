@@ -2475,6 +2475,7 @@ dependencies = [
  "fastbloom",
  "hex",
  "lru 0.16.2",
+ "parking_lot",
  "rayon",
  "rustc-hash",
  "serde 1.0.228",
