@@ -61,7 +61,16 @@ rm -f *.blob
 
 ### 3. Start the L2 Stack
 
-**Terminal 1 - Start L2 sequencer:**
+**Important:** Start the prover first, then the sequencer. This prevents the committer from getting stuck waiting for deposits to be verified.
+
+**Terminal 1 - Start prover (exec mode):**
+
+```bash
+cd crates/l2
+make init-prover-exec
+```
+
+**Terminal 2 - Start L2 sequencer:**
 
 ```bash
 cd crates/l2
@@ -69,16 +78,9 @@ COMPILE_CONTRACTS=true cargo run --release --bin ethrex --features l2,l2-sql -- 
     l2 --dev --no-monitor --committer.commit-time 20000
 ```
 
-**Terminal 2 - Start prover (exec mode):**
-
-```bash
-cd crates/l2
-make init-prover-exec
-```
-
 ### 4. Wait for 6 Blobs
 
-Monitor Terminal 1 for commitment messages:
+Monitor Terminal 2 (sequencer) for commitment messages:
 ```
 INFO Commitment sent: 0x...
 ```
