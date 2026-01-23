@@ -2,9 +2,17 @@
 
 ## Perf
 
+### 2026-01-21
+
+- Improve snap sync logging with table format and visual progress bars [#5977](https://github.com/lambdaclass/ethrex/pull/5977)
+
 ### 2026-01-20
 
 Adds rlp length function implementation for many types so they are not encoded twice: [#5951](https://github.com/lambdaclass/ethrex/pull/5951)
+
+### 2026-01-20
+
+- Remove `ethrex-threadpool` crate and move `ThreadPool` to `ethrex-trie` [#5925](https://github.com/lambdaclass/ethrex/pull/5925)
 
 ### 2026-01-19
 

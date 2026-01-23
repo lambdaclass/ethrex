@@ -2570,11 +2570,11 @@ dependencies = [
  "datatest-stable",
  "ethrex-blockchain",
  "ethrex-common 9.0.0",
+ "ethrex-guest-program",
  "ethrex-prover",
  "ethrex-rlp 9.0.0",
  "ethrex-storage 9.0.0",
  "ethrex-vm",
- "guest_program",
  "hex",
  "lazy_static",
  "regex",
@@ -3336,6 +3336,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-guest-program"
+version = "9.0.0"
+dependencies = [
+ "bincode",
+ "bytes",
+ "ethrex-blockchain",
+ "ethrex-common 9.0.0",
+ "ethrex-crypto",
+ "ethrex-l2-common",
+ "ethrex-rlp 9.0.0",
+ "ethrex-storage 9.0.0",
+ "ethrex-trie 9.0.0",
+ "ethrex-vm",
+ "hex",
+ "rkyv",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "sp1-build",
+ "sp1-sdk",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "ethrex-l2"
 version = "9.0.0"
 dependencies = [
@@ -3355,6 +3379,7 @@ dependencies = [
  "ethrex-common 9.0.0",
  "ethrex-config",
  "ethrex-dev",
+ "ethrex-guest-program",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
  "ethrex-levm",
@@ -3368,7 +3393,6 @@ dependencies = [
  "ethrex-trie 9.0.0",
  "ethrex-vm",
  "futures",
- "guest_program",
  "hex",
  "jsonwebtoken 9.3.1",
  "lazy_static",
@@ -3401,7 +3425,6 @@ dependencies = [
  "ethrex-common 9.0.0",
  "ethrex-crypto",
  "ethrex-rlp 9.0.0",
- "ethrex-storage 9.0.0",
  "ethrex-trie 9.0.0",
  "ethrex-vm",
  "hex",
@@ -3511,7 +3534,6 @@ dependencies = [
  "ethrex-rlp 9.0.0",
  "ethrex-storage 9.0.0",
  "ethrex-storage-rollup",
- "ethrex-threadpool",
  "ethrex-trie 9.0.0",
  "futures",
  "hex",
@@ -3548,13 +3570,13 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
  "ethrex-common 9.0.0",
+ "ethrex-guest-program",
  "ethrex-l2",
  "ethrex-l2-common",
  "ethrex-rlp 9.0.0",
  "ethrex-sdk",
  "ethrex-storage 9.0.0",
  "ethrex-vm",
- "guest_program",
  "hex",
  "kzg-rs",
  "rkyv",
@@ -3736,13 +3758,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethrex-threadpool"
-version = "9.0.0"
-dependencies = [
- "crossbeam 0.8.4",
-]
-
-[[package]]
 name = "ethrex-trie"
 version = "1.0.0"
 source = "git+https://github.com/lambdaclass/ethrex?tag=v1.0.0#a976db3e20acb441b930e1afd156586f222e8f79"
@@ -3774,7 +3789,6 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-crypto",
  "ethrex-rlp 9.0.0",
- "ethrex-threadpool",
  "hex",
  "lazy_static",
  "rkyv",
@@ -4308,30 +4322,6 @@ dependencies = [
  "ff 0.13.1",
  "rand_core 0.6.4",
  "subtle",
-]
-
-[[package]]
-name = "guest_program"
-version = "9.0.0"
-dependencies = [
- "bincode",
- "bytes",
- "ethrex-blockchain",
- "ethrex-common 9.0.0",
- "ethrex-crypto",
- "ethrex-l2-common",
- "ethrex-rlp 9.0.0",
- "ethrex-storage 9.0.0",
- "ethrex-trie 9.0.0",
- "ethrex-vm",
- "hex",
- "rkyv",
- "serde",
- "serde_json",
- "serde_with",
- "sp1-build",
- "sp1-sdk",
- "thiserror 2.0.17",
 ]
 
 [[package]]

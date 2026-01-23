@@ -2162,6 +2162,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-guest-program"
+version = "9.0.0"
+dependencies = [
+ "bincode",
+ "bytes",
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-crypto",
+ "ethrex-l2-common",
+ "ethrex-rlp",
+ "ethrex-storage",
+ "ethrex-trie",
+ "ethrex-vm",
+ "hex",
+ "rkyv",
+ "serde 1.0.228",
+ "serde_json",
+ "serde_with",
+ "thiserror 2.0.16",
+]
+
+[[package]]
 name = "ethrex-l2"
 version = "9.0.0"
 dependencies = [
@@ -2181,6 +2203,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-config",
  "ethrex-dev",
+ "ethrex-guest-program",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
  "ethrex-levm",
@@ -2194,7 +2217,6 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "futures",
- "guest_program",
  "hex",
  "jsonwebtoken 9.3.1",
  "lazy_static",
@@ -2227,7 +2249,6 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
- "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
  "hex",
@@ -2336,7 +2357,6 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-storage-rollup",
- "ethrex-threadpool",
  "ethrex-trie",
  "futures",
  "hex",
@@ -2489,13 +2509,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethrex-threadpool"
-version = "9.0.0"
-dependencies = [
- "crossbeam 0.8.4",
-]
-
-[[package]]
 name = "ethrex-trie"
 version = "9.0.0"
 dependencies = [
@@ -2506,7 +2519,6 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-crypto",
  "ethrex-rlp",
- "ethrex-threadpool",
  "hex",
  "lazy_static",
  "rkyv",
@@ -2899,28 +2911,6 @@ dependencies = [
  "ff",
  "rand_core 0.6.4",
  "subtle",
-]
-
-[[package]]
-name = "guest_program"
-version = "9.0.0"
-dependencies = [
- "bincode",
- "bytes",
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-crypto",
- "ethrex-l2-common",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-trie",
- "ethrex-vm",
- "hex",
- "rkyv",
- "serde 1.0.228",
- "serde_json",
- "serde_with",
- "thiserror 2.0.16",
 ]
 
 [[package]]
@@ -4884,13 +4874,13 @@ dependencies = [
  "configfs-tsm",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-guest-program",
  "ethrex-l2",
  "ethrex-l2-common",
  "ethrex-rlp",
  "ethrex-rpc",
  "ethrex-storage",
  "ethrex-vm",
- "guest_program",
  "hex",
  "secp256k1",
  "serde 0.9.15",
