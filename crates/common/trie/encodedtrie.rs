@@ -170,6 +170,7 @@ impl EncodedTrie {
     ///
     /// This also clears the hashes of every relevant node.
     pub fn insert(&mut self, path: Vec<u8>, value: Vec<u8>) -> Result<(), EncodedTrieError> {
+        self.ensure_hashes_initialized();
         let path = Nibbles::from_bytes(&path);
         if let Some(root_index) = self.root_index {
             self.root_index = self.insert_inner(root_index, path, value).map(Some)?;
@@ -343,6 +344,7 @@ impl EncodedTrie {
     ///
     /// This also clears the hashes of every relevant node.
     pub fn remove(&mut self, path: &[u8]) -> Result<(), EncodedTrieError> {
+        self.ensure_hashes_initialized();
         let path = Nibbles::from_bytes(path);
         if let Some(root_index) = self.root_index {
             self.root_index = self.remove_inner(root_index, path)?;
@@ -601,6 +603,15 @@ impl EncodedTrie {
         Ok(index)
     }
 
+    /// Ensures hashes vector is properly sized after deserialization.
+    /// This is O(1) in the common case (already initialized).
+    #[inline]
+    fn ensure_hashes_initialized(&mut self) {
+        if self.hashes.len() != self.nodes.len() {
+            self.hashes = vec![None; self.nodes.len()];
+        }
+    }
+
     /// Hashes all encoded nodes before any changes to the trie, checking consistency across
     /// encoded (non-pruned) nodes to make sure they reference valid children hashes.
     ///
@@ -687,6 +698,7 @@ impl EncodedTrie {
     ///
     /// Returns a root hash that binds to the trie structure and data.
     pub fn hash(&mut self) -> Result<NodeHash, EncodedTrieError> {
+        self.ensure_hashes_initialized();
         fn recursive(trie: &mut EncodedTrie, index: usize) -> Result<(), EncodedTrieError> {
             if trie.hashes[index].is_some() {
                 return Ok(());
@@ -1111,7 +1123,7 @@ mod test {
 
         // Build a trie with some data
         let mut trie = Trie::new_temp();
-        let kv = vec![
+        let kv = [
             (vec![1, 2, 3], vec![4, 5, 6]),
             (vec![1, 2, 4], vec![7, 8, 9]),
             (vec![2, 3, 4], vec![10, 11, 12]),
@@ -1150,7 +1162,7 @@ mod test {
 
         // Build a trie with some data
         let mut trie = Trie::new_temp();
-        let kv = vec![
+        let kv = [
             (vec![1, 2, 3], vec![4, 5, 6]),
             (vec![1, 2, 4], vec![7, 8, 9]),
             (vec![2, 3, 4], vec![10, 11, 12]),
