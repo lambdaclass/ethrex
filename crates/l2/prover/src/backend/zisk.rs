@@ -224,8 +224,8 @@ impl ZiskBackend {
                     String::from_utf8_lossy(&snark.stderr)
                 )));
             }
-            let proof_bytes = std::fs::read(output_dir.join("final_snark_proof.bin"))
-                .map_err(BackendError::proving)?;
+            let proof_path = output_dir.join("snark_proof").join("final_snark_proof.bin");
+            let proof_bytes = std::fs::read(&proof_path).map_err(BackendError::proving)?;
             Ok(ZiskProveOutput(proof_bytes))
         } else {
             let proof_bytes = std::fs::read(path_to_proof).map_err(BackendError::proving)?;
