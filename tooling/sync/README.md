@@ -77,6 +77,45 @@ The parallel snapsync system:
 - On success: restarts containers and begins a new sync cycle
 - On failure: keeps containers running for debugging
 
+### Auto-Update Mode with State Trie Validation
+
+The `multisync-loop-auto` target provides continuous integration testing by:
+1. **Pulling latest code** from a configured branch before each run
+2. **Building Docker image** with configurable Cargo profile
+3. **Running state trie validation** when using `release-with-debug-assertions` profile
+4. **Looping continuously** on success, stopping on failure for inspection
+
+State trie validation (enabled with `release-with-debug-assertions` profile) verifies:
+- **State root**: Traverses entire account trie, validates all node hashes
+- **Storage roots**: Validates each account's storage trie (parallelized)
+- **Bytecodes**: Verifies code exists for all accounts with code
+
+This mirrors the daily snapsync CI checks but runs continuously on your own infrastructure.
+
+**Quick Start:**
+
+```bash
+# Run with validation on current branch
+make multisync-loop-auto
+
+# Run on specific branch
+make multisync-loop-auto MULTISYNC_BRANCH=main
+
+# Run without validation (faster builds)
+make multisync-loop-auto MULTISYNC_BUILD_PROFILE=release
+```
+
+**Configuration (in `.env` or as make variables):**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MULTISYNC_BRANCH` | current branch | Git branch to track |
+| `MULTISYNC_BUILD_PROFILE` | `release-with-debug-assertions` | Cargo build profile |
+| `MULTISYNC_LOCAL_IMAGE` | `ethrex-local:multisync` | Docker image tag |
+| `MULTISYNC_NETWORKS` | `hoodi,sepolia,mainnet` | Networks to sync |
+
+**Run count persistence:** The run count is persisted across restarts by reading from the history log. If run #5 fails and you restart, the next run will be #6.
+
 ### Requirements
 
 - Docker and Docker Compose
