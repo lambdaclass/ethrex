@@ -8,6 +8,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/main_prover.yaml"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -64,7 +65,7 @@ jobs:
       - name: Show vks
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
-          ls -lah crates/l2/prover/src/guest_program/src/sp1/out/
+          ls -lah crates/guest-program/bin/sp1/out/
 
       - name: Build test
         # if: ${{ always() && github.event_name == 'merge_group' }}

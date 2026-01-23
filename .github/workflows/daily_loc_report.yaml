@@ -63,8 +63,10 @@ jobs:
           PERF_PROMETHEUS_RANGE: 24h
           PERF_PROMETHEUS_QUERY: >-
             label_replace(avg_over_time(gigagas{instance=~"ethrex-mainnet-1(:[0-9]+)?"}[24h]), "client", "ethrex", "", "")
-            or label_replace(avg_over_time(reth_engine_rpc_new_payload_gas_per_second{instance=~"reth-mainnet-1(:[0-9]+)?",quantile="0.5"}[24h]) / 1e9, "client", "reth", "", "")
+            or label_replace(rate(reth_consensus_engine_beacon_new_payload_gas_per_second_sum{instance=~"reth-mainnet-1(:[0-9]+)?"}[24h]) / rate(reth_consensus_engine_beacon_new_payload_gas_per_second_count{instance=~"reth-mainnet-1(:[0-9]+)?"}[24h]) / 1e9, "client", "reth", "", "")
             or label_replace(avg_over_time(nethermind_mgas_per_sec{instance=~"nethermind-mainnet-1(:[0-9]+)?"}[24h]) / 1000, "client", "nethermind", "", "")
+            or label_replace(avg_over_time(chain_mgasps{instance=~"geth-mainnet-1(:[0-9]+)?",quantile="0.5"}[24h]) / 1000, "client", "geth", "", "")
+            or label_replace(avg_over_time(chain_mgasps{instance=~"geth-mainnet-1(:[0-9]+)?",quantile="0.999"}[24h]) / 1000, "client", "geth", "", "")
         run: |
           bash .github/scripts/generate_performance_report.sh
 
@@ -120,6 +122,37 @@ jobs:
               "",
               ""
             )
+            or label_replace(
+              avg_over_time(
+                reth_engine_rpc_new_payload_v4{instance="reth-mainnet-1:6060", quantile="0.5"}[24h]
+              ) * 10e2,
+              "client",
+              "reth",
+              "",
+              ""
+            )
+            or label_replace(
+              avg_over_time(
+                (
+                  (rpc_duration_engine_newPayloadV4_success{instance="geth-mainnet-1:6060",quantile="0.999"} / 1e6) > 0
+                )[24h:15s]
+              ),
+              "client",
+              "geth",
+              "",
+              ""
+            )
+            or label_replace(
+              avg_over_time(
+                (
+                  (rpc_duration_engine_newPayloadV4_success{instance="geth-mainnet-1:6060",quantile="0.5"} / 1e6) > 0
+                )[24h:15s]
+              ),
+              "client",
+              "geth",
+              "",
+              ""
+            )
         run: |
           bash .github/scripts/generate_block_time_report.sh
 
@@ -161,3 +194,12 @@ jobs:
             bash .github/scripts/publish_performance.sh "$webhook" tooling/performance_report/performance_report_slack.json
             bash .github/scripts/publish_performance.sh "$webhook" tooling/block_time_report/block_time_report_slack.json
           done
+
+      - name: Post results to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_ETHREX_CHAT_ID: ${{ secrets.TELEGRAM_ETHREX_CHAT_ID }}
+        run: |
+          bash .github/scripts/publish_telegram.sh tooling/loc/loc_report_github.txt
+          bash .github/scripts/publish_telegram.sh tooling/performance_report/performance_report_github.txt
+          bash .github/scripts/publish_telegram.sh tooling/block_time_report/block_time_report_github.txt

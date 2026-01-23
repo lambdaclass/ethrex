@@ -13,7 +13,7 @@ use ethrex_l2::{
     },
 };
 use ethrex_l2_rpc::signer::{LocalSigner, RemoteSigner, Signer};
-use ethrex_prover_lib::{backend::Backend, config::ProverConfig};
+use ethrex_prover_lib::{backend::BackendType, config::ProverConfig};
 use ethrex_rpc::clients::eth::{
     BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
 };
@@ -1055,7 +1055,7 @@ pub struct ProverClientOptions {
         help_heading = "Prover client options",
         value_enum
     )]
-    pub backend: Backend,
+    pub backend: BackendType,
     #[arg(
         long = "proof-coordinators",
         value_name = "URL",
@@ -1115,7 +1115,7 @@ impl Default for ProverClientOptions {
             ],
             proving_time_ms: 5000,
             log_level: Level::INFO,
-            backend: Backend::Exec,
+            backend: BackendType::Exec,
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: None,
         }
