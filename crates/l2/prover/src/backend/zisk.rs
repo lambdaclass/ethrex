@@ -31,9 +31,7 @@ fn resolve_elf_path() -> PathBuf {
 fn resolve_zisk_home() -> PathBuf {
     std::env::var_os(ZISK_HOME_ENV)
         .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".zisk"))
-        })
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".zisk")))
         .unwrap_or_else(|| PathBuf::from(".zisk"))
 }
 
@@ -64,8 +62,7 @@ fn resolve_witness_lib_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
     if fallback.exists() {
         return Ok(fallback);
     }
-    Err("Missing ZisK witness library path. Set ZISK_WITNESS_LIB_PATH or ZISK_REPO_PATH."
-        .into())
+    Err("Missing ZisK witness library path. Set ZISK_WITNESS_LIB_PATH or ZISK_REPO_PATH.".into())
 }
 
 pub struct ProveOutput {
@@ -173,7 +170,6 @@ pub fn prove(
         INPUT_PATH,
         "-a",
         "-u",
-        "-f",
         "-k",
         proving_key_path_str.as_ref(),
         "-w",
