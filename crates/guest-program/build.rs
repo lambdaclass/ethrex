@@ -177,7 +177,7 @@ fn build_zisk_program() {
             .args([
                 "rom-vkey",
                 "-e",
-                "./target/riscv64ima-zisk-zkvm-elf/release/zkvm-zisk-program",
+                "./target/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk",
                 "-k",
                 proving_key.as_str(),
                 "-o",

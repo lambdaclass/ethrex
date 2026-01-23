@@ -78,7 +78,6 @@ contract OnChainProposer is
     address public PICO_VERIFIER_ADDRESS;
     address public RISC0_VERIFIER_ADDRESS;
     address public SP1_VERIFIER_ADDRESS;
-    address public ZISK_VERIFIER_ADDRESS;
 
     /// @dev Deprecated variable.
     bytes32 public SP1_VERIFICATION_KEY;
@@ -105,8 +104,6 @@ contract OnChainProposer is
     bool public REQUIRE_SP1_PROOF;
     /// @notice True if a TDX proof is required for batch verification.
     bool public REQUIRE_TDX_PROOF;
-    /// @notice True if a ZisK proof is required for batch verification.
-    bool public REQUIRE_ZISK_PROOF;
 
     /// @notice True if verification is done through Aligned Layer instead of smart contract verifiers.
     bool public ALIGNED_MODE;
@@ -114,6 +111,12 @@ contract OnChainProposer is
     /// @notice Verification keys keyed by git commit hash (keccak of the commit SHA string) and verifier type.
     mapping(bytes32 commitHash => mapping(uint8 verifierId => bytes32 vk))
         public verificationKeys;
+
+    /// @notice ZisK verifier address. Appended to preserve storage layout.
+    address public ZISK_VERIFIER_ADDRESS;
+
+    /// @notice True if a ZisK proof is required for batch verification.
+    bool public REQUIRE_ZISK_PROOF;
 
     /// @notice Initializes the contract.
     /// @dev This method is called only once after the contract is deployed.
