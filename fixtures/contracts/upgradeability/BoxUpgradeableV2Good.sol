@@ -5,7 +5,7 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
-contract BoxUpgradeableV2 is Initializable, OwnableUpgradeable, UUPSUpgradeable {
+contract BoxUpgradeableV2Good is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     uint256 public value;
     uint256 public extraValue;
 
