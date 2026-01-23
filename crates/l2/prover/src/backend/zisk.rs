@@ -11,7 +11,7 @@ use crate::backend::{BackendError, ProverBackend};
 
 const INPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_input.bin");
 const OUTPUT_DIR_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output");
-const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zkvm-zisk-program");
+const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/ethrex-guest-zisk");
 
 /// ZisK-specific proof output containing the proof bytes.
 pub struct ZiskProveOutput(pub Vec<u8>);
