@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-01-23
+
+- Compute base blob fee once per block [#6006](https://github.com/lambdaclass/ethrex/pull/6006)
+
 ### 2026-01-21
 
 - Improve snap sync logging with table format and visual progress bars [#5977](https://github.com/lambdaclass/ethrex/pull/5977)
