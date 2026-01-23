@@ -1,5 +1,5 @@
 [package]
-name = "zkvm-sp1-program"
+name = "ethrex-guest-sp1"
 version = "9.0.0"
 edition = "2024"
 
@@ -13,14 +13,16 @@ codegen-units = 1
 sp1-zkvm = { version = "=5.0.8" }
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 
-guest_program = { path = "../../", features = ["sp1-cycles"] }
+ethrex-guest-program = { path = "../../", features = ["sp1-cycles"] }
 
-ethrex-common = { path = "../../../../../../common", default-features = false }
-ethrex-rlp = { path = "../../../../../../common/rlp" }
-ethrex-vm = { path = "../../../../../../vm", default-features = false, features = [
+ethrex-common = { path = "../../../common", default-features = false }
+ethrex-storage = { path = "../../../storage", default-features = false }
+ethrex-rlp = { path = "../../../common/rlp" }
+ethrex-vm = { path = "../../../vm", default-features = false, features = [
     "sp1",
 ] }
-ethrex-l2-common = { path = "../../../../../common", default-features = false }
+ethrex-blockchain = { path = "../../../blockchain", default-features = false }
+ethrex-l2-common = { path = "../../../l2/common", default-features = false }
 
 [patch.crates-io]
 sha2-v0-10-9 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.9-sp1-4.0.0" }
@@ -37,4 +39,4 @@ substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "patch-0.6.0-s
 bls12_381 = { git = "https://github.com/lambdaclass/bls12_381-patch/", branch = "expose-fp-struct" }
 
 [features]
-l2 = ["guest_program/l2", "sp1-zkvm/embedded"]
+l2 = ["ethrex-guest-program/l2", "sp1-zkvm/embedded"]

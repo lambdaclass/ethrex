@@ -112,7 +112,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          cargo test --workspace --exclude 'ethrex-l2*' --exclude ethrex-prover --exclude guest_program
+          cargo test --workspace --exclude 'ethrex-l2*' --exclude ethrex-prover --exclude ethrex-guest-program
 
       - name: Run Blockchain EF tests
         if: ${{ github.event_name != 'merge_group' }}

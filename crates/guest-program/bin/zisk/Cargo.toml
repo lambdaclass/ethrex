@@ -1,6 +1,6 @@
 [package]
 version = "9.0.0"
-name = "zkvm-zisk-program"
+name = "ethrex-guest-zisk"
 edition = "2024"
 
 [workspace]
@@ -10,11 +10,14 @@ ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v0.15.0" 
 sha2 = "0.10.9"
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 
-guest_program = { path = "../../", default-features = false }
-ethrex-vm = { path = "../../../../../../vm", default-features = false, features = [
+ethrex-guest-program = { path = "../../", default-features = false }
+ethrex-vm = { path = "../../../vm", default-features = false, features = [
     "zisk",
 ] }
-ethrex-common = { path = "../../../../../../common", default-features = false, features = [
+ethrex-common = { path = "../../../common", default-features = false, features = [
+    "zisk",
+] }
+ethrex-blockchain = { path = "../../../blockchain", default-features = false, features = [
     "zisk",
 ] }
 
@@ -28,4 +31,4 @@ tiny-keccak = { git = "https://github.com/0xPolygonHermez/zisk-patch-tiny-keccak
 kzg-rs = { git = "https://github.com/0xPolygonHermez/zisk-patch-kzg/", tag = "patch-0.2.7-zisk-0.15.0" }
 
 [features]
-l2 = ["guest_program/l2"]
+l2 = ["ethrex-guest-program/l2"]
