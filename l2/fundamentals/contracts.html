@@ -356,16 +356,25 @@
 </li>
 </ol>
 <h3 id="messenger"><a class="header" href="#messenger"><code>Messenger</code></a></h3>
-<p>The <code>Messenger</code> is a simple L2 smart contract that enables communication from L2 to L1 by emitting the data as <code>L1Message</code> events for sequencers to pick up.</p>
+<p>The <code>Messenger</code> is a simple L2 smart contract that enables cross-chain communication. It supports L2 to L1 messaging by emitting <code>L1Message</code> events for sequencers to pick up (currently used exclusively for withdrawals), and L2 to L2 messaging by emitting <code>L2Message</code> events.</p>
 <h4 id="state-variables-3"><a class="header" href="#state-variables-3"><strong>State Variables</strong></a></h4>
 <ul>
 <li><strong><code>lastMessageId</code></strong>: Counter that tracks the ID of the last emitted message (incremented before each message is sent)</li>
+<li><strong><code>BRIDGE</code></strong>: Constant address (<code>0x000000000000000000000000000000000000FFff</code>) representing the <code>CommonBridgeL2</code> contract</li>
 </ul>
 <h4 id="core-functionality-3"><a class="header" href="#core-functionality-3"><strong>Core Functionality</strong></a></h4>
 <ol>
-<li><strong>Message Sending</strong>
+<li>
+<p><strong>Message Sending</strong></p>
 <ul>
-<li><strong><code>sendMessageToL1()</code></strong>: Sends a message to L1 by emitting an <code>L1Message</code> event with the sender, data, and <code>lastMessageId</code></li>
+<li><strong><code>sendMessageToL1()</code></strong>: Sends a message to L1 by emitting an <code>L1Message</code> event with the sender, data, and <code>lastMessageId</code>. Only the <code>CommonBridgeL2</code> contract can call this function.</li>
+<li><strong><code>sendMessageToL2()</code></strong>: Sends a message to another L2 chain by emitting an <code>L2Message</code> event. Only the <code>CommonBridgeL2</code> contract can call this function.</li>
+</ul>
+</li>
+<li>
+<p><strong>Access Control</strong></p>
+<ul>
+<li><strong><code>onlyBridge</code></strong>: Modifier ensuring only the <code>CommonBridgeL2</code> contract can call messaging functions</li>
 </ul>
 </li>
 </ol>
