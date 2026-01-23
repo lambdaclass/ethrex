@@ -3,7 +3,7 @@ use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
-    discv4::peer_table::PeerTable,
+    peer_table::PeerTable,
     sync::SyncMode,
     types::{Node, NodeRecord},
 };
@@ -191,4 +191,8 @@ pub fn display_chain_initialization(genesis: &Genesis) {
     let hash = genesis.get_block().hash();
     info!("Genesis Block Hash: {hash:x}");
     info!("{border}");
+}
+
+pub fn is_memory_datadir(datadir: &Path) -> bool {
+    datadir.ends_with("memory")
 }
