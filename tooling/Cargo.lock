@@ -3425,7 +3425,6 @@ dependencies = [
  "ethrex-common 9.0.0",
  "ethrex-crypto",
  "ethrex-rlp 9.0.0",
- "ethrex-storage 9.0.0",
  "ethrex-trie 9.0.0",
  "ethrex-vm",
  "hex",
