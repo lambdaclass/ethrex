@@ -664,13 +664,7 @@ async fn test_erc20_roundtrip(
     )
     .await?;
 
-    // Calculate transaction size
-    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
-        data: Bytes::from(encode_calldata(signature, &data)?),
-        ..Default::default()
-    });
-    let transaction_size: u64 = tx.encode_to_vec().len().try_into().unwrap();
-
+    let transaction_size = calculate_transaction_size(encode_calldata(signature, &data)?.into());
     let approve_fees = get_fees_details_l2(&approve_receipt, &l2_client, transaction_size).await?;
 
     let signature = "withdrawERC20(address,address,address,uint256)";
@@ -691,13 +685,7 @@ async fn test_erc20_roundtrip(
     )
     .await?;
 
-    // Calculate transaction size
-    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
-        data: Bytes::from(encode_calldata(signature, &data)?),
-        ..Default::default()
-    });
-    let transaction_size: u64 = tx.encode_to_vec().len().try_into().unwrap();
-
+    let transaction_size = calculate_transaction_size(encode_calldata(signature, &data)?.into());
     let withdraw_fees =
         get_fees_details_l2(&withdraw_receipt, &l2_client, transaction_size).await?;
 
@@ -828,16 +816,7 @@ async fn test_erc20_withdraw_l1_address_mismatch(
 
     println!("test_erc20_withdraw_l1_address_mismatch: token l1={token_l1:x}, l2={token_l2:x}");
 
-    // Mint and approve tokens on L1
-    test_send(
-        &l1_client,
-        &rich_wallet_private_key,
-        token_l1,
-        "freeMint()",
-        &[],
-        "test_erc20_withdraw_l1_address_mismatch",
-    )
-    .await?;
+    // Approve tokens on L1 (tokens already minted during deployment)
     test_send(
         &l1_client,
         &rich_wallet_private_key,
@@ -887,18 +866,16 @@ async fn test_erc20_withdraw_l1_address_mismatch(
     )
     .await?;
 
-    // Build a dummy tx to calculate its encoded size (needed for fee calculation)
-    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
-        data: Bytes::from(encode_calldata(
+    let transaction_size = calculate_transaction_size(
+        encode_calldata(
             "approve(address,uint256)",
             &[
                 Value::Address(COMMON_BRIDGE_L2_ADDRESS),
                 Value::Uint(token_amount),
             ],
-        )?),
-        ..Default::default()
-    });
-    let transaction_size: u64 = tx.encode_to_vec().len().try_into().unwrap();
+        )?
+        .into(),
+    );
     let approve_fees = get_fees_details_l2(&approve_receipt, &l2_client, transaction_size).await?;
 
     // Use a wrong L1 address (not matching token_l2's l1Address())
@@ -953,13 +930,8 @@ async fn test_erc20_withdraw_l1_address_mismatch(
         "Expected withdrawal to revert due to L1 address mismatch, but it succeeded"
     );
 
-    // Calculate withdraw fees (reverted txs still pay gas).
-    // Build a dummy tx to calculate its encoded size (needed for fee calculation).
-    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
-        data: calldata,
-        ..Default::default()
-    });
-    let transaction_size: u64 = tx.encode_to_vec().len().try_into().unwrap();
+    // Calculate withdraw fees (reverted txs still pay gas)
+    let transaction_size = calculate_transaction_size(calldata);
     let withdraw_fees =
         get_fees_details_l2(&withdraw_receipt, &l2_client, transaction_size).await?;
 
@@ -1839,14 +1811,9 @@ async fn test_n_withdraws(
     let mut total_withdraw_fees_l2 = FeesDetails::default();
 
     // Calculate transaction size for withdrawals
-    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
-        data: Bytes::from(encode_calldata(
-            L2_WITHDRAW_SIGNATURE,
-            &[Value::Address(Address::random())],
-        )?),
-        ..Default::default()
-    });
-    let transaction_size: u64 = tx.encode_to_vec().len().try_into().unwrap();
+    let transaction_size = calculate_transaction_size(
+        encode_calldata(L2_WITHDRAW_SIGNATURE, &[Value::Address(Address::random())])?.into(),
+    );
 
     for receipt in &receipts {
         total_withdraw_fees_l2 += get_fees_details_l2(receipt, l2_client, transaction_size).await?;
@@ -2631,6 +2598,16 @@ async fn get_fees_details_l2(
         operator_fees,
         l1_fees,
     })
+}
+
+/// Calculates the encoded transaction size for fee calculation purposes.
+/// Takes calldata bytes and returns the encoded size of a dummy EIP1559 transaction.
+fn calculate_transaction_size(data: Bytes) -> u64 {
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        data,
+        ..Default::default()
+    });
+    tx.encode_to_vec().len().try_into().unwrap()
 }
 
 fn l1_client() -> EthClient {

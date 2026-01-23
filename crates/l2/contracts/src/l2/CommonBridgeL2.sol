@@ -75,7 +75,10 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         uint256 amount
     ) external onlySelf {
         IERC20L2 token = IERC20L2(tokenL2);
-        require(token.l1Address() == tokenL1);
+        require(
+            token.l1Address() == tokenL1,
+            "CommonBridgeL2: L1 address mismatch"
+        );
         token.crosschainMint(destination, amount);
     }
 
