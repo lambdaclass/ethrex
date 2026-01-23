@@ -1,5 +1,5 @@
 [package]
-name = "guest_program"
+name = "ethrex-guest-program"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -13,12 +13,14 @@ thiserror = "2.0.9"
 rkyv.workspace = true
 bytes.workspace = true
 
-ethrex-common = { path = "../../../../common/", default-features = false }
-ethrex-crypto = { path = "../../../../common/crypto", default-features = false }
-ethrex-vm = { path = "../../../../vm", default-features = false }
-ethrex-rlp = { path = "../../../../common/rlp", default-features = false }
-ethrex-trie = { path = "../../../../common/trie", default-features = false }
-ethrex-l2-common = { path = "../../../common", default-features = false }
+ethrex-common = { path = "../common/", default-features = false }
+ethrex-crypto = { path = "../common/crypto", default-features = false }
+ethrex-blockchain = { path = "../blockchain/", default-features = false }
+ethrex-vm = { path = "../vm", default-features = false }
+ethrex-rlp = { path = "../common/rlp", default-features = false }
+ethrex-storage = { path = "../storage", default-features = false }
+ethrex-trie = { path = "../common/trie", default-features = false }
+ethrex-l2-common = { path = "../l2/common", default-features = false }
 
 [build-dependencies]
 hex.workspace = true
@@ -34,7 +36,7 @@ bincode = "1.3"
 serde.workspace = true
 
 [package.metadata.risc0]
-methods = ["src/risc0"]
+methods = ["bin/risc0"]
 
 [features]
 default = ["secp256k1"]
@@ -57,7 +59,7 @@ secp256k1 = [
 ci = []
 
 # When this feature is enabled, the cycles used in the code inside the
-# report_cycles! macro will be reported to stdout when running inside SP1 zkVM.
+# report_cycles function will be reported to stdout when running inside SP1 zkVM.
 sp1-cycles = []
 
 [lib]
