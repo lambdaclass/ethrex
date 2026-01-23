@@ -437,6 +437,7 @@ pub fn calculate_base_fee_per_blob_gas(parent_excess_blob_gas: u64, update_fract
     if update_fraction == 0 {
         return U256::zero();
     }
+
     fake_exponential(
         U256::from(MIN_BASE_FEE_PER_BLOB_GAS),
         U256::from(parent_excess_blob_gas),
