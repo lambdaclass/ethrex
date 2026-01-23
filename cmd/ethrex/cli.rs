@@ -248,9 +248,9 @@ pub struct Options {
     pub discv4_enabled: bool,
     #[arg(
         long = "p2p.discv5",
-        default_value_t = false,
+        default_value_t = true,
         action = ArgAction::Set,
-        help = "Enable discv5 discovery (experimental).",
+        help = "Enable discv5 discovery.",
         help_heading = "P2P options"
     )]
     pub discv5_enabled: bool,
@@ -327,7 +327,7 @@ impl Options {
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
             discv4_enabled: true,
-            discv5_enabled: false,
+            discv5_enabled: true,
             mempool_max_size: 10_000,
             ..Default::default()
         }
@@ -349,7 +349,7 @@ impl Options {
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
             discv4_enabled: true,
-            discv5_enabled: false,
+            discv5_enabled: true,
             mempool_max_size: 10_000,
             ..Default::default()
         }
@@ -375,7 +375,7 @@ impl Default for Options {
             p2p_port: Default::default(),
             discovery_port: Default::default(),
             discv4_enabled: true,
-            discv5_enabled: false,
+            discv5_enabled: true,
             network: Default::default(),
             bootnodes: Default::default(),
             datadir: Default::default(),
