@@ -32,12 +32,12 @@ The verification key that goes on-chain is obtained when you build the prover.
 
 For SP1 it is stored at:
 
-  - `crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254`.
+  - `crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254`.
 
-  - If proving with Aligned, use the `u32` form generated alongside it at `crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32`.
+  - If proving with Aligned, use the `u32` form generated alongside it at `crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32`.
 
 For RISC0 it is stored at:
-  - `crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk`
+  - `crates/guest-program/bin/risc0/out/riscv32im-risc0-vk`
 
 
 ## Upgrade sequencer with zero downtime
