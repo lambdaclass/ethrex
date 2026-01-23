@@ -28,6 +28,8 @@ pub trait Database: Send + Sync {
 /// database/trie lookups when multiple transactions touch the same accounts.
 ///
 /// Thread-safe via RwLock - optimized for read-heavy concurrent access.
+///
+/// This caching database is inspired by reth's overlay/proof worker cache.
 pub struct CachingDatabase {
     inner: Arc<dyn Database>,
     /// Cached account states (balance, nonce, code_hash, storage_root)
