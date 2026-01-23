@@ -143,7 +143,9 @@ impl Memory {
     #[inline(always)]
     pub fn load_word(&mut self, offset: usize) -> Result<U256, VMError> {
         let value: [u8; 32] = self.load_range_const(offset)?;
-        Ok(U256::from_be_bytes(value))
+        // SAFETY: slice is exactly 32 bytes which is the required size for U256
+        #[expect(unsafe_code)]
+        Ok(unsafe { U256::try_from_be_slice(&value).unwrap_unchecked() })
     }
 
     /// Stores the given data and data size at the given offset.

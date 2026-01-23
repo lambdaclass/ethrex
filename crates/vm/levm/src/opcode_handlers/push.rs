@@ -24,7 +24,11 @@ impl<'a> VM<'a> {
             // Create a 32-byte buffer with zero padding on the left
             let mut padded = [0u8; 32];
             padded[32 - N..].copy_from_slice(slice);
-            U256::from_be_bytes(padded)
+            // SAFETY: slice is exactly 32 bytes which is the required size for U256
+            #[expect(unsafe_code)]
+            unsafe {
+                U256::try_from_be_slice(&padded).unwrap_unchecked()
+            }
         } else {
             // NOTE: this isn't exactly correct, since a PUSHN with insufficient bytes should pad with zeros,
             // but if we're out of bytes, the next instruction will halt, discarding the stack anyway.

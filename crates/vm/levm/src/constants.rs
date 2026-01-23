@@ -73,10 +73,15 @@ pub const VALID_BLOB_PREFIXES: [u8; 2] = [0x01, 0x02];
 pub const LAST_AVAILABLE_BLOCK_LIMIT: U256 = U256::from_limbs([256, 0, 0, 0]);
 
 // EIP7702 - EOA Load Code
-pub static SECP256K1_ORDER: LazyLock<U256> = LazyLock::new(||
-        // we use the k256 crate instead of the secp256k1 because the latter is optional
-        // while the former is not, this is to avoid a conditional compilation attribute.
-        U256::from_be_slice(&k256::Secp256k1::ORDER.to_be_bytes()));
+pub static SECP256K1_ORDER: LazyLock<U256> = LazyLock::new(|| {
+    // we use the k256 crate instead of the secp256k1 because the latter is optional
+    // while the former is not, this is to avoid a conditional compilation attribute.
+    // SAFETY: to_be_bytes returns exactly 32 bytes which is the required size for U256
+    #[expect(unsafe_code)]
+    unsafe {
+        U256::try_from_be_slice(&k256::Secp256k1::ORDER.to_be_bytes()).unwrap_unchecked()
+    }
+});
 pub static SECP256K1_ORDER_OVER2: std::sync::LazyLock<U256> =
     LazyLock::new(|| *SECP256K1_ORDER / U256::from(2));
 pub const MAGIC: u8 = 0x05;

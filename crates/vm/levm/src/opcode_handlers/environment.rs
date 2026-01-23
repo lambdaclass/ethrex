@@ -108,7 +108,9 @@ impl<'a> VM<'a> {
             }
         }
 
-        let result = U256::from_be_bytes(data);
+        // SAFETY: slice is exactly 32 bytes which is the required size for U256
+        #[expect(unsafe_code)]
+        let result = unsafe { U256::try_from_be_slice(&data).unwrap_unchecked() };
 
         current_call_frame.stack.push(result)?;
 
@@ -404,7 +406,9 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        let hash = U256::from_be_bytes(account_code_hash);
+        // SAFETY: slice is exactly 32 bytes which is the required size for U256
+        #[expect(unsafe_code)]
+        let hash = unsafe { U256::try_from_be_slice(&account_code_hash).unwrap_unchecked() };
         current_call_frame.stack.push(hash)?;
 
         Ok(OpcodeResult::Continue)

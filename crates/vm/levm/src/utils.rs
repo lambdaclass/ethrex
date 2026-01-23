@@ -35,7 +35,11 @@ pub fn address_to_word(address: Address) -> U256 {
         *word_byte = *address_byte;
     }
 
-    U256::from_be_bytes(word)
+    // SAFETY: slice is exactly 32 bytes which is the required size for U256
+    #[expect(unsafe_code)]
+    unsafe {
+        U256::try_from_be_slice(&word).unwrap_unchecked()
+    }
 }
 
 /// Calculates the address of a new contract using the CREATE2 opcode as follows

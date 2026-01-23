@@ -33,9 +33,10 @@ impl<'a> VM<'a> {
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
         let block_hash = self.db.store.get_block_hash(block_number)?;
-        self.current_call_frame
-            .stack
-            .push(U256::from_be_bytes(block_hash.to_fixed_bytes()))?;
+        // SAFETY: to_fixed_bytes returns exactly 32 bytes which is the required size for U256
+        #[expect(unsafe_code)]
+        let hash = unsafe { U256::try_from_be_slice(&block_hash.to_fixed_bytes()).unwrap_unchecked() };
+        self.current_call_frame.stack.push(hash)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -77,9 +78,10 @@ impl<'a> VM<'a> {
     pub fn op_prevrandao(&mut self) -> Result<OpcodeResult, VMError> {
         // https://eips.ethereum.org/EIPS/eip-4399
         // After Paris the prev randao is the prev_randao (or current_random) field
-        let randao = U256::from_be_bytes(
-            self.env.prev_randao.unwrap_or_default().to_fixed_bytes(),
-        );
+        let bytes = self.env.prev_randao.unwrap_or_default().to_fixed_bytes();
+        // SAFETY: to_fixed_bytes returns exactly 32 bytes which is the required size for U256
+        #[expect(unsafe_code)]
+        let randao = unsafe { U256::try_from_be_slice(&bytes).unwrap_unchecked() };
 
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::PREVRANDAO)?;
@@ -156,7 +158,10 @@ impl<'a> VM<'a> {
         //This should never fail because we check if the index fits above
         #[expect(unsafe_code, reason = "bounds checked beforehand already")]
         let blob_hash = unsafe { blob_hashes.get_unchecked(index) };
-        let hash = U256::from_be_bytes(blob_hash.to_fixed_bytes());
+        let bytes = blob_hash.to_fixed_bytes();
+        // SAFETY: to_fixed_bytes returns exactly 32 bytes which is the required size for U256
+        #[expect(unsafe_code)]
+        let hash = unsafe { U256::try_from_be_slice(&bytes).unwrap_unchecked() };
 
         self.current_call_frame.stack.push(hash)?;
 
