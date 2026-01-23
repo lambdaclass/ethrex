@@ -52,7 +52,6 @@ The workflow in `.github/workflows/pr_upgradeability.yaml` runs on PRs and compa
 upgradeable contracts against `main`. It compiles Hardhat in the PR and in a
 `main` worktree, copies the `build-info` from `main`, and runs
 `npm run validate:upgrades` to check storage layout compatibility.
-Dummy examples in `crates/l2/contracts/src/example/**` are excluded.
 
 ## Environment overrides
 

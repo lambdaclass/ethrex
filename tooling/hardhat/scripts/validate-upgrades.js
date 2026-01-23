@@ -42,6 +42,7 @@ async function main() {
 
   const exclude = [
     "crates/l2/contracts/src/example/**",
+    "fixtures/contracts/upgradeability/**",
     "@openzeppelin/**",
     "**/node_modules/**"
   ];
