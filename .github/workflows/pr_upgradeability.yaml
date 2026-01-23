@@ -32,6 +32,10 @@ jobs:
           npm install
           npm run compile
 
+      - name: Run Hardhat tests
+        working-directory: tooling/hardhat
+        run: npm test
+
       - name: Add main worktree
         run: |
           git fetch origin main
