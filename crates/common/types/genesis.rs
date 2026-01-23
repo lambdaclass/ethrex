@@ -139,6 +139,8 @@ pub struct BlobSchedule {
     pub bpo4: Option<ForkBlobSchedule>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bpo5: Option<ForkBlobSchedule>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amsterdam: Option<ForkBlobSchedule>,
 }
 
 impl Default for BlobSchedule {
@@ -152,6 +154,7 @@ impl Default for BlobSchedule {
             bpo3: None,
             bpo4: None,
             bpo5: None,
+            amsterdam: None,
         }
     }
 }
@@ -253,6 +256,8 @@ pub struct ChainConfig {
     pub bpo4_time: Option<u64>,
     pub bpo5_time: Option<u64>,
 
+    pub amsterdam_time: Option<u64>,
+
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     pub terminal_total_difficulty: Option<u128>,
     /// Network has already passed the terminal total difficult
@@ -307,10 +312,10 @@ pub enum Fork {
     Osaka = 19,
     BPO1 = 20,
     BPO2 = 21,
-    Amsterdam = 22,
-    BPO3 = 23,
-    BPO4 = 24,
-    BPO5 = 25,
+    BPO3 = 22,
+    BPO4 = 23,
+    BPO5 = 24,
+    Amsterdam = 25,
 }
 
 impl From<Fork> for &str {
@@ -342,17 +347,23 @@ impl From<Fork> for &str {
             Fork::BPO3 => "BPO3",
             Fork::BPO4 => "BPO4",
             Fork::BPO5 => "BPO5",
+            Fork::Amsterdam => "Amsterdam",
         }
     }
 }
 
 impl ChainConfig {
-    pub fn is_bpo1_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo1_time.is_some_and(|time| time <= block_timestamp)
+    pub fn is_amsterdam_activated(&self, block_timestamp: u64) -> bool {
+        self.amsterdam_time
+            .is_some_and(|time| time <= block_timestamp)
     }
 
-    pub fn is_bpo2_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo2_time.is_some_and(|time| time <= block_timestamp)
+    pub fn is_bpo5_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo5_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    pub fn is_bpo4_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo4_time.is_some_and(|time| time <= block_timestamp)
     }
 
     pub fn is_amsterdam_activated(&self, block_timestamp: u64) -> bool {
@@ -364,12 +375,12 @@ impl ChainConfig {
         self.bpo3_time.is_some_and(|time| time <= block_timestamp)
     }
 
-    pub fn is_bpo4_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo4_time.is_some_and(|time| time <= block_timestamp)
+    pub fn is_bpo2_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo2_time.is_some_and(|time| time <= block_timestamp)
     }
 
-    pub fn is_bpo5_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo5_time.is_some_and(|time| time <= block_timestamp)
+    pub fn is_bpo1_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo1_time.is_some_and(|time| time <= block_timestamp)
     }
 
     pub fn is_osaka_activated(&self, block_timestamp: u64) -> bool {
@@ -411,6 +422,7 @@ impl ChainConfig {
             ("Prague", self.prague_time),
             ("Verkle", self.verkle_time),
             ("Osaka", self.osaka_time),
+            ("Amsterdam", self.amsterdam_time),
         ];
 
         let active_forks: Vec<_> = post_merge_forks
@@ -430,7 +442,9 @@ impl ChainConfig {
     }
 
     pub fn get_fork(&self, block_timestamp: u64) -> Fork {
-        if self.is_bpo5_activated(block_timestamp) {
+        if self.is_amsterdam_activated(block_timestamp) {
+            Fork::Amsterdam
+        } else if self.is_bpo5_activated(block_timestamp) {
             Fork::BPO5
         } else if self.is_bpo4_activated(block_timestamp) {
             Fork::BPO4
@@ -456,7 +470,9 @@ impl ChainConfig {
     }
 
     pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
-        if self.is_bpo5_activated(block_timestamp) {
+        if self.is_amsterdam_activated(block_timestamp) {
+            Some(self.blob_schedule.amsterdam.unwrap_or_default())
+        } else if self.is_bpo5_activated(block_timestamp) {
             Some(self.blob_schedule.bpo5.unwrap_or_default())
         } else if self.is_bpo4_activated(block_timestamp) {
             Some(self.blob_schedule.bpo4.unwrap_or_default())
@@ -484,8 +500,10 @@ impl ChainConfig {
     }
 
     pub fn next_fork(&self, block_timestamp: u64) -> Option<Fork> {
-        let next = if self.is_bpo5_activated(block_timestamp) {
+        let next = if self.is_amsterdam_activated(block_timestamp) {
             None
+        } else if self.is_bpo5_activated(block_timestamp) && self.amsterdam_time.is_some() {
+            Some(Fork::Amsterdam)
         } else if self.is_bpo4_activated(block_timestamp) && self.bpo5_time.is_some() {
             Some(Fork::BPO5)
         } else if self.is_bpo3_activated(block_timestamp) && self.bpo4_time.is_some() {
@@ -514,7 +532,9 @@ impl ChainConfig {
     }
 
     pub fn get_last_scheduled_fork(&self) -> Fork {
-        if self.bpo5_time.is_some() {
+        if self.amsterdam_time.is_some() {
+            Fork::Amsterdam
+        } else if self.bpo5_time.is_some() {
             Fork::BPO5
         } else if self.bpo4_time.is_some() {
             Fork::BPO4
@@ -548,6 +568,7 @@ impl ChainConfig {
             Fork::BPO3 => self.bpo3_time,
             Fork::BPO4 => self.bpo4_time,
             Fork::BPO5 => self.bpo5_time,
+            Fork::Amsterdam => self.amsterdam_time,
             Fork::Homestead => self.homestead_block,
             Fork::DaoFork => self.dao_fork_block,
             Fork::Byzantium => self.byzantium_block,
@@ -576,6 +597,7 @@ impl ChainConfig {
             Fork::BPO3 => self.blob_schedule.bpo3,
             Fork::BPO4 => self.blob_schedule.bpo4,
             Fork::BPO5 => self.blob_schedule.bpo5,
+            Fork::Amsterdam => self.blob_schedule.amsterdam,
             _ => None,
         }
     }
@@ -621,6 +643,7 @@ impl ChainConfig {
             self.bpo3_time,
             self.bpo4_time,
             self.bpo5_time,
+            self.amsterdam_time,
             self.verkle_time,
         ]
         .into_iter()
