@@ -9,7 +9,7 @@ use std::{
     process::{Command, Stdio},
     time::{Duration, Instant},
 };
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::backend::{BackendError, ProverBackend};
 
@@ -191,6 +191,7 @@ impl ZiskBackend {
                 output_dir = %output_dir.display(),
                 "ZisK prove complete; starting snark wrapping"
             );
+            std::fs::create_dir_all(cwd.join("tmp")).map_err(BackendError::proving)?;
             std::fs::create_dir_all(output_dir.join("proofs")).map_err(BackendError::proving)?;
             let snark_key_path = resolve_proving_key_snark_path();
             let snark_key_path_str = snark_key_path.to_string_lossy();
@@ -204,12 +205,18 @@ impl ZiskBackend {
                 "-o",
                 OUTPUT_DIR_PATH,
             ];
+            debug!(?args, "Running cargo-zisk prove-snark");
             let snark = Command::new("cargo-zisk")
-                .args(args)
+                .args(args.as_slice())
                 .stdin(Stdio::inherit())
-                .stderr(Stdio::inherit())
                 .output()
                 .map_err(BackendError::proving)?;
+
+            debug!(
+                stdout = %String::from_utf8_lossy(&snark.stdout),
+                stderr = %String::from_utf8_lossy(&snark.stderr),
+                "cargo-zisk prove-snark output"
+            );
 
             if !snark.status.success() {
                 return Err(BackendError::proving(format!(
