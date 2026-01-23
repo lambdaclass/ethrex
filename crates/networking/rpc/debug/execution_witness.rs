@@ -47,11 +47,19 @@ impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
     fn try_from(value: ExecutionWitness) -> Result<Self, Self::Error> {
         let mut nodes = Vec::new();
         if let Some(state_trie) = &value.state_trie {
-            // EncodedTrie stores nodes in encoded_data, extract them
-            nodes.push(state_trie.encoded_data.clone());
+            // Extract individual encoded nodes from the contiguous buffer
+            for node in &state_trie.nodes {
+                if let Some((start, end)) = node.encoded_range {
+                    nodes.push(state_trie.encoded_data[start..end].to_vec());
+                }
+            }
         }
         for storage_trie in value.storage_tries.values() {
-            nodes.push(storage_trie.encoded_data.clone());
+            for node in &storage_trie.nodes {
+                if let Some((start, end)) = node.encoded_range {
+                    nodes.push(storage_trie.encoded_data[start..end].to_vec());
+                }
+            }
         }
         Ok(Self {
             state: nodes.into_iter().map(Bytes::from).collect(),
