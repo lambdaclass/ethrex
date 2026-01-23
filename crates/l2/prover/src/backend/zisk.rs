@@ -15,7 +15,7 @@ use crate::backend::{BackendError, ProverBackend};
 
 const INPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_input.bin");
 const OUTPUT_DIR_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output");
-const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zkvm-zisk-program");
+const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/ethrex-guest-zisk");
 
 const ZISK_ELF_ENV: &str = "ZISK_ELF_PATH";
 const ZISK_HOME_ENV: &str = "ZISK_HOME";
