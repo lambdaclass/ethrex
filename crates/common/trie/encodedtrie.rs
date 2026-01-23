@@ -109,6 +109,8 @@ pub enum EncodedTrieError {
     AuthFailed(&'static str),
     #[error("Tried to access data of a {0} with an incorrect node type")]
     IncorrectNodeTypeData(&'static str),
+    #[error("{0}")]
+    Custom(String),
     #[error("RLPDecodeError")]
     RLPDecodeError(#[from] RLPDecodeError),
 }
@@ -710,35 +712,60 @@ impl EncodedTrie {
 
             let hash = match &trie.nodes[index].node_type {
                 NodeType::Leaf { partial, value } => {
-                    if partial.is_some() || value.is_some() {
-                        // re-encode with new values
+                    // Check if node has encoded data
+                    if trie.nodes[index].encoded_range.is_some() {
+                        if partial.is_some() || value.is_some() {
+                            // re-encode with overrides
+                            let (partial, value) = trie.get_leaf_data(index)?;
+                            let encoded = encode_leaf(&partial, value);
+                            Some(NodeHash::from_encoded(&encoded))
+                        } else {
+                            // use already encoded data without overrides
+                            Some(trie.hash_encoded_data(index)?)
+                        }
+                    } else {
+                        // No encoded data - must reconstruct from overrides
                         let (partial, value) = trie.get_leaf_data(index)?;
                         let encoded = encode_leaf(&partial, value);
                         Some(NodeHash::from_encoded(&encoded))
-                    } else {
-                        // use already encoded
-                        Some(trie.hash_encoded_data(index)?)
                     }
                 }
                 NodeType::Extension {
                     prefix,
                     child_index,
-                } => match (prefix, child_index) {
-                    (None, None) => Some(trie.hash_encoded_data(index)?),
-                    (_, Some(child_index)) => {
-                        // recurse to calculate the child hash and re-encode
-                        let child_hash = trie.get_hash(*child_index)?;
-                        let prefix = trie.get_extension_data(index)?;
-                        let encoded = encode_extension(&prefix, child_hash);
-                        Some(NodeHash::from_encoded(&encoded))
+                } => {
+                    if trie.nodes[index].encoded_range.is_some() {
+                        match (prefix, child_index) {
+                            (None, None) => Some(trie.hash_encoded_data(index)?),
+                            (_, Some(child_index)) => {
+                                // recurse to calculate the child hash and re-encode
+                                let child_hash = trie.get_hash(*child_index)?;
+                                let prefix = trie.get_extension_data(index)?;
+                                let encoded = encode_extension(&prefix, child_hash);
+                                Some(NodeHash::from_encoded(&encoded))
+                            }
+                            (Some(prefix), None) => {
+                                // get encoded child hash and re-encode
+                                let child_hash = trie.get_extension_encoded_child_hash(index)?;
+                                let encoded = encode_extension(prefix, child_hash);
+                                Some(NodeHash::from_encoded(&encoded))
+                            }
+                        }
+                    } else {
+                        // No encoded data - must reconstruct from overrides
+                        if let Some(child_index) = child_index {
+                            let child_hash = trie.get_hash(*child_index)?;
+                            let prefix = trie.get_extension_data(index)?;
+                            let encoded = encode_extension(&prefix, child_hash);
+                            Some(NodeHash::from_encoded(&encoded))
+                        } else {
+                            // Extension node must have a child
+                            return Err(EncodedTrieError::Custom(
+                                "Extension node without child or encoded data".to_string(),
+                            ));
+                        }
                     }
-                    (Some(prefix), None) => {
-                        // get encoded child hash and re-encode
-                        let child_hash = trie.get_extension_encoded_child_hash(index)?;
-                        let encoded = encode_extension(prefix, child_hash);
-                        Some(NodeHash::from_encoded(&encoded))
-                    }
-                },
+                }
                 NodeType::Branch { children_indices } => {
                     let mut any_pruned = false;
                     for child_index in children_indices.iter().flatten() {
