@@ -51,6 +51,7 @@ pub struct Genesis {
     #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
     pub excess_blob_gas: Option<u64>,
     pub requests_hash: Option<H256>,
+    pub block_access_list_hash: Option<H256>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -709,6 +710,7 @@ impl Genesis {
             excess_blob_gas,
             parent_beacon_block_root,
             requests_hash,
+            block_access_list_hash: self.block_access_list_hash,
             ..Default::default()
         }
     }

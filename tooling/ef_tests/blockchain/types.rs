@@ -188,6 +188,7 @@ impl TestUnit {
                 .excess_blob_gas
                 .map(|v| v.as_u64()),
             requests_hash: self.genesis_block_header.requests_hash,
+            block_access_list_hash: self.genesis_block_header.block_access_list_hash,
         }
     }
 }
