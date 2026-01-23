@@ -5,6 +5,7 @@ use std::{
 };
 
 use ethrex_common::{Address, U256};
+use ethrex_guest_program::{ZKVM_RISC0_PROGRAM_VK, ZKVM_SP1_PROGRAM_ELF};
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProverType},
@@ -16,10 +17,9 @@ use ethrex_metrics::l2::metrics::METRICS;
 use ethrex_metrics::metrics;
 use ethrex_rpc::{
     EthClient,
-    clients::{EthClientError, eth::errors::EstimateGasError},
+    clients::{EthClientError, eth::errors::RpcRequestError},
 };
 use ethrex_storage_rollup::StoreRollup;
-use guest_program::{ZKVM_RISC0_PROGRAM_VK, ZKVM_SP1_PROGRAM_ELF};
 use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
@@ -49,7 +49,8 @@ use aligned_sdk::{
 
 use ethers::signers::{Signer as EthersSigner, Wallet};
 
-const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes,bytes,bytes,bytes)";
+const VERIFY_FUNCTION_SIGNATURE_BASED: &str = "verifyBatch(uint256,bytes,bytes,bytes)";
+const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes,bytes)";
 
 #[derive(Clone)]
 pub enum InMessage {
@@ -82,6 +83,7 @@ pub struct L1ProofSender {
     /// Directory where checkpoints are stored.
     checkpoints_dir: PathBuf,
     aligned_mode: bool,
+    based: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -109,6 +111,7 @@ impl L1ProofSender {
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
         checkpoints_dir: PathBuf,
+        based: bool,
     ) -> Result<Self, ProofSenderError> {
         let eth_client = EthClient::new_with_config(
             eth_cfg.rpc_url.clone(),
@@ -138,6 +141,7 @@ impl L1ProofSender {
             fee_estimate,
             checkpoints_dir,
             aligned_mode: aligned_cfg.aligned_mode,
+            based,
         })
     }
 
@@ -157,6 +161,7 @@ impl L1ProofSender {
             rollup_store,
             needed_proof_types,
             checkpoints_dir,
+            cfg.based.enabled,
         )
         .await?;
         let mut l1_proof_sender = L1ProofSender::start(state);
@@ -380,27 +385,56 @@ impl L1ProofSender {
             "Sending batch verification transaction to L1"
         );
 
-        let calldata_values = [
-            &[Value::Uint(U256::from(batch_number))],
-            proofs
-                .get(&ProverType::RISC0)
-                .map(|proof| proof.calldata())
-                .unwrap_or(ProverType::RISC0.empty_calldata())
-                .as_slice(),
-            proofs
-                .get(&ProverType::SP1)
-                .map(|proof| proof.calldata())
-                .unwrap_or(ProverType::SP1.empty_calldata())
-                .as_slice(),
-            proofs
-                .get(&ProverType::TDX)
-                .map(|proof| proof.calldata())
-                .unwrap_or(ProverType::TDX.empty_calldata())
-                .as_slice(),
-        ]
-        .concat();
+        let (verify_signature, calldata_values) = if self.based {
+            let calldata_values = [
+                &[Value::Uint(U256::from(batch_number))],
+                proofs
+                    .get(&ProverType::RISC0)
+                    .map(|proof| proof.calldata())
+                    .unwrap_or(ProverType::RISC0.empty_calldata())
+                    .as_slice(),
+                proofs
+                    .get(&ProverType::SP1)
+                    .map(|proof| proof.calldata())
+                    .unwrap_or(ProverType::SP1.empty_calldata())
+                    .as_slice(),
+                proofs
+                    .get(&ProverType::TDX)
+                    .map(|proof| proof.calldata())
+                    .unwrap_or(ProverType::TDX.empty_calldata())
+                    .as_slice(),
+            ]
+            .concat();
+            (VERIFY_FUNCTION_SIGNATURE_BASED, calldata_values)
+        } else {
+            let calldata_values = [
+                &[Value::Uint(U256::from(batch_number))],
+                proofs
+                    .get(&ProverType::RISC0)
+                    .map(|proof| proof.calldata())
+                    .unwrap_or(ProverType::RISC0.empty_calldata())
+                    .as_slice(),
+                proofs
+                    .get(&ProverType::SP1)
+                    .map(|proof| proof.calldata())
+                    .unwrap_or(ProverType::SP1.empty_calldata())
+                    .as_slice(),
+                proofs
+                    .get(&ProverType::ZisK)
+                    .map(|proof| proof.calldata())
+                    .unwrap_or(ProverType::ZisK.empty_calldata())
+                    .as_slice(),
+                proofs
+                    .get(&ProverType::TDX)
+                    .map(|proof| proof.calldata())
+                    .unwrap_or(ProverType::TDX.empty_calldata())
+                    .as_slice(),
+            ]
+            .concat();
+            (VERIFY_FUNCTION_SIGNATURE, calldata_values)
+        };
 
-        let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
+        let calldata = encode_calldata(verify_signature, &calldata_values)?;
 
         // Based won't have timelock address until we implement it on it. For the meantime if it's None (only happens in based) we use the OCP
         let target_address = self
@@ -410,20 +444,20 @@ impl L1ProofSender {
         let send_verify_tx_result =
             send_verify_tx(calldata, &self.eth_client, target_address, &self.signer).await;
 
-        if let Err(EthClientError::EstimateGasError(EstimateGasError::RPCError(error))) =
+        if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError { message, .. })) =
             send_verify_tx_result.as_ref()
         {
-            if error.contains("Invalid TDX proof") {
+            if message.contains("Invalid TDX proof") {
                 warn!("Deleting invalid TDX proof");
                 self.rollup_store
                     .delete_proof_by_batch_and_type(batch_number, ProverType::TDX)
                     .await?;
-            } else if error.contains("Invalid RISC0 proof") {
+            } else if message.contains("Invalid RISC0 proof") {
                 warn!("Deleting invalid RISC0 proof");
                 self.rollup_store
                     .delete_proof_by_batch_and_type(batch_number, ProverType::RISC0)
                     .await?;
-            } else if error.contains("Invalid SP1 proof") {
+            } else if message.contains("Invalid SP1 proof") {
                 warn!("Deleting invalid SP1 proof");
                 self.rollup_store
                     .delete_proof_by_batch_and_type(batch_number, ProverType::SP1)

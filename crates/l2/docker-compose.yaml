@@ -11,8 +11,8 @@ services:
     environment:
       - ETHREX_LOG_LEVEL
     volumes:
-      - ../../fixtures/genesis/l1-dev.json:/genesis/l1-dev.json
-    command: --network /genesis/l1-dev.json --http.addr 0.0.0.0 --http.port 8545 --dev
+      - ../../fixtures/genesis/l1.json:/genesis/l1.json
+    command: --network /genesis/l1.json --http.addr 0.0.0.0 --http.port 8545 --dev
 
   contract_deployer:
     container_name: contract_deployer
@@ -26,20 +26,20 @@ services:
       # NOTE: DOCKER_ETHREX_WORKDIR is defined in crates/l2/Makefile
       - ./contracts:${DOCKER_ETHREX_WORKDIR}/contracts
       - env:/env/
-      - ../../fixtures/genesis/l1-dev.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l1-dev.json
+      - ../../fixtures/genesis/l1.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l1.json
       - ../../fixtures/genesis/l2.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l2.json
       - ../../fixtures/keys/private_keys_l1.txt:${DOCKER_ETHREX_WORKDIR}/fixtures/keys/private_keys_l1.txt
-      - ./prover/src/guest_program/src/sp1/out/:${DOCKER_ETHREX_WORKDIR}/sp1_out
-      - ./prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32:${DOCKER_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk-u32
-      - ./prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254:${DOCKER_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk-bn254
-      - ./prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk:${DOCKER_ETHREX_WORKDIR}/riscv32im-risc0-vk
+      - ../guest-program/bin/sp1/out/:${DOCKER_ETHREX_WORKDIR}/sp1_out
+      - ../guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32:${DOCKER_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk-u32
+      - ../guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254:${DOCKER_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk-bn254
+      - ../guest-program/bin/risc0/out/riscv32im-risc0-vk:${DOCKER_ETHREX_WORKDIR}/riscv32im-risc0-vk
     environment:
       - ETHREX_ETH_RPC_URL=http://ethrex_l1:8545
       # NOTE: The paths in the env variables must match those
       # specified in the `volumes:` section
       - ETHREX_DEPLOYER_L1_PRIVATE_KEY=${ETHREX_DEPLOYER_PRIVATE_KEY:-0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924}
       - ETHREX_DEPLOYER_ENV_FILE_PATH=/env/.env
-      - ETHREX_DEPLOYER_GENESIS_L1_PATH=${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l1-dev.json
+      - ETHREX_DEPLOYER_GENESIS_L1_PATH=${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l1.json
       - ETHREX_DEPLOYER_GENESIS_L2_PATH=${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l2.json
       - ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=${DOCKER_ETHREX_WORKDIR}/fixtures/keys/private_keys_l1.txt
       - ETHREX_DEPLOYER_DEPLOY_RICH=${ETHREX_DEPLOYER_DEPLOY_RICH:-true}

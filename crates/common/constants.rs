@@ -58,3 +58,7 @@ pub const RLP_BLOCK_SIZE_SAFETY_MARGIN: u64 = 2_097_152;
 pub const MAX_RLP_BLOCK_SIZE: u64 = MAX_BLOCK_SIZE - RLP_BLOCK_SIZE_SAFETY_MARGIN;
 // Blob base cost defined in EIP-7918
 pub const BLOB_BASE_COST: u64 = 8192;
+
+// === EIP-7825 constants ===
+// https://eips.ethereum.org/EIPS/eip-7825
+pub const POST_OSAKA_GAS_LIMIT_CAP: u64 = 16777216;

@@ -78,21 +78,3 @@ pub fn truncate_array<const N: usize, const M: usize>(data: [u8; N]) -> [u8; M] 
     res.copy_from_slice(&data[..M]);
     res
 }
-
-#[cfg(test)]
-mod test {
-    use ethereum_types::U256;
-
-    use crate::utils::u256_to_big_endian;
-
-    #[test]
-    fn u256_to_big_endian_test() {
-        let a = u256_to_big_endian(U256::one());
-        let b = U256::one().to_big_endian();
-        assert_eq!(a, b);
-
-        let a = u256_to_big_endian(U256::max_value());
-        let b = U256::max_value().to_big_endian();
-        assert_eq!(a, b);
-    }
-}

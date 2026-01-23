@@ -14,12 +14,12 @@ lint-l1:
 
 lint-l2:
 	cargo clippy --all-targets -F debug,sync-test,l2,l2-sql \
-		--workspace --exclude ethrex-prover --exclude guest_program \
+		--workspace --exclude ethrex-prover --exclude ethrex-guest-program \
 		--release -- -D warnings
 
 lint-gpu:
 	cargo clippy --all-targets -F debug,sync-test,l2,l2-sql,,sp1,risc0,gpu \
-		--workspace --exclude ethrex-prover --exclude guest_program \
+		--workspace --exclude ethrex-prover --exclude ethrex-guest-program \
 		--release -- -D warnings
 
 lint: lint-l1 lint-l2 ## 🧹 Linter check
@@ -45,13 +45,9 @@ run-image: build-image ## 🏃 Run the Docker image
 	docker run --rm -p 127.0.0.1:8545:8545 ethrex:main --http.addr 0.0.0.0
 
 dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
-	cargo run --bin ethrex -- \
-			--network ./fixtures/genesis/l1.json \
-			--http.port 8545 \
-			--http.addr 0.0.0.0 \
-			--authrpc.port 8551 \
-			--dev \
-			--datadir memory
+	cargo run --release -- \
+		--dev \
+		--datadir memory
 
 ETHEREUM_PACKAGE_REVISION := 82e5a7178138d892c0c31c3839c89d53ffd42d9a
 ETHEREUM_PACKAGE_DIR := ethereum-package
@@ -203,10 +199,10 @@ docs-serve: mermaid-init.js mermaid.min.js ## 📚 Generate and serve the docume
 
 update-cargo-lock: ## 📦 Update Cargo.lock files
 	cargo tree
-	cargo tree --manifest-path crates/l2/prover/src/guest_program/src/sp1/Cargo.toml
-	cargo tree --manifest-path crates/l2/prover/src/guest_program/src/risc0/Cargo.toml
-	cargo tree --manifest-path crates/l2/prover/src/guest_program/src/zisk/Cargo.toml
-	cargo tree --manifest-path crates/l2/prover/src/guest_program/src/openvm/Cargo.toml
+	cargo tree --manifest-path crates/guest-program/bin/sp1/Cargo.toml
+	cargo tree --manifest-path crates/guest-program/bin/risc0/Cargo.toml
+	cargo tree --manifest-path crates/guest-program/bin/zisk/Cargo.toml
+	cargo tree --manifest-path crates/guest-program/bin/openvm/Cargo.toml
 	cargo tree --manifest-path crates/l2/tee/quote-gen/Cargo.toml
 	cargo tree --manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml
 	cargo tree --manifest-path tooling/Cargo.toml
@@ -214,12 +210,12 @@ update-cargo-lock: ## 📦 Update Cargo.lock files
 
 check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
 	cargo metadata --locked > /dev/null
-	cargo metadata --locked --manifest-path crates/l2/prover/src/guest_program/src/sp1/Cargo.toml > /dev/null
-	cargo metadata --locked --manifest-path crates/l2/prover/src/guest_program/src/risc0/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path crates/guest-program/bin/sp1/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path crates/guest-program/bin/risc0/Cargo.toml > /dev/null
 	# We use metadata so we don't need to have the ZisK toolchain installed and verify compilation
 	# if changes made to the source code CI will run with the toolchain
-	cargo metadata --locked --manifest-path crates/l2/prover/src/guest_program/src/zisk/Cargo.toml > /dev/null
-	cargo metadata --locked --manifest-path crates/l2/prover/src/guest_program/src/openvm/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path crates/guest-program/bin/zisk/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path crates/guest-program/bin/openvm/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path crates/l2/tee/quote-gen/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path tooling/Cargo.toml > /dev/null

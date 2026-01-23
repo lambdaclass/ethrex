@@ -61,16 +61,16 @@ impl ProverType {
     pub fn empty_calldata(&self) -> Vec<Value> {
         match self {
             ProverType::RISC0 => {
-                vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
+                vec![Value::Bytes(vec![].into())]
             }
             ProverType::SP1 => {
-                vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
+                vec![Value::Bytes(vec![].into())]
             }
             ProverType::TDX => {
-                vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
+                vec![Value::Bytes(vec![].into())]
             }
             ProverType::ZisK => {
-                vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
+                vec![Value::Bytes(vec![].into())]
             }
             ProverType::Exec => unimplemented!("Doesn't need to generate an empty calldata."),
         }

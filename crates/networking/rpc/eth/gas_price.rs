@@ -1,13 +1,29 @@
+//! Gas price estimation for `eth_gasPrice` RPC method.
+//!
+//! This module implements the gas price oracle that estimates a reasonable
+//! gas price based on recent block history and network conditions.
+
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::utils::RpcErr;
 use ethrex_blockchain::BlockchainType;
 use serde_json::Value;
 
-// TODO: This does not need a struct,
-// but I'm leaving it like this for consistency
-// with the other RPC endpoints.
-// The handle function could simply be
-// a function called 'estimate'.
+/// Handler for the `eth_gasPrice` RPC method.
+///
+/// Returns the current gas price in wei as a hexadecimal string.
+/// The price is calculated as: `base_fee + estimated_priority_fee + operator_fee (L2 only)`.
+///
+/// # Algorithm
+///
+/// 1. Gets the base fee from the latest block header
+/// 2. Estimates a reasonable priority fee (gas tip) by analyzing recent transactions
+/// 3. For L2 nodes, adds the operator fee if configured
+///
+/// # Example Response
+///
+/// ```json
+/// "0x3b9aca00"  // 1 Gwei in hexadecimal
+/// ```
 #[derive(Debug, Clone)]
 pub struct GasPrice;
 
