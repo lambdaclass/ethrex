@@ -251,7 +251,6 @@ pub struct ChainConfig {
 
     pub bpo1_time: Option<u64>,
     pub bpo2_time: Option<u64>,
-    pub amsterdam_time: Option<u64>,
     pub bpo3_time: Option<u64>,
     pub bpo4_time: Option<u64>,
     pub bpo5_time: Option<u64>,
@@ -343,7 +342,6 @@ impl From<Fork> for &str {
             Fork::Osaka => "Osaka",
             Fork::BPO1 => "BPO1",
             Fork::BPO2 => "BPO2",
-            Fork::Amsterdam => "Amsterdam",
             Fork::BPO3 => "BPO3",
             Fork::BPO4 => "BPO4",
             Fork::BPO5 => "BPO5",
@@ -364,11 +362,6 @@ impl ChainConfig {
 
     pub fn is_bpo4_activated(&self, block_timestamp: u64) -> bool {
         self.bpo4_time.is_some_and(|time| time <= block_timestamp)
-    }
-
-    pub fn is_amsterdam_activated(&self, block_timestamp: u64) -> bool {
-        self.amsterdam_time
-            .is_some_and(|time| time <= block_timestamp)
     }
 
     pub fn is_bpo3_activated(&self, block_timestamp: u64) -> bool {
@@ -564,7 +557,6 @@ impl ChainConfig {
             Fork::Osaka => self.osaka_time,
             Fork::BPO1 => self.bpo1_time,
             Fork::BPO2 => self.bpo2_time,
-            Fork::Amsterdam => self.amsterdam_time,
             Fork::BPO3 => self.bpo3_time,
             Fork::BPO4 => self.bpo4_time,
             Fork::BPO5 => self.bpo5_time,
@@ -593,7 +585,6 @@ impl ChainConfig {
             Fork::Osaka => Some(self.blob_schedule.osaka),
             Fork::BPO1 => Some(self.blob_schedule.bpo1),
             Fork::BPO2 => Some(self.blob_schedule.bpo2),
-            Fork::Amsterdam => Some(self.blob_schedule.bpo2),
             Fork::BPO3 => self.blob_schedule.bpo3,
             Fork::BPO4 => self.blob_schedule.bpo4,
             Fork::BPO5 => self.blob_schedule.bpo5,
