@@ -1107,7 +1107,13 @@ mod test {
         // Verify get() works on deserialized trie
         for (key, value) in kv.iter() {
             let result = deserialized.get(key).unwrap();
-            assert_eq!(result, Some(value.as_slice()), "Key {:?} should return {:?}", key, value);
+            assert_eq!(
+                result,
+                Some(value.as_slice()),
+                "Key {:?} should return {:?}",
+                key,
+                value
+            );
         }
     }
 
