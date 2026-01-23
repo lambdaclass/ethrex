@@ -9,7 +9,7 @@ use ethrex_l2_common::{
     prover::{BatchProof, ProofCalldata, ProverType},
     utils::get_address_from_secret_key,
 };
-use guest_program::input::ProgramInput;
+use ethrex_guest_program::input::ProgramInput;
 use secp256k1::{Message, SecretKey, generate_keypair, rand};
 use sender::{get_batch, submit_proof, submit_quote};
 use std::time::Duration;
@@ -38,7 +38,7 @@ fn sign_eip191(msg: &[u8], private_key: &SecretKey) -> Vec<u8> {
 }
 
 fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
-    let output = guest_program::execution::execution_program(input).map_err(|e| e.to_string())?;
+    let output = ethrex_guest_program::execution::execution_program(input).map_err(|e| e.to_string())?;
 
     Ok(output.encode())
 }

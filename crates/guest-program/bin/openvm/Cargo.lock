@@ -947,6 +947,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-guest-openvm"
+version = "9.0.0"
+dependencies = [
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-guest-program",
+ "ethrex-vm",
+ "k256 0.13.4 (git+https://github.com/openvm-org/openvm.git?tag=v1.4.1)",
+ "openvm",
+ "openvm-algebra-guest",
+ "openvm-ecc-guest",
+ "openvm-keccak256",
+ "rkyv",
+]
+
+[[package]]
+name = "ethrex-guest-program"
+version = "9.0.0"
+dependencies = [
+ "bincode",
+ "bytes",
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-crypto",
+ "ethrex-l2-common",
+ "ethrex-rlp",
+ "ethrex-storage",
+ "ethrex-trie",
+ "ethrex-vm",
+ "hex",
+ "rkyv",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "thiserror",
+]
+
+[[package]]
 name = "ethrex-l2-common"
 version = "9.0.0"
 dependencies = [
@@ -1276,26 +1314,6 @@ dependencies = [
  "ff",
  "rand_core",
  "subtle",
-]
-
-[[package]]
-name = "guest_program"
-version = "9.0.0"
-dependencies = [
- "bincode",
- "bytes",
- "ethrex-common",
- "ethrex-crypto",
- "ethrex-l2-common",
- "ethrex-rlp",
- "ethrex-trie",
- "ethrex-vm",
- "hex",
- "rkyv",
- "serde",
- "serde_json",
- "serde_with",
- "thiserror",
 ]
 
 [[package]]
@@ -3715,20 +3733,4 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.111",
-]
-
-[[package]]
-name = "zkvm-openvm-program"
-version = "9.0.0"
-dependencies = [
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-vm",
- "guest_program",
- "k256 0.13.4 (git+https://github.com/openvm-org/openvm.git?tag=v1.4.1)",
- "openvm",
- "openvm-algebra-guest",
- "openvm-ecc-guest",
- "openvm-keccak256",
- "rkyv",
 ]
