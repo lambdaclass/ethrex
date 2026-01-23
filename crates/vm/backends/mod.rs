@@ -9,7 +9,7 @@ use ethrex_common::types::{
     AccessList, AccountUpdate, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction,
     Withdrawal,
 };
-use ethrex_common::{Address, types::fee_config::FeeConfig, U256};
+use ethrex_common::{Address, U256, types::fee_config::FeeConfig};
 pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
@@ -109,8 +109,14 @@ impl Evm {
         let block_excess_blob_gas = block_header.excess_blob_gas.map(U256::from);
         let base_blob_fee_per_gas = get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?;
 
-        let execution_report =
-            LEVM::execute_tx(tx, sender, block_header, &mut self.db, self.vm_type, base_blob_fee_per_gas)?;
+        let execution_report = LEVM::execute_tx(
+            tx,
+            sender,
+            block_header,
+            &mut self.db,
+            self.vm_type,
+            base_blob_fee_per_gas,
+        )?;
 
         *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
 

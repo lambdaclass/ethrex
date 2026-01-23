@@ -1,8 +1,8 @@
 use ethrex_common::types::{Block, Transaction};
-use ethrex_common::{tracing::CallTrace, types::BlockHeader, U256};
-use ethrex_levm::vm::VMType;
-use ethrex_levm::{db::gen_db::GeneralizedDatabase, tracing::LevmCallTracer, vm::VM, EVMConfig};
+use ethrex_common::{U256, tracing::CallTrace, types::BlockHeader};
 use ethrex_levm::utils::get_base_fee_per_blob_gas;
+use ethrex_levm::vm::VMType;
+use ethrex_levm::{EVMConfig, db::gen_db::GeneralizedDatabase, tracing::LevmCallTracer, vm::VM};
 
 use crate::{EvmError, backends::levm::LEVM};
 
@@ -35,7 +35,14 @@ impl LEVM {
                 break;
             }
 
-            Self::execute_tx(tx, sender, &block.header, db, vm_type, base_blob_fee_per_gas)?;
+            Self::execute_tx(
+                tx,
+                sender,
+                &block.header,
+                db,
+                vm_type,
+                base_blob_fee_per_gas,
+            )?;
         }
 
         // Process withdrawals only if the whole block has been executed.

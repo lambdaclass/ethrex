@@ -78,7 +78,14 @@ impl LEVM {
                 )));
             }
 
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, base_blob_fee_per_gas)?;
+            let report = Self::execute_tx(
+                tx,
+                tx_sender,
+                &block.header,
+                db,
+                vm_type,
+                base_blob_fee_per_gas,
+            )?;
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
@@ -331,7 +338,14 @@ impl LEVM {
         vm_type: VMType,
         base_blob_fee_per_gas: U256,
     ) -> Result<ExecutionReport, EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type, base_blob_fee_per_gas)?;
+        let env = Self::setup_env(
+            tx,
+            tx_sender,
+            block_header,
+            db,
+            vm_type,
+            base_blob_fee_per_gas,
+        )?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         vm.execute().map_err(VMError::into)
@@ -350,7 +364,14 @@ impl LEVM {
         base_blob_fee_per_gas: U256,
         stack_pool: &mut Vec<Stack>,
     ) -> Result<ExecutionReport, EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type, base_blob_fee_per_gas)?;
+        let env = Self::setup_env(
+            tx,
+            tx_sender,
+            block_header,
+            db,
+            vm_type,
+            base_blob_fee_per_gas,
+        )?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         std::mem::swap(&mut vm.stack_pool, stack_pool);

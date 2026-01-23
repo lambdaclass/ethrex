@@ -1067,5 +1067,4 @@ mod test {
         // With u64 this overflows
         assert!(thing.is_ok());
     }
-
 }
