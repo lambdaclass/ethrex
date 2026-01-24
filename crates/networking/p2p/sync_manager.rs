@@ -215,12 +215,14 @@ impl SyncManager {
                 "Resuming header backfill from block {} (blocks remaining to genesis)",
                 backfill_progress
             );
+            let chain_id = self.store.get_chain_config().chain_id;
             spawn_header_backfill(
                 self.peer_handler.clone(),
                 self.store.clone(),
                 backfill_progress,
                 self.backfill_cancel_token.clone(),
                 self.backfill_in_progress.clone(),
+                chain_id,
             );
         }
     }

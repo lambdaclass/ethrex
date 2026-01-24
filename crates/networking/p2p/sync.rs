@@ -1,4 +1,5 @@
 mod code_collector;
+pub mod security_checkpoints;
 mod state_healing;
 mod storage_healing;
 
@@ -6,6 +7,7 @@ use crate::peer_handler::{BlockRequestOrder, PeerHandlerError, SNAP_LIMIT};
 use crate::peer_table::PeerTableError;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::code_collector::CodeHashCollector;
+use crate::sync::security_checkpoints::{CheckpointError, validate_headers_against_checkpoints};
 use crate::sync::state_healing::heal_state_trie_wrap;
 use crate::sync::storage_healing::heal_storage_trie;
 use crate::utils::{
@@ -264,12 +266,14 @@ impl Syncer {
         // Spawn background task to backfill headers from pivot to genesis
         // Create a shared flag for tracking backfill progress
         let backfill_in_progress = Arc::new(AtomicBool::new(false));
+        let chain_id = store.get_chain_config().chain_id;
         spawn_header_backfill(
             self.peers.clone(),
             store.clone(),
             pivot_number,
             self.cancel_token.clone(),
             backfill_in_progress,
+            chain_id,
         );
 
         store.clear_snap_state().await?;
@@ -1354,16 +1358,19 @@ pub fn calculate_staleness_timestamp(timestamp: u64) -> u64 {
 
 /// Spawns the background header backfill task
 /// Downloads headers from pivot backwards to genesis in background
+/// Validates headers against security checkpoints for the given chain_id
 pub fn spawn_header_backfill(
     peers: PeerHandler,
     store: Store,
     pivot_number: u64,
     cancel_token: CancellationToken,
     backfill_in_progress: Arc<AtomicBool>,
+    chain_id: u64,
 ) {
     tokio::spawn(async move {
         backfill_in_progress.store(true, Ordering::Relaxed);
-        let result = header_backfill_loop(peers, store.clone(), pivot_number, cancel_token).await;
+        let result =
+            header_backfill_loop(peers, store.clone(), pivot_number, cancel_token, chain_id).await;
         backfill_in_progress.store(false, Ordering::Relaxed);
 
         match result {
@@ -1382,11 +1389,13 @@ pub fn spawn_header_backfill(
 
 /// Background task to download headers from pivot towards genesis
 /// Updates CANONICAL_BLOCK_HASHES incrementally and checkpoints progress
+/// Validates headers against security checkpoints for long-range attack protection
 async fn header_backfill_loop(
     mut peers: PeerHandler,
     store: Store,
     pivot_number: u64,
     cancel_token: CancellationToken,
+    chain_id: u64,
 ) -> Result<(), SyncError> {
     // Check if we have a checkpoint to resume from
     let start_block = match store.get_header_backfill_progress().await? {
@@ -1414,8 +1423,8 @@ async fn header_backfill_loop(
     let mut last_checkpoint = current_block;
 
     info!(
-        "Header backfill: downloading {} blocks (from {} to genesis)",
-        current_block, current_block
+        "Header backfill: downloading {} blocks (from {} to genesis) with checkpoint validation for chain {}",
+        current_block, current_block, chain_id
     );
 
     while current_block > 0 {
@@ -1439,6 +1448,18 @@ async fn header_backfill_loop(
         // Request headers for this batch
         match request_headers_for_backfill(&mut peers, batch_start, batch_size).await {
             Ok(headers) => {
+                // Validate headers against security checkpoints before storing
+                // This protects against long-range attacks where an attacker provides
+                // fake historical headers
+                if let Err(e) = validate_headers_against_checkpoints(&headers, chain_id) {
+                    error!(
+                        "SECURITY: Header checkpoint validation failed! {}. \
+                        This may indicate a long-range attack. Aborting backfill.",
+                        e
+                    );
+                    return Err(e.into());
+                }
+
                 consecutive_failures = 0;
 
                 // Store headers and update canonical hashes
@@ -1617,6 +1638,8 @@ pub enum SyncError {
     PeerTableError(#[from] PeerTableError),
     #[error("Missing fullsync batch")]
     MissingFullsyncBatch,
+    #[error("Security checkpoint validation failed: {0}")]
+    CheckpointValidation(#[from] CheckpointError),
 }
 
 impl SyncError {
@@ -1641,7 +1664,8 @@ impl SyncError {
             | SyncError::BytecodeFileError
             | SyncError::NoLatestCanonical
             | SyncError::PeerTableError(_)
-            | SyncError::MissingFullsyncBatch => false,
+            | SyncError::MissingFullsyncBatch
+            | SyncError::CheckpointValidation(_) => false,
             SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)
