@@ -1769,18 +1769,21 @@ impl Blockchain {
             "after exec"
         };
 
-        let details = format!(
-            "  |- validate: {:>4} ms  ({:>2}%){}
-  |- exec:     {:>4} ms  ({:>2}%){}
-  |- merkle:   {:>4} ms  ({:>2}%){}  [concurrent: {} ms, drain: {} ms, overlap: {}%, queue: {}]
-  |- store:    {:>4} ms  ({:>2}%){}
-  `- warmer:   {:>4} ms         [finished: {} ms {}]",
+        info!("{}", header);
+        info!(
+            "  |- validate: {:>4} ms  ({:>2}%){}",
             validate_ms,
             pct(validate_ms),
-            bottleneck_marker("validate"),
+            bottleneck_marker("validate")
+        );
+        info!(
+            "  |- exec:     {:>4} ms  ({:>2}%){}",
             exec_ms,
             pct(exec_ms),
-            bottleneck_marker("exec"),
+            bottleneck_marker("exec")
+        );
+        info!(
+            "  |- merkle:   {:>4} ms  ({:>2}%){}  [concurrent: {} ms, drain: {} ms, overlap: {}%, queue: {}]",
             merkle_total_ms.saturating_sub(exec_ms.min(merkle_concurrent_ms)),
             pct(merkle_drain_ms),
             bottleneck_marker("merkle"),
@@ -1788,15 +1791,19 @@ impl Blockchain {
             merkle_drain_ms,
             overlap_pct,
             merkle_queue_length,
+        );
+        info!(
+            "  |- store:    {:>4} ms  ({:>2}%){}",
             store_ms,
             pct(store_ms),
-            bottleneck_marker("store"),
+            bottleneck_marker("store")
+        );
+        info!(
+            "  `- warmer:   {:>4} ms         [finished: {} ms {}]",
             warmer_ms,
             warmer_early_ms.unsigned_abs(),
             warmer_relation,
         );
-
-        info!("{}\n{}", header, details);
 
         // Set prometheus metrics
         metrics!(
