@@ -57,6 +57,18 @@ const SECONDS_PER_BLOCK: u64 = 12;
 /// Bytecodes to downloader per batch
 const BYTECODE_CHUNK_SIZE: usize = 50_000;
 
+/// Number of recent headers to download during minimal header sync (pivot + 128 recent)
+pub const MINIMAL_HEADERS_COUNT: u64 = 128;
+
+/// Number of headers to download per batch during backfill
+pub const BACKFILL_BATCH_SIZE: u64 = 192;
+
+/// Checkpoint progress every N blocks during backfill
+pub const BACKFILL_CHECKPOINT_INTERVAL: u64 = 10_000;
+
+/// Maximum attempts before pausing backfill
+pub const MAX_BACKFILL_ATTEMPTS: u32 = 100;
+
 /// We assume this amount of slots are missing a block to adjust our timestamp
 /// based update pivot algorithm. This is also used to try to find "safe" blocks in the chain
 /// that are unlikely to be re-orged.
@@ -79,6 +91,29 @@ pub enum SyncMode {
     #[default]
     Full,
     Snap,
+}
+
+/// Headers downloaded during minimal header sync for deferred backfill
+#[derive(Debug, Clone)]
+pub struct MinimalHeaders {
+    /// The pivot header for snap sync
+    pub pivot_header: BlockHeader,
+    /// Recent headers from (pivot - MINIMAL_HEADERS_COUNT) to pivot
+    pub recent_headers: Vec<BlockHeader>,
+    /// Hashes of recent headers for canonical chain tracking
+    pub recent_hashes: Vec<H256>,
+}
+
+impl MinimalHeaders {
+    /// Creates a new MinimalHeaders from downloaded headers
+    pub fn new(pivot_header: BlockHeader, recent_headers: Vec<BlockHeader>) -> Self {
+        let recent_hashes = recent_headers.iter().map(|h| h.hash()).collect();
+        Self {
+            pivot_header,
+            recent_headers,
+            recent_hashes,
+        }
+    }
 }
 
 /// Manager in charge the sync process
@@ -170,8 +205,86 @@ impl Syncer {
         }
     }
 
-    /// Performs the sync cycle described in `start_sync`, returns an error if the sync fails at any given step and aborts all active processes
+    /// Performs the snap sync cycle with deferred header backfill.
+    /// Downloads only minimal headers (pivot + recent), runs snap sync, then spawns
+    /// a background task to backfill remaining headers from pivot to genesis.
     async fn sync_cycle_snap(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
+        // We validate that we have the folders that are being used empty
+        delete_leaves_folder(&self.datadir);
+
+        info!("Starting snap sync with deferred header backfill");
+
+        // Check if we're resuming from a previous sync attempt
+        if let Some(checkpoint) = store.get_header_download_checkpoint().await? {
+            info!("Resuming from previous sync checkpoint: {:?}", checkpoint);
+            // Fall back to full header download for resume case
+            return self.sync_cycle_snap_full_headers(sync_head, store).await;
+        }
+
+        // Download minimal headers (pivot + MINIMAL_HEADERS_COUNT recent)
+        let minimal_headers = self.download_minimal_headers(sync_head, &store).await?;
+        let pivot_number = minimal_headers.pivot_header.number;
+
+        // Check if we should switch to full sync (head too close to genesis)
+        if pivot_number < MIN_FULL_BLOCKS {
+            info!(
+                "Pivot block {} is too close to genesis, switching to FullSync",
+                pivot_number
+            );
+            self.snap_enabled.store(false, Ordering::Relaxed);
+            return self.sync_cycle_full(sync_head, store.clone()).await;
+        }
+
+        // Store the minimal headers
+        store
+            .add_block_headers(minimal_headers.recent_headers.clone())
+            .await?;
+
+        // Create a minimal SnapBlockSyncState with only the recent hashes
+        let mut block_sync_state = SnapBlockSyncState::new(store.clone());
+        block_sync_state.block_hashes = minimal_headers.recent_hashes.clone();
+
+        // Set checkpoint to the pivot (in case we need to resume)
+        store
+            .set_header_download_checkpoint(minimal_headers.pivot_header.hash())
+            .await?;
+
+        info!(
+            "Starting snap sync from pivot block {} with {} recent headers",
+            pivot_number,
+            block_sync_state.block_hashes.len()
+        );
+
+        // Run snap sync with minimal headers
+        self.snap_sync(&store, &mut block_sync_state).await?;
+
+        // Snap sync completed successfully
+        info!("Snap sync completed, spawning header backfill task");
+
+        // Spawn background task to backfill headers from pivot to genesis
+        // Create a shared flag for tracking backfill progress
+        let backfill_in_progress = Arc::new(AtomicBool::new(false));
+        spawn_header_backfill(
+            self.peers.clone(),
+            store.clone(),
+            pivot_number,
+            self.cancel_token.clone(),
+            backfill_in_progress,
+        );
+
+        store.clear_snap_state().await?;
+        self.snap_enabled.store(false, Ordering::Relaxed);
+
+        Ok(())
+    }
+
+    /// Original snap sync implementation that downloads all headers first.
+    /// Used when resuming from a previous sync attempt.
+    async fn sync_cycle_snap_full_headers(
+        &mut self,
+        sync_head: H256,
+        store: Store,
+    ) -> Result<(), SyncError> {
         // Request all block headers between the current head and the sync head
         // We will begin from the current head so that we download the earliest state first
         // This step is not parallelized
@@ -195,11 +308,7 @@ impl Syncer {
 
         let mut attempts = 0;
 
-        // We validate that we have the folders that are being used empty, as we currently assume
-        // they are. If they are not empty we empty the folder
-        delete_leaves_folder(&self.datadir);
-
-        info!("Starting to download block headers from peers");
+        info!("Starting to download block headers from peers (full download)");
 
         loop {
             debug!("Requesting Block Headers from {current_head}");
@@ -305,6 +414,8 @@ impl Syncer {
 
         self.snap_sync(&store, &mut block_sync_state).await?;
 
+        // Mark backfill as complete since we downloaded all headers
+        store.set_header_backfill_complete(true).await?;
         store.clear_snap_state().await?;
         self.snap_enabled.store(false, Ordering::Relaxed);
 
@@ -579,6 +690,126 @@ impl Syncer {
         } else {
             blockchain.add_blocks_in_batch(blocks, cancel_token).await
         }
+    }
+
+    /// Downloads minimal headers for deferred backfill snap sync
+    /// Returns the pivot header and recent headers (pivot - MINIMAL_HEADERS_COUNT to pivot)
+    pub async fn download_minimal_headers(
+        &mut self,
+        sync_head: H256,
+        store: &Store,
+    ) -> Result<MinimalHeaders, SyncError> {
+        info!(
+            "Downloading minimal headers for snap sync (pivot + {} recent)",
+            MINIMAL_HEADERS_COUNT
+        );
+
+        let mut attempts = 0;
+        let mut current_head = store
+            .get_latest_canonical_block_hash()
+            .await?
+            .ok_or(SyncError::NoLatestCanonical)?;
+        let mut current_head_number = store
+            .get_block_number(current_head)
+            .await?
+            .ok_or(SyncError::BlockNumber(current_head))?;
+
+        let mut all_headers: Vec<BlockHeader> = Vec::new();
+        let mut sync_head_found = false;
+
+        // Download headers until we find the sync head
+        loop {
+            let Some(mut block_headers) = self
+                .peers
+                .request_block_headers(current_head_number, sync_head)
+                .await?
+            else {
+                if attempts > MAX_HEADER_FETCH_ATTEMPTS {
+                    warn!("Failed to find target block header during minimal download, aborting");
+                    return Err(SyncError::NoBlockHeaders);
+                }
+                attempts += 1;
+                tokio::time::sleep(Duration::from_millis(1.1_f64.powf(attempts as f64) as u64))
+                    .await;
+                continue;
+            };
+
+            let (first_block_hash, first_block_number, first_block_parent_hash) =
+                match block_headers.first() {
+                    Some(header) => (header.hash(), header.number, header.parent_hash),
+                    None => continue,
+                };
+            let (last_block_hash, last_block_number) = match block_headers.last() {
+                Some(header) => (header.hash(), header.number),
+                None => continue,
+            };
+
+            // Handle reorg case
+            if first_block_hash == last_block_hash
+                && first_block_hash == current_head
+                && current_head != sync_head
+            {
+                warn!("Failed to find target block header, going back to previous parent");
+                current_head = first_block_parent_hash;
+                continue;
+            }
+
+            debug!(
+                "Minimal headers: received {} headers (block {} to {})",
+                block_headers.len(),
+                first_block_number,
+                last_block_number
+            );
+
+            // Check if we found the sync head
+            if let Some(index) = block_headers.iter().position(|h| h.hash() == sync_head) {
+                sync_head_found = true;
+                block_headers.drain(index + 1..);
+            }
+
+            current_head = last_block_hash;
+            current_head_number = last_block_number;
+
+            // Skip first header if we already have it
+            if !all_headers.is_empty()
+                && block_headers.first().map(|h| h.hash()) == all_headers.last().map(|h| h.hash())
+            {
+                block_headers.remove(0);
+            }
+
+            all_headers.extend(block_headers);
+
+            if sync_head_found {
+                break;
+            }
+        }
+
+        if all_headers.is_empty() {
+            return Err(SyncError::NoBlockHeaders);
+        }
+
+        // The pivot is the last (most recent) header
+        let pivot_header = all_headers
+            .last()
+            .cloned()
+            .ok_or(SyncError::NoBlockHeaders)?;
+        let pivot_number = pivot_header.number;
+
+        // Keep only the recent headers (pivot - MINIMAL_HEADERS_COUNT to pivot)
+        let start_index = if all_headers.len() > MINIMAL_HEADERS_COUNT as usize {
+            all_headers.len() - MINIMAL_HEADERS_COUNT as usize - 1
+        } else {
+            0
+        };
+        let recent_headers: Vec<BlockHeader> = all_headers.drain(start_index..).collect();
+
+        info!(
+            "Minimal headers downloaded: pivot block {} with {} recent headers",
+            pivot_number,
+            recent_headers.len()
+        );
+
+        Ok(MinimalHeaders::new(pivot_header, recent_headers))
     }
 }
 
@@ -1120,6 +1351,196 @@ pub fn block_is_stale(block_header: &BlockHeader) -> bool {
 pub fn calculate_staleness_timestamp(timestamp: u64) -> u64 {
     timestamp + (SNAP_LIMIT as u64 * 12)
 }
+
+/// Spawns the background header backfill task
+/// Downloads headers from pivot backwards to genesis in background
+pub fn spawn_header_backfill(
+    peers: PeerHandler,
+    store: Store,
+    pivot_number: u64,
+    cancel_token: CancellationToken,
+    backfill_in_progress: Arc<AtomicBool>,
+) {
+    tokio::spawn(async move {
+        backfill_in_progress.store(true, Ordering::Relaxed);
+        let result = header_backfill_loop(peers, store.clone(), pivot_number, cancel_token).await;
+        backfill_in_progress.store(false, Ordering::Relaxed);
+
+        match result {
+            Ok(()) => {
+                info!("Header backfill completed successfully");
+                if let Err(e) = store.set_header_backfill_complete(true).await {
+                    error!("Failed to mark header backfill as complete: {}", e);
+                }
+            }
+            Err(e) => {
+                error!("Header backfill failed: {}", e);
+            }
+        }
+    });
+}
+
+/// Background task to download headers from pivot towards genesis
+/// Updates CANONICAL_BLOCK_HASHES incrementally and checkpoints progress
+async fn header_backfill_loop(
+    mut peers: PeerHandler,
+    store: Store,
+    pivot_number: u64,
+    cancel_token: CancellationToken,
+) -> Result<(), SyncError> {
+    // Check if we have a checkpoint to resume from
+    let start_block = match store.get_header_backfill_progress().await? {
+        Some(progress) => {
+            info!("Resuming header backfill from block {}", progress);
+            progress
+        }
+        None => {
+            info!("Starting header backfill from pivot block {}", pivot_number);
+            // Set backfill as incomplete and start from below the minimal headers we already have
+            store.set_header_backfill_complete(false).await?;
+            pivot_number.saturating_sub(MINIMAL_HEADERS_COUNT)
+        }
+    };
+
+    // Nothing to backfill if we're already at or past genesis
+    if start_block == 0 {
+        info!("Header backfill: already at genesis, nothing to backfill");
+        store.set_header_backfill_complete(true).await?;
+        return Ok(());
+    }
+
+    let mut current_block = start_block;
+    let mut consecutive_failures = 0;
+    let mut last_checkpoint = current_block;
+
+    info!(
+        "Header backfill: downloading {} blocks (from {} to genesis)",
+        current_block, current_block
+    );
+
+    while current_block > 0 {
+        // Check for cancellation
+        if cancel_token.is_cancelled() {
+            info!("Header backfill cancelled at block {}", current_block);
+            store.set_header_backfill_progress(current_block).await?;
+            return Ok(());
+        }
+
+        // Calculate batch range (going backwards from current_block)
+        let batch_end = current_block;
+        let batch_start = current_block.saturating_sub(BACKFILL_BATCH_SIZE).max(1);
+        let batch_size = batch_end - batch_start + 1;
+
+        debug!(
+            "Header backfill: requesting batch {} to {}",
+            batch_start, batch_end
+        );
+
+        // Request headers for this batch
+        match request_headers_for_backfill(&mut peers, batch_start, batch_size).await {
+            Ok(headers) => {
+                consecutive_failures = 0;
+
+                // Store headers and update canonical hashes
+                let entries: Vec<(u64, H256)> =
+                    headers.iter().map(|h| (h.number, h.hash())).collect();
+
+                store.add_block_headers(headers).await?;
+                store.add_canonical_block_hashes_batch(entries).await?;
+
+                current_block = batch_start.saturating_sub(1);
+
+                // Checkpoint progress periodically
+                if last_checkpoint - current_block >= BACKFILL_CHECKPOINT_INTERVAL {
+                    info!(
+                        "Header backfill progress: {} blocks remaining",
+                        current_block
+                    );
+                    store.set_header_backfill_progress(current_block).await?;
+                    last_checkpoint = current_block;
+                }
+            }
+            Err(e) => {
+                consecutive_failures += 1;
+                warn!(
+                    "Header backfill batch failed (attempt {}): {}",
+                    consecutive_failures, e
+                );
+
+                if consecutive_failures >= MAX_BACKFILL_ATTEMPTS {
+                    error!(
+                        "Header backfill paused after {} consecutive failures at block {}",
+                        consecutive_failures, current_block
+                    );
+                    store.set_header_backfill_progress(current_block).await?;
+                    return Err(e);
+                }
+
+                // Exponential backoff
+                let backoff = Duration::from_millis(100 * 2_u64.pow(consecutive_failures.min(10)));
+                tokio::time::sleep(backoff).await;
+            }
+        }
+    }
+
+    info!("Header backfill completed: all headers downloaded to genesis");
+    store.set_header_backfill_progress(0).await?;
+    Ok(())
+}
+
+/// Requests a batch of headers for backfill (from start_block to start_block + count - 1)
+async fn request_headers_for_backfill(
+    peers: &mut PeerHandler,
+    start_block: u64,
+    count: u64,
+) -> Result<Vec<BlockHeader>, SyncError> {
+    use crate::rlpx::eth::blocks::{GetBlockHeaders, HashOrNumber};
+    use crate::rlpx::message::Message as RLPxMessage;
+
+    let Some((peer_id, mut connection)) = peers
+        .peer_table
+        .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+        .await?
+    else {
+        // No peers available, will retry with backoff
+        return Err(SyncError::NoBlockHeaders);
+    };
+
+    let request_id = rand::random();
+    let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+        id: request_id,
+        startblock: HashOrNumber::Number(start_block),
+        limit: count,
+        skip: 0,
+        reverse: false,
+    });
+
+    // Track request count
+    peers.peer_table.inc_requests(peer_id).await?;
+    let result = connection
+        .outgoing_request(request, Duration::from_secs(10))
+        .await;
+    peers.peer_table.dec_requests(peer_id).await?;
+
+    match result {
+        Ok(RLPxMessage::BlockHeaders(response)) => {
+            peers.peer_table.record_success(&peer_id).await?;
+            if response.block_headers.is_empty() {
+                return Err(SyncError::NoBlockHeaders);
+            }
+            Ok(response.block_headers)
+        }
+        Ok(_) => {
+            peers.peer_table.record_failure(&peer_id).await?;
+            Err(SyncError::NoBlockHeaders)
+        }
+        Err(_) => {
+            peers.peer_table.record_failure(&peer_id).await?;
+            Err(SyncError::NoBlockHeaders)
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 #[allow(clippy::type_complexity)]
 /// We store for optimization the accounts that need to heal storage

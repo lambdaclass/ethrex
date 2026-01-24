@@ -45,6 +45,10 @@ pub enum SnapStateIndex {
     StateTrieRebuildCheckpoint = 3,
     // Storage tries awaiting rebuild (AccountHash, ExpectedRoot)
     StorageTrieRebuildPending = 4,
+    // Block number of the last backfilled header (backfilling goes from pivot towards genesis)
+    HeaderBackfillProgress = 5,
+    // Boolean flag indicating whether header backfill has completed
+    HeaderBackfillComplete = 6,
 }
 
 impl From<u8> for SnapStateIndex {
@@ -55,6 +59,8 @@ impl From<u8> for SnapStateIndex {
             2 => SnapStateIndex::StateHealPaths,
             3 => SnapStateIndex::StateTrieRebuildCheckpoint,
             4 => SnapStateIndex::StorageTrieRebuildPending,
+            5 => SnapStateIndex::HeaderBackfillProgress,
+            6 => SnapStateIndex::HeaderBackfillComplete,
             _ => panic!("Invalid value when casting to SnapDataIndex: {value}"),
         }
     }

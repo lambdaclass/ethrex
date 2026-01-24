@@ -18,7 +18,7 @@ use tracing::{error, info, warn};
 
 use crate::{
     peer_handler::PeerHandler,
-    sync::{SyncMode, Syncer},
+    sync::{SyncMode, Syncer, spawn_header_backfill},
 };
 
 /// Abstraction to interact with the active sync process without disturbing it
@@ -30,6 +30,12 @@ pub struct SyncManager {
     syncer: Arc<Mutex<Syncer>>,
     last_fcu_head: Arc<Mutex<H256>>,
     store: Store,
+    /// Flag indicating whether header backfill is currently running in the background
+    backfill_in_progress: Arc<AtomicBool>,
+    /// Token to cancel the backfill task when shutting down
+    backfill_cancel_token: CancellationToken,
+    /// PeerHandler for backfill operations (cloned from syncer's peer handler)
+    peer_handler: PeerHandler,
 }
 
 impl SyncManager {
@@ -42,6 +48,10 @@ impl SyncManager {
         datadir: PathBuf,
     ) -> Self {
         let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
+        let backfill_in_progress = Arc::new(AtomicBool::new(false));
+        let backfill_cancel_token = CancellationToken::new();
+        let peer_handler_clone = peer_handler.clone();
+
         let syncer = Arc::new(Mutex::new(Syncer::new(
             peer_handler,
             snap_enabled.clone(),
@@ -54,7 +64,11 @@ impl SyncManager {
             syncer,
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: store.clone(),
+            backfill_in_progress,
+            backfill_cancel_token,
+            peer_handler: peer_handler_clone,
         };
+
         // If the node was in the middle of a sync and then re-started we must resume syncing
         // Otherwise we will incorreclty assume the node is already synced and work on invalid state
         if store
@@ -64,6 +78,10 @@ impl SyncManager {
         {
             sync_manager.start_sync();
         }
+
+        // Check if we need to resume header backfill
+        sync_manager.resume_backfill_if_needed().await;
+
         sync_manager
     }
 
@@ -149,5 +167,69 @@ impl SyncManager {
 
     pub fn get_last_fcu_head(&self) -> Result<H256, tokio::sync::TryLockError> {
         Ok(*self.last_fcu_head.try_lock()?)
+    }
+
+    /// Returns true if header backfill is currently running in the background
+    pub fn is_backfill_active(&self) -> bool {
+        self.backfill_in_progress.load(Ordering::Relaxed)
+    }
+
+    /// Check if backfill needs to be resumed and spawn the task if necessary
+    async fn resume_backfill_if_needed(&self) {
+        // Check if backfill is already running
+        if self.is_backfill_active() {
+            return;
+        }
+
+        // Check if backfill is complete
+        match self.store.is_header_backfill_complete().await {
+            Ok(true) => {
+                // Backfill already complete, nothing to do
+                return;
+            }
+            Ok(false) => {
+                // Backfill is not complete, check progress
+            }
+            Err(e) => {
+                warn!("Failed to check backfill status: {}", e);
+                return;
+            }
+        }
+
+        // Check if there's backfill progress to resume from
+        let backfill_progress = match self.store.get_header_backfill_progress().await {
+            Ok(Some(progress)) => progress,
+            Ok(None) => {
+                // No backfill in progress, nothing to resume
+                return;
+            }
+            Err(e) => {
+                warn!("Failed to get backfill progress: {}", e);
+                return;
+            }
+        };
+
+        // Only resume if there are still blocks to backfill
+        if backfill_progress > 0 {
+            info!(
+                "Resuming header backfill from block {} (blocks remaining to genesis)",
+                backfill_progress
+            );
+            spawn_header_backfill(
+                self.peer_handler.clone(),
+                self.store.clone(),
+                backfill_progress,
+                self.backfill_cancel_token.clone(),
+                self.backfill_in_progress.clone(),
+            );
+        }
+    }
+
+    /// Cancels the backfill task if it's running
+    pub fn cancel_backfill(&self) {
+        if self.is_backfill_active() {
+            info!("Cancelling header backfill task");
+            self.backfill_cancel_token.cancel();
+        }
     }
 }

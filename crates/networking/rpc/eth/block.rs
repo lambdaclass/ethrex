@@ -70,6 +70,15 @@ impl RpcHandler for GetBlockByNumberRequest {
             Some(block_number) => block_number,
             _ => return Ok(Value::Null),
         };
+
+        // Check if block is available (above backfill progress or backfill complete)
+        if !storage.is_block_available(block_number)? {
+            return Err(RpcErr::BackfillInProgress(format!(
+                "Block {} is not yet available, header backfill in progress",
+                block_number
+            )));
+        }
+
         let header = storage.get_block_header(block_number)?;
         let body = storage.get_block_body(block_number).await?;
         let (header, body) = match (header, body) {
@@ -104,6 +113,15 @@ impl RpcHandler for GetBlockByHashRequest {
             Some(number) => number,
             _ => return Ok(Value::Null),
         };
+
+        // Check if block is available (above backfill progress or backfill complete)
+        if !storage.is_block_available(block_number)? {
+            return Err(RpcErr::BackfillInProgress(format!(
+                "Block {} is not yet available, header backfill in progress",
+                block_number
+            )));
+        }
+
         let header = storage.get_block_header(block_number)?;
         let body = storage.get_block_body(block_number).await?;
         let (header, body) = match (header, body) {

@@ -56,6 +56,8 @@ pub enum RpcErr {
     InvalidPayloadAttributes(String),
     #[error("Unknown payload: {0}")]
     UnknownPayload(String),
+    #[error("Header backfill in progress: {0}")]
+    BackfillInProgress(String),
 }
 
 impl From<RpcErr> for RpcErrorMetadata {
@@ -156,6 +158,11 @@ impl From<RpcErr> for RpcErrorMetadata {
                 code: -38001,
                 data: None,
                 message: format!("Unknown payload: {context}"),
+            },
+            RpcErr::BackfillInProgress(context) => RpcErrorMetadata {
+                code: -32000,
+                data: None,
+                message: format!("Header backfill in progress: {context}"),
             },
         }
     }

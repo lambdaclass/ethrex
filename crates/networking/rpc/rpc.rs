@@ -304,6 +304,7 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::InvalidForkChoiceState(_) => "InvalidForkChoiceState",
         RpcErr::InvalidPayloadAttributes(_) => "InvalidPayloadAttributes",
         RpcErr::UnknownPayload(_) => "UnknownPayload",
+        RpcErr::BackfillInProgress(_) => "BackfillInProgress",
     }
 }
 

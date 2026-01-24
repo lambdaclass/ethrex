@@ -981,6 +981,119 @@ impl Store {
             .map_err(StoreError::from)
     }
 
+    // Header backfill methods
+
+    /// Sets the block number of the last backfilled header (backfilling goes from pivot towards genesis)
+    pub async fn set_header_backfill_progress(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
+        let key = snap_state_key(SnapStateIndex::HeaderBackfillProgress);
+        let value = block_number.to_le_bytes().to_vec();
+        self.write_async(SNAP_STATE, key, value).await
+    }
+
+    /// Gets the block number of the last backfilled header
+    pub async fn get_header_backfill_progress(&self) -> Result<Option<BlockNumber>, StoreError> {
+        let key = snap_state_key(SnapStateIndex::HeaderBackfillProgress);
+        self.backend
+            .begin_read()?
+            .get(SNAP_STATE, &key)?
+            .map(|bytes| -> Result<BlockNumber, StoreError> {
+                let array: [u8; 8] = bytes
+                    .try_into()
+                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                Ok(BlockNumber::from_le_bytes(array))
+            })
+            .transpose()
+    }
+
+    /// Sets the flag indicating whether header backfill has completed
+    pub async fn set_header_backfill_complete(&self, complete: bool) -> Result<(), StoreError> {
+        let key = snap_state_key(SnapStateIndex::HeaderBackfillComplete);
+        let value = vec![if complete { 1u8 } else { 0u8 }];
+        self.write_async(SNAP_STATE, key, value).await
+    }
+
+    /// Returns whether header backfill has completed
+    pub async fn is_header_backfill_complete(&self) -> Result<bool, StoreError> {
+        let key = snap_state_key(SnapStateIndex::HeaderBackfillComplete);
+        Ok(self
+            .backend
+            .begin_read()?
+            .get(SNAP_STATE, &key)?
+            .map(|bytes| !bytes.is_empty() && bytes[0] == 1)
+            .unwrap_or(true)) // Default to true (no backfill in progress)
+    }
+
+    /// Adds canonical block hashes in a batch (used during header backfill)
+    pub async fn add_canonical_block_hashes_batch(
+        &self,
+        entries: Vec<(BlockNumber, BlockHash)>,
+    ) -> Result<(), StoreError> {
+        let db = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut txn = db.begin_write()?;
+            for (block_number, block_hash) in entries {
+                let key = block_number.to_le_bytes();
+                let value = block_hash.encode_to_vec();
+                txn.put(CANONICAL_BLOCK_HASHES, &key, &value)?;
+            }
+            txn.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
+    /// Gets the block number of the last backfilled header (synchronous version)
+    pub fn get_header_backfill_progress_sync(&self) -> Result<Option<BlockNumber>, StoreError> {
+        let key = snap_state_key(SnapStateIndex::HeaderBackfillProgress);
+        self.backend
+            .begin_read()?
+            .get(SNAP_STATE, &key)?
+            .map(|bytes| -> Result<BlockNumber, StoreError> {
+                let array: [u8; 8] = bytes
+                    .try_into()
+                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                Ok(BlockNumber::from_le_bytes(array))
+            })
+            .transpose()
+    }
+
+    /// Returns whether header backfill has completed (synchronous version)
+    pub fn is_header_backfill_complete_sync(&self) -> Result<bool, StoreError> {
+        let key = snap_state_key(SnapStateIndex::HeaderBackfillComplete);
+        Ok(self
+            .backend
+            .begin_read()?
+            .get(SNAP_STATE, &key)?
+            .map(|bytes| !bytes.is_empty() && bytes[0] == 1)
+            .unwrap_or(true)) // Default to true (no backfill in progress)
+    }
+
+    /// Checks if a block number is available (above backfill progress or backfill complete)
+    /// Returns Ok(true) if the block is available for querying
+    /// Returns Ok(false) if the block is below backfill progress and not yet available
+    pub fn is_block_available(&self, block_number: BlockNumber) -> Result<bool, StoreError> {
+        // If backfill is complete, all blocks are available
+        if self.is_header_backfill_complete_sync()? {
+            return Ok(true);
+        }
+
+        // Check backfill progress
+        match self.get_header_backfill_progress_sync()? {
+            Some(progress) => {
+                // Block is available if it's at or above the backfill progress
+                // (backfill goes from pivot towards genesis, so progress decreases)
+                Ok(block_number >= progress)
+            }
+            None => {
+                // No backfill in progress, all blocks are available
+                Ok(true)
+            }
+        }
+    }
+
     /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
     /// when processing an invalid payload. To provide this, we must track invalid chains.
     ///
