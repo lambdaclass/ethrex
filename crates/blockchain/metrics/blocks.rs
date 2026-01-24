@@ -24,6 +24,19 @@ pub struct MetricsBlocks {
     store_ms: IntGauge,
     /// Keeps track of the head block number
     head_height: IntGauge,
+    // Pipeline-specific metrics
+    /// Block validation time in milliseconds
+    validate_ms: IntGauge,
+    /// Time spent on merkle operations concurrent with execution
+    merkle_concurrent_ms: IntGauge,
+    /// Time spent draining merkle queue after execution completes
+    merkle_drain_ms: IntGauge,
+    /// Percentage of merkle work done concurrently with execution
+    merkle_overlap_pct: IntGauge,
+    /// Total warmer thread execution time in milliseconds
+    warmer_ms: IntGauge,
+    /// Warmer finished early (positive) or late (negative) relative to exec, in ms
+    warmer_early_ms: IntGauge,
 }
 
 impl Default for MetricsBlocks {
@@ -114,6 +127,36 @@ impl MetricsBlocks {
                 "Keeps track of transaction count in a block",
             )
             .unwrap(),
+            validate_ms: IntGauge::new(
+                "validate_ms",
+                "Block validation time in milliseconds",
+            )
+            .unwrap(),
+            merkle_concurrent_ms: IntGauge::new(
+                "merkle_concurrent_ms",
+                "Time spent on merkle operations concurrent with execution in milliseconds",
+            )
+            .unwrap(),
+            merkle_drain_ms: IntGauge::new(
+                "merkle_drain_ms",
+                "Time spent draining merkle queue after execution completes in milliseconds",
+            )
+            .unwrap(),
+            merkle_overlap_pct: IntGauge::new(
+                "merkle_overlap_pct",
+                "Percentage of merkle work done concurrently with execution",
+            )
+            .unwrap(),
+            warmer_ms: IntGauge::new(
+                "warmer_ms",
+                "Total warmer thread execution time in milliseconds",
+            )
+            .unwrap(),
+            warmer_early_ms: IntGauge::new(
+                "warmer_early_ms",
+                "Warmer finished early (positive) or late (negative) relative to exec in milliseconds",
+            )
+            .unwrap(),
         }
     }
 
@@ -166,6 +209,30 @@ impl MetricsBlocks {
         self.gas_used.set(gas_used);
     }
 
+    pub fn set_validate_ms(&self, validate_ms: i64) {
+        self.validate_ms.set(validate_ms);
+    }
+
+    pub fn set_merkle_concurrent_ms(&self, merkle_concurrent_ms: i64) {
+        self.merkle_concurrent_ms.set(merkle_concurrent_ms);
+    }
+
+    pub fn set_merkle_drain_ms(&self, merkle_drain_ms: i64) {
+        self.merkle_drain_ms.set(merkle_drain_ms);
+    }
+
+    pub fn set_merkle_overlap_pct(&self, merkle_overlap_pct: i64) {
+        self.merkle_overlap_pct.set(merkle_overlap_pct);
+    }
+
+    pub fn set_warmer_ms(&self, warmer_ms: i64) {
+        self.warmer_ms.set(warmer_ms);
+    }
+
+    pub fn set_warmer_early_ms(&self, warmer_early_ms: i64) {
+        self.warmer_early_ms.set(warmer_early_ms);
+    }
+
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         if self.block_number.get() <= 0 {
             return Ok(String::new());
@@ -198,6 +265,18 @@ impl MetricsBlocks {
         r.register(Box::new(self.merkle_ms.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.transaction_count.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.validate_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.merkle_concurrent_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.merkle_drain_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.merkle_overlap_pct.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.warmer_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.warmer_early_ms.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();
