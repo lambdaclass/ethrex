@@ -1,4 +1,5 @@
 mod code_collector;
+pub mod metrics;
 pub mod security_checkpoints;
 mod state_healing;
 mod storage_healing;
@@ -7,6 +8,7 @@ use crate::peer_handler::{BlockRequestOrder, PeerHandlerError, SNAP_LIMIT};
 use crate::peer_table::PeerTableError;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::code_collector::CodeHashCollector;
+use crate::sync::metrics::{PhaseLogger, PhaseSummary, SyncMetrics, SyncPhase};
 use crate::sync::security_checkpoints::{CheckpointError, validate_headers_against_checkpoints};
 use crate::sync::state_healing::heal_state_trie_wrap;
 use crate::sync::storage_healing::heal_storage_trie;
@@ -211,6 +213,9 @@ impl Syncer {
     /// Downloads only minimal headers (pivot + recent), runs snap sync, then spawns
     /// a background task to backfill remaining headers from pivot to genesis.
     async fn sync_cycle_snap(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
+        // Initialize sync metrics for tracking performance
+        let sync_metrics = SyncMetrics::new();
+
         // We validate that we have the folders that are being used empty
         delete_leaves_folder(&self.datadir);
 
@@ -258,7 +263,11 @@ impl Syncer {
         );
 
         // Run snap sync with minimal headers
-        self.snap_sync(&store, &mut block_sync_state).await?;
+        self.snap_sync(&store, &mut block_sync_state, &sync_metrics)
+            .await?;
+
+        // Log sync completion
+        PhaseLogger::sync_complete(&sync_metrics);
 
         // Snap sync completed successfully
         info!("Snap sync completed, spawning header backfill task");
@@ -293,6 +302,8 @@ impl Syncer {
         // We will begin from the current head so that we download the earliest state first
         // This step is not parallelized
         let mut block_sync_state = SnapBlockSyncState::new(store.clone());
+        // Initialize sync metrics for tracking performance
+        let sync_metrics = SyncMetrics::new();
         // Check if we have some blocks downloaded from a previous sync attempt
         // This applies only to snap sync—full sync always starts fetching headers
         // from the canonical block, which updates as new block headers are fetched.
@@ -416,7 +427,11 @@ impl Syncer {
 
         info!("All block headers downloaded successfully");
 
-        self.snap_sync(&store, &mut block_sync_state).await?;
+        self.snap_sync(&store, &mut block_sync_state, &sync_metrics)
+            .await?;
+
+        // Log sync completion
+        PhaseLogger::sync_complete(&sync_metrics);
 
         // Mark backfill as complete since we downloaded all headers
         store.set_header_backfill_complete(true).await?;
@@ -900,6 +915,7 @@ impl Syncer {
         &mut self,
         store: &Store,
         block_sync_state: &mut SnapBlockSyncState,
+        sync_metrics: &SyncMetrics,
     ) -> Result<(), SyncError> {
         // snap-sync: launch tasks to fetch blocks and state in parallel
         // - Fetch each block's body and its receipt via eth p2p requests
@@ -922,9 +938,11 @@ impl Syncer {
             )
             .await?;
         }
-        debug!(
-            "Selected block {} as pivot for snap sync",
-            pivot_header.number
+
+        info!(
+            pivot_block = pivot_header.number,
+            pivot_hash = ?pivot_header.hash(),
+            "Selected pivot block for snap sync"
         );
 
         let state_root = pivot_header.state_root;
@@ -940,11 +958,13 @@ impl Syncer {
 
         let mut storage_accounts = AccountStorageRoots::default();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
+            // Phase 2: Account Ranges
+            PhaseLogger::phase_start(SyncPhase::AccountRanges);
+            let account_phase_start = Instant::now();
+
             // We start by downloading all of the leafs of the trie of accounts
             // The function request_account_range writes the leafs into files in
             // account_state_snapshots_dir
-
-            info!("Starting to download account ranges from peers");
             self.peers
                 .request_account_range(
                     H256::zero(),
@@ -954,7 +974,23 @@ impl Syncer {
                     block_sync_state,
                 )
                 .await?;
-            info!("Finish downloading account ranges from peers");
+
+            let accounts_downloaded = METRICS.downloaded_account_tries.load(Ordering::Relaxed);
+            let account_summary = PhaseSummary {
+                duration: account_phase_start.elapsed(),
+                items_processed: accounts_downloaded,
+                bytes_transferred: 0,
+                extra_info: Some(format!(
+                    "{} accounts have non-empty storage",
+                    storage_accounts.accounts_with_storage_root.len()
+                )),
+            };
+            PhaseLogger::phase_end(SyncPhase::AccountRanges, &account_summary);
+            sync_metrics.record_phase_summary(SyncPhase::AccountRanges, account_summary);
+
+            // Phase 3: Account Insertion
+            PhaseLogger::phase_start(SyncPhase::AccountInsertion);
+            let account_insert_start = Instant::now();
 
             *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
             // We read the account leafs from the files in account_state_snapshots_dir, write it into
@@ -970,14 +1006,29 @@ impl Syncer {
                 &mut code_hash_collector,
             )
             .await?;
-            info!(
-                "Finished inserting account ranges, total storage accounts: {}",
-                storage_accounts.accounts_with_storage_root.len()
-            );
+
+            let accounts_inserted = METRICS.account_tries_inserted.load(Ordering::Relaxed);
+            let account_insert_summary = PhaseSummary {
+                duration: account_insert_start.elapsed(),
+                items_processed: accounts_inserted,
+                bytes_transferred: 0,
+                extra_info: Some(format!(
+                    "{} accounts with storage",
+                    storage_accounts.accounts_with_storage_root.len()
+                )),
+            };
+            PhaseLogger::phase_end(SyncPhase::AccountInsertion, &account_insert_summary);
+            sync_metrics.record_phase_summary(SyncPhase::AccountInsertion, account_insert_summary);
+
             *METRICS.account_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
             debug!("Original state root: {state_root:?}");
             debug!("Computed state root after request_account_rages: {computed_state_root:?}");
+
+            // Phase 4: Storage Ranges
+            PhaseLogger::phase_start(SyncPhase::StorageRanges);
+            let storage_phase_start = Instant::now();
+            let storage_accounts_to_download = storage_accounts.accounts_with_storage_root.len();
 
             *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
             // We start downloading the storage leafs. To do so, we need to be sure that the storage root
@@ -1064,8 +1115,26 @@ impl Syncer {
                 }
                 debug!("We stopped because of staleness, restarting loop");
             }
-            info!("Finished request_storage_ranges");
+            // Storage ranges phase complete
+            let storage_slots_downloaded = METRICS.storage_leaves_downloaded.get();
+            let storage_summary = PhaseSummary {
+                duration: storage_phase_start.elapsed(),
+                items_processed: storage_slots_downloaded,
+                bytes_transferred: 0,
+                extra_info: Some(format!(
+                    "{} accounts processed, {} queued for healing",
+                    storage_accounts_to_download,
+                    storage_accounts.healed_accounts.len()
+                )),
+            };
+            PhaseLogger::phase_end(SyncPhase::StorageRanges, &storage_summary);
+            sync_metrics.record_phase_summary(SyncPhase::StorageRanges, storage_summary);
+
             *METRICS.storage_tries_download_end_time.lock().await = Some(SystemTime::now());
+
+            // Phase 5: Storage Insertion
+            PhaseLogger::phase_start(SyncPhase::StorageInsertion);
+            let storage_insert_start = Instant::now();
 
             *METRICS.storage_tries_insert_start_time.lock().await = Some(SystemTime::now());
             METRICS
@@ -1081,13 +1150,24 @@ impl Syncer {
             )
             .await?;
 
-            *METRICS.storage_tries_insert_end_time.lock().await = Some(SystemTime::now());
+            let storage_slots_inserted = METRICS.storage_leaves_inserted.get();
+            let storage_insert_summary = PhaseSummary {
+                duration: storage_insert_start.elapsed(),
+                items_processed: storage_slots_inserted,
+                bytes_transferred: 0,
+                extra_info: None,
+            };
+            PhaseLogger::phase_end(SyncPhase::StorageInsertion, &storage_insert_summary);
+            sync_metrics.record_phase_summary(SyncPhase::StorageInsertion, storage_insert_summary);
 
-            info!("Finished storing storage tries");
+            *METRICS.storage_tries_insert_end_time.lock().await = Some(SystemTime::now());
         }
 
+        // Phase 6: State Healing
+        PhaseLogger::phase_start(SyncPhase::StateHealing);
+        let state_healing_start = Instant::now();
+
         *METRICS.heal_start_time.lock().await = Some(SystemTime::now());
-        info!("Starting Healing Process");
         let mut global_state_leafs_healed: u64 = 0;
         let mut global_storage_leafs_healed: u64 = 0;
         let mut healing_done = false;
@@ -1115,6 +1195,21 @@ impl Syncer {
             if !healing_done {
                 continue;
             }
+
+            // State healing complete, log summary
+            let state_heal_summary = PhaseSummary {
+                duration: state_healing_start.elapsed(),
+                items_processed: global_state_leafs_healed,
+                bytes_transferred: 0,
+                extra_info: None,
+            };
+            PhaseLogger::phase_end(SyncPhase::StateHealing, &state_heal_summary);
+            sync_metrics.record_phase_summary(SyncPhase::StateHealing, state_heal_summary);
+
+            // Phase 7: Storage Healing
+            PhaseLogger::phase_start(SyncPhase::StorageHealing);
+            let storage_healing_start = Instant::now();
+
             healing_done = heal_storage_trie(
                 pivot_header.state_root,
                 &storage_accounts,
@@ -1125,6 +1220,20 @@ impl Syncer {
                 &mut global_storage_leafs_healed,
             )
             .await?;
+
+            if healing_done {
+                let storage_heal_summary = PhaseSummary {
+                    duration: storage_healing_start.elapsed(),
+                    items_processed: global_storage_leafs_healed,
+                    bytes_transferred: 0,
+                    extra_info: Some(format!(
+                        "{} accounts healed",
+                        storage_accounts.healed_accounts.len()
+                    )),
+                };
+                PhaseLogger::phase_end(SyncPhase::StorageHealing, &storage_heal_summary);
+                sync_metrics.record_phase_summary(SyncPhase::StorageHealing, storage_heal_summary);
+            }
         }
         *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
@@ -1133,18 +1242,20 @@ impl Syncer {
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
 
-        info!("Finished healing");
-
         // Finish code hash collection
         code_hash_collector.finish().await?;
+
+        // Phase 8: Bytecodes
+        PhaseLogger::phase_start(SyncPhase::Bytecodes);
+        let bytecodes_phase_start = Instant::now();
+        let mut total_bytecodes_downloaded: u64 = 0;
+        let mut total_bytecode_bytes: u64 = 0;
 
         *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
 
         let code_hashes_dir = get_code_hashes_snapshots_dir(&self.datadir);
         let mut seen_code_hashes = HashSet::new();
         let mut code_hashes_to_download = Vec::new();
-
-        info!("Starting download bytecodes from peers");
         for entry in std::fs::read_dir(&code_hashes_dir)
             .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
         {
@@ -1161,8 +1272,9 @@ impl Syncer {
 
                     if code_hashes_to_download.len() >= BYTECODE_CHUNK_SIZE {
                         debug!(
-                            "Starting bytecode download of {} hashes",
-                            code_hashes_to_download.len()
+                            bytecodes_batch = code_hashes_to_download.len(),
+                            total_downloaded = total_bytecodes_downloaded,
+                            "Downloading bytecode batch"
                         );
                         let bytecodes = self
                             .peers
@@ -1170,6 +1282,11 @@ impl Syncer {
                             .await
                             .map_err(SyncError::PeerHandler)?
                             .ok_or(SyncError::BytecodesNotFound)?;
+
+                        // Track bytes downloaded
+                        let batch_bytes: u64 = bytecodes.iter().map(|b| b.len() as u64).sum();
+                        total_bytecode_bytes += batch_bytes;
+                        total_bytecodes_downloaded += bytecodes.len() as u64;
 
                         store
                             .write_account_code_batch(
@@ -1196,6 +1313,12 @@ impl Syncer {
                 .await
                 .map_err(SyncError::PeerHandler)?
                 .ok_or(SyncError::BytecodesNotFound)?;
+
+            // Track bytes downloaded
+            let batch_bytes: u64 = bytecodes.iter().map(|b| b.len() as u64).sum();
+            total_bytecode_bytes += batch_bytes;
+            total_bytecodes_downloaded += bytecodes.len() as u64;
+
             store
                 .write_account_code_batch(
                     code_hashes_to_download
@@ -1208,7 +1331,15 @@ impl Syncer {
                 .await?;
         }
 
-        info!("Finished download bytecodes from peers");
+        // Log bytecodes phase completion
+        let bytecodes_summary = PhaseSummary {
+            duration: bytecodes_phase_start.elapsed(),
+            items_processed: total_bytecodes_downloaded,
+            bytes_transferred: total_bytecode_bytes,
+            extra_info: None,
+        };
+        PhaseLogger::phase_end(SyncPhase::Bytecodes, &bytecodes_summary);
+        sync_metrics.record_phase_summary(SyncPhase::Bytecodes, bytecodes_summary);
 
         std::fs::remove_dir_all(code_hashes_dir)
             .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?;
