@@ -495,6 +495,7 @@ async fn log_phase_progress(
             let phase_downloaded = accounts_downloaded - phase_start_accounts;
             let rate = phase_downloaded / phase_secs;
 
+            info!("");
             let col1 = format!(
                 "Accounts fetched: {}",
                 format_thousands(accounts_downloaded)
@@ -509,6 +510,7 @@ async fn log_phase_progress(
             let phase_inserted = accounts_inserted - phase_start_accounts_inserted;
             let rate = phase_inserted / phase_secs;
 
+            info!("");
             let col1 = format!("Accounts inserted: {}", format_thousands(accounts_inserted));
             info!("  {:<col1_width$} │  Elapsed: {}", col1, phase_elapsed_str);
             let col1 = format!("Rate: {} accounts/s", format_thousands(rate));
@@ -520,6 +522,7 @@ async fn log_phase_progress(
             let phase_downloaded = storage_downloaded - phase_start_storage;
             let rate = phase_downloaded / phase_secs;
 
+            info!("");
             let col1 = format!(
                 "Storage slots fetched: {}",
                 format_thousands(storage_downloaded)
@@ -534,6 +537,7 @@ async fn log_phase_progress(
             let phase_inserted = storage_inserted - phase_start_storage_inserted;
             let rate = phase_inserted / phase_secs;
 
+            info!("");
             let col1 = format!(
                 "Storage slots inserted: {}",
                 format_thousands(storage_inserted)
@@ -550,6 +554,7 @@ async fn log_phase_progress(
             let phase_healed = healed - phase_start_healed_accounts;
             let rate = phase_healed / phase_secs;
 
+            info!("");
             let col1 = format!("State paths healed: {}", format_thousands(healed));
             info!("  {:<col1_width$} │  Elapsed: {}", col1, phase_elapsed_str);
             let col1 = format!("Rate: {} paths/s", format_thousands(rate));
@@ -563,6 +568,7 @@ async fn log_phase_progress(
             let phase_healed = healed - phase_start_healed_storage;
             let rate = phase_healed / phase_secs;
 
+            info!("");
             let col1 = format!("Storage accounts healed: {}", format_thousands(healed));
             info!("  {:<col1_width$} │  Elapsed: {}", col1, phase_elapsed_str);
             let col1 = format!("Rate: {} accounts/s", format_thousands(rate));
