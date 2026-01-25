@@ -267,22 +267,16 @@ pub async fn periodically_show_peer_stats_during_syncing(
                 let head_short = &head_short[..8.min(head_short.len())];
 
                 info!("");
-                info!(
-                    "╭──────────────────────────────────────────────────────────────────────────────╮"
-                );
-                info!(
-                    "│ SNAP SYNC STARTED                                                            │"
-                );
+                info!("╭─────────────────────────────────────────────────────────────╮");
+                info!("│ {:<59} │", "SNAP SYNC STARTED");
                 let target_content = format!(
                     "Target: {}... (block #{})",
                     head_short,
                     format_thousands(sync_head_block)
                 );
-                info!("│ {:<76}│", target_content);
-                info!("│ Peers: {:<69}│", peer_number);
-                info!(
-                    "╰──────────────────────────────────────────────────────────────────────────────╯"
-                );
+                info!("│ {:<59} │", target_content);
+                info!("│ {:<59} │", format!("Peers: {}", peer_number));
+                info!("╰─────────────────────────────────────────────────────────────╯");
                 sync_started_logged = true;
             }
         }
