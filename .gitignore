@@ -91,3 +91,7 @@ dev_ethrex_l2/
 
 # Logs
 logs/
+
+# Node/npm (root tooling)
+node_modules/
+/package-lock.json
