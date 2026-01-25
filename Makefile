@@ -1,12 +1,62 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
 		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
-		load-test-fibonacci load-test-io run-hive-eels-blobs
+		load-test-fibonacci load-test-io run-hive-eels-blobs \
+		build-bolt bolt-instrument bolt-optimize bolt-clean \
+		pgo-bolt-build pgo-bolt-optimize pgo-full-build pgo-full-optimize
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
 build: ## 🔨 Build the client
 	cargo build --workspace
+
+# BOLT optimization targets (Linux x86-64 only)
+# Prerequisites: llvm-bolt, merge-fdata from LLVM 16+, cargo-pgo
+BOLT_PROFILE_DIR ?= /tmp/bolt-profiles
+BOLT_BINARY := target/release/ethrex
+
+build-bolt: ## 🔨 Build release binary for BOLT optimization
+	cargo build --release --profile release-bolt
+
+bolt-instrument: build-bolt ## 🔧 Create BOLT-instrumented binary
+	@mkdir -p $(BOLT_PROFILE_DIR)
+	llvm-bolt \
+		$(BOLT_BINARY) \
+		-o ethrex-instrumented \
+		-instrument \
+		--instrumentation-file-append-pid \
+		--instrumentation-file=$(BOLT_PROFILE_DIR)/prof
+
+bolt-optimize: ## ⚡ Apply BOLT optimization using collected profiles
+	merge-fdata $(BOLT_PROFILE_DIR)/prof.* > $(BOLT_PROFILE_DIR)/merged.fdata
+	llvm-bolt \
+		$(BOLT_BINARY) \
+		-o ethrex-bolt-optimized \
+		-data=$(BOLT_PROFILE_DIR)/merged.fdata \
+		-reorder-blocks=ext-tsp \
+		-reorder-functions=cdsort \
+		-split-functions \
+		-split-all-cold \
+		-split-eh \
+		-dyno-stats
+
+bolt-clean: ## 🧹 Clean BOLT profiles and artifacts
+	rm -rf $(BOLT_PROFILE_DIR)
+	rm -f ethrex-instrumented ethrex-bolt-optimized
+
+# cargo-pgo workflow (requires: cargo install cargo-pgo)
+pgo-bolt-build: ## 🔨 Build with cargo-pgo for BOLT instrumentation
+	cargo pgo bolt build --release
+
+pgo-bolt-optimize: ## ⚡ Build BOLT-optimized binary with cargo-pgo
+	cargo pgo bolt optimize --release
+
+pgo-full-build: ## 🔨 Build with PGO instrumentation
+	cargo pgo build
+
+pgo-full-optimize: ## ⚡ Build PGO+BOLT optimized binary (maximum performance)
+	cargo pgo bolt build --with-pgo
+	@echo "Run profiling workload, then: cargo pgo bolt optimize --with-pgo"
 
 lint-l1:
 	cargo clippy --lib --bins -F debug,sync-test \
