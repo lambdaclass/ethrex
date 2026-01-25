@@ -506,12 +506,24 @@ async fn log_phase_progress(
             info!("  Total time: {}", total_elapsed);
         }
         CurrentStepValue::InsertingAccountRanges | CurrentStepValue::InsertingAccountRangesNoDb => {
+            let accounts_to_insert = METRICS.downloaded_account_tries.load(Ordering::Relaxed);
             let accounts_inserted = METRICS.account_tries_inserted.load(Ordering::Relaxed);
             let phase_inserted = accounts_inserted - phase_start_accounts_inserted;
+            let percentage = if accounts_to_insert == 0 {
+                0.0
+            } else {
+                (accounts_inserted as f64 / accounts_to_insert as f64) * 100.0
+            };
             let rate = phase_inserted / phase_secs;
 
+            let progress = progress_bar(percentage, 40);
+            info!("  {} {:>5.1}%", progress, percentage);
             info!("");
-            let col1 = format!("Accounts inserted: {}", format_thousands(accounts_inserted));
+            let col1 = format!(
+                "Accounts: {} / {}",
+                format_thousands(accounts_inserted),
+                format_thousands(accounts_to_insert)
+            );
             info!("  {:<col1_width$} │  Elapsed: {}", col1, phase_elapsed_str);
             let col1 = format!("Rate: {} accounts/s", format_thousands(rate));
             info!("  {:<col1_width$} │  Peers: {}", col1, peer_count);
