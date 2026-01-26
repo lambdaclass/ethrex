@@ -368,48 +368,66 @@ pub fn start_block_executor(
 ///
 /// * `listener` - TCP listener to accept connections from
 /// * `router` - Axum router to serve requests
+/// * `shutdown` - Future that completes when the server should shut down
 ///
 /// # Errors
 ///
 /// Returns an error if serving fails.
-async fn serve_with_http2(listener: TcpListener, router: Router) -> Result<(), RpcErr> {
+async fn serve_with_http2<F>(
+    listener: TcpListener,
+    router: Router,
+    shutdown: F,
+) -> Result<(), RpcErr>
+where
+    F: std::future::Future<Output = ()> + Send,
+{
+    tokio::pin!(shutdown);
+
     loop {
-        let (stream, _remote_addr) = match listener.accept().await {
-            Ok(conn) => conn,
-            Err(e) => {
-                warn!("Failed to accept TCP connection: {}", e);
-                continue;
+        tokio::select! {
+            _ = &mut shutdown => {
+                info!("Gracefully shutting down HTTP/2 server");
+                return Ok(());
             }
-        };
+            result = listener.accept() => {
+                let (stream, _remote_addr) = match result {
+                    Ok(conn) => conn,
+                    Err(e) => {
+                        warn!("Failed to accept TCP connection: {}", e);
+                        continue;
+                    }
+                };
 
-        let router = router.clone();
+                let router = router.clone();
 
-        tokio::spawn(async move {
-            let io = TokioIo::new(stream);
-            let service = router.into_make_service();
-            let mut make_service = service;
+                tokio::spawn(async move {
+                    let io = TokioIo::new(stream);
+                    let service = router.into_make_service();
+                    let mut make_service = service;
 
-            let tower_service = match make_service.call(()).await {
-                Ok(svc) => svc,
-                Err(_) => return, // Infallible
-            };
+                    let tower_service = match make_service.call(()).await {
+                        Ok(svc) => svc,
+                        Err(_) => return, // Infallible
+                    };
 
-            let hyper_service = hyper::service::service_fn(move |req: hyper::Request<Incoming>| {
-                let mut tower_svc = tower_service.clone();
-                async move { tower_svc.call(req).await }
-            });
+                    let hyper_service = hyper::service::service_fn(move |req: hyper::Request<Incoming>| {
+                        let mut tower_svc = tower_service.clone();
+                        async move { tower_svc.call(req).await }
+                    });
 
-            let builder = HttpConnectionBuilder::new(TokioExecutor::new());
-            if let Err(e) = builder
-                .serve_connection_with_upgrades(io, hyper_service)
-                .await
-            {
-                // Don't log normal connection closures
-                if !e.to_string().contains("connection closed") {
-                    warn!("Error serving connection: {}", e);
-                }
+                    let builder = HttpConnectionBuilder::new(TokioExecutor::new());
+                    if let Err(e) = builder
+                        .serve_connection_with_upgrades(io, hyper_service)
+                        .await
+                    {
+                        // Don't log normal connection closures
+                        if !e.to_string().contains("connection closed") {
+                            warn!("Error serving connection: {}", e);
+                        }
+                    }
+                });
             }
-        });
+        }
     }
 }
 
@@ -525,7 +543,11 @@ pub async fn start_api(
     let http_server: std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>> =
         if http2_enabled {
             info!("Starting HTTP server at {http_addr} (HTTP/2 enabled)");
-            Box::pin(serve_with_http2(http_listener, http_router))
+            Box::pin(serve_with_http2(
+                http_listener,
+                http_router,
+                shutdown_signal(),
+            ))
         } else {
             info!("Starting HTTP server at {http_addr}");
             Box::pin(
@@ -566,7 +588,11 @@ pub async fn start_api(
     let authrpc_server: std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>> =
         if http2_enabled {
             info!("Starting Auth-RPC server at {authrpc_addr} (HTTP/2 enabled)");
-            Box::pin(serve_with_http2(authrpc_listener, authrpc_router))
+            Box::pin(serve_with_http2(
+                authrpc_listener,
+                authrpc_router,
+                shutdown_signal(),
+            ))
         } else {
             info!("Starting Auth-RPC server at {authrpc_addr}");
             Box::pin(
