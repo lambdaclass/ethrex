@@ -1249,5 +1249,165 @@ mod test {
                 prop_assert_eq!(hash, flat_trie_hash.finalize());
             }
         }
+
+        #[test]
+        fn proptest_from_then_insert_compare_hash((kv, _shuffle) in kv_pairs_strategy()) {
+            // Test scenario: convert trie to EncodedTrie, then insert more items
+            // This is the scenario used in stateless execution
+            if kv.len() < 2 {
+                return Ok(());
+            }
+
+            // Split kv into initial and additional
+            let mid = kv.len() / 2;
+            let initial = &kv[..mid];
+            let additional = &kv[mid..];
+
+            // Create trie with initial data
+            let mut trie = Trie::new_temp();
+            for (key, value) in initial.iter() {
+                trie.insert(key.clone(), value.clone()).unwrap();
+            }
+
+            // Convert to EncodedTrie
+            let root_node = trie.get_root_node(Nibbles::default()).unwrap();
+            let mut flat_trie = EncodedTrie::try_from(&(*root_node)).unwrap();
+
+            // Verify initial hash matches
+            let hash = trie.hash_no_commit();
+            let flat_trie_hash = flat_trie.hash().unwrap();
+            prop_assert_eq!(hash, flat_trie_hash.finalize(), "Initial hash mismatch after conversion");
+
+            // Insert additional items into both tries
+            for (key, value) in additional.iter() {
+                trie.insert(key.clone(), value.clone()).unwrap();
+                flat_trie.insert(key.clone(), value.clone()).unwrap();
+                let hash = trie.hash_no_commit();
+                let flat_trie_hash = flat_trie.hash().unwrap();
+                prop_assert_eq!(hash, flat_trie_hash.finalize(), "Hash mismatch after insert");
+            }
+        }
+
+        #[test]
+        fn proptest_authenticate_then_insert_compare_hash((kv, _shuffle) in kv_pairs_strategy()) {
+            // Test scenario: convert, authenticate, then insert (like stateless execution)
+            if kv.len() < 2 {
+                return Ok(());
+            }
+
+            // Split kv into initial and additional
+            let mid = kv.len() / 2;
+            let initial = &kv[..mid];
+            let additional = &kv[mid..];
+
+            // Create trie with initial data
+            let mut trie = Trie::new_temp();
+            for (key, value) in initial.iter() {
+                trie.insert(key.clone(), value.clone()).unwrap();
+            }
+
+            // Convert to EncodedTrie
+            let root_node = trie.get_root_node(Nibbles::default()).unwrap();
+            let mut flat_trie = EncodedTrie::try_from(&(*root_node)).unwrap();
+
+            // Authenticate the trie (like stateless execution does)
+            let auth_hash = flat_trie.authenticate().unwrap();
+            let expected_hash = trie.hash_no_commit();
+            prop_assert_eq!(expected_hash, auth_hash.finalize(), "Auth hash mismatch");
+
+            // Insert additional items into both tries
+            for (key, value) in additional.iter() {
+                trie.insert(key.clone(), value.clone()).unwrap();
+                flat_trie.insert(key.clone(), value.clone()).unwrap();
+                let hash = trie.hash_no_commit();
+                let flat_trie_hash = flat_trie.hash().unwrap();
+                prop_assert_eq!(hash, flat_trie_hash.finalize(), "Hash mismatch after insert post-auth");
+            }
+        }
+
+        #[test]
+        fn proptest_multi_round_updates((kv, _shuffle) in kv_pairs_strategy()) {
+            // Test scenario: simulate multi-block execution with updates to same keys
+            // This is like what happens with the beacon root contract across multiple blocks
+            if kv.len() < 4 {
+                return Ok(());
+            }
+
+            // Use first quarter for initial state
+            let initial = &kv[..kv.len()/4];
+
+            // Create trie with initial data
+            let mut trie = Trie::new_temp();
+            for (key, value) in initial.iter() {
+                trie.insert(key.clone(), value.clone()).unwrap();
+            }
+
+            // Convert to EncodedTrie
+            let root_node = trie.get_root_node(Nibbles::default()).unwrap();
+            let mut flat_trie = EncodedTrie::try_from(&(*root_node)).unwrap();
+
+            // Authenticate (like stateless execution does at start)
+            let auth_hash = flat_trie.authenticate().unwrap();
+            let expected_hash = trie.hash_no_commit();
+            prop_assert_eq!(expected_hash, auth_hash.finalize(), "Initial auth hash mismatch");
+
+            // Simulate multiple "blocks" of updates
+            // Each block: read some keys, modify some keys, compute hash
+            for block in 0..3 {
+                // Update some existing keys with new values (simulating account state updates)
+                for i in 0..initial.len().min(2) {
+                    let key = &initial[i].0;
+                    let new_value = format!("block{}_{}", block, i).into_bytes();
+                    trie.insert(key.clone(), new_value.clone()).unwrap();
+                    flat_trie.insert(key.clone(), new_value).unwrap();
+                }
+
+                // Insert a new key (simulating new account)
+                if block < kv.len() / 4 {
+                    let new_key = format!("newkey_block{}", block).into_bytes();
+                    let new_value = format!("newvalue_block{}", block).into_bytes();
+                    trie.insert(new_key.clone(), new_value.clone()).unwrap();
+                    flat_trie.insert(new_key, new_value).unwrap();
+                }
+
+                // Compute hash after each "block"
+                let hash = trie.hash_no_commit();
+                let flat_trie_hash = flat_trie.hash().unwrap();
+                prop_assert_eq!(hash, flat_trie_hash.finalize(), "Hash mismatch after block {}", block);
+            }
+        }
+
+        #[test]
+        fn proptest_from_then_remove_compare_hash((kv, shuffle) in kv_pairs_strategy()) {
+            // Test scenario: convert trie to EncodedTrie, then remove some items
+            if kv.len() < 2 {
+                return Ok(());
+            }
+
+            // Create trie with all data
+            let mut trie = Trie::new_temp();
+            for (key, value) in kv.iter() {
+                trie.insert(key.clone(), value.clone()).unwrap();
+            }
+
+            // Convert to EncodedTrie
+            let root_node = trie.get_root_node(Nibbles::default()).unwrap();
+            let mut flat_trie = EncodedTrie::try_from(&(*root_node)).unwrap();
+
+            // Verify initial hash matches
+            let hash = trie.hash_no_commit();
+            let flat_trie_hash = flat_trie.hash().unwrap();
+            prop_assert_eq!(hash, flat_trie_hash.finalize(), "Initial hash mismatch after conversion");
+
+            // Remove items from both tries
+            for i in shuffle.iter().take(kv.len() / 2) {
+                let key = &kv[*i].0;
+                trie.remove(key).unwrap();
+                flat_trie.remove(key).unwrap();
+                let hash = trie.hash_no_commit();
+                let flat_trie_hash = flat_trie.hash().unwrap();
+                prop_assert_eq!(hash, flat_trie_hash.finalize(), "Hash mismatch after remove");
+            }
+        }
     }
 }
