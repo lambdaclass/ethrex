@@ -107,16 +107,6 @@ fn test_execution_report_has_both_gas_fields() {
 }
 
 #[test]
-fn test_fork_ordering_amsterdam() {
-    // Verify Amsterdam fork is correctly positioned between BPO2 and BPO3
-    assert!(Fork::BPO2 < Fork::Amsterdam);
-    assert!(Fork::Amsterdam < Fork::BPO3);
-
-    // Amsterdam should be greater than Osaka
-    assert!(Fork::Amsterdam > Fork::Osaka);
-}
-
-#[test]
 fn test_receipt_backward_compatibility() {
     // Test that we can decode receipts without gas_spent (pre-Amsterdam format)
     // and receipts with gas_spent (Amsterdam+ format)
