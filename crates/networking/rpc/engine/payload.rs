@@ -333,7 +333,8 @@ impl RpcHandler for GetPayloadV1Request {
         // necessary
         validate_payload_v1_v2(&payload_bundle.block, &context)?;
 
-        let response = ExecutionPayload::from_block(payload_bundle.block);
+        // V1 doesn't support BAL (pre-EIP-7928)
+        let response = ExecutionPayload::from_block(payload_bundle.block, None);
 
         serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -353,8 +354,9 @@ impl RpcHandler for GetPayloadV2Request {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
         validate_payload_v1_v2(&payload_bundle.block, &context)?;
 
+        // V2 doesn't support BAL (pre-EIP-7928)
         let response = ExecutionPayloadResponse {
-            execution_payload: ExecutionPayload::from_block(payload_bundle.block),
+            execution_payload: ExecutionPayload::from_block(payload_bundle.block, None),
             block_value: payload_bundle.block_value,
             blobs_bundle: None,
             should_override_builder: None,
@@ -389,8 +391,9 @@ impl RpcHandler for GetPayloadV3Request {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
         validate_fork(&payload_bundle.block, Fork::Cancun, &context)?;
 
+        // V3 doesn't support BAL (Cancun fork, pre-EIP-7928)
         let response = ExecutionPayloadResponse {
-            execution_payload: ExecutionPayload::from_block(payload_bundle.block),
+            execution_payload: ExecutionPayload::from_block(payload_bundle.block, None),
             block_value: payload_bundle.block_value,
             blobs_bundle: Some(payload_bundle.blobs_bundle),
             should_override_builder: Some(false),
@@ -435,8 +438,9 @@ impl RpcHandler for GetPayloadV4Request {
             return Err(RpcErr::UnsuportedFork(format!("{:?}", Fork::Osaka)));
         }
 
+        // V4 doesn't support BAL (Prague fork, pre-EIP-7928)
         let response = ExecutionPayloadResponse {
-            execution_payload: ExecutionPayload::from_block(payload_bundle.block),
+            execution_payload: ExecutionPayload::from_block(payload_bundle.block, None),
             block_value: payload_bundle.block_value,
             blobs_bundle: Some(payload_bundle.blobs_bundle),
             should_override_builder: Some(false),
@@ -484,8 +488,12 @@ impl RpcHandler for GetPayloadV5Request {
             )));
         }
 
+        // V5 supports BAL (Amsterdam fork, EIP-7928)
         let response = ExecutionPayloadResponse {
-            execution_payload: ExecutionPayload::from_block(payload_bundle.block),
+            execution_payload: ExecutionPayload::from_block(
+                payload_bundle.block,
+                payload_bundle.block_access_list,
+            ),
             block_value: payload_bundle.block_value,
             blobs_bundle: Some(payload_bundle.blobs_bundle),
             should_override_builder: Some(false),
@@ -931,12 +939,13 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
         id = %format!("{:#018x}", payload_id),
         "Requested payload with"
     );
-    let (blobs_bundle, requests, block_value, block) = {
+    let (blobs_bundle, requests, block_value, block, block_access_list) = {
         let PayloadBuildResult {
             blobs_bundle,
             block_value,
             requests,
             payload,
+            block_access_list,
             ..
         } = context
             .blockchain
@@ -948,7 +957,13 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
                 }
                 err => RpcErr::Internal(err.to_string()),
             })?;
-        (blobs_bundle, requests, block_value, payload)
+        (
+            blobs_bundle,
+            requests,
+            block_value,
+            payload,
+            block_access_list,
+        )
     };
 
     let new_payload = PayloadBundle {
@@ -956,6 +971,7 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
         block_value,
         blobs_bundle,
         requests,
+        block_access_list,
     };
 
     Ok(new_payload)

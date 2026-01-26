@@ -167,6 +167,22 @@ impl Evm {
         levm::extract_all_requests_levm(receipts, &mut self.db, header, self.vm_type)
     }
 
+    /// Takes the Block Access List (BAL) from the database if recording was enabled.
+    /// Returns `None` if BAL recording was not enabled.
+    pub fn take_bal(&mut self) -> Option<BlockAccessList> {
+        self.db.take_bal()
+    }
+
+    /// Enables BAL (Block Access List) recording for EIP-7928.
+    pub fn enable_bal_recording(&mut self) {
+        self.db.enable_bal_recording();
+    }
+
+    /// Sets the current block access index for BAL recording.
+    pub fn set_bal_index(&mut self, index: u32) {
+        self.db.set_bal_index(index);
+    }
+
     pub fn simulate_tx_from_generic(
         &mut self,
         tx: &GenericTransaction,

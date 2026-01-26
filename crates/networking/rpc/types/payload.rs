@@ -148,7 +148,7 @@ impl ExecutionPayload {
         Ok(Block::new(header, body))
     }
 
-    pub fn from_block(block: Block) -> Self {
+    pub fn from_block(block: Block, block_access_list: Option<BlockAccessList>) -> Self {
         Self {
             parent_hash: block.header.parent_hash,
             fee_recipient: block.header.coinbase,
@@ -172,8 +172,7 @@ impl ExecutionPayload {
             withdrawals: block.body.withdrawals,
             blob_gas_used: block.header.blob_gas_used,
             excess_blob_gas: block.header.excess_blob_gas,
-            // TODO: need to finish this after we are able to get BAL from blocks
-            block_access_list: None,
+            block_access_list,
         }
     }
 }

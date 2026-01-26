@@ -427,8 +427,12 @@ impl<'a> VM<'a> {
         address: Address,
         increase: U256,
     ) -> Result<(), InternalError> {
-        // Record initial balance for BAL round-trip detection before any changes
-        let initial_balance = self.db.get_account(address)?.info.balance;
+        // Only fetch initial balance when BAL recording is enabled (Amsterdam+)
+        let initial_balance = if self.db.is_bal_recording_enabled() {
+            Some(self.db.get_account(address)?.info.balance)
+        } else {
+            None
+        };
 
         let account = self.get_account_mut(address)?;
         account.info.balance = account
@@ -440,7 +444,9 @@ impl<'a> VM<'a> {
 
         // Record initial and changed balance for BAL in a single check
         if let Some(recorder) = self.db.bal_recorder.as_mut() {
-            recorder.set_initial_balance(address, initial_balance);
+            if let Some(initial) = initial_balance {
+                recorder.set_initial_balance(address, initial);
+            }
             recorder.record_balance_change(address, new_balance);
         }
 
@@ -452,8 +458,12 @@ impl<'a> VM<'a> {
         address: Address,
         decrease: U256,
     ) -> Result<(), InternalError> {
-        // Record initial balance for BAL round-trip detection before any changes
-        let initial_balance = self.db.get_account(address)?.info.balance;
+        // Only fetch initial balance when BAL recording is enabled (Amsterdam+)
+        let initial_balance = if self.db.is_bal_recording_enabled() {
+            Some(self.db.get_account(address)?.info.balance)
+        } else {
+            None
+        };
 
         let account = self.get_account_mut(address)?;
         account.info.balance = account
@@ -465,7 +475,9 @@ impl<'a> VM<'a> {
 
         // Record initial and changed balance for BAL in a single check
         if let Some(recorder) = self.db.bal_recorder.as_mut() {
-            recorder.set_initial_balance(address, initial_balance);
+            if let Some(initial) = initial_balance {
+                recorder.set_initial_balance(address, initial);
+            }
             recorder.record_balance_change(address, new_balance);
         }
 
