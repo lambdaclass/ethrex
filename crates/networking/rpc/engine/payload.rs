@@ -721,7 +721,7 @@ async fn try_execute_payload(
     }
 
     // Execute and store the block
-    info!(%block_hash, %block_number, "Executing payload");
+    debug!(%block_hash, %block_number, "Executing payload");
 
     match add_block(context, block).await {
         Err(ChainError::ParentNotFound) => {
@@ -769,7 +769,7 @@ async fn try_execute_payload(
             Err(RpcErr::Internal(e.to_string()))
         }
         Ok(()) => {
-            info!("Block with hash {block_hash} executed and added to storage succesfully");
+            debug!("Block with hash {block_hash} executed and added to storage successfully");
             Ok(PayloadStatus::valid_with_hash(block_hash))
         }
     }
