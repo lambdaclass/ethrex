@@ -2,8 +2,8 @@ use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use clap::ValueEnum;
+use ethrex_guest_program::input::ProgramInput;
 use ethrex_l2_common::prover::{BatchProof, ProofFormat};
-use guest_program::input::ProgramInput;
 use serde::{Deserialize, Serialize};
 
 pub mod error;
