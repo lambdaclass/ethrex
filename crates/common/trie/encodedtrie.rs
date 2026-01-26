@@ -1329,12 +1329,14 @@ mod test {
         fn proptest_multi_round_updates((kv, _shuffle) in kv_pairs_strategy()) {
             // Test scenario: simulate multi-block execution with updates to same keys
             // This is like what happens with the beacon root contract across multiple blocks
-            if kv.len() < 4 {
+            if kv.len() < 8 {
                 return Ok(());
             }
 
             // Use first quarter for initial state
             let initial = &kv[..kv.len()/4];
+            // Reserve remaining keys for "new account" insertions (same length as initial keys)
+            let remaining = &kv[kv.len()/4..];
 
             // Create trie with initial data
             let mut trie = Trie::new_temp();
@@ -1362,12 +1364,13 @@ mod test {
                     flat_trie.insert(key.clone(), new_value).unwrap();
                 }
 
-                // Insert a new key (simulating new account)
-                if block < kv.len() / 4 {
-                    let new_key = format!("newkey_block{}", block).into_bytes();
+                // Insert a new key from remaining keys (same length, simulating new account)
+                // In Ethereum, all keys are 32 bytes (keccak hashes), so we use same-length keys
+                if block < remaining.len() {
+                    let (new_key, _) = &remaining[block];
                     let new_value = format!("newvalue_block{}", block).into_bytes();
                     trie.insert(new_key.clone(), new_value.clone()).unwrap();
-                    flat_trie.insert(new_key, new_value).unwrap();
+                    flat_trie.insert(new_key.clone(), new_value).unwrap();
                 }
 
                 // Compute hash after each "block"
