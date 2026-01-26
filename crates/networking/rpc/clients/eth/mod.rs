@@ -10,7 +10,7 @@ use crate::{
         receipt::{RpcLog, RpcReceipt},
         transaction::RpcTransaction,
     },
-    utils::{RpcErrorResponse, RpcRequest, RpcSuccessResponse},
+    utils::{RpcRequest, RpcResponse},
 };
 use bytes::Bytes;
 use errors::{EthClientError, RpcRequestError};
@@ -21,18 +21,10 @@ use ethrex_common::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use reqwest::{Client, Url};
-use serde::Deserialize;
 use serde_json::{Value, json};
 use tracing::{debug, trace, warn};
 
 pub mod errors;
-
-#[derive(Deserialize, Debug)]
-#[serde(untagged)]
-pub enum RpcResponse {
-    Success(RpcSuccessResponse),
-    Error(RpcErrorResponse),
-}
 
 #[derive(Debug, Clone)]
 pub struct EthClient {
