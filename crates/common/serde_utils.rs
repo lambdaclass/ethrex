@@ -632,7 +632,7 @@ pub mod block_access_list {
             S: Serializer,
         {
             let buf = value.encode_to_vec();
-            serializer.serialize_str(&hex::encode(buf))
+            serializer.serialize_str(&format!("0x{}", hex::encode(buf)))
         }
     }
 
@@ -670,7 +670,7 @@ pub mod block_access_list {
             let bal = value
                 .as_ref()
                 .map(|bal| bal.encode_to_vec())
-                .map(hex::encode);
+                .map(|bytes| format!("0x{}", hex::encode(bytes)));
             Option::<String>::serialize(&bal, serializer)
         }
     }
