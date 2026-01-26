@@ -697,7 +697,6 @@ pub fn fork_to_spec_id(fork: Fork) -> SpecId {
         Fork::Osaka => SpecId::OSAKA,
         Fork::BPO1 => SpecId::OSAKA,
         Fork::BPO2 => SpecId::OSAKA,
-        Fork::Amsterdam => SpecId::OSAKA,
         Fork::BPO3 => SpecId::OSAKA,
         Fork::BPO4 => SpecId::OSAKA,
         Fork::BPO5 => SpecId::OSAKA,
