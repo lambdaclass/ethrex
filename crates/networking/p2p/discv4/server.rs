@@ -6,9 +6,9 @@ use crate::{
             ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage,
             Packet, PacketDecodeErr, PingMessage, PongMessage,
         },
+        peer_table::{Contact, OutMessage as PeerTableOutMessage, PeerTable, PeerTableError},
     },
     metrics::METRICS,
-    peer_table::{Contact, OutMessage as PeerTableOutMessage, PeerTable, PeerTableError},
     types::{Endpoint, Node, NodeRecord},
     utils::{
         get_msg_expiration_from_seconds, is_msg_expired, node_id, public_key_from_signing_key,

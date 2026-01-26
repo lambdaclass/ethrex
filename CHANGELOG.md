@@ -2,6 +2,14 @@
 
 ## Perf
 
+### 2026-01-23
+
+- Reuse cache in prewarm workers [#5999](https://github.com/lambdaclass/ethrex/pull/5999)
+
+### 2026-01-21
+
+- Improve snap sync logging with table format and visual progress bars [#5977](https://github.com/lambdaclass/ethrex/pull/5977)
+
 ### 2026-01-20
 
 - Remove `ethrex-threadpool` crate and move `ThreadPool` to `ethrex-trie` [#5925](https://github.com/lambdaclass/ethrex/pull/5925)
