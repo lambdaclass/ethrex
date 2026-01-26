@@ -10,11 +10,8 @@ use ethrex_l2_common::messages::L1MessageProof;
 use ethrex_rpc::types::block_identifier::BlockIdentifier;
 use ethrex_rpc::{
     EthClient,
-    clients::{
-        EthClientError,
-        eth::{RpcResponse, errors::RpcRequestError},
-    },
-    utils::RpcRequest,
+    clients::{EthClientError, eth::errors::RpcRequestError},
+    utils::{RpcRequest, RpcResponse},
 };
 use hex;
 use serde_json::json;
