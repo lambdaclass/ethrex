@@ -10,7 +10,7 @@ use crate::utils::keccak;
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct StorageChange {
-    block_access_index: usize,
+    block_access_index: u32,
     post_value: U256,
 }
 
@@ -66,7 +66,7 @@ impl RLPDecode for SlotChange {
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct BalanceChange {
-    block_access_index: usize,
+    block_access_index: u32,
     post_balance: U256,
 }
 
@@ -97,7 +97,7 @@ impl RLPDecode for BalanceChange {
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct NonceChange {
-    block_access_index: usize,
+    block_access_index: u32,
     post_nonce: u64,
 }
 
@@ -128,7 +128,7 @@ impl RLPDecode for NonceChange {
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct CodeChange {
-    block_access_index: usize,
+    block_access_index: u32,
     new_code: Bytes,
 }
 
@@ -169,26 +169,28 @@ pub struct AccountChanges {
 
 impl RLPEncode for AccountChanges {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        let mut sorted = self.clone();
-        sorted.storage_changes.sort_by(|a, b| a.slot.cmp(&b.slot));
-        sorted.storage_reads.sort();
-        sorted
-            .balance_changes
-            .sort_by(|a, b| a.block_access_index.cmp(&b.block_access_index));
-        sorted
-            .nonce_changes
-            .sort_by(|a, b| a.block_access_index.cmp(&b.block_access_index));
-        sorted
-            .code_changes
-            .sort_by(|a, b| a.block_access_index.cmp(&b.block_access_index));
+        let mut storage_changes = self.storage_changes.clone();
+        storage_changes.sort_by(|a, b| a.slot.cmp(&b.slot));
+
+        let mut storage_reads = self.storage_reads.clone();
+        storage_reads.sort();
+
+        let mut balance_changes = self.balance_changes.clone();
+        balance_changes.sort_by(|a, b| a.block_access_index.cmp(&b.block_access_index));
+
+        let mut nonce_changes = self.nonce_changes.clone();
+        nonce_changes.sort_by(|a, b| a.block_access_index.cmp(&b.block_access_index));
+
+        let mut code_changes = self.code_changes.clone();
+        code_changes.sort_by(|a, b| a.block_access_index.cmp(&b.block_access_index));
 
         structs::Encoder::new(buf)
-            .encode_field(&sorted.address)
-            .encode_field(&sorted.storage_changes)
-            .encode_field(&sorted.storage_reads)
-            .encode_field(&sorted.balance_changes)
-            .encode_field(&sorted.nonce_changes)
-            .encode_field(&sorted.code_changes)
+            .encode_field(&self.address)
+            .encode_field(&storage_changes)
+            .encode_field(&storage_reads)
+            .encode_field(&balance_changes)
+            .encode_field(&nonce_changes)
+            .encode_field(&code_changes)
             .finish();
     }
 }
