@@ -9,6 +9,7 @@ use crate::{
 use clap::Parser;
 use colored::Colorize;
 use ethrex_common::Address;
+use ethrex_common::types::Fork;
 use ethrex_levm::account::LevmAccount;
 use ethrex_levm::errors::{ExecutionReport, VMError};
 pub use revm::primitives::hardfork::SpecId;
@@ -64,9 +65,9 @@ pub struct EFTestRunnerOptions {
         value_name = "FORK",
         value_delimiter = ',',
         value_parser=parse_fork,
-        default_value = "Merge,Shanghai,Cancun,Prague,Osaka"
+        default_value = "Paris,Shanghai,Cancun,Prague,Osaka,Amsterdam"
     )]
-    pub forks: Option<Vec<SpecId>>,
+    pub forks: Option<Vec<Fork>>,
     /// For running specific .json files
     #[arg(short, long, value_name = "TESTS", value_delimiter = ',')]
     pub tests: Vec<String>,
@@ -89,8 +90,31 @@ pub struct EFTestRunnerOptions {
     pub paths: bool,
 }
 
-fn parse_fork(value: &str) -> Result<SpecId, String> {
-    SpecId::from_str(value).map_err(|_| format!("Unknown fork: {value}"))
+fn parse_fork(value: &str) -> Result<Fork, String> {
+    match value {
+        "Frontier" => Ok(Fork::Frontier),
+        "FrontierThawing" => Ok(Fork::FrontierThawing),
+        "Homestead" => Ok(Fork::Homestead),
+        "DaoFork" => Ok(Fork::DaoFork),
+        "Tangerine" => Ok(Fork::Tangerine),
+        "SpuriousDragon" => Ok(Fork::SpuriousDragon),
+        "Byzantium" => Ok(Fork::Byzantium),
+        "Constantinople" => Ok(Fork::Constantinople),
+        "Petersburg" => Ok(Fork::Petersburg),
+        "Istanbul" => Ok(Fork::Istanbul),
+        "MuirGlacier" => Ok(Fork::MuirGlacier),
+        "Berlin" => Ok(Fork::Berlin),
+        "London" => Ok(Fork::London),
+        "ArrowGlacier" => Ok(Fork::ArrowGlacier),
+        "GrayGlacier" => Ok(Fork::GrayGlacier),
+        "Paris" | "Merge" => Ok(Fork::Paris),
+        "Shanghai" => Ok(Fork::Shanghai),
+        "Cancun" => Ok(Fork::Cancun),
+        "Prague" => Ok(Fork::Prague),
+        "Osaka" => Ok(Fork::Osaka),
+        "Amsterdam" => Ok(Fork::Amsterdam),
+        other => Err(format!("Unknown fork: {other}")),
+    }
 }
 
 pub async fn run_ef_tests(
