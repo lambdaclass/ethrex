@@ -45,9 +45,9 @@ use tracing_subscriber::{
 };
 
 // Compile-time check to ensure that at least one of the database features is enabled.
-#[cfg(not(feature = "rocksdb"))]
+#[cfg(not(any(feature = "rocksdb", feature = "ethrex-db")))]
 const _: () = {
-    compile_error!("Database feature must be enabled (Available: `rocksdb`).");
+    compile_error!("Database feature must be enabled (Available: `rocksdb`, `ethrex-db`).");
 };
 
 pub fn init_tracing(
@@ -160,8 +160,10 @@ pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
     if is_memory_datadir(datadir) {
         Store::new(datadir, EngineType::InMemory)
     } else {
-        #[cfg(feature = "rocksdb")]
+        #[cfg(all(feature = "rocksdb", not(feature = "ethrex-db")))]
         let engine_type = EngineType::RocksDB;
+        #[cfg(feature = "ethrex-db")]
+        let engine_type = EngineType::EthrexDb;
         #[cfg(feature = "metrics")]
         ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
         Store::new(datadir, engine_type)
