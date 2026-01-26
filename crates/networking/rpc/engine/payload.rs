@@ -6,7 +6,7 @@ use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
 use ethrex_p2p::sync::SyncMode;
 use ethrex_rlp::error::RLPDecodeError;
-use metrics::histogram;
+use metrics::{gauge, histogram};
 use serde_json::Value;
 use std::time::Instant;
 use tokio::sync::oneshot;
@@ -627,6 +627,7 @@ async fn handle_new_payload_v1_v2(
     // Record consensus layer newPayload latency
     let duration_secs = start.elapsed().as_secs_f64();
     histogram!("engine_new_payload_latency_seconds").record(duration_secs);
+    gauge!("engine_new_payload_latency_last_seconds").set(duration_secs);
 
     Ok(payload_status)
 }
