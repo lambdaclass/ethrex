@@ -103,6 +103,9 @@ pub struct AlignedConfig {
     pub aligned_verifier_interval_ms: u64,
     pub beacon_urls: Vec<Url>,
     pub network: Network,
+    /// Starting L1 block number for the proof aggregation search.
+    /// This helps avoid scanning blocks from before proofs were being sent.
+    pub from_block: Option<u64>,
 }
 
 #[derive(Clone, Debug)]

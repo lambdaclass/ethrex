@@ -67,6 +67,7 @@ struct L1ProofVerifier {
     network: Network,
     rollup_store: StoreRollup,
     needed_proof_types: Vec<ProverType>,
+    from_block: Option<u64>,
 }
 
 impl L1ProofVerifier {
@@ -99,6 +100,7 @@ impl L1ProofVerifier {
             proof_verify_interval_ms: aligned_cfg.aligned_verifier_interval_ms,
             rollup_store,
             needed_proof_types,
+            from_block: aligned_cfg.from_block,
         })
     }
 
@@ -410,12 +412,22 @@ impl L1ProofVerifier {
                     Self::verification_data(prover_type, public_inputs.clone(), sp1_vk, risc0_vk)?;
 
                 match provider
-                    .check_proof_verification(None, verification_data)
+                    .check_proof_verification(self.from_block, verification_data)
                     .await
                 {
                     Ok(proof_status) => return Ok(proof_status),
-                    Err(ProofVerificationAggModeError::BeaconClient(_)) => continue,
-                    Err(ProofVerificationAggModeError::EthereumProviderError(_)) => break,
+                    Err(ProofVerificationAggModeError::BeaconClient(e)) => {
+                        warn!(
+                            "Beacon client error when checking proof verification with RPC URL {rpc_url} and Beacon URL {beacon_url}: {e:?}. Trying next combination.",
+                        );
+                        continue;
+                    }
+                    Err(ProofVerificationAggModeError::EthereumProviderError(e)) => {
+                        warn!(
+                            "Ethereum provider error when checking proof verification with RPC URL {rpc_url} and Beacon URL {beacon_url}: {e:?}. Trying next combination.",
+                        );
+                        continue;
+                    }
                     Err(e) => return Err(ProofVerifierError::InternalError(format!("{e:?}"))),
                 }
             }

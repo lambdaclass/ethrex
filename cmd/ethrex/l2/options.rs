@@ -230,6 +230,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 network: resolve_aligned_network(
                     &opts.aligned_opts.aligned_network.unwrap_or_default(),
                 ),
+                from_block: opts.aligned_opts.from_block,
             },
             monitor: MonitorConfig {
                 enabled: !opts.no_monitor,
@@ -859,6 +860,14 @@ pub struct AlignedOptions {
         help_heading = "Aligned options"
     )]
     pub aligned_network: Option<String>,
+    #[arg(
+        long = "aligned.from-block",
+        value_name = "BLOCK_NUMBER",
+        env = "ETHREX_ALIGNED_FROM_BLOCK",
+        help = "Starting L1 block number for proof aggregation search. Helps avoid scanning blocks from before proofs were being sent.",
+        help_heading = "Aligned options"
+    )]
+    pub from_block: Option<u64>,
 }
 
 impl Default for AlignedOptions {
@@ -868,6 +877,7 @@ impl Default for AlignedOptions {
             aligned_verifier_interval_ms: 5000,
             beacon_url: None,
             aligned_network: Some("devnet".to_string()),
+            from_block: None,
         }
     }
 }
@@ -879,6 +889,7 @@ impl AlignedOptions {
             .aligned_network
             .clone()
             .or(defaults.aligned_network.clone());
+        self.from_block = self.from_block.or(defaults.from_block);
     }
 }
 

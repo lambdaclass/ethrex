@@ -114,6 +114,7 @@ ethrex l2 \
   --watcher.block-delay 0 \
   --network fixtures/genesis/l2.json \
   --l1.bridge-address <BRIDGE_ADDRESS> \
+  --l1.timelock-address <TIMELOCK_ADDRESS> \
   --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> \
   --eth.rpc-url <ETH_RPC_URL> \
   --aligned \
@@ -133,6 +134,7 @@ Aligned params explanation:
 - `--aligned`: Enables aligned mode, enforcing all required parameters.
 - `--aligned.beacon-url`: URL of the beacon client used by the Aligned SDK to verify proof aggregations, it has to support `/eth/v1/beacon/blobs`
 - `--aligned-network`: Parameter used by the Aligned SDK. Available networks: `devnet`, `hoodi`, `mainnet`.
+- `--aligned.from-block`: (Optional) Starting L1 block number for proof aggregation search. Helps avoid scanning old blocks from before proofs were being sent. If not set, the search starts from the beginning.
 
 If you can't find a beacon client URL which supports that endpoint, you can run your own with lighthouse and ethrex:
 
