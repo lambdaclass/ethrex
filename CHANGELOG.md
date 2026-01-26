@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-01-23
+
+- Reuse cache in prewarm workers [#5999](https://github.com/lambdaclass/ethrex/pull/5999)
+
 ### 2026-01-21
 
 - Use fastbloom as the bloom filter [#5968](https://github.com/lambdaclass/ethrex/pull/5968)
