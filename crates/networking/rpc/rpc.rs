@@ -61,6 +61,10 @@ use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
 use ethrex_p2p::types::NodeRecord;
 use ethrex_storage::Store;
+use futures::FutureExt;
+use hyper::body::Incoming;
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::server::conn::auto::Builder as HttpConnectionBuilder;
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
@@ -77,6 +81,7 @@ use tokio::sync::{
     oneshot,
 };
 use tokio::time::timeout;
+use tower::Service;
 use tower_http::cors::CorsLayer;
 use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, Registry, reload};
@@ -353,6 +358,61 @@ pub fn start_block_executor(
     block_worker_channel
 }
 
+/// Serves an Axum router with HTTP/2 cleartext (h2c) and HTTP/1.1 support.
+///
+/// This function accepts TCP connections and serves requests using hyper's
+/// auto-detection for HTTP protocol version. Supports both HTTP/1.1 and
+/// HTTP/2 over cleartext (h2c) via the HTTP Upgrade mechanism or prior knowledge.
+///
+/// # Arguments
+///
+/// * `listener` - TCP listener to accept connections from
+/// * `router` - Axum router to serve requests
+///
+/// # Errors
+///
+/// Returns an error if serving fails.
+async fn serve_with_http2(listener: TcpListener, router: Router) -> Result<(), RpcErr> {
+    loop {
+        let (stream, _remote_addr) = match listener.accept().await {
+            Ok(conn) => conn,
+            Err(e) => {
+                warn!("Failed to accept TCP connection: {}", e);
+                continue;
+            }
+        };
+
+        let router = router.clone();
+
+        tokio::spawn(async move {
+            let io = TokioIo::new(stream);
+            let service = router.into_make_service();
+            let mut make_service = service;
+
+            let tower_service = match make_service.call(()).await {
+                Ok(svc) => svc,
+                Err(_) => return, // Infallible
+            };
+
+            let hyper_service = hyper::service::service_fn(move |req: hyper::Request<Incoming>| {
+                let mut tower_svc = tower_service.clone();
+                async move { tower_svc.call(req).await }
+            });
+
+            let builder = HttpConnectionBuilder::new(TokioExecutor::new());
+            if let Err(e) = builder
+                .serve_connection_with_upgrades(io, hyper_service)
+                .await
+            {
+                // Don't log normal connection closures
+                if !e.to_string().contains("connection closed") {
+                    warn!("Error serving connection: {}", e);
+                }
+            }
+        });
+    }
+}
+
 /// Starts the JSON-RPC API servers.
 ///
 /// This function initializes and runs three server endpoints:
@@ -406,6 +466,7 @@ pub async fn start_api(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: u64,
     extra_data: String,
+    http2_enabled: bool,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -460,10 +521,20 @@ pub async fn start_api(
     let http_listener = TcpListener::bind(http_addr)
         .await
         .map_err(|error| RpcErr::Internal(error.to_string()))?;
-    let http_server = axum::serve(http_listener, http_router)
-        .with_graceful_shutdown(shutdown_signal())
-        .into_future();
-    info!("Starting HTTP server at {http_addr}");
+
+    let http_server: std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>> =
+        if http2_enabled {
+            info!("Starting HTTP server at {http_addr} (HTTP/2 enabled)");
+            Box::pin(serve_with_http2(http_listener, http_router))
+        } else {
+            info!("Starting HTTP server at {http_addr}");
+            Box::pin(
+                axum::serve(http_listener, http_router)
+                    .with_graceful_shutdown(shutdown_signal())
+                    .into_future()
+                    .map(|r| r.map_err(|e| RpcErr::Internal(e.to_string()))),
+            )
+        };
 
     let (timer_sender, mut timer_receiver) = tokio::sync::watch::channel(());
 
@@ -491,10 +562,20 @@ pub async fn start_api(
     let authrpc_listener = TcpListener::bind(authrpc_addr)
         .await
         .map_err(|error| RpcErr::Internal(error.to_string()))?;
-    let authrpc_server = axum::serve(authrpc_listener, authrpc_router)
-        .with_graceful_shutdown(shutdown_signal())
-        .into_future();
-    info!("Starting Auth-RPC server at {authrpc_addr}");
+
+    let authrpc_server: std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>> =
+        if http2_enabled {
+            info!("Starting Auth-RPC server at {authrpc_addr} (HTTP/2 enabled)");
+            Box::pin(serve_with_http2(authrpc_listener, authrpc_router))
+        } else {
+            info!("Starting Auth-RPC server at {authrpc_addr}");
+            Box::pin(
+                axum::serve(authrpc_listener, authrpc_router)
+                    .with_graceful_shutdown(shutdown_signal())
+                    .into_future()
+                    .map(|r| r.map_err(|e| RpcErr::Internal(e.to_string()))),
+            )
+        };
 
     if let Some(address) = ws_addr {
         let ws_handler = |ws: WebSocketUpgrade, ctx| async {
@@ -507,10 +588,14 @@ pub async fn start_api(
         let ws_listener = TcpListener::bind(address)
             .await
             .map_err(|error| RpcErr::Internal(error.to_string()))?;
-        let ws_server = axum::serve(ws_listener, ws_router)
-            .with_graceful_shutdown(shutdown_signal())
-            .into_future();
+
         info!("Starting WS server at {address}");
+        let ws_server: std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>> = Box::pin(
+            axum::serve(ws_listener, ws_router)
+                .with_graceful_shutdown(shutdown_signal())
+                .into_future()
+                .map(|r| r.map_err(|e| RpcErr::Internal(e.to_string()))),
+        );
 
         let _ = tokio::try_join!(authrpc_server, http_server, ws_server)
             .inspect_err(|e| error!("Error shutting down servers: {e:?}"));

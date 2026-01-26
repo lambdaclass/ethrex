@@ -227,6 +227,7 @@ pub async fn init_rpc_api(
         log_filter_handler,
         opts.gas_limit,
         opts.extra_data.clone(),
+        opts.http2_enabled,
     );
 
     tracker.spawn(rpc_api);

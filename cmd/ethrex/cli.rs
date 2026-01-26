@@ -213,6 +213,15 @@ pub struct Options {
         help_heading = "RPC options"
     )]
     pub authrpc_jwtsecret: String,
+    #[arg(
+        long = "http2",
+        default_value = "false",
+        help = "Enable HTTP/2 cleartext (h2c) support for HTTP and Auth-RPC servers.",
+        long_help = "When enabled, HTTP and Auth-RPC servers will support both HTTP/1.1 and HTTP/2 over cleartext (h2c). Clients can upgrade to HTTP/2 or connect directly with prior knowledge.",
+        help_heading = "RPC options",
+        env = "ETHREX_HTTP2_ENABLED"
+    )]
+    pub http2_enabled: bool,
     #[arg(long = "p2p.disabled", default_value = "false", value_name = "P2P_DISABLED", action = ArgAction::SetTrue, help_heading = "P2P options")]
     pub p2p_disabled: bool,
     #[arg(
@@ -350,6 +359,7 @@ impl Default for Options {
             authrpc_addr: Default::default(),
             authrpc_port: Default::default(),
             authrpc_jwtsecret: Default::default(),
+            http2_enabled: false,
             p2p_disabled: Default::default(),
             p2p_addr: None,
             p2p_port: Default::default(),
