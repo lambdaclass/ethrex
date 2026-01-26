@@ -107,6 +107,30 @@ pub fn validate_requests_hash(
     Ok(())
 }
 
+/// Validates that the block access list hash matches the block header (Amsterdam+).
+pub fn validate_block_access_list_hash(
+    header: &BlockHeader,
+    chain_config: &ChainConfig,
+    computed_bal: &crate::types::block_access_list::BlockAccessList,
+) -> Result<(), InvalidBlockError> {
+    // BAL validation only applies to Amsterdam+ forks
+    if !chain_config.is_amsterdam_activated(header.timestamp) {
+        return Ok(());
+    }
+
+    let computed_hash = computed_bal.compute_hash();
+    let valid = header
+        .block_access_list_hash
+        .map(|expected_hash| expected_hash == computed_hash)
+        .unwrap_or(false);
+
+    if !valid {
+        return Err(InvalidBlockError::BlockAccessListHashMismatch);
+    }
+
+    Ok(())
+}
+
 /// Perform validations over the block's blob gas usage.
 /// Must be called only if the block has cancun activated.
 fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), InvalidBlockError> {

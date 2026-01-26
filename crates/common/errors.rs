@@ -27,6 +27,8 @@ pub enum EcdsaError {
 pub enum InvalidBlockError {
     #[error("Requests hash does not match the one in the header after executing")]
     RequestsHashMismatch,
+    #[error("Block access list hash does not match the one in the header after executing")]
+    BlockAccessListHashMismatch,
     #[error("World State Root does not match the one in the header after executing")]
     StateRootMismatch,
     #[error("Receipts Root does not match the one in the header after executing")]

@@ -68,8 +68,8 @@ use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H160, H256, TrieLogger};
 pub use ethrex_common::{
-    get_total_blob_gas, validate_block, validate_gas_used, validate_receipts_root,
-    validate_requests_hash,
+    get_total_blob_gas, validate_block, validate_block_access_list_hash, validate_gas_used,
+    validate_receipts_root, validate_requests_hash,
 };
 use ethrex_metrics::metrics;
 use ethrex_rlp::constants::RLP_NULL;
@@ -280,13 +280,18 @@ impl Blockchain {
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
         let mut vm = self.new_evm(vm_db)?;
 
-        let (execution_result, _bal) = vm.execute_block(block, false)?;
+        // Enable BAL recording for Amsterdam+ forks
+        let record_bal = chain_config.is_amsterdam_activated(block.header.timestamp);
+        let (execution_result, bal) = vm.execute_block(block, record_bal)?;
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
+        if let Some(bal) = &bal {
+            validate_block_access_list_hash(&block.header, &chain_config, bal)?;
+        }
 
         Ok((execution_result, account_updates))
     }
@@ -838,11 +843,16 @@ impl Blockchain {
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
         validate_block(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
-        let (execution_result, _bal) = vm.execute_block(block, false)?;
+        // Enable BAL recording for Amsterdam+ forks
+        let record_bal = chain_config.is_amsterdam_activated(block.header.timestamp);
+        let (execution_result, bal) = vm.execute_block(block, record_bal)?;
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
+        if let Some(bal) = &bal {
+            validate_block_access_list_hash(&block.header, chain_config, bal)?;
+        }
 
         Ok(execution_result)
     }
