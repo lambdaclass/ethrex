@@ -341,7 +341,6 @@ impl From<Fork> for &str {
             Fork::Osaka => "Osaka",
             Fork::BPO1 => "BPO1",
             Fork::BPO2 => "BPO2",
-            Fork::Amsterdam => "Amsterdam",
             Fork::BPO3 => "BPO3",
             Fork::BPO4 => "BPO4",
             Fork::BPO5 => "BPO5",

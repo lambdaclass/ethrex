@@ -46,14 +46,21 @@ impl<'a> VM<'a> {
             x => x.wrapping_sub(20),
         };
 
-        let Some(absolute_offset) = self
+        // Stack grows downwards, so we add the offset to get deeper elements
+        // SWAPN swaps the top element with the element at depth (relative_offset + 1)
+        let absolute_offset = self
             .current_call_frame
             .stack
             .offset
-            .checked_sub(usize::from(relative_offset).wrapping_add(1))
-        else {
+            .checked_add(usize::from(relative_offset).wrapping_add(1))
+            .ok_or(ExceptionalHalt::StackUnderflow)?;
+
+        // Verify the offset is within stack bounds
+        if absolute_offset >= STACK_LIMIT {
             return Err(ExceptionalHalt::StackUnderflow.into());
-        };
+        }
+
+        let top_offset = self.current_call_frame.stack.offset;
 
         #[expect(unsafe_code, reason = "bound already checked")]
         unsafe {
@@ -61,7 +68,7 @@ impl<'a> VM<'a> {
                 .current_call_frame
                 .stack
                 .values
-                .get_disjoint_unchecked_mut([absolute_offset, STACK_LIMIT - 1]);
+                .get_disjoint_unchecked_mut([top_offset, absolute_offset]);
             mem::swap(x, y);
         }
 
@@ -113,15 +120,21 @@ impl<'a> VM<'a> {
             }
         };
 
+        // Stack grows downwards, so we add the offsets to get deeper elements
         let absolute_offset = {
             let stack_offset = self.current_call_frame.stack.offset;
 
             let q = stack_offset
-                .checked_sub(usize::from(relative_offset.0))
+                .checked_add(usize::from(relative_offset.0))
                 .ok_or(ExceptionalHalt::StackUnderflow)?;
             let r = stack_offset
-                .checked_sub(usize::from(relative_offset.1))
+                .checked_add(usize::from(relative_offset.1))
                 .ok_or(ExceptionalHalt::StackUnderflow)?;
+
+            // Verify both offsets are within stack bounds
+            if q >= STACK_LIMIT || r >= STACK_LIMIT {
+                return Err(ExceptionalHalt::StackUnderflow.into());
+            }
 
             (q, r)
         };
