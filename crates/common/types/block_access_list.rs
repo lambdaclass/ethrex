@@ -47,9 +47,12 @@ pub struct SlotChange {
 
 impl RLPEncode for SlotChange {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        let mut slot_changes = self.slot_changes.clone();
+        slot_changes.sort_by(|a, b| a.block_access_index.cmp(&b.block_access_index));
+
         structs::Encoder::new(buf)
             .encode_field(&self.slot)
-            .encode_field(&self.slot_changes)
+            .encode_field(&slot_changes)
             .finish();
     }
 }
