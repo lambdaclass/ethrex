@@ -3,8 +3,8 @@ use crate::{
     config::ProverConfig,
 };
 use ethrex_guest_program::input::ProgramInput;
-use ethrex_l2::sequencer::{proof_coordinator::ProofData, utils::get_git_commit_hash};
-use ethrex_l2_common::prover::{BatchProof, ProofFormat};
+use ethrex_l2::sequencer::utils::get_git_commit_hash;
+use ethrex_l2_common::prover::{BatchProof, ProofData, ProofFormat};
 use std::time::Duration;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},

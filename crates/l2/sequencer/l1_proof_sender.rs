@@ -10,7 +10,6 @@ use aligned_sdk::gateway::provider::GatewayError;
 use aligned_sdk::types::Network;
 use alloy::signers::local::PrivateKeySigner;
 use ethrex_common::{Address, U256};
-use ethrex_guest_program::{ZKVM_RISC0_PROGRAM_VK, ZKVM_SP1_PROGRAM_ELF};
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProverType},
