@@ -246,7 +246,6 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             None,
             DEFAULT_BUILDER_GAS_CEIL,
             String::new(),
-            false, // http2_enabled
         )
         .await
         .unwrap()

@@ -484,7 +484,6 @@ pub async fn start_api(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: u64,
     extra_data: String,
-    http2_enabled: bool,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -540,23 +539,8 @@ pub async fn start_api(
         .await
         .map_err(|error| RpcErr::Internal(error.to_string()))?;
 
-    let http_server: std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>> =
-        if http2_enabled {
-            info!("Starting HTTP server at {http_addr} (HTTP/2 enabled)");
-            Box::pin(serve_with_http2(
-                http_listener,
-                http_router,
-                shutdown_signal(),
-            ))
-        } else {
-            info!("Starting HTTP server at {http_addr}");
-            Box::pin(
-                axum::serve(http_listener, http_router)
-                    .with_graceful_shutdown(shutdown_signal())
-                    .into_future()
-                    .map(|r| r.map_err(|e| RpcErr::Internal(e.to_string()))),
-            )
-        };
+    info!("Starting HTTP server at {http_addr}");
+    let http_server = serve_with_http2(http_listener, http_router, shutdown_signal());
 
     let (timer_sender, mut timer_receiver) = tokio::sync::watch::channel(());
 
@@ -585,23 +569,8 @@ pub async fn start_api(
         .await
         .map_err(|error| RpcErr::Internal(error.to_string()))?;
 
-    let authrpc_server: std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>> =
-        if http2_enabled {
-            info!("Starting Auth-RPC server at {authrpc_addr} (HTTP/2 enabled)");
-            Box::pin(serve_with_http2(
-                authrpc_listener,
-                authrpc_router,
-                shutdown_signal(),
-            ))
-        } else {
-            info!("Starting Auth-RPC server at {authrpc_addr}");
-            Box::pin(
-                axum::serve(authrpc_listener, authrpc_router)
-                    .with_graceful_shutdown(shutdown_signal())
-                    .into_future()
-                    .map(|r| r.map_err(|e| RpcErr::Internal(e.to_string()))),
-            )
-        };
+    info!("Starting Auth-RPC server at {authrpc_addr}");
+    let authrpc_server = serve_with_http2(authrpc_listener, authrpc_router, shutdown_signal());
 
     if let Some(address) = ws_addr {
         let ws_handler = |ws: WebSocketUpgrade, ctx| async {
