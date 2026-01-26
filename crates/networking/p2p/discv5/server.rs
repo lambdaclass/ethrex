@@ -3,7 +3,8 @@ use crate::{
         codec::Discv5Codec,
         messages::{
             DISTANCES_PER_FIND_NODE_MSG, FindNodeMessage, Handshake, Message, NodesMessage,
-            Ordinary, Packet, PacketCodecError, PacketTrait as _, PingMessage, PongMessage,
+            Ordinary, Packet, PacketCodecError, PacketHeader, PacketTrait as _, PingMessage,
+            PongMessage, WhoAreYou,
         },
         session::{build_challenge_data, create_id_signature, derive_session_keys},
     },
@@ -36,25 +37,27 @@ use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
 use tracing::{debug, error, info, trace};
 
-/// Interval between revalidation checks.
-const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours,
-/// Interval between revalidations.
-const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours,
+/// Interval between revalidation checks (how often we run the revalidation loop).
+const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(10);
+/// Nodes not validated within this interval are candidates for revalidation.
+const REVALIDATION_INTERVAL: Duration = Duration::from_secs(30);
 /// The initial interval between peer lookups, until the number of peers reaches
 /// [target_peers](DiscoverySideCarState::target_peers), or the number of
 /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
 pub const INITIAL_LOOKUP_INTERVAL_MS: f64 = 100.0; // 10 per second
 pub const LOOKUP_INTERVAL_MS: f64 = 600.0; // 100 per minute
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
+/// Timeout for pending messages awaiting WhoAreYou response.
+/// Per spec, good timeout is 500ms for single requests, 1s for handshakes.
+/// Using 2s to be conservative.
+const MESSAGE_CACHE_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, thiserror::Error)]
 pub enum DiscoveryServerError {
     #[error(transparent)]
     IoError(#[from] std::io::Error),
     #[error("Failed to decode packet")]
-    InvalidPacket(#[from] PacketCodecError),
-    #[error("Failed to send message")]
-    MessageSendFailure(PacketCodecError),
+    DecodeError(#[from] PacketCodecError),
     #[error("Only partial message was sent")]
     PartialMessageSent,
     #[error("Unknown or invalid contact")]
@@ -150,7 +153,10 @@ impl DiscoveryServer {
                 tracing::info!("Received handsake message");
                 Ok(())
             }
-            _ => Err(PacketCodecError::MalformedData)?,
+            f => {
+                tracing::info!("Unexpected flag {f}");
+                Err(PacketCodecError::MalformedData)?
+            }
         }
     }
     async fn handle_ordinary(
@@ -169,7 +175,7 @@ impl DiscoveryServer {
 
         tracing::trace!(received = %ordinary.message, from = %src_id, %addr);
 
-        self.handle_message(ordinary).await
+        self.handle_message(ordinary, addr).await
     }
 
     async fn handle_who_are_you(
@@ -177,9 +183,6 @@ impl DiscoveryServer {
         packet: Packet,
         addr: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
-        // TODO: check enr-seq to decide if we have to send the ENR in the handshake.
-        // (https://github.com/lambdaclass/ethrex/issues/5777)
-        // let whoareyou = WhoAreYou::decode(&packet)?;
         let nonce = packet.header.nonce;
         let Some((node, message, _)) = self.messages_by_nonce.swap_remove(&nonce) else {
             tracing::trace!("Received unexpected WhoAreYou packet. Ignoring it");
@@ -225,21 +228,25 @@ impl DiscoveryServer {
         self.peer_table
             .set_session_info(node.node_id(), session)
             .await?;
-        self.send_handshake(&message, signature, &ephemeral_pubkey, &node)
-            .await?;
 
-        Ok(())
+        // Check enr-seq to decide if we have to send the local ENR in the handshake.
+        let whoareyou = WhoAreYou::decode(&packet)?;
+        let record = (self.local_node_record.seq != whoareyou.enr_seq)
+            .then(|| self.local_node_record.clone());
+        self.send_handshake(&message, signature, &ephemeral_pubkey, &node, record)
+            .await
     }
 
     async fn revalidate(&mut self) -> Result<(), DiscoveryServerError> {
-        for _contact in self
+        let contacts = self
             .peer_table
             .get_contacts_to_revalidate(REVALIDATION_INTERVAL)
-            .await?
-        {
-            // TODO: Implement Ping/Pong workflow
-            // (https://github.com/lambdaclass/ethrex/issues/5778)
-            // self.send_ping(&contact.node).await?;
+            .await?;
+
+        for contact in contacts {
+            if let Err(e) = self.send_ping(&contact.node).await {
+                trace!(node = %contact.node.node_id(), err = ?e, "Failed to send revalidation PING");
+            }
         }
         Ok(())
     }
@@ -307,19 +314,41 @@ impl DiscoveryServer {
 
     async fn handle_ping(
         &mut self,
-        _ping_message: PingMessage,
+        ping_message: PingMessage,
+        sender_id: H256,
+        sender_addr: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
-        // TODO: Implement Ping/Pong workflow
-        // (https://github.com/lambdaclass/ethrex/issues/5778)
+        trace!(from = %sender_id, enr_seq = ping_message.enr_seq, "Received PING");
+
+        // Build PONG response
+        let pong = Message::Pong(PongMessage {
+            req_id: ping_message.req_id,
+            enr_seq: self.local_node_record.seq,
+            recipient_addr: sender_addr,
+        });
+
+        // Get sender node for sending response (need public key for encryption)
+        if let Some(contact) = self.peer_table.get_contact(sender_id).await? {
+            self.send_ordinary(&pong, &contact.node).await?;
+        } else {
+            trace!(from = %sender_id, "Received PING from unknown node, cannot respond");
+        }
+
         Ok(())
     }
 
     async fn handle_pong(
         &mut self,
-        _pong_message: PongMessage,
+        pong_message: PongMessage,
+        sender_id: H256,
     ) -> Result<(), DiscoveryServerError> {
-        // TODO: Implement Ping/Pong workflow
-        // (https://github.com/lambdaclass/ethrex/issues/5778)
+        // Validate and record PONG (clears ping_req_id if matches)
+        self.peer_table
+            .record_pong_received(&sender_id, pong_message.req_id)
+            .await?;
+
+        // TODO: If sender's enr_seq > our cached version, request updated ENR
+
         Ok(())
     }
 
@@ -340,6 +369,25 @@ impl DiscoveryServer {
         self.peer_table
             .new_contact_records(nodes_message.nodes, self.local_node.node_id())
             .await?;
+        Ok(())
+    }
+
+    async fn send_ping(&mut self, node: &Node) -> Result<(), DiscoveryServerError> {
+        let mut rng = OsRng;
+        let req_id = Bytes::from(rng.r#gen::<u64>().to_be_bytes().to_vec());
+
+        let ping = Message::Ping(PingMessage {
+            req_id: req_id.clone(),
+            enr_seq: self.local_node_record.seq,
+        });
+
+        self.send_ordinary(&ping, node).await?;
+
+        // Record ping sent for later PONG verification
+        self.peer_table
+            .record_ping_sent(&node.node_id(), req_id)
+            .await?;
+
         Ok(())
     }
 
@@ -383,12 +431,13 @@ impl DiscoveryServer {
         signature: Signature,
         eph_pubkey: &[u8],
         node: &Node,
+        record: Option<NodeRecord>,
     ) -> Result<(), DiscoveryServerError> {
         let handshake = Handshake {
             src_id: self.local_node.node_id(),
             id_signature: signature.serialize_compact().to_vec(),
             eph_pubkey: eph_pubkey.to_vec(),
-            record: Some(self.local_node_record.clone()),
+            record,
             message: message.clone(),
         };
         let encrypt_key = self
@@ -430,15 +479,38 @@ impl DiscoveryServer {
         nonce
     }
 
-    async fn handle_message(&mut self, ordinary: Ordinary) -> Result<(), DiscoveryServerError> {
+    /// Remove stale entries from the messages_by_nonce cache.
+    /// Called periodically to prevent unbounded growth.
+    fn cleanup_message_cache(&mut self) {
+        let now = Instant::now();
+        let before = self.messages_by_nonce.len();
+        self.messages_by_nonce
+            .retain(|_nonce, (_node, _message, timestamp)| {
+                now.duration_since(*timestamp) < MESSAGE_CACHE_TIMEOUT
+            });
+        let removed = before - self.messages_by_nonce.len();
+        if removed > 0 {
+            trace!("Cleaned up {} stale entries from message cache", removed);
+        }
+    }
+
+    async fn handle_message(
+        &mut self,
+        ordinary: Ordinary,
+        sender_addr: SocketAddr,
+    ) -> Result<(), DiscoveryServerError> {
         // Ignore packets sent by ourselves
-        if ordinary.src_id == self.local_node.node_id() {
+        let sender_id = ordinary.src_id;
+        if sender_id == self.local_node.node_id() {
             return Ok(());
         }
         match ordinary.message {
-            Message::Ping(ping_message) => self.handle_ping(ping_message).await?,
+            Message::Ping(ping_message) => {
+                self.handle_ping(ping_message, sender_id, sender_addr)
+                    .await?
+            }
             Message::Pong(pong_message) => {
-                self.handle_pong(pong_message).await?;
+                self.handle_pong(pong_message, sender_id).await?;
             }
             Message::FindNode(find_node_message) => {
                 self.handle_find_node(find_node_message).await?;
@@ -508,21 +580,21 @@ impl GenServer for DiscoveryServer {
                     .handle_packet(*message)
                     .await
                     // log level trace as we don't want to spam decoding errors from bad peers.
-                    .inspect_err(|e| trace!(err=?e, "Error Handling Discovery message"));
+                    .inspect_err(|e| trace!(err=%e, "Error Handling Discovery message"));
             }
             Self::CastMsg::Revalidate => {
                 trace!(received = "Revalidate");
                 let _ = self
                     .revalidate()
                     .await
-                    .inspect_err(|e| error!(err=?e, "Error revalidating discovered peers"));
+                    .inspect_err(|e| error!(err=%e, "Error revalidating discovered peers"));
             }
             Self::CastMsg::Lookup => {
                 trace!(received = "Lookup");
                 let _ = self
                     .lookup()
                     .await
-                    .inspect_err(|e| error!(err=?e, "Error performing Discovery lookup"));
+                    .inspect_err(|e| error!(err=%e, "Error performing Discovery lookup"));
 
                 let interval = self.get_lookup_interval().await;
                 send_after(interval, handle.clone(), Self::CastMsg::Lookup);
@@ -533,6 +605,7 @@ impl GenServer for DiscoveryServer {
                     .prune()
                     .await
                     .inspect_err(|e| error!(err=?e, "Error Pruning peer table"));
+                self.cleanup_message_cache();
             }
             Self::CastMsg::Shutdown => return CastResponse::Stop,
         }

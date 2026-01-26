@@ -323,6 +323,14 @@ pub struct RpcErrorResponse {
     pub error: RpcErrorMetadata,
 }
 
+/// A JSON-RPC 2.0 response, either success or error.
+#[derive(Deserialize, Debug)]
+#[serde(untagged)]
+pub enum RpcResponse {
+    Success(RpcSuccessResponse),
+    Error(RpcErrorResponse),
+}
+
 /// Failure to read from DB will always constitute an internal error
 impl From<StoreError> for RpcErr {
     fn from(value: StoreError) -> Self {

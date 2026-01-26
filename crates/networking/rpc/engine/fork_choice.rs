@@ -6,7 +6,7 @@ use ethrex_blockchain::{
 use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
 use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
@@ -215,7 +215,7 @@ async fn handle_forkchoice(
             "Fork choice requested but syncer is not initialized".to_string(),
         ));
     };
-    info!(
+    debug!(
         version = %format!("v{}", version),
         head = %format!("{:#x}", fork_choice_state.head_block_hash),
         safe = %format!("{:#x}", fork_choice_state.safe_block_hash),

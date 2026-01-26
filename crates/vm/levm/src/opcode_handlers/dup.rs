@@ -46,14 +46,18 @@ impl<'a> VM<'a> {
             x => x.wrapping_sub(20),
         };
 
-        let Some(absolute_offset) = self
+        // Stack grows downwards, so we add the offset to get deeper elements
+        let absolute_offset = self
             .current_call_frame
             .stack
             .offset
-            .checked_sub(usize::from(relative_offset))
-        else {
+            .checked_add(usize::from(relative_offset))
+            .ok_or(ExceptionalHalt::StackUnderflow)?;
+
+        // Verify the offset is within stack bounds
+        if absolute_offset >= self.current_call_frame.stack.values.len() {
             return Err(ExceptionalHalt::StackUnderflow.into());
-        };
+        }
 
         #[expect(unsafe_code, reason = "bound already checked")]
         self.current_call_frame.stack.push(unsafe {
