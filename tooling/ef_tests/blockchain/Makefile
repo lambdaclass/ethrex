@@ -10,7 +10,6 @@ EXECUTION_SPECS_REPO := https://github.com/ethereum/execution-specs.git
 EXECUTION_SPECS_REF := forks/amsterdam
 
 # Fill command options
-FILL_FORK := Amsterdam
 FILL_PROCESSES := 10
 FILL_MARKERS := not slow and not zkevm and not benchmark
 
@@ -33,7 +32,7 @@ $(SPECTEST_FIXTURES_DIR): $(EXECUTION_SPECS_DIR)
 	cd $(EXECUTION_SPECS_DIR) && uv run fill \
 		-m "$(FILL_MARKERS)" \
 		-n auto --maxprocesses $(FILL_PROCESSES) --dist=loadgroup \
-		--fork $(FILL_FORK) \
+		--until Amsterdam \
 		--clean \
 		--output $(CURDIR)/$(SPECTEST_FIXTURES_DIR) \
 		tests
@@ -75,6 +74,6 @@ test-sp1: $(VECTORS_TARGETS)
 test-stateless: $(VECTORS_TARGETS)
 	cargo test --profile release-with-debug --features stateless
 
-test: ## 🧪 Run blockchain tests with LEVM both with state and stateless 
+test: ## 🧪 Run blockchain tests with LEVM both with state and stateless
 	$(MAKE) test-levm
 	$(MAKE) test-stateless
