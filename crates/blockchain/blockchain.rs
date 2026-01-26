@@ -1702,7 +1702,7 @@ impl Blockchain {
         // Calculate merkle breakdown
         // merkle_end_instant marks when merkle thread finished (may be before or after exec)
         // exec_merkle_end_instant marks when both exec and merkle are done
-        let merkle_total_ms = exec_merkle_end_instant
+        let _merkle_total_ms = exec_merkle_end_instant
             .duration_since(exec_merkle_start)
             .as_millis() as u64;
 
@@ -1718,8 +1718,9 @@ impl Blockchain {
             .as_millis() as u64;
 
         // Overlap percentage: how much of merkle work was done concurrently
-        let overlap_pct = if merkle_total_ms > 0 {
-            (merkle_concurrent_ms * 100) / merkle_total_ms
+        let actual_merkle_ms = merkle_concurrent_ms + merkle_drain_ms;
+        let overlap_pct = if actual_merkle_ms > 0 {
+            (merkle_concurrent_ms * 100) / actual_merkle_ms
         } else {
             0
         };
@@ -1784,7 +1785,7 @@ impl Blockchain {
         );
         info!(
             "  |- merkle:   {:>4} ms  ({:>2}%){}  [concurrent: {} ms, drain: {} ms, overlap: {}%, queue: {}]",
-            merkle_total_ms.saturating_sub(exec_ms.min(merkle_concurrent_ms)),
+            merkle_drain_ms,
             pct(merkle_drain_ms),
             bottleneck_marker("merkle"),
             merkle_concurrent_ms,
@@ -1816,7 +1817,7 @@ impl Blockchain {
             METRICS_BLOCKS.set_execution_ms(exec_ms as i64);
             METRICS_BLOCKS.set_merkle_concurrent_ms(merkle_concurrent_ms as i64);
             METRICS_BLOCKS.set_merkle_drain_ms(merkle_drain_ms as i64);
-            METRICS_BLOCKS.set_merkle_ms(merkle_total_ms as i64);
+            METRICS_BLOCKS.set_merkle_ms(_merkle_total_ms as i64);
             METRICS_BLOCKS.set_merkle_overlap_pct(overlap_pct as i64);
             METRICS_BLOCKS.set_store_ms(store_ms as i64);
             METRICS_BLOCKS.set_warmer_ms(warmer_ms as i64);
