@@ -51,6 +51,9 @@ pub struct GuestProgramState {
     /// verified.
     /// Verification is done by hashing the trie and comparing the root hash with the account's storage root.
     pub verified_storage_roots: BTreeMap<Address, bool>,
+    /// Map of account addresses to booleans, indicating which storage tries have been modified
+    /// after initial loading. Modified tries must use hash() instead of authenticate().
+    pub modified_storage_tries: BTreeMap<Address, bool>,
 }
 
 /// Witness data produced by the client and consumed by the guest program
@@ -171,6 +174,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             chain_config: value.chain_config,
             account_hashes_by_address: BTreeMap::new(),
             verified_storage_roots: BTreeMap::new(),
+            modified_storage_tries: BTreeMap::new(),
         };
 
         Ok(ethrex_guest_program_state)
@@ -224,6 +228,9 @@ impl GuestProgramState {
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
                     let storage_trie = self.storage_tries.entry(update.address).or_default();
+
+                    // Mark this storage trie as modified so we use hash() instead of authenticate()
+                    self.modified_storage_tries.insert(update.address, true);
 
                     // Inserts must come before deletes, otherwise deletes might require extra nodes
                     // Example:
@@ -460,7 +467,13 @@ impl GuestProgramState {
             let storage_trie = match self.storage_tries.get_mut(&address) {
                 None if storage_root == *EMPTY_TRIE_HASH => return Ok(None),
                 Some(trie) => {
-                    let trie_root = trie.authenticate()?.finalize();
+                    // Use hash() for modified tries, authenticate() for unmodified tries
+                    let is_modified = *self.modified_storage_tries.get(&address).unwrap_or(&false);
+                    let trie_root = if is_modified {
+                        trie.hash()?.finalize()
+                    } else {
+                        trie.authenticate()?.finalize()
+                    };
                     if trie_root == storage_root {
                         trie
                     } else {
