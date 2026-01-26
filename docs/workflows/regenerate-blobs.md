@@ -8,16 +8,33 @@ The state reconstruction test (`crates/l2/tests/state_reconstruct.rs`) replays a
 ## Prerequisites
 
 - Rust toolchain installed
-- Docker installed and running
 - `solc` available in PATH
+- Docker installed and running
 
 ## Workflow
 
-### 1. Apply Temporary Code Changes
+### 1. Check Prerequisites
+
+Before starting, verify all prerequisites are met:
+
+```bash
+# Check Rust toolchain
+rustc --version
+
+# Check solc is available
+solc --version
+
+# Check docker is running
+docker info > /dev/null 2>&1 && echo "Docker is running"
+```
+
+If any command fails, stop and ask the user to install the missing dependency before proceeding.
+
+### 2. Apply Temporary Code Changes
 
 The agent must apply two patches to the sequencer code:
 
-#### 1.1 Cap Block Payloads at 10 Transactions
+#### 2.1 Cap Block Payloads at 10 Transactions
 
 Edit `crates/l2/sequencer/block_producer/payload_builder.rs`. Find the `fill_transactions` function and locate the main `loop` block. Add the following early exit at the **beginning of the loop body**, before the gas and blob space checks:
 
@@ -28,7 +45,7 @@ if context.payload.body.transactions.len() >= 10 {
 }
 ```
 
-#### 1.2 Persist Blobs When Committer Sends a Batch
+#### 2.2 Persist Blobs When Committer Sends a Batch
 
 Edit `crates/l2/sequencer/l1_committer.rs`:
 
@@ -57,7 +74,7 @@ store_blobs(batch.blobs_bundle.blobs.clone(), batch.number);
 Ok(commit_tx_hash)
 ```
 
-### 2. Clean Previous State
+### 3. Clean Previous State
 
 ```bash
 cd crates/l2
@@ -66,9 +83,11 @@ make rm-db-l2 2>/dev/null || true
 rm -f *.blob
 ```
 
-### 3. Start the L2 Stack
+### 4. Start the L2 Stack
 
 **Important:** Start the prover first, then the sequencer. This prevents the committer from getting stuck waiting for deposits to be verified.
+
+**Note:** The prover is stateless. It doesn't need to be restarted if the sequencer needs to be restarted during this workflow. However, if the prover was already running before this workflow, it must be restarted so it runs on the same commit as the sequencer.
 
 **Terminal 1 - Start prover (exec mode):**
 
@@ -77,15 +96,14 @@ cd crates/l2
 make init-prover-exec
 ```
 
-**Terminal 2 - Start L2 sequencer:**
+**Terminal 2 - Start L1 + L2 sequencer:**
 
 ```bash
 cd crates/l2
-COMPILE_CONTRACTS=true cargo run --release --bin ethrex --features l2,l2-sql -- \
-    l2 --dev --no-monitor --committer.commit-time 20000
+ETHREX_NO_MONITOR=true make init-l2-dev
 ```
 
-### 4. Wait for 6 Blobs
+### 5. Wait for 6 Blobs
 
 Monitor Terminal 2 (sequencer) for commitment messages:
 ```
@@ -94,9 +112,9 @@ INFO Commitment sent: 0x...
 
 **Wait until 6 commitment messages appear.** This creates files `1-1.blob` through `6-1.blob` in `crates/l2/`.
 
-### 5. Stop Processes and Copy Blobs
+### 6. Stop Processes and Copy Blobs
 
-Stop both processes (Ctrl+C), then:
+Stop the sequencer (Ctrl+C), then:
 
 ```bash
 cd crates/l2
@@ -104,21 +122,19 @@ cd crates/l2
 # Verify 6 blobs exist
 ls -la *.blob
 
-# Copy to fixtures
-cp 1-1.blob 2-1.blob 3-1.blob 4-1.blob 5-1.blob 6-1.blob ../../fixtures/blobs/
-
-# Clean up
-rm -f *.blob
+# Remove old blobs and move new ones to fixtures
+rm -f ../../fixtures/blobs/*.blob
+mv *.blob ../../fixtures/blobs/
 ```
 
-### 6. Revert Code Changes
+### 7. Revert Code Changes
 
 ```bash
 git checkout crates/l2/sequencer/block_producer/payload_builder.rs
 git checkout crates/l2/sequencer/l1_committer.rs
 ```
 
-### 7. Clean Up Databases
+### 8. Clean Up Databases
 
 ```bash
 cd crates/l2
@@ -126,7 +142,7 @@ make rm-db-l1 2>/dev/null || true
 make rm-db-l2 2>/dev/null || true
 ```
 
-### 8. Verify Regeneration
+### 9. Verify Regeneration
 
 ```bash
 cd crates/l2
@@ -134,7 +150,7 @@ cd crates/l2
 # Quick validation (fast)
 make validate-blobs
 
-# Full state reconstruction test (slower, requires docker)
+# Full state reconstruction test (requires docker)
 make state-diff-test
 ```
 
@@ -149,7 +165,7 @@ If verification tests fail, the agent must:
 1. **Analyze the error** - Read the test output carefully to understand what failed
 2. **Check the Troubleshooting table** - Look for known issues and solutions
 3. **Attempt a fix** - Apply the appropriate solution from the table
-4. **Retry the workflow** - Restart from the appropriate step (usually Step 2)
+4. **Retry the workflow** - Restart from the appropriate step (usually Step 3)
 
 **After 3 failed attempts**, the agent must:
 - Stop retrying
@@ -178,7 +194,7 @@ How would you like me to proceed?
 | No `.blob` files generated | Verify `store_blobs` patch was applied correctly |
 | Less than 6 blobs | Wait longer; commit interval is 20 seconds |
 | `validate-blobs` fails after regeneration | Genesis may have changed during blob generation; restart |
-| `state-diff-test` fails | Ensure docker is running; verify blobs were from clean state |
+| `state-diff-test` fails | Ensure docker is running; verify blobs were generated from a clean state |
 | Compilation errors | Ensure `solc` is in PATH. If compilation fails with undefined types or modules, verify that all required imports (`Blob` and `fs`) have been added at the top of the modified files. |
 
 ### Verification Commands
