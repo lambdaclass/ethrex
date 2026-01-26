@@ -1084,7 +1084,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "7.0.0"
+version = "9.0.0"
 dependencies = [
  "bytes",
  "ethrex-common",
@@ -1104,7 +1104,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "7.0.0"
+version = "9.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -1113,6 +1113,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
+ "hex-literal",
  "k256",
  "kzg-rs",
  "lazy_static",
@@ -1134,7 +1135,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "7.0.0"
+version = "9.0.0"
 dependencies = [
  "kzg-rs",
  "thiserror",
@@ -1143,7 +1144,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "7.0.0"
+version = "9.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1175,7 +1176,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "7.0.0"
+version = "9.0.0"
 dependencies = [
  "ethrex-common",
  "serde",
@@ -1186,7 +1187,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "7.0.0"
+version = "9.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1199,7 +1200,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "7.0.0"
+version = "9.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1222,15 +1223,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethrex-threadpool"
-version = "0.1.0"
-dependencies = [
- "crossbeam",
-]
-
-[[package]]
 name = "ethrex-trie"
-version = "7.0.0"
+version = "9.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1239,7 +1233,6 @@ dependencies = [
  "ethereum-types",
  "ethrex-crypto",
  "ethrex-rlp",
- "ethrex-threadpool",
  "hex",
  "lazy_static",
  "rkyv",
@@ -1253,7 +1246,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "7.0.0"
+version = "9.0.0"
 dependencies = [
  "bincode",
  "bytes",
@@ -1266,6 +1259,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "lazy_static",
+ "rayon",
  "rkyv",
  "serde",
  "thiserror",

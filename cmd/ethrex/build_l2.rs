@@ -8,7 +8,7 @@ use std::{
 };
 
 use ethrex_common::{U256, types::GenesisAccount};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use bytes::Bytes;
 use ethrex_common::Address;
@@ -107,6 +107,10 @@ pub fn download_script() {
             &Path::new("../../crates/l2/contracts/src/l1/Router.sol"),
             "Router",
         ),
+        (
+            &Path::new("../../crates/l2/contracts/src/l1/Timelock.sol"),
+            "Timelock",
+        ),
     ];
     for (path, name) in l1_contracts {
         compile_contract_to_bytecode(
@@ -136,6 +140,10 @@ pub fn download_script() {
         (
             &Path::new("../../crates/l2/contracts/src/l2/FeeTokenRegistry.sol"),
             "FeeTokenRegistry",
+        ),
+        (
+            &Path::new("../../crates/l2/contracts/src/l2/FeeTokenPricer.sol"),
+            "FeeTokenPricer",
         ),
     ];
     for (path, name) in l2_contracts {
@@ -192,6 +200,7 @@ fn write_empty_bytecode_files(output_contracts_path: &Path) {
         "UpgradeableSystemContract",
         "SequencerRegistry",
         "OnChainProposerBased",
+        "Timelock",
     ];
 
     for name in &contract_names {
@@ -293,8 +302,8 @@ fn decode_to_bytecode(input_file_path: &Path, output_file_path: &Path) {
 
 use ethrex_l2_sdk::{
     COMMON_BRIDGE_L2_ADDRESS, CREATE2DEPLOYER_ADDRESS, DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS,
-    FEE_TOKEN_REGISTRY_ADDRESS, L2_TO_L1_MESSENGER_ADDRESS, SAFE_SINGLETON_FACTORY_ADDRESS,
-    address_to_word, get_erc1967_slot,
+    FEE_TOKEN_PRICER_ADDRESS, FEE_TOKEN_REGISTRY_ADDRESS, L2_TO_L1_MESSENGER_ADDRESS,
+    SAFE_SINGLETON_FACTORY_ADDRESS, address_to_word, get_erc1967_slot,
 };
 
 #[allow(clippy::enum_variant_names)]
@@ -357,6 +366,12 @@ fn fee_token_registry_runtime(out_dir: &Path) -> Vec<u8> {
     fs::read(path).expect("Failed to read bytecode file")
 }
 
+/// Bytecode of the FeeTokenPricer contract.
+fn fee_token_pricer_runtime(out_dir: &Path) -> Vec<u8> {
+    let path = out_dir.join("contracts/solc_out/FeeTokenPricer.bytecode");
+    fs::read(path).expect("Failed to read bytecode file")
+}
+
 /// Bytecode of the Create2Deployer contract.
 fn create2deployer_runtime(out_dir: &Path) -> Vec<u8> {
     let path = out_dir.join("contracts/solc_out/Create2Deployer.bytecode");
@@ -385,13 +400,13 @@ fn add_with_proxy(
         impl_address,
         GenesisAccount {
             code: Bytes::from(code),
-            storage: HashMap::new(),
+            storage: BTreeMap::new(),
             balance: U256::zero(),
             nonce: 1,
         },
     );
 
-    let mut storage = HashMap::new();
+    let mut storage = BTreeMap::new();
 
     storage.insert(
         get_erc1967_slot("eip1967.proxy.implementation"),
@@ -419,7 +434,7 @@ fn add_placeholder_proxy(
     address: Address,
     out_dir: &Path,
 ) -> Result<(), SystemContractsUpdaterError> {
-    let storage: HashMap<U256, U256> = HashMap::from([(
+    let storage: BTreeMap<U256, U256> = BTreeMap::from([(
         get_erc1967_slot("eip1967.proxy.admin"),
         address_to_word(ADMIN_ADDRESS),
     )]);
@@ -467,7 +482,14 @@ pub fn update_genesis_file(
         out_dir,
     )?;
 
-    for address in 0xff00..0xfffc {
+    add_with_proxy(
+        &mut genesis,
+        FEE_TOKEN_PRICER_ADDRESS,
+        fee_token_pricer_runtime(out_dir),
+        out_dir,
+    )?;
+
+    for address in 0xff00..0xfffb {
         add_placeholder_proxy(&mut genesis, Address::from_low_u64_be(address), out_dir)?;
     }
 
@@ -483,7 +505,7 @@ fn add_deterministic_deployers(genesis: &mut Genesis, out_dir: &Path) {
         DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS,
         GenesisAccount {
             code: Bytes::from_static(&DETERMINISTIC_DEPLOYMENT_CODE),
-            storage: HashMap::new(),
+            storage: BTreeMap::new(),
             balance: U256::zero(),
             nonce: 1,
         },
@@ -493,7 +515,7 @@ fn add_deterministic_deployers(genesis: &mut Genesis, out_dir: &Path) {
         SAFE_SINGLETON_FACTORY_ADDRESS,
         GenesisAccount {
             code: Bytes::from_static(&DETERMINISTIC_DEPLOYMENT_CODE),
-            storage: HashMap::new(),
+            storage: BTreeMap::new(),
             balance: U256::zero(),
             nonce: 1,
         },
@@ -503,7 +525,7 @@ fn add_deterministic_deployers(genesis: &mut Genesis, out_dir: &Path) {
         CREATE2DEPLOYER_ADDRESS,
         GenesisAccount {
             code: Bytes::from(create2deployer_runtime(out_dir)),
-            storage: HashMap::new(),
+            storage: BTreeMap::new(),
             balance: U256::zero(),
             nonce: 1,
         },

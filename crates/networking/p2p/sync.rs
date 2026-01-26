@@ -2,8 +2,8 @@ mod code_collector;
 mod state_healing;
 mod storage_healing;
 
-use crate::discv4::peer_table::PeerTableError;
 use crate::peer_handler::{BlockRequestOrder, PeerHandlerError, SNAP_LIMIT};
+use crate::peer_table::PeerTableError;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::code_collector::CodeHashCollector;
 use crate::sync::state_healing::heal_state_trie_wrap;
@@ -25,10 +25,12 @@ use ethrex_common::{
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     types::{AccountState, Block, BlockHeader},
 };
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
+use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
+#[cfg(feature = "rocksdb")]
+use ethrex_trie::Trie;
+use ethrex_trie::TrieError;
 use ethrex_trie::trie_sorted::TrieGenerationError;
-use ethrex_trie::{Trie, TrieError};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -59,6 +61,9 @@ const BYTECODE_CHUNK_SIZE: usize = 50_000;
 /// based update pivot algorithm. This is also used to try to find "safe" blocks in the chain
 /// that are unlikely to be re-orged.
 const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
+
+/// Maximum attempts before giving up on header downloads during syncing
+const MAX_HEADER_FETCH_ATTEMPTS: u64 = 100;
 
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
@@ -188,15 +193,15 @@ impl Syncer {
             Err(e) => return Err(e.into()),
         };
 
+        let mut attempts = 0;
+
         // We validate that we have the folders that are being used empty, as we currently assume
         // they are. If they are not empty we empty the folder
         delete_leaves_folder(&self.datadir);
+
+        info!("Starting to download block headers from peers");
+
         loop {
-            debug!("Sync Log 1: In snap sync");
-            debug!(
-                "Sync Log 2: State block hashes len {}",
-                block_sync_state.block_hashes.len()
-            );
             debug!("Requesting Block Headers from {current_head}");
 
             let Some(mut block_headers) = self
@@ -204,9 +209,21 @@ impl Syncer {
                 .request_block_headers(current_head_number, sync_head)
                 .await?
             else {
-                warn!("Sync failed to find target block header, aborting");
-                return Ok(());
+                if attempts > MAX_HEADER_FETCH_ATTEMPTS {
+                    warn!("Sync failed to find target block header, aborting");
+                    return Ok(());
+                }
+                attempts += 1;
+                tokio::time::sleep(Duration::from_millis(1.1_f64.powf(attempts as f64) as u64))
+                    .await;
+                continue;
             };
+
+            debug!("Sync Log 1: In snap sync");
+            debug!(
+                "Sync Log 2: State block hashes len {}",
+                block_sync_state.block_hashes.len()
+            );
 
             let (first_block_hash, first_block_number, first_block_parent_hash) =
                 match block_headers.first() {
@@ -284,6 +301,8 @@ impl Syncer {
             };
         }
 
+        info!("All block headers downloaded successfully");
+
         self.snap_sync(&store, &mut block_sync_state).await?;
 
         store.clear_snap_state().await?;
@@ -323,6 +342,8 @@ impl Syncer {
         let mut headers = vec![];
         let mut single_batch = true;
 
+        let mut attempts = 0;
+
         // Request and store all block headers from the advertised sync head
         loop {
             let Some(mut block_headers) = self
@@ -330,9 +351,14 @@ impl Syncer {
                 .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
                 .await?
             else {
-                warn!("Sync failed to find target block header, aborting");
-                debug!("Sync Log 8: Sync failed to find target block header, aborting");
-                return Ok(());
+                if attempts > MAX_HEADER_FETCH_ATTEMPTS {
+                    warn!("Sync failed to find target block header, aborting");
+                    return Ok(());
+                }
+                attempts += 1;
+                tokio::time::sleep(Duration::from_millis(1.1_f64.powf(attempts as f64) as u64))
+                    .await;
+                continue;
             };
             debug!("Sync Log 9: Received {} block headers", block_headers.len());
 
@@ -493,7 +519,7 @@ impl Syncer {
 
         store
             .forkchoice_update(
-                Some(numbers_and_hashes),
+                numbers_and_hashes,
                 last_block_number,
                 last_block_hash,
                 None,
@@ -715,8 +741,8 @@ impl Syncer {
             );
             *METRICS.account_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
-            info!("Original state root: {state_root:?}");
-            info!("Computed state root after request_account_rages: {computed_state_root:?}");
+            debug!("Original state root: {state_root:?}");
+            debug!("Computed state root after request_account_rages: {computed_state_root:?}");
 
             *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
             // We start downloading the storage leafs. To do so, we need to be sure that the storage root
@@ -755,7 +781,7 @@ impl Syncer {
                     storage_accounts.accounts_with_storage_root.len()
                 );
                 storage_range_request_attempts += 1;
-                if storage_range_request_attempts < 3 {
+                if storage_range_request_attempts < 5 {
                     chunk_index = self
                         .peers
                         .request_storage_ranges(
@@ -785,10 +811,13 @@ impl Syncer {
                         );
                     }
 
+                    warn!("Storage could not be downloaded after multiple attempts. Marking for healing.
+                        This could impact snap sync time (healing may take a while).");
+
                     storage_accounts.accounts_with_storage_root.clear();
                 }
 
-                info!(
+                debug!(
                     "Ended request_storage_ranges with {} accounts with storage root unchanged and not downloaded yet and with {} big/healed accounts",
                     storage_accounts.accounts_with_storage_root.len(),
                     // These accounts are marked as heals if they're a big account. This is
@@ -798,7 +827,7 @@ impl Syncer {
                 if !block_is_stale(&pivot_header) {
                     break;
                 }
-                info!("We stopped because of staleness, restarting loop");
+                debug!("We stopped because of staleness, restarting loop");
             }
             info!("Finished request_storage_ranges");
             *METRICS.storage_tries_download_end_time.lock().await = Some(SystemTime::now());
@@ -880,7 +909,7 @@ impl Syncer {
         let mut seen_code_hashes = HashSet::new();
         let mut code_hashes_to_download = Vec::new();
 
-        info!("Starting download code hashes from peers");
+        info!("Starting download bytecodes from peers");
         for entry in std::fs::read_dir(&code_hashes_dir)
             .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
         {
@@ -896,7 +925,7 @@ impl Syncer {
                     code_hashes_to_download.push(hash);
 
                     if code_hashes_to_download.len() >= BYTECODE_CHUNK_SIZE {
-                        info!(
+                        debug!(
                             "Starting bytecode download of {} hashes",
                             code_hashes_to_download.len()
                         );
@@ -944,12 +973,14 @@ impl Syncer {
                 .await?;
         }
 
+        info!("Finished download bytecodes from peers");
+
         std::fs::remove_dir_all(code_hashes_dir)
             .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?;
 
         *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
 
-        debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root).await);
+        debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root));
 
         store_block_bodies(
             vec![pivot_header.clone()],
@@ -975,7 +1006,7 @@ impl Syncer {
 
         store
             .forkchoice_update(
-                Some(numbers_and_hashes),
+                numbers_and_hashes,
                 pivot_header.number,
                 pivot_header.hash(),
                 None,
@@ -985,6 +1016,9 @@ impl Syncer {
         Ok(())
     }
 }
+
+#[cfg(not(feature = "rocksdb"))]
+use ethrex_rlp::encode::RLPEncode;
 
 #[cfg(not(feature = "rocksdb"))]
 type StorageRoots = (H256, Vec<(ethrex_trie::Nibbles, Vec<u8>)>);
@@ -1047,7 +1081,7 @@ pub async fn update_pivot(
         };
 
         let peer_score = peers.peer_table.get_score(&peer_id).await?;
-        info!(
+        debug!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
         let Some(pivot) = peers
@@ -1066,7 +1100,7 @@ pub async fn update_pivot(
 
         // Reward peer
         peers.peer_table.record_success(&peer_id).await?;
-        info!("Succesfully updated pivot");
+        debug!("Succesfully updated pivot");
         let block_headers = peers
             .request_block_headers(block_number + 1, pivot.hash())
             .await?
@@ -1150,10 +1184,10 @@ pub enum SyncError {
     CorruptPath,
     #[error("Sorted Trie Generation Error: {0}")]
     TrieGenerationError(#[from] TrieGenerationError),
-    #[error("Failed to get account temp db directory")]
-    AccountTempDBDirNotFound,
-    #[error("Failed to get storage temp db directory")]
-    StorageTempDBDirNotFound,
+    #[error("Failed to get account temp db directory: {0}")]
+    AccountTempDBDirNotFound(String),
+    #[error("Failed to get storage temp db directory: {0}")]
+    StorageTempDBDirNotFound(String),
     #[error("RocksDB Error: {0}")]
     RocksDBError(String),
     #[error("Bytecode file error")]
@@ -1180,8 +1214,8 @@ impl SyncError {
             | SyncError::PeerHandler(_)
             | SyncError::CorruptPath
             | SyncError::TrieGenerationError(_)
-            | SyncError::AccountTempDBDirNotFound
-            | SyncError::StorageTempDBDirNotFound
+            | SyncError::AccountTempDBDirNotFound(_)
+            | SyncError::StorageTempDBDirNotFound(_)
             | SyncError::RocksDBError(_)
             | SyncError::BytecodeFileError
             | SyncError::NoLatestCanonical
@@ -1210,65 +1244,53 @@ impl<T> From<SendError<T>> for SyncError {
 
 pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
     info!("Starting validate_state_root");
-    let computed_state_root = tokio::task::spawn_blocking(move || {
-        Trie::compute_hash_from_unsorted_iter(
-            store
-                .iter_accounts(state_root)
-                .expect("we couldn't iterate over accounts")
-                .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())),
-        )
+    let validated = tokio::task::spawn_blocking(move || {
+        store
+            .open_locked_state_trie(state_root)
+            .expect("couldn't open trie")
+            .validate()
     })
     .await
     .expect("We should be able to create threads");
 
-    let tree_validated = state_root == computed_state_root;
-    if tree_validated {
+    if validated.is_ok() {
         info!("Succesfully validated tree, {state_root} found");
     } else {
-        error!(
-            "We have failed the validation of the state tree {state_root} expected but {computed_state_root} found"
-        );
+        error!("We have failed the validation of the state tree");
+        std::process::exit(1);
     }
-    tree_validated
+    validated.is_ok()
 }
 
 pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     info!("Starting validate_storage_root");
-    let is_valid = store
-        .clone()
-        .iter_accounts(state_root)
-        .expect("We should be able to open the store")
-        .par_bridge()
-        .map(|(hashed_address, account_state)|
-    {
-        let store_clone = store.clone();
-        let computed_storage_root = Trie::compute_hash_from_unsorted_iter(
+    let is_valid = tokio::task::spawn_blocking(move || {
+        store
+            .iter_accounts(state_root)
+            .expect("couldn't iterate accounts")
+            .par_bridge()
+            .try_for_each(|(hashed_address, account_state)| {
+                let store_clone = store.clone();
                 store_clone
-                    .iter_storage(state_root, hashed_address)
-                    .expect("we couldn't iterate over accounts")
-                    .expect("This address should be valid")
-                    .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())),
-            );
-
-        let tree_validated = account_state.storage_root == computed_storage_root;
-        if !tree_validated {
-            error!(
-                "We have failed the validation of the storage tree {:x} expected but {computed_storage_root:x} found for the account {:x}",
-                account_state.storage_root,
-                hashed_address
-            );
-        }
-        tree_validated
+                    .open_locked_storage_trie(
+                        hashed_address,
+                        state_root,
+                        account_state.storage_root,
+                    )
+                    .expect("couldn't open storage trie")
+                    .validate()
+            })
     })
-    .all(|valid| valid);
+    .await
+    .expect("We should be able to create threads");
     info!("Finished validate_storage_root");
-    if !is_valid {
+    if is_valid.is_err() {
         std::process::exit(1);
     }
-    is_valid
+    is_valid.is_ok()
 }
 
-pub async fn validate_bytecodes(store: Store, state_root: H256) -> bool {
+pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
     info!("Starting validate_bytecodes");
     let mut is_valid = true;
     for (account_hash, account_state) in store
@@ -1439,7 +1461,7 @@ async fn insert_accounts(
     let mut db_options = rocksdb::Options::default();
     db_options.create_if_missing(true);
     let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
-        .map_err(|_| SyncError::AccountTempDBDirNotFound)?;
+        .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
     let file_paths: Vec<PathBuf> = std::fs::read_dir(account_state_snapshots_dir)
         .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
         .collect::<Result<Vec<_>, _>>()
@@ -1480,10 +1502,12 @@ async fn insert_accounts(
     )
     .map_err(SyncError::TrieGenerationError)?;
 
+    drop(db); // close db before removing directory
+
     std::fs::remove_dir_all(account_state_snapshots_dir)
         .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?;
     std::fs::remove_dir_all(get_rocksdb_temp_accounts_dir(datadir))
-        .map_err(|_| SyncError::AccountTempDBDirNotFound)?;
+        .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
 
     let accounts_with_storage =
         BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().copied());
@@ -1499,9 +1523,8 @@ async fn insert_storages(
 ) -> Result<(), SyncError> {
     use crate::utils::get_rocksdb_temp_storage_dir;
     use crossbeam::channel::{bounded, unbounded};
-    use ethrex_threadpool::ThreadPool;
     use ethrex_trie::{
-        Nibbles, Node,
+        Nibbles, Node, ThreadPool,
         trie_sorted::{BUFFER_COUNT, SIZE_TO_WRITE_DB, trie_from_sorted_accounts},
     };
     use std::thread::scope;
@@ -1619,10 +1642,14 @@ async fn insert_storages(
         }
     });
 
+    // close db before removing directory
+    drop(snapshot);
+    drop(db);
+
     std::fs::remove_dir_all(account_storages_snapshots_dir)
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
     std::fs::remove_dir_all(get_rocksdb_temp_storage_dir(datadir))
-        .map_err(|_| SyncError::StorageTempDBDirNotFound)?;
+        .map_err(|e| SyncError::StorageTempDBDirNotFound(e.to_string()))?;
 
     Ok(())
 }

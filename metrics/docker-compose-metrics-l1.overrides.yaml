@@ -9,7 +9,7 @@ services:
       - --consensus-url=http://host.docker.internal:5052
       - --metrics-port=9093
     ports:
-      - "9093:9093"
+      - "9094:9093"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -33,3 +33,24 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on:
+      - prometheus
+
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  promtail:
+    image: grafana/promtail:latest
+    volumes:
+      - ./provisioning/promtail/promtail.yaml:/etc/promtail/config.yaml
+      - ${ETHREX_LOGS_DIR:-../logs}:/var/log/ethrex
+    command: -config.file=/etc/promtail/config.yaml
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - loki

@@ -26,6 +26,7 @@ libc = "0.2"
 crc32fast.workspace = true
 bytes.workspace = true
 hex.workspace = true
+hex-literal.workspace = true
 lazy_static.workspace = true
 rayon.workspace = true
 url.workspace = true
@@ -34,9 +35,6 @@ rustc-hash.workspace = true
 k256.workspace = true
 
 secp256k1 = { workspace = true, optional = true }
-
-[dev-dependencies]
-hex-literal.workspace = true
 
 [features]
 default = ["secp256k1"]

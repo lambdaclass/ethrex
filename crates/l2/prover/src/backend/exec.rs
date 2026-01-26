@@ -1,70 +1,84 @@
 use std::time::{Duration, Instant};
+
 use tracing::{info, warn};
 
+use ethrex_guest_program::{input::ProgramInput, output::ProgramOutput};
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofCalldata, ProofFormat, ProverType},
 };
-use guest_program::{input::ProgramInput, output::ProgramOutput};
 
-pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
-    let now = Instant::now();
-    execution_program(input)?;
-    let elapsed = now.elapsed();
+use crate::backend::{BackendError, ProverBackend};
 
-    info!("Successfully executed program in {:.2?}", elapsed);
-    Ok(())
-}
+/// Exec backend - executes the program without generating actual proofs.
+///
+/// This backend is useful for testing and debugging, as it runs the guest
+/// program directly without the overhead of proof generation.
+#[derive(Default)]
+pub struct ExecBackend;
 
-pub fn execute_timed(input: ProgramInput) -> Result<Duration, Box<dyn std::error::Error>> {
-    let now = Instant::now();
-    execution_program(input)?;
-    let duration = now.elapsed();
+impl ExecBackend {
+    pub fn new() -> Self {
+        Self
+    }
 
-    Ok(duration)
-}
+    /// Core execution - runs the guest program directly.
+    fn execute_core(input: ProgramInput) -> Result<ProgramOutput, BackendError> {
+        ethrex_guest_program::execution::execution_program(input).map_err(BackendError::execution)
+    }
 
-pub fn prove(
-    input: ProgramInput,
-    _format: ProofFormat,
-) -> Result<ProgramOutput, Box<dyn std::error::Error>> {
-    warn!("\"exec\" prover backend generates no proof, only executes");
-    let output = execution_program(input)?;
-    Ok(output)
-}
-
-pub fn prove_timed(
-    input: ProgramInput,
-    _format: ProofFormat,
-) -> Result<(ProgramOutput, Duration), Box<dyn std::error::Error>> {
-    warn!("\"exec\" prover backend generates no proof, only executes");
-    let now = Instant::now();
-    let output = execution_program(input)?;
-    let duration = now.elapsed();
-
-    Ok((output, duration))
-}
-
-pub fn verify(_proof: &ProgramOutput) -> Result<(), Box<dyn std::error::Error>> {
-    warn!("\"exec\" prover backend generates no proof, verification always succeeds");
-    Ok(())
-}
-
-fn to_calldata(proof: ProgramOutput) -> ProofCalldata {
-    let public_inputs = proof.encode();
-    ProofCalldata {
-        prover_type: ProverType::Exec,
-        calldata: vec![Value::Bytes(public_inputs.into())],
+    fn to_calldata() -> ProofCalldata {
+        ProofCalldata {
+            prover_type: ProverType::Exec,
+            calldata: vec![Value::Bytes(vec![].into())],
+        }
     }
 }
 
-pub fn to_batch_proof(
-    proof: ProgramOutput,
-    _format: ProofFormat,
-) -> Result<BatchProof, Box<dyn std::error::Error>> {
-    Ok(BatchProof::ProofCalldata(to_calldata(proof)))
-}
+impl ProverBackend for ExecBackend {
+    type ProofOutput = ProgramOutput;
+    type SerializedInput = ();
 
-pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::error::Error>> {
-    guest_program::execution::execution_program(input).map_err(|e| e.into())
+    fn serialize_input(
+        &self,
+        _input: &ProgramInput,
+    ) -> Result<Self::SerializedInput, BackendError> {
+        // ExecBackend doesn't serialize - it passes input directly to execution_program
+        Ok(())
+    }
+
+    fn execute(&self, input: ProgramInput) -> Result<(), BackendError> {
+        Self::execute_core(input)?;
+        Ok(())
+    }
+
+    fn prove(
+        &self,
+        input: ProgramInput,
+        _format: ProofFormat,
+    ) -> Result<Self::ProofOutput, BackendError> {
+        warn!("\"exec\" prover backend generates no proof, only executes");
+        Self::execute_core(input)
+    }
+
+    fn verify(&self, _proof: &Self::ProofOutput) -> Result<(), BackendError> {
+        warn!("\"exec\" prover backend generates no proof, verification always succeeds");
+        Ok(())
+    }
+
+    fn to_batch_proof(
+        &self,
+        _proof: Self::ProofOutput,
+        _format: ProofFormat,
+    ) -> Result<BatchProof, BackendError> {
+        Ok(BatchProof::ProofCalldata(Self::to_calldata()))
+    }
+
+    fn execute_timed(&self, input: ProgramInput) -> Result<Duration, BackendError> {
+        let start = Instant::now();
+        Self::execute_core(input)?;
+        let elapsed = start.elapsed();
+        info!("Successfully executed program in {:.2?}", elapsed);
+        Ok(elapsed)
+    }
 }

@@ -23,8 +23,11 @@ use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
     POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST,
 };
+use ethrex_levm::db::Database;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
+#[cfg(feature = "perf_opcode_timings")]
+use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
 use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::utils::get_base_fee_per_blob_gas;
 use ethrex_levm::vm::VMType;
@@ -33,7 +36,9 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::VM,
 };
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::cmp::min;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 
@@ -149,6 +154,17 @@ impl LEVM {
 
             receipts.push(receipt);
         }
+
+        #[cfg(feature = "perf_opcode_timings")]
+        {
+            let mut timings = OPCODE_TIMINGS.lock().expect("poison");
+            timings.inc_tx_count(receipts.len());
+            timings.inc_block_count();
+            ::tracing::info!("{}", timings.info_pretty());
+            let precompiles_timings = PRECOMPILES_TIMINGS.lock().expect("poison");
+            ::tracing::info!("{}", precompiles_timings.info_pretty());
+        }
+
         if queue_length.load(Ordering::Relaxed) == 0 {
             LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
         }
@@ -178,6 +194,52 @@ impl LEVM {
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
         Ok(BlockExecutionResult { receipts, requests })
+    }
+
+    pub fn warm_block(
+        block: &Block,
+        store: Arc<dyn Database>,
+        vm_type: VMType,
+    ) -> Result<(), EvmError> {
+        let mut db = GeneralizedDatabase::new(store.clone());
+
+        block
+            .body
+            .get_transactions_with_sender()
+            .map_err(|error| {
+                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+            })?
+            .into_par_iter()
+            .for_each_with(
+                Vec::with_capacity(STACK_LIMIT),
+                |stack_pool, (tx, tx_sender)| {
+                    let mut db = GeneralizedDatabase::new(store.clone());
+                    let _ = Self::execute_tx_in_block(
+                        tx,
+                        tx_sender,
+                        &block.header,
+                        &mut db,
+                        vm_type,
+                        stack_pool,
+                    );
+                },
+            );
+
+        for withdrawal in block
+            .body
+            .withdrawals
+            .iter()
+            .flatten()
+            .filter(|withdrawal| withdrawal.amount > 0)
+        {
+            db.get_account_mut(withdrawal.address).map_err(|_| {
+                EvmError::DB(format!(
+                    "Withdrawal account {} not found",
+                    withdrawal.address
+                ))
+            })?;
+        }
+        Ok(())
     }
 
     fn send_state_transitions_tx(

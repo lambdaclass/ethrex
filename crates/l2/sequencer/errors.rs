@@ -1,10 +1,10 @@
 use crate::based::block_fetcher::BlockFetcherError;
-use crate::based::state_updater::StateUpdaterError;
 use crate::sequencer::admin_server::AdminError;
+use crate::sequencer::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
 use aligned_sdk::common::errors::SubmitError;
 use ethereum_types::FromStrRadixErr;
-use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
+use ethrex_blockchain::error::{ChainError, InvalidBlockError, InvalidForkChoice};
 use ethrex_common::Address;
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;
@@ -230,6 +230,12 @@ pub enum BlockProducerError {
     CalldataEncodeError(#[from] CalldataEncodeError),
 }
 
+impl From<InvalidBlockError> for BlockProducerError {
+    fn from(err: InvalidBlockError) -> Self {
+        BlockProducerError::ChainError(ChainError::from(err))
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum CommitterError {
     #[error("Committer failed because of an EthClient error: {0}")]
@@ -292,6 +298,8 @@ pub enum CommitterError {
     ChainError(#[from] ChainError),
     #[error("Failed due to invalid fork choice: {0}")]
     InvalidForkChoice(#[from] InvalidForkChoice),
+    #[error("Privileged transaction hash could not be computed")]
+    InvalidPrivilegedTransaction,
 }
 
 #[derive(Debug, thiserror::Error)]

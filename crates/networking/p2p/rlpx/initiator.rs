@@ -1,11 +1,7 @@
-use crate::discv4::server::lookup_interval_function;
+use crate::discv4::server::{LOOKUP_INTERVAL_MS, lookup_interval_function};
+use crate::peer_table::PeerTableError;
 use crate::types::Node;
-use crate::{
-    discv4::{peer_table::PeerTableError, server::LOOKUP_INTERVAL_MS},
-    metrics::METRICS,
-    network::P2PContext,
-    rlpx::connection::server::PeerConnection,
-};
+use crate::{metrics::METRICS, network::P2PContext, rlpx::connection::server::PeerConnection};
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle, InitResult, send_after, send_message_on},
@@ -40,7 +36,7 @@ impl RLPxInitiator {
     async fn look_for_peer(&mut self) -> Result<(), RLPxInitiatorError> {
         if !self.context.table.target_peers_reached().await? {
             if let Some(contact) = self.context.table.get_contact_to_initiate().await? {
-                PeerConnection::spawn_as_initiator(self.context.clone(), &contact.node).await;
+                PeerConnection::spawn_as_initiator(self.context.clone(), &contact.node);
                 METRICS.record_new_rlpx_conn_attempt().await;
             };
         } else {
@@ -109,7 +105,7 @@ impl GenServer for RLPxInitiator {
                 CastResponse::NoReply
             }
             Self::CastMsg::Initiate { node } => {
-                PeerConnection::spawn_as_initiator(self.context.clone(), &node).await;
+                PeerConnection::spawn_as_initiator(self.context.clone(), &node);
                 METRICS.record_new_rlpx_conn_attempt().await;
                 CastResponse::NoReply
             }
