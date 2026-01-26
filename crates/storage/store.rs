@@ -51,7 +51,7 @@ use std::{
     },
     thread::JoinHandle,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// Maximum number of execution witnesses to keep in the database
 pub const MAX_WITNESSES: u64 = 128;
@@ -219,6 +219,11 @@ impl PinnedStorageCache {
         if let Some(contract_storage) = self.storage.get_mut(address) {
             contract_storage.clear();
         }
+    }
+
+    /// Insert all storage slots for a contract (used during cache warming).
+    pub fn insert_contract(&mut self, address: Address, storage: HashMap<H256, U256>) {
+        self.storage.insert(address, storage);
     }
 
     /// Get statistics about the cache.
@@ -2094,6 +2099,14 @@ impl Store {
         let latest_block_header = self
             .load_block_header(number)?
             .ok_or_else(|| StoreError::Custom("latest block header is missing".to_string()))?;
+
+        // Warm the pinned storage cache for high-frequency contracts
+        // This loads all storage slots for USDT, USDC, WETH, and XEN Crypto
+        // which account for ~45% of all mainnet storage operations
+        if let Err(e) = self.warm_pinned_storage_cache(latest_block_header.state_root) {
+            warn!("Failed to warm pinned storage cache: {e}");
+        }
+
         self.latest_block_header.update(latest_block_header);
         Ok(())
     }
@@ -2206,19 +2219,26 @@ impl Store {
             }
 
             // Open the storage trie and iterate over all slots
-            let _storage_trie = self.open_storage_trie(account_hash, state_root, storage_root)?;
-            let contract_slots: usize;
+            let contract_start = std::time::Instant::now();
+            let storage_trie = self.open_direct_storage_trie(account_hash, storage_root)?;
 
-            // Note: This requires iterating over the storage trie. For now, we'll skip
-            // the iteration and let the cache warm up lazily through normal access patterns.
-            // TODO: Implement trie iteration to pre-warm all slots
-            //
-            // For now, we mark the cache as warmed so reads will use it.
-            // The cache will be populated through write-through as blocks are processed.
-            contract_slots = 0; // Placeholder - will be populated by trie iteration
+            // Create a HashMap for this contract's slots
+            let mut contract_storage: HashMap<H256, U256> = HashMap::new();
 
-            debug!(
-                "Pinned contract {address:?}: loaded {contract_slots} slots from storage root {storage_root:?}"
+            // Iterate over all leaf nodes (key-value pairs) in the storage trie
+            for (key_path, value_rlp) in storage_trie.into_iter().content() {
+                let slot_key = H256::from_slice(&key_path);
+                let slot_value = U256::decode(&value_rlp)?;
+                contract_storage.insert(slot_key, slot_value);
+            }
+
+            let contract_slots = contract_storage.len();
+            cache.insert_contract(address, contract_storage);
+
+            let contract_elapsed = contract_start.elapsed();
+            info!(
+                "Pinned contract {address:?}: loaded {contract_slots} slots in {:?}",
+                contract_elapsed
             );
             total_slots += contract_slots;
         }
