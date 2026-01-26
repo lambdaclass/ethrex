@@ -139,7 +139,10 @@ pub struct BlobSchedule {
     pub bpo4: Option<ForkBlobSchedule>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bpo5: Option<ForkBlobSchedule>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default = "default_amsterdam_schedule_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub amsterdam: Option<ForkBlobSchedule>,
 }
 
@@ -154,7 +157,7 @@ impl Default for BlobSchedule {
             bpo3: None,
             bpo4: None,
             bpo5: None,
-            amsterdam: None,
+            amsterdam: Some(default_amsterdam_schedule()),
         }
     }
 }
@@ -197,6 +200,18 @@ fn default_bpo2_schedule() -> ForkBlobSchedule {
         max: 21,
         base_fee_update_fraction: 11684671,
     }
+}
+
+fn default_amsterdam_schedule() -> ForkBlobSchedule {
+    ForkBlobSchedule {
+        target: 14,
+        max: 21,
+        base_fee_update_fraction: 11684671,
+    }
+}
+
+fn default_amsterdam_schedule_opt() -> Option<ForkBlobSchedule> {
+    Some(default_amsterdam_schedule())
 }
 /// Blockchain settings defined per block
 #[allow(unused)]

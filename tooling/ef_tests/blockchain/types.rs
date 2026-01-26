@@ -101,6 +101,7 @@ pub struct BlobSchedule {
     pub bpo4: Option<ForkBlobSchedule>,
     #[serde(rename = "BPO5")]
     pub bpo5: Option<ForkBlobSchedule>,
+    pub amsterdam: Option<ForkBlobSchedule>,
 }
 
 impl From<BlobSchedule> for ethrex_common::types::BlobSchedule {
@@ -129,6 +130,9 @@ impl From<BlobSchedule> for ethrex_common::types::BlobSchedule {
         }
         if let Some(bpo5_schedule) = val.bpo5 {
             blob_schedule.bpo5 = Some(bpo5_schedule.into())
+        }
+        if let Some(amsterdam_schedule) = val.amsterdam {
+            blob_schedule.amsterdam = Some(amsterdam_schedule.into())
         }
         blob_schedule
     }
