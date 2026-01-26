@@ -4,7 +4,7 @@ use crate::{
     errors::{ContextResult, InternalError, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::hook::Hook,
-    utils::{create_eth_transfer_log, *},
+    utils::*,
     vm::VM,
 };
 

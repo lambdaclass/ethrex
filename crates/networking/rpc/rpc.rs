@@ -915,7 +915,6 @@ mod tests {
                         "osakaTime": null,
                         "bpo1Time": null,
                         "bpo2Time": null,
-                        "amsterdamTime": null,
                         "bpo3Time": null,
                         "bpo4Time": null,
                         "bpo5Time": null,
