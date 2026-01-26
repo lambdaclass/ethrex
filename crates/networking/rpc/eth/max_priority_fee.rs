@@ -11,8 +11,8 @@ use serde_json::Value;
 pub struct MaxPriorityFee;
 
 impl RpcHandler for MaxPriorityFee {
-    fn parse(_: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        Ok(MaxPriorityFee {})
+    fn parse(_: Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        Ok(MaxPriorityFee)
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {

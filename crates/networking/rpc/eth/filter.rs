@@ -57,7 +57,7 @@ pub struct PollableFilter {
 }
 
 impl NewFilterRequest {
-    pub fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    pub fn parse(params: Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
         let filter = LogsFilter::parse(params)?;
         Ok(NewFilterRequest {
             request_data: filter,
@@ -114,7 +114,7 @@ impl NewFilterRequest {
         storage: Store,
         state: ActiveFilters,
     ) -> Result<Value, RpcErr> {
-        let request = Self::parse(&req.params)?;
+        let request = Self::parse(req.params.clone())?;
         request.handle(storage, state).await
     }
 }
@@ -124,7 +124,7 @@ pub struct DeleteFilterRequest {
 }
 
 impl DeleteFilterRequest {
-    pub fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    pub fn parse(params: Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
         match params.as_deref() {
             Some([param]) => {
                 let id = parse_json_hex(param).map_err(|_err| RpcErr::BadHexFormat(0))?;
@@ -159,7 +159,7 @@ impl DeleteFilterRequest {
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
-        let request = Self::parse(&req.params)?;
+        let request = Self::parse(req.params.clone())?;
         request.handle(storage, filters)
     }
 }
@@ -169,7 +169,7 @@ pub struct FilterChangesRequest {
 }
 
 impl FilterChangesRequest {
-    pub fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    pub fn parse(params: Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
         match params.as_deref() {
             Some([param]) => {
                 let id = parse_json_hex(param).map_err(|_err| RpcErr::BadHexFormat(0))?;
@@ -243,7 +243,7 @@ impl FilterChangesRequest {
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
-        let request = Self::parse(&req.params)?;
+        let request = Self::parse(req.params.clone())?;
         request.handle(storage, filters).await
     }
 }

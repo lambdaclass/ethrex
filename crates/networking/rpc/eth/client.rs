@@ -18,8 +18,8 @@ use crate::{
 
 pub struct ChainId;
 impl RpcHandler for ChainId {
-    fn parse(_params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        Ok(Self {})
+    fn parse(_params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        Ok(Self)
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -45,8 +45,8 @@ struct SyncingStatusRpc {
 
 impl RpcHandler for Syncing {
     /// Ref: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_syncing
-    fn parse(_params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        Ok(Self {})
+    fn parse(_params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        Ok(Self)
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -95,8 +95,8 @@ pub struct EthConfigResponse {
 }
 
 impl RpcHandler for Config {
-    fn parse(_params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        Ok(Self {})
+    fn parse(_params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        Ok(Self)
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {

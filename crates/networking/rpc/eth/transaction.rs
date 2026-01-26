@@ -75,10 +75,8 @@ pub struct AccessListResult {
 }
 
 impl RpcHandler for CallRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<CallRequest, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<CallRequest, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.is_empty() {
             return Err(RpcErr::BadParams("No params provided".to_owned()));
         }
@@ -88,15 +86,13 @@ impl RpcHandler for CallRequest {
                 params.len()
             )));
         }
-        let block = match params.get(1) {
-            // Differentiate between missing and bad block param
-            Some(value) => Some(BlockIdentifier::parse(value.clone(), 1)?),
-            None => None,
+        let block = if params.len() > 1 {
+            Some(BlockIdentifier::parse(params.remove(1), 1)?)
+        } else {
+            None
         };
-        Ok(CallRequest {
-            transaction: serde_json::from_value(params[0].clone())?,
-            block,
-        })
+        let transaction = serde_json::from_value(params.remove(0))?;
+        Ok(CallRequest { transaction, block })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let block = self.block.clone().unwrap_or_default();
@@ -120,22 +116,23 @@ impl RpcHandler for CallRequest {
 
 impl RpcHandler for GetTransactionByBlockNumberAndIndexRequest {
     fn parse(
-        params: &Option<Vec<Value>>,
+        params: Option<Vec<Value>>,
     ) -> Result<GetTransactionByBlockNumberAndIndexRequest, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 2 {
             return Err(RpcErr::BadParams(format!(
                 "Expected two params and {} were provided",
                 params.len()
             )));
         };
-        let index_as_string: String = serde_json::from_value(params[1].clone())?;
+        let index_as_string: String = serde_json::from_value(params.remove(1))?;
+        let block = BlockIdentifier::parse(params.remove(0), 0)?;
+        let transaction_index =
+            usize::from_str_radix(index_as_string.trim_start_matches("0x"), 16)
+                .map_err(|error| RpcErr::BadParams(error.to_string()))?;
         Ok(GetTransactionByBlockNumberAndIndexRequest {
-            block: BlockIdentifier::parse(params[0].clone(), 0)?,
-            transaction_index: usize::from_str_radix(index_as_string.trim_start_matches("0x"), 16)
-                .map_err(|error| RpcErr::BadParams(error.to_string()))?,
+            block,
+            transaction_index,
         })
     }
 
@@ -172,22 +169,23 @@ impl RpcHandler for GetTransactionByBlockNumberAndIndexRequest {
 
 impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
     fn parse(
-        params: &Option<Vec<Value>>,
+        params: Option<Vec<Value>>,
     ) -> Result<GetTransactionByBlockHashAndIndexRequest, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 2 {
             return Err(RpcErr::BadParams(format!(
                 "Expected two param and {} were provided",
                 params.len()
             )));
         };
-        let index_as_string: String = serde_json::from_value(params[1].clone())?;
+        let index_as_string: String = serde_json::from_value(params.remove(1))?;
+        let block = serde_json::from_value(params.remove(0))?;
+        let transaction_index =
+            usize::from_str_radix(index_as_string.trim_start_matches("0x"), 16)
+                .map_err(|error| RpcErr::BadParams(error.to_string()))?;
         Ok(GetTransactionByBlockHashAndIndexRequest {
-            block: serde_json::from_value(params[0].clone())?,
-            transaction_index: usize::from_str_radix(index_as_string.trim_start_matches("0x"), 16)
-                .map_err(|error| RpcErr::BadParams(error.to_string()))?,
+            block,
+            transaction_index,
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -218,19 +216,16 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
 }
 
 impl RpcHandler for GetTransactionByHashRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetTransactionByHashRequest, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<GetTransactionByHashRequest, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 1 {
             return Err(RpcErr::BadParams(format!(
                 "Expected one param and {} were provided",
                 params.len()
             )));
         };
-        Ok(GetTransactionByHashRequest {
-            transaction_hash: serde_json::from_value(params[0].clone())?,
-        })
+        let transaction_hash = serde_json::from_value(params.remove(0))?;
+        Ok(GetTransactionByHashRequest { transaction_hash })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
@@ -269,19 +264,16 @@ impl RpcHandler for GetTransactionByHashRequest {
 }
 
 impl RpcHandler for GetTransactionReceiptRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetTransactionReceiptRequest, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<GetTransactionReceiptRequest, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 1 {
             return Err(RpcErr::BadParams(format!(
                 "Expected one param and {} were provided",
                 params.len()
             )));
         };
-        Ok(GetTransactionReceiptRequest {
-            transaction_hash: serde_json::from_value(params[0].clone())?,
-        })
+        let transaction_hash = serde_json::from_value(params.remove(0))?;
+        Ok(GetTransactionReceiptRequest { transaction_hash })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
@@ -310,10 +302,8 @@ impl RpcHandler for GetTransactionReceiptRequest {
 }
 
 impl RpcHandler for CreateAccessListRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<CreateAccessListRequest, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<CreateAccessListRequest, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.is_empty() {
             return Err(RpcErr::BadParams("No params provided".to_owned()));
         }
@@ -323,15 +313,13 @@ impl RpcHandler for CreateAccessListRequest {
                 params.len()
             )));
         }
-        let block = match params.get(1) {
-            // Differentiate between missing and bad block param
-            Some(value) => Some(BlockIdentifier::parse(value.clone(), 1)?),
-            None => None,
+        let block = if params.len() > 1 {
+            Some(BlockIdentifier::parse(params.remove(1), 1)?)
+        } else {
+            None
         };
-        Ok(CreateAccessListRequest {
-            transaction: serde_json::from_value(params[0].clone())?,
-            block,
-        })
+        let transaction = serde_json::from_value(params.remove(0))?;
+        Ok(CreateAccessListRequest { transaction, block })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let block = self.block.clone().unwrap_or_default();
@@ -368,10 +356,8 @@ impl RpcHandler for CreateAccessListRequest {
 }
 
 impl RpcHandler for GetRawTransaction {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 1 {
             return Err(RpcErr::BadParams(format!(
                 "Expected one param and {} were provided",
@@ -379,14 +365,13 @@ impl RpcHandler for GetRawTransaction {
             )));
         };
 
-        let transaction_str: String = serde_json::from_value(params[0].clone())?;
+        let transaction_val = params.remove(0);
+        let transaction_str: String = serde_json::from_value(transaction_val.clone())?;
         if !transaction_str.starts_with("0x") {
             return Err(RpcErr::BadHexFormat(0));
         }
-
-        Ok(GetRawTransaction {
-            transaction_hash: serde_json::from_value(params[0].clone())?,
-        })
+        let transaction_hash = serde_json::from_value(transaction_val)?;
+        Ok(GetRawTransaction { transaction_hash })
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -410,10 +395,8 @@ impl RpcHandler for GetRawTransaction {
 }
 
 impl RpcHandler for EstimateGasRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<EstimateGasRequest, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<EstimateGasRequest, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.is_empty() {
             return Err(RpcErr::BadParams("No params provided".to_owned()));
         }
@@ -423,15 +406,13 @@ impl RpcHandler for EstimateGasRequest {
                 params.len()
             )));
         }
-        let block = match params.get(1) {
-            // Differentiate between missing and bad block param
-            Some(value) => Some(BlockIdentifier::parse(value.clone(), 1)?),
-            None => None,
+        let block = if params.len() > 1 {
+            Some(BlockIdentifier::parse(params.remove(1), 1)?)
+        } else {
+            None
         };
-        Ok(EstimateGasRequest {
-            transaction: serde_json::from_value(params[0].clone())?,
-            block,
-        })
+        let transaction = serde_json::from_value(params.remove(0))?;
+        Ok(EstimateGasRequest { transaction, block })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
@@ -588,7 +569,7 @@ fn simulate_tx(
 }
 
 impl RpcHandler for SendRawTransactionRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<SendRawTransactionRequest, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<SendRawTransactionRequest, RpcErr> {
         let data = get_transaction_data(params)?;
 
         let transaction = SendRawTransactionRequest::decode_canonical(&data)
@@ -621,10 +602,8 @@ impl RpcHandler for SendRawTransactionRequest {
     }
 }
 
-fn get_transaction_data(rpc_req_params: &Option<Vec<Value>>) -> Result<Vec<u8>, RpcErr> {
-    let params = rpc_req_params
-        .as_ref()
-        .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+fn get_transaction_data(rpc_req_params: Option<Vec<Value>>) -> Result<Vec<u8>, RpcErr> {
+    let mut params = rpc_req_params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
     if params.len() != 1 {
         return Err(RpcErr::BadParams(format!(
             "Expected one param and {} were provided",
@@ -632,7 +611,7 @@ fn get_transaction_data(rpc_req_params: &Option<Vec<Value>>) -> Result<Vec<u8>, 
         )));
     };
 
-    let str_data = serde_json::from_value::<String>(params[0].clone())?;
+    let str_data = serde_json::from_value::<String>(params.remove(0))?;
     let str_data = str_data
         .strip_prefix("0x")
         .ok_or(RpcErr::BadParams("Params are note 0x prefixed".to_owned()))?;

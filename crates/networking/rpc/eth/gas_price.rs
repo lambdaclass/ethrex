@@ -28,8 +28,8 @@ use serde_json::Value;
 pub struct GasPrice;
 
 impl RpcHandler for GasPrice {
-    fn parse(_: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        Ok(GasPrice {})
+    fn parse(_: Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        Ok(GasPrice)
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {

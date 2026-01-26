@@ -81,6 +81,35 @@ use tower_http::cors::CorsLayer;
 use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, Registry, reload};
 
+/// Parses a JSON-RPC request body using simd-json when the feature is enabled,
+/// falling back to serde_json otherwise.
+///
+/// simd-json provides ~2x faster JSON parsing by leveraging SIMD instructions.
+/// When the `simd-json` feature is disabled, this function uses standard serde_json.
+///
+/// # Safety
+///
+/// The simd-json `from_str` function is marked unsafe because it temporarily mutates
+/// the input buffer during parsing for performance. However, it restores the buffer
+/// to its original state before returning. Since we pass an owned copy of the string,
+/// this is safe.
+#[inline]
+fn parse_rpc_request<T: serde::de::DeserializeOwned>(body: &str) -> Result<T, serde_json::Error> {
+    #[cfg(feature = "simd-json")]
+    {
+        use serde::de::Error as _;
+        let mut body_mut = body.to_owned();
+        // SAFETY: simd_json::from_str temporarily mutates the buffer during parsing
+        // but restores it afterward. We pass an owned copy, so this is safe.
+        unsafe { simd_json::from_str(&mut body_mut) }
+            .map_err(|e| serde_json::Error::custom(e.to_string()))
+    }
+    #[cfg(not(feature = "simd-json"))]
+    {
+        serde_json::from_str(body)
+    }
+}
+
 #[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
 use axum::response::IntoResponse;
 // only works on linux
@@ -231,11 +260,11 @@ pub struct NodeData {
 /// }
 ///
 /// impl RpcHandler for GetBalanceRequest {
-///     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-///         let params = params.as_ref().ok_or(RpcErr::MissingParam("params"))?;
+///     fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
+///         let mut params = params.ok_or(RpcErr::MissingParam("params"))?;
 ///         Ok(Self {
-///             address: serde_json::from_value(params[0].clone())?,
-///             block: serde_json::from_value(params[1].clone())?,
+///             address: serde_json::from_value(params.remove(0))?,
+///             block: serde_json::from_value(params.remove(0))?,
 ///         })
 ///     }
 ///
@@ -249,15 +278,16 @@ pub struct NodeData {
 pub trait RpcHandler: Sized {
     /// Parse JSON-RPC parameters into the handler struct.
     ///
+    /// Takes ownership of the params to avoid cloning JSON values.
     /// Returns an error if required parameters are missing or have invalid types.
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr>;
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr>;
 
     /// Entry point for handling an RPC request.
     ///
     /// This method parses the request, records metrics, and delegates to `handle()`.
     /// Most implementations should not override this method.
     async fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let request = Self::parse(&req.params)?;
+        let request = Self::parse(req.params.clone())?;
         let namespace = match req.namespace() {
             Ok(RpcNamespace::Engine) => "engine",
             _ => "rpc",
@@ -535,7 +565,7 @@ async fn handle_http_request(
     State(service_context): State<RpcApiContext>,
     body: String,
 ) -> Result<Json<Value>, StatusCode> {
-    let res = match serde_json::from_str::<RpcRequestWrapper>(&body) {
+    let res = match parse_rpc_request::<RpcRequestWrapper>(&body) {
         Ok(RpcRequestWrapper::Single(request)) => {
             let res = map_http_requests(&request, service_context).await;
             rpc_response(request.id, res).map_err(|_| StatusCode::BAD_REQUEST)?
@@ -562,7 +592,7 @@ pub async fn handle_authrpc_request(
     auth_header: Option<TypedHeader<Authorization<Bearer>>>,
     body: String,
 ) -> Result<Json<Value>, StatusCode> {
-    let req: RpcRequest = match serde_json::from_str(&body) {
+    let req: RpcRequest = match parse_rpc_request(&body) {
         Ok(req) => req,
         Err(_) => {
             return Ok(Json(

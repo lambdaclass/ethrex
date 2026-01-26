@@ -46,16 +46,13 @@ impl From<ExchangeCapabilitiesRequest> for RpcRequest {
 }
 
 impl RpcHandler for ExchangeCapabilitiesRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?
-            .first()
-            .ok_or(RpcErr::BadParams("Expected 1 param".to_owned()))
-            .and_then(|v| {
-                serde_json::from_value(v.clone())
-                    .map_err(|error| RpcErr::BadParams(error.to_string()))
-            })
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.is_empty() {
+            return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
+        }
+        serde_json::from_value(params.remove(0))
+            .map_err(|error| RpcErr::BadParams(error.to_string()))
     }
 
     async fn handle(&self, _context: RpcApiContext) -> Result<Value, RpcErr> {

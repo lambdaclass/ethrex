@@ -45,10 +45,8 @@ pub struct FeeHistoryResponse {
 // - https://ethereum.github.io/execution-apis/api-documentation/
 // - https://github.com/ethereum/go-ethereum/blob/master/eth/gasprice/feehistory.go
 impl RpcHandler for FeeHistoryRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<FeeHistoryRequest, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<FeeHistoryRequest, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 3 {
             return Err(RpcErr::BadParams(format!(
                 "Expected 3 params, got {}",
@@ -62,7 +60,7 @@ impl RpcHandler for FeeHistoryRequest {
                 "Too large block_count parameter".to_owned(),
             ));
         }
-        let rp: Vec<f32> = serde_json::from_value(params[2].clone())?;
+        let rp: Vec<f32> = serde_json::from_value(params.remove(2))?;
         // NOTE: This check is offspec
         if rp.len() > MAX_PERCENTILE_ARRAY_LEN {
             return Err(RpcErr::BadParams(format!(
@@ -77,10 +75,11 @@ impl RpcHandler for FeeHistoryRequest {
                 "Wrong reward_percentiles parameter".to_owned(),
             ));
         }
+        let newest_block = BlockIdentifier::parse(params.remove(1), 0)?;
 
         Ok(FeeHistoryRequest {
             block_count,
-            newest_block: BlockIdentifier::parse(params[1].clone(), 0)?,
+            newest_block,
             reward_percentiles: rp,
         })
     }

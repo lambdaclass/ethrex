@@ -25,8 +25,8 @@ pub struct ForkChoiceUpdatedV1 {
 }
 
 impl RpcHandler for ForkChoiceUpdatedV1 {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let (fork_choice_state, payload_attributes) = parse(params, false)?;
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let (fork_choice_state, payload_attributes) = parse_fork_choice(params, false)?;
         Ok(ForkChoiceUpdatedV1 {
             fork_choice_state,
             payload_attributes,
@@ -58,8 +58,8 @@ pub struct ForkChoiceUpdatedV2 {
 }
 
 impl RpcHandler for ForkChoiceUpdatedV2 {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let (fork_choice_state, payload_attributes) = parse(params, false)?;
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let (fork_choice_state, payload_attributes) = parse_fork_choice(params, false)?;
         Ok(ForkChoiceUpdatedV2 {
             fork_choice_state,
             payload_attributes,
@@ -108,8 +108,8 @@ impl From<ForkChoiceUpdatedV3> for RpcRequest {
 }
 
 impl RpcHandler for ForkChoiceUpdatedV3 {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let (fork_choice_state, payload_attributes) = parse(params, true)?;
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let (fork_choice_state, payload_attributes) = parse_fork_choice(params, true)?;
         Ok(ForkChoiceUpdatedV3 {
             fork_choice_state,
             payload_attributes,
@@ -128,24 +128,21 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
     }
 }
 
-fn parse(
-    params: &Option<Vec<Value>>,
+fn parse_fork_choice(
+    params: Option<Vec<Value>>,
     is_v3: bool,
 ) -> Result<(ForkChoiceState, Option<PayloadAttributesV3>), RpcErr> {
-    let params = params
-        .as_ref()
-        .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
 
     if params.len() != 2 && params.len() != 1 {
         return Err(RpcErr::BadParams("Expected 2 or 1 params".to_owned()));
     }
 
-    let forkchoice_state: ForkChoiceState = serde_json::from_value(params[0].clone())?;
     let mut payload_attributes: Option<PayloadAttributesV3> = None;
     if params.len() == 2 {
         // if there is an error when parsing (or the parameter is missing), set to None
         payload_attributes =
-            match serde_json::from_value::<Option<PayloadAttributesV3>>(params[1].clone()) {
+            match serde_json::from_value::<Option<PayloadAttributesV3>>(params.remove(1)) {
                 Ok(attributes) => attributes,
                 Err(error) => {
                     warn!("Could not parse payload attributes {}", error);
@@ -153,6 +150,7 @@ fn parse(
                 }
             };
     }
+    let forkchoice_state: ForkChoiceState = serde_json::from_value(params.remove(0))?;
 
     if payload_attributes
         .as_ref()

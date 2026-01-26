@@ -54,7 +54,7 @@ pub struct LogsFilter {
     pub topics: Vec<TopicFilter>,
 }
 impl RpcHandler for LogsFilter {
-    fn parse(params: &Option<Vec<Value>>) -> Result<LogsFilter, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<LogsFilter, RpcErr> {
         match params.as_deref() {
             Some([param]) => {
                 let param = param
@@ -241,7 +241,7 @@ mod tests {
         let params = Some(vec![
             json!({"topics": ["0x0000000000000000000000000000000000000000000000000000000000000000"]}),
         ]);
-        let request = LogsFilter::parse(&params).unwrap();
+        let request = LogsFilter::parse(params).unwrap();
 
         assert!(request.address_filters.is_none(), "{request:?}");
         assert!(
@@ -264,7 +264,7 @@ mod tests {
             ],
             "topics": ["0x0000000000000000000000000000000000000000000000000000000000000000"]
         })]);
-        let request = LogsFilter::parse(&params).unwrap();
+        let request = LogsFilter::parse(params).unwrap();
 
         assert_eq!(
             request.address_filters.as_ref().unwrap().as_ref(),

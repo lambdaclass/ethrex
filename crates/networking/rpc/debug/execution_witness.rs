@@ -167,10 +167,8 @@ pub struct ExecutionWitnessRequest {
 }
 
 impl RpcHandler for ExecutionWitnessRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() > 2 {
             return Err(RpcErr::BadParams(format!(
                 "Expected one or two params and {} were provided",
@@ -178,12 +176,12 @@ impl RpcHandler for ExecutionWitnessRequest {
             )));
         }
 
-        let from = BlockIdentifier::parse(params[0].clone(), 0)?;
-        let to = if let Some(param) = params.get(1) {
-            Some(BlockIdentifier::parse(param.clone(), 1)?)
+        let to = if params.len() == 2 {
+            Some(BlockIdentifier::parse(params.remove(1), 1)?)
         } else {
             None
         };
+        let from = BlockIdentifier::parse(params.remove(0), 0)?;
 
         Ok(ExecutionWitnessRequest { from, to })
     }

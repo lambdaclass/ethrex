@@ -49,15 +49,13 @@ pub struct BlobAndProofV2 {
 }
 
 impl RpcHandler for BlobsV1Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 1 {
             return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
         };
         Ok(BlobsV1Request {
-            blob_versioned_hashes: serde_json::from_value(params[0].clone())?,
+            blob_versioned_hashes: serde_json::from_value(params.remove(0))?,
         })
     }
 
@@ -101,15 +99,13 @@ impl RpcHandler for BlobsV1Request {
 }
 
 impl RpcHandler for BlobsV2Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 1 {
             return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
         };
         Ok(BlobsV2Request {
-            blob_versioned_hashes: serde_json::from_value(params[0].clone())?,
+            blob_versioned_hashes: serde_json::from_value(params.remove(0))?,
         })
     }
 
@@ -124,15 +120,13 @@ impl RpcHandler for BlobsV2Request {
 }
 
 impl RpcHandler for BlobsV3Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 1 {
             return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
         };
         Ok(BlobsV3Request {
-            blob_versioned_hashes: serde_json::from_value(params[0].clone())?,
+            blob_versioned_hashes: serde_json::from_value(params.remove(0))?,
         })
     }
 
