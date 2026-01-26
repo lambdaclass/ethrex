@@ -762,3 +762,390 @@ fn test_nested_calls_multiple_logs() {
     assert_transfer_log(&report.logs[0], contract_a, contract_b, value_a_to_b);
     assert_transfer_log(&report.logs[1], contract_b, contract_c, value_b_to_c);
 }
+
+/// Creates init code that immediately SELFDESTRUCTs to the given beneficiary.
+/// Bytecode: PUSH20 beneficiary, SELFDESTRUCT
+fn selfdestruct_init_code(beneficiary: Address) -> Vec<u8> {
+    let mut code = Vec::new();
+    code.push(0x73); // PUSH20
+    code.extend_from_slice(beneficiary.as_bytes());
+    code.push(0xff); // SELFDESTRUCT
+    code
+}
+
+/// Creates bytecode that:
+/// 1. Stores init_code in memory
+/// 2. CREATEs a contract with create_value
+/// 3. STOREs the created address at memory offset 200
+/// 4. CALLs the created address with call_value
+fn create_and_call_bytecode(init_code: &[u8], create_value: U256, call_value: U256) -> Bytes {
+    let mut bytecode = Vec::new();
+
+    // Store init_code in memory byte by byte
+    for (i, byte) in init_code.iter().enumerate() {
+        bytecode.extend_from_slice(&[0x60, *byte, 0x60, i as u8, 0x53]); // PUSH1 byte, PUSH1 offset, MSTORE8
+    }
+
+    // CREATE: stack needs [value, offset, size]
+    // PUSH1 size, PUSH1 0 (offset), PUSH32 value
+    bytecode.extend_from_slice(&[0x60, init_code.len() as u8, 0x60, 0x00]); // size, offset
+    bytecode.push(0x7f); // PUSH32 value
+    bytecode.extend_from_slice(&create_value.to_big_endian());
+    bytecode.push(0xf0); // CREATE - leaves created address on stack
+
+    // Store address at memory offset 200 for CALL
+    bytecode.extend_from_slice(&[0x60, 200, 0x52]); // PUSH1 200, MSTORE
+
+    // Now stack is empty, build CALL args
+    // CALL: pops [gas, address, value, argsOffset, argsSize, retOffset, retSize]
+    // Build stack (top to bottom): [gas, address, value, 0, 0, 0, 0]
+
+    // Push in reverse order (they go to top):
+    bytecode.extend_from_slice(&[0x60, 0x00]); // retSize = 0
+    bytecode.extend_from_slice(&[0x60, 0x00]); // retOffset = 0
+    bytecode.extend_from_slice(&[0x60, 0x00]); // argsSize = 0
+    bytecode.extend_from_slice(&[0x60, 0x00]); // argsOffset = 0
+    bytecode.push(0x7f); // PUSH32 call_value
+    bytecode.extend_from_slice(&call_value.to_big_endian());
+    bytecode.extend_from_slice(&[0x60, 200, 0x51]); // PUSH1 200, MLOAD (load address)
+    bytecode.push(0x5a); // GAS
+    bytecode.push(0xf1); // CALL
+    bytecode.push(0x50); // POP (call result)
+    bytecode.push(0x00); // STOP
+
+    Bytes::from(bytecode)
+}
+
+/// When a contract created in the same transaction calls SELFDESTRUCT to a DIFFERENT address,
+/// only a Transfer log should be emitted (not a Selfdestruct log).
+/// Transfer and Selfdestruct logs are mutually exclusive per EIP-7708.
+#[test]
+fn test_created_contract_selfdestruct_to_other_only_transfer_log() {
+    let sender = Address::from_low_u64_be(SENDER);
+    let factory = Address::from_low_u64_be(CONTRACT);
+    let beneficiary = Address::from_low_u64_be(BENEFICIARY);
+    let create_value = U256::from(1000);
+
+    // Init code that selfdestructs to beneficiary (different address)
+    let init_code = selfdestruct_init_code(beneficiary);
+
+    let report = TestBuilder::new()
+        .account(sender, eoa(U256::from(DEFAULT_BALANCE)))
+        .account(
+            factory,
+            contract_funded(
+                U256::from(100000),
+                create_with_value_bytecode(&init_code, create_value),
+                1,
+            ),
+        )
+        .account(beneficiary, eoa(U256::zero()))
+        .to(factory)
+        .execute();
+
+    assert!(report.is_success(), "Transaction should succeed");
+
+    // Should have exactly 2 Transfer logs:
+    // 1. Transfer(factory -> child, 1000) from CREATE
+    // 2. Transfer(child -> beneficiary, 1000) from SELFDESTRUCT
+    // NO Selfdestruct log should be emitted because beneficiary != child
+    assert_eq!(
+        report.logs.len(),
+        2,
+        "Should have exactly 2 logs (both Transfer, no Selfdestruct)"
+    );
+
+    // First log: CREATE transfer from factory to child
+    assert_eq!(
+        report.logs[0].topics[0], TRANSFER_EVENT_TOPIC,
+        "First log should be Transfer event"
+    );
+
+    // Second log: SELFDESTRUCT transfer from child to beneficiary
+    assert_eq!(
+        report.logs[1].topics[0], TRANSFER_EVENT_TOPIC,
+        "Second log should be Transfer event (not Selfdestruct)"
+    );
+    // Verify the second log goes to beneficiary
+    let mut beneficiary_topic = [0u8; 32];
+    beneficiary_topic[12..].copy_from_slice(beneficiary.as_bytes());
+    assert_eq!(
+        report.logs[1].topics[2],
+        H256::from(beneficiary_topic),
+        "Second Transfer log should go to beneficiary"
+    );
+}
+
+/// When a contract created in the same transaction calls SELFDESTRUCT to ITSELF,
+/// a Selfdestruct log should be emitted (balance is burned, not transferred).
+#[test]
+fn test_created_contract_selfdestruct_to_self_emits_selfdestruct_log() {
+    let sender = Address::from_low_u64_be(SENDER);
+    let factory = Address::from_low_u64_be(CONTRACT);
+    let create_value = U256::from(1000);
+
+    // The child contract address is deterministic based on factory address and nonce
+    // Factory nonce is 1, so child = keccak256(rlp([factory, 1]))[12..]
+    let child_address = ethrex_common::evm::calculate_create_address(factory, 1);
+
+    // Init code that selfdestructs to itself (the child address)
+    let init_code = selfdestruct_init_code(child_address);
+
+    let report = TestBuilder::new()
+        .account(sender, eoa(U256::from(DEFAULT_BALANCE)))
+        .account(
+            factory,
+            contract_funded(
+                U256::from(100000),
+                create_with_value_bytecode(&init_code, create_value),
+                1,
+            ),
+        )
+        .to(factory)
+        .execute();
+
+    assert!(report.is_success(), "Transaction should succeed");
+
+    // Should have exactly 2 logs:
+    // 1. Transfer(factory -> child, 1000) from CREATE
+    // 2. Selfdestruct(child, 1000) from SELFDESTRUCT to self (balance burned)
+    // NO Transfer log for the selfdestruct because beneficiary == child
+    assert_eq!(
+        report.logs.len(),
+        2,
+        "Should have exactly 2 logs (Transfer from CREATE, Selfdestruct from self-destruct)"
+    );
+
+    // First log: CREATE transfer from factory to child
+    assert_eq!(
+        report.logs[0].topics[0], TRANSFER_EVENT_TOPIC,
+        "First log should be Transfer event"
+    );
+    // Verify child address in the transfer
+    let mut child_topic = [0u8; 32];
+    child_topic[12..].copy_from_slice(child_address.as_bytes());
+    assert_eq!(
+        report.logs[0].topics[2],
+        H256::from(child_topic),
+        "Transfer should go to child address"
+    );
+
+    // Second log: Selfdestruct log for the contract
+    assert_eq!(
+        report.logs[1].topics[0], SELFDESTRUCT_EVENT_TOPIC,
+        "Second log should be Selfdestruct event"
+    );
+    assert_selfdestruct_log(&report.logs[1], child_address, create_value);
+}
+
+/// When a contract is flagged for SELFDESTRUCT and then receives ETH,
+/// a Selfdestruct closure log should be emitted at end of transaction
+/// for the non-zero balance remaining at account closure.
+#[test]
+fn test_eth_received_after_selfdestruct_emits_closure_log() {
+    let sender = Address::from_low_u64_be(SENDER);
+    let factory = Address::from_low_u64_be(CONTRACT);
+    let beneficiary = Address::from_low_u64_be(BENEFICIARY);
+    let create_value = U256::from(1000);
+    let call_value = U256::from(500);
+
+    // The child contract address
+    let child_address = ethrex_common::evm::calculate_create_address(factory, 1);
+
+    // Init code that selfdestructs to beneficiary (transferring away all balance)
+    let init_code = selfdestruct_init_code(beneficiary);
+
+    // Factory bytecode that:
+    // 1. CREATEs child with 1000 wei (child selfdestructs to beneficiary immediately)
+    // 2. CALLs child with 500 wei (child receives ETH after being flagged for destruction)
+    let factory_code = create_and_call_bytecode(&init_code, create_value, call_value);
+
+    let report = TestBuilder::new()
+        .account(sender, eoa(U256::from(DEFAULT_BALANCE)))
+        .account(
+            factory,
+            contract_funded(U256::from(100000), factory_code, 1),
+        )
+        .account(beneficiary, eoa(U256::zero()))
+        .to(factory)
+        .execute();
+
+    assert!(report.is_success(), "Transaction should succeed");
+
+    // Expected logs:
+    // 1. Transfer(factory -> child, 1000) from CREATE
+    // 2. Transfer(child -> beneficiary, 1000) from SELFDESTRUCT
+    // 3. Transfer(factory -> child, 500) from CALL (child receives ETH after being flagged)
+    // 4. Selfdestruct(child, 500) - closure log at end of tx (non-zero balance at destruction)
+    assert_eq!(
+        report.logs.len(),
+        4,
+        "Should have 4 logs: 2 Transfers from CREATE+SELFDESTRUCT, 1 Transfer from CALL, 1 Selfdestruct closure"
+    );
+
+    // First log: CREATE transfer
+    assert_eq!(
+        report.logs[0].topics[0], TRANSFER_EVENT_TOPIC,
+        "First log should be Transfer (CREATE)"
+    );
+    assert_transfer_log(&report.logs[0], factory, child_address, create_value);
+
+    // Second log: SELFDESTRUCT transfer to beneficiary
+    assert_eq!(
+        report.logs[1].topics[0], TRANSFER_EVENT_TOPIC,
+        "Second log should be Transfer (SELFDESTRUCT to beneficiary)"
+    );
+    assert_transfer_log(&report.logs[1], child_address, beneficiary, create_value);
+
+    // Third log: CALL transfer (ETH sent to child after it's flagged for destruction)
+    assert_eq!(
+        report.logs[2].topics[0], TRANSFER_EVENT_TOPIC,
+        "Third log should be Transfer (CALL)"
+    );
+    assert_transfer_log(&report.logs[2], factory, child_address, call_value);
+
+    // Fourth log: Selfdestruct closure log (emitted at end of tx for non-zero balance)
+    assert_eq!(
+        report.logs[3].topics[0], SELFDESTRUCT_EVENT_TOPIC,
+        "Fourth log should be Selfdestruct (closure)"
+    );
+    assert_selfdestruct_log(&report.logs[3], child_address, call_value);
+}
+
+/// When multiple contracts are flagged for SELFDESTRUCT and receive ETH,
+/// their closure logs should be emitted in lexicographical order of address.
+#[test]
+fn test_closure_logs_lexicographical_order() {
+    // This test creates two contracts with predictable addresses and verifies
+    // that their closure logs are emitted in lexicographical order.
+
+    let sender = Address::from_low_u64_be(SENDER);
+    let factory = Address::from_low_u64_be(CONTRACT);
+    let beneficiary = Address::from_low_u64_be(BENEFICIARY);
+
+    // Calculate child addresses based on factory nonce
+    // First CREATE uses nonce 1, second uses nonce 2
+    let child1 = ethrex_common::evm::calculate_create_address(factory, 1);
+    let child2 = ethrex_common::evm::calculate_create_address(factory, 2);
+
+    // Determine which address is lower (lexicographically first)
+    let (lower_addr, higher_addr) = if child1 < child2 {
+        (child1, child2)
+    } else {
+        (child2, child1)
+    };
+
+    // Create bytecode that:
+    // 1. Creates child1 with 100 wei (selfdestructs to beneficiary)
+    // 2. Creates child2 with 100 wei (selfdestructs to beneficiary)
+    // 3. Calls child1 with 50 wei
+    // 4. Calls child2 with 50 wei
+    // Both children should have closure logs, in lexicographical order
+
+    let init_code = selfdestruct_init_code(beneficiary);
+    let create_value = U256::from(100);
+    let call_value = U256::from(50);
+
+    // Build complex factory bytecode
+    let mut factory_code = Vec::new();
+
+    // Store init_code in memory (same for both children)
+    for (i, byte) in init_code.iter().enumerate() {
+        factory_code.extend_from_slice(&[0x60, *byte, 0x60, i as u8, 0x53]);
+    }
+
+    // CREATE child1: stack needs [value, offset, size]
+    factory_code.extend_from_slice(&[0x60, init_code.len() as u8, 0x60, 0x00]); // size, offset
+    factory_code.push(0x7f);
+    factory_code.extend_from_slice(&create_value.to_big_endian());
+    factory_code.push(0xf0); // CREATE - leaves child1 address on stack
+
+    // Store child1 at memory offset 100 for later use
+    factory_code.extend_from_slice(&[0x60, 100, 0x52]); // PUSH1 100, MSTORE
+
+    // Restore init_code in memory (it was overwritten by MSTORE)
+    for (i, byte) in init_code.iter().enumerate() {
+        factory_code.extend_from_slice(&[0x60, *byte, 0x60, i as u8, 0x53]);
+    }
+
+    // CREATE child2
+    factory_code.extend_from_slice(&[0x60, init_code.len() as u8, 0x60, 0x00]);
+    factory_code.push(0x7f);
+    factory_code.extend_from_slice(&create_value.to_big_endian());
+    factory_code.push(0xf0); // CREATE - leaves child2 address on stack
+
+    // Store child2 at memory offset 132
+    factory_code.extend_from_slice(&[0x60, 132, 0x52]); // PUSH1 132, MSTORE
+
+    // CALL child1 with 50 wei
+    // Load child1 from memory offset 100
+    factory_code.extend_from_slice(&[
+        0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60,
+        0x00, // retSize, retOffset, argsSize, argsOffset
+    ]);
+    factory_code.push(0x7f);
+    factory_code.extend_from_slice(&call_value.to_big_endian());
+    factory_code.extend_from_slice(&[0x60, 100, 0x51]); // PUSH1 100, MLOAD (child1 address)
+    factory_code.push(0x5a); // GAS
+    factory_code.push(0xf1); // CALL
+    factory_code.push(0x50); // POP result
+
+    // CALL child2 with 50 wei
+    factory_code.extend_from_slice(&[0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00]);
+    factory_code.push(0x7f);
+    factory_code.extend_from_slice(&call_value.to_big_endian());
+    factory_code.extend_from_slice(&[0x60, 132, 0x51]); // PUSH1 132, MLOAD (child2 address)
+    factory_code.push(0x5a); // GAS
+    factory_code.push(0xf1); // CALL
+    factory_code.push(0x50); // POP result
+    factory_code.push(0x00); // STOP
+
+    let report = TestBuilder::new()
+        .account(sender, eoa(U256::from(DEFAULT_BALANCE)))
+        .account(
+            factory,
+            contract_funded(U256::from(100000), Bytes::from(factory_code), 1),
+        )
+        .account(beneficiary, eoa(U256::zero()))
+        .to(factory)
+        .execute();
+
+    assert!(report.is_success(), "Transaction should succeed");
+
+    // Expected logs (8 total):
+    // 1. Transfer(factory -> child1, 100) from CREATE
+    // 2. Transfer(child1 -> beneficiary, 100) from SELFDESTRUCT
+    // 3. Transfer(factory -> child2, 100) from CREATE
+    // 4. Transfer(child2 -> beneficiary, 100) from SELFDESTRUCT
+    // 5. Transfer(factory -> child1, 50) from CALL
+    // 6. Transfer(factory -> child2, 50) from CALL
+    // 7. Selfdestruct(lower_addr, 50) - closure log in lex order
+    // 8. Selfdestruct(higher_addr, 50) - closure log in lex order
+    assert_eq!(report.logs.len(), 8, "Should have 8 logs");
+
+    // The last two logs should be Selfdestruct closure logs in lexicographical order
+    let log7 = &report.logs[6];
+    let log8 = &report.logs[7];
+
+    assert_eq!(
+        log7.topics[0], SELFDESTRUCT_EVENT_TOPIC,
+        "7th log should be Selfdestruct"
+    );
+    assert_eq!(
+        log8.topics[0], SELFDESTRUCT_EVENT_TOPIC,
+        "8th log should be Selfdestruct"
+    );
+
+    // Extract addresses from the logs
+    let addr7 = Address::from_slice(&log7.topics[1].as_bytes()[12..]);
+    let addr8 = Address::from_slice(&log8.topics[1].as_bytes()[12..]);
+
+    assert_eq!(
+        addr7, lower_addr,
+        "First closure log should be for lexicographically lower address"
+    );
+    assert_eq!(
+        addr8, higher_addr,
+        "Second closure log should be for lexicographically higher address"
+    );
+}

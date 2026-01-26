@@ -575,8 +575,8 @@ impl<'a> VM<'a> {
 
                 self.substate.add_selfdestruct(to);
 
-                // EIP-7708: Emit selfdestruct log when contract is destroyed
-                if self.env.config.fork >= Fork::Amsterdam {
+                // EIP-7708: Emit selfdestruct log ONLY when destroying to self
+                if self.env.config.fork >= Fork::Amsterdam && to == beneficiary {
                     let log = create_selfdestruct_log(to, balance);
                     self.substate.add_log(log);
                 }
@@ -593,8 +593,8 @@ impl<'a> VM<'a> {
 
             self.substate.add_selfdestruct(to);
 
-            // EIP-7708: Emit selfdestruct log when contract is destroyed
-            if self.env.config.fork >= Fork::Amsterdam {
+            // EIP-7708: Emit selfdestruct log ONLY when destroying to self
+            if self.env.config.fork >= Fork::Amsterdam && to == beneficiary {
                 let log = create_selfdestruct_log(to, balance);
                 self.substate.add_log(log);
             }
