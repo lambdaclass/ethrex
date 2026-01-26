@@ -253,6 +253,9 @@ jobs:
     env:
       # Sanitize ref name by replacing '/' with '-' to match artifact names
       SANITIZED_REF: ${{ github.ref_name }}
+      # Check if signing secrets are available (for use in step conditions)
+      HAS_MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY != '' }}
+      HAS_MINISIGN_PUBLIC_KEY: ${{ secrets.MINISIGN_PUBLIC_KEY != '' }}
     steps:
       - name: Sanitize ref name
         env:
@@ -346,7 +349,7 @@ jobs:
           sudo apt-get install -y minisign
 
       - name: Sign artifacts with minisign
-        if: ${{ secrets.MINISIGN_SECRET_KEY != '' }}
+        if: env.HAS_MINISIGN_SECRET_KEY == 'true'
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
           MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
@@ -365,7 +368,7 @@ jobs:
           rm -f ../minisign.key
 
       - name: Add public key
-        if: ${{ secrets.MINISIGN_PUBLIC_KEY != '' }}
+        if: env.HAS_MINISIGN_PUBLIC_KEY == 'true'
         env:
           MINISIGN_PUBLIC_KEY: ${{ secrets.MINISIGN_PUBLIC_KEY }}
         run: |
