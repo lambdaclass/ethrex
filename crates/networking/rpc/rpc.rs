@@ -535,7 +535,9 @@ async fn handle_http_request(
     State(service_context): State<RpcApiContext>,
     body: String,
 ) -> Result<Json<Value>, StatusCode> {
-    let res = match serde_json::from_str::<RpcRequestWrapper>(&body) {
+    // Use simd-json for faster parsing - requires mutable bytes
+    let mut body_bytes = body.into_bytes();
+    let res = match simd_json::from_slice::<RpcRequestWrapper>(&mut body_bytes) {
         Ok(RpcRequestWrapper::Single(request)) => {
             let res = map_http_requests(&request, service_context).await;
             rpc_response(request.id, res).map_err(|_| StatusCode::BAD_REQUEST)?
@@ -562,7 +564,9 @@ pub async fn handle_authrpc_request(
     auth_header: Option<TypedHeader<Authorization<Bearer>>>,
     body: String,
 ) -> Result<Json<Value>, StatusCode> {
-    let req: RpcRequest = match serde_json::from_str(&body) {
+    // Use simd-json for faster parsing - requires mutable bytes
+    let mut body_bytes = body.into_bytes();
+    let req: RpcRequest = match simd_json::from_slice(&mut body_bytes) {
         Ok(req) => req,
         Err(_) => {
             return Ok(Json(
