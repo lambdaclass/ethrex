@@ -5,6 +5,7 @@ use crate::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
         snap::{GetTrieNodes, TrieNodes},
     },
+    scoring::{FailureSeverity, RequestType},
     sync::{
         AccountStorageRoots, SyncError,
         state_healing::{SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE},
@@ -22,7 +23,7 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
     collections::{HashMap, VecDeque},
     sync::atomic::Ordering,
-    time::Instant,
+    time::{Duration, Instant},
 };
 use tokio::{sync::mpsc::error::TryRecvError, task::JoinSet};
 use tokio::{
@@ -303,7 +304,7 @@ pub async fn heal_storage_trie(
                     .extend(inflight_request.requests.clone());
                 peers
                     .peer_table
-                    .record_failure(&inflight_request.peer_id)
+                    .record_failure_typed(&inflight_request.peer_id, RequestType::TrieNodes, FailureSeverity::Low)
                     .await?;
             }
         }
@@ -433,7 +434,7 @@ async fn zip_requeue_node_responses_score_peer(
         *failed_downloads += 1;
         peer_handler
             .peer_table
-            .record_failure(&request.peer_id)
+            .record_failure_typed(&request.peer_id, RequestType::TrieNodes, FailureSeverity::Low)
             .await?;
 
         download_queue.extend(request.requests);
@@ -482,14 +483,20 @@ async fn zip_requeue_node_responses_score_peer(
         *succesful_downloads += 1;
         peer_handler
             .peer_table
-            .record_success(&request.peer_id)
+            .record_success_typed(
+                &request.peer_id,
+                RequestType::TrieNodes,
+                Duration::from_millis(150),
+                None, // Node sizes vary
+            )
             .await?;
         Ok(Some(nodes))
     } else {
         *failed_downloads += 1;
+        // Decode/hash validation failure - more severe
         peer_handler
             .peer_table
-            .record_failure(&request.peer_id)
+            .record_failure_typed(&request.peer_id, RequestType::TrieNodes, FailureSeverity::High)
             .await?;
         download_queue.extend(request.requests);
         Ok(None)

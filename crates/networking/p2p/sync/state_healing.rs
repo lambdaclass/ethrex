@@ -25,6 +25,7 @@ use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_handler::{PeerHandler, RequestMetadata, RequestStateTrieNodesError},
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
+    scoring::{FailureSeverity, RequestType},
     sync::{AccountStorageRoots, code_collector::CodeHashCollector},
     utils::current_unix_time,
 };
@@ -198,7 +199,15 @@ async fn heal_state_trie(
                         .count() as u64;
                     nodes_to_heal.push((nodes, batch));
                     downloads_success += 1;
-                    peers.peer_table.record_success(&peer_id).await?;
+                    peers
+                        .peer_table
+                        .record_success_typed(
+                            &peer_id,
+                            RequestType::TrieNodes,
+                            Duration::from_millis(150),
+                            None, // Node sizes vary
+                        )
+                        .await?;
                 }
                 // If the peers failed to respond, reschedule the task by adding the batch to the paths vector
                 Err(_) => {
@@ -207,7 +216,10 @@ async fn heal_state_trie(
                     // Or with a VecDequeue
                     paths.extend(batch);
                     downloads_fail += 1;
-                    peers.peer_table.record_failure(&peer_id).await?;
+                    peers
+                        .peer_table
+                        .record_failure_typed(&peer_id, RequestType::TrieNodes, FailureSeverity::Low)
+                        .await?;
                 }
             }
         }

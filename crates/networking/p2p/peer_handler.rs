@@ -1,4 +1,5 @@
 use crate::rlpx::initiator::RLPxInitiator;
+use crate::scoring::{FailureSeverity, RequestType};
 use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_table::{PeerData, PeerTable, PeerTableError},
@@ -289,7 +290,9 @@ impl PeerHandler {
             {
                 trace!("We received a download chunk from peer");
                 if headers.is_empty() {
-                    self.peer_table.record_failure(&peer_id).await?;
+                    self.peer_table
+                        .record_failure_typed(&peer_id, RequestType::BlockHeaders, FailureSeverity::Low)
+                        .await?;
 
                     debug!("Failed to download chunk from peer. Downloader {peer_id} freed");
 
@@ -331,7 +334,16 @@ impl PeerHandler {
                     tasks_queue_not_started.push_back((new_start, new_chunk_limit));
                 }
 
-                self.peer_table.record_success(&peer_id).await?;
+                // Estimate ~500 bytes per header
+                let bytes_received = (headers.len() * 500) as u64;
+                self.peer_table
+                    .record_success_typed(
+                        &peer_id,
+                        RequestType::BlockHeaders,
+                        Duration::from_millis(100), // Default latency estimate
+                        Some(bytes_received),
+                    )
+                    .await?;
                 debug!("Downloader {peer_id} freed");
             }
             let Some((peer_id, mut connection)) = self
@@ -550,14 +562,23 @@ impl PeerHandler {
                 {
                     // Check that the response is not empty and does not contain more bodies than the ones requested
                     if !block_bodies.is_empty() && block_bodies.len() <= block_hashes_len {
-                        self.peer_table.record_success(&peer_id).await?;
+                        self.peer_table
+                            .record_success_typed(
+                                &peer_id,
+                                RequestType::BlockBodies,
+                                Duration::from_millis(150),
+                                None, // Body size varies significantly
+                            )
+                            .await?;
                         return Ok(Some((block_bodies, peer_id)));
                     }
                 }
                 warn!(
                     "[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}..."
                 );
-                self.peer_table.record_failure(&peer_id).await?;
+                self.peer_table
+                    .record_failure_typed(&peer_id, RequestType::BlockBodies, FailureSeverity::Low)
+                    .await?;
                 Ok(None)
             }
         }
@@ -588,7 +609,9 @@ impl PeerHandler {
                         "Invalid block body error {e}, discarding peer {peer_id} and retrying..."
                     );
                     validation_success = false;
-                    self.peer_table.record_critical_failure(&peer_id).await?;
+                    self.peer_table
+                        .record_failure_typed(&peer_id, RequestType::BlockBodies, FailureSeverity::Critical)
+                        .await?;
                     break;
                 }
                 res.push(body);
@@ -719,10 +742,21 @@ impl PeerHandler {
                     completed_tasks += 1;
                 }
                 if accounts.is_empty() {
-                    self.peer_table.record_failure(&peer_id).await?;
+                    self.peer_table
+                        .record_failure_typed(&peer_id, RequestType::AccountRange, FailureSeverity::Low)
+                        .await?;
                     continue;
                 }
-                self.peer_table.record_success(&peer_id).await?;
+                // Estimate ~100 bytes per account (hash + state)
+                let bytes_received = (accounts.len() * 100) as u64;
+                self.peer_table
+                    .record_success_typed(
+                        &peer_id,
+                        RequestType::AccountRange,
+                        Duration::from_millis(200),
+                        Some(bytes_received),
+                    )
+                    .await?;
 
                 downloaded_count += accounts.len() as u64;
 
@@ -1010,13 +1044,22 @@ impl PeerHandler {
                     completed_tasks += 1;
                 }
                 if bytecodes.is_empty() {
-                    self.peer_table.record_failure(&peer_id).await?;
+                    self.peer_table
+                        .record_failure_typed(&peer_id, RequestType::ByteCodes, FailureSeverity::Low)
+                        .await?;
                     continue;
                 }
 
                 downloaded_count += bytecodes.len() as u64;
 
-                self.peer_table.record_success(&peer_id).await?;
+                self.peer_table
+                    .record_success_typed(
+                        &peer_id,
+                        RequestType::ByteCodes,
+                        Duration::from_millis(150),
+                        None, // Bytecode sizes vary significantly
+                    )
+                    .await?;
                 for (i, bytecode) in bytecodes.into_iter().enumerate() {
                     all_bytecodes[start_index + i] = bytecode;
                 }
@@ -1480,7 +1523,9 @@ impl PeerHandler {
                 }
 
                 if account_storages.is_empty() {
-                    self.peer_table.record_failure(&peer_id).await?;
+                    self.peer_table
+                        .record_failure_typed(&peer_id, RequestType::StorageRanges, FailureSeverity::Low)
+                        .await?;
                     continue;
                 }
                 if let Some(hash_end) = hash_end {
@@ -1490,7 +1535,14 @@ impl PeerHandler {
                     }
                 }
 
-                self.peer_table.record_success(&peer_id).await?;
+                self.peer_table
+                    .record_success_typed(
+                        &peer_id,
+                        RequestType::StorageRanges,
+                        Duration::from_millis(200),
+                        None, // Storage sizes vary significantly
+                    )
+                    .await?;
 
                 let n_storages = account_storages.len();
                 let n_slots = account_storages

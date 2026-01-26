@@ -5,6 +5,7 @@ mod storage_healing;
 use crate::peer_handler::{BlockRequestOrder, PeerHandlerError, SNAP_LIMIT};
 use crate::peer_table::PeerTableError;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
+use crate::scoring::{FailureSeverity, RequestType};
 use crate::sync::code_collector::CodeHashCollector;
 use crate::sync::state_healing::heal_state_trie_wrap;
 use crate::sync::storage_healing::heal_storage_trie;
@@ -1093,7 +1094,10 @@ pub async fn update_pivot(
             .map_err(SyncError::PeerHandler)?
         else {
             // Penalize peer
-            peers.peer_table.record_failure(&peer_id).await?;
+            peers
+                .peer_table
+                .record_failure_typed(&peer_id, RequestType::BlockHeaders, FailureSeverity::Low)
+                .await?;
             let peer_score = peers.peer_table.get_score(&peer_id).await?;
             warn!(
                 "Received None pivot from peer {peer_id} (score after penalizing: {peer_score}). Retrying"
@@ -1102,7 +1106,15 @@ pub async fn update_pivot(
         };
 
         // Reward peer
-        peers.peer_table.record_success(&peer_id).await?;
+        peers
+            .peer_table
+            .record_success_typed(
+                &peer_id,
+                RequestType::BlockHeaders,
+                Duration::from_millis(100),
+                Some(500), // Single header ~500 bytes
+            )
+            .await?;
         debug!("Succesfully updated pivot");
         let block_headers = peers
             .request_block_headers(block_number + 1, pivot.hash())
