@@ -4,7 +4,7 @@
 //! from user-level gas accounting (post-refund).
 
 use bytes::Bytes;
-use ethrex_common::types::{Fork, Receipt, TxType};
+use ethrex_common::types::{Receipt, TxType};
 use ethrex_levm::errors::{ExecutionReport, TxResult};
 
 /// Test that Receipt RLP encoding/decoding works correctly with gas_spent field
@@ -25,7 +25,7 @@ fn test_receipt_gas_spent_encoding_pre_amsterdam() {
     let encoded = receipt.encode_inner_with_bloom();
     let decoded = ethrex_common::types::ReceiptWithBloom::decode_inner(&encoded).unwrap();
 
-    assert_eq!(decoded.succeeded, true);
+    assert!(decoded.succeeded);
     assert_eq!(decoded.cumulative_gas_used, 21000);
     assert!(decoded.gas_spent.is_none());
 }
@@ -51,7 +51,7 @@ fn test_receipt_gas_spent_encoding_amsterdam() {
     let encoded = receipt.encode_inner_with_bloom();
     let decoded = ethrex_common::types::ReceiptWithBloom::decode_inner(&encoded).unwrap();
 
-    assert_eq!(decoded.succeeded, true);
+    assert!(decoded.succeeded);
     assert_eq!(decoded.cumulative_gas_used, cumulative_gas_used);
     assert_eq!(decoded.gas_spent, Some(gas_spent));
 }
