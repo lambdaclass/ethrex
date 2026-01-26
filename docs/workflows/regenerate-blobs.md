@@ -19,7 +19,7 @@ The agent must apply two patches to the sequencer code:
 
 #### 1.1 Cap Block Payloads at 10 Transactions
 
-Edit `crates/l2/sequencer/block_producer/payload_builder.rs` and find the `fill_transactions` loop. Add an early exit:
+Edit `crates/l2/sequencer/block_producer/payload_builder.rs`. Find the `fill_transactions` function and locate the main `loop` block. Add the following early exit at the **beginning of the loop body**, before the gas and blob space checks:
 
 ```rust
 if context.payload.body.transactions.len() >= 10 {
@@ -32,7 +32,14 @@ if context.payload.body.transactions.len() >= 10 {
 
 Edit `crates/l2/sequencer/l1_committer.rs`:
 
-**Add this helper function:**
+**First, add the required imports at the top of the file:**
+
+```rust
+use ethrex_common::types::Blob;
+use std::fs;
+```
+
+**Then add this helper function** (place it at the end of the file, outside of any impl block):
 
 ```rust
 fn store_blobs(blobs: Vec<Blob>, current_blob: u64) {
@@ -172,7 +179,7 @@ How would you like me to proceed?
 | Less than 6 blobs | Wait longer; commit interval is 20 seconds |
 | `validate-blobs` fails after regeneration | Genesis may have changed during blob generation; restart |
 | `state-diff-test` fails | Ensure docker is running; verify blobs were from clean state |
-| Compilation errors | Ensure `solc` is in PATH |
+| Compilation errors | Ensure `solc` is in PATH. If compilation fails with undefined types or modules, verify that all required imports (`Blob` and `fs`) have been added at the top of the modified files. |
 
 ### Verification Commands
 
