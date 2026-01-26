@@ -8,6 +8,7 @@ use crate::system_contracts::{
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
+use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
 use ethrex_common::{
@@ -51,25 +52,67 @@ use std::sync::mpsc::Sender;
 pub struct LEVM;
 
 impl LEVM {
+    /// Execute a block and return the execution result.
+    ///
+    /// If `record_bal` is true, also records and returns the Block Access List (EIP-7928).
+    /// The BAL will be `None` if `record_bal` is false.
     pub fn execute_block(
         block: &Block,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
-    ) -> Result<BlockExecutionResult, EvmError> {
+        record_bal: bool,
+    ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
+        // Enable BAL recording if requested
+        if record_bal {
+            db.enable_bal_recording();
+            // Set index 0 for pre-execution phase (system contracts)
+            db.set_bal_index(0);
+        }
+
         Self::prepare_block(block, db, vm_type)?;
+
+        // Record coinbase if block has txs or withdrawals (per EIP-7928)
+        if record_bal {
+            let has_txs_or_withdrawals = !block.body.transactions.is_empty()
+                || block
+                    .body
+                    .withdrawals
+                    .as_ref()
+                    .is_some_and(|w| !w.is_empty());
+            if has_txs_or_withdrawals && let Some(recorder) = db.bal_recorder_mut() {
+                recorder.record_touched_address(block.header.coinbase);
+            }
+        }
 
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
-        for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
-            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-        })? {
+        let transactions_with_sender =
+            block.body.get_transactions_with_sender().map_err(|error| {
+                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+            })?;
+
+        for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             if cumulative_gas_used + tx.gas_limit() > block.header.gas_limit {
                 return Err(EvmError::Transaction(format!(
                     "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
                     block.header.gas_limit,
                     tx.gas_limit()
                 )));
+            }
+
+            // Set BAL index for this transaction (1-indexed per EIP-7928)
+            if record_bal {
+                #[allow(clippy::cast_possible_truncation)]
+                db.set_bal_index((tx_idx + 1) as u32);
+
+                // Record tx sender and recipient for BAL
+                if let Some(recorder) = db.bal_recorder_mut() {
+                    recorder.record_touched_address(tx_sender);
+                    if let TxKind::Call(to) = tx.to() {
+                        recorder.record_touched_address(to);
+                    }
+                }
             }
 
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
@@ -85,7 +128,20 @@ impl LEVM {
             receipts.push(receipt);
         }
 
+        // Set BAL index for post-execution phase (withdrawals)
+        if record_bal {
+            #[allow(clippy::cast_possible_truncation)]
+            let withdrawal_index = (block.body.transactions.len() + 1) as u32;
+            db.set_bal_index(withdrawal_index);
+        }
+
         if let Some(withdrawals) = &block.body.withdrawals {
+            // Record withdrawal recipients for BAL
+            if record_bal && let Some(recorder) = db.bal_recorder_mut() {
+                for withdrawal in withdrawals {
+                    recorder.record_touched_address(withdrawal.address);
+                }
+            }
             Self::process_withdrawals(db, withdrawals)?;
         }
 
@@ -97,7 +153,10 @@ impl LEVM {
             VMType::L2(_) => Default::default(),
         };
 
-        Ok(BlockExecutionResult { receipts, requests })
+        // Extract BAL if recording was enabled
+        let bal = if record_bal { db.take_bal() } else { None };
+
+        Ok((BlockExecutionResult { receipts, requests }, bal))
     }
 
     pub fn execute_block_pipeline(

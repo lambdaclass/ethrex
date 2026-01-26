@@ -4,6 +4,7 @@ use levm::LEVM;
 use crate::db::{DynVmDatabase, VmDatabase};
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
+use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
     AccessList, AccountUpdate, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction,
@@ -73,8 +74,16 @@ impl Evm {
         }
     }
 
-    pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
-        LEVM::execute_block(block, &mut self.db, self.vm_type)
+    /// Execute a block and return the execution result.
+    ///
+    /// If `record_bal` is true, also records and returns the Block Access List (EIP-7928).
+    /// The BAL will be `None` if `record_bal` is false.
+    pub fn execute_block(
+        &mut self,
+        block: &Block,
+        record_bal: bool,
+    ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
+        LEVM::execute_block(block, &mut self.db, self.vm_type, record_bal)
     }
 
     #[instrument(

@@ -32,6 +32,11 @@ impl<'a> VM<'a> {
         let address_was_cold = !self.substate.add_accessed_address(address);
         let account_balance = self.db.get_account(address)?.info.balance;
 
+        // Record address touch for BAL
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(address);
+        }
+
         let current_call_frame = &mut self.current_call_frame;
 
         current_call_frame.increase_consumed_gas(gas_cost::balance(address_was_cold)?)?;
@@ -264,6 +269,11 @@ impl<'a> VM<'a> {
         // FIXME: a bit wasteful to fetch the whole code just to get the length.
         let account_code_length = self.db.get_account_code(address)?.bytecode.len().into();
 
+        // Record address touch for BAL
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(address);
+        }
+
         let current_call_frame = &mut self.current_call_frame;
 
         current_call_frame.increase_consumed_gas(gas_cost::extcodesize(address_was_cold)?)?;
@@ -293,6 +303,11 @@ impl<'a> VM<'a> {
                 current_memory_size,
                 address_was_cold,
             )?)?;
+
+        // Record address touch for BAL
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(address);
+        }
 
         if size == 0 {
             return Ok(OpcodeResult::Continue);
@@ -398,6 +413,12 @@ impl<'a> VM<'a> {
         let account = self.db.get_account(address)?;
         let account_is_empty = account.is_empty();
         let account_code_hash = account.info.code_hash.0;
+
+        // Record address touch for BAL
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(address);
+        }
+
         let current_call_frame = &mut self.current_call_frame;
 
         current_call_frame.increase_consumed_gas(gas_cost::extcodehash(address_was_cold)?)?;

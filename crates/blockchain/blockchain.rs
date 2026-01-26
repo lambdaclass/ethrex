@@ -280,7 +280,7 @@ impl Blockchain {
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
         let mut vm = self.new_evm(vm_db)?;
 
-        let execution_result = vm.execute_block(block)?;
+        let (execution_result, _bal) = vm.execute_block(block, false)?;
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
@@ -838,7 +838,7 @@ impl Blockchain {
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
         validate_block(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
-        let execution_result = vm.execute_block(block)?;
+        let (execution_result, _bal) = vm.execute_block(block, false)?;
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
@@ -935,7 +935,7 @@ impl Blockchain {
             };
 
             // Re-execute block with logger
-            let execution_result = vm.execute_block(block)?;
+            let (execution_result, _bal) = vm.execute_block(block, false)?;
 
             // Gather account updates
             let account_updates = vm.get_state_transitions()?;

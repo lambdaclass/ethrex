@@ -5,6 +5,7 @@ use ethrex_common::H256;
 use ethrex_common::U256;
 use ethrex_common::types::Account;
 use ethrex_common::types::Code;
+use ethrex_common::types::block_access_list::{BlockAccessList, BlockAccessListRecorder};
 use ethrex_common::utils::ZERO_U256;
 
 use super::Database;
@@ -29,6 +30,8 @@ pub struct GeneralizedDatabase {
     pub initial_accounts_state: CacheDB,
     pub codes: FxHashMap<H256, Code>,
     pub tx_backup: Option<CallFrameBackup>,
+    /// Optional BAL recorder for EIP-7928 Block Access List recording.
+    pub bal_recorder: Option<BlockAccessListRecorder>,
 }
 
 impl GeneralizedDatabase {
@@ -39,7 +42,43 @@ impl GeneralizedDatabase {
             initial_accounts_state: Default::default(),
             tx_backup: None,
             codes: Default::default(),
+            bal_recorder: None,
         }
+    }
+
+    /// Enables BAL recording for EIP-7928.
+    /// After enabling, state changes will be recorded during execution.
+    pub fn enable_bal_recording(&mut self) {
+        self.bal_recorder = Some(BlockAccessListRecorder::new());
+    }
+
+    /// Disables BAL recording.
+    pub fn disable_bal_recording(&mut self) {
+        self.bal_recorder = None;
+    }
+
+    /// Returns true if BAL recording is enabled.
+    pub fn is_bal_recording_enabled(&self) -> bool {
+        self.bal_recorder.is_some()
+    }
+
+    /// Sets the current block access index for BAL recording.
+    /// Call this before each transaction or phase.
+    pub fn set_bal_index(&mut self, index: u32) {
+        if let Some(recorder) = &mut self.bal_recorder {
+            recorder.set_block_access_index(index);
+        }
+    }
+
+    /// Takes the BAL recorder and builds the final BlockAccessList.
+    /// Returns None if recording was not enabled.
+    pub fn take_bal(&mut self) -> Option<BlockAccessList> {
+        self.bal_recorder.take().map(|recorder| recorder.build())
+    }
+
+    /// Returns a mutable reference to the BAL recorder if enabled.
+    pub fn bal_recorder_mut(&mut self) -> Option<&mut BlockAccessListRecorder> {
+        self.bal_recorder.as_mut()
     }
 
     /// Only used within Levm Runner, where the accounts already have all the storage pre-loaded, not used in real case scenarios.
@@ -62,6 +101,7 @@ impl GeneralizedDatabase {
             initial_accounts_state: levm_accounts,
             tx_backup: None,
             codes,
+            bal_recorder: None,
         }
     }
 
@@ -387,12 +427,25 @@ impl<'a> VM<'a> {
         address: Address,
         increase: U256,
     ) -> Result<(), InternalError> {
+        // Record initial balance for BAL round-trip detection before any changes
+        let initial_balance = self.db.get_account(address)?.info.balance;
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.set_initial_balance(address, initial_balance);
+        }
+
         let account = self.get_account_mut(address)?;
         account.info.balance = account
             .info
             .balance
             .checked_add(increase)
             .ok_or(InternalError::Overflow)?;
+        let new_balance = account.info.balance;
+
+        // Record balance change for BAL
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_balance_change(address, new_balance);
+        }
+
         Ok(())
     }
 
@@ -401,12 +454,25 @@ impl<'a> VM<'a> {
         address: Address,
         decrease: U256,
     ) -> Result<(), InternalError> {
+        // Record initial balance for BAL round-trip detection before any changes
+        let initial_balance = self.db.get_account(address)?.info.balance;
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.set_initial_balance(address, initial_balance);
+        }
+
         let account = self.get_account_mut(address)?;
         account.info.balance = account
             .info
             .balance
             .checked_sub(decrease)
             .ok_or(InternalError::Underflow)?;
+        let new_balance = account.info.balance;
+
+        // Record balance change for BAL
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_balance_change(address, new_balance);
+        }
+
         Ok(())
     }
 
@@ -430,6 +496,11 @@ impl<'a> VM<'a> {
         address: Address,
         new_bytecode: Code,
     ) -> Result<(), InternalError> {
+        // Record code change for BAL
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_code_change(address, new_bytecode.bytecode.clone());
+        }
+
         let acc = self.get_account_mut(address)?;
         let code_hash = new_bytecode.hash;
         acc.info.code_hash = new_bytecode.hash;
@@ -438,6 +509,12 @@ impl<'a> VM<'a> {
     }
 
     // =================== Nonce related functions ======================
+    /// Increments the nonce of the given account.
+    /// Per EIP-7928, nonce changes are recorded for:
+    /// - EOA senders
+    /// - Contracts performing CREATE/CREATE2
+    /// - Deployed contracts
+    /// - EIP-7702 authorities
     pub fn increment_account_nonce(&mut self, address: Address) -> Result<u64, InternalError> {
         let account = self.get_account_mut(address)?;
         account.info.nonce = account
@@ -445,7 +522,14 @@ impl<'a> VM<'a> {
             .nonce
             .checked_add(1)
             .ok_or(InternalError::Overflow)?;
-        Ok(account.info.nonce)
+        let new_nonce = account.info.nonce;
+
+        // Record nonce change for BAL
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_nonce_change(address, new_nonce);
+        }
+
+        Ok(new_nonce)
     }
 
     /// Gets original storage value of an account, caching it if not already cached.
@@ -477,6 +561,12 @@ impl<'a> VM<'a> {
         let storage_slot_was_cold = !self.substate.add_accessed_slot(address, key);
 
         let storage_slot = self.get_storage_value(address, key)?;
+
+        // Record storage read for BAL (will be converted to write if SSTORE follows)
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            // Convert H256 key to U256 for BAL recording
+            recorder.record_storage_read(address, U256::from_big_endian(key.as_bytes()));
+        }
 
         Ok((storage_slot, storage_slot_was_cold))
     }
@@ -519,6 +609,20 @@ impl<'a> VM<'a> {
         current_value: U256,
     ) -> Result<(), InternalError> {
         self.backup_storage_slot(address, key, current_value)?;
+
+        // Record storage write for BAL
+        // Per EIP-7928: actual writes (post != pre) are recorded as writes
+        // No-op writes (post == pre) are recorded as reads
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            let slot = U256::from_big_endian(key.as_bytes());
+            if new_value != current_value {
+                // Actual write
+                recorder.record_storage_write(address, slot, new_value);
+            } else {
+                // No-op write (post == pre) - record as read per EIP-7928
+                recorder.record_storage_read(address, slot);
+            }
+        }
 
         let account = self.get_account_mut(address)?;
         account.storage.insert(key, new_value);
