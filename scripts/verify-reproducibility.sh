@@ -41,7 +41,7 @@ esac
 # Create temp directories
 BUILD1_DIR=$(mktemp -d)
 BUILD2_DIR=$(mktemp -d)
-trap "rm -rf $BUILD1_DIR $BUILD2_DIR" EXIT
+trap 'rm -rf "$BUILD1_DIR" "$BUILD2_DIR"' EXIT
 
 WORKSPACE=$(pwd)
 
@@ -68,8 +68,8 @@ docker run --rm \
 echo ""
 echo "=== Comparing Hashes ==="
 
-HASH1=$(sha256sum "$BUILD1_DIR/ethrex-$ZKVM" | cut -d' ' -f1)
-HASH2=$(sha256sum "$BUILD2_DIR/ethrex-$ZKVM" | cut -d' ' -f1)
+HASH1=$(sha256sum "${BUILD1_DIR}/ethrex-${ZKVM}" | cut -d' ' -f1)
+HASH2=$(sha256sum "${BUILD2_DIR}/ethrex-${ZKVM}" | cut -d' ' -f1)
 
 echo "Build 1 SHA256: $HASH1"
 echo "Build 2 SHA256: $HASH2"

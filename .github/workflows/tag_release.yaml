@@ -22,10 +22,8 @@ env:
   # Work around frequent libgit2/submodule fetch flakiness in CI.
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   CARGO_NET_RETRY: "10"
-  # ere-compiler version for reproducible guest builds
-  # Update this when ere releases a new version
-  # Can be overridden via repository variable: vars.ERE_COMPILER_VERSION
-  ERE_COMPILER_VERSION: ${{ vars.ERE_COMPILER_VERSION || 'latest' }}
+  # ere-compiler version for reproducible guest builds can be overridden
+  # via repository variable: vars.ERE_COMPILER_VERSION (default: 'latest')
 
 jobs:
   build-ethrex:
@@ -155,106 +153,10 @@ jobs:
   build-guest-ere:
     # Only run ere-compiler builds for tagged releases
     if: github.ref_type == 'tag'
-    strategy:
-      matrix:
-        zkvm:
-          - sp1
-          - risc0
-          - zisk
-        include:
-          - zkvm: sp1
-            sdk_version: v5_0_8
-          - zkvm: risc0
-            sdk_version: v3_0_3
-          - zkvm: zisk
-            sdk_version: v0_15_0
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Free Disk Space
-        uses: ./.github/actions/free-disk
-
-      - name: Get version info
-        id: versions
-        env:
-          REF_NAME: ${{ github.ref_name }}
-        run: |
-          # Get ethrex version from tag (e.g., v8.0.0 -> v8_0_0)
-          ETHREX_VERSION=$(echo "$REF_NAME" | sed 's/\./_/g' | tr -d 'v')
-          echo "ethrex_version=v$ETHREX_VERSION" >> $GITHUB_OUTPUT
-
-          # Artifact name following naming convention:
-          # <EL_NAME>-<EL_VERSION>-<ZKVM_NAME>-<ZKVM_SDK_VERSION>
-          ARTIFACT_NAME="ethrex-v${ETHREX_VERSION}-${{ matrix.zkvm }}-${{ matrix.sdk_version }}"
-          echo "artifact_name=$ARTIFACT_NAME" >> $GITHUB_OUTPUT
-
-      - name: Pull ere-compiler image
-        env:
-          ERE_VERSION: ${{ env.ERE_COMPILER_VERSION }}
-        run: |
-          docker pull ghcr.io/eth-act/ere/ere-compiler-${{ matrix.zkvm }}:$ERE_VERSION
-
-      - name: Compile guest with ere-compiler
-        env:
-          ARTIFACT_NAME: ${{ steps.versions.outputs.artifact_name }}
-          ERE_VERSION: ${{ env.ERE_COMPILER_VERSION }}
-        run: |
-          mkdir -p output
-          docker run --rm \
-            -v ${{ github.workspace }}:/workspace:ro \
-            -v ${{ github.workspace }}/output:/output \
-            ghcr.io/eth-act/ere/ere-compiler-${{ matrix.zkvm }}:$ERE_VERSION \
-            --compiler-kind rust-customized \
-            --guest-path /workspace/crates/guest-program/bin/${{ matrix.zkvm }} \
-            --output-path /output/$ARTIFACT_NAME
-
-      - name: Extract raw ELF (backwards compatibility)
-        env:
-          ARTIFACT_NAME: ${{ steps.versions.outputs.artifact_name }}
-        run: |
-          # ere Program format: bincode serialized struct with elf: Vec<u8> as first field
-          # Format: 8 bytes (u64 LE length) + elf bytes + optional metadata
-          python3 -c "
-          import struct
-          import os
-
-          artifact_name = os.environ['ARTIFACT_NAME']
-          with open(f'output/{artifact_name}', 'rb') as f:
-              data = f.read()
-
-          # Read ELF length (first 8 bytes, little-endian u64)
-          elf_len = struct.unpack('<Q', data[:8])[0]
-
-          # Extract ELF bytes
-          elf = data[8:8+elf_len]
-
-          with open(f'output/{artifact_name}.elf', 'wb') as f:
-              f.write(elf)
-
-          print(f'Extracted ELF: {elf_len} bytes')
-          "
-
-      - name: Verify artifacts exist
-        env:
-          ARTIFACT_NAME: ${{ steps.versions.outputs.artifact_name }}
-        run: |
-          ls -la output/
-          echo "ere Program size: $(stat -c%s "output/$ARTIFACT_NAME") bytes"
-          echo "Raw ELF size: $(stat -c%s "output/$ARTIFACT_NAME.elf") bytes"
-
-      - name: Upload ere Program artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.versions.outputs.artifact_name }}
-          path: output/${{ steps.versions.outputs.artifact_name }}
-
-      - name: Upload raw ELF artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.versions.outputs.artifact_name }}-elf
-          path: output/${{ steps.versions.outputs.artifact_name }}.elf
+    uses: ./.github/workflows/build-guest-ere.yaml
+    with:
+      ere_version: ${{ vars.ERE_COMPILER_VERSION || 'latest' }}
+      ref_name: ${{ github.ref_name }}
 
   # Native SDK builds for guest programs. Used for:
   # - Verification key generation (SP1, RISC0)
@@ -360,7 +262,8 @@ jobs:
           echo "SANITIZED_REF=$SANITIZED" >> $GITHUB_ENV
 
           # Compute ere-style version (e.g., v8.0.0 -> v8_0_0)
-          ERE_VERSION=$(echo "$REF_NAME" | sed 's/\./_/g' | tr -d 'v')
+          # Use sed to remove only the leading 'v' (not all 'v' characters)
+          ERE_VERSION=$(echo "$REF_NAME" | sed 's/^v//' | sed 's/\./_/g')
           echo "ERE_VERSION=v$ERE_VERSION" >> $GITHUB_ENV
 
       # Download native SDK artifacts (always available)
@@ -549,7 +452,7 @@ jobs:
             echo "TAG_VERSION=main" >> $GITHUB_ENV
             echo "tag=main" >> $GITHUB_OUTPUT
           else
-            SANITIZED_REF=$(echo "$REF_NAME" | tr -d v | tr '/' '-')
+            SANITIZED_REF=$(echo "$REF_NAME" | sed 's/^v//' | tr '/' '-')
             echo "TAG_VERSION=$SANITIZED_REF" >> $GITHUB_ENV
             echo "tag=$SANITIZED_REF" >> $GITHUB_OUTPUT
           fi
