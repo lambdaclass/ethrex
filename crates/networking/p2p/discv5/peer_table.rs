@@ -4,6 +4,7 @@ use crate::{
     discv5::session::Session,
     metrics::METRICS,
     rlpx::{connection::server::PeerConnection, p2p::Capability},
+    scoring::{FailureSeverity, PeerScore, PeerScoringConfig, RequestType},
     types::{Node, NodeRecord},
     utils::distance,
 };
@@ -23,18 +24,12 @@ use std::{
 };
 use thiserror::Error;
 
-const MAX_SCORE: i64 = 50;
-const MIN_SCORE: i64 = -50;
-/// Score assigned to peers who are acting maliciously (e.g., returning a node with wrong hash)
-const MIN_SCORE_CRITICAL: i64 = MIN_SCORE * 3;
 /// Maximum amount of FindNode messages sent to a single node.
 const MAX_FIND_NODE_PER_PEER: u64 = 20;
 /// Score weight for the load balancing function.
 const SCORE_WEIGHT: i64 = 1;
 /// Weight for amount of requests being handled by the peer for the load balancing function.
 const REQUESTS_WEIGHT: i64 = 1;
-/// Max amount of ongoing requests per peer.
-const MAX_CONCURRENT_REQUESTS_PER_PEER: i64 = 100;
 /// The target number of RLPx connections to reach.
 pub const TARGET_PEERS: usize = 100;
 /// The target number of contacts to maintain in peer_table.
@@ -131,8 +126,8 @@ pub struct PeerData {
     pub is_connection_inbound: bool,
     /// communication channels between the peer data and its active connection
     pub connection: Option<PeerConnection>,
-    /// This tracks the score of a peer
-    score: i64,
+    /// Multi-dimensional peer score
+    score: PeerScore,
     /// Track the amount of concurrent requests this peer is handling
     requests: i64,
 }
@@ -150,9 +145,19 @@ impl PeerData {
             supported_capabilities: capabilities,
             is_connection_inbound: false,
             connection,
-            score: Default::default(),
+            score: PeerScore::new(PeerScoringConfig::default()),
             requests: Default::default(),
         }
+    }
+
+    /// Returns the legacy i64 score for backward compatibility.
+    pub fn legacy_score(&self) -> i64 {
+        self.score.to_legacy_score()
+    }
+
+    /// Returns a reference to the peer's score.
+    pub fn score(&self) -> &PeerScore {
+        &self.score
     }
 }
 
@@ -294,6 +299,46 @@ impl PeerTable {
     pub async fn record_critical_failure(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
         self.handle
             .cast(CastMessage::RecordCriticalFailure { node_id: *node_id })
+            .await?;
+        Ok(())
+    }
+
+    /// Record a successful request with typed metrics (new scoring system).
+    ///
+    /// This provides more detailed scoring based on request type, latency, and bytes transferred.
+    pub async fn record_success_typed(
+        &mut self,
+        node_id: &H256,
+        request_type: RequestType,
+        latency: Duration,
+        bytes: Option<u64>,
+    ) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::RecordSuccessTyped {
+                node_id: *node_id,
+                request_type,
+                latency,
+                bytes,
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Record a failed request with typed metrics and severity (new scoring system).
+    ///
+    /// This provides more nuanced scoring based on failure severity.
+    pub async fn record_failure_typed(
+        &mut self,
+        node_id: &H256,
+        request_type: RequestType,
+        severity: FailureSeverity,
+    ) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::RecordFailureTyped {
+                node_id: *node_id,
+                request_type,
+                severity,
+            })
             .await?;
         Ok(())
     }
@@ -535,7 +580,7 @@ impl PeerTable {
         }
     }
 
-    /// Get peer score
+    /// Get peer score (legacy i64 format for backward compatibility)
     pub async fn get_score(&mut self, node_id: &H256) -> Result<i64, PeerTableError> {
         match self
             .handle
@@ -543,6 +588,32 @@ impl PeerTable {
             .await?
         {
             OutMessage::PeerScore(score) => Ok(score),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Returns the best peer for a specific request type.
+    ///
+    /// Uses the multi-dimensional scoring system to select peers
+    /// that perform well for the given request type.
+    pub async fn get_best_peer_for_request(
+        &mut self,
+        request_type: RequestType,
+        capabilities: &[Capability],
+    ) -> Result<Option<(H256, PeerConnection)>, PeerTableError> {
+        match self
+            .handle
+            .call(CallMessage::GetBestPeerForRequest {
+                request_type,
+                capabilities: capabilities.to_vec(),
+            })
+            .await?
+        {
+            OutMessage::FoundPeer {
+                node_id,
+                connection,
+            } => Ok(Some((node_id, connection))),
+            OutMessage::NotFound => Ok(None),
             _ => unreachable!(),
         }
     }
@@ -682,17 +753,31 @@ impl PeerTableServer {
     }
     // Internal functions //
 
-    // Weighting function used to select best peer
-    // TODO: Review this formula and weight constants.
-    fn weight_peer(&self, score: &i64, requests: &i64) -> i64 {
-        score * SCORE_WEIGHT - requests * REQUESTS_WEIGHT
+    // Weighting function used to select best peer (uses composite score)
+    fn weight_peer(&self, score: &PeerScore, requests: &i64) -> i64 {
+        let composite = score.compute_overall_score();
+        // Convert to i64 scale for comparison: [0,1] -> [-50, 50]
+        let score_i64 = ((composite - 0.5) * 100.0) as i64;
+        score_i64 * SCORE_WEIGHT - requests * REQUESTS_WEIGHT
+    }
+
+    // Weighting function for request-type-specific peer selection
+    fn weight_peer_for_request(
+        &self,
+        score: &PeerScore,
+        requests: &i64,
+        request_type: RequestType,
+    ) -> i64 {
+        let composite = score.compute_composite_score(request_type);
+        // Convert to i64 scale for comparison: [0,1] -> [-50, 50]
+        let score_i64 = ((composite - 0.5) * 100.0) as i64;
+        score_i64 * SCORE_WEIGHT - requests * REQUESTS_WEIGHT
     }
 
     // Returns if the peer has room for more connections given the current score
     // and amount of inflight requests
-    fn can_try_more_requests(&self, score: &i64, requests: &i64) -> bool {
-        let score_ratio = (score - MIN_SCORE) as f64 / (MAX_SCORE - MIN_SCORE) as f64;
-        (*requests as f64) < MAX_CONCURRENT_REQUESTS_PER_PEER as f64 * score_ratio
+    fn can_try_more_requests(&self, score: &PeerScore, requests: &i64) -> bool {
+        score.can_accept_request(*requests)
     }
 
     fn get_best_peer(&self, capabilities: &[Capability]) -> Option<(H256, PeerConnection)> {
@@ -713,10 +798,46 @@ impl PeerTableServer {
                     let connection = peer_data.connection.clone()?;
 
                     // We return the id, the score and the channel to connect with.
-                    Some((*id, peer_data.score, peer_data.requests, connection))
+                    Some((
+                        *id,
+                        peer_data.score.clone(),
+                        peer_data.requests,
+                        connection,
+                    ))
                 }
             })
             .max_by_key(|(_, score, reqs, _)| self.weight_peer(score, reqs))
+            .map(|(k, _, _, v)| (k, v))
+    }
+
+    fn get_best_peer_for_request(
+        &self,
+        request_type: RequestType,
+        capabilities: &[Capability],
+    ) -> Option<(H256, PeerConnection)> {
+        self.peers
+            .iter()
+            .filter_map(|(id, peer_data)| {
+                // Skip if can't accept more requests or doesn't match capabilities
+                if !self.can_try_more_requests(&peer_data.score, &peer_data.requests)
+                    || !capabilities
+                        .iter()
+                        .any(|cap| peer_data.supported_capabilities.contains(cap))
+                {
+                    None
+                } else {
+                    let connection = peer_data.connection.clone()?;
+                    Some((
+                        *id,
+                        peer_data.score.clone(),
+                        peer_data.requests,
+                        connection,
+                    ))
+                }
+            })
+            .max_by_key(|(_, score, reqs, _)| {
+                self.weight_peer_for_request(score, reqs, request_type)
+            })
             .map(|(k, _, _, v)| (k, v))
     }
 
@@ -984,6 +1105,17 @@ enum CastMessage {
     RecordCriticalFailure {
         node_id: H256,
     },
+    RecordSuccessTyped {
+        node_id: H256,
+        request_type: RequestType,
+        latency: Duration,
+        bytes: Option<u64>,
+    },
+    RecordFailureTyped {
+        node_id: H256,
+        request_type: RequestType,
+        severity: FailureSeverity,
+    },
     RecordPingSent {
         node_id: H256,
         req_id: Bytes,
@@ -1027,6 +1159,10 @@ enum CallMessage {
     GetContact { node_id: H256 },
     GetContactsToRevalidate(Duration),
     GetBestPeer { capabilities: Vec<Capability> },
+    GetBestPeerForRequest {
+        request_type: RequestType,
+        capabilities: Vec<Capability>,
+    },
     GetScore { node_id: H256 },
     GetConnectedNodes,
     GetPeersWithCapabilities,
@@ -1138,10 +1274,23 @@ impl GenServer for PeerTableServer {
                     },
                 ))
             }
+            CallMessage::GetBestPeerForRequest {
+                request_type,
+                capabilities,
+            } => {
+                let channels = self.get_best_peer_for_request(request_type, &capabilities);
+                CallResponse::Reply(channels.map_or(
+                    Self::OutMsg::NotFound,
+                    |(node_id, connection)| Self::OutMsg::FoundPeer {
+                        node_id,
+                        connection,
+                    },
+                ))
+            }
             CallMessage::GetScore { node_id } => CallResponse::Reply(Self::OutMsg::PeerScore(
                 self.peers
                     .get(&node_id)
-                    .map(|peer_data| peer_data.score)
+                    .map(|peer_data| peer_data.score.to_legacy_score())
                     .unwrap_or_default(),
             )),
             CallMessage::GetConnectedNodes => CallResponse::Reply(Self::OutMsg::Nodes(
@@ -1257,19 +1406,47 @@ impl GenServer for PeerTableServer {
                     .and_modify(|contact| contact.is_fork_id_valid = Some(valid));
             }
             CastMessage::RecordSuccess { node_id } => {
-                self.peers
-                    .entry(node_id)
-                    .and_modify(|peer_data| peer_data.score = (peer_data.score + 1).min(MAX_SCORE));
+                // Legacy API: record as generic success with default latency
+                self.peers.entry(node_id).and_modify(|peer_data| {
+                    peer_data
+                        .score
+                        .record_success(RequestType::BlockHeaders, Duration::from_millis(100), None);
+                });
             }
             CastMessage::RecordFailure { node_id } => {
-                self.peers
-                    .entry(node_id)
-                    .and_modify(|peer_data| peer_data.score = (peer_data.score - 1).max(MIN_SCORE));
+                // Legacy API: record as low severity failure
+                self.peers.entry(node_id).and_modify(|peer_data| {
+                    peer_data
+                        .score
+                        .record_failure(RequestType::BlockHeaders, FailureSeverity::Low);
+                });
             }
             CastMessage::RecordCriticalFailure { node_id } => {
-                self.peers
-                    .entry(node_id)
-                    .and_modify(|peer_data| peer_data.score = MIN_SCORE_CRITICAL);
+                // Legacy API: record as critical failure
+                self.peers.entry(node_id).and_modify(|peer_data| {
+                    peer_data
+                        .score
+                        .record_failure(RequestType::BlockHeaders, FailureSeverity::Critical);
+                });
+            }
+            CastMessage::RecordSuccessTyped {
+                node_id,
+                request_type,
+                latency,
+                bytes,
+            } => {
+                self.peers.entry(node_id).and_modify(|peer_data| {
+                    peer_data.score.record_success(request_type, latency, bytes);
+                });
+            }
+            CastMessage::RecordFailureTyped {
+                node_id,
+                request_type,
+                severity,
+            } => {
+                self.peers.entry(node_id).and_modify(|peer_data| {
+                    peer_data.score.record_failure(request_type, severity);
+                });
             }
             CastMessage::RecordPingSent { node_id, req_id } => {
                 self.contacts
