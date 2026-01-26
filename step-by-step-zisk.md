@@ -22,12 +22,12 @@ Program Execution → STARK Proof → SNARK Proof → On-chain Verification
 
 **With GPU acceleration (recommended):**
 ```bash
-COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,zisk,gpu
+COMPILE_CONTRACTS=true make -C crates/l2 build-prover-zisk GPU=true
 ```
 
 **CPU only:**
 ```bash
-COMPILE_CONTRACTS=true cargo build --release --bin ethrex --features l2,zisk
+COMPILE_CONTRACTS=true make -C crates/l2 build-prover-zisk
 ```
 
 This generates the ELF at `crates/guest-program/bin/zisk/out/riscv64ima-zisk-elf`
@@ -159,21 +159,20 @@ Deploy the L1 contracts with ZisK verification enabled:
 
 ```bash
 COMPILE_CONTRACTS=true \
+ETHREX_L2_ZISK=true \
+ETHREX_DEPLOYER_ZISK_VERIFIER_ADDRESS=<ZISK_VERIFIER_ADDRESS> \
+ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true \
 ethrex l2 deploy \
-    --eth-rpc-url <L1_RPC_URL> \
-    --private-key <DEPLOYER_PRIVATE_KEY> \
-    --genesis-l2-path fixtures/genesis/l2.json \
-    --bridge-owner <BRIDGE_OWNER_ADDRESS> \
-    --on-chain-proposer-owner <ON_CHAIN_PROPOSER_OWNER_ADDRESS> \
-    --committer.l1-address <COMMITTER_L1_ADDRESS> \
-    --proof-sender.l1-address <PROOF_SENDER_L1_ADDRESS> \
-    --zisk true \
-    --zisk.verifier-address <ZISK_VERIFIER_ADDRESS> \
-    --randomize-contract-deployment
+  --eth-rpc-url <ETH_RPC_URL> \
+  --private-key <YOUR_PRIVATE_KEY> \
+  --on-chain-proposer-owner <ON_CHAIN_PROPOSER_OWNER>  \
+  --bridge-owner <BRIDGE_OWNER_ADDRESS>  \
+  --genesis-l2-path fixtures/genesis/l2.json \
+  --proof-sender.l1-address <PROOF_SENDER_L1_ADDRESS>
 ```
 
 > [!NOTE]
-> - `<ZISK_VERIFIER_ADDRESS>` is the address from step 10
+> - `ETHREX_DEPLOYER_ZISK_VERIFIER_ADDRESS` is the verifier contract address from step 10
 > - Save the deployed contract addresses for the next step
 
 ### 12. Start the L2 Node
@@ -199,10 +198,11 @@ ethrex l2 \
 In a separate terminal, start the ZisK prover:
 
 ```bash
-ethrex l2 prover \
-    --proof-coordinator-endpoint <PROOF_COORDINATOR_ENDPOINT> \
-    --backend zisk
+make -C crates/l2 init-prover-zisk GPU=true
 ```
+
+> [!NOTE]
+> The `GPU=true` flag is optional but recommended for faster STARK proof generation.
 
 The prover automatically:
 1. Receives batch input from the proof coordinator
