@@ -8,6 +8,10 @@
 
 ## Perf
 
+### 2026-01-23
+
+- Reuse cache in prewarm workers [#5999](https://github.com/lambdaclass/ethrex/pull/5999)
+
 ### 2026-01-21
 
 - Improve snap sync logging with table format and visual progress bars [#5977](https://github.com/lambdaclass/ethrex/pull/5977)
