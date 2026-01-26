@@ -1324,6 +1324,8 @@ async fn insert_accounts(
     code_hash_collector: &mut CodeHashCollector,
 ) -> Result<(H256, BTreeSet<H256>), SyncError> {
     let mut computed_state_root = *EMPTY_TRIE_HASH;
+    let mut file_count = 0usize;
+
     for entry in std::fs::read_dir(account_state_snapshots_dir)
         .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
     {
@@ -1372,7 +1374,31 @@ async fn insert_accounts(
             .await?;
 
         computed_state_root = current_state_root?;
+        file_count += 1;
+
+        // Flush pending writes to disk periodically (every 10 files)
+        // This is critical for ethrex-db backend to prevent memory exhaustion
+        if file_count % 10 == 0 {
+            let flushed = store
+                .flush_pending_writes()
+                .map_err(|e| SyncError::Store(e))?;
+            if flushed > 0 {
+                info!(
+                    "Flushed {} account entries to disk after {} files",
+                    flushed, file_count
+                );
+            }
+        }
     }
+
+    // Final flush to ensure all remaining entries are persisted
+    let final_flushed = store
+        .flush_pending_writes()
+        .map_err(|e| SyncError::Store(e))?;
+    if final_flushed > 0 {
+        info!("Final flush: {} account entries to disk", final_flushed);
+    }
+
     std::fs::remove_dir_all(account_state_snapshots_dir)
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
     info!("computed_state_root {computed_state_root}");
@@ -1387,6 +1413,8 @@ async fn insert_storages(
     _: &Path,
 ) -> Result<(), SyncError> {
     use rayon::iter::IntoParallelIterator;
+
+    let mut file_count = 0usize;
 
     for entry in std::fs::read_dir(account_storages_snapshots_dir)
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
@@ -1438,6 +1466,31 @@ async fn insert_storages(
         store
             .write_storage_trie_nodes_batch(storage_trie_node_changes)
             .await?;
+
+        file_count += 1;
+
+        // Flush pending writes to disk periodically (every 5 files)
+        // Storage files are typically larger than account files, so flush more frequently
+        // This is critical for ethrex-db backend to prevent memory exhaustion
+        if file_count % 5 == 0 {
+            let flushed = store
+                .flush_pending_writes()
+                .map_err(|e| SyncError::Store(e))?;
+            if flushed > 0 {
+                info!(
+                    "Flushed {} storage entries to disk after {} files",
+                    flushed, file_count
+                );
+            }
+        }
+    }
+
+    // Final flush to ensure all remaining entries are persisted
+    let final_flushed = store
+        .flush_pending_writes()
+        .map_err(|e| SyncError::Store(e))?;
+    if final_flushed > 0 {
+        info!("Final flush: {} storage entries to disk", final_flushed);
     }
 
     std::fs::remove_dir_all(account_storages_snapshots_dir)

@@ -1,7 +1,7 @@
-#[cfg(feature = "rocksdb")]
-use crate::backend::rocksdb::RocksDBBackend;
 #[cfg(feature = "ethrex-db")]
 use crate::backend::ethrex_db::EthrexDbBackend;
+#[cfg(feature = "rocksdb")]
+use crate::backend::rocksdb::RocksDBBackend;
 #[cfg(feature = "ethrex-db")]
 use ethrex_db::chain::Blockchain;
 
@@ -1272,10 +1272,10 @@ impl Store {
         update_batch: UpdateBatch,
         blockchain_ref: &BlockchainRef,
     ) -> Result<(), StoreError> {
-
-        let raw_updates = update_batch.raw_account_updates.as_ref().ok_or_else(|| {
-            StoreError::Custom("ethrex_db requires raw account updates".into())
-        })?;
+        let raw_updates = update_batch
+            .raw_account_updates
+            .as_ref()
+            .ok_or_else(|| StoreError::Custom("ethrex_db requires raw account updates".into()))?;
 
         let blockchain = blockchain_ref
             .0
@@ -1367,10 +1367,7 @@ impl Store {
     /// Store block metadata (headers, bodies, receipts, code) in RocksDB.
     /// Used by ethrex_db backend to maintain compatibility with existing queries.
     #[cfg(feature = "ethrex-db")]
-    fn store_block_metadata_auxiliary(
-        &self,
-        update_batch: &UpdateBatch,
-    ) -> Result<(), StoreError> {
+    fn store_block_metadata_auxiliary(&self, update_batch: &UpdateBatch) -> Result<(), StoreError> {
         let db = self.backend.clone();
         let mut tx = db.begin_write()?;
 
@@ -1541,9 +1538,14 @@ impl Store {
                     let mut tx = backend.begin_write()?;
                     tx.put(MISC_VALUES, "last_written".as_bytes(), &[0xff])?;
                     tx.commit()?;
-                    *store.last_computed_flatkeyvalue.lock().map_err(|_| StoreError::LockError)? = vec![0xff; 64];
+                    *store
+                        .last_computed_flatkeyvalue
+                        .lock()
+                        .map_err(|_| StoreError::LockError)? = vec![0xff; 64];
                 }
-                info!("ethrex_db backend: Initialized without TrieLayerCache workers (using native state management)");
+                info!(
+                    "ethrex_db backend: Initialized without TrieLayerCache workers (using native state management)"
+                );
 
                 Ok(store)
             }
@@ -1894,7 +1896,10 @@ impl Store {
         // For ethrex_db, we can reuse get_account_info which already has routing
         #[cfg(feature = "ethrex-db")]
         if self.ethrex_blockchain.is_some() {
-            return Ok(self.get_account_info(block_number, address).await?.map(|a| a.nonce));
+            return Ok(self
+                .get_account_info(block_number, address)
+                .await?
+                .map(|a| a.nonce));
         }
 
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
@@ -2315,7 +2320,12 @@ impl Store {
         if let Some(blockchain_ref) = &self.ethrex_blockchain {
             // Get block hash for this block number
             if let Some(block_hash) = self.get_canonical_block_hash_sync(block_number)? {
-                return self.get_storage_at_ethrex_db(block_hash, address, storage_key, blockchain_ref);
+                return self.get_storage_at_ethrex_db(
+                    block_hash,
+                    address,
+                    storage_key,
+                    blockchain_ref,
+                );
             }
             return Ok(None);
         }
@@ -2517,10 +2527,15 @@ impl Store {
             let blockchain = blockchain_ref.0.write().map_err(|_| {
                 StoreError::Custom("Failed to acquire write lock on ethrex_db blockchain".into())
             })?;
-            blockchain.persist_state_trie(block_number, block_hash).map_err(|e| {
-                StoreError::Custom(format!("Failed to persist snap-sync state: {}", e))
-            })?;
-            info!("ethrex_db: Persisted snap-sync state at block {}", block_number);
+            blockchain
+                .persist_state_trie(block_number, block_hash)
+                .map_err(|e| {
+                    StoreError::Custom(format!("Failed to persist snap-sync state: {}", e))
+                })?;
+            info!(
+                "ethrex_db: Persisted snap-sync state at block {}",
+                block_number
+            );
         }
         Ok(())
     }
@@ -2539,10 +2554,15 @@ impl Store {
             let blockchain = blockchain_ref.0.write().map_err(|_| {
                 StoreError::Custom("Failed to acquire write lock on ethrex_db blockchain".into())
             })?;
-            blockchain.persist_state_trie_checkpoint(block_number, block_hash).map_err(|e| {
-                StoreError::Custom(format!("Failed to save snap-sync checkpoint: {}", e))
-            })?;
-            debug!("ethrex_db: Saved snap-sync checkpoint at block {}", block_number);
+            blockchain
+                .persist_state_trie_checkpoint(block_number, block_hash)
+                .map_err(|e| {
+                    StoreError::Custom(format!("Failed to save snap-sync checkpoint: {}", e))
+                })?;
+            debug!(
+                "ethrex_db: Saved snap-sync checkpoint at block {}",
+                block_number
+            );
         }
         Ok(())
     }
@@ -2557,6 +2577,19 @@ impl Store {
     #[cfg(not(feature = "ethrex-db"))]
     pub fn uses_ethrex_db(&self) -> bool {
         false
+    }
+
+    /// Flushes pending writes in the storage backend to disk.
+    ///
+    /// This method is primarily used during snap sync to periodically persist
+    /// buffered trie data to disk, preventing memory exhaustion when syncing
+    /// large state. For the ethrex-db backend, this flushes pending trie writes
+    /// to the PagedStateTrie and persists them via checkpoint.
+    ///
+    /// Returns the number of entries that were flushed. For backends that don't
+    /// buffer writes (like RocksDB), this returns 0.
+    pub fn flush_pending_writes(&self) -> Result<usize, StoreError> {
+        self.backend.flush_pending_writes()
     }
 
     pub async fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
@@ -2625,16 +2658,21 @@ impl Store {
                     .iter()
                     .find(|(num, _)| *num == finalized_number)
                     .map(|(_, hash)| *hash)
-                    .or_else(|| self.get_canonical_block_hash_sync(finalized_number).ok().flatten());
+                    .or_else(|| {
+                        self.get_canonical_block_hash_sync(finalized_number)
+                            .ok()
+                            .flatten()
+                    });
 
                 if let Some(hash) = finalized_hash {
                     // Get expected state root from block header before finalization
-                    let expected_state_root = self
-                        .load_block_header_by_hash(hash)?
-                        .map(|h| h.state_root);
+                    let expected_state_root =
+                        self.load_block_header_by_hash(hash)?.map(|h| h.state_root);
 
                     let blockchain = blockchain_ref.0.write().map_err(|_| {
-                        StoreError::Custom("Failed to acquire write lock on ethrex_db blockchain".into())
+                        StoreError::Custom(
+                            "Failed to acquire write lock on ethrex_db blockchain".into(),
+                        )
                     })?;
 
                     // Get the count of hot blocks before finalization for logging
@@ -2642,20 +2680,29 @@ impl Store {
 
                     // Call ethrex_db's fork_choice_update which handles finalization and pruning
                     blockchain
-                        .fork_choice_update(head_hash, safe.and_then(|n| {
-                            new_canonical_blocks
-                                .iter()
-                                .find(|(num, _)| *num == n)
-                                .map(|(_, h)| *h)
-                                .or_else(|| self.get_canonical_block_hash_sync(n).ok().flatten())
-                        }), Some(hash))
+                        .fork_choice_update(
+                            head_hash,
+                            safe.and_then(|n| {
+                                new_canonical_blocks
+                                    .iter()
+                                    .find(|(num, _)| *num == n)
+                                    .map(|(_, h)| *h)
+                                    .or_else(|| {
+                                        self.get_canonical_block_hash_sync(n).ok().flatten()
+                                    })
+                            }),
+                            Some(hash),
+                        )
                         .map_err(|e| {
                             tracing::error!(
                                 "ethrex_db fork_choice_update failed at block {}: {}",
                                 finalized_number,
                                 e
                             );
-                            StoreError::Custom(format!("ethrex_db fork_choice_update failed: {}", e))
+                            StoreError::Custom(format!(
+                                "ethrex_db fork_choice_update failed: {}",
+                                e
+                            ))
                         })?;
 
                     let hot_blocks_after = blockchain.committed_count();

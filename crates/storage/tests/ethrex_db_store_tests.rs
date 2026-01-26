@@ -10,9 +10,9 @@
 
 use bytes::Bytes;
 use ethrex_common::{
+    Address, H256, U256,
     types::{Block, BlockBody, BlockHeader, ChainConfig, Code, Genesis, GenesisAccount},
     utils::keccak,
-    Address, H256, U256,
 };
 use ethrex_storage::{EngineType, Store};
 use std::collections::BTreeMap;
@@ -157,8 +157,8 @@ async fn test_store_block_operations_with_ethrex_db() {
 #[tokio::test]
 async fn test_concurrent_reads_with_ethrex_db() {
     let temp_dir = TempDir::new().unwrap();
-    let mut store = Store::new(temp_dir.path(), EngineType::EthrexDb)
-        .expect("Failed to create store");
+    let mut store =
+        Store::new(temp_dir.path(), EngineType::EthrexDb).expect("Failed to create store");
 
     // Initialize with genesis
     let genesis = create_test_genesis();
@@ -205,8 +205,8 @@ async fn test_concurrent_reads_with_ethrex_db() {
 #[tokio::test]
 async fn test_concurrent_reads_during_write_with_ethrex_db() {
     let temp_dir = TempDir::new().unwrap();
-    let mut store = Store::new(temp_dir.path(), EngineType::EthrexDb)
-        .expect("Failed to create store");
+    let mut store =
+        Store::new(temp_dir.path(), EngineType::EthrexDb).expect("Failed to create store");
 
     // Initialize with genesis
     let genesis = create_test_genesis();
@@ -261,7 +261,10 @@ async fn test_concurrent_reads_during_write_with_ethrex_db() {
     }
 
     // Verify final state
-    let latest = store.get_latest_block_number().await.expect("Failed to get latest");
+    let latest = store
+        .get_latest_block_number()
+        .await
+        .expect("Failed to get latest");
     assert_eq!(latest, 4);
 }
 
@@ -272,8 +275,8 @@ async fn test_concurrent_reads_during_write_with_ethrex_db() {
 #[tokio::test]
 async fn test_blockchain_reference_access() {
     let temp_dir = TempDir::new().unwrap();
-    let mut store = Store::new(temp_dir.path(), EngineType::EthrexDb)
-        .expect("Failed to create store");
+    let mut store =
+        Store::new(temp_dir.path(), EngineType::EthrexDb).expect("Failed to create store");
 
     let genesis = create_test_genesis();
     store
@@ -282,7 +285,9 @@ async fn test_blockchain_reference_access() {
         .expect("Failed to add genesis");
 
     // Access blockchain reference
-    let blockchain_ref = store.ethrex_blockchain().expect("Should have blockchain ref");
+    let blockchain_ref = store
+        .ethrex_blockchain()
+        .expect("Should have blockchain ref");
 
     // Acquire read lock on blockchain
     let blockchain = blockchain_ref.0.read().expect("Failed to read lock");
@@ -312,8 +317,8 @@ fn test_uses_ethrex_db_helper() {
 
     // Test with RocksDB backend
     let temp_dir2 = TempDir::new().unwrap();
-    let store2 = Store::new(temp_dir2.path(), EngineType::RocksDB)
-        .expect("Failed to create rocksdb store");
+    let store2 =
+        Store::new(temp_dir2.path(), EngineType::RocksDB).expect("Failed to create rocksdb store");
     assert!(!store2.uses_ethrex_db());
 
     // Test with InMemory backend
@@ -328,8 +333,8 @@ fn test_uses_ethrex_db_helper() {
 #[tokio::test]
 async fn test_multiple_blocks_chain_with_ethrex_db() {
     let temp_dir = TempDir::new().unwrap();
-    let mut store = Store::new(temp_dir.path(), EngineType::EthrexDb)
-        .expect("Failed to create store");
+    let mut store =
+        Store::new(temp_dir.path(), EngineType::EthrexDb).expect("Failed to create store");
 
     // Initialize with genesis
     let genesis = create_test_genesis();
@@ -360,7 +365,10 @@ async fn test_multiple_blocks_chain_with_ethrex_db() {
     }
 
     // Verify the chain
-    let latest = store.get_latest_block_number().await.expect("Failed to get latest");
+    let latest = store
+        .get_latest_block_number()
+        .await
+        .expect("Failed to get latest");
     assert_eq!(latest, 5);
 
     // Verify each block is retrievable
@@ -390,8 +398,8 @@ async fn test_store_persistence_after_reopen() {
 
     // Create store and add some data
     {
-        let mut store = Store::new(&temp_path, EngineType::EthrexDb)
-            .expect("Failed to create store");
+        let mut store =
+            Store::new(&temp_path, EngineType::EthrexDb).expect("Failed to create store");
 
         let genesis = create_test_genesis();
         store
@@ -419,8 +427,7 @@ async fn test_store_persistence_after_reopen() {
 
     // Reopen the store
     {
-        let store = Store::new(&temp_path, EngineType::EthrexDb)
-            .expect("Failed to reopen store");
+        let store = Store::new(&temp_path, EngineType::EthrexDb).expect("Failed to reopen store");
 
         assert!(store.uses_ethrex_db());
 
@@ -441,8 +448,7 @@ async fn test_store_persistence_after_reopen() {
 #[test]
 fn test_ethrex_db_creates_expected_files() {
     let temp_dir = TempDir::new().unwrap();
-    let _store = Store::new(temp_dir.path(), EngineType::EthrexDb)
-        .expect("Failed to create store");
+    let _store = Store::new(temp_dir.path(), EngineType::EthrexDb).expect("Failed to create store");
 
     // Verify expected file structure
     let state_db_path = temp_dir.path().join("state.db");
@@ -468,8 +474,8 @@ fn test_ethrex_db_creates_expected_files() {
 #[tokio::test]
 async fn test_forkchoice_update_basic() {
     let temp_dir = TempDir::new().unwrap();
-    let mut store = Store::new(temp_dir.path(), EngineType::EthrexDb)
-        .expect("Failed to create store");
+    let mut store =
+        Store::new(temp_dir.path(), EngineType::EthrexDb).expect("Failed to create store");
 
     // Initialize with genesis
     let genesis = create_test_genesis();
@@ -516,8 +522,8 @@ async fn test_forkchoice_update_basic() {
 #[tokio::test]
 async fn test_forkchoice_update_with_safe_and_finalized() {
     let temp_dir = TempDir::new().unwrap();
-    let mut store = Store::new(temp_dir.path(), EngineType::EthrexDb)
-        .expect("Failed to create store");
+    let mut store =
+        Store::new(temp_dir.path(), EngineType::EthrexDb).expect("Failed to create store");
 
     // Initialize with genesis
     let genesis = create_test_genesis();
@@ -552,7 +558,10 @@ async fn test_forkchoice_update_with_safe_and_finalized() {
     }
 
     // Verify the chain is canonical
-    let latest = store.get_latest_block_number().await.expect("Failed to get latest");
+    let latest = store
+        .get_latest_block_number()
+        .await
+        .expect("Failed to get latest");
     assert_eq!(latest, 5);
 }
 
@@ -563,8 +572,7 @@ async fn test_code_storage_and_retrieval_with_ethrex_db() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
     // Create store with ethrex_db backend
-    let store = Store::new(temp_dir.path(), EngineType::EthrexDb)
-        .expect("Failed to create store");
+    let store = Store::new(temp_dir.path(), EngineType::EthrexDb).expect("Failed to create store");
 
     // Create some test bytecode (simple contract)
     let bytecode = Bytes::from(vec![
@@ -615,8 +623,7 @@ async fn test_code_storage_persistence_with_ethrex_db() {
 
     // Store code in first store instance
     {
-        let store = Store::new(&temp_path, EngineType::EthrexDb)
-            .expect("Failed to create store");
+        let store = Store::new(&temp_path, EngineType::EthrexDb).expect("Failed to create store");
 
         store
             .add_account_code(code.clone())
@@ -626,8 +633,7 @@ async fn test_code_storage_persistence_with_ethrex_db() {
 
     // Reopen store and verify code is still there
     {
-        let store = Store::new(&temp_path, EngineType::EthrexDb)
-            .expect("Failed to reopen store");
+        let store = Store::new(&temp_path, EngineType::EthrexDb).expect("Failed to reopen store");
 
         let retrieved_code = store
             .get_account_code(code_hash)
@@ -644,8 +650,7 @@ async fn test_code_storage_persistence_with_ethrex_db() {
 fn test_nonexistent_code_returns_none() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
-    let store = Store::new(temp_dir.path(), EngineType::EthrexDb)
-        .expect("Failed to create store");
+    let store = Store::new(temp_dir.path(), EngineType::EthrexDb).expect("Failed to create store");
 
     // Try to get a code hash that was never stored
     let fake_code_hash = H256::repeat_byte(0xAB);
@@ -683,7 +688,13 @@ async fn test_ethrex_db_no_background_trie_workers() {
     // Basic operations should work - this tests that the Store is functional
     // without spawning the trie_update_worker and flatkeyvalue_generator threads
     let result = store.get_latest_block_number().await;
-    assert!(result.is_ok() || matches!(result, Err(ethrex_storage::error::StoreError::MissingLatestBlockNumber)));
+    assert!(
+        result.is_ok()
+            || matches!(
+                result,
+                Err(ethrex_storage::error::StoreError::MissingLatestBlockNumber)
+            )
+    );
 }
 
 /// Test that StateBeyondHistoryDepth error is properly formatted.
@@ -698,7 +709,10 @@ fn test_state_beyond_history_depth_error() {
     };
 
     let error_msg = error.to_string();
-    assert!(error_msg.contains("100"), "Error should mention queried block");
+    assert!(
+        error_msg.contains("100"),
+        "Error should mention queried block"
+    );
     assert!(error_msg.contains("500"), "Error should mention head block");
     assert!(error_msg.contains("256"), "Error should mention max depth");
 }

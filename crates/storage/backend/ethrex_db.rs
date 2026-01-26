@@ -28,7 +28,7 @@ use crate::api::{
 };
 use crate::error::StoreError;
 use ethrex_db::chain::Blockchain;
-use ethrex_db::store::PagedDb;
+use ethrex_db::store::{AccountData, PagedDb};
 use primitive_types::U256;
 use std::collections::HashMap;
 use std::fmt;
@@ -116,10 +116,9 @@ pub fn parse_trie_key(key: &[u8], table: &str) -> ParsedTrieKey {
             // Storage leaf: 131 nibbles = 64 + 1 (separator) + 64 + 2 (terminator)
             // Note: actual format may vary, check for separator at position 64
             if key.len() == 131 && key[64] == 17 {
-                if let (Some(address_hash), Some(slot_hash)) = (
-                    nibbles_to_hash(&key[0..64]),
-                    nibbles_to_hash(&key[65..129]),
-                ) {
+                if let (Some(address_hash), Some(slot_hash)) =
+                    (nibbles_to_hash(&key[0..64]), nibbles_to_hash(&key[65..129]))
+                {
                     return ParsedTrieKey::StorageLeaf {
                         address_hash,
                         slot_hash,
@@ -177,8 +176,10 @@ fn encode_account_for_trie(account: &ethrex_db::chain::Account) -> Vec<u8> {
         b
     };
 
-    let total_len =
-        nonce_encoded.len() + balance_encoded.len() + storage_root_encoded.len() + code_hash_encoded.len();
+    let total_len = nonce_encoded.len()
+        + balance_encoded.len()
+        + storage_root_encoded.len()
+        + code_hash_encoded.len();
 
     // RLP list header
     if total_len < 56 {
@@ -236,6 +237,37 @@ fn encode_length(len: usize) -> Vec<u8> {
     }
     bytes.reverse();
     bytes
+}
+
+/// Decodes an RLP-encoded storage value to a 32-byte array.
+///
+/// Storage values in the trie are stored as RLP-encoded bytes with leading
+/// zeros trimmed. This function decodes them back to a padded 32-byte array.
+fn decode_storage_value_from_rlp(rlp_bytes: &[u8]) -> [u8; 32] {
+    use ethrex_rlp::decode::RLPDecode;
+
+    // Empty input means zero value
+    if rlp_bytes.is_empty() {
+        return [0u8; 32];
+    }
+
+    // Try to decode as RLP bytes
+    let decoded: Result<Vec<u8>, _> = Vec::<u8>::decode(rlp_bytes);
+
+    let value_bytes = match decoded {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            // If RLP decoding fails, treat the input as raw bytes
+            rlp_bytes.to_vec()
+        }
+    };
+
+    // Pad to 32 bytes (right-aligned, big-endian)
+    let mut result = [0u8; 32];
+    let offset = 32usize.saturating_sub(value_bytes.len());
+    let copy_len = value_bytes.len().min(32);
+    result[offset..offset + copy_len].copy_from_slice(&value_bytes[..copy_len]);
+    result
 }
 
 /// Tables that are handled by ethrex_db (state and storage tries).
@@ -329,6 +361,92 @@ impl EthrexDbBackend {
     pub fn auxiliary(&self) -> Arc<RocksDBBackend> {
         self.auxiliary.clone()
     }
+
+    /// Flushes pending trie writes to the ethrex_db state trie.
+    ///
+    /// This method:
+    /// 1. Takes and clears pending trie writes from memory
+    /// 2. Parses leaf nodes (accounts and storage) from the pending writes
+    /// 3. Inserts them into PagedStateTrie via ethrex-db's native API
+    /// 4. Persists to PagedDb via persist_state_trie_checkpoint()
+    ///
+    /// Intermediate trie nodes (ACCOUNT_TRIE_NODES, STORAGE_TRIE_NODES) are discarded
+    /// because ethrex-db recomputes the trie structure internally.
+    ///
+    /// Returns the number of leaf entries that were flushed.
+    pub fn flush_pending_trie_writes(&self) -> Result<usize, StoreError> {
+        use primitive_types::H256;
+
+        let mut flushed = 0;
+
+        // Take and clear pending writes atomically
+        let pending = {
+            let mut p = self.pending_trie_writes.write().map_err(|_| {
+                StoreError::Custom("Failed to acquire write lock on pending trie writes".into())
+            })?;
+            std::mem::take(&mut *p)
+        };
+
+        // Check if there's anything to flush
+        if pending.is_empty() {
+            return Ok(0);
+        }
+
+        let blockchain = self
+            .blockchain
+            .write()
+            .map_err(|_| StoreError::Custom("Failed to acquire write lock on blockchain".into()))?;
+        let mut state_trie = blockchain.state_trie_mut();
+
+        // Process ACCOUNT_FLATKEYVALUE leaves
+        if let Some(accounts) = pending.get(ACCOUNT_FLATKEYVALUE) {
+            for (key, value) in accounts {
+                if let ParsedTrieKey::AccountLeaf { address_hash } =
+                    parse_trie_key(key, ACCOUNT_FLATKEYVALUE)
+                {
+                    // Decode the RLP-encoded account data
+                    let account_data = AccountData::decode(value);
+                    state_trie.set_account_by_hash(&address_hash, account_data);
+                    flushed += 1;
+                }
+            }
+        }
+
+        // Process STORAGE_FLATKEYVALUE leaves
+        if let Some(storages) = pending.get(STORAGE_FLATKEYVALUE) {
+            for (key, value) in storages {
+                if let ParsedTrieKey::StorageLeaf {
+                    address_hash,
+                    slot_hash,
+                } = parse_trie_key(key, STORAGE_FLATKEYVALUE)
+                {
+                    // Decode the RLP-encoded storage value to [u8; 32]
+                    let storage_value = decode_storage_value_from_rlp(value);
+                    state_trie
+                        .storage_trie_by_hash(&address_hash)
+                        .set_by_hash(&slot_hash, storage_value);
+                    flushed += 1;
+                }
+            }
+        }
+
+        // Intermediate nodes (TRIE_NODES tables) are intentionally discarded.
+        // ethrex-db recomputes the trie structure when computing the root hash.
+
+        // Drop the trie lock before persisting
+        drop(state_trie);
+
+        // Persist checkpoint to disk (using block 0, hash zero as placeholder during snap sync)
+        blockchain
+            .persist_state_trie_checkpoint(0, H256::zero())
+            .map_err(|e| {
+                StoreError::Custom(format!("Failed to persist state trie checkpoint: {}", e))
+            })?;
+
+        tracing::info!("Flushed {} trie entries to ethrex-db", flushed);
+
+        Ok(flushed)
+    }
 }
 
 impl StorageBackend for EthrexDbBackend {
@@ -397,6 +515,10 @@ impl StorageBackend for EthrexDbBackend {
         // Note: ethrex_db has its own snapshot mechanism via PagedDb::create_snapshot()
         // For now, we rely on finalization for state durability
         Ok(())
+    }
+
+    fn flush_pending_writes(&self) -> Result<usize, StoreError> {
+        self.flush_pending_trie_writes()
     }
 }
 

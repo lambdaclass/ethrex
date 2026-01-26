@@ -51,6 +51,17 @@ pub trait StorageBackend: Debug + Send + Sync {
     // TODO: remove this and provide historic data via diff-layers
     /// Creates a checkpoint of the current database state at the specified path.
     fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
+
+    /// Flushes pending writes to durable storage.
+    ///
+    /// This method is primarily used during snap sync to periodically persist
+    /// buffered trie data to disk, preventing memory exhaustion.
+    ///
+    /// Returns the number of entries that were flushed, or 0 if the backend
+    /// does not buffer writes (default behavior).
+    fn flush_pending_writes(&self) -> Result<usize, StoreError> {
+        Ok(0) // Default: no-op for backends without buffering
+    }
 }
 
 /// Read-only transaction interface.

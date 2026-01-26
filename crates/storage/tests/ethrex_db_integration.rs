@@ -6,7 +6,7 @@
 #![cfg(feature = "ethrex-db")]
 
 use ethrex_db::chain::{Account, Blockchain, ReadOnlyWorldState, WorldState};
-use ethrex_db::merkle::{MerkleTrie, EMPTY_ROOT};
+use ethrex_db::merkle::{EMPTY_ROOT, MerkleTrie};
 use ethrex_db::store::{PagedDb, PagedStateTrie};
 use primitive_types::{H256, U256};
 
@@ -187,7 +187,9 @@ fn test_block_finalization() {
     assert_eq!(blockchain.committed_count(), 1);
 
     // Finalize the block
-    blockchain.finalize(block1_hash).expect("Failed to finalize");
+    blockchain
+        .finalize(block1_hash)
+        .expect("Failed to finalize");
 
     // Verify finalization
     assert_eq!(blockchain.last_finalized_number(), 1);
