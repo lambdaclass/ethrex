@@ -172,6 +172,38 @@ pub async fn periodically_show_peer_stats(blockchain: Arc<Blockchain>, mut peer_
     periodically_show_peer_stats_after_sync(&mut peer_table).await;
 }
 
+/// Tracks metric values at phase start and from the previous interval for rate calculations
+#[derive(Default, Clone, Copy)]
+struct PhaseCounters {
+    headers: u64,
+    accounts: u64,
+    accounts_inserted: u64,
+    storage: u64,
+    storage_inserted: u64,
+    healed_accounts: u64,
+    healed_storage: u64,
+    bytecodes: u64,
+}
+
+impl PhaseCounters {
+    fn capture_current() -> Self {
+        Self {
+            headers: METRICS.downloaded_headers.get(),
+            accounts: METRICS.downloaded_account_tries.load(Ordering::Relaxed),
+            accounts_inserted: METRICS.account_tries_inserted.load(Ordering::Relaxed),
+            storage: METRICS.storage_leaves_downloaded.get(),
+            storage_inserted: METRICS.storage_leaves_inserted.get(),
+            healed_accounts: METRICS
+                .global_state_trie_leafs_healed
+                .load(Ordering::Relaxed),
+            healed_storage: METRICS
+                .global_storage_tries_leafs_healed
+                .load(Ordering::Relaxed),
+            bytecodes: METRICS.downloaded_bytecodes.load(Ordering::Relaxed),
+        }
+    }
+}
+
 pub async fn periodically_show_peer_stats_during_syncing(
     blockchain: Arc<Blockchain>,
     peer_table: &mut PeerTable,
@@ -181,15 +213,10 @@ pub async fn periodically_show_peer_stats_during_syncing(
     let mut phase_start_time = std::time::Instant::now();
     let mut sync_started_logged = false;
 
-    // Track metrics at phase start for calculating phase-specific rates
-    let mut phase_start_headers: u64 = 0;
-    let mut phase_start_accounts: u64 = 0;
-    let mut phase_start_accounts_inserted: u64 = 0;
-    let mut phase_start_storage: u64 = 0;
-    let mut phase_start_storage_inserted: u64 = 0;
-    let mut phase_start_healed_accounts: u64 = 0;
-    let mut phase_start_healed_storage: u64 = 0;
-    let mut phase_start_bytecodes: u64 = 0;
+    // Track metrics at phase start for phase summaries
+    let mut phase_start = PhaseCounters::default();
+    // Track metrics from previous interval for rate calculations
+    let mut prev_interval = PhaseCounters::default();
 
     loop {
         if blockchain.is_synced() {
@@ -295,18 +322,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
                 log_phase_completion(
                     previous_step,
                     phase_elapsed,
-                    &phase_metrics(
-                        previous_step,
-                        phase_start_headers,
-                        phase_start_accounts,
-                        phase_start_accounts_inserted,
-                        phase_start_storage,
-                        phase_start_storage_inserted,
-                        phase_start_healed_accounts,
-                        phase_start_healed_storage,
-                        phase_start_bytecodes,
-                    )
-                    .await,
+                    &phase_metrics(previous_step, &phase_start).await,
                 );
             }
 
@@ -314,18 +330,8 @@ pub async fn periodically_show_peer_stats_during_syncing(
             phase_start_time = std::time::Instant::now();
 
             // Capture metrics at phase start
-            phase_start_headers = METRICS.downloaded_headers.get();
-            phase_start_accounts = METRICS.downloaded_account_tries.load(Ordering::Relaxed);
-            phase_start_accounts_inserted = METRICS.account_tries_inserted.load(Ordering::Relaxed);
-            phase_start_storage = METRICS.storage_leaves_downloaded.get();
-            phase_start_storage_inserted = METRICS.storage_leaves_inserted.get();
-            phase_start_healed_accounts = METRICS
-                .global_state_trie_leafs_healed
-                .load(Ordering::Relaxed);
-            phase_start_healed_storage = METRICS
-                .global_storage_tries_leafs_healed
-                .load(Ordering::Relaxed);
-            phase_start_bytecodes = METRICS.downloaded_bytecodes.load(Ordering::Relaxed);
+            phase_start = PhaseCounters::capture_current();
+            prev_interval = phase_start;
 
             log_phase_separator(current_step);
             previous_step = current_step;
@@ -340,18 +346,14 @@ pub async fn periodically_show_peer_stats_during_syncing(
             phase_elapsed,
             &total_elapsed,
             peer_number,
-            phase_start_headers,
-            phase_start_accounts,
-            phase_start_accounts_inserted,
-            phase_start_storage,
-            phase_start_storage_inserted,
-            phase_start_healed_accounts,
-            phase_start_healed_storage,
-            phase_start_bytecodes,
+            &prev_interval,
         )
         .await;
 
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        // Update previous interval counters for next rate calculation
+        prev_interval = PhaseCounters::capture_current();
+
+        tokio::time::sleep(Duration::from_secs(30)).await;
     }
 }
 
@@ -374,8 +376,10 @@ fn phase_info(step: CurrentStepValue) -> (u8, &'static str) {
 
 fn log_phase_separator(step: CurrentStepValue) {
     let (phase_num, phase_name) = phase_info(step);
-    let header = format!("━━━ PHASE {}/8: {} ", phase_num, phase_name);
-    let padding = "━".repeat(80 - header.len());
+    let header = format!("── PHASE {}/8: {} ", phase_num, phase_name);
+    let header_width = header.chars().count();
+    let padding_width = 80usize.saturating_sub(header_width);
+    let padding = "─".repeat(padding_width);
     info!("");
     info!("{}{}", header, padding);
 }
@@ -385,80 +389,78 @@ fn log_phase_completion(step: CurrentStepValue, elapsed: String, summary: &str) 
     info!("✓ {} complete: {} in {}", phase_name, summary, elapsed);
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn phase_metrics(
-    step: CurrentStepValue,
-    phase_start_headers: u64,
-    phase_start_accounts: u64,
-    phase_start_accounts_inserted: u64,
-    phase_start_storage: u64,
-    phase_start_storage_inserted: u64,
-    phase_start_healed_accounts: u64,
-    phase_start_healed_storage: u64,
-    phase_start_bytecodes: u64,
-) -> String {
+async fn phase_metrics(step: CurrentStepValue, phase_start: &PhaseCounters) -> String {
     match step {
         CurrentStepValue::DownloadingHeaders => {
-            let downloaded = METRICS.downloaded_headers.get() - phase_start_headers;
+            let downloaded = METRICS
+                .downloaded_headers
+                .get()
+                .saturating_sub(phase_start.headers);
             format!("{} headers", format_thousands(downloaded))
         }
         CurrentStepValue::RequestingAccountRanges => {
-            let downloaded =
-                METRICS.downloaded_account_tries.load(Ordering::Relaxed) - phase_start_accounts;
+            let downloaded = METRICS
+                .downloaded_account_tries
+                .load(Ordering::Relaxed)
+                .saturating_sub(phase_start.accounts);
             format!("{} accounts", format_thousands(downloaded))
         }
         CurrentStepValue::InsertingAccountRanges | CurrentStepValue::InsertingAccountRangesNoDb => {
-            let inserted = METRICS.account_tries_inserted.load(Ordering::Relaxed)
-                - phase_start_accounts_inserted;
+            let inserted = METRICS
+                .account_tries_inserted
+                .load(Ordering::Relaxed)
+                .saturating_sub(phase_start.accounts_inserted);
             format!("{} accounts inserted", format_thousands(inserted))
         }
         CurrentStepValue::RequestingStorageRanges => {
-            let downloaded = METRICS.storage_leaves_downloaded.get() - phase_start_storage;
+            let downloaded = METRICS
+                .storage_leaves_downloaded
+                .get()
+                .saturating_sub(phase_start.storage);
             format!("{} storage slots", format_thousands(downloaded))
         }
         CurrentStepValue::InsertingStorageRanges => {
-            let inserted = METRICS.storage_leaves_inserted.get() - phase_start_storage_inserted;
+            let inserted = METRICS
+                .storage_leaves_inserted
+                .get()
+                .saturating_sub(phase_start.storage_inserted);
             format!("{} storage slots inserted", format_thousands(inserted))
         }
         CurrentStepValue::HealingState => {
             let healed = METRICS
                 .global_state_trie_leafs_healed
                 .load(Ordering::Relaxed)
-                - phase_start_healed_accounts;
+                .saturating_sub(phase_start.healed_accounts);
             format!("{} state paths healed", format_thousands(healed))
         }
         CurrentStepValue::HealingStorage => {
             let healed = METRICS
                 .global_storage_tries_leafs_healed
                 .load(Ordering::Relaxed)
-                - phase_start_healed_storage;
+                .saturating_sub(phase_start.healed_storage);
             format!("{} storage accounts healed", format_thousands(healed))
         }
         CurrentStepValue::RequestingBytecodes => {
-            let downloaded =
-                METRICS.downloaded_bytecodes.load(Ordering::Relaxed) - phase_start_bytecodes;
+            let downloaded = METRICS
+                .downloaded_bytecodes
+                .load(Ordering::Relaxed)
+                .saturating_sub(phase_start.bytecodes);
             format!("{} bytecodes", format_thousands(downloaded))
         }
         CurrentStepValue::None => String::new(),
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Interval in seconds between progress updates
+const PROGRESS_INTERVAL_SECS: u64 = 30;
+
 async fn log_phase_progress(
     step: CurrentStepValue,
     phase_elapsed: Duration,
     total_elapsed: &str,
     peer_count: usize,
-    phase_start_headers: u64,
-    phase_start_accounts: u64,
-    phase_start_accounts_inserted: u64,
-    phase_start_storage: u64,
-    phase_start_storage_inserted: u64,
-    phase_start_healed_accounts: u64,
-    phase_start_healed_storage: u64,
-    phase_start_bytecodes: u64,
+    prev_interval: &PhaseCounters,
 ) {
-    let phase_secs = phase_elapsed.as_secs().max(1);
     let phase_elapsed_str = format_duration(phase_elapsed);
 
     // Use consistent column widths: left column 40 chars, then │, then right column
@@ -469,13 +471,13 @@ async fn log_phase_progress(
             let headers_to_download = METRICS.sync_head_block.load(Ordering::Relaxed);
             let headers_downloaded =
                 u64::min(METRICS.downloaded_headers.get(), headers_to_download);
-            let phase_downloaded = headers_downloaded - phase_start_headers;
+            let interval_downloaded = headers_downloaded.saturating_sub(prev_interval.headers);
             let percentage = if headers_to_download == 0 {
                 0.0
             } else {
                 (headers_downloaded as f64 / headers_to_download as f64) * 100.0
             };
-            let rate = phase_downloaded / phase_secs;
+            let rate = interval_downloaded / PROGRESS_INTERVAL_SECS;
 
             let progress = progress_bar(percentage, 40);
             info!("  {} {:>5.1}%", progress, percentage);
@@ -492,8 +494,8 @@ async fn log_phase_progress(
         }
         CurrentStepValue::RequestingAccountRanges => {
             let accounts_downloaded = METRICS.downloaded_account_tries.load(Ordering::Relaxed);
-            let phase_downloaded = accounts_downloaded - phase_start_accounts;
-            let rate = phase_downloaded / phase_secs;
+            let interval_downloaded = accounts_downloaded.saturating_sub(prev_interval.accounts);
+            let rate = interval_downloaded / PROGRESS_INTERVAL_SECS;
 
             info!("");
             let col1 = format!(
@@ -508,13 +510,14 @@ async fn log_phase_progress(
         CurrentStepValue::InsertingAccountRanges | CurrentStepValue::InsertingAccountRangesNoDb => {
             let accounts_to_insert = METRICS.downloaded_account_tries.load(Ordering::Relaxed);
             let accounts_inserted = METRICS.account_tries_inserted.load(Ordering::Relaxed);
-            let phase_inserted = accounts_inserted - phase_start_accounts_inserted;
+            let interval_inserted =
+                accounts_inserted.saturating_sub(prev_interval.accounts_inserted);
             let percentage = if accounts_to_insert == 0 {
                 0.0
             } else {
                 (accounts_inserted as f64 / accounts_to_insert as f64) * 100.0
             };
-            let rate = phase_inserted / phase_secs;
+            let rate = interval_inserted / PROGRESS_INTERVAL_SECS;
 
             let progress = progress_bar(percentage, 40);
             info!("  {} {:>5.1}%", progress, percentage);
@@ -531,8 +534,8 @@ async fn log_phase_progress(
         }
         CurrentStepValue::RequestingStorageRanges => {
             let storage_downloaded = METRICS.storage_leaves_downloaded.get();
-            let phase_downloaded = storage_downloaded - phase_start_storage;
-            let rate = phase_downloaded / phase_secs;
+            let interval_downloaded = storage_downloaded.saturating_sub(prev_interval.storage);
+            let rate = interval_downloaded / PROGRESS_INTERVAL_SECS;
 
             info!("");
             let col1 = format!(
@@ -546,8 +549,8 @@ async fn log_phase_progress(
         }
         CurrentStepValue::InsertingStorageRanges => {
             let storage_inserted = METRICS.storage_leaves_inserted.get();
-            let phase_inserted = storage_inserted - phase_start_storage_inserted;
-            let rate = phase_inserted / phase_secs;
+            let interval_inserted = storage_inserted.saturating_sub(prev_interval.storage_inserted);
+            let rate = interval_inserted / PROGRESS_INTERVAL_SECS;
 
             info!("");
             let col1 = format!(
@@ -563,8 +566,8 @@ async fn log_phase_progress(
             let healed = METRICS
                 .global_state_trie_leafs_healed
                 .load(Ordering::Relaxed);
-            let phase_healed = healed - phase_start_healed_accounts;
-            let rate = phase_healed / phase_secs;
+            let interval_healed = healed.saturating_sub(prev_interval.healed_accounts);
+            let rate = interval_healed / PROGRESS_INTERVAL_SECS;
 
             info!("");
             let col1 = format!("State paths healed: {}", format_thousands(healed));
@@ -577,8 +580,8 @@ async fn log_phase_progress(
             let healed = METRICS
                 .global_storage_tries_leafs_healed
                 .load(Ordering::Relaxed);
-            let phase_healed = healed - phase_start_healed_storage;
-            let rate = phase_healed / phase_secs;
+            let interval_healed = healed.saturating_sub(prev_interval.healed_storage);
+            let rate = interval_healed / PROGRESS_INTERVAL_SECS;
 
             info!("");
             let col1 = format!("Storage accounts healed: {}", format_thousands(healed));
@@ -590,13 +593,13 @@ async fn log_phase_progress(
         CurrentStepValue::RequestingBytecodes => {
             let bytecodes_to_download = METRICS.bytecodes_to_download.load(Ordering::Relaxed);
             let bytecodes_downloaded = METRICS.downloaded_bytecodes.load(Ordering::Relaxed);
-            let phase_downloaded = bytecodes_downloaded - phase_start_bytecodes;
+            let interval_downloaded = bytecodes_downloaded.saturating_sub(prev_interval.bytecodes);
             let percentage = if bytecodes_to_download == 0 {
                 0.0
             } else {
                 (bytecodes_downloaded as f64 / bytecodes_to_download as f64) * 100.0
             };
-            let rate = phase_downloaded / phase_secs;
+            let rate = interval_downloaded / PROGRESS_INTERVAL_SECS;
 
             let progress = progress_bar(percentage, 40);
             info!("  {} {:>5.1}%", progress, percentage);
@@ -616,9 +619,11 @@ async fn log_phase_progress(
 }
 
 fn progress_bar(percentage: f64, width: usize) -> String {
-    let filled = ((percentage / 100.0) * width as f64) as usize;
+    let clamped_percentage = percentage.clamp(0.0, 100.0);
+    let filled = ((clamped_percentage / 100.0) * width as f64) as usize;
+    let filled = filled.min(width);
     let empty = width.saturating_sub(filled);
-    format!("▓{}░{}", "▓".repeat(filled), "░".repeat(empty))
+    format!("{}{}", "▓".repeat(filled), "░".repeat(empty))
 }
 
 fn format_thousands(n: u64) -> String {
