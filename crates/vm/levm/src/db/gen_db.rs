@@ -429,9 +429,6 @@ impl<'a> VM<'a> {
     ) -> Result<(), InternalError> {
         // Record initial balance for BAL round-trip detection before any changes
         let initial_balance = self.db.get_account(address)?.info.balance;
-        if let Some(recorder) = self.db.bal_recorder.as_mut() {
-            recorder.set_initial_balance(address, initial_balance);
-        }
 
         let account = self.get_account_mut(address)?;
         account.info.balance = account
@@ -441,8 +438,9 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Overflow)?;
         let new_balance = account.info.balance;
 
-        // Record balance change for BAL
+        // Record initial and changed balance for BAL in a single check
         if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.set_initial_balance(address, initial_balance);
             recorder.record_balance_change(address, new_balance);
         }
 
@@ -456,9 +454,6 @@ impl<'a> VM<'a> {
     ) -> Result<(), InternalError> {
         // Record initial balance for BAL round-trip detection before any changes
         let initial_balance = self.db.get_account(address)?.info.balance;
-        if let Some(recorder) = self.db.bal_recorder.as_mut() {
-            recorder.set_initial_balance(address, initial_balance);
-        }
 
         let account = self.get_account_mut(address)?;
         account.info.balance = account
@@ -468,8 +463,9 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Underflow)?;
         let new_balance = account.info.balance;
 
-        // Record balance change for BAL
+        // Record initial and changed balance for BAL in a single check
         if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.set_initial_balance(address, initial_balance);
             recorder.record_balance_change(address, new_balance);
         }
 
