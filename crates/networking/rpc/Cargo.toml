@@ -41,7 +41,6 @@ jemalloc_pprof = { version = "0.8.0", optional = true, features = [
 ] }
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
-rayon.workspace = true
 
 # Clients
 envy = "0.4.2"
