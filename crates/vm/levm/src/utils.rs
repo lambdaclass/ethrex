@@ -27,14 +27,9 @@ pub type Storage = HashMap<U256, H256>;
 
 // ================== Address related functions ======================
 /// Converts address (H160) to word (U256)
+#[inline(always)]
 pub fn address_to_word(address: Address) -> U256 {
-    let mut word = [0u8; 32];
-
-    for (word_byte, address_byte) in word.iter_mut().skip(12).zip(address.as_bytes().iter()) {
-        *word_byte = *address_byte;
-    }
-
-    u256_from_big_endian_const(word)
+    u256_from_big_endian_const(*address.as_fixed_bytes())
 }
 
 /// Calculates the address of a new contract using the CREATE2 opcode as follows
