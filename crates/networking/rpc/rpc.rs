@@ -533,9 +533,9 @@ pub async fn shutdown_signal() {
 
 async fn handle_http_request(
     State(service_context): State<RpcApiContext>,
-    body: String,
+    body: Bytes,
 ) -> Result<Json<Value>, StatusCode> {
-    let res = match serde_json::from_str::<RpcRequestWrapper>(&body) {
+    let res = match serde_json::from_slice::<RpcRequestWrapper>(&body) {
         Ok(RpcRequestWrapper::Single(request)) => {
             let res = map_http_requests(&request, service_context).await;
             rpc_response(request.id, res).map_err(|_| StatusCode::BAD_REQUEST)?
@@ -560,9 +560,9 @@ async fn handle_http_request(
 pub async fn handle_authrpc_request(
     State(service_context): State<RpcApiContext>,
     auth_header: Option<TypedHeader<Authorization<Bearer>>>,
-    body: String,
+    body: Bytes,
 ) -> Result<Json<Value>, StatusCode> {
-    let req: RpcRequest = match serde_json::from_str(&body) {
+    let req: RpcRequest = match serde_json::from_slice(&body) {
         Ok(req) => req,
         Err(_) => {
             return Ok(Json(
@@ -592,7 +592,7 @@ async fn handle_websocket(mut socket: WebSocket, state: State<RpcApiContext>) {
     while let Some(message) = socket.recv().await {
         let Ok(body) = message
             .and_then(|msg| msg.into_text())
-            .map(|msg| msg.to_string())
+            .map(|msg| Bytes::from(msg.to_string()))
         else {
             return;
         };
