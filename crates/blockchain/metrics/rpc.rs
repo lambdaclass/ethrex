@@ -1,3 +1,4 @@
+use metrics::{counter, histogram};
 use prometheus::{CounterVec, HistogramVec, register_counter_vec, register_histogram_vec};
 use std::{future::Future, sync::LazyLock};
 
@@ -12,8 +13,8 @@ pub static METRICS_RPC_DURATION: LazyLock<HistogramVec> =
 
 fn initialize_rpc_outcomes_counter() -> CounterVec {
     register_counter_vec!(
-        "rpc_requests_total",
-        "Total number of RPC requests partitioned by namespace, method, and outcome",
+        "old_rpc_requests_total",
+        "[DEPRECATED] Total number of RPC requests partitioned by namespace, method, and outcome",
         &["namespace", "method", "outcome", "error_kind"],
     )
     .unwrap()
@@ -21,8 +22,8 @@ fn initialize_rpc_outcomes_counter() -> CounterVec {
 
 fn initialize_rpc_duration_histogram() -> HistogramVec {
     register_histogram_vec!(
-        "rpc_request_duration_seconds",
-        "Histogram of RPC request handling duration partitioned by namespace and method",
+        "old_rpc_request_duration_seconds",
+        "[DEPRECATED] Histogram of RPC request handling duration partitioned by namespace and method",
         &["namespace", "method"],
     )
     .unwrap()
@@ -55,6 +56,14 @@ pub fn record_rpc_outcome(namespace: &str, method: &str, outcome: RpcOutcome) {
     METRICS_RPC_REQUEST_OUTCOMES
         .with_label_values(&[namespace, method, outcome.as_label(), outcome.error_kind()])
         .inc();
+    // Record to new metrics system
+    counter!(
+        "rpc_requests_total",
+        "namespace" => namespace.to_string(),
+        "method" => method.to_string(),
+        "outcome" => outcome.as_label().to_string()
+    )
+    .increment(1);
 }
 
 pub fn initialize_rpc_metrics() {
@@ -79,7 +88,18 @@ where
         .with_label_values(&[namespace, method])
         .start_timer();
 
+    let start = std::time::Instant::now();
     let output = future.await;
     timer.observe_duration();
+
+    // Record to new metrics system for summary quantiles (p50, p90, p95, p99, p999)
+    let duration_secs = start.elapsed().as_secs_f64();
+    histogram!(
+        "rpc_request_duration_seconds",
+        "namespace" => namespace.to_string(),
+        "method" => method.to_string()
+    )
+    .record(duration_secs);
+
     output
 }

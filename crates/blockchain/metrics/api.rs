@@ -2,13 +2,18 @@ use axum::{Router, routing::get};
 
 use crate::{
     MetricsApiError, blocks::METRICS_BLOCKS, gather_default_metrics, node::METRICS_NODE,
-    p2p::METRICS_P2P, process::METRICS_PROCESS, transactions::METRICS_TX,
+    p2p::METRICS_P2P, process::METRICS_PROCESS, recorder, transactions::METRICS_TX,
 };
 
 pub async fn start_prometheus_metrics_api(
     address: String,
     port: String,
 ) -> Result<(), MetricsApiError> {
+    // Initialize the metrics recorder (for p50/p99 summary metrics)
+    if let Err(e) = recorder::initialize_metrics_recorder() {
+        tracing::warn!("Failed to initialize metrics recorder: {e}");
+    }
+
     let app = Router::new()
         .route("/metrics", get(get_metrics))
         .route("/health", get("Service Up"));
@@ -61,6 +66,11 @@ pub(crate) async fn get_metrics() -> String {
             Err(_) => tracing::error!("Failed to gather METRICS_NODE"),
         };
     }
+
+    // Include metrics from the new metrics-exporter-prometheus recorder
+    // These include summary metrics with p50, p90, p95, p99, p999 quantiles
+    ret_string.push('\n');
+    ret_string.push_str(&recorder::render_metrics());
 
     ret_string
 }
