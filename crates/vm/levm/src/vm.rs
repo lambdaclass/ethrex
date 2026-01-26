@@ -536,14 +536,16 @@ impl<'a> VM<'a> {
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
             let op_result = match opcode {
                 0x5d if self.env.config.fork >= Fork::Cancun => self.op_tstore(),
-                0x60 => self.op_push::<1>(),
-                0x61 => self.op_push::<2>(),
-                0x62 => self.op_push::<3>(),
-                0x63 => self.op_push::<4>(),
-                0x64 => self.op_push::<5>(),
-                0x65 => self.op_push::<6>(),
-                0x66 => self.op_push::<7>(),
-                0x67 => self.op_push::<8>(),
+                // PUSH1-8: use specialized small push (fits in single u64 limb)
+                0x60 => self.op_push_small::<1>(),
+                0x61 => self.op_push_small::<2>(),
+                0x62 => self.op_push_small::<3>(),
+                0x63 => self.op_push_small::<4>(),
+                0x64 => self.op_push_small::<5>(),
+                0x65 => self.op_push_small::<6>(),
+                0x66 => self.op_push_small::<7>(),
+                0x67 => self.op_push_small::<8>(),
+                // PUSH9+: use generic push (needs full U256 conversion)
                 0x68 => self.op_push::<9>(),
                 0x69 => self.op_push::<10>(),
                 0x6a => self.op_push::<11>(),

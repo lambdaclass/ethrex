@@ -398,15 +398,16 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::SSTORE as usize] = OpCodeFn(VM::op_sstore);
         opcode_table[Opcode::MSIZE as usize] = OpCodeFn(VM::op_msize);
         opcode_table[Opcode::GAS as usize] = OpCodeFn(VM::op_gas);
-        opcode_table[Opcode::PUSH1 as usize] = OpCodeFn(VM::op_push::<1>);
-        opcode_table[Opcode::PUSH2 as usize] = OpCodeFn(VM::op_push::<2>);
-        opcode_table[Opcode::PUSH3 as usize] = OpCodeFn(VM::op_push::<3>);
-        opcode_table[Opcode::PUSH4 as usize] = OpCodeFn(VM::op_push::<4>);
-        opcode_table[Opcode::PUSH5 as usize] = OpCodeFn(VM::op_push::<5>);
-        opcode_table[Opcode::PUSH6 as usize] = OpCodeFn(VM::op_push::<6>);
-        opcode_table[Opcode::PUSH7 as usize] = OpCodeFn(VM::op_push::<7>);
-        opcode_table[Opcode::PUSH8 as usize] = OpCodeFn(VM::op_push::<8>);
-        opcode_table[Opcode::PUSH8 as usize] = OpCodeFn(VM::op_push::<8>);
+        // PUSH1-8: use specialized small push (fits in single u64 limb)
+        opcode_table[Opcode::PUSH1 as usize] = OpCodeFn(VM::op_push_small::<1>);
+        opcode_table[Opcode::PUSH2 as usize] = OpCodeFn(VM::op_push_small::<2>);
+        opcode_table[Opcode::PUSH3 as usize] = OpCodeFn(VM::op_push_small::<3>);
+        opcode_table[Opcode::PUSH4 as usize] = OpCodeFn(VM::op_push_small::<4>);
+        opcode_table[Opcode::PUSH5 as usize] = OpCodeFn(VM::op_push_small::<5>);
+        opcode_table[Opcode::PUSH6 as usize] = OpCodeFn(VM::op_push_small::<6>);
+        opcode_table[Opcode::PUSH7 as usize] = OpCodeFn(VM::op_push_small::<7>);
+        opcode_table[Opcode::PUSH8 as usize] = OpCodeFn(VM::op_push_small::<8>);
+        // PUSH9+: use generic push (needs full U256 conversion)
         opcode_table[Opcode::PUSH9 as usize] = OpCodeFn(VM::op_push::<9>);
         opcode_table[Opcode::PUSH10 as usize] = OpCodeFn(VM::op_push::<10>);
         opcode_table[Opcode::PUSH11 as usize] = OpCodeFn(VM::op_push::<11>);
