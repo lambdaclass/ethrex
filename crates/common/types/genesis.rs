@@ -250,11 +250,9 @@ pub struct ChainConfig {
 
     pub bpo1_time: Option<u64>,
     pub bpo2_time: Option<u64>,
-    pub amsterdam_time: Option<u64>,
     pub bpo3_time: Option<u64>,
     pub bpo4_time: Option<u64>,
     pub bpo5_time: Option<u64>,
-
     pub amsterdam_time: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
@@ -342,7 +340,6 @@ impl From<Fork> for &str {
             Fork::Osaka => "Osaka",
             Fork::BPO1 => "BPO1",
             Fork::BPO2 => "BPO2",
-            Fork::Amsterdam => "Amsterdam",
             Fork::BPO3 => "BPO3",
             Fork::BPO4 => "BPO4",
             Fork::BPO5 => "BPO5",
@@ -363,11 +360,6 @@ impl ChainConfig {
 
     pub fn is_bpo4_activated(&self, block_timestamp: u64) -> bool {
         self.bpo4_time.is_some_and(|time| time <= block_timestamp)
-    }
-
-    pub fn is_amsterdam_activated(&self, block_timestamp: u64) -> bool {
-        self.amsterdam_time
-            .is_some_and(|time| time <= block_timestamp)
     }
 
     pub fn is_bpo3_activated(&self, block_timestamp: u64) -> bool {
@@ -449,8 +441,6 @@ impl ChainConfig {
             Fork::BPO4
         } else if self.is_bpo3_activated(block_timestamp) {
             Fork::BPO3
-        } else if self.is_amsterdam_activated(block_timestamp) {
-            Fork::Amsterdam
         } else if self.is_bpo2_activated(block_timestamp) {
             Fork::BPO2
         } else if self.is_bpo1_activated(block_timestamp) {
@@ -477,9 +467,6 @@ impl ChainConfig {
             Some(self.blob_schedule.bpo4.unwrap_or_default())
         } else if self.is_bpo3_activated(block_timestamp) {
             Some(self.blob_schedule.bpo3.unwrap_or_default())
-        } else if self.is_amsterdam_activated(block_timestamp) {
-            // Amsterdam uses the same blob schedule as BPO2
-            Some(self.blob_schedule.bpo2)
         } else if self.is_bpo2_activated(block_timestamp) {
             Some(self.blob_schedule.bpo2)
         } else if self.is_bpo1_activated(block_timestamp) {
@@ -508,10 +495,8 @@ impl ChainConfig {
             Some(Fork::BPO5)
         } else if self.is_bpo3_activated(block_timestamp) && self.bpo4_time.is_some() {
             Some(Fork::BPO4)
-        } else if self.is_amsterdam_activated(block_timestamp) && self.bpo3_time.is_some() {
+        } else if self.is_bpo2_activated(block_timestamp) && self.bpo3_time.is_some() {
             Some(Fork::BPO3)
-        } else if self.is_bpo2_activated(block_timestamp) && self.amsterdam_time.is_some() {
-            Some(Fork::Amsterdam)
         } else if self.is_bpo1_activated(block_timestamp) && self.bpo2_time.is_some() {
             Some(Fork::BPO2)
         } else if self.is_osaka_activated(block_timestamp) && self.bpo1_time.is_some() {
@@ -540,8 +525,6 @@ impl ChainConfig {
             Fork::BPO4
         } else if self.bpo3_time.is_some() {
             Fork::BPO3
-        } else if self.amsterdam_time.is_some() {
-            Fork::Amsterdam
         } else if self.bpo2_time.is_some() {
             Fork::BPO2
         } else if self.bpo1_time.is_some() {
@@ -564,7 +547,6 @@ impl ChainConfig {
             Fork::Osaka => self.osaka_time,
             Fork::BPO1 => self.bpo1_time,
             Fork::BPO2 => self.bpo2_time,
-            Fork::Amsterdam => self.amsterdam_time,
             Fork::BPO3 => self.bpo3_time,
             Fork::BPO4 => self.bpo4_time,
             Fork::BPO5 => self.bpo5_time,
@@ -592,7 +574,7 @@ impl ChainConfig {
             Fork::Prague => Some(self.blob_schedule.prague),
             Fork::Osaka => Some(self.blob_schedule.osaka),
             Fork::BPO1 => Some(self.blob_schedule.bpo1),
-            Fork::BPO2 | Fork::Amsterdam => Some(self.blob_schedule.bpo2),
+            Fork::BPO2 => Some(self.blob_schedule.bpo2),
             Fork::BPO3 => self.blob_schedule.bpo3,
             Fork::BPO4 => self.blob_schedule.bpo4,
             Fork::BPO5 => self.blob_schedule.bpo5,
@@ -638,7 +620,6 @@ impl ChainConfig {
             self.osaka_time,
             self.bpo1_time,
             self.bpo2_time,
-            self.amsterdam_time,
             self.bpo3_time,
             self.bpo4_time,
             self.bpo5_time,
