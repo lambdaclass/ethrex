@@ -5,6 +5,7 @@ use std::{
 };
 
 use ethrex_common::{Address, U256};
+use ethrex_guest_program::{ZKVM_RISC0_PROGRAM_VK, ZKVM_SP1_PROGRAM_ELF};
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProverType},
@@ -16,10 +17,9 @@ use ethrex_metrics::l2::metrics::METRICS;
 use ethrex_metrics::metrics;
 use ethrex_rpc::{
     EthClient,
-    clients::{EthClientError, eth::errors::EstimateGasError},
+    clients::{EthClientError, eth::errors::RpcRequestError},
 };
 use ethrex_storage_rollup::StoreRollup;
-use guest_program::{ZKVM_RISC0_PROGRAM_VK, ZKVM_SP1_PROGRAM_ELF};
 use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
@@ -33,8 +33,11 @@ use super::{
 
 use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
-    based::sequencer_state::{SequencerState, SequencerStatus},
-    sequencer::{errors::ProofSenderError, utils::batch_checkpoint_name},
+    sequencer::{
+        errors::ProofSenderError,
+        sequencer_state::{SequencerState, SequencerStatus},
+        utils::batch_checkpoint_name,
+    },
 };
 use aligned_sdk::{
     common::{
@@ -46,7 +49,7 @@ use aligned_sdk::{
 
 use ethers::signers::{Signer as EthersSigner, Wallet};
 
-const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes,bytes,bytes,bytes)";
+const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes)";
 
 #[derive(Clone)]
 pub enum InMessage {
@@ -68,6 +71,7 @@ pub struct L1ProofSender {
     eth_client: EthClient,
     signer: ethrex_l2_rpc::signer::Signer,
     on_chain_proposer_address: Address,
+    timelock_address: Option<Address>,
     needed_proof_types: Vec<ProverType>,
     proof_send_interval_ms: u64,
     sequencer_state: SequencerState,
@@ -124,6 +128,7 @@ impl L1ProofSender {
             eth_client,
             signer: cfg.signer.clone(),
             on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
+            timelock_address: committer_cfg.timelock_address,
             needed_proof_types,
             proof_send_interval_ms: cfg.proof_send_interval_ms,
             sequencer_state,
@@ -397,28 +402,28 @@ impl L1ProofSender {
 
         let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
-        let send_verify_tx_result = send_verify_tx(
-            calldata,
-            &self.eth_client,
-            self.on_chain_proposer_address,
-            &self.signer,
-        )
-        .await;
+        // Based won't have timelock address until we implement it on it. For the meantime if it's None (only happens in based) we use the OCP
+        let target_address = self
+            .timelock_address
+            .unwrap_or(self.on_chain_proposer_address);
 
-        if let Err(EthClientError::EstimateGasError(EstimateGasError::RPCError(error))) =
+        let send_verify_tx_result =
+            send_verify_tx(calldata, &self.eth_client, target_address, &self.signer).await;
+
+        if let Err(EthClientError::RpcRequestError(RpcRequestError::RPCError { message, .. })) =
             send_verify_tx_result.as_ref()
         {
-            if error.contains("Invalid TDX proof") {
+            if message.contains("Invalid TDX proof") {
                 warn!("Deleting invalid TDX proof");
                 self.rollup_store
                     .delete_proof_by_batch_and_type(batch_number, ProverType::TDX)
                     .await?;
-            } else if error.contains("Invalid RISC0 proof") {
+            } else if message.contains("Invalid RISC0 proof") {
                 warn!("Deleting invalid RISC0 proof");
                 self.rollup_store
                     .delete_proof_by_batch_and_type(batch_number, ProverType::RISC0)
                     .await?;
-            } else if error.contains("Invalid SP1 proof") {
+            } else if message.contains("Invalid SP1 proof") {
                 warn!("Deleting invalid SP1 proof");
                 self.rollup_store
                     .delete_proof_by_batch_and_type(batch_number, ProverType::SP1)

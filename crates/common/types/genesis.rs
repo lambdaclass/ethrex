@@ -356,24 +356,24 @@ impl ChainConfig {
             .is_some_and(|time| time <= block_timestamp)
     }
 
-    pub fn is_bpo1_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo1_time.is_some_and(|time| time <= block_timestamp)
-    }
-
-    pub fn is_bpo2_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo2_time.is_some_and(|time| time <= block_timestamp)
-    }
-
-    pub fn is_bpo3_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo3_time.is_some_and(|time| time <= block_timestamp)
+    pub fn is_bpo5_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo5_time.is_some_and(|time| time <= block_timestamp)
     }
 
     pub fn is_bpo4_activated(&self, block_timestamp: u64) -> bool {
         self.bpo4_time.is_some_and(|time| time <= block_timestamp)
     }
 
-    pub fn is_bpo5_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo5_time.is_some_and(|time| time <= block_timestamp)
+    pub fn is_bpo3_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo3_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    pub fn is_bpo2_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo2_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    pub fn is_bpo1_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo1_time.is_some_and(|time| time <= block_timestamp)
     }
 
     pub fn is_osaka_activated(&self, block_timestamp: u64) -> bool {
@@ -650,7 +650,7 @@ pub struct GenesisAccount {
     #[serde(default, with = "crate::serde_utils::bytes")]
     pub code: Bytes,
     #[serde(default)]
-    pub storage: HashMap<U256, U256>,
+    pub storage: BTreeMap<U256, U256>,
     #[serde(deserialize_with = "crate::serde_utils::u256::deser_hex_or_dec_str")]
     pub balance: U256,
     #[serde(default, with = "crate::serde_utils::u64::hex_str")]

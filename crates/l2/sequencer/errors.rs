@@ -1,10 +1,10 @@
 use crate::based::block_fetcher::BlockFetcherError;
-use crate::based::state_updater::StateUpdaterError;
 use crate::sequencer::admin_server::AdminError;
+use crate::sequencer::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
 use aligned_sdk::common::errors::SubmitError;
 use ethereum_types::FromStrRadixErr;
-use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
+use ethrex_blockchain::error::{ChainError, InvalidBlockError, InvalidForkChoice};
 use ethrex_common::Address;
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;
@@ -228,6 +228,12 @@ pub enum BlockProducerError {
     EthClientError(#[from] EthClientError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
+}
+
+impl From<InvalidBlockError> for BlockProducerError {
+    fn from(err: InvalidBlockError) -> Self {
+        BlockProducerError::ChainError(ChainError::from(err))
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

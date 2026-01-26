@@ -783,7 +783,7 @@ fn get_block_from_payload(
 ) -> Result<Block, RLPDecodeError> {
     let block_hash = payload.block_hash;
     let block_number = payload.block_number;
-    info!(%block_hash, %block_number, "Received new payload");
+    debug!(%block_hash, %block_number, "Received new payload");
 
     payload.clone().into_block(
         parent_beacon_block_root,

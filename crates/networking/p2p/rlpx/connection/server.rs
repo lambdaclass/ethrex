@@ -6,15 +6,15 @@ use crate::rlpx::l2::{
     },
 };
 use crate::{
-    discv4::peer_table::PeerTable,
+    backend,
     metrics::METRICS,
     network::P2PContext,
+    peer_table::PeerTable,
     rlpx::{
         Message,
         connection::{codec::RLPxCodec, handshake},
         error::PeerConnectionError,
         eth::{
-            backend,
             blocks::{BlockBodies, BlockHeaders},
             receipts::{GetReceipts, Receipts68, Receipts69},
             status::{StatusMessage68, StatusMessage69},
@@ -397,10 +397,14 @@ impl GenServer for PeerConnectionServer {
                     );
                     match msg {
                         L2Cast::BatchBroadcast => {
-                            l2_connection::send_sealed_batch(established_state).await
+                            let res = l2_connection::send_sealed_batch(established_state).await;
+                            res.and(
+                                l2_connection::process_batches_on_queue(established_state).await,
+                            )
                         }
                         L2Cast::BlockBroadcast => {
-                            l2_connection::send_new_block(established_state).await
+                            let res = l2_connection::send_new_block(established_state).await;
+                            res.and(l2_connection::process_blocks_on_queue(established_state).await)
                         }
                     }
                 }
