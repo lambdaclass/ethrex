@@ -136,9 +136,11 @@ impl LEVM {
         }
 
         if let Some(withdrawals) = &block.body.withdrawals {
-            // Record withdrawal recipients for BAL (only non-zero amounts per EIP-7928)
+            // Record ALL withdrawal recipients for BAL per EIP-7928:
+            // "Withdrawal recipients regardless of amount"
+            // The amount filter only applies to balance_changes, not touched_addresses
             if record_bal && let Some(recorder) = db.bal_recorder_mut() {
-                for withdrawal in withdrawals.iter().filter(|w| w.amount > 0) {
+                for withdrawal in withdrawals.iter() {
                     recorder.record_touched_address(withdrawal.address);
                 }
             }

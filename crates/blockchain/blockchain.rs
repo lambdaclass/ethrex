@@ -294,7 +294,12 @@ impl Blockchain {
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
         if let Some(bal) = &bal {
-            validate_block_access_list_hash(&block.header, &chain_config, bal)?;
+            validate_block_access_list_hash(
+                &block.header,
+                &chain_config,
+                bal,
+                block.body.transactions.len(),
+            )?;
         }
 
         Ok((execution_result, account_updates))
@@ -870,7 +875,12 @@ impl Blockchain {
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
         if let Some(bal) = &bal {
-            validate_block_access_list_hash(&block.header, chain_config, bal)?;
+            validate_block_access_list_hash(
+                &block.header,
+                chain_config,
+                bal,
+                block.body.transactions.len(),
+            )?;
         }
 
         Ok(execution_result)
