@@ -128,6 +128,7 @@ impl GeneralizedDatabase {
                 // If so, compute metadata from cached code instead of hitting the database
                 let metadata = if let Some(code) = self.codes.get(&code_hash) {
                     CodeMetadata {
+                        #[expect(clippy::as_conversions, reason = "same sized types (on 64bit)")]
                         length: code.bytecode.len() as u64,
                     }
                 } else {
@@ -147,6 +148,7 @@ impl GeneralizedDatabase {
             return Ok(0);
         }
         let metadata = self.get_code_metadata(code_hash)?;
+        #[expect(clippy::as_conversions, reason = "same sized types (on 64bit)")]
         Ok(metadata.length as usize)
     }
 
