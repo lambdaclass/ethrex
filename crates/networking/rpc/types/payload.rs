@@ -93,7 +93,7 @@ impl ExecutionPayload {
     /// Converts an `ExecutionPayload` into a block (aka a BlockHeader and BlockBody)
     /// using the parentBeaconBlockRoot received along with the payload in the rpc call `engine_newPayloadV2/V3`
     pub fn into_block(
-        self,
+        &self,
         parent_beacon_block_root: Option<H256>,
         requests_hash: Option<H256>,
     ) -> Result<Block, RLPDecodeError> {
@@ -104,7 +104,7 @@ impl ExecutionPayload {
                 .map(|encoded_tx| encoded_tx.decode())
                 .collect::<Result<Vec<_>, RLPDecodeError>>()?,
             ommers: vec![],
-            withdrawals: self.withdrawals,
+            withdrawals: self.withdrawals.clone(),
         };
         let header = BlockHeader {
             parent_hash: self.parent_hash,
@@ -119,7 +119,7 @@ impl ExecutionPayload {
             gas_limit: self.gas_limit,
             gas_used: self.gas_used,
             timestamp: self.timestamp,
-            extra_data: self.extra_data,
+            extra_data: self.extra_data.clone(),
             prev_randao: self.prev_randao,
             nonce: 0,
             base_fee_per_gas: Some(self.base_fee_per_gas),

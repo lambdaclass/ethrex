@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-01-27
+
+- Avoid unnecesary clones in engine_newPayloadV3/V4 [#5836](https://github.com/lambdaclass/ethrex/pull/5836)
+
 ### 2026-01-23
 
 - Reuse cache in prewarm workers [#5999](https://github.com/lambdaclass/ethrex/pull/5999)
