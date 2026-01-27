@@ -37,8 +37,8 @@ use ethrex_levm::{
     vm::VM,
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rustc_hash::FxHashMap;
 use std::cmp::min;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
@@ -219,7 +219,7 @@ impl LEVM {
         })?;
 
         // Group transactions by sender for sequential execution within groups
-        let mut sender_groups: HashMap<Address, Vec<&Transaction>> = HashMap::new();
+        let mut sender_groups: FxHashMap<Address, Vec<&Transaction>> = FxHashMap::default();
         for (tx, sender) in &txs_with_sender {
             sender_groups.entry(*sender).or_default().push(tx);
         }
