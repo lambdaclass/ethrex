@@ -27,7 +27,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
-#[cfg(feature = "rocksdb")]
+#[cfg(all(feature = "rocksdb", not(feature = "ethrex-db")))]
 use ethrex_trie::Trie;
 use ethrex_trie::TrieError;
 use ethrex_trie::trie_sorted::TrieGenerationError;
@@ -1449,7 +1449,7 @@ async fn insert_storages(
     Ok(())
 }
 
-#[cfg(feature = "rocksdb")]
+#[cfg(all(feature = "rocksdb", not(feature = "ethrex-db")))]
 async fn insert_accounts(
     store: Store,
     storage_accounts: &mut AccountStorageRoots,
@@ -1517,7 +1517,7 @@ async fn insert_accounts(
     Ok((compute_state_root, accounts_with_storage))
 }
 
-#[cfg(feature = "rocksdb")]
+#[cfg(all(feature = "rocksdb", not(feature = "ethrex-db")))]
 async fn insert_storages(
     store: Store,
     accounts_with_storage: BTreeSet<H256>,
@@ -1653,6 +1653,171 @@ async fn insert_storages(
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
     std::fs::remove_dir_all(get_rocksdb_temp_storage_dir(datadir))
         .map_err(|e| SyncError::StorageTempDBDirNotFound(e.to_string()))?;
+
+    Ok(())
+}
+
+// ============================================================================
+// ethrex-db optimized snap sync functions
+// ============================================================================
+
+/// Converts ethrex_common AccountState to ethrex_storage AccountState format.
+#[cfg(feature = "ethrex-db")]
+fn convert_account_state(
+    state: &AccountState,
+) -> ethrex_storage::state_backend::AccountState {
+    ethrex_storage::state_backend::AccountState {
+        nonce: state.nonce,
+        balance: state.balance,
+        code_hash: state.code_hash,
+        storage_root: state.storage_root,
+    }
+}
+
+#[cfg(feature = "ethrex-db")]
+async fn insert_accounts(
+    store: Store,
+    storage_accounts: &mut AccountStorageRoots,
+    account_state_snapshots_dir: &Path,
+    _datadir: &Path,
+    code_hash_collector: &mut CodeHashCollector,
+) -> Result<(H256, BTreeSet<H256>), SyncError> {
+    use std::sync::atomic::Ordering;
+
+    info!("Using ethrex-db for account insertion");
+
+    // Process all account snapshot files
+    for entry in std::fs::read_dir(account_state_snapshots_dir)
+        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
+    {
+        let entry = entry
+            .map_err(|err| SyncError::SnapshotReadError(account_state_snapshots_dir.into(), err))?;
+        info!("Reading account file from entry {entry:?}");
+        let snapshot_path = entry.path();
+        let snapshot_contents = std::fs::read(&snapshot_path)
+            .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
+        let account_states_snapshot: Vec<(H256, AccountState)> =
+            RLPDecode::decode(&snapshot_contents)
+                .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+
+        // Track accounts with non-empty storage
+        storage_accounts.accounts_with_storage_root.extend(
+            account_states_snapshot.iter().filter_map(|(hash, state)| {
+                (state.storage_root != *EMPTY_TRIE_HASH)
+                    .then_some((*hash, (Some(state.storage_root), Vec::new())))
+            }),
+        );
+
+        // Collect code hashes
+        let code_hashes_from_snapshot: Vec<H256> = account_states_snapshot
+            .iter()
+            .filter_map(|(_, state)| {
+                (state.code_hash != *EMPTY_KECCACK_HASH).then_some(state.code_hash)
+            })
+            .collect();
+
+        code_hash_collector.extend(code_hashes_from_snapshot);
+        code_hash_collector.flush_if_needed().await?;
+
+        // Convert accounts to ethrex-db format and batch insert
+        let accounts: Vec<(H256, ethrex_storage::state_backend::AccountState)> =
+            account_states_snapshot
+                .iter()
+                .map(|(hash, state)| {
+                    METRICS
+                        .account_tries_inserted
+                        .fetch_add(1, Ordering::Relaxed);
+                    (*hash, convert_account_state(state))
+                })
+                .collect();
+
+        info!(
+            "Inserting {} accounts into ethrex-db state trie",
+            accounts.len()
+        );
+
+        store.set_accounts_batch_ethrex_db(accounts)?;
+    }
+
+    // Compute and verify state root
+    let computed_state_root = store.compute_state_root_ethrex_db()?;
+    info!("ethrex-db computed_state_root: {computed_state_root}");
+
+    // Cleanup snapshot files
+    std::fs::remove_dir_all(account_state_snapshots_dir)
+        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
+
+    let accounts_with_storage =
+        BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().copied());
+    Ok((computed_state_root, accounts_with_storage))
+}
+
+#[cfg(feature = "ethrex-db")]
+async fn insert_storages(
+    store: Store,
+    _accounts_with_storage: BTreeSet<H256>,
+    account_storages_snapshots_dir: &Path,
+    _datadir: &Path,
+) -> Result<(), SyncError> {
+    use crate::utils::AccountsWithStorage;
+    use ethrex_common::U256;
+
+    info!("Using ethrex-db for storage insertion");
+
+    let mut storage_tries_flushed = 0usize;
+
+    for entry in std::fs::read_dir(account_storages_snapshots_dir)
+        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
+    {
+        let entry = entry.map_err(|err| {
+            SyncError::SnapshotReadError(account_storages_snapshots_dir.into(), err)
+        })?;
+        info!("Reading account storage file from entry {entry:?}");
+
+        let snapshot_path = entry.path();
+        let snapshot_contents = std::fs::read(&snapshot_path)
+            .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
+
+        #[expect(clippy::type_complexity)]
+        let account_storages_snapshot: Vec<AccountsWithStorage> =
+            RLPDecode::decode(&snapshot_contents)
+                .map(|all_accounts: Vec<(Vec<H256>, Vec<(H256, U256)>)>| {
+                    all_accounts
+                        .into_iter()
+                        .map(|(accounts, storages)| AccountsWithStorage { accounts, storages })
+                        .collect()
+                })
+                .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+
+        // Process each account's storage
+        for account_storage in account_storages_snapshot {
+            let slots: Vec<(H256, U256)> = account_storage.storages.clone();
+
+            // Insert storage for each account that shares this storage data
+            for account_hash in &account_storage.accounts {
+                METRICS.storage_leaves_inserted.inc();
+                store.set_storage_batch_ethrex_db(*account_hash, slots.clone())?;
+            }
+        }
+
+        // Periodically flush storage tries to manage memory
+        let flushed = store.flush_storage_tries_ethrex_db()?;
+        storage_tries_flushed += flushed;
+        if flushed > 0 {
+            info!("Flushed {flushed} storage tries (total: {storage_tries_flushed})");
+        }
+    }
+
+    // Final flush
+    let final_flushed = store.flush_storage_tries_ethrex_db()?;
+    info!(
+        "Final storage trie flush: {final_flushed} (total: {})",
+        storage_tries_flushed + final_flushed
+    );
+
+    // Cleanup
+    std::fs::remove_dir_all(account_storages_snapshots_dir)
+        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
 
     Ok(())
 }

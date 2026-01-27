@@ -69,12 +69,22 @@ pub mod backend;
 pub mod error;
 mod layering;
 pub mod rlp;
+pub mod state_backend;
 pub mod store;
 pub mod trie;
 pub mod utils;
 
 pub use layering::apply_prefix;
+pub use state_backend::{AccountState, StateStorageBackend, StateUpdate};
 pub use store::{AccountUpdatesList, EngineType, Store, UpdateBatch, hash_address, hash_key};
+
+#[cfg(feature = "ethrex-db")]
+pub use backend::ethrex_db::{
+    EthrexDbBackend,
+    LoggingStateBackend,
+    SharedWitness,
+    StateWitness,
+};
 
 /// Store Schema Version, must be updated on any breaking change.
 ///

@@ -13,6 +13,9 @@ ethrex-common.workspace = true
 ethrex-crypto.workspace = true
 ethrex-trie.workspace = true
 
+# ethrex-db: Paprika-inspired state storage engine
+ethrex-db = { git = "https://github.com/lambdaclass/ethrex-db.git", package = "ethrex_db", optional = true }
+
 async-trait.workspace = true
 ethereum-types.workspace = true
 anyhow = "1.0.86"
@@ -32,6 +35,7 @@ lru = "0.16.2"
 [features]
 default = []
 rocksdb = ["dep:rocksdb"]
+ethrex-db = ["dep:ethrex-db"]
 
 [dev-dependencies]
 hex.workspace = true

@@ -94,6 +94,8 @@ c-kzg = [
 ]
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics", "ethrex-p2p/metrics"]
 rocksdb = ["ethrex-storage/rocksdb", "ethrex-p2p/rocksdb", "ethrex-l2?/rocksdb"]
+# ethrex-db optimized state storage (requires rocksdb for historical data)
+ethrex-db = ["ethrex-storage/ethrex-db", "ethrex-p2p/ethrex-db"]
 jemalloc = ["dep:tikv-jemallocator"]
 jemalloc_profiling = [
   "jemalloc",

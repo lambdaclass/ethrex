@@ -40,7 +40,8 @@ impl CodeHashCollector {
     }
 
     // The optimization for rocksdb database doesn't use this method
-    #[cfg(not(feature = "rocksdb"))]
+    // (unless using ethrex-db which does)
+    #[cfg(any(not(feature = "rocksdb"), feature = "ethrex-db"))]
     /// Extends the buffer with a list of code hashes
     pub fn extend(&mut self, hashes: impl IntoIterator<Item = H256>) {
         self.buffer.extend(hashes);

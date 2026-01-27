@@ -1,5 +1,9 @@
 #[cfg(feature = "rocksdb")]
 use crate::backend::rocksdb::RocksDBBackend;
+#[cfg(feature = "ethrex-db")]
+use crate::backend::ethrex_db::EthrexDbBackend;
+#[cfg(feature = "ethrex-db")]
+use crate::state_backend::StateStorageBackend;
 use crate::{
     STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION,
     api::{
@@ -179,6 +183,14 @@ pub struct Store {
     account_code_cache: Arc<Mutex<CodeCache>>,
 
     background_threads: Arc<ThreadList>,
+
+    /// Optional state storage backend (ethrex-db).
+    ///
+    /// When present, state operations (accounts, storage) are routed
+    /// to this backend instead of the trie-based storage in `backend`.
+    /// This enables hybrid storage: ethrex-db for state, RocksDB for historical data.
+    #[cfg(feature = "ethrex-db")]
+    state_backend: Option<Arc<std::sync::RwLock<EthrexDbBackend>>>,
 }
 
 #[derive(Debug, Default)]
@@ -211,6 +223,13 @@ pub enum EngineType {
     /// RocksDB storage, persistent. Suitable for production.
     #[cfg(feature = "rocksdb")]
     RocksDB,
+    /// Hybrid: ethrex-db for state storage, RocksDB for historical data.
+    ///
+    /// This provides optimized state storage (accounts, storage slots)
+    /// using ethrex-db's page-based storage with built-in Merkle trie,
+    /// while keeping blocks, receipts, and other historical data in RocksDB.
+    #[cfg(all(feature = "ethrex-db", feature = "rocksdb"))]
+    EthrexDbRocksDB,
 }
 
 /// Batch of updates to apply to the store atomically.
@@ -249,6 +268,26 @@ pub struct AccountUpdatesList {
 }
 
 impl Store {
+    /// Returns true if ethrex-db is being used for state storage.
+    ///
+    /// When this returns true, state operations (accounts, storage) are
+    /// routed to the ethrex-db backend instead of the trie-based storage.
+    #[cfg(feature = "ethrex-db")]
+    pub fn has_ethrex_db_state(&self) -> bool {
+        self.state_backend.is_some()
+    }
+
+    #[cfg(not(feature = "ethrex-db"))]
+    pub fn has_ethrex_db_state(&self) -> bool {
+        false
+    }
+
+    /// Returns a reference to the ethrex-db state backend if enabled.
+    #[cfg(feature = "ethrex-db")]
+    pub fn ethrex_db_state(&self) -> Option<&Arc<std::sync::RwLock<EthrexDbBackend>>> {
+        self.state_backend.as_ref()
+    }
+
     /// Add a block in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
     pub async fn add_block(&self, block: Block) -> Result<(), StoreError> {
@@ -960,6 +999,121 @@ impl Store {
 
     // Snap State methods
 
+    // =========================================================================
+    // ethrex-db State Methods (for snap sync with hybrid storage)
+    // =========================================================================
+
+    /// Bulk loads accounts into ethrex-db state backend.
+    ///
+    /// This is optimized for snap sync - accounts are batched for efficient
+    /// insertion into the state trie.
+    ///
+    /// Only available when using `EthrexDbRocksDB` engine type.
+    #[cfg(feature = "ethrex-db")]
+    pub fn set_accounts_batch_ethrex_db(
+        &self,
+        accounts: Vec<(H256, crate::state_backend::AccountState)>,
+    ) -> Result<(), StoreError> {
+        let Some(state_backend) = &self.state_backend else {
+            return Err(StoreError::Custom(
+                "ethrex-db state backend not configured".to_string(),
+            ));
+        };
+
+        let mut backend = state_backend
+            .write()
+            .map_err(|_| StoreError::Custom("Failed to acquire state backend lock".to_string()))?;
+
+        backend.set_accounts_batch(accounts)
+    }
+
+    /// Bulk loads storage slots into ethrex-db state backend.
+    ///
+    /// This is optimized for snap sync - slots are batched for efficient
+    /// insertion into the account's storage trie.
+    ///
+    /// Only available when using `EthrexDbRocksDB` engine type.
+    #[cfg(feature = "ethrex-db")]
+    pub fn set_storage_batch_ethrex_db(
+        &self,
+        address_hash: H256,
+        slots: Vec<(H256, U256)>,
+    ) -> Result<(), StoreError> {
+        let Some(state_backend) = &self.state_backend else {
+            return Err(StoreError::Custom(
+                "ethrex-db state backend not configured".to_string(),
+            ));
+        };
+
+        let mut backend = state_backend
+            .write()
+            .map_err(|_| StoreError::Custom("Failed to acquire state backend lock".to_string()))?;
+
+        backend.set_storage_batch(address_hash, slots)
+    }
+
+    /// Flushes storage tries in ethrex-db to free memory.
+    ///
+    /// This computes storage roots for all pending storage tries and
+    /// frees their memory. Essential for memory-efficient snap sync.
+    ///
+    /// Returns the number of storage tries flushed.
+    #[cfg(feature = "ethrex-db")]
+    pub fn flush_storage_tries_ethrex_db(&self) -> Result<usize, StoreError> {
+        let Some(state_backend) = &self.state_backend else {
+            return Err(StoreError::Custom(
+                "ethrex-db state backend not configured".to_string(),
+            ));
+        };
+
+        let mut backend = state_backend
+            .write()
+            .map_err(|_| StoreError::Custom("Failed to acquire state backend lock".to_string()))?;
+
+        backend.flush_storage_tries()
+    }
+
+    /// Persists current ethrex-db state as a checkpoint.
+    ///
+    /// Used during snap sync to periodically save progress.
+    /// If sync is interrupted, it can resume from the last checkpoint.
+    #[cfg(feature = "ethrex-db")]
+    pub fn persist_state_checkpoint_ethrex_db(
+        &self,
+        block_number: u64,
+        block_hash: H256,
+    ) -> Result<(), StoreError> {
+        let Some(state_backend) = &self.state_backend else {
+            return Err(StoreError::Custom(
+                "ethrex-db state backend not configured".to_string(),
+            ));
+        };
+
+        let mut backend = state_backend
+            .write()
+            .map_err(|_| StoreError::Custom("Failed to acquire state backend lock".to_string()))?;
+
+        backend.persist_checkpoint(block_number, block_hash)
+    }
+
+    /// Computes the current ethrex-db state root.
+    ///
+    /// This computes the Merkle root of all accounts and their storage.
+    #[cfg(feature = "ethrex-db")]
+    pub fn compute_state_root_ethrex_db(&self) -> Result<H256, StoreError> {
+        let Some(state_backend) = &self.state_backend else {
+            return Err(StoreError::Custom(
+                "ethrex-db state backend not configured".to_string(),
+            ));
+        };
+
+        let mut backend = state_backend
+            .write()
+            .map_err(|_| StoreError::Custom("Failed to acquire state backend lock".to_string()))?;
+
+        backend.compute_state_root()
+    }
+
     /// Sets the hash of the last header downloaded during a snap sync
     pub async fn set_header_download_checkpoint(
         &self,
@@ -1321,20 +1475,72 @@ impl Store {
         match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
-                let backend = Arc::new(RocksDBBackend::open(path)?);
-                Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
+                let backend = Arc::new(RocksDBBackend::open(&path)?);
+                #[cfg(feature = "ethrex-db")]
+                {
+                    Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD, None)
+                }
+                #[cfg(not(feature = "ethrex-db"))]
+                {
+                    Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
+                }
             }
             EngineType::InMemory => {
                 let backend = Arc::new(InMemoryBackend::open()?);
-                Self::from_backend(backend, db_path, IN_MEMORY_COMMIT_THRESHOLD)
+                #[cfg(feature = "ethrex-db")]
+                {
+                    Self::from_backend(backend, db_path, IN_MEMORY_COMMIT_THRESHOLD, None)
+                }
+                #[cfg(not(feature = "ethrex-db"))]
+                {
+                    Self::from_backend(backend, db_path, IN_MEMORY_COMMIT_THRESHOLD)
+                }
+            }
+            #[cfg(all(feature = "ethrex-db", feature = "rocksdb"))]
+            EngineType::EthrexDbRocksDB => {
+                // RocksDB for historical data (blocks, receipts, etc.)
+                let backend = Arc::new(RocksDBBackend::open(&path)?);
+
+                // ethrex-db for state storage
+                let state_db_path = db_path.join("ethrex_state");
+                std::fs::create_dir_all(&state_db_path)?;
+                let state_backend = EthrexDbBackend::open(&state_db_path)?;
+
+                Self::from_backend(
+                    backend,
+                    db_path,
+                    DB_COMMIT_THRESHOLD,
+                    Some(Arc::new(std::sync::RwLock::new(state_backend))),
+                )
             }
         }
     }
 
+    #[cfg(feature = "ethrex-db")]
     fn from_backend(
         backend: Arc<dyn StorageBackend>,
         db_path: PathBuf,
         commit_threshold: usize,
+        state_backend: Option<Arc<std::sync::RwLock<EthrexDbBackend>>>,
+    ) -> Result<Self, StoreError> {
+        Self::from_backend_internal(backend, db_path, commit_threshold, state_backend)
+    }
+
+    #[cfg(not(feature = "ethrex-db"))]
+    fn from_backend(
+        backend: Arc<dyn StorageBackend>,
+        db_path: PathBuf,
+        commit_threshold: usize,
+    ) -> Result<Self, StoreError> {
+        Self::from_backend_internal(backend, db_path, commit_threshold)
+    }
+
+    #[cfg(feature = "ethrex-db")]
+    fn from_backend_internal(
+        backend: Arc<dyn StorageBackend>,
+        db_path: PathBuf,
+        commit_threshold: usize,
+        state_backend: Option<Arc<std::sync::RwLock<EthrexDbBackend>>>,
     ) -> Result<Self, StoreError> {
         debug!("Initializing Store with {commit_threshold} in-memory diff-layers");
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
@@ -1363,6 +1569,7 @@ impl Store {
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             background_threads: Default::default(),
+            state_backend,
         };
         let backend_clone = store.backend.clone();
         let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
@@ -1445,6 +1652,91 @@ impl Store {
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
         let mut store = Self::new(store_path, engine_type)?;
         store.add_initial_state(genesis).await?;
+        Ok(store)
+    }
+
+    #[cfg(not(feature = "ethrex-db"))]
+    fn from_backend_internal(
+        backend: Arc<dyn StorageBackend>,
+        db_path: PathBuf,
+        commit_threshold: usize,
+    ) -> Result<Self, StoreError> {
+        debug!("Initializing Store with {commit_threshold} in-memory diff-layers");
+        let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
+        let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(0);
+
+        let last_written = {
+            let tx = backend.begin_read()?;
+            let last_written = tx
+                .get(MISC_VALUES, "last_written".as_bytes())?
+                .unwrap_or_else(|| vec![0u8; 64]);
+            if last_written == [0xff] {
+                vec![0xff; 64]
+            } else {
+                last_written
+            }
+        };
+        let mut background_threads = Vec::new();
+        let mut store = Self {
+            db_path,
+            backend,
+            chain_config: Default::default(),
+            latest_block_header: Default::default(),
+            trie_cache: Arc::new(Mutex::new(Arc::new(TrieLayerCache::new(commit_threshold)))),
+            flatkeyvalue_control_tx: fkv_tx,
+            trie_update_worker_tx: trie_upd_tx,
+            last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
+            account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
+            background_threads: Default::default(),
+        };
+        let backend_clone = store.backend.clone();
+        let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
+        background_threads.push(std::thread::spawn(move || {
+            let rx = fkv_rx;
+            // Wait for the first Continue to start generation
+            loop {
+                match rx.recv() {
+                    Ok(FKVGeneratorControlMessage::Continue) => break,
+                    Ok(FKVGeneratorControlMessage::Stop) => {}
+                    Err(std::sync::mpsc::RecvError) => {
+                        debug!("Closing FlatKeyValue generator.");
+                        return;
+                    }
+                }
+            }
+
+            let _ = flatkeyvalue_generator(&backend_clone, &last_computed_fkv, &rx)
+                .inspect_err(|err| error!("Error while generating FlatKeyValue: {err}"));
+        }));
+        let backend = store.backend.clone();
+        let flatkeyvalue_control_tx = store.flatkeyvalue_control_tx.clone();
+        let trie_cache = store.trie_cache.clone();
+        background_threads.push(std::thread::spawn(move || {
+            let rx = trie_upd_rx;
+            loop {
+                match rx.recv() {
+                    Ok(trie_update) => {
+                        // FIXME: what should we do on error?
+                        let _ = apply_trie_updates(
+                            backend.as_ref(),
+                            &flatkeyvalue_control_tx,
+                            &trie_cache,
+                            trie_update,
+                        )
+                        .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
+                    }
+                    Err(err) => {
+                        debug!("Trie update sender disconnected: {err}");
+                        return;
+                    }
+                }
+            }
+        }));
+
+        store.background_threads = Arc::new(ThreadList {
+            list: background_threads,
+        });
+
         Ok(store)
     }
 

@@ -72,6 +72,9 @@ test-utils = []
 metrics = ["dep:ethrex-metrics"]
 # discv5 is currently experimental and should only be enabled for development purposes
 experimental-discv5 = ["dep:aes-gcm", "dep:hkdf"]
+# ethrex-db optimized state storage (requires rocksdb for historical data)
+ethrex-db = ["ethrex-storage/ethrex-db", "rocksdb"]
+rocksdb = ["dep:rocksdb"]
 
 [lints.clippy]
 unwrap_used = "deny"
