@@ -896,7 +896,7 @@ async fn test_erc20_withdraw_l1_address_mismatch(
     let calldata: Bytes = encode_calldata(signature, &data)?.into();
     // Get the current nonce for the eth_call
     let nonce = l2_client
-        .get_nonce(rich_address, BlockIdentifier::Tag(BlockTag::Pending))
+        .get_nonce(rich_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
     let call_result = l2_client
         .call(
