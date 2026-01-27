@@ -213,6 +213,9 @@ impl BranchNode {
             .enumerate()
             .filter(|(_, child)| child.is_valid())
             .collect::<Vec<_>>();
+        if children.is_empty() && self.value.is_empty() {
+            return Ok((None, value));
+        }
         let new_node = match (children.len(), !self.value.is_empty()) {
             // If this node still has a value but no longer has children, convert it into a leaf node
             (0, true) => NodeRemoveResult::New(
