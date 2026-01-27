@@ -5,10 +5,10 @@ use crate::{
     api::{
         StorageBackend,
         tables::{
-            ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
-            CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS,
-            INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS, SNAP_STATE,
-            STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
+            BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES,
+            FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS,
+            SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -25,8 +25,8 @@ use ethrex_common::{
     Address, H256, U256,
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
-        BlockNumber, ChainConfig, Code, ForkId, Genesis, GenesisAccount, Index, Receipt,
-        Transaction, block_execution_witness::ExecutionWitness,
+        BlockNumber, ChainConfig, Code, CodeMetadata, ForkId, Genesis, GenesisAccount, Index,
+        Receipt, Transaction, block_execution_witness::ExecutionWitness,
     },
     utils::keccak,
 };
@@ -177,6 +177,10 @@ pub struct Store {
     /// those changes already affect the code hash stored in the account, and only
     /// may result in this cache having useless data.
     account_code_cache: Arc<Mutex<CodeCache>>,
+
+    /// Cache for code metadata (code length), keyed by the bytecode hash.
+    /// Uses FxHashMap for efficient lookups, much smaller than code cache.
+    code_metadata_cache: Arc<Mutex<rustc_hash::FxHashMap<H256, CodeMetadata>>>,
 
     background_threads: Arc<ThreadList>,
 }
@@ -705,11 +709,93 @@ impl Store {
         Ok(Some(code))
     }
 
+    /// Get code metadata (length) by its hash.
+    ///
+    /// Checks cache first, falls back to database. If metadata is missing,
+    /// falls back to loading full code and extracts length (auto-migration).
+    pub fn get_code_metadata(&self, code_hash: H256) -> Result<Option<CodeMetadata>, StoreError> {
+        use ethrex_common::constants::EMPTY_KECCACK_HASH;
+
+        // Empty code special case
+        if code_hash == *EMPTY_KECCACK_HASH {
+            return Ok(Some(CodeMetadata { length: 0 }));
+        }
+
+        // Check cache first
+        if let Some(metadata) = self
+            .code_metadata_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get(&code_hash)
+            .copied()
+        {
+            return Ok(Some(metadata));
+        }
+
+        // Try reading from metadata table
+        let metadata = if let Some(bytes) = self
+            .backend
+            .begin_read()?
+            .get(ACCOUNT_CODE_METADATA, code_hash.as_bytes())?
+        {
+            let length =
+                u64::from_be_bytes(bytes.try_into().map_err(|_| {
+                    StoreError::Custom("Invalid metadata length encoding".to_string())
+                })?);
+            CodeMetadata { length }
+        } else {
+            // Fallback: load full code and extract length (auto-migration)
+            let Some(code) = self.get_account_code(code_hash)? else {
+                return Ok(None);
+            };
+            let metadata = CodeMetadata {
+                length: code.bytecode.len() as u64,
+            };
+
+            // Write metadata for future use (async, fire and forget)
+            let metadata_buf = metadata.length.to_be_bytes().to_vec();
+            let hash_key = code_hash.0.to_vec();
+            let backend = self.backend.clone();
+            tokio::task::spawn(async move {
+                if let Err(e) = async {
+                    let mut tx = backend.begin_write()?;
+                    tx.put(ACCOUNT_CODE_METADATA, &hash_key, &metadata_buf)?;
+                    tx.commit()
+                }
+                .await
+                {
+                    tracing::warn!("Failed to write code metadata during auto-migration: {}", e);
+                }
+            });
+
+            metadata
+        };
+
+        // Update cache
+        self.code_metadata_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .insert(code_hash, metadata);
+
+        Ok(Some(metadata))
+    }
+
     /// Add account code
     pub async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
         let hash_key = code.hash.0.to_vec();
         let buf = encode_code(&code);
-        self.write_async(ACCOUNT_CODES, hash_key, buf).await
+        let metadata_buf = (code.bytecode.len() as u64).to_be_bytes().to_vec();
+
+        // Write both code and metadata atomically
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut tx = backend.begin_write()?;
+            tx.put(ACCOUNT_CODES, &hash_key, &buf)?;
+            tx.put(ACCOUNT_CODE_METADATA, &hash_key, &metadata_buf)?;
+            tx.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Clears all checkpoint data created during the last snap sync
@@ -1074,13 +1160,21 @@ impl Store {
         &self,
         account_codes: Vec<(H256, Code)>,
     ) -> Result<(), StoreError> {
-        let mut batch_items = Vec::new();
+        let mut code_batch_items = Vec::new();
+        let mut metadata_batch_items = Vec::new();
+
         for (code_hash, code) in account_codes {
             let buf = encode_code(&code);
-            batch_items.push((code_hash.as_bytes().to_vec(), buf));
+            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes().to_vec();
+            code_batch_items.push((code_hash.as_bytes().to_vec(), buf));
+            metadata_batch_items.push((code_hash.as_bytes().to_vec(), metadata_buf));
         }
 
-        self.write_batch_async(ACCOUNT_CODES, batch_items).await
+        // Write both batches
+        self.write_batch_async(ACCOUNT_CODES, code_batch_items)
+            .await?;
+        self.write_batch_async(ACCOUNT_CODE_METADATA, metadata_batch_items)
+            .await
     }
 
     // Helper methods for async operations with spawn_blocking
@@ -1295,7 +1389,9 @@ impl Store {
 
         for (code_hash, code) in update_batch.code_updates {
             let buf = encode_code(&code);
+            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes().to_vec();
             tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
+            tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
         }
 
         // Wait for an updated top layer so every caller afterwards sees a consistent view.
@@ -1362,6 +1458,7 @@ impl Store {
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
+            code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();

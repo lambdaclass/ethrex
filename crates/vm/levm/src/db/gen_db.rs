@@ -5,6 +5,7 @@ use ethrex_common::H256;
 use ethrex_common::U256;
 use ethrex_common::types::Account;
 use ethrex_common::types::Code;
+use ethrex_common::types::CodeMetadata;
 use ethrex_common::utils::ZERO_U256;
 
 use super::Database;
@@ -28,6 +29,7 @@ pub struct GeneralizedDatabase {
     pub current_accounts_state: CacheDB,
     pub initial_accounts_state: CacheDB,
     pub codes: FxHashMap<H256, Code>,
+    pub code_metadata: FxHashMap<H256, CodeMetadata>,
     pub tx_backup: Option<CallFrameBackup>,
 }
 
@@ -39,6 +41,7 @@ impl GeneralizedDatabase {
             initial_accounts_state: Default::default(),
             tx_backup: None,
             codes: Default::default(),
+            code_metadata: Default::default(),
         }
     }
 
@@ -62,6 +65,7 @@ impl GeneralizedDatabase {
             initial_accounts_state: levm_accounts,
             tx_backup: None,
             codes,
+            code_metadata: Default::default(),
         }
     }
 
@@ -113,6 +117,37 @@ impl GeneralizedDatabase {
     pub fn get_account_code(&mut self, address: Address) -> Result<&Code, InternalError> {
         let code_hash = self.get_account(address)?.info.code_hash;
         self.get_code(code_hash)
+    }
+
+    /// Gets code metadata immutably given the code hash.
+    pub fn get_code_metadata(&mut self, code_hash: H256) -> Result<&CodeMetadata, InternalError> {
+        match self.code_metadata.entry(code_hash) {
+            Entry::Occupied(entry) => Ok(entry.into_mut()),
+            Entry::Vacant(entry) => {
+                // Check if we have the code in cache (e.g., from contract creation in this tx)
+                // If so, compute metadata from cached code instead of hitting the database
+                let metadata = if let Some(code) = self.codes.get(&code_hash) {
+                    CodeMetadata {
+                        length: code.bytecode.len() as u64,
+                    }
+                } else {
+                    self.store.get_code_metadata(code_hash)?
+                };
+                Ok(entry.insert(metadata))
+            }
+        }
+    }
+
+    /// Convenience method to get code length by address (optimized for EXTCODESIZE).
+    pub fn get_code_length(&mut self, address: Address) -> Result<usize, InternalError> {
+        use ethrex_common::constants::EMPTY_KECCACK_HASH;
+
+        let code_hash = self.get_account(address)?.info.code_hash;
+        if code_hash == *EMPTY_KECCACK_HASH {
+            return Ok(0);
+        }
+        let metadata = self.get_code_metadata(code_hash)?;
+        Ok(metadata.length as usize)
     }
 
     /// Gets storage slot from Database, storing in initial_accounts_state for efficiency when getting AccountUpdates.
@@ -250,6 +285,7 @@ impl GeneralizedDatabase {
         self.initial_accounts_state.clear();
         self.current_accounts_state.clear();
         self.codes.clear();
+        self.code_metadata.clear();
         Ok(account_updates)
     }
 

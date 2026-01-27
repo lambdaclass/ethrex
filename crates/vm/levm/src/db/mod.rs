@@ -1,7 +1,7 @@
 use crate::errors::DatabaseError;
 use ethrex_common::{
     Address, H256, U256,
-    types::{AccountState, ChainConfig, Code},
+    types::{AccountState, ChainConfig, Code, CodeMetadata},
 };
 use rustc_hash::FxHashMap;
 use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -12,6 +12,7 @@ pub mod gen_db;
 type AccountCache = FxHashMap<Address, AccountState>;
 type StorageCache = FxHashMap<(Address, H256), U256>;
 type CodeCache = FxHashMap<H256, Code>;
+type CodeMetadataCache = FxHashMap<H256, CodeMetadata>;
 
 pub trait Database: Send + Sync {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError>;
@@ -19,6 +20,7 @@ pub trait Database: Send + Sync {
     fn get_block_hash(&self, block_number: u64) -> Result<H256, DatabaseError>;
     fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError>;
     fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError>;
+    fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError>;
 }
 
 /// A database wrapper that caches state lookups for parallel pre-warming.
@@ -38,6 +40,8 @@ pub struct CachingDatabase {
     storage: RwLock<StorageCache>,
     /// Cached contract code
     code: RwLock<CodeCache>,
+    /// Cached code metadata
+    code_metadata: RwLock<CodeMetadataCache>,
 }
 
 impl CachingDatabase {
@@ -47,6 +51,7 @@ impl CachingDatabase {
             accounts: RwLock::new(FxHashMap::default()),
             storage: RwLock::new(FxHashMap::default()),
             code: RwLock::new(FxHashMap::default()),
+            code_metadata: RwLock::new(FxHashMap::default()),
         }
     }
 
@@ -72,6 +77,16 @@ impl CachingDatabase {
 
     fn write_code(&self) -> Result<RwLockWriteGuard<'_, CodeCache>, DatabaseError> {
         self.code.write().map_err(poison_error_to_db_error)
+    }
+
+    fn read_code_metadata(&self) -> Result<RwLockReadGuard<'_, CodeMetadataCache>, DatabaseError> {
+        self.code_metadata.read().map_err(poison_error_to_db_error)
+    }
+
+    fn write_code_metadata(
+        &self,
+    ) -> Result<RwLockWriteGuard<'_, CodeMetadataCache>, DatabaseError> {
+        self.code_metadata.write().map_err(poison_error_to_db_error)
     }
 }
 
@@ -134,5 +149,20 @@ impl Database for CachingDatabase {
         self.write_code()?.insert(code_hash, code.clone());
 
         Ok(code)
+    }
+
+    fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
+        // Check cache first
+        if let Some(metadata) = self.read_code_metadata()?.get(&code_hash).copied() {
+            return Ok(metadata);
+        }
+
+        // Cache miss: query underlying database
+        let metadata = self.inner.get_code_metadata(code_hash)?;
+
+        // Populate cache (CodeMetadata is Copy, no clone needed)
+        self.write_code_metadata()?.insert(code_hash, metadata);
+
+        Ok(metadata)
     }
 }
