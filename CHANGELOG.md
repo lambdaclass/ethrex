@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-01-27
+
+- Replace `TransactionQueue::heads` from `Vec<_>` into `VecDeque<_>` [#6033](https://github.com/lambdaclass/ethrex/pull/6033)
+
 ### 2026-01-23
 
 - Reuse cache in prewarm workers [#5999](https://github.com/lambdaclass/ethrex/pull/5999)
