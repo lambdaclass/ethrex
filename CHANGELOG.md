@@ -5,6 +5,7 @@
 ### 2026-01-27
 
 - Optimize prewarmer by grouping transactions by sender [#6047](https://github.com/lambdaclass/ethrex/pull/6047)
+- Memory profiling endpoint `/debug/pprof/heap` for jemalloc heap profiles in pprof format. Available when built with `jemalloc_profiling` feature flag. Compatible with Grafana Pyroscope scraping.
 
 ### 2026-01-23
 
