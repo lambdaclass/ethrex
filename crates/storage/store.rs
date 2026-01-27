@@ -178,6 +178,10 @@ pub struct Store {
     /// may result in this cache having useless data.
     account_code_cache: Arc<Mutex<CodeCache>>,
 
+    /// Cache for recent canonical block hashes.
+    /// Reduces DB lookups during fork choice updates and BLOCKHASH opcode execution.
+    canonical_hash_cache: CanonicalHashCache,
+
     background_threads: Arc<ThreadList>,
 }
 
@@ -770,18 +774,30 @@ impl Store {
         self.get_block_by_hash(block_hash).await
     }
 
-    // Get the canonical block hash for a given block number.
+    /// Get the canonical block hash for a given block number.
+    ///
+    /// Checks caches first (latest header, then canonical hash cache) before
+    /// falling back to database lookup. Populates the cache on miss.
     pub async fn get_canonical_block_hash(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
+        // Fast path: check if it's the latest block
         let last = self.latest_block_header.get();
         if last.number == block_number {
             return Ok(Some(last.hash()));
         }
+
+        // Check canonical hash cache
+        if let Some(hash) = self.canonical_hash_cache.get(block_number) {
+            return Ok(Some(hash));
+        }
+
+        // Cache miss: query database and populate cache
         let backend = self.backend.clone();
+        let cache = self.canonical_hash_cache.clone();
         tokio::task::spawn_blocking(move || {
-            backend
+            let result = backend
                 .begin_read()?
                 .get(
                     CANONICAL_BLOCK_HASHES,
@@ -789,7 +805,14 @@ impl Store {
                 )?
                 .map(|bytes| H256::decode(bytes.as_slice()))
                 .transpose()
-                .map_err(StoreError::from)
+                .map_err(StoreError::from)?;
+
+            // Populate cache on successful lookup
+            if let Some(hash) = result {
+                cache.insert(block_number, hash);
+            }
+
+            Ok(result)
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -1025,23 +1048,42 @@ impl Store {
             .transpose()
     }
 
-    /// Get the canonical block hash for a given block number.
+    /// Get the canonical block hash for a given block number (synchronous version).
+    ///
+    /// Checks caches first (latest header, then canonical hash cache) before
+    /// falling back to database lookup. Populates the cache on miss.
     pub fn get_canonical_block_hash_sync(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
+        // Fast path: check if it's the latest block
         let last = self.latest_block_header.get();
         if last.number == block_number {
             return Ok(Some(last.hash()));
         }
+
+        // Check canonical hash cache
+        if let Some(hash) = self.canonical_hash_cache.get(block_number) {
+            return Ok(Some(hash));
+        }
+
+        // Cache miss: query database and populate cache
         let txn = self.backend.begin_read()?;
-        txn.get(
-            CANONICAL_BLOCK_HASHES,
-            block_number.to_le_bytes().as_slice(),
-        )?
-        .map(|bytes| H256::decode(bytes.as_slice()))
-        .transpose()
-        .map_err(StoreError::from)
+        let result = txn
+            .get(
+                CANONICAL_BLOCK_HASHES,
+                block_number.to_le_bytes().as_slice(),
+            )?
+            .map(|bytes| H256::decode(bytes.as_slice()))
+            .transpose()
+            .map_err(StoreError::from)?;
+
+        // Populate cache on successful lookup
+        if let Some(hash) = result {
+            self.canonical_hash_cache.insert(block_number, hash);
+        }
+
+        Ok(result)
     }
 
     /// CAUTION: This method writes directly to the underlying database, bypassing any caching layer.
@@ -1362,6 +1404,7 @@ impl Store {
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
+            canonical_hash_cache: CanonicalHashCache::default(),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -2007,6 +2050,19 @@ impl Store {
             .load_block_header_by_hash(head_hash)?
             .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
         self.latest_block_header.update(new_head);
+
+        // Update canonical hash cache:
+        // 1. Invalidate any cached entries above the new head (they're no longer canonical)
+        self.canonical_hash_cache.invalidate_above(head_number);
+
+        // 2. Insert the new canonical blocks into the cache
+        // Clone the blocks for cache insertion (we still need the original for DB update)
+        let cache_entries = new_canonical_blocks
+            .iter()
+            .cloned()
+            .chain(std::iter::once((head_number, head_hash)));
+        self.canonical_hash_cache.insert_batch(cache_entries);
+
         self.forkchoice_update_inner(
             new_canonical_blocks,
             head_number,
@@ -2890,6 +2946,82 @@ impl LatestBlockHeaderCache {
     pub fn update(&self, header: BlockHeader) {
         let new = Arc::new(header);
         *self.current.lock().expect("poisoned mutex") = new;
+    }
+}
+
+/// Cache for recent canonical block hashes.
+///
+/// Stores a fixed number of recent (block_number, block_hash) pairs to avoid
+/// repeated database lookups during fork choice updates and BLOCKHASH opcode
+/// execution. Uses RwLock for concurrent read access.
+///
+/// The cache is keyed by block number and stores the canonical hash for that height.
+/// On reorgs, the cache is invalidated for affected block numbers.
+const CANONICAL_HASH_CACHE_SIZE: usize = 256;
+
+#[derive(Debug, Clone)]
+struct CanonicalHashCache {
+    /// Maps block_number -> block_hash for recent canonical blocks.
+    /// Uses RwLock for read-heavy workload (many readers, infrequent writes).
+    entries: Arc<std::sync::RwLock<HashMap<BlockNumber, BlockHash>>>,
+}
+
+impl Default for CanonicalHashCache {
+    fn default() -> Self {
+        Self {
+            entries: Arc::new(std::sync::RwLock::new(HashMap::with_capacity(
+                CANONICAL_HASH_CACHE_SIZE,
+            ))),
+        }
+    }
+}
+
+impl CanonicalHashCache {
+    /// Get a canonical hash from the cache.
+    /// Returns None if not cached (caller should fall back to DB).
+    pub fn get(&self, block_number: BlockNumber) -> Option<BlockHash> {
+        self.entries
+            .read()
+            .expect("poisoned rwlock")
+            .get(&block_number)
+            .copied()
+    }
+
+    /// Insert a canonical hash into the cache.
+    /// If the cache exceeds capacity, older entries may be evicted.
+    pub fn insert(&self, block_number: BlockNumber, block_hash: BlockHash) {
+        let mut cache = self.entries.write().expect("poisoned rwlock");
+        // Simple capacity management: if we're over capacity, remove entries
+        // that are far from the new block number
+        if cache.len() >= CANONICAL_HASH_CACHE_SIZE {
+            // Remove entries that are more than CANONICAL_HASH_CACHE_SIZE blocks away
+            let min_keep = block_number.saturating_sub(CANONICAL_HASH_CACHE_SIZE as u64);
+            cache.retain(|&num, _| num >= min_keep);
+        }
+        cache.insert(block_number, block_hash);
+    }
+
+    /// Batch insert multiple canonical hashes.
+    /// Used during fork choice updates to populate the cache efficiently.
+    pub fn insert_batch(&self, entries: impl IntoIterator<Item = (BlockNumber, BlockHash)>) {
+        let mut cache = self.entries.write().expect("poisoned rwlock");
+        for (block_number, block_hash) in entries {
+            cache.insert(block_number, block_hash);
+        }
+        // Trim if over capacity
+        if cache.len() > CANONICAL_HASH_CACHE_SIZE {
+            if let Some(&max_num) = cache.keys().max() {
+                let min_keep = max_num.saturating_sub(CANONICAL_HASH_CACHE_SIZE as u64);
+                cache.retain(|&num, _| num >= min_keep);
+            }
+        }
+    }
+
+    /// Invalidate cache entries for block numbers > head_number.
+    /// Called during reorgs to remove stale entries.
+    pub fn invalidate_above(&self, head_number: BlockNumber) {
+        let mut cache = self.entries.write().expect("poisoned rwlock");
+        cache.retain(|&num, _| num <= head_number);
     }
 }
 
