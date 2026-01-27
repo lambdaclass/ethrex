@@ -770,9 +770,13 @@ impl PeerHandler {
 
                         let chunk_count = (missing_storage_range / chunk_size).as_usize().max(1);
 
+                        let first_acc_hash = *accounts_by_root_hash[remaining_start].1
+                            .get(0)
+                            .ok_or(SnapError::InternalError("Empty accounts vector".to_owned()))?;
+
                         let maybe_old_intervals = account_storage_roots
                             .accounts_with_storage_root
-                            .get(&accounts_by_root_hash[remaining_start].1[0]);
+                            .get(&first_acc_hash);
 
                         if let Some((_, old_intervals)) = maybe_old_intervals {
                             if !old_intervals.is_empty() {
@@ -790,12 +794,12 @@ impl PeerHandler {
                             } else {
                                 // TODO: DRY
                                 account_storage_roots.accounts_with_storage_root.insert(
-                                    accounts_by_root_hash[remaining_start].1[0],
+                                    first_acc_hash,
                                     (None, vec![]),
                                 );
                                 let (_, intervals) = account_storage_roots
                                     .accounts_with_storage_root
-                                    .get_mut(&accounts_by_root_hash[remaining_start].1[0])
+                                    .get_mut(&first_acc_hash)
                                     .ok_or(SnapError::InternalError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
 
                                 for i in 0..chunk_count {
@@ -826,12 +830,12 @@ impl PeerHandler {
                             }
                         } else {
                             account_storage_roots.accounts_with_storage_root.insert(
-                                accounts_by_root_hash[remaining_start].1[0],
+                                first_acc_hash,
                                 (None, vec![]),
                             );
                             let (_, intervals) = account_storage_roots
                                 .accounts_with_storage_root
-                                .get_mut(&accounts_by_root_hash[remaining_start].1[0])
+                                .get_mut(&first_acc_hash)
                                 .ok_or(SnapError::InternalError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
 
                             for i in 0..chunk_count {
@@ -963,7 +967,7 @@ impl PeerHandler {
             let (chunk_account_hashes, chunk_storage_roots): (Vec<_>, Vec<_>) =
                 accounts_by_root_hash[task.start_index..task.end_index]
                     .iter()
-                    .map(|(root, storages)| (storages[0], *root))
+                    .map(|(root, storages)| (*storages.first().unwrap_or(&H256::zero()), *root))
                     .unzip();
 
             if task_count - completed_tasks < 30 {
