@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-01-27
+
+- Implement cache for `EXTCODESIZE` [#6034](https://github.com/lambdaclass/ethrex/pull/6034)
+
 ### 2026-01-23
 
 - Reuse cache in prewarm workers [#5999](https://github.com/lambdaclass/ethrex/pull/5999)
