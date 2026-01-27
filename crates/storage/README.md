@@ -16,10 +16,10 @@ This crate provides a high-level storage API (`Store`) for blockchain operations
                                            │
                               ┌────────────┴────────────┐
                               ▼                         ▼
-                    ┌─────────────────┐       ┌─────────────────┐
+                    ┌─────────────────-┐       ┌─────────────────┐
                     │  InMemoryBackend │       │  RocksDBBackend │
                     │    (Testing)     │       │  (Production)   │
-                    └─────────────────┘       └─────────────────┘
+                    └─────────────────-┘       └─────────────────┘
 ```
 
 ## Quick Start
