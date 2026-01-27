@@ -357,18 +357,13 @@ pub async fn get_all_block_rpc_receipts(
         };
         let gas_used = receipt.cumulative_gas_used - last_cumulative_gas_used;
         let tx_info = RpcReceiptTxInfo::from_transaction(
-            tx.clone(),
+            tx,
             index,
             gas_used,
             blob_base_fee,
             base_fee_per_gas,
         )?;
-        let receipt = RpcReceipt::new(
-            receipt.clone(),
-            tx_info,
-            block_info.clone(),
-            current_log_index,
-        );
+        let receipt = RpcReceipt::new(receipt, tx_info, block_info.clone(), current_log_index);
         last_cumulative_gas_used += gas_used;
         current_log_index += receipt.logs.len() as u64;
         receipts.push(receipt);
