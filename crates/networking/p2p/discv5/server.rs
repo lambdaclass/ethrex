@@ -3,8 +3,8 @@ use crate::{
         codec::Discv5Codec,
         messages::{
             DISTANCES_PER_FIND_NODE_MSG, FindNodeMessage, Handshake, Message, NodesMessage,
-            Ordinary, Packet, PacketCodecError, PacketHeader, PacketTrait as _, PingMessage,
-            PongMessage, WhoAreYou,
+            Ordinary, Packet, PacketCodecError, PacketTrait as _, PingMessage, PongMessage,
+            WhoAreYou,
         },
         session::{build_challenge_data, create_id_signature, derive_session_keys},
     },

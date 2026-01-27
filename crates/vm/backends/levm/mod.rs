@@ -222,6 +222,11 @@ impl LEVM {
         Ok(BlockExecutionResult { receipts, requests })
     }
 
+    /// Pre-warms state by executing all transactions in parallel.
+    ///
+    /// The `store` parameter should be a `CachingDatabase`-wrapped store so that
+    /// parallel workers can benefit from shared caching. The same cache should
+    /// be used by the sequential execution phase.
     pub fn warm_block(
         block: &Block,
         store: Arc<dyn Database>,
@@ -239,6 +244,7 @@ impl LEVM {
             .for_each_with(
                 Vec::with_capacity(STACK_LIMIT),
                 |stack_pool, (tx, tx_sender)| {
+                    // Each worker uses the shared caching store
                     let mut db = GeneralizedDatabase::new(store.clone());
                     let _ = Self::execute_tx_in_block(
                         tx,
