@@ -4,11 +4,11 @@ use ethereum_types::{Address, U256};
 use serde::Serialize;
 
 /// Collection of traces of each call frame as defined in geth's `callTracer` output
-/// https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers#call-tracer
+/// <https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers#call-tracer>
 pub type CallTrace = Vec<CallTraceFrame>;
 
 /// Trace of each call frame as defined in geth's `callTracer` output
-/// https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers#call-tracer
+/// <https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers#call-tracer>
 #[derive(Debug, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CallTraceFrame {

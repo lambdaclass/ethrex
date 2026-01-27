@@ -175,7 +175,7 @@ impl Nibbles {
         self.data.push(nibble);
     }
 
-    /// Taken from https://github.com/citahub/cita_trie/blob/master/src/nibbles.rs#L56
+    /// Taken from <https://github.com/citahub/cita_trie/blob/master/src/nibbles.rs#L56>
     /// Encodes the nibbles in compact form
     pub fn encode_compact(&self) -> Vec<u8> {
         let mut compact = vec![];

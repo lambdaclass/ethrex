@@ -446,7 +446,7 @@ pub fn calculate_base_fee_per_blob_gas(parent_excess_blob_gas: u64, update_fract
 }
 
 /// Approximates factor * e ** (numerator / denominator) using Taylor expansion
-/// https://eips.ethereum.org/EIPS/eip-4844#helpers
+/// <https://eips.ethereum.org/EIPS/eip-4844#helpers>
 /// 400_000_000 numerator is the limit for this operation to work with U256,
 /// it will overflow with a larger numerator
 pub fn fake_exponential(
