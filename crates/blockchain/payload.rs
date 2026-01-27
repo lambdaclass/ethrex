@@ -783,8 +783,8 @@ impl TransactionQueue {
 
     /// Removes current head transaction and all transactions from the given sender
     pub fn pop(&mut self) {
-        if !self.is_empty() {
-            let sender = self.heads.pop_front().unwrap().tx.sender();
+        if let Some(head) = self.heads.pop_front() {
+            let sender = head.tx.sender();
             self.txs.remove(&sender);
         }
     }
@@ -792,7 +792,10 @@ impl TransactionQueue {
     /// Remove the top transaction
     /// Add a tx from the same sender to the head transactions
     pub fn shift(&mut self) -> Result<(), ChainError> {
-        let tx = self.heads.pop_front().unwrap();
+        let tx = self
+            .heads
+            .pop_front()
+            .expect("shift should only be called when heads is not empty");
         if let Some(txs) = self.txs.get_mut(&tx.tx.sender()) {
             // Fetch next head
             if !txs.is_empty() {
