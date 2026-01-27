@@ -62,9 +62,9 @@ impl GeneralizedDatabase {
         self.bal_recorder.is_some()
     }
 
-    /// Sets the current block access index for BAL recording.
+    /// Sets the current block access index for BAL recording per EIP-7928 spec (uint16).
     /// Call this before each transaction or phase.
-    pub fn set_bal_index(&mut self, index: u32) {
+    pub fn set_bal_index(&mut self, index: u16) {
         if let Some(recorder) = &mut self.bal_recorder {
             recorder.set_block_access_index(index);
         }
@@ -560,6 +560,9 @@ impl<'a> VM<'a> {
     ///
     /// Accessed storage slots are stored in the `accessed_storage_slots` set.
     /// Accessed storage slots take place in some gas cost computation.
+    ///
+    /// Per EIP-7928: BAL recording is deferred until after gas checks pass.
+    /// Use `record_storage_slot_to_bal()` after gas check succeeds.
     pub fn access_storage_slot(
         &mut self,
         address: Address,
@@ -570,13 +573,20 @@ impl<'a> VM<'a> {
 
         let storage_slot = self.get_storage_value(address, key)?;
 
-        // Record storage read for BAL (will be converted to write if SSTORE follows)
-        if let Some(recorder) = self.db.bal_recorder.as_mut() {
-            // Convert H256 key to U256 for BAL recording
-            recorder.record_storage_read(address, U256::from_big_endian(key.as_bytes()));
-        }
+        // Note: BAL recording is NOT done here per EIP-7928.
+        // "If pre-state validation fails, the target is never accessed and must not appear in BAL."
+        // Call record_storage_slot_to_bal() after gas check passes.
 
         Ok((storage_slot, storage_slot_was_cold))
+    }
+
+    /// Records a storage slot read to BAL after gas checks have passed.
+    /// Per EIP-7928: "If pre-state validation fails, the target is never accessed and must not appear in BAL."
+    /// This function should be called AFTER the gas check succeeds.
+    pub fn record_storage_slot_to_bal(&mut self, address: Address, key: H256) {
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_storage_read(address, U256::from_big_endian(key.as_bytes()));
+        }
     }
 
     /// Gets storage value of an account, caching it if not already cached.

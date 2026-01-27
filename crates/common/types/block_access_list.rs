@@ -18,13 +18,14 @@ pub const SYSTEM_ADDRESS: Address = H160([
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct StorageChange {
-    block_access_index: u32,
+    /// Block access index per EIP-7928 spec (uint16).
+    block_access_index: u16,
     post_value: U256,
 }
 
 impl StorageChange {
     /// Creates a new storage change with the given block access index and post value.
-    pub fn new(block_access_index: u32, post_value: U256) -> Self {
+    pub fn new(block_access_index: u16, post_value: U256) -> Self {
         Self {
             block_access_index,
             post_value,
@@ -32,7 +33,7 @@ impl StorageChange {
     }
 
     /// Returns the block access index for this storage change.
-    pub fn block_access_index(&self) -> u32 {
+    pub fn block_access_index(&self) -> u16 {
         self.block_access_index
     }
 
@@ -136,13 +137,14 @@ impl RLPDecode for SlotChange {
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct BalanceChange {
-    block_access_index: u32,
+    /// Block access index per EIP-7928 spec (uint16).
+    block_access_index: u16,
     post_balance: U256,
 }
 
 impl BalanceChange {
     /// Creates a new balance change with the given block access index and post balance.
-    pub fn new(block_access_index: u32, post_balance: U256) -> Self {
+    pub fn new(block_access_index: u16, post_balance: U256) -> Self {
         Self {
             block_access_index,
             post_balance,
@@ -150,7 +152,7 @@ impl BalanceChange {
     }
 
     /// Returns the block access index for this balance change.
-    pub fn block_access_index(&self) -> u32 {
+    pub fn block_access_index(&self) -> u16 {
         self.block_access_index
     }
 
@@ -187,13 +189,14 @@ impl RLPDecode for BalanceChange {
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct NonceChange {
-    block_access_index: u32,
+    /// Block access index per EIP-7928 spec (uint16).
+    block_access_index: u16,
     post_nonce: u64,
 }
 
 impl NonceChange {
     /// Creates a new nonce change with the given block access index and post nonce.
-    pub fn new(block_access_index: u32, post_nonce: u64) -> Self {
+    pub fn new(block_access_index: u16, post_nonce: u64) -> Self {
         Self {
             block_access_index,
             post_nonce,
@@ -201,7 +204,7 @@ impl NonceChange {
     }
 
     /// Returns the block access index for this nonce change.
-    pub fn block_access_index(&self) -> u32 {
+    pub fn block_access_index(&self) -> u16 {
         self.block_access_index
     }
 
@@ -238,13 +241,14 @@ impl RLPDecode for NonceChange {
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct CodeChange {
-    block_access_index: u32,
+    /// Block access index per EIP-7928 spec (uint16).
+    block_access_index: u16,
     new_code: Bytes,
 }
 
 impl CodeChange {
     /// Creates a new code change with the given block access index and new code.
-    pub fn new(block_access_index: u32, new_code: Bytes) -> Self {
+    pub fn new(block_access_index: u16, new_code: Bytes) -> Self {
         Self {
             block_access_index,
             new_code,
@@ -252,7 +256,7 @@ impl CodeChange {
     }
 
     /// Returns the block access index for this code change.
-    pub fn block_access_index(&self) -> u32 {
+    pub fn block_access_index(&self) -> u16 {
         self.block_access_index
     }
 
@@ -536,6 +540,28 @@ impl RLPDecode for BlockAccessList {
     }
 }
 
+/// A checkpoint of the BAL recorder state that can be restored on revert.
+///
+/// Per EIP-7928: "State changes from reverted calls are discarded, but all accessed
+/// addresses must be included." This checkpoint captures the state change data
+/// (storage, balance, nonce, code changes) but NOT touched_addresses, which persist
+/// across reverts.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BlockAccessListCheckpoint {
+    /// Snapshot of storage reads at checkpoint time.
+    /// We need to store the actual slots because when a write is reverted, it must
+    /// be converted back to a read if it was originally a read.
+    storage_reads_snapshot: BTreeMap<Address, BTreeSet<U256>>,
+    /// For each address+slot, the number of writes at checkpoint time.
+    storage_writes_len: BTreeMap<Address, BTreeMap<U256, usize>>,
+    /// Number of balance changes per address at checkpoint time.
+    balance_changes_len: BTreeMap<Address, usize>,
+    /// Number of nonce changes per address at checkpoint time.
+    nonce_changes_len: BTreeMap<Address, usize>,
+    /// Number of code changes per address at checkpoint time.
+    code_changes_len: BTreeMap<Address, usize>,
+}
+
 /// Records state accesses during block execution to build a Block Access List (EIP-7928).
 ///
 /// The recorder accumulates all storage reads/writes, balance changes, nonce changes,
@@ -547,22 +573,28 @@ impl RLPDecode for BlockAccessList {
 /// - n+1: Post-execution phase (withdrawals)
 #[derive(Debug, Default, Clone)]
 pub struct BlockAccessListRecorder {
-    /// Current block access index (0=pre-exec, 1..n=tx indices, n+1=post-exec).
-    current_index: u32,
+    /// Current block access index per EIP-7928 spec (uint16).
+    /// 0=pre-exec, 1..n=tx indices, n+1=post-exec.
+    current_index: u16,
     /// All addresses that must be in BAL (touched during execution).
     touched_addresses: BTreeSet<Address>,
     /// Storage reads per address (slot -> set of slots read but not written).
     storage_reads: BTreeMap<Address, BTreeSet<U256>>,
     /// Storage writes per address (slot -> list of (index, post_value) pairs).
-    storage_writes: BTreeMap<Address, BTreeMap<U256, Vec<(u32, U256)>>>,
-    /// Initial balances for detecting balance round-trips.
+    storage_writes: BTreeMap<Address, BTreeMap<U256, Vec<(u16, U256)>>>,
+    /// Initial balances for detecting balance round-trips (per-block, used for general reference).
     initial_balances: BTreeMap<Address, U256>,
+    /// Per-transaction initial balances for round-trip detection.
+    /// Per EIP-7928: "If an account's balance changes during a transaction, but its
+    /// post-transaction balance is equal to its pre-transaction balance, then the
+    /// change MUST NOT be recorded."
+    tx_initial_balances: BTreeMap<Address, U256>,
     /// Balance changes per address (list of (index, post_balance) pairs).
-    balance_changes: BTreeMap<Address, Vec<(u32, U256)>>,
+    balance_changes: BTreeMap<Address, Vec<(u16, U256)>>,
     /// Nonce changes per address (list of (index, post_nonce) pairs).
-    nonce_changes: BTreeMap<Address, Vec<(u32, u64)>>,
+    nonce_changes: BTreeMap<Address, Vec<(u16, u64)>>,
     /// Code changes per address (list of (index, new_code) pairs).
-    code_changes: BTreeMap<Address, Vec<(u32, Bytes)>>,
+    code_changes: BTreeMap<Address, Vec<(u16, Bytes)>>,
 }
 
 impl BlockAccessListRecorder {
@@ -571,14 +603,24 @@ impl BlockAccessListRecorder {
         Self::default()
     }
 
-    /// Sets the current block access index.
+    /// Sets the current block access index per EIP-7928 spec (uint16).
     /// Call this before each transaction (index 1..n) and for withdrawals (n+1).
-    pub fn set_block_access_index(&mut self, index: u32) {
+    ///
+    /// Per EIP-7928: "If an account's balance changes during a transaction, but its
+    /// post-transaction balance is equal to its pre-transaction balance, then the
+    /// change MUST NOT be recorded."
+    /// Clears per-transaction initial balances when switching to a new transaction.
+    pub fn set_block_access_index(&mut self, index: u16) {
+        // Clear per-transaction initial balances when switching transactions
+        // This enables per-transaction round-trip detection as required by EIP-7928
+        if self.current_index != index {
+            self.tx_initial_balances.clear();
+        }
         self.current_index = index;
     }
 
-    /// Returns the current block access index.
-    pub fn current_index(&self) -> u32 {
+    /// Returns the current block access index per EIP-7928 spec (uint16).
+    pub fn current_index(&self) -> u16 {
         self.current_index
     }
 
@@ -644,8 +686,14 @@ impl BlockAccessListRecorder {
 
     /// Sets the initial balance for an address before any changes.
     /// This should be called when first accessing an account to enable round-trip detection.
+    ///
+    /// Tracks both per-block initial (for general reference) and per-transaction initial
+    /// (for EIP-7928 round-trip detection).
     pub fn set_initial_balance(&mut self, address: Address, balance: U256) {
+        // Track per-block initial (for overall reference)
         self.initial_balances.entry(address).or_insert(balance);
+        // Track per-transaction initial (for EIP-7928 round-trip detection)
+        self.tx_initial_balances.entry(address).or_insert(balance);
     }
 
     /// Records a nonce change.
@@ -683,9 +731,13 @@ impl BlockAccessListRecorder {
     /// Builds the final BlockAccessList from accumulated data.
     ///
     /// This method:
-    /// 1. Filters out balance changes where the final balance equals the initial balance
+    /// 1. Filters out balance changes per-transaction where the final balance equals the initial balance
     /// 2. Creates AccountChanges entries for all touched addresses
     /// 3. Includes addresses even if they have no state changes (per EIP-7928)
+    ///
+    /// Per EIP-7928: "If an account's balance changes during a transaction, but its
+    /// post-transaction balance is equal to its pre-transaction balance, then the
+    /// change MUST NOT be recorded."
     pub fn build(self) -> BlockAccessList {
         let mut bal = BlockAccessList::new();
 
@@ -711,23 +763,39 @@ impl BlockAccessListRecorder {
                 }
             }
 
-            // Add balance changes (filtered for round-trips)
+            // Add balance changes (filtered for round-trips per-transaction)
+            // Per EIP-7928: "If an account's balance changes during a transaction, but its
+            // post-transaction balance is equal to its pre-transaction balance, then the
+            // change MUST NOT be recorded."
             if let Some(changes) = self.balance_changes.get(address) {
-                let initial_balance = self.initial_balances.get(address).copied();
-                let final_balance = changes.last().map(|(_, b)| *b);
+                // Group balance changes by transaction index
+                let mut changes_by_tx: BTreeMap<u16, Vec<U256>> = BTreeMap::new();
+                for (index, post_balance) in changes {
+                    changes_by_tx.entry(*index).or_default().push(*post_balance);
+                }
 
-                // Only include balance changes if the final balance differs from initial
-                // Per EIP-7928: if balance returns to pre-tx value, don't record changes
-                let should_include = match (initial_balance, final_balance) {
-                    (Some(initial), Some(final_bal)) => initial != final_bal,
-                    _ => true, // Include if we can't determine (edge case)
-                };
+                // For each transaction, check if balance round-tripped
+                let mut prev_balance = self.initial_balances.get(address).copied();
+                for (index, tx_changes) in &changes_by_tx {
+                    let initial_for_tx = prev_balance;
+                    let final_for_tx = tx_changes.last().copied();
 
-                if should_include {
-                    for (index, post_balance) in changes {
-                        account_changes
-                            .add_balance_change(BalanceChange::new(*index, *post_balance));
+                    // Check if this transaction's balance round-tripped
+                    let is_round_trip = match (initial_for_tx, final_for_tx) {
+                        (Some(initial), Some(final_bal)) => initial == final_bal,
+                        _ => false, // Include if we can't determine
+                    };
+
+                    // Only include changes if NOT a round-trip within this transaction
+                    if !is_round_trip {
+                        for post_balance in tx_changes {
+                            account_changes
+                                .add_balance_change(BalanceChange::new(*index, *post_balance));
+                        }
                     }
+
+                    // Update prev_balance for next transaction
+                    prev_balance = final_for_tx;
                 }
             }
 
@@ -760,6 +828,110 @@ impl BlockAccessListRecorder {
             && self.balance_changes.is_empty()
             && self.nonce_changes.is_empty()
             && self.code_changes.is_empty()
+    }
+
+    /// Creates a checkpoint of the current state (excluding touched_addresses which persist).
+    ///
+    /// Per EIP-7928: "State changes from reverted calls are discarded, but all accessed
+    /// addresses must be included." The checkpoint captures state change data so it can
+    /// be restored on revert, while touched_addresses are preserved.
+    pub fn checkpoint(&self) -> BlockAccessListCheckpoint {
+        BlockAccessListCheckpoint {
+            storage_reads_snapshot: self.storage_reads.clone(),
+            storage_writes_len: self
+                .storage_writes
+                .iter()
+                .map(|(addr, slots)| {
+                    (
+                        *addr,
+                        slots
+                            .iter()
+                            .map(|(slot, changes)| (*slot, changes.len()))
+                            .collect(),
+                    )
+                })
+                .collect(),
+            balance_changes_len: self
+                .balance_changes
+                .iter()
+                .map(|(addr, changes)| (*addr, changes.len()))
+                .collect(),
+            nonce_changes_len: self
+                .nonce_changes
+                .iter()
+                .map(|(addr, changes)| (*addr, changes.len()))
+                .collect(),
+            code_changes_len: self
+                .code_changes
+                .iter()
+                .map(|(addr, changes)| (*addr, changes.len()))
+                .collect(),
+        }
+    }
+
+    /// Restores state to a checkpoint, keeping touched_addresses intact.
+    ///
+    /// This truncates all state change vectors back to their lengths at checkpoint time,
+    /// removing any changes made after the checkpoint was created.
+    /// Storage reads are fully restored from the snapshot, which correctly handles
+    /// the case where a slot that was read is later written (removed from reads)
+    /// and then reverted (must reappear as a read).
+    pub fn restore(&mut self, checkpoint: BlockAccessListCheckpoint) {
+        // Restore storage_reads from snapshot.
+        // This correctly handles reverted writes: if a slot was originally a read,
+        // then written (removing it from reads), and then reverted, it will be
+        // restored as a read.
+        self.storage_reads = checkpoint.storage_reads_snapshot;
+
+        // Restore storage_writes: truncate change vectors
+        self.storage_writes.retain(|addr, slots| {
+            if let Some(slot_lens) = checkpoint.storage_writes_len.get(addr) {
+                slots.retain(|slot, changes| {
+                    if let Some(&len) = slot_lens.get(slot) {
+                        changes.truncate(len);
+                        len > 0
+                    } else {
+                        false
+                    }
+                });
+                !slots.is_empty()
+            } else {
+                false
+            }
+        });
+
+        // Restore balance_changes: truncate change vectors
+        self.balance_changes.retain(|addr, changes| {
+            if let Some(&len) = checkpoint.balance_changes_len.get(addr) {
+                changes.truncate(len);
+                len > 0
+            } else {
+                false
+            }
+        });
+
+        // Restore nonce_changes: truncate change vectors
+        self.nonce_changes.retain(|addr, changes| {
+            if let Some(&len) = checkpoint.nonce_changes_len.get(addr) {
+                changes.truncate(len);
+                len > 0
+            } else {
+                false
+            }
+        });
+
+        // Restore code_changes: truncate change vectors
+        self.code_changes.retain(|addr, changes| {
+            if let Some(&len) = checkpoint.code_changes_len.get(addr) {
+                changes.truncate(len);
+                len > 0
+            } else {
+                false
+            }
+        });
+
+        // Note: touched_addresses is intentionally NOT restored - per EIP-7928,
+        // accessed addresses must be included even from reverted calls
     }
 }
 
@@ -1086,22 +1258,49 @@ mod tests {
     }
 
     #[test]
-    fn test_recorder_balance_roundtrip_filtered() {
+    fn test_recorder_balance_roundtrip_filtered_within_tx() {
+        // Per EIP-7928: "If an account's balance changes during a transaction, but its
+        // post-transaction balance is equal to its pre-transaction balance, then the
+        // change MUST NOT be recorded."
+        // This is per-TRANSACTION filtering, not per-block.
         let mut recorder = BlockAccessListRecorder::new();
         recorder.set_block_access_index(1);
 
         // Set initial balance
         recorder.set_initial_balance(ALICE_ADDR, U256::from(1000));
-        // Record some changes
+        // Record changes within the SAME transaction that round-trip
         recorder.record_balance_change(ALICE_ADDR, U256::from(500)); // decrease
-        recorder.set_block_access_index(2);
         recorder.record_balance_change(ALICE_ADDR, U256::from(1000)); // back to initial
 
         let bal = recorder.build();
 
         let account = &bal.accounts()[0];
-        // Balance returned to initial, so balance_changes should be empty
+        // Balance round-tripped within same TX, so balance_changes should be empty
         assert!(account.balance_changes().is_empty());
+    }
+
+    #[test]
+    fn test_recorder_balance_changes_across_txs_not_filtered() {
+        // Per EIP-7928: Per-transaction filtering means changes across different
+        // transactions are evaluated independently.
+        let mut recorder = BlockAccessListRecorder::new();
+        recorder.set_block_access_index(1);
+
+        // Set initial balance for TX 1
+        recorder.set_initial_balance(ALICE_ADDR, U256::from(1000));
+        // TX 1: decrease to 500 (NOT round-trip: 1000 -> 500)
+        recorder.record_balance_change(ALICE_ADDR, U256::from(500));
+
+        // TX 2: increase back to 1000 (NOT round-trip: 500 -> 1000)
+        recorder.set_block_access_index(2);
+        recorder.record_balance_change(ALICE_ADDR, U256::from(1000));
+
+        let bal = recorder.build();
+
+        let account = &bal.accounts()[0];
+        // Both transactions have actual balance changes (not round-trips within their tx)
+        // TX 1: 1000 -> 500, TX 2: 500 -> 1000
+        assert_eq!(account.balance_changes().len(), 2);
     }
 
     #[test]

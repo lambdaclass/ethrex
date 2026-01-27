@@ -101,10 +101,10 @@ impl LEVM {
                 )));
             }
 
-            // Set BAL index for this transaction (1-indexed per EIP-7928)
+            // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
             if record_bal {
                 #[allow(clippy::cast_possible_truncation)]
-                db.set_bal_index((tx_idx + 1) as u32);
+                db.set_bal_index((tx_idx + 1) as u16);
 
                 // Record tx sender and recipient for BAL
                 if let Some(recorder) = db.bal_recorder_mut() {
@@ -128,17 +128,17 @@ impl LEVM {
             receipts.push(receipt);
         }
 
-        // Set BAL index for post-execution phase (withdrawals)
+        // Set BAL index for post-execution phase (withdrawals, uint16)
         if record_bal {
             #[allow(clippy::cast_possible_truncation)]
-            let withdrawal_index = (block.body.transactions.len() + 1) as u32;
+            let withdrawal_index = (block.body.transactions.len() + 1) as u16;
             db.set_bal_index(withdrawal_index);
         }
 
         if let Some(withdrawals) = &block.body.withdrawals {
-            // Record withdrawal recipients for BAL
+            // Record withdrawal recipients for BAL (only non-zero amounts per EIP-7928)
             if record_bal && let Some(recorder) = db.bal_recorder_mut() {
-                for withdrawal in withdrawals {
+                for withdrawal in withdrawals.iter().filter(|w| w.amount > 0) {
                     recorder.record_touched_address(withdrawal.address);
                 }
             }

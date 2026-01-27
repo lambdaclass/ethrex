@@ -576,9 +576,23 @@ impl<'a> VM<'a> {
                 balance,
             )?)?;
 
-        // Record beneficiary address touch for BAL per EIP-7928
+        // Record beneficiary and destroyed account for BAL per EIP-7928
+        // Also record any previously-accessed storage slots as reads per EIP-7928:
+        // "SELFDESTRUCT: Include modified/read storage keys as storage_read"
+        let accessed_slots = self.substate.get_accessed_storage_slots(&to);
         if let Some(recorder) = self.db.bal_recorder.as_mut() {
             recorder.record_touched_address(beneficiary);
+            // Also record the destroyed account (source) as touched
+            recorder.record_touched_address(to);
+            // Record initial balance for the destroyed account if it has balance
+            if balance > U256::zero() {
+                recorder.set_initial_balance(to, balance);
+            }
+            // Record any previously-accessed storage slots as reads
+            for key in &accessed_slots {
+                let slot = U256::from_big_endian(key.as_bytes());
+                recorder.record_storage_read(to, slot);
+            }
         }
 
         // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
@@ -590,11 +604,21 @@ impl<'a> VM<'a> {
                 // If target is the same as the contract calling, Ether will be burnt.
                 self.get_account_mut(to)?.info.balance = U256::zero();
 
+                // Record balance change to zero for destroyed account in BAL
+                if let Some(recorder) = self.db.bal_recorder.as_mut() {
+                    recorder.record_balance_change(to, U256::zero());
+                }
+
                 self.substate.add_selfdestruct(to);
             }
         } else {
             self.increase_account_balance(beneficiary, balance)?;
             self.get_account_mut(to)?.info.balance = U256::zero();
+
+            // Record balance change to zero for destroyed account in BAL
+            if let Some(recorder) = self.db.bal_recorder.as_mut() {
+                recorder.record_balance_change(to, U256::zero());
+            }
 
             self.substate.add_selfdestruct(to);
         }
@@ -703,12 +727,15 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
+        // Create BAL checkpoint before entering create call for potential revert per EIP-7928
+        let bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
+
         let mut stack = self.stack_pool.pop().unwrap_or_default();
         stack.clear();
 
         let next_memory = self.current_call_frame.memory.next_memory();
 
-        let new_call_frame = CallFrame::new(
+        let mut new_call_frame = CallFrame::new(
             deployer,
             new_address,
             new_address,
@@ -726,6 +753,9 @@ impl<'a> VM<'a> {
             stack,
             next_memory,
         );
+        // Store BAL checkpoint in the call frame's backup for restoration on revert
+        new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
+
         self.add_callframe(new_call_frame);
 
         // Changes that revert in case the Create fails.
@@ -843,12 +873,15 @@ impl<'a> VM<'a> {
 
             self.tracer.exit_context(&ctx_result, false)?;
         } else {
+            // Create BAL checkpoint before entering nested call for potential revert per EIP-7928
+            let bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
+
             let mut stack = self.stack_pool.pop().unwrap_or_default();
             stack.clear();
 
             let next_memory = self.current_call_frame.memory.next_memory();
 
-            let new_call_frame = CallFrame::new(
+            let mut new_call_frame = CallFrame::new(
                 msg_sender,
                 to,
                 code_address,
@@ -865,6 +898,9 @@ impl<'a> VM<'a> {
                 stack,
                 next_memory,
             );
+            // Store BAL checkpoint in the call frame's backup for restoration on revert
+            new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
+
             self.add_callframe(new_call_frame);
 
             // Transfer value from caller to callee.
