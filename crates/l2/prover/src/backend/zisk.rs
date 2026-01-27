@@ -21,6 +21,8 @@ const ZISK_ELF_ENV: &str = "ZISK_ELF_PATH";
 const ZISK_HOME_ENV: &str = "ZISK_HOME";
 const ZISK_PROVING_KEY_ENV: &str = "ZISK_PROVING_KEY_PATH";
 const ZISK_PROVING_KEY_SNARK_ENV: &str = "ZISK_PROVING_KEY_SNARK_PATH";
+const ZISK_STARK_BINARY_ENV: &str = "ZISK_STARK_BINARY";
+const ZISK_SNARK_BINARY_ENV: &str = "ZISK_SNARK_BINARY";
 
 fn resolve_elf_path() -> PathBuf {
     std::env::var_os(ZISK_ELF_ENV)
@@ -45,6 +47,18 @@ fn resolve_proving_key_snark_path() -> PathBuf {
     std::env::var_os(ZISK_PROVING_KEY_SNARK_ENV)
         .map(PathBuf::from)
         .unwrap_or_else(|| resolve_zisk_home().join("provingKeySnark"))
+}
+
+/// Returns the binary to use for STARK proof generation.
+/// Defaults to "cargo-zisk" if ZISK_STARK_BINARY is not set.
+fn resolve_stark_binary() -> String {
+    std::env::var(ZISK_STARK_BINARY_ENV).unwrap_or_else(|_| "cargo-zisk".to_string())
+}
+
+/// Returns the binary to use for SNARK proof generation.
+/// Defaults to "cargo-zisk" if ZISK_SNARK_BINARY is not set.
+fn resolve_snark_binary() -> String {
+    std::env::var(ZISK_SNARK_BINARY_ENV).unwrap_or_else(|_| "cargo-zisk".to_string())
 }
 
 /// ZisK-specific proof output containing the proof bytes.
@@ -147,7 +161,10 @@ impl ZiskBackend {
             OUTPUT_DIR_PATH,
         ];
 
-        let output = Command::new("cargo-zisk")
+        let stark_binary = resolve_stark_binary();
+        debug!(binary = %stark_binary, ?args, "Running STARK proof generation");
+
+        let output = Command::new(&stark_binary)
             .args(args)
             .stdin(Stdio::inherit())
             .stderr(Stdio::inherit())
@@ -181,8 +198,10 @@ impl ZiskBackend {
                 "-o",
                 OUTPUT_DIR_PATH,
             ];
-            debug!(?args, "Running cargo-zisk prove-snark");
-            let snark = Command::new("cargo-zisk")
+            let snark_binary = resolve_snark_binary();
+            debug!(binary = %snark_binary, ?args, "Running SNARK proof generation");
+
+            let snark = Command::new(&snark_binary)
                 .args(args.as_slice())
                 .stdin(Stdio::inherit())
                 .output()

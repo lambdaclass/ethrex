@@ -34,19 +34,30 @@ This generates the ELF at `crates/guest-program/bin/zisk/out/riscv64ima-zisk-elf
 
 ### 2. Clone and build ZisK
 
+ZisK requires **two separate binaries** for proof generation:
+- **GPU binary**: Used for STARK proof generation (fast)
+- **CPU binary**: Used for SNARK proof generation (cannot use GPU binary due to segfault)
+
 ```bash
 git clone git@github.com:0xPolygonHermez/zisk.git
 cd zisk && git checkout pre-develop-0.16.0
 ```
 
-**With GPU:**
+**Build both binaries:**
 ```bash
+# Build GPU binary for STARK proof generation
 cargo build --release --features gpu
+cp target/release/cargo-zisk ~/.zisk/bin/cargo-zisk-gpu
+
+# Build CPU binary for SNARK proof generation
+cargo build --release
+cp target/release/cargo-zisk ~/.zisk/bin/cargo-zisk-cpu
 ```
 
-**CPU only:**
+**CPU only (if no GPU available):**
 ```bash
 cargo build --release
+# Only one binary needed when running CPU-only
 ```
 
 ### 3. Install ZisK binaries
@@ -177,23 +188,30 @@ ZISK=true ETHREX_NO_MONITOR=true ETHREX_LOG_LEVEL=debug make -C crates/l2 init-l
 
 In a separate terminal, start the ZisK prover:
 
+**With GPU acceleration (recommended):**
 ```bash
-make -C crates/l2 init-prover-zisk GPU=true
+ZISK_STARK_BINARY=cargo-zisk-gpu ZISK_SNARK_BINARY=cargo-zisk-cpu \
+    make -C crates/l2 init-prover-zisk GPU=true
 ```
 
-> [!NOTE]
-> The `GPU=true` flag is optional but recommended for faster STARK proof generation.
+**CPU only:**
+```bash
+make -C crates/l2 init-prover-zisk
+```
+
+> [!IMPORTANT]
+> When using GPU, you must set `ZISK_STARK_BINARY` and `ZISK_SNARK_BINARY` to point to the GPU and CPU binaries respectively. The SNARK proof generation crashes with a segfault when using the GPU binary.
 
 The prover automatically:
 1. Receives batch input from the proof coordinator
-2. Runs `cargo-zisk prove` (STARK proof on GPU)
-3. Runs `cargo-zisk prove-snark` (SNARK proof on CPU)
+2. Runs STARK proof generation (GPU binary if configured)
+3. Runs SNARK proof generation (must use CPU binary)
 4. Submits proof back to coordinator
 5. Sequencer verifies on-chain
 
 ## ZisK Environment Variables (optional)
 
-The prover uses sensible defaults, but you can override paths:
+The prover uses sensible defaults, but you can override paths and binaries:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -201,6 +219,8 @@ The prover uses sensible defaults, but you can override paths:
 | `ZISK_ELF_PATH` | embedded | Path to guest ELF |
 | `ZISK_PROVING_KEY_PATH` | `~/.zisk/provingKey` | STARK proving key |
 | `ZISK_PROVING_KEY_SNARK_PATH` | `~/.zisk/provingKeySnark` | SNARK proving key |
+| `ZISK_STARK_BINARY` | `cargo-zisk` | Binary for STARK proof (use GPU version) |
+| `ZISK_SNARK_BINARY` | `cargo-zisk` | Binary for SNARK proof (must be CPU version) |
 
 ## Troubleshooting
 
@@ -211,6 +231,15 @@ Dynamic library error: ~/.zisk/provingKeySnark/final/final.so: cannot enable exe
 Fix:
 ```bash
 patchelf --clear-execstack ~/.zisk/provingKeySnark/final/final.so
+```
+
+### SNARK proof segfault
+```
+Segmentation fault (core dumped) cargo-zisk prove-snark ...
+```
+The GPU-built binary crashes during SNARK generation. Use a CPU-built binary for SNARK proofs:
+```bash
+export ZISK_SNARK_BINARY=cargo-zisk-cpu
 ```
 
 ### MerkleHash assertion error
@@ -231,20 +260,21 @@ export LD_LIBRARY_PATH=$HOME/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/
 If you need to manually generate proofs (e.g., for debugging):
 
 ### Generate STARK proof
+Use the GPU binary for faster STARK proof generation:
 ```bash
-cargo-zisk prove \
+cargo-zisk-gpu prove \
     -e <PATH_TO_ELF> \
     -i <PATH_TO_INPUT> \
     -k ~/.zisk/provingKey \
-    -w ~/.zisk/bin/libzisk_witness.so \
     -o <OUTPUT_PATH> \
     -a -u -f
 ```
 
 ### Generate SNARK proof
+Use the CPU binary (GPU binary will segfault):
 ```bash
 mkdir -p <OUTPUT_PATH>/proofs
-cargo-zisk prove-snark \
+cargo-zisk-cpu prove-snark \
     -k ~/.zisk/provingKeySnark \
     -p <OUTPUT_PATH>/vadcop_final_proof.bin \
     -o <OUTPUT_PATH>
