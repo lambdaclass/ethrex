@@ -164,7 +164,14 @@ fn finalize_non_privileged_execution(
     }
 
     if use_fee_token {
-        refund_sender_fee_token(vm, ctx_result, gas_refunded, total_gas, fee_token_ratio)?;
+        refund_sender_fee_token(
+            vm,
+            ctx_result,
+            gas_refunded,
+            total_gas,
+            total_gas_pre_refund,
+            fee_token_ratio,
+        )?;
     } else {
         default_hook::refund_sender(
             vm,
@@ -695,14 +702,22 @@ fn refund_sender_fee_token(
     ctx_result: &mut ContextResult,
     refunded_gas: u64,
     gas_spent: u64,
+    gas_used_pre_refund: u64,
     fee_token_ratio: u64,
 ) -> Result<(), VMError> {
     vm.substate.refunded_gas = refunded_gas;
 
-    // For L2 fee token transactions, we don't have EIP-7778 separation
-    // Both gas_used and gas_spent are set to the same value
-    ctx_result.gas_used = gas_spent;
-    ctx_result.gas_spent = gas_spent;
+    // EIP-7778: Separate block vs user gas accounting for Amsterdam+
+    if vm.env.config.fork >= Fork::Amsterdam {
+        // Block accounting uses pre-refund gas
+        ctx_result.gas_used = gas_used_pre_refund;
+        // User pays post-refund gas
+        ctx_result.gas_spent = gas_spent;
+    } else {
+        // Pre-Amsterdam: both use post-refund value
+        ctx_result.gas_used = gas_spent;
+        ctx_result.gas_spent = gas_spent;
+    }
 
     // Return unspent gas to the sender.
     let gas_to_return = vm
