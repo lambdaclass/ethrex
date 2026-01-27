@@ -27,7 +27,10 @@ use crate::{
     initializers::{
         get_network, init_blockchain, init_store, init_tracing, load_store, regenerate_head_state,
     },
-    utils::{self, default_datadir, get_client_version, get_minimal_client_version, init_datadir},
+    utils::{
+        self, default_datadir, get_client_version, get_client_version_string,
+        get_minimal_client_version, init_datadir,
+    },
 };
 
 pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
@@ -38,7 +41,7 @@ use ethrex_config::networks::Network;
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
-#[command(name="ethrex", author = "Lambdaclass", version=get_client_version(), about = "ethrex Execution client")]
+#[command(name="ethrex", author = "Lambdaclass", version=get_client_version_string(), about = "ethrex Execution client")]
 pub struct CLI {
     #[command(flatten)]
     pub opts: Options,

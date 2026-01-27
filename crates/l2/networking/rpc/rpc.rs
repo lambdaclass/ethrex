@@ -20,7 +20,7 @@ use ethrex_p2p::types::NodeRecord;
 use ethrex_rpc::RpcHandler as L1RpcHandler;
 use ethrex_rpc::debug::execution_witness::ExecutionWitnessRequest;
 use ethrex_rpc::{
-    GasTipEstimator, NodeData, RpcRequestWrapper,
+    ClientVersion, GasTipEstimator, NodeData, RpcRequestWrapper,
     types::transaction::SendRawTransactionRequest,
     utils::{RpcRequest, RpcRequestId},
 };
@@ -81,7 +81,7 @@ pub async fn start_api(
     local_node_record: NodeRecord,
     syncer: Option<Arc<SyncManager>>,
     peer_handler: Option<PeerHandler>,
-    client_version: String,
+    client_version: ClientVersion,
     valid_delegation_addresses: Vec<Address>,
     sponsor_pk: SecretKey,
     rollup_store: StoreRollup,
