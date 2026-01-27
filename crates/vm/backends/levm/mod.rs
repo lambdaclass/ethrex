@@ -37,8 +37,8 @@ use ethrex_levm::{
     vm::VM,
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use std::collections::HashMap;
 use std::cmp::min;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
@@ -214,42 +214,37 @@ impl LEVM {
     ) -> Result<(), EvmError> {
         let mut db = GeneralizedDatabase::new(store.clone());
 
-        let txs_with_sender = block
-            .body
-            .get_transactions_with_sender()
-            .map_err(|error| {
-                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-            })?;
+        let txs_with_sender = block.body.get_transactions_with_sender().map_err(|error| {
+            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+        })?;
 
         // Group transactions by sender for sequential execution within groups
-        let mut sender_groups: HashMap<Address, Vec<(&Transaction, Address)>> = HashMap::new();
+        let mut sender_groups: HashMap<Address, Vec<&Transaction>> = HashMap::new();
         for (tx, sender) in &txs_with_sender {
-            sender_groups.entry(*sender).or_default().push((tx, *sender));
+            sender_groups.entry(*sender).or_default().push(tx);
         }
 
         // Parallel across sender groups, sequential within each group
-        sender_groups
-            .into_par_iter()
-            .for_each_with(
-                Vec::with_capacity(STACK_LIMIT),
-                |stack_pool, (_sender, txs)| {
-                    // Each sender group gets its own db instance for state propagation
-                    let mut group_db = GeneralizedDatabase::new(store.clone());
+        sender_groups.into_par_iter().for_each_with(
+            Vec::with_capacity(STACK_LIMIT),
+            |stack_pool, (sender, txs)| {
+                // Each sender group gets its own db instance for state propagation
+                let mut group_db = GeneralizedDatabase::new(store.clone());
 
-                    // Execute transactions sequentially within sender group
-                    // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
-                    for (tx, tx_sender) in txs {
-                        let _ = Self::execute_tx_in_block(
-                            tx,
-                            tx_sender,
-                            &block.header,
-                            &mut group_db,
-                            vm_type,
-                            stack_pool,
-                        );
-                    }
-                },
-            );
+                // Execute transactions sequentially within sender group
+                // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
+                for tx in txs {
+                    let _ = Self::execute_tx_in_block(
+                        tx,
+                        sender,
+                        &block.header,
+                        &mut group_db,
+                        vm_type,
+                        stack_pool,
+                    );
+                }
+            },
+        );
 
         for withdrawal in block
             .body
