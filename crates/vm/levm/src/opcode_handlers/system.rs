@@ -562,21 +562,21 @@ impl<'a> VM<'a> {
         if self.env.config.fork >= Fork::Cancun {
             self.transfer(to, beneficiary, balance)?;
 
-            // EIP-7708: Emit transfer log if nonzero value sent to different address
-            if self.env.config.fork >= Fork::Amsterdam && !balance.is_zero() && to != beneficiary {
-                let log = create_eth_transfer_log(to, beneficiary, balance);
-                self.substate.add_log(log);
-            }
-
             // Selfdestruct is executed in the same transaction as the contract was created
             if self.substate.is_account_created(&to) {
                 // If target is the same as the contract calling, Ether will be burnt.
                 self.get_account_mut(to)?.info.balance = U256::zero();
 
                 self.substate.add_selfdestruct(to);
+            }
 
-                // EIP-7708: Emit selfdestruct log ONLY when destroying to self
-                if self.env.config.fork >= Fork::Amsterdam && to == beneficiary {
+            // EIP-7708: Emit appropriate log for ETH movement
+            if self.env.config.fork >= Fork::Amsterdam && !balance.is_zero() {
+                if to != beneficiary {
+                    let log = create_eth_transfer_log(to, beneficiary, balance);
+                    self.substate.add_log(log);
+                } else if self.substate.is_account_created(&to) {
+                    // Selfdestruct to self - only log when account is actually being destroyed
                     let log = create_selfdestruct_log(to, balance);
                     self.substate.add_log(log);
                 }
@@ -585,17 +585,15 @@ impl<'a> VM<'a> {
             self.increase_account_balance(beneficiary, balance)?;
             self.get_account_mut(to)?.info.balance = U256::zero();
 
-            // EIP-7708: Emit transfer log if nonzero value sent to different address
-            if self.env.config.fork >= Fork::Amsterdam && !balance.is_zero() && to != beneficiary {
-                let log = create_eth_transfer_log(to, beneficiary, balance);
-                self.substate.add_log(log);
-            }
-
             self.substate.add_selfdestruct(to);
 
-            // EIP-7708: Emit selfdestruct log ONLY when destroying to self
-            if self.env.config.fork >= Fork::Amsterdam && to == beneficiary {
-                let log = create_selfdestruct_log(to, balance);
+            // EIP-7708: Emit appropriate log for ETH movement
+            if self.env.config.fork >= Fork::Amsterdam && !balance.is_zero() {
+                let log = if to != beneficiary {
+                    create_eth_transfer_log(to, beneficiary, balance)
+                } else {
+                    create_selfdestruct_log(to, balance)
+                };
                 self.substate.add_log(log);
             }
         }
