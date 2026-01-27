@@ -160,7 +160,11 @@ pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
     if is_memory_datadir(datadir) {
         Store::new(datadir, EngineType::InMemory)
     } else {
-        #[cfg(feature = "rocksdb")]
+        // Use EthrexDbRocksDB when ethrex-db feature is enabled (hybrid storage)
+        #[cfg(feature = "ethrex-db")]
+        let engine_type = EngineType::EthrexDbRocksDB;
+        // Otherwise use standard RocksDB
+        #[cfg(all(feature = "rocksdb", not(feature = "ethrex-db")))]
         let engine_type = EngineType::RocksDB;
         #[cfg(feature = "metrics")]
         ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
