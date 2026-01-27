@@ -1,6 +1,6 @@
 use crate::{
     U256,
-    constants::WORD_SIZE,
+    constants::{TWO_FIFTY_SIX, WORD_SIZE},
     errors::{InternalError, OpcodeResult, VMError},
     gas_cost,
     vm::VM,
@@ -11,6 +11,7 @@ use crate::{
 
 impl<'a> VM<'a> {
     // LT operation
+    #[inline]
     pub fn op_lt(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::LT)?;
@@ -22,6 +23,7 @@ impl<'a> VM<'a> {
     }
 
     // GT operation
+    #[inline]
     pub fn op_gt(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::GT)?;
@@ -71,6 +73,7 @@ impl<'a> VM<'a> {
     }
 
     // EQ operation (equality check)
+    #[inline]
     pub fn op_eq(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::EQ)?;
@@ -96,6 +99,7 @@ impl<'a> VM<'a> {
     }
 
     // AND operation
+    #[inline]
     pub fn op_and(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::AND)?;
@@ -106,6 +110,7 @@ impl<'a> VM<'a> {
     }
 
     // OR operation
+    #[inline]
     pub fn op_or(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::OR)?;
@@ -116,6 +121,7 @@ impl<'a> VM<'a> {
     }
 
     // XOR operation
+    #[inline]
     pub fn op_xor(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::XOR)?;
@@ -167,12 +173,13 @@ impl<'a> VM<'a> {
 
     #[expect(clippy::arithmetic_side_effects)]
     // SHL operation (shift left)
+    #[inline]
     pub fn op_shl(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::SHL)?;
         let [shift, value] = *current_call_frame.stack.pop()?;
 
-        if shift < U256::from(256) {
+        if shift < TWO_FIFTY_SIX {
             current_call_frame.stack.push(value << shift)?;
         } else {
             current_call_frame.stack.push_zero()?;
@@ -183,12 +190,13 @@ impl<'a> VM<'a> {
 
     #[expect(clippy::arithmetic_side_effects)]
     // SHR operation (shift right)
+    #[inline]
     pub fn op_shr(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::SHR)?;
         let [shift, value] = *current_call_frame.stack.pop()?;
 
-        if shift < U256::from(256) {
+        if shift < TWO_FIFTY_SIX {
             current_call_frame.stack.push(value >> shift)?;
         } else {
             current_call_frame.stack.push_zero()?;
@@ -199,6 +207,7 @@ impl<'a> VM<'a> {
 
     #[allow(clippy::arithmetic_side_effects)]
     // SAR operation (arithmetic shift right)
+    #[inline]
     pub fn op_sar(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::SAR)?;
@@ -207,11 +216,11 @@ impl<'a> VM<'a> {
         // In 2's complement arithmetic, the most significant bit being one means the number is negative
         let is_negative = value.bit(255);
 
-        let res = if shift < U256::from(256) {
+        let res = if shift < TWO_FIFTY_SIX {
             if !is_negative {
                 value >> shift
             } else {
-                (value >> shift) | ((U256::MAX) << (U256::from(256) - shift))
+                (value >> shift) | ((U256::MAX) << (TWO_FIFTY_SIX - shift))
             }
         } else if is_negative {
             U256::MAX
@@ -222,36 +231,6 @@ impl<'a> VM<'a> {
 
         Ok(OpcodeResult::Continue)
     }
-}
-
-/// Instead of using unsafe <<, uses checked_mul n times, replicating n shifts.
-/// Note: These (checked_shift_left and checked_shift_right) are done because
-/// are not available in U256
-pub fn checked_shift_left(value: U256, shift: U256) -> Result<U256, VMError> {
-    let mut result = value;
-    let mut shifts_left = shift;
-
-    while !shifts_left.is_zero() {
-        result = match result.checked_mul(U256::from(2)) {
-            Some(num) => num,
-            None => {
-                let only_most_representative_bit_on = U256::from(2)
-                    .checked_pow(U256::from(255))
-                    .ok_or(InternalError::Overflow)?;
-                let partial_result = result
-                    .checked_sub(only_most_representative_bit_on)
-                    .ok_or(InternalError::Underflow)?; //Should not happen bc checked_mul overflows
-                partial_result
-                    .checked_mul(U256::from(2))
-                    .ok_or(InternalError::Overflow)?
-            }
-        };
-        shifts_left = shifts_left
-            .checked_sub(U256::from(1))
-            .ok_or(InternalError::Underflow)?; // Should not reach negative values
-    }
-
-    Ok(result)
 }
 
 const ONE: U256 = U256::from_limbs([1, 0, 0, 0]);

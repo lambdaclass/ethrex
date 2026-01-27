@@ -1,5 +1,6 @@
 use crate::{
     U256, U512,
+    constants::{EIGHT, ONE, SEVEN, THIRTY_ONE},
     errors::{OpcodeResult, VMError},
     gas_cost,
     vm::VM,
@@ -228,7 +229,7 @@ impl<'a> VM<'a> {
 
         let [byte_size_minus_one, value_to_extend] = *current_call_frame.stack.pop()?;
 
-        if byte_size_minus_one > U256::from(31) {
+        if byte_size_minus_one > THIRTY_ONE {
             current_call_frame.stack.push(value_to_extend)?;
             return Ok(OpcodeResult::Continue);
         }
@@ -237,15 +238,15 @@ impl<'a> VM<'a> {
             clippy::arithmetic_side_effects,
             reason = "Since byte_size_minus_one ≤ 31, overflow is impossible"
         )]
-        let sign_bit_index = byte_size_minus_one.wrapping_mul(U256::from(8)).wrapping_add(U256::from(7));
+        let sign_bit_index = byte_size_minus_one.wrapping_mul(EIGHT).wrapping_add(SEVEN);
 
         #[expect(
             clippy::arithmetic_side_effects,
             reason = "sign_bit_index max value is 31 * 8 + 7 = 255, which can't overflow."
         )]
         {
-            let sign_bit = (value_to_extend >> sign_bit_index) & U256::from(1);
-            let mask = (U256::from(1) << sign_bit_index) - U256::from(1);
+            let sign_bit = (value_to_extend >> sign_bit_index) & ONE;
+            let mask = (ONE << sign_bit_index) - ONE;
 
             let result = if sign_bit.is_zero() {
                 value_to_extend & mask
@@ -280,7 +281,7 @@ fn is_negative(value: U256) -> bool {
 
 /// Negates a number in two's complement
 fn negate(value: U256) -> U256 {
-    let (dividend, _overflowed) = (!value).overflowing_add(U256::from(1));
+    let (dividend, _overflowed) = (!value).overflowing_add(ONE);
     dividend
 }
 

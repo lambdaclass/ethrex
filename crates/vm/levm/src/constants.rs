@@ -14,6 +14,13 @@ pub const SUCCESS: U256 = U256::from_limbs([1, 0, 0, 0]);
 pub const FAIL: U256 = U256::ZERO;
 pub const WORD_SIZE: usize = 32;
 
+// Pre-computed constants to avoid runtime U256::from() allocations
+pub const ONE: U256 = U256::from_limbs([1, 0, 0, 0]);
+pub const SEVEN: U256 = U256::from_limbs([7, 0, 0, 0]);
+pub const EIGHT: U256 = U256::from_limbs([8, 0, 0, 0]);
+pub const THIRTY_ONE: U256 = U256::from_limbs([31, 0, 0, 0]);
+pub const TWO_FIFTY_SIX: U256 = U256::from_limbs([256, 0, 0, 0]);
+
 pub const STACK_LIMIT: usize = 1024;
 
 pub const EMPTY_CODE_HASH: H256 = H256([

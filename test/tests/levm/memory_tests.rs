@@ -1,6 +1,5 @@
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
-use ethrex_common::U256;
-use ethrex_levm::memory::Memory;
+use ethrex_levm::{U256, memory::Memory};
 
 #[test]
 fn test_basic_store_data() {
@@ -60,7 +59,7 @@ fn test_copy_word_within() {
         mem.store_word(0, U256::from(4)).unwrap();
         mem.copy_within(32, 0, 32).unwrap();
 
-        assert_eq!(mem.load_word(0).unwrap(), U256::zero());
+        assert_eq!(mem.load_word(0).unwrap(), U256::ZERO);
         assert_eq!(mem.len(), 64);
     }
 }

@@ -1,7 +1,6 @@
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
-use ethrex_common::U256;
-use ethrex_levm::call_frame::Stack;
+use ethrex_levm::{U256, call_frame::Stack};
 
 /// Helper to setup a stack with specific values
 fn setup_stack_with_values(values: &[u64]) -> Stack {
