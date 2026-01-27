@@ -2,6 +2,7 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::too_many_arguments)]
+#![allow(clippy::indexing_slicing)]
 
 use anyhow::{Context, Result};
 use ethrex_common::{Address, H160, U256, types::TxType};
@@ -49,6 +50,7 @@ const SENDER_PRIVATE_KEY_ERC20: &str =
 const VALUE: u64 = 10000000000000001u64;
 
 const L2_A_CHAIN_ID: u64 = 65536999u64;
+const L2_B_CHAIN_ID: u64 = 1730u64;
 
 const DEST_GAS_LIMIT: u64 = 100000u64;
 
@@ -111,6 +113,12 @@ async fn test_transfer_erc_20() -> Result<()> {
     let l2a_client = connect(L2A_RPC_URL).await;
     let l2b_client = connect(L2B_RPC_URL).await;
 
+    // Get the bridge addresses from the Router contract
+    let router = router_address()?;
+    let l2a_bridge = get_bridge_address_from_router(&l1_client, router, L2_A_CHAIN_ID).await;
+    let l2b_bridge = get_bridge_address_from_router(&l1_client, router, L2_B_CHAIN_ID).await;
+    println!("test_transfer_erc_20: L2A bridge: {l2a_bridge:?}, L2B bridge: {l2b_bridge:?}");
+
     let private_key = SecretKey::from_str(SENDER_PRIVATE_KEY_ERC20).unwrap();
     let signer: Signer = LocalSigner::new(private_key).into();
     let sender_address = signer.address();
@@ -148,15 +156,14 @@ async fn test_transfer_erc_20() -> Result<()> {
     )
     .await?;
 
-    let bridge_balance =
-        test_balance_of(&l1_client, l1_erc20_contract_address, bridge_address()?).await;
+    let bridge_balance = test_balance_of(&l1_client, l1_erc20_contract_address, l2a_bridge).await;
     assert_eq!(bridge_balance, U256::from(DEPOSIT_VALUE), "invalid deposit");
 
     // send ERC20 from L2a to L2b
     let transfer_amount = U256::from(999999u64);
     let signature = "transferERC20(uint256,address,uint256,address,address,uint256)";
     let values = [
-        Value::Uint(U256::from(1730)),
+        Value::Uint(U256::from(L2_B_CHAIN_ID)),
         Value::Address(sender_address),
         Value::Uint(transfer_amount),
         Value::Address(l2a_erc20_contract_address),
@@ -182,6 +189,33 @@ async fn test_transfer_erc_20() -> Result<()> {
         l2b_new_balance,
         l2b_balance + transfer_amount,
         "test_transfer_erc_20: Invalid deposit"
+    );
+
+    // Verify L1 bridge deposits accounting was updated correctly.
+    // Each L2 has its own bridge on L1, so we use the bridge addresses queried from the Router.
+    let l1_deposits_l2a_after = get_bridge_deposits(
+        &l1_client,
+        l2a_bridge,
+        l1_erc20_contract_address,
+        l2a_erc20_contract_address,
+    )
+    .await;
+    let l1_deposits_l2b_after = get_bridge_deposits(
+        &l1_client,
+        l2b_bridge,
+        l1_erc20_contract_address,
+        l2b_erc20_contract_address,
+    )
+    .await;
+
+    assert_eq!(
+        l1_deposits_l2a_after,
+        U256::from(DEPOSIT_VALUE) - transfer_amount,
+        "test_transfer_erc_20: L1 deposits for L2a should decrease after L2->L2 transfer"
+    );
+    assert_eq!(
+        l1_deposits_l2b_after, transfer_amount,
+        "test_transfer_erc_20: L1 deposits for L2b should increase after L2->L2 transfer"
     );
 
     Ok(())
@@ -744,4 +778,55 @@ async fn test_balance_of(client: &EthClient, token: Address, user: Address) -> U
         .await
         .unwrap();
     U256::from_str_radix(res.trim_start_matches("0x"), 16).unwrap()
+}
+
+/// Reads the `deposits(address,address)` mapping from the L1 CommonBridge contract.
+async fn get_bridge_deposits(
+    client: &EthClient,
+    bridge: Address,
+    token_l1: Address,
+    token_l2: Address,
+) -> U256 {
+    let res = client
+        .call(
+            bridge,
+            encode_calldata(
+                "deposits(address,address)",
+                &[Value::Address(token_l1), Value::Address(token_l2)],
+            )
+            .unwrap()
+            .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+    U256::from_str_radix(res.trim_start_matches("0x"), 16).unwrap()
+}
+
+/// Gets the Router contract address from environment variable.
+fn router_address() -> Result<Address> {
+    std::env::var("ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS")
+        .context("ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS not set")?
+        .parse()
+        .context("Invalid router address")
+}
+
+/// Queries the Router contract's `bridges(uint256)` mapping to get the bridge address for a chain.
+async fn get_bridge_address_from_router(
+    client: &EthClient,
+    router: Address,
+    chain_id: u64,
+) -> Address {
+    let res = client
+        .call(
+            router,
+            encode_calldata("bridges(uint256)", &[Value::Uint(U256::from(chain_id))])
+                .unwrap()
+                .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+    let bytes = hex::decode(res.trim_start_matches("0x")).unwrap();
+    Address::from_slice(&bytes[12..32])
 }
