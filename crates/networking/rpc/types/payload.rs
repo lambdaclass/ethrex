@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use ethrex_rlp::error::RLPDecodeError;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 
 use ethrex_common::{
@@ -100,7 +101,7 @@ impl ExecutionPayload {
         let body = BlockBody {
             transactions: self
                 .transactions
-                .iter()
+                .par_iter()
                 .map(|encoded_tx| encoded_tx.decode())
                 .collect::<Result<Vec<_>, RLPDecodeError>>()?,
             ommers: vec![],
