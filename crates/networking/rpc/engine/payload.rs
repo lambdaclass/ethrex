@@ -666,7 +666,7 @@ fn get_block_from_payload(
 ) -> Result<Block, RLPDecodeError> {
     let block_hash = payload.block_hash;
     let block_number = payload.block_number;
-    info!(%block_hash, %block_number, "Received new payload");
+    debug!(%block_hash, %block_number, "Received new payload");
 
     payload.into_block(parent_beacon_block_root, requests_hash)
 }
@@ -717,7 +717,7 @@ async fn try_execute_payload(
     }
 
     // Execute and store the block
-    info!(%block_hash, %block_number, "Executing payload");
+    debug!(%block_hash, %block_number, "Executing payload");
 
     match add_block(context, block).await {
         Err(ChainError::ParentNotFound) => {
@@ -765,7 +765,7 @@ async fn try_execute_payload(
             Err(RpcErr::Internal(e.to_string()))
         }
         Ok(()) => {
-            info!("Block with hash {block_hash} executed and added to storage succesfully");
+            debug!("Block with hash {block_hash} executed and added to storage successfully");
             Ok(PayloadStatus::valid_with_hash(block_hash))
         }
     }

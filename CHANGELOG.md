@@ -2,9 +2,26 @@
 
 ## Perf
 
-### 2026-01-16
+### 2026-01-27
 
 - Avoid unnecesary clones in engine_newPayloadV3/V4 [#5836](https://github.com/lambdaclass/ethrex/pull/5836)
+
+### 2026-01-23
+
+- Reuse cache in prewarm workers [#5999](https://github.com/lambdaclass/ethrex/pull/5999)
+
+### 2026-01-21
+
+- Improve snap sync logging with table format and visual progress bars [#5977](https://github.com/lambdaclass/ethrex/pull/5977)
+
+### 2026-01-20
+
+- Remove `ethrex-threadpool` crate and move `ThreadPool` to `ethrex-trie` [#5925](https://github.com/lambdaclass/ethrex/pull/5925)
+
+### 2026-01-19
+
+- Use FxHashset for access lists [#5864](https://github.com/lambdaclass/ethrex/pull/5864)
+- Prewarm cache by executing in parallel [#5906](https://github.com/lambdaclass/ethrex/pull/5906)
 
 ### 2026-01-15
 
@@ -12,6 +29,7 @@
 
 ### 2026-01-13
 
+- Remove needless allocs in CALLDATACOPY/CODECOPY/EXTCODECOPY [#5810](https://github.com/lambdaclass/ethrex/pull/5810)
 - Inline common opcodes [#5761](https://github.com/lambdaclass/ethrex/pull/5761)
 - Improve ecrecover precompile by removing heap allocs and conversions [#5709](https://github.com/lambdaclass/ethrex/pull/5709)
 
