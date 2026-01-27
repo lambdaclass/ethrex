@@ -894,9 +894,9 @@ async fn test_erc20_withdraw_l1_address_mismatch(
 
     // Verify the revert reason using eth_call before sending the transaction
     let calldata: Bytes = encode_calldata(signature, &data)?.into();
-    // Get the current nonce for the eth_call (L2 requires nonce validation)
+    // Get the current nonce for the eth_call
     let nonce = l2_client
-        .get_nonce(rich_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .get_nonce(rich_address, BlockIdentifier::Tag(BlockTag::Pending))
         .await?;
     let call_result = l2_client
         .call(
