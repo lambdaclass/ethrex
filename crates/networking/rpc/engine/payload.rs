@@ -632,15 +632,16 @@ fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcEr
     Ok(())
 }
 
+#[inline]
 fn validate_execution_payload_v4(payload: &ExecutionPayload) -> Result<(), RpcErr> {
     // This method follows the same specification as `engine_newPayloadV4` additionally
     // rejects payload without block access list
 
-    validate_execution_payload_v3(payload)?;
-
     if payload.block_access_list.is_none() {
         return Err(RpcErr::WrongParam("block_access_list".to_string()));
     }
+
+    validate_execution_payload_v3(payload)?;
 
     Ok(())
 }
