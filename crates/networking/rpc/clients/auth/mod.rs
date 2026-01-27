@@ -8,7 +8,7 @@ use crate::{
         fork_choice::{ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3},
         payload::{ExecutionPayload, ExecutionPayloadResponse, PayloadStatus},
     },
-    utils::{RpcErrorResponse, RpcRequest, RpcSuccessResponse},
+    utils::{RpcRequest, RpcResponse},
 };
 use bytes::Bytes;
 use errors::{
@@ -17,18 +17,10 @@ use errors::{
 };
 use ethrex_common::H256;
 use reqwest::Client;
-use serde::Deserialize;
 use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod errors;
-
-#[derive(Deserialize, Debug)]
-#[serde(untagged)]
-pub enum RpcResponse {
-    Success(RpcSuccessResponse),
-    Error(RpcErrorResponse),
-}
 
 #[derive(Debug, Clone)]
 pub struct EngineClient {
