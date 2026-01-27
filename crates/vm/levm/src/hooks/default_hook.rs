@@ -502,8 +502,13 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
     } else {
         // Here bytecode and code_address could be either from the account or from the delegated account.
         let to = vm.current_call_frame.to;
-        let (_is_delegation, _eip7702_gas_consumed, code_address, bytecode) =
+        let (_is_delegation, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, to)?;
+
+        // Charge the gas cost for resolving EIP-7702 delegation (cold/warm access to delegated address)
+        vm.current_call_frame
+            .increase_consumed_gas(eip7702_gas_consumed)
+            .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
 
         (bytecode, code_address)
     };
