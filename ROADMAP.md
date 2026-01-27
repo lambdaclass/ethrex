@@ -31,14 +31,11 @@ This is a WIP document and it requires better descriptions; it's supposed to be 
 
 | Item | Priority | Status | Description |
 |-----|----------|--------|-------------|
-| Replace BTreeMap with FxHashMap | 0 | In Progress | Replace BTreeMap/BTreeSet with FxHashMap/FxHashSet|
-| Skip Zero-Initialization in Memory Resize | 0 | Pending | Use unsafe set_len (EVM spec says expanded memory is zero) |
-| Remove RefCell from Memory | 0 | Pending | Consider using UnsafeCell with manual safety guarantees, or restructure to avoid shared ownership. |
+| Skip Zero-Initialization in Memory Resize | 0 | Need benchmark [#5774](https://github.com/lambdaclass/ethrex/pull/5774) | Use unsafe set_len (EVM spec says expanded memory is zero) |
+| Remove RefCell from Memory | 0 | Needs benchmark [#5793](https://github.com/lambdaclass/ethrex/pull/5793) | Consider using UnsafeCell with manual safety guarantees, or restructure to avoid shared ownership. |
 | Try out PEVM | 0 | In Progress | Benchmark again against pevm |
-| Inline Hot Opcodes | 0 | In Progress | Opcodes call a function in a jump table when some of the most used ones could perform better being inlined instead |
 | Test ECPairing libraries | 0 | Pending | Benchmark arkworks pairing in levm|
 | PGO/BOLT | 0 | Pending | Try out both [PGO](https://doc.rust-lang.org/beta/rustc/profile-guided-optimization.html) and [BOLT](https://github.com/llvm/llvm-project/tree/main/bolt) to see if we can improve perf |
-| Use an arena allocator for substate tracking | 0 | Pending | Substates are currently a linked list allocated through boxing. Consider using an arena allocator (e.g. bumpalo) for them |
 | ruint | 0 | Pending | Try out [ruint](https://github.com/recmo/uint) as the `U256` library to see if it improves performance. Part of SIMD initiative |
 | Nibbles | 1 | Pending | Nibbles are currently stored as a byte (`u8`), when they could be stored compactly as actual nibbles in memory and reduce by half their representation size |
 | RLP Duplication | 1 | Pending | Check whether we are encoding/decoding something twice (clearly unnecessary) |
@@ -48,6 +45,16 @@ This is a WIP document and it requires better descriptions; it's supposed to be 
 | EXTCODESIZE without full bytecode | 1 | Pending | EXTCODESIZE loads entire bytecode just to get length. Add `get_account_code_size()` or store code length alongside code (`crates/vm/levm/src/opcode_handlers/environment.rs:260-274`) |
 | TransactionQueue data structure | 1 | Pending | `TransactionQueue` uses `Vec` with `remove(0)` which is O(n). Replace with `BinaryHeap`/`BTreeSet` or `VecDeque` for O(log n) or O(1) operations (`crates/blockchain/payload.rs:708-820`) |
 
+
+### Done
+
+| Item | Result | Description | PR
+|-----|----------|--------|-------------|
+| Replace BTreeMap with FxHashMap for  for access lists | Success, perf improved | Replace BTreeMap/BTreeSet with FxHashMap/FxHashSet for access lists | [#5824](https://github.com/lambdaclass/ethrex/pull/5824)
+| Inline Hot Opcodes | Success, perf improved | Opcodes call a function in a jump table when some of the most used ones could perform better being inlined instead | [#5761](https://github.com/lambdaclass/ethrex/pull/5761)
+| Use an arena allocator for substate tracking | Rejected, perf regresion | Substates are currently a linked list allocated through boxing. Consider using an arena allocator (e.g. bumpalo) for them |
+| accessed_storage_slots from btree to fxhashmap | Rejected, no perf improved | change accessed_storage_slots from btree to fxhashmap | [#5762](https://github.com/lambdaclass/ethrex/pull/5762)
+| sstore add (address, key) → (current, original) cache | Rejected, regression | improve sstore by adding a (address, key) → (current, original) cache | [#5835](https://github.com/lambdaclass/ethrex/pull/5835)
 
 ---
 
@@ -86,7 +93,7 @@ This is a WIP document and it requires better descriptions; it's supposed to be 
 |-----|----------|--------|-------------|
 | Parallel tx decoding | 0 | Pending | Use rayon to decode transactions in parallel. Currently sequential at ~5-10μs per tx |
 | simd-json | 0 | Pending | Replace serde_json with simd-json for SIMD-accelerated JSON parsing |
-| Remove payload.clone() | 0 | Pending | Avoid cloning `ExecutionPayload` in `get_block_from_payload` (`crates/networking/rpc/engine/payload.rs:674`). Use references or owned values directly |
+| Remove payload.clone() | 0 | Needs benchmark [#5836](https://github.com/lambdaclass/ethrex/pull/5836) | Avoid cloning `ExecutionPayload` in `get_block_from_payload` (`crates/networking/rpc/engine/payload.rs:674`). Use references or owned values directly |
 | Remove params.clone() | 0 | Pending | Avoid cloning params before `serde_json::from_value()`. Use references instead of `params[i].clone()` in RPC handlers (`crates/networking/rpc/engine/payload.rs`) |
 | Use Bytes instead of String | 0 | Pending | Change HTTP body extraction from `String` to `Bytes` and use `serde_json::from_slice()` instead of `from_str()` to avoid UTF-8 validation overhead (`crates/networking/rpc/rpc.rs:536,563`) |
 | RawValue for params | 1 | Pending | Use `Option<Vec<serde_json::value::RawValue>>` instead of `Option<Vec<Value>>` in `RpcRequest` to defer parsing until needed (`crates/networking/rpc/utils.rs:242`) |
