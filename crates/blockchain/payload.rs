@@ -1,6 +1,6 @@
 use std::{
     cmp::{Ordering, max},
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     ops::Div,
     sync::Arc,
     time::{Duration, Instant},
@@ -705,10 +705,9 @@ pub fn apply_plain_transaction(
 }
 
 /// A struct representing suitable mempool transactions waiting to be included in a block
-// TODO: Consider using VecDequeue instead of Vec
 pub struct TransactionQueue {
     // The first transaction for each account along with its tip, sorted by highest tip
-    heads: Vec<HeadTransaction>,
+    heads: VecDeque<HeadTransaction>,
     // The remaining txs grouped by account and sorted by nonce
     txs: HashMap<Address, Vec<MempoolTransaction>>,
     // Base Fee stored for tip calculations
@@ -759,7 +758,7 @@ impl TransactionQueue {
         // Sort heads by higest tip (and lowest timestamp if tip is equal)
         heads.sort();
         Ok(TransactionQueue {
-            heads,
+            heads: VecDeque::from(heads),
             txs,
             base_fee,
         })
@@ -779,13 +778,13 @@ impl TransactionQueue {
     /// Returns the head transaction with the highest tip
     /// If there is more than one transaction with the highest tip, return the one with the lowest timestamp
     pub fn peek(&self) -> Option<HeadTransaction> {
-        self.heads.first().cloned()
+        self.heads.front().cloned()
     }
 
     /// Removes current head transaction and all transactions from the given sender
     pub fn pop(&mut self) {
         if !self.is_empty() {
-            let sender = self.heads.remove(0).tx.sender();
+            let sender = self.heads.pop_front().unwrap().tx.sender();
             self.txs.remove(&sender);
         }
     }
@@ -793,7 +792,7 @@ impl TransactionQueue {
     /// Remove the top transaction
     /// Add a tx from the same sender to the head transactions
     pub fn shift(&mut self) -> Result<(), ChainError> {
-        let tx = self.heads.remove(0);
+        let tx = self.heads.pop_front().unwrap();
         if let Some(txs) = self.txs.get_mut(&tx.tx.sender()) {
             // Fetch next head
             if !txs.is_empty() {
@@ -808,7 +807,8 @@ impl TransactionQueue {
                     tx: head_tx,
                 };
                 // Insert head into heads list while maintaing order
-                let index = match self.heads.binary_search(&head) {
+                // Convert VecDeque to slice for binary_search
+                let index = match self.heads.make_contiguous().binary_search(&head) {
                     Ok(index) => index, // Same ordering shouldn't be possible when adding timestamps
                     Err(index) => index,
                 };
