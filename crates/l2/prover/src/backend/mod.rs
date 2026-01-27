@@ -48,6 +48,7 @@ pub enum BackendType {
     #[cfg(feature = "risc0")]
     RISC0,
     #[cfg(feature = "zisk")]
+    #[value(name = "zisk")]
     ZisK,
     #[cfg(feature = "openvm")]
     OpenVM,

@@ -135,9 +135,15 @@ else
   RISC0? :=
 endif
 
+ifdef ZISK
+  ZISK? := zisk
+else
+  ZISK? :=
+endif
+
 init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	export $(shell cat ../../cmd/.env | xargs); \
-	cargo run --release --features l2,l2-sql,$(SP1?),$(RISC0?) --manifest-path ../../Cargo.toml -- \
+	cargo run --release --features l2,l2-sql,$(SP1?),$(RISC0?),$(ZISK?) --manifest-path ../../Cargo.toml -- \
 	l2 \
 	--watcher.block-delay 0 \
 	--network ${L2_GENESIS_FILE_PATH} \
