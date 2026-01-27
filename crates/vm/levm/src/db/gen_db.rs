@@ -121,22 +121,25 @@ impl GeneralizedDatabase {
 
     /// Gets code metadata immutably given the code hash.
     pub fn get_code_metadata(&mut self, code_hash: H256) -> Result<&CodeMetadata, InternalError> {
-        match self.code_metadata.entry(code_hash) {
-            Entry::Occupied(entry) => Ok(entry.into_mut()),
-            Entry::Vacant(entry) => {
-                // Check if we have the code in cache (e.g., from contract creation in this tx)
-                // If so, compute metadata from cached code instead of hitting the database
-                let metadata = if let Some(code) = self.codes.get(&code_hash) {
-                    CodeMetadata {
-                        #[expect(clippy::as_conversions, reason = "same sized types (on 64bit)")]
-                        length: code.bytecode.len() as u64,
-                    }
-                } else {
-                    self.store.get_code_metadata(code_hash)?
-                };
-                Ok(entry.insert(metadata))
-            }
+        // Check if metadata is already cached
+        if self.code_metadata.contains_key(&code_hash) {
+            return Ok(&self.code_metadata[&code_hash]);
         }
+
+        // First ensure code is loaded into cache by calling get_code
+        // This handles witness fallbacks and other code loading logic correctly
+        let code_length = {
+            let code = self.get_code(code_hash)?;
+            code.bytecode.len() as u64
+        };
+
+        let metadata = CodeMetadata {
+            length: code_length,
+        };
+
+        // Insert into cache and return reference
+        self.code_metadata.insert(code_hash, metadata);
+        Ok(&self.code_metadata[&code_hash])
     }
 
     /// Convenience method to get code length by address (optimized for EXTCODESIZE).
