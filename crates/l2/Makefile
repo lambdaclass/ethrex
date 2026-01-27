@@ -199,7 +199,7 @@ build-prover-exec:
 	cargo build --release --features "l2,l2-sql,$(GPU?)" --manifest-path ../../Cargo.toml --bin ethrex
 
 init-prover-sp1:
-	cargo run --release --features "l2,l2-sql,$(GPU?),sp1" --manifest-path ../../Cargo.toml -- \
+	RUST_LOG=debug cargo run --release --features "l2,l2-sql,$(GPU?),sp1" --manifest-path ../../Cargo.toml -- \
 	l2 prover \
 	--proof-coordinators tcp://127.0.0.1:3900 \
 	--backend sp1
