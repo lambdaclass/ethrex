@@ -3339,20 +3339,15 @@ dependencies = [
 name = "ethrex-guest-program"
 version = "9.0.0"
 dependencies = [
- "bincode",
  "bytes",
- "ethrex-blockchain",
  "ethrex-common 9.0.0",
  "ethrex-crypto",
  "ethrex-l2-common",
  "ethrex-rlp 9.0.0",
- "ethrex-storage 9.0.0",
- "ethrex-trie 9.0.0",
  "ethrex-vm",
  "hex",
  "rkyv",
  "serde",
- "serde_json",
  "serde_with",
  "sp1-build",
  "sp1-sdk",
@@ -3425,7 +3420,6 @@ dependencies = [
  "ethrex-common 9.0.0",
  "ethrex-crypto",
  "ethrex-rlp 9.0.0",
- "ethrex-storage 9.0.0",
  "ethrex-trie 9.0.0",
  "ethrex-vm",
  "hex",
