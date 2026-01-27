@@ -159,7 +159,7 @@ pub fn dump_accounts_to_file(
     path: &Path,
     accounts: Vec<(H256, AccountState)>,
 ) -> Result<(), DumpError> {
-    #[cfg(feature = "rocksdb")]
+    #[cfg(all(feature = "rocksdb", not(feature = "ethrex-db")))]
     return dump_accounts_to_rocks_db(path, accounts)
         .inspect_err(|err| error!("Rocksdb writing stt error {err:?}"))
         .map_err(|_| DumpError {
@@ -167,7 +167,7 @@ pub fn dump_accounts_to_file(
             contents: Vec::new(),
             error: std::io::ErrorKind::Other,
         });
-    #[cfg(not(feature = "rocksdb"))]
+    #[cfg(any(not(feature = "rocksdb"), feature = "ethrex-db"))]
     dump_to_file(path, accounts.encode_to_vec())
 }
 
@@ -183,7 +183,7 @@ pub fn dump_storages_to_file(
     path: &Path,
     storages: Vec<AccountsWithStorage>,
 ) -> Result<(), DumpError> {
-    #[cfg(feature = "rocksdb")]
+    #[cfg(all(feature = "rocksdb", not(feature = "ethrex-db")))]
     return dump_storages_to_rocks_db(
         path,
         storages
@@ -211,7 +211,7 @@ pub fn dump_storages_to_file(
         error: std::io::ErrorKind::Other,
     });
 
-    #[cfg(not(feature = "rocksdb"))]
+    #[cfg(any(not(feature = "rocksdb"), feature = "ethrex-db"))]
     dump_to_file(
         path,
         storages
