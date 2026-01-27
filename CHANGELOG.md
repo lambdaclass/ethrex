@@ -1,5 +1,11 @@
 # Ethrex Changelog
 
+## Feat
+
+### 2026-01-20
+
+- Add ethrex-db as submodule for state trie integration [#5952](https://github.com/lambdaclass/ethrex/pull/5952)
+
 ## Perf
 
 ### 2026-01-23

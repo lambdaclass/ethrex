@@ -1059,7 +1059,13 @@ impl Blockchain {
             // We cannot ensure that the users of this function have the necessary
             // state stored, so in order for it to not assume anything, we update
             // the storage with the new state after re-execution
-            self.store_block(block.clone(), account_updates_list, execution_result)?;
+            self.store_block(
+                block.clone(),
+                account_updates_list,
+                execution_result,
+                #[cfg(feature = "ethrex-db")]
+                Some(account_updates.clone()),
+            )?;
 
             for (address, (witness, _storage_trie)) in storage_tries_after_update {
                 let mut witness = witness.lock().map_err(|_| {
@@ -1461,6 +1467,7 @@ impl Blockchain {
         block: Block,
         account_updates_list: AccountUpdatesList,
         execution_result: BlockExecutionResult,
+        #[cfg(feature = "ethrex-db")] raw_account_updates: Option<Vec<AccountUpdate>>,
     ) -> Result<(), ChainError> {
         // Check state root matches the one in block header
         validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
@@ -1471,6 +1478,8 @@ impl Blockchain {
             receipts: vec![(block.hash(), execution_result.receipts)],
             blocks: vec![block],
             code_updates: account_updates_list.code_updates,
+            #[cfg(feature = "ethrex-db")]
+            raw_account_updates,
         };
 
         self.storage
@@ -1497,7 +1506,13 @@ impl Blockchain {
         );
 
         let merkleized = Instant::now();
-        let result = self.store_block(block, account_updates_list, res);
+        let result = self.store_block(
+            block,
+            account_updates_list,
+            res,
+            #[cfg(feature = "ethrex-db")]
+            Some(updates),
+        );
         let stored = Instant::now();
 
         if self.options.perf_logs_enabled {
@@ -1566,6 +1581,10 @@ impl Blockchain {
             block.body.transactions.len(),
         );
 
+        // Clone updates for ethrex-db before potentially moving them
+        #[cfg(feature = "ethrex-db")]
+        let raw_updates_for_db = accumulated_updates.clone();
+
         if let Some(logger) = logger
             && let Some(account_updates) = accumulated_updates
         {
@@ -1580,7 +1599,13 @@ impl Blockchain {
                 .store_witness(block_hash, block_number, witness)?;
         };
 
-        let result = self.store_block(block, account_updates_list, res);
+        let result = self.store_block(
+            block,
+            account_updates_list,
+            res,
+            #[cfg(feature = "ethrex-db")]
+            raw_updates_for_db,
+        );
 
         let stored = Instant::now();
 
@@ -1942,6 +1967,8 @@ impl Blockchain {
             blocks,
             receipts: all_receipts,
             code_updates,
+            #[cfg(feature = "ethrex-db")]
+            raw_account_updates: Some(account_updates),
         };
 
         self.storage

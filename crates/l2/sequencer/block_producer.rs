@@ -232,8 +232,13 @@ impl BlockProducer {
         let block_number = block.header.number;
         let block_hash = block.hash();
         self.store_fee_config_by_block(block.header.number).await?;
-        self.blockchain
-            .store_block(block, account_updates_list, execution_result)?;
+        self.blockchain.store_block(
+            block,
+            account_updates_list,
+            execution_result,
+            #[cfg(feature = "ethrex-db")]
+            Some(account_updates.clone()),
+        )?;
         info!(
             "Stored new block {:x}, transaction_count {}",
             block_hash, transactions_count

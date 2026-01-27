@@ -1,5 +1,22 @@
+#[cfg(feature = "ethrex-db")]
+use crate::backend::ethrex_db::EthrexDbBackend;
 #[cfg(feature = "rocksdb")]
 use crate::backend::rocksdb::RocksDBBackend;
+#[cfg(feature = "ethrex-db")]
+use ethrex_db::chain::Blockchain;
+
+/// Wrapper for ethrex_db Blockchain that implements Debug.
+#[cfg(feature = "ethrex-db")]
+#[derive(Clone)]
+pub struct BlockchainRef(pub Arc<std::sync::RwLock<Blockchain>>);
+
+#[cfg(feature = "ethrex-db")]
+impl std::fmt::Debug for BlockchainRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlockchainRef").finish_non_exhaustive()
+    }
+}
+
 use crate::{
     STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION,
     api::{
@@ -62,6 +79,12 @@ pub const MAX_WITNESSES: u64 = 128;
 #[allow(unused)]
 const DB_COMMIT_THRESHOLD: usize = 128;
 const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
+
+/// Maximum number of blocks to keep in hot storage (unfinalized state).
+/// This matches Ethereum's BLOCKHASH opcode limit (256 blocks).
+/// Blocks older than this are automatically finalized when using ethrex_db backend.
+#[cfg(feature = "ethrex-db")]
+pub const HISTORY_DEPTH: u64 = 256;
 
 /// Control messages for the FlatKeyValue generator
 #[derive(Debug, PartialEq)]
@@ -153,6 +176,10 @@ pub struct Store {
     db_path: PathBuf,
     /// Storage backend (InMemory or RocksDB).
     backend: Arc<dyn StorageBackend>,
+    /// Optional reference to ethrex_db Blockchain for direct state operations.
+    /// Only present when using the ethrex-db backend.
+    #[cfg(feature = "ethrex-db")]
+    ethrex_blockchain: Option<BlockchainRef>,
     /// Chain configuration (fork schedule, chain ID, etc.).
     chain_config: ChainConfig,
     /// Cache for trie nodes from recent blocks.
@@ -211,6 +238,11 @@ pub enum EngineType {
     /// RocksDB storage, persistent. Suitable for production.
     #[cfg(feature = "rocksdb")]
     RocksDB,
+    /// Hybrid ethrex-db + RocksDB storage.
+    /// Uses ethrex-db for state/storage tries (optimized page-based storage)
+    /// and RocksDB for blocks, headers, receipts, and other data.
+    #[cfg(feature = "ethrex-db")]
+    EthrexDb,
 }
 
 /// Batch of updates to apply to the store atomically.
@@ -228,6 +260,11 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Contract code updates (code hash -> bytecode).
     pub code_updates: Vec<(H256, Code)>,
+    /// Raw account updates for ethrex_db backend.
+    /// Contains the original account updates from execution, needed because
+    /// ethrex_db stores raw account data directly rather than trie nodes.
+    #[cfg(feature = "ethrex-db")]
+    pub raw_account_updates: Option<Vec<AccountUpdate>>,
 }
 
 /// Storage trie updates grouped by account address hash.
@@ -1216,7 +1253,167 @@ impl Store {
     }
 
     pub fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if let Some(blockchain_ref) = &self.ethrex_blockchain {
+            return self.store_block_updates_ethrex_db(update_batch, blockchain_ref);
+        }
+
         self.apply_updates(update_batch)
+    }
+
+    /// Store block updates using the ethrex_db backend.
+    ///
+    /// This method routes state writes through ethrex_db's native Block/Blockchain
+    /// API instead of the trie layer cache. Block metadata (headers, bodies,
+    /// receipts, code) is still stored in RocksDB for compatibility.
+    #[cfg(feature = "ethrex-db")]
+    fn store_block_updates_ethrex_db(
+        &self,
+        update_batch: UpdateBatch,
+        blockchain_ref: &BlockchainRef,
+    ) -> Result<(), StoreError> {
+        let raw_updates = update_batch
+            .raw_account_updates
+            .as_ref()
+            .ok_or_else(|| StoreError::Custom("ethrex_db requires raw account updates".into()))?;
+
+        let blockchain = blockchain_ref
+            .0
+            .write()
+            .map_err(|_| StoreError::Custom("Blockchain lock poisoned".into()))?;
+
+        // Process each block
+        for block in &update_batch.blocks {
+            let parent_hash =
+                primitive_types::H256::from_slice(block.header.parent_hash.as_bytes());
+            let block_hash = primitive_types::H256::from_slice(block.hash().as_bytes());
+            let block_number = block.header.number;
+
+            // Create new block in ethrex_db
+            let mut ethrex_block = blockchain
+                .start_new(parent_hash, block_hash, block_number)
+                .map_err(|e| StoreError::Custom(format!("Failed to start new block: {e}")))?;
+
+            // Apply account updates to the block
+            for update in raw_updates {
+                Self::apply_account_update_to_block(&mut ethrex_block, update)?;
+            }
+
+            // Commit block to hot storage
+            blockchain
+                .commit(ethrex_block)
+                .map_err(|e| StoreError::Custom(format!("Failed to commit block: {e}")))?;
+        }
+
+        drop(blockchain); // Release lock before metadata writes
+
+        // Store metadata in RocksDB auxiliary storage
+        self.store_block_metadata_auxiliary(&update_batch)?;
+
+        Ok(())
+    }
+
+    /// Apply a single account update to an ethrex_db Block.
+    #[cfg(feature = "ethrex-db")]
+    fn apply_account_update_to_block(
+        block: &mut ethrex_db::chain::Block,
+        update: &AccountUpdate,
+    ) -> Result<(), StoreError> {
+        use ethrex_db::chain::{Account as EthrexDbAccount, ReadOnlyWorldState, WorldState};
+
+        // Hash the address for ethrex_db (uses H256 hashed addresses)
+        let addr_hash = primitive_types::H256::from(keccak_hash(update.address.as_bytes()));
+
+        if update.removed {
+            block.delete_account(&addr_hash);
+            return Ok(());
+        }
+
+        // Handle storage clearing if account was destroyed and recreated
+        if update.removed_storage {
+            // Clear all storage for this account
+            // Note: ethrex_db's Block doesn't have a clear_storage method,
+            // so we rely on delete_account to clear storage, then re-add the account
+            block.delete_account(&addr_hash);
+        }
+
+        // Set account info if present
+        if let Some(info) = &update.info {
+            // Get existing account to preserve storage_root if not changing storage
+            let existing_storage_root = block
+                .get_account(&addr_hash)
+                .map(|a| a.storage_root)
+                .unwrap_or_else(|| primitive_types::H256::from(EMPTY_TRIE_HASH.0));
+
+            let account = EthrexDbAccount {
+                nonce: info.nonce,
+                balance: info.balance,
+                storage_root: existing_storage_root,
+                code_hash: primitive_types::H256::from(info.code_hash.0),
+            };
+
+            block.set_account(addr_hash, account);
+        }
+
+        // Apply storage updates
+        for (slot, value) in &update.added_storage {
+            let slot_hash = primitive_types::H256::from(keccak_hash(slot.as_bytes()));
+            block.set_storage(addr_hash, slot_hash, *value);
+        }
+
+        Ok(())
+    }
+
+    /// Store block metadata (headers, bodies, receipts, code) in RocksDB.
+    /// Used by ethrex_db backend to maintain compatibility with existing queries.
+    #[cfg(feature = "ethrex-db")]
+    fn store_block_metadata_auxiliary(&self, update_batch: &UpdateBatch) -> Result<(), StoreError> {
+        let db = self.backend.clone();
+        let mut tx = db.begin_write()?;
+
+        // Store block headers, bodies, and transaction locations
+        for block in &update_batch.blocks {
+            let block_number = block.header.number;
+            let block_hash = block.hash();
+            let hash_key = block_hash.encode_to_vec();
+
+            let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
+            tx.put(HEADERS, &hash_key, header_value_rlp.bytes())?;
+
+            let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
+            tx.put(BODIES, &hash_key, body_value.bytes())?;
+
+            tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
+
+            for (index, transaction) in block.body.transactions.iter().enumerate() {
+                let tx_hash = transaction.hash();
+                // Key: tx_hash + block_hash
+                let mut composite_key = Vec::with_capacity(64);
+                composite_key.extend_from_slice(tx_hash.as_bytes());
+                composite_key.extend_from_slice(block_hash.as_bytes());
+                let location_value = (block_number, block_hash, index as u64).encode_to_vec();
+                tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
+            }
+        }
+
+        // Store receipts
+        for (block_hash, receipts) in &update_batch.receipts {
+            for (index, receipt) in receipts.iter().enumerate() {
+                let key = (*block_hash, index as u64).encode_to_vec();
+                let value = receipt.encode_to_vec();
+                tx.put(RECEIPTS, &key, &value)?;
+            }
+        }
+
+        // Store code updates
+        for (code_hash, code) in &update_batch.code_updates {
+            let buf = encode_code(code);
+            tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
+        }
+
+        tx.commit()?;
+
+        Ok(())
     }
 
     fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
@@ -1324,6 +1521,34 @@ impl Store {
                 let backend = Arc::new(RocksDBBackend::open(path)?);
                 Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
             }
+            #[cfg(feature = "ethrex-db")]
+            EngineType::EthrexDb => {
+                let backend = EthrexDbBackend::open(path)?;
+                let blockchain = BlockchainRef(backend.blockchain());
+                let backend = Arc::new(backend);
+
+                // Use specialized initialization that skips TrieLayerCache workers
+                let mut store = Self::from_backend_ethrex_db(backend.clone(), db_path)?;
+                store.ethrex_blockchain = Some(blockchain);
+
+                // Mark FlatKeyValue generation as complete for ethrex_db backend.
+                // ethrex_db uses its own flat key-value model internally (PagedStateTrie),
+                // so the FlatKeyValue generator is not needed.
+                {
+                    let mut tx = backend.begin_write()?;
+                    tx.put(MISC_VALUES, "last_written".as_bytes(), &[0xff])?;
+                    tx.commit()?;
+                    *store
+                        .last_computed_flatkeyvalue
+                        .lock()
+                        .map_err(|_| StoreError::LockError)? = vec![0xff; 64];
+                }
+                info!(
+                    "ethrex_db backend: Initialized without TrieLayerCache workers (using native state management)"
+                );
+
+                Ok(store)
+            }
             EngineType::InMemory => {
                 let backend = Arc::new(InMemoryBackend::open()?);
                 Self::from_backend(backend, db_path, IN_MEMORY_COMMIT_THRESHOLD)
@@ -1355,6 +1580,8 @@ impl Store {
         let mut store = Self {
             db_path,
             backend,
+            #[cfg(feature = "ethrex-db")]
+            ethrex_blockchain: None,
             chain_config: Default::default(),
             latest_block_header: Default::default(),
             trie_cache: Arc::new(Mutex::new(Arc::new(TrieLayerCache::new(commit_threshold)))),
@@ -1433,6 +1660,42 @@ impl Store {
         Ok(store)
     }
 
+    /// Initialize Store for ethrex_db backend without TrieLayerCache workers.
+    ///
+    /// This method creates a Store that bypasses the traditional trie caching layer
+    /// because ethrex_db has its own state management (PagedStateTrie + Blockchain).
+    /// The TrieLayerCache is created but kept empty, and no background workers are spawned.
+    #[cfg(feature = "ethrex-db")]
+    fn from_backend_ethrex_db(
+        backend: Arc<dyn StorageBackend>,
+        db_path: PathBuf,
+    ) -> Result<Self, StoreError> {
+        debug!("Initializing Store for ethrex_db (no TrieLayerCache workers)");
+
+        // Create channels that won't be used but are required for the struct
+        let (fkv_tx, _fkv_rx) = std::sync::mpsc::sync_channel(1);
+        let (trie_upd_tx, _trie_upd_rx) = std::sync::mpsc::sync_channel(1);
+
+        // Use 0 commit threshold since TrieLayerCache won't be used
+        let trie_cache = Arc::new(Mutex::new(Arc::new(TrieLayerCache::new(0))));
+
+        let store = Self {
+            db_path,
+            backend,
+            ethrex_blockchain: None, // Will be set by caller
+            chain_config: Default::default(),
+            latest_block_header: Default::default(),
+            trie_cache,
+            flatkeyvalue_control_tx: fkv_tx,
+            trie_update_worker_tx: trie_upd_tx,
+            last_computed_flatkeyvalue: Arc::new(Mutex::new(vec![0xff; 64])), // Mark as complete
+            account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
+            background_threads: Arc::new(ThreadList { list: Vec::new() }), // No background threads
+        };
+
+        Ok(store)
+    }
+
     pub async fn new_from_genesis(
         store_path: &Path,
         engine_type: EngineType,
@@ -1464,6 +1727,11 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if let Some(blockchain_ref) = &self.ethrex_blockchain {
+            return self.get_account_info_ethrex_db(block_hash, address, blockchain_ref);
+        }
+
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -1479,6 +1747,87 @@ impl Store {
             balance: account_state.balance,
             nonce: account_state.nonce,
         }))
+    }
+
+    /// Get account info from ethrex_db backend.
+    ///
+    /// Queries both hot (unfinalized) and cold (finalized) storage:
+    /// 1. First tries to find the block in hot storage and get the account from it
+    /// 2. If not in hot storage, queries finalized state
+    #[cfg(feature = "ethrex-db")]
+    fn get_account_info_ethrex_db(
+        &self,
+        block_hash: BlockHash,
+        address: Address,
+        blockchain_ref: &BlockchainRef,
+    ) -> Result<Option<AccountInfo>, StoreError> {
+        let blockchain = blockchain_ref
+            .0
+            .read()
+            .map_err(|_| StoreError::Custom("Blockchain lock poisoned".into()))?;
+
+        let block_hash_pt = primitive_types::H256::from(block_hash.0);
+        let addr_hash = primitive_types::H256::from(keccak_hash(address.as_bytes()));
+
+        // Try hot storage first (committed but not finalized blocks)
+        if let Some(account) = blockchain.get_account(&block_hash_pt, &addr_hash) {
+            return Ok(Some(AccountInfo {
+                nonce: account.nonce,
+                balance: account.balance,
+                code_hash: H256::from(account.code_hash.0),
+            }));
+        }
+
+        // Check if this is the finalized block or earlier
+        let finalized_hash = blockchain.last_finalized_hash();
+        if block_hash_pt == finalized_hash {
+            // Query finalized state using raw address
+            let addr_bytes: [u8; 20] = address.0;
+            if let Some(account) = blockchain.get_finalized_account(&addr_bytes) {
+                return Ok(Some(AccountInfo {
+                    nonce: account.nonce,
+                    balance: account.balance,
+                    code_hash: H256::from(account.code_hash.0),
+                }));
+            }
+        }
+
+        // Block might be older than finalized - check by block number
+        // First get the block number for this hash from RocksDB metadata
+        drop(blockchain); // Release lock before querying RocksDB
+
+        if let Some(queried_block_number) = self.get_block_number_sync(block_hash)? {
+            let blockchain = blockchain_ref
+                .0
+                .read()
+                .map_err(|_| StoreError::Custom("Blockchain lock poisoned".into()))?;
+
+            let finalized_number = blockchain.last_finalized_number();
+
+            if queried_block_number == finalized_number {
+                // Block is exactly the finalized block, query finalized state
+                let addr_bytes: [u8; 20] = address.0;
+                if let Some(account) = blockchain.get_finalized_account(&addr_bytes) {
+                    return Ok(Some(AccountInfo {
+                        nonce: account.nonce,
+                        balance: account.balance,
+                        code_hash: H256::from(account.code_hash.0),
+                    }));
+                }
+                return Ok(None);
+            }
+
+            // Block is older than finalized - we don't have historical state
+            if queried_block_number < finalized_number {
+                return Err(StoreError::StateBeyondHistoryDepth {
+                    block: queried_block_number,
+                    head: finalized_number + HISTORY_DEPTH, // Approximate head
+                    max_depth: HISTORY_DEPTH,
+                });
+            }
+        }
+
+        Ok(None)
     }
 
     pub fn get_account_state_by_acc_hash(
@@ -1516,6 +1865,15 @@ impl Store {
         block_number: BlockNumber,
         address: Address,
     ) -> Result<Option<Code>, StoreError> {
+        // For ethrex_db, get code_hash from account info, then look up code in RocksDB
+        #[cfg(feature = "ethrex-db")]
+        if self.ethrex_blockchain.is_some() {
+            let Some(account_info) = self.get_account_info(block_number, address).await? else {
+                return Ok(None);
+            };
+            return self.get_account_code(account_info.code_hash);
+        }
+
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
@@ -1535,6 +1893,15 @@ impl Store {
         block_number: BlockNumber,
         address: Address,
     ) -> Result<Option<u64>, StoreError> {
+        // For ethrex_db, we can reuse get_account_info which already has routing
+        #[cfg(feature = "ethrex-db")]
+        if self.ethrex_blockchain.is_some() {
+            return Ok(self
+                .get_account_info(block_number, address)
+                .await?
+                .map(|a| a.nonce));
+        }
+
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
@@ -1949,10 +2316,98 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
+        #[cfg(feature = "ethrex-db")]
+        if let Some(blockchain_ref) = &self.ethrex_blockchain {
+            // Get block hash for this block number
+            if let Some(block_hash) = self.get_canonical_block_hash_sync(block_number)? {
+                return self.get_storage_at_ethrex_db(
+                    block_hash,
+                    address,
+                    storage_key,
+                    blockchain_ref,
+                );
+            }
+            return Ok(None);
+        }
+
         match self.get_block_header(block_number)? {
             Some(header) => self.get_storage_at_root(header.state_root, address, storage_key),
             None => Ok(None),
         }
+    }
+
+    /// Get storage value from ethrex_db backend.
+    ///
+    /// Queries both hot (unfinalized) and cold (finalized) storage:
+    /// 1. First tries to find the block in hot storage and get the storage from it
+    /// 2. If not in hot storage, queries finalized state
+    #[cfg(feature = "ethrex-db")]
+    fn get_storage_at_ethrex_db(
+        &self,
+        block_hash: BlockHash,
+        address: Address,
+        storage_key: H256,
+        blockchain_ref: &BlockchainRef,
+    ) -> Result<Option<U256>, StoreError> {
+        let blockchain = blockchain_ref
+            .0
+            .read()
+            .map_err(|_| StoreError::Custom("Blockchain lock poisoned".into()))?;
+
+        let block_hash_pt = primitive_types::H256::from(block_hash.0);
+        let addr_hash = primitive_types::H256::from(keccak_hash(address.as_bytes()));
+        let slot_hash = primitive_types::H256::from(keccak_hash(storage_key.as_bytes()));
+
+        // Try hot storage first (committed but not finalized blocks)
+        if let Some(value) = blockchain.get_storage(&block_hash_pt, &addr_hash, &slot_hash) {
+            return Ok(Some(value));
+        }
+
+        // Check if this is the finalized block or earlier
+        let finalized_hash = blockchain.last_finalized_hash();
+        if block_hash_pt == finalized_hash {
+            // Query finalized state using hashed keys
+            if let Some(value) = blockchain.get_finalized_storage_by_hash(
+                addr_hash.as_fixed_bytes(),
+                slot_hash.as_fixed_bytes(),
+            ) {
+                return Ok(Some(value));
+            }
+        }
+
+        // Block might be older than finalized - check by block number
+        drop(blockchain); // Release lock before querying RocksDB
+
+        if let Some(queried_block_number) = self.get_block_number_sync(block_hash)? {
+            let blockchain = blockchain_ref
+                .0
+                .read()
+                .map_err(|_| StoreError::Custom("Blockchain lock poisoned".into()))?;
+
+            let finalized_number = blockchain.last_finalized_number();
+
+            if queried_block_number == finalized_number {
+                // Block is exactly the finalized block, query finalized state
+                if let Some(value) = blockchain.get_finalized_storage_by_hash(
+                    addr_hash.as_fixed_bytes(),
+                    slot_hash.as_fixed_bytes(),
+                ) {
+                    return Ok(Some(value));
+                }
+                return Ok(None);
+            }
+
+            // Block is older than finalized - we don't have historical state
+            if queried_block_number < finalized_number {
+                return Err(StoreError::StateBeyondHistoryDepth {
+                    block: queried_block_number,
+                    head: finalized_number + HISTORY_DEPTH, // Approximate head
+                    max_depth: HISTORY_DEPTH,
+                });
+            }
+        }
+
+        Ok(None)
     }
 
     pub fn get_storage_at_root(
@@ -1986,6 +2441,157 @@ impl Store {
         self.chain_config
     }
 
+    /// Returns a reference to the ethrex_db Blockchain if using the ethrex-db backend.
+    ///
+    /// This provides direct access to ethrex_db's native API for operations like:
+    /// - Creating and committing blocks
+    /// - Managing hot/cold state storage
+    /// - Fork choice updates and finalization
+    #[cfg(feature = "ethrex-db")]
+    pub fn ethrex_blockchain(&self) -> Option<&BlockchainRef> {
+        self.ethrex_blockchain.as_ref()
+    }
+
+    /// Returns the finalized state root from ethrex_db.
+    ///
+    /// This computes the Merkle root of the finalized state trie. The result
+    /// should match the state_root in the last finalized block header.
+    ///
+    /// Returns None if not using ethrex_db backend.
+    #[cfg(feature = "ethrex-db")]
+    pub fn get_finalized_state_root_ethrex_db(&self) -> Result<Option<H256>, StoreError> {
+        if let Some(blockchain_ref) = &self.ethrex_blockchain {
+            let blockchain = blockchain_ref.0.write().map_err(|_| {
+                StoreError::Custom("Failed to acquire write lock on ethrex_db blockchain".into())
+            })?;
+            let root = blockchain.state_root();
+            Ok(Some(H256::from(root)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Returns the last finalized block number from ethrex_db.
+    ///
+    /// Returns None if not using ethrex_db backend.
+    #[cfg(feature = "ethrex-db")]
+    pub fn get_finalized_block_number_ethrex_db(&self) -> Result<Option<BlockNumber>, StoreError> {
+        if let Some(blockchain_ref) = &self.ethrex_blockchain {
+            let blockchain = blockchain_ref.0.read().map_err(|_| {
+                StoreError::Custom("Failed to acquire read lock on ethrex_db blockchain".into())
+            })?;
+            Ok(Some(blockchain.last_finalized_number()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Verifies that ethrex_db's finalized state root matches the expected value.
+    ///
+    /// This is useful for sanity checks after syncing or recovering from a crash.
+    /// Returns Ok(true) if roots match, Ok(false) if they don't match,
+    /// or an error if the check couldn't be performed.
+    #[cfg(feature = "ethrex-db")]
+    pub fn verify_ethrex_db_state_root(&self, expected: H256) -> Result<bool, StoreError> {
+        if let Some(computed) = self.get_finalized_state_root_ethrex_db()? {
+            let matches = computed == expected;
+            if !matches {
+                tracing::warn!(
+                    "ethrex_db state root verification failed: expected {:?}, computed {:?}",
+                    expected,
+                    computed
+                );
+            }
+            Ok(matches)
+        } else {
+            Err(StoreError::Custom(
+                "ethrex_db backend not available for state root verification".into(),
+            ))
+        }
+    }
+
+    /// Persists the current state trie to ethrex_db during snap-sync.
+    ///
+    /// This should be called after snap-sync completes to persist the state trie
+    /// and update the finalized block metadata.
+    ///
+    /// Returns Ok(()) if successful, or Ok(()) if not using ethrex_db backend
+    /// (in which case the caller should use the standard trie persistence).
+    #[cfg(feature = "ethrex-db")]
+    pub fn persist_snap_sync_state(
+        &self,
+        block_number: BlockNumber,
+        block_hash: BlockHash,
+    ) -> Result<(), StoreError> {
+        if let Some(blockchain_ref) = &self.ethrex_blockchain {
+            let blockchain = blockchain_ref.0.write().map_err(|_| {
+                StoreError::Custom("Failed to acquire write lock on ethrex_db blockchain".into())
+            })?;
+            blockchain
+                .persist_state_trie(block_number, block_hash)
+                .map_err(|e| {
+                    StoreError::Custom(format!("Failed to persist snap-sync state: {}", e))
+                })?;
+            info!(
+                "ethrex_db: Persisted snap-sync state at block {}",
+                block_number
+            );
+        }
+        Ok(())
+    }
+
+    /// Saves a checkpoint during snap-sync for recovery purposes.
+    ///
+    /// Unlike `persist_snap_sync_state`, this doesn't update the in-memory
+    /// finalized state, allowing the sync to resume from the checkpoint.
+    #[cfg(feature = "ethrex-db")]
+    pub fn save_snap_sync_checkpoint(
+        &self,
+        block_number: BlockNumber,
+        block_hash: BlockHash,
+    ) -> Result<(), StoreError> {
+        if let Some(blockchain_ref) = &self.ethrex_blockchain {
+            let blockchain = blockchain_ref.0.write().map_err(|_| {
+                StoreError::Custom("Failed to acquire write lock on ethrex_db blockchain".into())
+            })?;
+            blockchain
+                .persist_state_trie_checkpoint(block_number, block_hash)
+                .map_err(|e| {
+                    StoreError::Custom(format!("Failed to save snap-sync checkpoint: {}", e))
+                })?;
+            debug!(
+                "ethrex_db: Saved snap-sync checkpoint at block {}",
+                block_number
+            );
+        }
+        Ok(())
+    }
+
+    /// Returns true if this Store is using the ethrex_db backend.
+    #[cfg(feature = "ethrex-db")]
+    pub fn uses_ethrex_db(&self) -> bool {
+        self.ethrex_blockchain.is_some()
+    }
+
+    /// Returns true if this Store is using the ethrex_db backend.
+    #[cfg(not(feature = "ethrex-db"))]
+    pub fn uses_ethrex_db(&self) -> bool {
+        false
+    }
+
+    /// Flushes pending writes in the storage backend to disk.
+    ///
+    /// This method is primarily used during snap sync to periodically persist
+    /// buffered trie data to disk, preventing memory exhaustion when syncing
+    /// large state. For the ethrex-db backend, this flushes pending trie writes
+    /// to the PagedStateTrie and persists them via checkpoint.
+    ///
+    /// Returns the number of entries that were flushed. For backends that don't
+    /// buffer writes (like RocksDB), this returns 0.
+    pub fn flush_pending_writes(&self) -> Result<usize, StoreError> {
+        self.backend.flush_pending_writes()
+    }
+
     pub async fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
         Ok(Some(self.latest_block_header.get().hash()))
     }
@@ -2008,13 +2614,132 @@ impl Store {
             .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
         self.latest_block_header.update(new_head);
         self.forkchoice_update_inner(
-            new_canonical_blocks,
+            new_canonical_blocks.clone(),
             head_number,
             head_hash,
             safe,
             finalized,
         )
         .await?;
+
+        // If using ethrex_db backend, finalize state in ethrex_db's Blockchain
+        #[cfg(feature = "ethrex-db")]
+        if let Some(blockchain_ref) = &self.ethrex_blockchain {
+            // Determine the effective finalized block number.
+            // If the head is more than HISTORY_DEPTH blocks ahead of the last finalized,
+            // we auto-finalize to maintain bounded history.
+            let auto_finalize_to = if head_number > HISTORY_DEPTH {
+                Some(head_number - HISTORY_DEPTH)
+            } else {
+                None
+            };
+
+            // Use the maximum of caller-provided finalized and auto-finalize threshold
+            let effective_finalized = match (finalized, auto_finalize_to) {
+                (Some(f), Some(a)) => Some(f.max(a)),
+                (Some(f), None) => Some(f),
+                (None, Some(a)) => Some(a),
+                (None, None) => None,
+            };
+
+            if let Some(finalized_number) = effective_finalized {
+                // Log if we're auto-finalizing due to history depth
+                if auto_finalize_to.is_some() && finalized.map_or(true, |f| f < finalized_number) {
+                    tracing::debug!(
+                        "ethrex_db: Auto-finalizing to block {} (head: {}, history_depth: {})",
+                        finalized_number,
+                        head_number,
+                        HISTORY_DEPTH
+                    );
+                }
+
+                // Find the finalized block hash from new_canonical_blocks or from storage
+                let finalized_hash = new_canonical_blocks
+                    .iter()
+                    .find(|(num, _)| *num == finalized_number)
+                    .map(|(_, hash)| *hash)
+                    .or_else(|| {
+                        self.get_canonical_block_hash_sync(finalized_number)
+                            .ok()
+                            .flatten()
+                    });
+
+                if let Some(hash) = finalized_hash {
+                    // Get expected state root from block header before finalization
+                    let expected_state_root =
+                        self.load_block_header_by_hash(hash)?.map(|h| h.state_root);
+
+                    let blockchain = blockchain_ref.0.write().map_err(|_| {
+                        StoreError::Custom(
+                            "Failed to acquire write lock on ethrex_db blockchain".into(),
+                        )
+                    })?;
+
+                    // Get the count of hot blocks before finalization for logging
+                    let hot_blocks_before = blockchain.committed_count();
+
+                    // Call ethrex_db's fork_choice_update which handles finalization and pruning
+                    blockchain
+                        .fork_choice_update(
+                            head_hash,
+                            safe.and_then(|n| {
+                                new_canonical_blocks
+                                    .iter()
+                                    .find(|(num, _)| *num == n)
+                                    .map(|(_, h)| *h)
+                                    .or_else(|| {
+                                        self.get_canonical_block_hash_sync(n).ok().flatten()
+                                    })
+                            }),
+                            Some(hash),
+                        )
+                        .map_err(|e| {
+                            tracing::error!(
+                                "ethrex_db fork_choice_update failed at block {}: {}",
+                                finalized_number,
+                                e
+                            );
+                            StoreError::Custom(format!(
+                                "ethrex_db fork_choice_update failed: {}",
+                                e
+                            ))
+                        })?;
+
+                    let hot_blocks_after = blockchain.committed_count();
+
+                    // Verify state root after finalization
+                    if let Some(expected) = expected_state_root {
+                        let computed_root = blockchain.state_root();
+                        let computed_h256 = H256::from(computed_root);
+                        if computed_h256 != expected {
+                            tracing::error!(
+                                "ethrex_db state root mismatch after finalization! \
+                                 Expected: {:?}, Computed: {:?}, Block: {}",
+                                expected,
+                                computed_h256,
+                                finalized_number
+                            );
+                            return Err(StoreError::Custom(format!(
+                                "ethrex_db state root mismatch: expected {:?}, got {:?}",
+                                expected, computed_h256
+                            )));
+                        }
+                        tracing::info!(
+                            "ethrex_db: Finalized block {} (state root: {:?}, hot blocks: {} -> {})",
+                            finalized_number,
+                            computed_h256,
+                            hot_blocks_before,
+                            hot_blocks_after
+                        );
+                    }
+                } else {
+                    tracing::warn!(
+                        "ethrex_db: Could not find hash for finalized block {}, skipping finalization",
+                        finalized_number
+                    );
+                }
+            }
+        }
 
         Ok(())
     }
@@ -2062,10 +2787,94 @@ impl Store {
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
+
+        #[cfg(feature = "ethrex-db")]
+        if let Some(blockchain_ref) = &self.ethrex_blockchain {
+            return self.get_account_state_ethrex_db(block_hash, address, blockchain_ref);
+        }
+
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
         self.get_account_state_from_trie(&state_trie, address)
+    }
+
+    /// Get full account state from ethrex_db backend.
+    #[cfg(feature = "ethrex-db")]
+    fn get_account_state_ethrex_db(
+        &self,
+        block_hash: BlockHash,
+        address: Address,
+        blockchain_ref: &BlockchainRef,
+    ) -> Result<Option<AccountState>, StoreError> {
+        let blockchain = blockchain_ref
+            .0
+            .read()
+            .map_err(|_| StoreError::Custom("Blockchain lock poisoned".into()))?;
+
+        let block_hash_pt = primitive_types::H256::from(block_hash.0);
+        let addr_hash = primitive_types::H256::from(keccak_hash(address.as_bytes()));
+
+        // Try hot storage first (committed but not finalized blocks)
+        if let Some(account) = blockchain.get_account(&block_hash_pt, &addr_hash) {
+            return Ok(Some(AccountState {
+                nonce: account.nonce,
+                balance: account.balance,
+                storage_root: H256::from(account.storage_root.0),
+                code_hash: H256::from(account.code_hash.0),
+            }));
+        }
+
+        // Check if this is the finalized block or earlier
+        let finalized_hash = blockchain.last_finalized_hash();
+        if block_hash_pt == finalized_hash {
+            let addr_bytes: [u8; 20] = address.0;
+            if let Some(account) = blockchain.get_finalized_account(&addr_bytes) {
+                return Ok(Some(AccountState {
+                    nonce: account.nonce,
+                    balance: account.balance,
+                    storage_root: H256::from(account.storage_root.0),
+                    code_hash: H256::from(account.code_hash.0),
+                }));
+            }
+        }
+
+        // Block might be older than finalized
+        drop(blockchain);
+
+        if let Some(queried_block_number) = self.get_block_number_sync(block_hash)? {
+            let blockchain = blockchain_ref
+                .0
+                .read()
+                .map_err(|_| StoreError::Custom("Blockchain lock poisoned".into()))?;
+
+            let finalized_number = blockchain.last_finalized_number();
+
+            if queried_block_number == finalized_number {
+                // Block is exactly the finalized block, query finalized state
+                let addr_bytes: [u8; 20] = address.0;
+                if let Some(account) = blockchain.get_finalized_account(&addr_bytes) {
+                    return Ok(Some(AccountState {
+                        nonce: account.nonce,
+                        balance: account.balance,
+                        storage_root: H256::from(account.storage_root.0),
+                        code_hash: H256::from(account.code_hash.0),
+                    }));
+                }
+                return Ok(None);
+            }
+
+            // Block is older than finalized - we don't have historical state
+            if queried_block_number < finalized_number {
+                return Err(StoreError::StateBeyondHistoryDepth {
+                    block: queried_block_number,
+                    head: finalized_number + HISTORY_DEPTH, // Approximate head
+                    max_depth: HISTORY_DEPTH,
+                });
+            }
+        }
+
+        Ok(None)
     }
 
     pub fn get_account_state_by_root(

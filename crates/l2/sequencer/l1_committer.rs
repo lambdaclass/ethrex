@@ -820,6 +820,8 @@ impl L1Committer {
                         receipts,
                         requests: vec![],
                     },
+                    #[cfg(feature = "ethrex-db")]
+                    Some(account_updates.clone()),
                 )?;
             } else {
                 warn!(
