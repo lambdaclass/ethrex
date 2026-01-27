@@ -110,7 +110,9 @@ impl PeerHandler {
         let limit_u256 = U256::from_big_endian(&limit.0);
 
         let chunk_count = 800;
-        let chunk_size = (limit_u256 - start_u256) / chunk_count;
+        let range = limit_u256 - start_u256;
+        let chunk_count = U256::from(chunk_count).min(range.max(U256::one())).as_usize();
+        let chunk_size = range / chunk_count;
 
         // list of tasks to be executed
         let mut tasks_queue_not_started = VecDeque::<(H256, H256)>::new();
