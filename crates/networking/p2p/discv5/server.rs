@@ -485,7 +485,7 @@ impl DiscoveryServer {
                 total: 1,
                 nodes: vec![],
             });
-            self.send_ordinary(&nodes_message, &contact.node).await?;
+            self.send_ordinary(nodes_message, &contact.node).await?;
         } else {
             for chunk in &chunks {
                 let nodes_message = Message::Nodes(NodesMessage {
@@ -493,7 +493,7 @@ impl DiscoveryServer {
                     total: chunks.len() as u64,
                     nodes: chunk.to_vec(),
                 });
-                self.send_ordinary(&nodes_message, &contact.node).await?;
+                self.send_ordinary(nodes_message, &contact.node).await?;
             }
         }
 
