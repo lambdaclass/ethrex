@@ -325,9 +325,13 @@ impl PeerHandler {
         METRICS
             .current_step
             .set(CurrentStepValue::RequestingBytecodes);
+        if all_bytecode_hashes.is_empty() {
+            return Ok(Some(Vec::new()));
+        }
         const MAX_BYTECODES_REQUEST_SIZE: usize = 100;
         // 1) split the range in chunks of same length
         let chunk_count = 800;
+        let chunk_count = chunk_count.min(all_bytecode_hashes.len());
         let chunk_size = all_bytecode_hashes.len() / chunk_count;
 
         // list of tasks to be executed
