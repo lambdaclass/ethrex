@@ -1,6 +1,5 @@
 use crate::{
     backend,
-    discv4::server::MAX_NODES_IN_NEIGHBORS_PACKET,
     discv5::session::Session,
     metrics::METRICS,
     rlpx::{connection::server::PeerConnection, p2p::Capability},
@@ -39,6 +38,9 @@ const MAX_CONCURRENT_REQUESTS_PER_PEER: i64 = 100;
 pub const TARGET_PEERS: usize = 100;
 /// The target number of contacts to maintain in peer_table.
 const TARGET_CONTACTS: usize = 100_000;
+/// Maximum number of ENRs to return in a FindNode response (across all NODES messages).
+/// See: https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire.md#nodes-response-0x04
+const MAX_ENRS_PER_FINDNODE_RESPONSE: usize = 16;
 
 #[derive(Debug, Clone)]
 pub struct Contact {
@@ -618,13 +620,20 @@ impl PeerTable {
     }
 
     /// Get closest nodes according to kademlia's distance
-    pub async fn get_closest_nodes(&mut self, node_id: &H256) -> Result<Vec<Node>, PeerTableError> {
+    pub async fn get_nodes_at_distances(
+        &mut self,
+        local_node_id: H256,
+        distances: Vec<u32>,
+    ) -> Result<Vec<NodeRecord>, PeerTableError> {
         match self
             .handle
-            .call(CallMessage::GetClosestNodes { node_id: *node_id })
+            .call(CallMessage::GetNodesAtDistances {
+                local_node_id,
+                distances,
+            })
             .await?
         {
-            OutMessage::Nodes(nodes) => Ok(nodes),
+            OutMessage::NodeRecords(records) => Ok(records),
             _ => unreachable!(),
         }
     }
@@ -804,23 +813,19 @@ impl PeerTableServer {
         OutMessage::Contact(Box::new(contact.clone()))
     }
 
-    fn get_closest_nodes(&self, node_id: H256) -> Vec<Node> {
-        let mut nodes: Vec<(Node, usize)> = vec![];
-
-        for (contact_id, contact) in &self.contacts {
-            let distance = distance(&node_id, contact_id);
-            if nodes.len() < MAX_NODES_IN_NEIGHBORS_PACKET {
-                nodes.push((contact.node.clone(), distance));
-            } else {
-                for (i, (_, dis)) in &mut nodes.iter().enumerate() {
-                    if distance < *dis {
-                        nodes[i] = (contact.node.clone(), distance);
-                        break;
-                    }
+    fn get_nodes_at_distances(&self, local_node_id: H256, distances: &[u32]) -> Vec<NodeRecord> {
+        self.contacts
+            .iter()
+            .filter_map(|(contact_id, contact)| {
+                let d = distance(&local_node_id, contact_id) as u32;
+                if distances.contains(&d) {
+                    contact.record.clone()
+                } else {
+                    None
                 }
-            }
-        }
-        nodes.into_iter().map(|(node, _distance)| node).collect()
+            })
+            .take(MAX_ENRS_PER_FINDNODE_RESPONSE)
+            .collect()
     }
 
     async fn new_contacts(&mut self, nodes: Vec<Node>, local_node_id: H256) {
@@ -1017,25 +1022,45 @@ enum CastMessage {
 #[derive(Clone, Debug)]
 enum CallMessage {
     PeerCount,
-    PeerCountByCapabilities { capabilities: Vec<Capability> },
+    PeerCountByCapabilities {
+        capabilities: Vec<Capability>,
+    },
     TargetReached,
     TargetPeersReached,
     TargetPeersCompletion,
     GetContactToInitiate,
     GetContactForLookup,
     GetContactForEnrLookup,
-    GetContact { node_id: H256 },
+    GetContact {
+        node_id: H256,
+    },
     GetContactsToRevalidate(Duration),
-    GetBestPeer { capabilities: Vec<Capability> },
-    GetScore { node_id: H256 },
+    GetBestPeer {
+        capabilities: Vec<Capability>,
+    },
+    GetScore {
+        node_id: H256,
+    },
     GetConnectedNodes,
     GetPeersWithCapabilities,
-    GetPeerConnections { capabilities: Vec<Capability> },
-    InsertIfNew { node: Node },
-    ValidateContact { node_id: H256, sender_ip: IpAddr },
-    GetClosestNodes { node_id: H256 },
+    GetPeerConnections {
+        capabilities: Vec<Capability>,
+    },
+    InsertIfNew {
+        node: Node,
+    },
+    ValidateContact {
+        node_id: H256,
+        sender_ip: IpAddr,
+    },
+    GetNodesAtDistances {
+        local_node_id: H256,
+        distances: Vec<u32>,
+    },
     GetPeersData,
-    GetRandomPeer { capabilities: Vec<Capability> },
+    GetRandomPeer {
+        capabilities: Vec<Capability>,
+    },
 }
 
 #[derive(Debug)]
@@ -1054,6 +1079,7 @@ pub enum OutMessage {
     TargetCompletion(f64),
     IsNew(bool),
     Nodes(Vec<Node>),
+    NodeRecords(Vec<NodeRecord>),
     Contact(Box<Contact>),
     InvalidContact,
     UnknownContact,
@@ -1182,9 +1208,12 @@ impl GenServer for PeerTableServer {
             CallMessage::ValidateContact { node_id, sender_ip } => {
                 CallResponse::Reply(self.validate_contact(node_id, sender_ip))
             }
-            CallMessage::GetClosestNodes { node_id } => {
-                CallResponse::Reply(Self::OutMsg::Nodes(self.get_closest_nodes(node_id)))
-            }
+            CallMessage::GetNodesAtDistances {
+                local_node_id,
+                distances,
+            } => CallResponse::Reply(Self::OutMsg::NodeRecords(
+                self.get_nodes_at_distances(local_node_id, &distances),
+            )),
             CallMessage::GetPeersData => CallResponse::Reply(OutMessage::PeersData(
                 self.peers.values().cloned().collect(),
             )),
