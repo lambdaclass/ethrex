@@ -304,7 +304,11 @@ pub async fn heal_storage_trie(
                     .extend(inflight_request.requests.clone());
                 peers
                     .peer_table
-                    .record_failure_typed(&inflight_request.peer_id, RequestType::TrieNodes, FailureSeverity::Low)
+                    .record_failure_typed(
+                        &inflight_request.peer_id,
+                        RequestType::TrieNodes,
+                        FailureSeverity::Low,
+                    )
                     .await?;
             }
         }
@@ -434,7 +438,11 @@ async fn zip_requeue_node_responses_score_peer(
         *failed_downloads += 1;
         peer_handler
             .peer_table
-            .record_failure_typed(&request.peer_id, RequestType::TrieNodes, FailureSeverity::Low)
+            .record_failure_typed(
+                &request.peer_id,
+                RequestType::TrieNodes,
+                FailureSeverity::Low,
+            )
             .await?;
 
         download_queue.extend(request.requests);
@@ -496,7 +504,11 @@ async fn zip_requeue_node_responses_score_peer(
         // Decode/hash validation failure - more severe
         peer_handler
             .peer_table
-            .record_failure_typed(&request.peer_id, RequestType::TrieNodes, FailureSeverity::High)
+            .record_failure_typed(
+                &request.peer_id,
+                RequestType::TrieNodes,
+                FailureSeverity::High,
+            )
             .await?;
         download_queue.extend(request.requests);
         Ok(None)

@@ -218,7 +218,11 @@ async fn heal_state_trie(
                     downloads_fail += 1;
                     peers
                         .peer_table
-                        .record_failure_typed(&peer_id, RequestType::TrieNodes, FailureSeverity::Low)
+                        .record_failure_typed(
+                            &peer_id,
+                            RequestType::TrieNodes,
+                            FailureSeverity::Low,
+                        )
                         .await?;
                 }
             }

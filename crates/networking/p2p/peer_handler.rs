@@ -291,7 +291,11 @@ impl PeerHandler {
                 trace!("We received a download chunk from peer");
                 if headers.is_empty() {
                     self.peer_table
-                        .record_failure_typed(&peer_id, RequestType::BlockHeaders, FailureSeverity::Low)
+                        .record_failure_typed(
+                            &peer_id,
+                            RequestType::BlockHeaders,
+                            FailureSeverity::Low,
+                        )
                         .await?;
 
                     debug!("Failed to download chunk from peer. Downloader {peer_id} freed");
@@ -610,7 +614,11 @@ impl PeerHandler {
                     );
                     validation_success = false;
                     self.peer_table
-                        .record_failure_typed(&peer_id, RequestType::BlockBodies, FailureSeverity::Critical)
+                        .record_failure_typed(
+                            &peer_id,
+                            RequestType::BlockBodies,
+                            FailureSeverity::Critical,
+                        )
                         .await?;
                     break;
                 }
@@ -743,7 +751,11 @@ impl PeerHandler {
                 }
                 if accounts.is_empty() {
                     self.peer_table
-                        .record_failure_typed(&peer_id, RequestType::AccountRange, FailureSeverity::Low)
+                        .record_failure_typed(
+                            &peer_id,
+                            RequestType::AccountRange,
+                            FailureSeverity::Low,
+                        )
                         .await?;
                     continue;
                 }
@@ -1045,7 +1057,11 @@ impl PeerHandler {
                 }
                 if bytecodes.is_empty() {
                     self.peer_table
-                        .record_failure_typed(&peer_id, RequestType::ByteCodes, FailureSeverity::Low)
+                        .record_failure_typed(
+                            &peer_id,
+                            RequestType::ByteCodes,
+                            FailureSeverity::Low,
+                        )
                         .await?;
                     continue;
                 }
@@ -1524,7 +1540,11 @@ impl PeerHandler {
 
                 if account_storages.is_empty() {
                     self.peer_table
-                        .record_failure_typed(&peer_id, RequestType::StorageRanges, FailureSeverity::Low)
+                        .record_failure_typed(
+                            &peer_id,
+                            RequestType::StorageRanges,
+                            FailureSeverity::Low,
+                        )
                         .await?;
                     continue;
                 }

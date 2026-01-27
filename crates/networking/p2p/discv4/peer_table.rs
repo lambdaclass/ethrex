@@ -746,12 +746,7 @@ impl PeerTableServer {
                     let connection = peer_data.connection.clone()?;
 
                     // We return the id, the score and the channel to connect with.
-                    Some((
-                        *id,
-                        peer_data.score.clone(),
-                        peer_data.requests,
-                        connection,
-                    ))
+                    Some((*id, peer_data.score.clone(), peer_data.requests, connection))
                 }
             })
             .max_by_key(|(_, score, reqs, _)| self.weight_peer(score, reqs))
@@ -775,12 +770,7 @@ impl PeerTableServer {
                     None
                 } else {
                     let connection = peer_data.connection.clone()?;
-                    Some((
-                        *id,
-                        peer_data.score.clone(),
-                        peer_data.requests,
-                        connection,
-                    ))
+                    Some((*id, peer_data.score.clone(), peer_data.requests, connection))
                 }
             })
             .max_by_key(|(_, score, reqs, _)| {
@@ -1067,29 +1057,48 @@ enum CastMessage {
 #[derive(Clone, Debug)]
 enum CallMessage {
     PeerCount,
-    PeerCountByCapabilities { capabilities: Vec<Capability> },
+    PeerCountByCapabilities {
+        capabilities: Vec<Capability>,
+    },
     TargetReached,
     TargetPeersReached,
     TargetPeersCompletion,
     GetContactToInitiate,
     GetContactForLookup,
     GetContactForEnrLookup,
-    GetContact { node_id: H256 },
+    GetContact {
+        node_id: H256,
+    },
     GetContactsToRevalidate(Duration),
-    GetBestPeer { capabilities: Vec<Capability> },
+    GetBestPeer {
+        capabilities: Vec<Capability>,
+    },
     GetBestPeerForRequest {
         request_type: RequestType,
         capabilities: Vec<Capability>,
     },
-    GetScore { node_id: H256 },
+    GetScore {
+        node_id: H256,
+    },
     GetConnectedNodes,
     GetPeersWithCapabilities,
-    GetPeerConnections { capabilities: Vec<Capability> },
-    InsertIfNew { node: Node },
-    ValidateContact { node_id: H256, sender_ip: IpAddr },
-    GetClosestNodes { node_id: H256 },
+    GetPeerConnections {
+        capabilities: Vec<Capability>,
+    },
+    InsertIfNew {
+        node: Node,
+    },
+    ValidateContact {
+        node_id: H256,
+        sender_ip: IpAddr,
+    },
+    GetClosestNodes {
+        node_id: H256,
+    },
     GetPeersData,
-    GetRandomPeer { capabilities: Vec<Capability> },
+    GetRandomPeer {
+        capabilities: Vec<Capability>,
+    },
 }
 
 #[derive(Debug)]
