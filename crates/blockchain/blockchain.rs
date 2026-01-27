@@ -433,6 +433,7 @@ impl Blockchain {
         let mut storage_updates_map: StoreUpdatesMap = Default::default();
         let mut code_updates: FxHashMap<H256, Code> = Default::default();
         let mut account_states: FxHashMap<H256, AccountState> = Default::default();
+        let mut hashed_slots_cache: FxHashMap<H256, H256> = Default::default();
         for updates in rx {
             Self::process_incoming_update_message(
                 &self.storage,
@@ -443,6 +444,7 @@ impl Blockchain {
                 &mut state_updates_map,
                 &mut code_updates,
                 &mut account_states,
+                &mut hashed_slots_cache,
             )?;
         }
 
@@ -650,6 +652,7 @@ impl Blockchain {
         let mut account_states: FxHashMap<H256, AccountState> = Default::default();
 
         let mut hashed_address_cache: FxHashMap<H160, H256> = Default::default();
+        let mut hashed_slots_cache: FxHashMap<H256, H256> = Default::default();
 
         // Accumulator for witness generation (only used if precompute_witnesses is true)
         let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
@@ -696,6 +699,7 @@ impl Blockchain {
                 &mut state_updates_map,
                 &mut code_updates,
                 &mut account_states,
+                &mut hashed_slots_cache,
             )?;
         }
         let state_updates = state_updates_map.into_iter().collect();
@@ -730,6 +734,7 @@ impl Blockchain {
         state_updates_map: &mut FxHashMap<Nibbles, Vec<u8>>,
         code_updates: &mut FxHashMap<H256, Code>,
         account_states: &mut FxHashMap<H256, AccountState>,
+        hashed_slots_cache: &mut FxHashMap<H256, H256>,
     ) -> Result<H256, StoreError> {
         trace!("Execute block pipeline: Received {} updates", updates.len());
         // Apply the account updates over the last block's state and compute the new state root
@@ -818,7 +823,11 @@ impl Blockchain {
                     return Err(StoreError::Custom("Error opening storage trie".to_string()));
                 };
                 for (storage_key, storage_value) in &update.added_storage {
-                    let hashed_key = hash_key(storage_key);
+                    let hashed_key = hashed_slots_cache
+                        .entry(*storage_key)
+                        .or_insert_with(|| keccak(storage_key))
+                        .as_bytes()
+                        .to_vec();
                     if storage_value.is_zero() {
                         trace!(slot = hex::encode(&hashed_key), "Removing");
                         storage_trie.remove(&hashed_key)?;
