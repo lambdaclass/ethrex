@@ -140,9 +140,7 @@ impl LEVM {
             // "Withdrawal recipients regardless of amount"
             // The amount filter only applies to balance_changes, not touched_addresses
             if record_bal && let Some(recorder) = db.bal_recorder_mut() {
-                for withdrawal in withdrawals.iter() {
-                    recorder.record_touched_address(withdrawal.address);
-                }
+                recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
             }
             Self::process_withdrawals(db, withdrawals)?;
         }

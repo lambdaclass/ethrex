@@ -490,6 +490,13 @@ impl BlockAccessList {
         Self { inner: Vec::new() }
     }
 
+    /// Creates a new block access list with pre-allocated capacity.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            inner: Vec::with_capacity(capacity),
+        }
+    }
+
     /// Adds an account changes entry to the block access list.
     pub fn add_account_changes(&mut self, changes: AccountChanges) {
         self.inner.push(changes);
@@ -635,6 +642,15 @@ impl BlockAccessListRecorder {
         }
     }
 
+    /// Records multiple addresses as touched during execution.
+    /// More efficient than calling `record_touched_address` in a loop.
+    ///
+    /// Note: SYSTEM_ADDRESS is filtered out.
+    pub fn extend_touched_addresses(&mut self, addresses: impl Iterator<Item = Address>) {
+        self.touched_addresses
+            .extend(addresses.filter(|addr| *addr != SYSTEM_ADDRESS));
+    }
+
     /// Records a storage slot read.
     /// If the slot is later written, the read will be removed (it becomes a write).
     pub fn record_storage_read(&mut self, address: Address, slot: U256) {
@@ -739,7 +755,7 @@ impl BlockAccessListRecorder {
     /// post-transaction balance is equal to its pre-transaction balance, then the
     /// change MUST NOT be recorded."
     pub fn build(self) -> BlockAccessList {
-        let mut bal = BlockAccessList::new();
+        let mut bal = BlockAccessList::with_capacity(self.touched_addresses.len());
 
         // Process all touched addresses
         for address in &self.touched_addresses {

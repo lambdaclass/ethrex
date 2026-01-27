@@ -427,14 +427,12 @@ impl<'a> VM<'a> {
         address: Address,
         increase: U256,
     ) -> Result<(), InternalError> {
-        // Only fetch initial balance when BAL recording is enabled (Amsterdam+)
-        let initial_balance = if self.db.is_bal_recording_enabled() {
-            Some(self.db.get_account(address)?.info.balance)
-        } else {
-            None
-        };
-
         let account = self.get_account_mut(address)?;
+
+        // Get initial balance BEFORE modification (avoids duplicate lookup)
+        let initial_balance = account.info.balance;
+
+        // Modify balance
         account.info.balance = account
             .info
             .balance
@@ -442,11 +440,9 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Overflow)?;
         let new_balance = account.info.balance;
 
-        // Record initial and changed balance for BAL in a single check
+        // Record initial and changed balance for BAL
         if let Some(recorder) = self.db.bal_recorder.as_mut() {
-            if let Some(initial) = initial_balance {
-                recorder.set_initial_balance(address, initial);
-            }
+            recorder.set_initial_balance(address, initial_balance);
             recorder.record_balance_change(address, new_balance);
         }
 
@@ -458,14 +454,12 @@ impl<'a> VM<'a> {
         address: Address,
         decrease: U256,
     ) -> Result<(), InternalError> {
-        // Only fetch initial balance when BAL recording is enabled (Amsterdam+)
-        let initial_balance = if self.db.is_bal_recording_enabled() {
-            Some(self.db.get_account(address)?.info.balance)
-        } else {
-            None
-        };
-
         let account = self.get_account_mut(address)?;
+
+        // Get initial balance BEFORE modification (avoids duplicate lookup)
+        let initial_balance = account.info.balance;
+
+        // Modify balance
         account.info.balance = account
             .info
             .balance
@@ -473,11 +467,9 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Underflow)?;
         let new_balance = account.info.balance;
 
-        // Record initial and changed balance for BAL in a single check
+        // Record initial and changed balance for BAL
         if let Some(recorder) = self.db.bal_recorder.as_mut() {
-            if let Some(initial) = initial_balance {
-                recorder.set_initial_balance(address, initial);
-            }
+            recorder.set_initial_balance(address, initial_balance);
             recorder.record_balance_change(address, new_balance);
         }
 
