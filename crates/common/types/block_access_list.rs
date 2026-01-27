@@ -1408,4 +1408,132 @@ mod tests {
         sorted.sort();
         assert_eq!(addresses, sorted);
     }
+
+    // ====================== EIP-7928 Execution Spec Tests ======================
+
+    #[test]
+    fn test_bal_self_transfer() {
+        // Per EIP-7928: Self-transfers where an account sends value to itself
+        // result in balance changes that round-trip within the same TX.
+        let mut recorder = BlockAccessListRecorder::new();
+        recorder.set_block_access_index(1);
+
+        // Initial balance of 1000
+        recorder.set_initial_balance(ALICE_ADDR, U256::from(1000));
+        // Self-transfer: balance goes down then back up by same amount
+        // (In a real self-transfer, the net effect is zero)
+        recorder.record_balance_change(ALICE_ADDR, U256::from(1000)); // No net change
+
+        let bal = recorder.build();
+
+        let account = &bal.accounts()[0];
+        // Self-transfer with no net balance change should result in empty balance_changes
+        assert!(account.balance_changes().is_empty());
+    }
+
+    #[test]
+    fn test_bal_zero_value_transfer() {
+        // Per EIP-7928: Zero-value transfers touch accounts but don't change balances.
+        // Both sender and recipient must appear in BAL even with no balance changes.
+        let mut recorder = BlockAccessListRecorder::new();
+        recorder.set_block_access_index(1);
+
+        // Touch both addresses (simulating a zero-value transfer)
+        recorder.record_touched_address(ALICE_ADDR); // sender
+        recorder.record_touched_address(BOB_ADDR); // recipient
+
+        // Set initial balances (no actual change occurs in zero-value transfer)
+        recorder.set_initial_balance(ALICE_ADDR, U256::from(1000));
+        recorder.set_initial_balance(BOB_ADDR, U256::from(500));
+
+        // Record same balances (no change)
+        recorder.record_balance_change(ALICE_ADDR, U256::from(1000));
+        recorder.record_balance_change(BOB_ADDR, U256::from(500));
+
+        let bal = recorder.build();
+
+        // Both accounts should appear (they were touched)
+        assert_eq!(bal.accounts().len(), 2);
+        // Neither should have balance_changes (balances unchanged)
+        for account in bal.accounts() {
+            assert!(account.balance_changes().is_empty());
+        }
+    }
+
+    #[test]
+    fn test_bal_checkpoint_restore_preserves_touched_addresses() {
+        // Per EIP-7928: "State changes from reverted calls are discarded, but all
+        // accessed addresses must be included."
+        let mut recorder = BlockAccessListRecorder::new();
+        recorder.set_block_access_index(1);
+
+        // Record some state before checkpoint
+        recorder.record_touched_address(ALICE_ADDR);
+        recorder.record_storage_write(ALICE_ADDR, U256::from(0x10), U256::from(0x01));
+
+        // Take checkpoint (simulating entering a nested call)
+        let checkpoint = recorder.checkpoint();
+
+        // Record more state that will be reverted
+        recorder.record_touched_address(BOB_ADDR);
+        recorder.record_storage_write(BOB_ADDR, U256::from(0x20), U256::from(0x02));
+
+        // Revert (simulating nested call failure)
+        recorder.restore(checkpoint);
+
+        let bal = recorder.build();
+
+        // ALICE should have her storage write preserved
+        // BOB's storage write should be reverted
+        // BUT both addresses should still appear (touched_addresses persists)
+        assert_eq!(bal.accounts().len(), 2);
+
+        let alice = bal
+            .accounts()
+            .iter()
+            .find(|a| a.address() == ALICE_ADDR)
+            .unwrap();
+        let bob = bal
+            .accounts()
+            .iter()
+            .find(|a| a.address() == BOB_ADDR)
+            .unwrap();
+
+        // Alice's storage write survived
+        assert_eq!(alice.storage_changes().len(), 1);
+        // Bob's storage write was reverted
+        assert!(bob.storage_changes().is_empty());
+    }
+
+    #[test]
+    fn test_bal_reverted_write_restores_read() {
+        // When a slot is read, then written (which removes it from reads), then
+        // the write is reverted, the slot should be restored as a read.
+        let mut recorder = BlockAccessListRecorder::new();
+        recorder.set_block_access_index(1);
+
+        // Read a slot
+        recorder.record_storage_read(ALICE_ADDR, U256::from(0x10));
+
+        // Take checkpoint
+        let checkpoint = recorder.checkpoint();
+
+        // Write to the same slot (this removes it from reads and adds to writes)
+        recorder.record_storage_write(ALICE_ADDR, U256::from(0x10), U256::from(0x42));
+
+        // At this point, the slot should be in writes, not reads
+        // (verified by existing test test_recorder_storage_read_then_write_becomes_write)
+
+        // Revert the write
+        recorder.restore(checkpoint);
+
+        let bal = recorder.build();
+
+        let account = &bal.accounts()[0];
+        // The write was reverted, so slot should be back in reads
+        assert_eq!(account.storage_reads().len(), 1);
+        assert!(account.storage_reads().contains(&U256::from(0x10)));
+        // And not in writes
+        assert!(account.storage_changes().is_empty());
+    }
 }
