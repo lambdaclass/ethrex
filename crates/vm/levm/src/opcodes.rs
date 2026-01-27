@@ -165,7 +165,11 @@ pub enum Opcode {
     LOG2 = 0xA2,
     LOG3 = 0xA3,
     LOG4 = 0xA4,
-    // // System Operations
+    // EIP-8024
+    DUPN = 0xE6,
+    SWAPN = 0xE7,
+    EXCHANGE = 0xE8,
+    // System Operations
     CREATE = 0xF0,
     CALL = 0xF1,
     CALLCODE = 0xF2,
@@ -325,6 +329,9 @@ impl From<u8> for Opcode {
             table[0x5E] = Opcode::MCOPY;
             table[0x5C] = Opcode::TLOAD;
             table[0x5D] = Opcode::TSTORE;
+            table[0xE6] = Opcode::DUPN;
+            table[0xE7] = Opcode::SWAPN;
+            table[0xE8] = Opcode::EXCHANGE;
             table[0xF0] = Opcode::CREATE;
             table[0xF1] = Opcode::CALL;
             table[0xF2] = Opcode::CALLCODE;
@@ -374,7 +381,9 @@ impl<'a> VM<'a> {
     /// This is faster than a conventional match.
     #[allow(clippy::as_conversions, clippy::indexing_slicing)]
     pub(crate) fn build_opcode_table(fork: Fork) -> [OpCodeFn<'a>; 256] {
-        if fork >= Fork::Osaka {
+        if fork >= Fork::Amsterdam {
+            Self::build_opcode_table_amsterdam()
+        } else if fork >= Fork::Osaka {
             Self::build_opcode_table_osaka()
         } else if fork >= Fork::Cancun {
             Self::build_opcode_table_pre_osaka()
@@ -574,6 +583,16 @@ impl<'a> VM<'a> {
         let mut opcode_table: [OpCodeFn<'a>; 256] = Self::build_opcode_table_pre_osaka();
 
         opcode_table[Opcode::CLZ as usize] = OpCodeFn(VM::op_clz);
+        opcode_table
+    }
+
+    #[expect(clippy::as_conversions, clippy::indexing_slicing)]
+    const fn build_opcode_table_amsterdam() -> [OpCodeFn<'a>; 256] {
+        let mut opcode_table: [OpCodeFn<'a>; 256] = Self::build_opcode_table_osaka();
+
+        opcode_table[Opcode::DUPN as usize] = OpCodeFn(VM::op_dupn);
+        opcode_table[Opcode::SWAPN as usize] = OpCodeFn(VM::op_swapn);
+        opcode_table[Opcode::EXCHANGE as usize] = OpCodeFn(VM::op_exchange);
         opcode_table
     }
 
