@@ -919,15 +919,23 @@ async fn test_erc20_withdraw_l1_address_mismatch(
         "Expected revert reason to contain 'L1 address mismatch', got: {error_message}"
     );
 
-    let withdraw_receipt = test_send(
+    // Send the transaction with a fixed gas limit (gas estimation fails for reverting txs)
+    let withdraw_tx = build_generic_tx(
         &l2_client,
-        &rich_wallet_private_key,
+        TxType::EIP1559,
         COMMON_BRIDGE_L2_ADDRESS,
-        signature,
-        &data,
-        "test_erc20_withdraw_l1_address_mismatch",
+        rich_address,
+        calldata.clone(),
+        Overrides {
+            gas_limit: Some(500_000),
+            ..Default::default()
+        },
     )
     .await?;
+    let withdraw_tx_hash =
+        send_generic_transaction(&l2_client, withdraw_tx, &rich_wallet_signer).await?;
+    let withdraw_receipt =
+        ethrex_l2_sdk::wait_for_transaction_receipt(withdraw_tx_hash, &l2_client, 1000).await?;
 
     // The transaction should revert
     assert!(
