@@ -121,25 +121,34 @@ impl GeneralizedDatabase {
 
     /// Gets code metadata immutably given the code hash.
     pub fn get_code_metadata(&mut self, code_hash: H256) -> Result<&CodeMetadata, InternalError> {
-        // Check if metadata is already cached
-        if self.code_metadata.contains_key(&code_hash) {
-            return Ok(&self.code_metadata[&code_hash]);
+        match self.code_metadata.entry(code_hash) {
+            Entry::Occupied(entry) => Ok(entry.into_mut()),
+            Entry::Vacant(entry) => {
+                // First ensure code is loaded into cache by calling get_code
+                // This handles witness fallbacks and other code loading logic correctly
+                #[expect(clippy::as_conversions, reason = "same sized types (on 64bit)")]
+                let code_length = {
+                    // Note: `self.get_code(code_hash)` has been inlined due to mutability borrow issues.
+                    //   To avoid this inlinement, self.get_code has to be moved into `self.codes` so that it's called
+                    //   like this: `self.codes.get(code_hash)`.
+                    let code = match self.codes.entry(code_hash) {
+                        Entry::Occupied(entry) => entry.into_mut(),
+                        Entry::Vacant(entry) => {
+                            entry.insert(self.store.get_account_code(code_hash)?)
+                        }
+                    };
+
+                    code.bytecode.len() as u64
+                };
+
+                let metadata = CodeMetadata {
+                    length: code_length,
+                };
+
+                // Insert into cache and return reference
+                Ok(entry.insert(metadata))
+            }
         }
-
-        // First ensure code is loaded into cache by calling get_code
-        // This handles witness fallbacks and other code loading logic correctly
-        let code_length = {
-            let code = self.get_code(code_hash)?;
-            code.bytecode.len() as u64
-        };
-
-        let metadata = CodeMetadata {
-            length: code_length,
-        };
-
-        // Insert into cache and return reference
-        self.code_metadata.insert(code_hash, metadata);
-        Ok(&self.code_metadata[&code_hash])
     }
 
     /// Convenience method to get code length by address (optimized for EXTCODESIZE).
