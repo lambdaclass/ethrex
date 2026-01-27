@@ -1501,9 +1501,8 @@ impl Store {
                 // RocksDB for historical data (blocks, receipts, etc.)
                 let backend = Arc::new(RocksDBBackend::open(&path)?);
 
-                // ethrex-db for state storage
-                let state_db_path = db_path.join("ethrex_state");
-                std::fs::create_dir_all(&state_db_path)?;
+                // ethrex-db for state storage (expects a file path, not directory)
+                let state_db_path = db_path.join("ethrex_state.db");
                 let state_backend = EthrexDbBackend::open(&state_db_path)?;
 
                 Self::from_backend(
