@@ -298,6 +298,9 @@ pub async fn snap_sync(
         info!("Finish downloading account ranges from peers");
 
         *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
+        METRICS
+            .current_step
+            .set(CurrentStepValue::InsertingAccountRanges);
         // We read the account leafs from the files in account_state_snapshots_dir, write it into
         // the trie to compute the nodes and stores the accounts with storages for later use
 

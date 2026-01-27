@@ -1,7 +1,6 @@
 use ethrex_rpc::utils::RpcErrorMetadata;
 use ethrex_storage::error::StoreError;
 use ethrex_storage_rollup::RollupStoreError;
-use serde_json::Value;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RpcErr {
@@ -75,13 +74,4 @@ impl From<RollupStoreError> for RpcErr {
     fn from(value: RollupStoreError) -> Self {
         RpcErr::Internal(value.to_string())
     }
-}
-
-pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
-    let Value::String(maybe_hex) = hex else {
-        return Err(format!("Could not parse given hex {hex}"));
-    };
-    let trimmed = maybe_hex.trim_start_matches("0x");
-    let maybe_parsed = u64::from_str_radix(trimmed, 16);
-    maybe_parsed.map_err(|_| format!("Could not parse given hex {maybe_hex}"))
 }
