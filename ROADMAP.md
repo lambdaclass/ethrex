@@ -45,6 +45,8 @@ This is a WIP document and it requires better descriptions; it's supposed to be 
 | Object pooling | 2 | Pending | Reuse EVM stack frames to reduce allocations and improve performance |
 | Avoid clones in hot path | 2 | Pending | Avoid Clone on Account Load and check rest of the hot path |
 | SIMD Everywhere | 2 | Pending | There are some libraries that can be replaced by others that use SIMD instructions for better performance |
+| EXTCODESIZE without full bytecode | 1 | Pending | EXTCODESIZE loads entire bytecode just to get length. Add `get_account_code_size()` or store code length alongside code (`crates/vm/levm/src/opcode_handlers/environment.rs:260-274`) |
+| TransactionQueue data structure | 1 | Pending | `TransactionQueue` uses `Vec` with `remove(0)` which is O(n). Replace with `BinaryHeap`/`BTreeSet` or `VecDeque` for O(log n) or O(1) operations (`crates/blockchain/payload.rs:708-820`) |
 
 
 ---
@@ -66,9 +68,38 @@ This is a WIP document and it requires better descriptions; it's supposed to be 
 | Remove locks | 1 | Pending | Check if there are still some unnecessary locks, e.g. in the VM we have one |
 | Benchmark bloom filter | 1 | Pending | Review trie layer's bloom filter, remove it or test other libraries/configurations |
 | Use multiget on trie traversal | 1 | Pending | Using multiget on trie traversal might reduce read time |
+| Bulk reads for block bodies | 1 | Pending | Implement `multi_get` for `get_block_bodies` and `get_block_bodies_by_hash` which currently loop over per-key reads (`crates/storage/store.rs:388-454`) |
+| Canonical tx index | 1 | Pending | Transaction location lookup does O(k) prefix scans. Add a canonical-tx index table or DUPSORT layout for O(1) lookups (`crates/storage/store.rs:562-606`) |
+| Reduce trie cache Mutex contention | 1 | Pending | `trie_cache` is behind `Arc<Mutex<Arc<TrieLayerCache>>>`. Use `ArcSwap` or `RwLock` for lock-free reads (`crates/storage/store.rs:159,1360`) |
+| Reduce LatestBlockHeaderCache contention | 1 | Pending | `LatestBlockHeaderCache` uses Mutex for every read. Use `ArcSwap` for atomic pointer swaps (`crates/storage/store.rs:2880-2894`) |
+| Use Bytes/Arc in trie layer cache | 2 | Pending | Trie layer cache clones `Vec<u8>` values on every read. Use `Bytes` or `Arc<[u8]>` to reduce allocations (`crates/storage/layering.rs:57,63`) |
+| Split hot vs cold data | 2 | Pending | Geth "freezer/ancients" pattern: store recent state in fast KV store, push old bodies/receipts to append-only ancient store to reduce compaction pressure |
+| Configurable cache budgets | 2 | Pending | Expose cache split for DB/trie/snapshot as runtime config. Currently hardcoded in ethrex |
+| Toggle compaction during sync | 2 | Pending | Disable RocksDB compaction during snap sync for higher write throughput, then compact after (Nethermind pattern). Wire `disable_compaction/enable_compaction` into sync stages |
 | Spawned | 3 | Pending | [*Spawnify*](https://github.com/lambdaclass/spawned) io intensive components/flows. Mempool and Snapsync are top priorities |
 
 ---
+
+## RPC
+
+| Item | Priority | Status | Description |
+|-----|----------|--------|-------------|
+| Parallel tx decoding | 0 | Pending | Use rayon to decode transactions in parallel. Currently sequential at ~5-10μs per tx |
+| simd-json | 0 | Pending | Replace serde_json with simd-json for SIMD-accelerated JSON parsing |
+| Remove payload.clone() | 0 | Pending | Avoid cloning `ExecutionPayload` in `get_block_from_payload` (`crates/networking/rpc/engine/payload.rs:674`). Use references or owned values directly |
+| Remove params.clone() | 0 | Pending | Avoid cloning params before `serde_json::from_value()`. Use references instead of `params[i].clone()` in RPC handlers (`crates/networking/rpc/engine/payload.rs`) |
+| Use Bytes instead of String | 0 | Pending | Change HTTP body extraction from `String` to `Bytes` and use `serde_json::from_slice()` instead of `from_str()` to avoid UTF-8 validation overhead (`crates/networking/rpc/rpc.rs:536,563`) |
+| RawValue for params | 1 | Pending | Use `Option<Vec<serde_json::value::RawValue>>` instead of `Option<Vec<Value>>` in `RpcRequest` to defer parsing until needed (`crates/networking/rpc/utils.rs:242`) |
+| Parallel tx root | 1 | Pending | Parallelize `compute_transactions_root` which computes ~400 keccak256 hashes for 200 txs (`crates/blockchain/payload.rs:671`) |
+| phf method routing | 2 | Pending | Replace match statements with `phf::Map` for O(1) RPC method dispatch instead of O(n) string comparisons (`crates/networking/rpc/rpc.rs:652-765`) |
+| Pre-create JWT decoder | 2 | Pending | Cache `DecodingKey` and `Validation` at startup instead of creating them on every auth request (`crates/networking/rpc/authentication.rs:43-46`) |
+| HTTP/2 support | 3 | Pending | Add HTTP/2 support for reduced latency through multiplexing |
+| Direct response serialization | 3 | Pending | Serialize responses directly to the output buffer instead of intermediate Value |
+| TCP tuning | 3 | Pending | Tune TCP settings (nodelay, buffer sizes) for lower latency |
+
+
+---
+
 
 ## ZK + L2
 

@@ -478,8 +478,6 @@ impl DiscoveryServer {
 
         // Chunk nodes into multiple NODES messages if needed
         let chunks: Vec<_> = nodes.chunks(MAX_ENRS_PER_MESSAGE).collect();
-        let total = chunks.len().max(1) as u64;
-
         if chunks.is_empty() {
             // Send empty response
             let nodes_message = Message::Nodes(NodesMessage {
@@ -487,15 +485,15 @@ impl DiscoveryServer {
                 total: 1,
                 nodes: vec![],
             });
-            self.send_ordinary(nodes_message, &contact.node).await?;
+            self.send_ordinary(&nodes_message, &contact.node).await?;
         } else {
-            for chunk in chunks {
+            for chunk in &chunks {
                 let nodes_message = Message::Nodes(NodesMessage {
                     req_id: find_node_message.req_id.clone(),
-                    total,
+                    total: chunks.len() as u64,
                     nodes: chunk.to_vec(),
                 });
-                self.send_ordinary(nodes_message, &contact.node).await?;
+                self.send_ordinary(&nodes_message, &contact.node).await?;
             }
         }
 
