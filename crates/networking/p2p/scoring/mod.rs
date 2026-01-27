@@ -35,6 +35,6 @@ mod score;
 mod types;
 
 pub use ip_tracker::{IpColocationTracker, IpPrefix};
-pub use metrics::{LatencyTracker, RequestTypeMetrics, ThroughputTracker, EWMA};
+pub use metrics::{EWMA, LatencyTracker, RequestTypeMetrics, ThroughputTracker};
 pub use score::{PeerScore, PeerScoringConfig};
 pub use types::{FailureSeverity, RequestType};

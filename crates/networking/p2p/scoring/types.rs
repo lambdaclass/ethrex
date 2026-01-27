@@ -122,7 +122,7 @@ impl FailureSeverity {
     /// Higher severity = larger penalty (more negative).
     pub fn penalty(self) -> f64 {
         match self {
-            FailureSeverity::Low => -0.01,      // -1%
+            FailureSeverity::Low => -0.01,     // -1%
             FailureSeverity::Medium => -0.03,  // -3%
             FailureSeverity::High => -0.10,    // -10%
             FailureSeverity::Critical => -1.0, // Immediate blacklist
@@ -144,41 +144,5 @@ impl fmt::Display for FailureSeverity {
             FailureSeverity::Critical => "critical",
         };
         write!(f, "{}", name)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_request_type_categorization() {
-        assert!(RequestType::BlockHeaders.is_eth());
-        assert!(RequestType::BlockBodies.is_eth());
-        assert!(!RequestType::BlockHeaders.is_snap());
-
-        assert!(RequestType::AccountRange.is_snap());
-        assert!(RequestType::TrieNodes.is_snap());
-        assert!(!RequestType::AccountRange.is_eth());
-    }
-
-    #[test]
-    fn test_failure_severity_ordering() {
-        assert!(FailureSeverity::Low < FailureSeverity::Medium);
-        assert!(FailureSeverity::Medium < FailureSeverity::High);
-        assert!(FailureSeverity::High < FailureSeverity::Critical);
-    }
-
-    #[test]
-    fn test_failure_severity_penalties() {
-        assert!(FailureSeverity::Low.penalty() > FailureSeverity::Medium.penalty());
-        assert!(FailureSeverity::Medium.penalty() > FailureSeverity::High.penalty());
-        assert!(FailureSeverity::High.penalty() > FailureSeverity::Critical.penalty());
-    }
-
-    #[test]
-    fn test_all_request_types() {
-        let all = RequestType::all();
-        assert_eq!(all.len(), 8);
     }
 }

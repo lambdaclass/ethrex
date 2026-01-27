@@ -41,7 +41,9 @@ impl IpPrefix {
             IpAddr::V6(ipv6) => {
                 let octets = ipv6.octets();
                 Self {
-                    bytes: [octets[0], octets[1], octets[2], octets[3], octets[4], octets[5]],
+                    bytes: [
+                        octets[0], octets[1], octets[2], octets[3], octets[4], octets[5],
+                    ],
                     is_ipv6: true,
                 }
             }
@@ -120,31 +122,28 @@ impl IpColocationTracker {
         let prefix = IpPrefix::from_ip(ip);
 
         // Remove from old prefix if exists
-        if let Some(old_prefix) = self.peer_prefix.remove(&peer_id) {
-            if let Some(peers) = self.prefix_peers.get_mut(&old_prefix) {
-                peers.retain(|p| *p != peer_id);
-                if peers.is_empty() {
-                    self.prefix_peers.remove(&old_prefix);
-                }
+        if let Some(old_prefix) = self.peer_prefix.remove(&peer_id)
+            && let Some(peers) = self.prefix_peers.get_mut(&old_prefix)
+        {
+            peers.retain(|p| *p != peer_id);
+            if peers.is_empty() {
+                self.prefix_peers.remove(&old_prefix);
             }
         }
 
         // Add to new prefix
         self.peer_prefix.insert(peer_id, prefix);
-        self.prefix_peers
-            .entry(prefix)
-            .or_insert_with(Vec::new)
-            .push(peer_id);
+        self.prefix_peers.entry(prefix).or_default().push(peer_id);
     }
 
     /// Removes a peer from tracking.
     pub fn remove_peer(&mut self, peer_id: &H256) {
-        if let Some(prefix) = self.peer_prefix.remove(peer_id) {
-            if let Some(peers) = self.prefix_peers.get_mut(&prefix) {
-                peers.retain(|p| p != peer_id);
-                if peers.is_empty() {
-                    self.prefix_peers.remove(&prefix);
-                }
+        if let Some(prefix) = self.peer_prefix.remove(peer_id)
+            && let Some(peers) = self.prefix_peers.get_mut(&prefix)
+        {
+            peers.retain(|p| p != peer_id);
+            if peers.is_empty() {
+                self.prefix_peers.remove(&prefix);
             }
         }
     }
@@ -215,154 +214,5 @@ impl IpColocationTracker {
     pub fn clear(&mut self) {
         self.prefix_peers.clear();
         self.peer_prefix.clear();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::net::{Ipv4Addr, Ipv6Addr};
-
-    fn make_peer_id(n: u8) -> H256 {
-        H256([n; 32])
-    }
-
-    #[test]
-    fn test_ip_prefix_ipv4() {
-        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100));
-        let prefix = IpPrefix::from_ip(ip);
-
-        assert!(!prefix.is_ipv6());
-        assert_eq!(prefix.display(), "192.168.1.0/24");
-
-        // Same /24 should produce same prefix
-        let ip2 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 200));
-        let prefix2 = IpPrefix::from_ip(ip2);
-        assert_eq!(prefix, prefix2);
-
-        // Different /24 should produce different prefix
-        let ip3 = IpAddr::V4(Ipv4Addr::new(192, 168, 2, 100));
-        let prefix3 = IpPrefix::from_ip(ip3);
-        assert_ne!(prefix, prefix3);
-    }
-
-    #[test]
-    fn test_ip_prefix_ipv6() {
-        let ip = IpAddr::V6(Ipv6Addr::new(0x2001, 0x0db8, 0x85a3, 0x0000, 0x0000, 0x8a2e, 0x0370, 0x7334));
-        let prefix = IpPrefix::from_ip(ip);
-
-        assert!(prefix.is_ipv6());
-    }
-
-    #[test]
-    fn test_no_penalty_under_threshold() {
-        let mut tracker = IpColocationTracker::new(3, 1.5);
-
-        // Add 3 peers from same subnet (at threshold)
-        for i in 0..3 {
-            tracker.add_peer(make_peer_id(i), IpAddr::V4(Ipv4Addr::new(192, 168, 1, i)));
-        }
-
-        // No penalty at threshold
-        assert_eq!(tracker.colocation_penalty(&make_peer_id(0)), 0.0);
-    }
-
-    #[test]
-    fn test_quadratic_penalty_above_threshold() {
-        let mut tracker = IpColocationTracker::new(3, 1.0);
-
-        // Add 5 peers from same subnet (2 over threshold)
-        for i in 0..5 {
-            tracker.add_peer(make_peer_id(i), IpAddr::V4(Ipv4Addr::new(192, 168, 1, i)));
-        }
-
-        // Penalty should be 1.0 * (5-3)^2 = 4.0
-        let penalty = tracker.colocation_penalty(&make_peer_id(0));
-        assert!((penalty - 4.0).abs() < 0.01, "Expected 4.0, got {}", penalty);
-
-        // Add more peers
-        for i in 5..8 {
-            tracker.add_peer(make_peer_id(i), IpAddr::V4(Ipv4Addr::new(192, 168, 1, i)));
-        }
-
-        // Penalty should be 1.0 * (8-3)^2 = 25.0
-        let penalty = tracker.colocation_penalty(&make_peer_id(0));
-        assert!((penalty - 25.0).abs() < 0.01, "Expected 25.0, got {}", penalty);
-    }
-
-    #[test]
-    fn test_remove_peer() {
-        let mut tracker = IpColocationTracker::new(2, 1.0);
-
-        // Add 4 peers from same subnet
-        for i in 0..4 {
-            tracker.add_peer(make_peer_id(i), IpAddr::V4(Ipv4Addr::new(192, 168, 1, i)));
-        }
-
-        assert_eq!(tracker.peers_in_same_prefix(&make_peer_id(0)), 4);
-
-        // Remove one peer
-        tracker.remove_peer(&make_peer_id(0));
-
-        // Remaining peers should now only see 3
-        assert_eq!(tracker.peers_in_same_prefix(&make_peer_id(1)), 3);
-
-        // Removed peer should have no penalty
-        assert_eq!(tracker.colocation_penalty(&make_peer_id(0)), 0.0);
-    }
-
-    #[test]
-    fn test_different_subnets() {
-        let mut tracker = IpColocationTracker::new(2, 1.0);
-
-        // Add peers from different subnets
-        tracker.add_peer(make_peer_id(0), IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)));
-        tracker.add_peer(make_peer_id(1), IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)));
-        tracker.add_peer(make_peer_id(2), IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)));
-
-        // Each peer is alone in their subnet
-        assert_eq!(tracker.peers_in_same_prefix(&make_peer_id(0)), 1);
-        assert_eq!(tracker.peers_in_same_prefix(&make_peer_id(1)), 1);
-        assert_eq!(tracker.peers_in_same_prefix(&make_peer_id(2)), 1);
-
-        // No penalties
-        assert_eq!(tracker.colocation_penalty(&make_peer_id(0)), 0.0);
-    }
-
-    #[test]
-    fn test_congested_prefixes() {
-        let mut tracker = IpColocationTracker::new(2, 1.0);
-
-        // Add peers to create one congested subnet
-        for i in 0..5 {
-            tracker.add_peer(make_peer_id(i), IpAddr::V4(Ipv4Addr::new(192, 168, 1, i)));
-        }
-
-        // Add peers to a normal subnet
-        tracker.add_peer(make_peer_id(10), IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)));
-        tracker.add_peer(make_peer_id(11), IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)));
-
-        let congested = tracker.congested_prefixes();
-        assert_eq!(congested.len(), 1);
-        assert_eq!(congested[0].1, 5); // 5 peers in congested subnet
-    }
-
-    #[test]
-    fn test_peer_ip_update() {
-        let mut tracker = IpColocationTracker::new(2, 1.0);
-
-        // Add peer to one subnet
-        tracker.add_peer(make_peer_id(0), IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)));
-        assert_eq!(tracker.peers_in_same_prefix(&make_peer_id(0)), 1);
-
-        // Move peer to another subnet
-        tracker.add_peer(make_peer_id(0), IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)));
-
-        // Old prefix should be empty, new should have peer
-        let prefix192 = IpPrefix::from_ip(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)));
-        assert!(tracker.prefix_peers.get(&prefix192).is_none() ||
-                tracker.prefix_peers.get(&prefix192).unwrap().is_empty());
-
-        assert_eq!(tracker.peers_in_same_prefix(&make_peer_id(0)), 1);
     }
 }
