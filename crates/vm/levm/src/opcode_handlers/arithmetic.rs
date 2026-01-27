@@ -1,5 +1,5 @@
 use crate::{
-    U256,
+    U256, U512,
     errors::{OpcodeResult, VMError},
     gas_cost,
     vm::VM,
@@ -35,12 +35,13 @@ impl<'a> VM<'a> {
     }
 
     // MUL operation
+    #[inline]
     pub fn op_mul(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::MUL)?;
 
         let [multiplicand, multiplier] = *current_call_frame.stack.pop()?;
-        let product = multiplicand.overflowing_mul(multiplier).0;
+        let product = multiplicand.wrapping_mul(multiplier);
         current_call_frame.stack.push(product)?;
 
         Ok(OpcodeResult::Continue)
@@ -93,13 +94,18 @@ impl<'a> VM<'a> {
     }
 
     // MOD operation
+    #[inline]
     pub fn op_mod(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::MOD)?;
 
         let [dividend, divisor] = *current_call_frame.stack.pop()?;
 
-        let remainder = dividend.checked_rem(divisor).unwrap_or_default();
+        let remainder = if divisor.is_zero() {
+            U256::ZERO
+        } else {
+            dividend.wrapping_rem(divisor)
+        };
 
         current_call_frame.stack.push(remainder)?;
 
@@ -188,7 +194,12 @@ impl<'a> VM<'a> {
         };
 
         #[cfg(not(feature = "zisk"))]
-        let product_mod = multiplicand.mul_mod(multiplier, modulus);
+        let product_mod = {
+            let product: U512 = multiplicand.widening_mul(multiplier);
+            let m_wide = U512::from(modulus);
+            let remainder = product % m_wide;
+            U256::from_limbs(*remainder.as_limbs().first_chunk::<4>().unwrap())
+        };
 
         current_call_frame.stack.push(product_mod)?;
 
