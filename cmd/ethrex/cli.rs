@@ -15,10 +15,8 @@ use ethrex_blockchain::{
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
 use ethrex_p2p::{
-    discv4::{peer_table::TARGET_PEERS, server::INITIAL_LOOKUP_INTERVAL_MS},
-    sync::SyncMode,
-    tx_broadcaster::BROADCAST_INTERVAL_MS,
-    types::Node,
+    discv4::server::INITIAL_LOOKUP_INTERVAL_MS, peer_table::TARGET_PEERS, sync::SyncMode,
+    tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
@@ -29,7 +27,10 @@ use crate::{
     initializers::{
         get_network, init_blockchain, init_store, init_tracing, load_store, regenerate_head_state,
     },
-    utils::{self, default_datadir, get_client_version, get_minimal_client_version, init_datadir},
+    utils::{
+        self, default_datadir, get_client_version, get_client_version_string,
+        get_minimal_client_version, init_datadir,
+    },
 };
 
 pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
@@ -40,7 +41,7 @@ use ethrex_config::networks::Network;
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
-#[command(name="ethrex", author = "Lambdaclass", version=get_client_version(), about = "ethrex Execution client")]
+#[command(name="ethrex", author = "Lambdaclass", version=get_client_version_string(), about = "ethrex Execution client")]
 pub struct CLI {
     #[command(flatten)]
     pub opts: Options,
