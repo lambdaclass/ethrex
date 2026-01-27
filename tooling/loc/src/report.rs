@@ -214,6 +214,15 @@ pub fn slack_message(old_report: LinesOfCodeReport, new_report: LinesOfCodeRepor
                 "type": "mrkdwn",
                 "text": "{}"
             }}
+        }},
+        {{
+            "type": "context",
+            "elements": [
+                {{
+                    "type": "mrkdwn",
+                    "text": "_Excluded folders: test/, tests/, tooling/_"
+                }}
+            ]
         }}
     ]
 }}"#,
@@ -289,6 +298,7 @@ ethrex (total): {} {}
 ethrex crates loc
 =================
 {}
+Excluded folders: test/, tests/, tooling/
 ```"#,
         new_report.ethrex_l1,
         if new_report.ethrex > old_report.ethrex {
@@ -320,7 +330,7 @@ ethrex crates loc
 
 pub fn shell_summary(new_report: LinesOfCodeReport) -> String {
     format!(
-        "{}\n{}\n{} {}\n{} {}\n{} {}\n{} {}",
+        "{}\n{}\n{} {}\n{} {}\n{} {}\n{} {}\n\n{}",
         "Lines of Code".bold(),
         "=============".bold(),
         "ethrex L1:".bold(),
@@ -331,5 +341,6 @@ pub fn shell_summary(new_report: LinesOfCodeReport) -> String {
         new_report.levm,
         "ethrex (total):".bold(),
         new_report.ethrex,
+        "Excluded folders: test/, tests/, tooling/".italic(),
     )
 }
