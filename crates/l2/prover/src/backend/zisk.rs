@@ -21,8 +21,6 @@ const ZISK_ELF_ENV: &str = "ZISK_ELF_PATH";
 const ZISK_HOME_ENV: &str = "ZISK_HOME";
 const ZISK_PROVING_KEY_ENV: &str = "ZISK_PROVING_KEY_PATH";
 const ZISK_PROVING_KEY_SNARK_ENV: &str = "ZISK_PROVING_KEY_SNARK_PATH";
-const ZISK_WITNESS_LIB_ENV: &str = "ZISK_WITNESS_LIB_PATH";
-const ZISK_REPO_ENV: &str = "ZISK_REPO_PATH";
 
 fn resolve_elf_path() -> PathBuf {
     std::env::var_os(ZISK_ELF_ENV)
@@ -47,24 +45,6 @@ fn resolve_proving_key_snark_path() -> PathBuf {
     std::env::var_os(ZISK_PROVING_KEY_SNARK_ENV)
         .map(PathBuf::from)
         .unwrap_or_else(|| resolve_zisk_home().join("provingKeySnark"))
-}
-
-fn resolve_witness_lib_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    if let Some(path) = std::env::var_os(ZISK_WITNESS_LIB_ENV) {
-        return Ok(PathBuf::from(path));
-    }
-    if let Some(repo) = std::env::var_os(ZISK_REPO_ENV) {
-        return Ok(PathBuf::from(repo).join("target/release/libzisk_witness.so"));
-    }
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(3)
-        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")));
-    let fallback = repo_root.join("zisk/target/release/libzisk_witness.so");
-    if fallback.exists() {
-        return Ok(fallback);
-    }
-    Err("Missing ZisK witness library path. Set ZISK_WITNESS_LIB_PATH or ZISK_REPO_PATH.".into())
 }
 
 /// ZisK-specific proof output containing the proof bytes.
@@ -150,11 +130,9 @@ impl ZiskBackend {
         std::fs::create_dir_all(cwd.join("tmp")).map_err(BackendError::proving)?;
 
         let proving_key_path = resolve_proving_key_path();
-        let witness_lib_path = resolve_witness_lib_path().map_err(BackendError::proving)?;
 
         let elf_path_str = elf_path.to_string_lossy();
         let proving_key_path_str = proving_key_path.to_string_lossy();
-        let witness_lib_path_str = witness_lib_path.to_string_lossy();
         let args = vec![
             "prove",
             "-e",
@@ -165,8 +143,6 @@ impl ZiskBackend {
             "-u",
             "-k",
             proving_key_path_str.as_ref(),
-            "-w",
-            witness_lib_path_str.as_ref(),
             "-o",
             OUTPUT_DIR_PATH,
         ];

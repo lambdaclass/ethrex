@@ -36,7 +36,7 @@ This generates the ELF at `crates/guest-program/bin/zisk/out/riscv64ima-zisk-elf
 
 ```bash
 git clone git@github.com:0xPolygonHermez/zisk.git
-cd zisk && git checkout feature/pre-develop-0.16.0-stable
+cd zisk && git checkout pre-develop-0.16.0
 ```
 
 **With GPU:**
@@ -105,15 +105,10 @@ Generate the VK for your ELF (needed for on-chain verification):
 cargo-zisk rom-vkey \
     -e crates/guest-program/bin/zisk/out/riscv64ima-zisk-elf \
     -k ~/.zisk/provingKey \
-    -o ~/.zisk/vk
+    -o crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk
 ```
 
-This outputs the VK root hash:
-```
-INFO: Root hash: [3121973382251281428, 1947533496960916486, 15830689218699704550, 16339664693968653792]
-```
-
-Save this root hash - it's needed when verifying proofs on-chain.
+This outputs the VK root hash and saves it to the path where the deployer expects it.
 
 ### 9. Compile the verifier contract
 
@@ -160,15 +155,9 @@ Deploy the L1 contracts with ZisK verification enabled:
 ```bash
 COMPILE_CONTRACTS=true \
 ETHREX_L2_ZISK=true \
-ETHREX_DEPLOYER_ZISK_VERIFIER_ADDRESS=<ZISK_VERIFIER_ADDRESS> \
+ETHREX_DEPLOYER_ZISK_VERIFIER_ADDRESS=0xd5cf1b40771142c801c9f522d27721ded4d8ef0d \
 ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true \
-ethrex l2 deploy \
-  --eth-rpc-url <ETH_RPC_URL> \
-  --private-key <YOUR_PRIVATE_KEY> \
-  --on-chain-proposer-owner <ON_CHAIN_PROPOSER_OWNER>  \
-  --bridge-owner <BRIDGE_OWNER_ADDRESS>  \
-  --genesis-l2-path fixtures/genesis/l2.json \
-  --proof-sender.l1-address <PROOF_SENDER_L1_ADDRESS>
+make -C crates/l2 deploy-l1
 ```
 
 > [!NOTE]
@@ -178,16 +167,7 @@ ethrex l2 deploy \
 ### 12. Start the L2 Node
 
 ```bash
-ethrex l2 \
-    --l1.bridge-address <BRIDGE_ADDRESS> \
-    --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> \
-    --block-producer.coinbase-address <COINBASE_ADDRESS> \
-    --committer.l1-private-key <COMMITTER_PRIVATE_KEY> \
-    --proof-coordinator.l1-private-key <PROOF_SENDER_PRIVATE_KEY> \
-    --eth.rpc-url <L1_RPC_URL> \
-    --network fixtures/genesis/l2.json \
-    --datadir ethrex_l2 \
-    --no-monitor
+ZISK=true ETHREX_NO_MONITOR=true ETHREX_LOG_LEVEL=debug make -C crates/l2 init-l2 | grep -E "INFO|WARN|ERROR"
 ```
 
 > [!IMPORTANT]
@@ -221,8 +201,6 @@ The prover uses sensible defaults, but you can override paths:
 | `ZISK_ELF_PATH` | embedded | Path to guest ELF |
 | `ZISK_PROVING_KEY_PATH` | `~/.zisk/provingKey` | STARK proving key |
 | `ZISK_PROVING_KEY_SNARK_PATH` | `~/.zisk/provingKeySnark` | SNARK proving key |
-| `ZISK_WITNESS_LIB_PATH` | auto-detected | Path to `libzisk_witness.so` |
-| `ZISK_REPO_PATH` | - | ZisK repo (for witness lib) |
 
 ## Troubleshooting
 
