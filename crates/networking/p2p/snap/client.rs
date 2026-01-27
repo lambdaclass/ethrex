@@ -828,7 +828,7 @@ impl PeerHandler {
                             let (_, intervals) = account_storage_roots
                                 .accounts_with_storage_root
                                 .get_mut(&accounts_by_root_hash[remaining_start].1[0])
-                                .ok_or(SnapError::InternalError("Trie to get the old download intervals for an account but did not find them".to_owned()))?;
+                                .ok_or(SnapError::InternalError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
 
                             for i in 0..chunk_count {
                                 let start_hash_u256 = start_hash_u256 + chunk_size * i;
