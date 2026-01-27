@@ -14,9 +14,9 @@ use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_process
 use ethrex_metrics::rpc::initialize_rpc_metrics;
 use ethrex_p2p::rlpx::initiator::RLPxInitiator;
 use ethrex_p2p::{
-    discv4::peer_table::PeerTable,
     network::P2PContext,
     peer_handler::PeerHandler,
+    peer_table::PeerTable,
     sync::SyncMode,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
@@ -488,7 +488,7 @@ pub async fn init_l1(
 
     let local_node_record = get_local_node_record(datadir, &local_p2p_node, &signer);
 
-    let peer_table = PeerTable::spawn(opts.target_peers);
+    let peer_table = PeerTable::spawn(opts.target_peers, store.clone());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
