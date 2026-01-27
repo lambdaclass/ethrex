@@ -1,7 +1,8 @@
 use ethrex_common::types::{Block, Transaction};
-use ethrex_common::{tracing::CallTrace, types::BlockHeader};
+use ethrex_common::{U256, tracing::CallTrace, types::BlockHeader};
+use ethrex_levm::utils::get_base_fee_per_blob_gas;
 use ethrex_levm::vm::VMType;
-use ethrex_levm::{db::gen_db::GeneralizedDatabase, tracing::LevmCallTracer, vm::VM};
+use ethrex_levm::{EVMConfig, db::gen_db::GeneralizedDatabase, tracing::LevmCallTracer, vm::VM};
 
 use crate::{EvmError, backends::levm::LEVM};
 
@@ -16,6 +17,12 @@ impl LEVM {
     ) -> Result<(), EvmError> {
         Self::prepare_block(block, db, vm_type)?;
 
+        // Compute base blob fee once for the entire block
+        let chain_config = db.store.get_chain_config()?;
+        let config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+        let block_excess_blob_gas = block.header.excess_blob_gas.map(U256::from);
+        let base_blob_fee_per_gas = get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?;
+
         // Executes transactions and stops when the index matches the stop index.
         for (index, (tx, sender)) in block
             .body
@@ -28,7 +35,14 @@ impl LEVM {
                 break;
             }
 
-            Self::execute_tx(tx, sender, &block.header, db, vm_type)?;
+            Self::execute_tx(
+                tx,
+                sender,
+                &block.header,
+                db,
+                vm_type,
+                base_blob_fee_per_gas,
+            )?;
         }
 
         // Process withdrawals only if the whole block has been executed.
@@ -50,6 +64,12 @@ impl LEVM {
         with_log: bool,
         vm_type: VMType,
     ) -> Result<CallTrace, EvmError> {
+        // Compute base blob fee per gas
+        let chain_config = db.store.get_chain_config()?;
+        let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+        let block_excess_blob_gas = block_header.excess_blob_gas.map(U256::from);
+        let base_blob_fee_per_gas = get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?;
+
         let env = Self::setup_env(
             tx,
             tx.sender().map_err(|error| {
@@ -58,6 +78,7 @@ impl LEVM {
             block_header,
             db,
             vm_type,
+            base_blob_fee_per_gas,
         )?;
         let mut vm = VM::new(
             env,

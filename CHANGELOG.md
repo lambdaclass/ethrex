@@ -4,6 +4,7 @@
 
 ### 2026-01-23
 
+- Compute base blob fee once per block [#6006](https://github.com/lambdaclass/ethrex/pull/6006)
 - Reuse cache in prewarm workers [#5999](https://github.com/lambdaclass/ethrex/pull/5999)
 
 ### 2026-01-21
