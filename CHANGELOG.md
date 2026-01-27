@@ -8,6 +8,7 @@
 
 ### 2026-01-21
 
+- Use fastbloom as the bloom filter [#5968](https://github.com/lambdaclass/ethrex/pull/5968)
 - Improve snap sync logging with table format and visual progress bars [#5977](https://github.com/lambdaclass/ethrex/pull/5977)
 
 ### 2026-01-20
