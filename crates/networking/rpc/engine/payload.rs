@@ -640,15 +640,16 @@ fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcEr
     Ok(())
 }
 
+#[inline]
 fn validate_execution_payload_v4(payload: &ExecutionPayload) -> Result<(), RpcErr> {
     // This method follows the same specification as `engine_newPayloadV4` additionally
     // rejects payload without block access list
 
-    validate_execution_payload_v3(payload)?;
-
     if payload.block_access_list.is_none() {
         return Err(RpcErr::WrongParam("block_access_list".to_string()));
     }
+
+    validate_execution_payload_v3(payload)?;
 
     Ok(())
 }
@@ -846,7 +847,7 @@ async fn try_execute_payload(
     }
 
     // Execute and store the block
-    info!(%block_hash, %block_number, "Executing payload");
+    debug!(%block_hash, %block_number, "Executing payload");
 
     match add_block(context, block).await {
         Err(ChainError::ParentNotFound) => {
@@ -894,7 +895,7 @@ async fn try_execute_payload(
             Err(RpcErr::Internal(e.to_string()))
         }
         Ok(()) => {
-            info!("Block with hash {block_hash} executed and added to storage succesfully");
+            debug!("Block with hash {block_hash} executed and added to storage successfully");
             Ok(PayloadStatus::valid_with_hash(block_hash))
         }
     }
