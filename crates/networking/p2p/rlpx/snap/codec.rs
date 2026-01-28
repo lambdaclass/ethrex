@@ -1,12 +1,18 @@
-use super::{
+//! Snap protocol message encoding/decoding
+//!
+//! This module implements RLPxMessage for snap protocol messages,
+//! as well as RLP encoding/decoding for helper types.
+
+use super::messages::{
+    AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges,
+    GetTrieNodes, StorageRanges, StorageSlot, TrieNodes,
+};
+use crate::rlpx::{
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::{BufMut, Bytes};
-use ethrex_common::{
-    H256, U256,
-    types::{AccountState, AccountStateSlimCodec},
-};
+use ethrex_common::{H256, U256, types::AccountStateSlimCodec};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -14,74 +20,29 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 
-// Snap Capability Messages
+// =============================================================================
+// MESSAGE CODES
+// =============================================================================
 
-#[derive(Debug, Clone)]
-pub struct GetAccountRange {
-    // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
-    pub id: u64,
-    pub root_hash: H256,
-    pub starting_hash: H256,
-    pub limit_hash: H256,
-    pub response_bytes: u64,
+/// Snap protocol message codes
+pub mod codes {
+    pub const GET_ACCOUNT_RANGE: u8 = 0x00;
+    pub const ACCOUNT_RANGE: u8 = 0x01;
+    pub const GET_STORAGE_RANGES: u8 = 0x02;
+    pub const STORAGE_RANGES: u8 = 0x03;
+    pub const GET_BYTE_CODES: u8 = 0x04;
+    pub const BYTE_CODES: u8 = 0x05;
+    pub const GET_TRIE_NODES: u8 = 0x06;
+    pub const TRIE_NODES: u8 = 0x07;
 }
 
-#[derive(Debug, Clone)]
-pub struct AccountRange {
-    // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
-    pub id: u64,
-    pub accounts: Vec<AccountRangeUnit>,
-    pub proof: Vec<Bytes>,
-}
-
-#[derive(Debug, Clone)]
-pub struct GetStorageRanges {
-    pub id: u64,
-    pub root_hash: H256,
-    pub account_hashes: Vec<H256>,
-    pub starting_hash: H256,
-    pub limit_hash: H256,
-    pub response_bytes: u64,
-}
-
-#[derive(Debug, Clone)]
-pub struct StorageRanges {
-    pub id: u64,
-    pub slots: Vec<Vec<StorageSlot>>,
-    pub proof: Vec<Bytes>,
-}
-
-#[derive(Debug, Clone)]
-pub struct GetByteCodes {
-    pub id: u64,
-    pub hashes: Vec<H256>,
-    pub bytes: u64,
-}
-
-#[derive(Debug, Clone)]
-pub struct ByteCodes {
-    pub id: u64,
-    pub codes: Vec<Bytes>,
-}
-
-#[derive(Debug, Clone)]
-pub struct GetTrieNodes {
-    pub id: u64,
-    pub root_hash: H256,
-    // [[acc_path, slot_path_1, slot_path_2,...]...]
-    // The paths can be either full paths (hash) or only the partial path (compact-encoded nibbles)
-    pub paths: Vec<Vec<Bytes>>,
-    pub bytes: u64,
-}
-
-#[derive(Debug, Clone)]
-pub struct TrieNodes {
-    pub id: u64,
-    pub nodes: Vec<Bytes>,
-}
+// =============================================================================
+// RLPX MESSAGE IMPLEMENTATIONS
+// =============================================================================
 
 impl RLPxMessage for GetAccountRange {
-    const CODE: u8 = 0x00;
+    const CODE: u8 = codes::GET_ACCOUNT_RANGE;
+
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -118,7 +79,8 @@ impl RLPxMessage for GetAccountRange {
 }
 
 impl RLPxMessage for AccountRange {
-    const CODE: u8 = 0x01;
+    const CODE: u8 = codes::ACCOUNT_RANGE;
+
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -149,7 +111,8 @@ impl RLPxMessage for AccountRange {
 }
 
 impl RLPxMessage for GetStorageRanges {
-    const CODE: u8 = 0x02;
+    const CODE: u8 = codes::GET_STORAGE_RANGES;
+
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -172,12 +135,14 @@ impl RLPxMessage for GetStorageRanges {
         let (id, decoder) = decoder.decode_field("request-id")?;
         let (root_hash, decoder) = decoder.decode_field("rootHash")?;
         let (account_hashes, decoder) = decoder.decode_field("accountHashes")?;
+        // Handle empty starting_hash as default (zero hash)
         let (starting_hash, decoder): (Bytes, _) = decoder.decode_field("startingHash")?;
         let starting_hash = if !starting_hash.is_empty() {
             H256::from_slice(&starting_hash)
         } else {
             Default::default()
         };
+        // Handle empty limit_hash as max hash
         let (limit_hash, decoder): (Bytes, _) = decoder.decode_field("limitHash")?;
         let limit_hash = if !limit_hash.is_empty() {
             H256::from_slice(&limit_hash)
@@ -199,7 +164,8 @@ impl RLPxMessage for GetStorageRanges {
 }
 
 impl RLPxMessage for StorageRanges {
-    const CODE: u8 = 0x03;
+    const CODE: u8 = codes::STORAGE_RANGES;
+
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -226,7 +192,8 @@ impl RLPxMessage for StorageRanges {
 }
 
 impl RLPxMessage for GetByteCodes {
-    const CODE: u8 = 0x04;
+    const CODE: u8 = codes::GET_BYTE_CODES;
+
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -253,7 +220,8 @@ impl RLPxMessage for GetByteCodes {
 }
 
 impl RLPxMessage for ByteCodes {
-    const CODE: u8 = 0x05;
+    const CODE: u8 = codes::BYTE_CODES;
+
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -278,7 +246,8 @@ impl RLPxMessage for ByteCodes {
 }
 
 impl RLPxMessage for GetTrieNodes {
-    const CODE: u8 = 0x06;
+    const CODE: u8 = codes::GET_TRIE_NODES;
+
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -312,7 +281,8 @@ impl RLPxMessage for GetTrieNodes {
 }
 
 impl RLPxMessage for TrieNodes {
-    const CODE: u8 = 0x07;
+    const CODE: u8 = codes::TRIE_NODES;
+
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -336,19 +306,9 @@ impl RLPxMessage for TrieNodes {
     }
 }
 
-// Intermediate structures
-
-#[derive(Debug, Clone)]
-pub struct AccountRangeUnit {
-    pub hash: H256,
-    pub account: AccountState,
-}
-
-#[derive(Debug, Clone)]
-pub struct StorageSlot {
-    pub hash: H256,
-    pub data: U256,
-}
+// =============================================================================
+// RLP IMPLEMENTATIONS FOR HELPER TYPES
+// =============================================================================
 
 impl RLPEncode for AccountRangeUnit {
     fn encode(&self, buf: &mut dyn BufMut) {

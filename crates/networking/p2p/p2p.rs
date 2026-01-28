@@ -74,7 +74,7 @@ pub(crate) mod metrics;
 pub mod network;
 pub mod peer_handler;
 pub mod rlpx;
-pub(crate) mod snap;
+pub mod snap;
 pub mod sync;
 pub mod sync_manager;
 pub mod tx_broadcaster;

@@ -23,27 +23,14 @@ use tracing::{debug, trace};
 
 use crate::{
     metrics::{CurrentStepValue, METRICS},
-    peer_handler::{PeerHandler, RequestMetadata, RequestStateTrieNodesError},
+    peer_handler::{PeerHandler, RequestMetadata},
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
-    sync::{AccountStorageRoots, code_collector::CodeHashCollector},
+    snap::{SnapError, constants::{NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION}},
+    sync::{AccountStorageRoots, SyncError, code_collector::CodeHashCollector},
     utils::current_unix_time,
 };
 
-/// Max size of a bach to start a storage fetch request in queues
-pub const STORAGE_BATCH_SIZE: usize = 300;
-/// Max size of a bach to start a node fetch request in queues
-pub const NODE_BATCH_SIZE: usize = 500;
-/// Pace at which progress is shown via info tracing
-pub const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(2);
-
-use super::SyncError;
-
-#[derive(Debug)]
-pub struct MembatchEntryValue {
-    node: Node,
-    children_not_in_storage_count: u64,
-    parent_path: Nibbles,
-}
+use super::types::{HealingQueueEntry, StateHealingQueue};
 
 pub async fn heal_state_trie_wrap(
     state_root: H256,
@@ -89,7 +76,7 @@ async fn heal_state_trie(
     mut peers: PeerHandler,
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
-    mut membatch: HashMap<Nibbles, MembatchEntryValue>,
+    mut healing_queue: StateHealingQueue,
     storage_accounts: &mut AccountStorageRoots,
     code_hash_collector: &mut CodeHashCollector,
 ) -> Result<bool, SyncError> {
@@ -114,7 +101,7 @@ async fn heal_state_trie(
     // channel to send the tasks to the peers
     let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
         H256,
-        Result<Vec<Node>, RequestStateTrieNodesError>,
+        Result<Vec<Node>, SnapError>,
         Vec<RequestMetadata>,
     )>(1000);
     // Contains both nodes and their corresponding paths to heal
@@ -148,7 +135,7 @@ async fn heal_state_trie(
                 global_leafs_healed,
                 downloads_rate,
                 paths_to_go = paths.len(),
-                pending_nodes = membatch.len(),
+                pending_nodes = healing_queue.len(),
                 heals_per_cycle,
                 "State Healing",
             );
@@ -278,7 +265,7 @@ async fn heal_state_trie(
                 batch,
                 nodes,
                 store.clone(),
-                &mut membatch,
+                &mut healing_queue,
                 &mut nodes_to_write,
             )
             .inspect_err(|err| {
@@ -332,7 +319,7 @@ async fn heal_state_trie(
         }
 
         if is_stale && nodes_to_heal.is_empty() && inflight_tasks == 0 {
-            debug!("Finisehd inflight tasks");
+            debug!("Finished inflight tasks");
             db_joinset.join_all().await;
             break;
         }
@@ -351,7 +338,7 @@ fn heal_state_batch(
     mut batch: Vec<RequestMetadata>,
     nodes: Vec<Node>,
     store: Store,
-    membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
+    healing_queue: &mut StateHealingQueue,
     nodes_to_write: &mut Vec<(Nibbles, Node)>, // TODO: change tuple to struct
 ) -> Result<Vec<RequestMetadata>, SyncError> {
     let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
@@ -365,16 +352,16 @@ fn heal_state_batch(
                 node,
                 &path.path,
                 &path.parent_path,
-                membatch,
+                healing_queue,
                 nodes_to_write,
             );
         } else {
-            let entry = MembatchEntryValue {
+            let entry = HealingQueueEntry {
                 node: node.clone(),
-                children_not_in_storage_count: missing_children_count,
+                missing_children_count,
                 parent_path: path.parent_path.clone(),
             };
-            membatch.insert(path.path.clone(), entry);
+            healing_queue.insert(path.path.clone(), entry);
         }
     }
     Ok(batch)
@@ -384,7 +371,7 @@ fn commit_node(
     node: Node,
     path: &Nibbles,
     parent_path: &Nibbles,
-    membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
+    healing_queue: &mut StateHealingQueue,
     nodes_to_write: &mut Vec<(Nibbles, Node)>,
 ) {
     nodes_to_write.push((path.clone(), node));
@@ -393,21 +380,21 @@ fn commit_node(
         return; // Case where we're saving the root
     }
 
-    let mut membatch_entry = membatch.remove(parent_path).unwrap_or_else(|| {
+    let mut healing_queue_entry = healing_queue.remove(parent_path).unwrap_or_else(|| {
         panic!("The parent should exist. Parent: {parent_path:?}, path: {path:?}")
     });
 
-    membatch_entry.children_not_in_storage_count -= 1;
-    if membatch_entry.children_not_in_storage_count == 0 {
+    healing_queue_entry.missing_children_count -= 1;
+    if healing_queue_entry.missing_children_count == 0 {
         commit_node(
-            membatch_entry.node,
+            healing_queue_entry.node,
             parent_path,
-            &membatch_entry.parent_path,
-            membatch,
+            &healing_queue_entry.parent_path,
+            healing_queue,
             nodes_to_write,
         );
     } else {
-        membatch.insert(parent_path.clone(), membatch_entry);
+        healing_queue.insert(parent_path.clone(), healing_queue_entry);
     }
 }
 
@@ -416,9 +403,9 @@ pub fn node_missing_children(
     node: &Node,
     path: &Nibbles,
     trie_state: &dyn TrieDB,
-) -> Result<(u64, Vec<RequestMetadata>), TrieError> {
+) -> Result<(usize, Vec<RequestMetadata>), TrieError> {
     let mut paths: Vec<RequestMetadata> = Vec::new();
-    let mut missing_children_count = 0_u64;
+    let mut missing_children_count: usize = 0;
     match &node {
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
