@@ -228,7 +228,7 @@ impl<'a> Encoder<'a> {
     }
 
     /// Stores a field to be encoded as bytes
-    /// This method is used to bypass the conflicting implementations between Vec<T> and Vec<u8>
+    /// This method is used to bypass the conflicting implementations between `Vec<T>` and `Vec<u8>`
     pub fn encode_bytes(mut self, value: &[u8]) -> Self {
         <[u8] as RLPEncode>::encode(value, &mut self.temp_buf);
         self

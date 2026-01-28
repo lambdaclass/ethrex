@@ -1,15 +1,18 @@
-//! # ethrex Storage
+//! # ethrex-storage
 //!
-//! This crate provides persistent storage for the ethrex Ethereum client.
+//! Persistent storage layer for the ethrex Ethereum client.
 //!
 //! ## Overview
 //!
-//! The storage layer handles:
+//! This crate provides a high-level storage API ([`Store`]) for blockchain operations,
+//! abstracting away pluggable storage backends. It handles:
+//!
 //! - Block storage (headers, bodies, receipts)
 //! - State storage (accounts, code, storage slots)
 //! - Merkle Patricia Trie management
 //! - Transaction indexing
 //! - Chain configuration
+//! - Execution witnesses for zkVM proving
 //!
 //! ## Architecture
 //!
@@ -21,10 +24,10 @@
 //!                        │
 //!           ┌────────────┴────────────┐
 //!           ▼                         ▼
-//! ┌─────────────────┐       ┌─────────────────┐
+//! ┌───────────-──────┐       ┌─────────────────┐
 //! │  InMemoryBackend │       │  RocksDBBackend │
 //! │    (Testing)     │       │  (Production)   │
-//! └─────────────────┘       └─────────────────┘
+//! └───────────────-──┘       └─────────────────┘
 //! ```
 //!
 //! ## Storage Backends
@@ -32,10 +35,11 @@
 //! - **InMemory**: Fast, non-persistent storage for testing
 //! - **RocksDB**: Production-grade persistent storage (requires `rocksdb` feature)
 //!
-//! ## Usage
+//! ## Quick Start
 //!
 //! ```ignore
 //! use ethrex_storage::{Store, EngineType};
+//! use std::path::Path;
 //!
 //! // Create a new store with RocksDB backend
 //! let store = Store::new("./data", EngineType::RocksDB)?;
@@ -51,8 +55,20 @@
 //! store.add_block(block).await?;
 //!
 //! // Query state
-//! let balance = store.get_account_info(block_number, address)?.map(|a| a.balance);
+//! let info = store.get_account_info(block_number, address).await?;
+//! let balance = info.map(|a| a.balance);
+//!
+//! // Get storage value
+//! let value = store.get_storage_at(block_hash, address, key)?;
 //! ```
+//!
+//! ## Modules
+//!
+//! - [`store`]: Main [`Store`] type with blockchain operations
+//! - [`api`]: [`api::StorageBackend`] trait and table definitions
+//! - [`backend`]: Backend implementations (InMemory, RocksDB)
+//! - [`trie`]: Trie database adapters
+//! - [`error`]: [`error::StoreError`] type
 //!
 //! ## State Management
 //!
@@ -61,8 +77,14 @@
 //! - **Storage Tries**: Maps storage keys to values for each contract
 //! - **Code Storage**: Separate storage for contract bytecode
 //!
-//! The store maintains a cache layer (`TrieLayerCache`) for efficient state access
-//! without requiring full trie traversal for recent blocks.
+//! The store maintains a cache layer for efficient state access without
+//! requiring full trie traversal for recent blocks.
+//!
+//! ## Feature Flags
+//!
+//! | Feature | Description |
+//! |---------|-------------|
+//! | `rocksdb` | Enable RocksDB backend for persistent storage |
 
 pub mod api;
 pub mod backend;
