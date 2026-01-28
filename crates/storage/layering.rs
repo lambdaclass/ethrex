@@ -1,17 +1,85 @@
 use ethrex_common::H256;
 use fastbloom::AtomicBloomFilter;
 use rayon::prelude::*;
-use rustc_hash::{FxBuildHasher, FxHashMap};
-use std::{fmt, sync::Arc};
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHasher};
+use std::{
+    collections::HashMap,
+    fmt,
+    hash::{BuildHasher, Hasher},
+    sync::Arc,
+};
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
 const BLOOM_SIZE: usize = 1_000_000;
 const FALSE_POSITIVE_RATE: f64 = 0.02;
 
+/// Extracts a u64 hash directly from a nibble path.
+///
+/// Since nibble paths are derived from Keccak256 hashes, they already have
+/// excellent distribution. We can extract the first 8 bytes (16 nibbles)
+/// directly as a u64, avoiding redundant hashing.
+///
+/// For short paths (internal trie nodes), we fall back to FxHash.
+#[inline]
+fn path_to_hash(path: &[u8]) -> u64 {
+    if path.len() >= 16 {
+        // First 16 nibbles = first 8 bytes of original Keccak256 hash
+        // Each nibble is stored as a byte with value 0-15
+        let mut bytes = [0u8; 8];
+        for i in 0..8 {
+            bytes[i] = (path[i * 2] << 4) | path[i * 2 + 1];
+        }
+        u64::from_le_bytes(bytes)
+    } else {
+        // Short paths (branch/extension nodes): use FxHash as fallback
+        let mut hasher = FxHasher::default();
+        hasher.write(path);
+        hasher.finish()
+    }
+}
+
+/// A hasher that extracts hash values directly from nibble paths.
+///
+/// This is safe because nibble paths are derived from Keccak256 hashes,
+/// so they already have uniform distribution. We just extract the first
+/// 8 bytes (16 nibbles) as the hash value.
+#[derive(Default)]
+struct NibblePathHasher {
+    hash: u64,
+}
+
+impl Hasher for NibblePathHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        self.hash = path_to_hash(bytes);
+    }
+
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.hash
+    }
+}
+
+/// BuildHasher for NibblePathHasher.
+#[derive(Default, Clone)]
+struct NibblePathBuildHasher;
+
+impl BuildHasher for NibblePathBuildHasher {
+    type Hasher = NibblePathHasher;
+
+    #[inline]
+    fn build_hasher(&self) -> Self::Hasher {
+        NibblePathHasher::default()
+    }
+}
+
+/// HashMap optimized for nibble path keys (which are already hash-derived).
+type NibblePathHashMap<K, V> = HashMap<K, V, NibblePathBuildHasher>;
+
 #[derive(Debug, Clone)]
 struct TrieLayer {
-    nodes: FxHashMap<Vec<u8>, Vec<u8>>,
+    nodes: NibblePathHashMap<Vec<u8>, Vec<u8>>,
     parent: H256,
     id: usize,
 }
@@ -72,7 +140,8 @@ impl TrieLayerCache {
     pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
         // Fast check to know if any layer may contain the given key.
         // We can only be certain it doesn't exist, but if it returns true it may or may not exist (false positive).
-        if !self.bloom.contains(key) {
+        // Use contains_hash to skip redundant hashing - the key is already derived from Keccak256.
+        if !self.bloom.contains_hash(path_to_hash(key)) {
             // TrieWrapper goes to db when returning None.
             return None;
         }
@@ -131,11 +200,12 @@ impl TrieLayerCache {
         }
 
         // Add keys to the global bloom filter
+        // Use insert_hash to skip redundant hashing - paths are already derived from Keccak256.
         for (p, _) in &key_values {
-            self.bloom.insert(p.as_ref());
+            self.bloom.insert_hash(path_to_hash(p.as_ref()));
         }
 
-        let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
+        let nodes: NibblePathHashMap<Vec<u8>, Vec<u8>> = key_values
             .into_iter()
             .map(|(path, value)| (path.into_vec(), value))
             .collect();
@@ -157,9 +227,10 @@ impl TrieLayerCache {
         let filter = Self::create_filter(total_keys.max(BLOOM_SIZE));
 
         // Parallel insertion - AtomicBloomFilter allows concurrent insert via &self
+        // Use insert_hash to skip redundant hashing - paths are already derived from Keccak256.
         self.layers.par_iter().for_each(|(_, layer)| {
             for path in layer.nodes.keys() {
-                filter.insert(path);
+                filter.insert_hash(path_to_hash(path));
             }
         });
 
