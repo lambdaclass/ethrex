@@ -1114,6 +1114,157 @@ impl Store {
         backend.compute_state_root()
     }
 
+    /// Applies account updates to ethrex-db state backend.
+    ///
+    /// This synchronizes the ethrex-db state with account updates from block execution.
+    /// Should be called after `apply_account_updates_batch` to keep ethrex-db in sync.
+    #[cfg(feature = "ethrex-db")]
+    pub fn sync_account_updates_to_ethrex_db(
+        &self,
+        account_updates: &[AccountUpdate],
+    ) -> Result<(), StoreError> {
+        let Some(state_backend) = &self.state_backend else {
+            // If ethrex-db is not configured, silently skip
+            return Ok(());
+        };
+
+        let mut backend = state_backend
+            .write()
+            .map_err(|_| StoreError::Custom("Failed to acquire state backend lock".to_string()))?;
+
+        // Convert AccountUpdate to ethrex-db format and apply
+        for update in account_updates {
+            let address_hash = H256::from(keccak_hash(update.address.as_bytes()));
+
+            if update.removed {
+                backend.delete_account(&address_hash)?;
+                continue;
+            }
+
+            // Get or create account state
+            let mut account_state = backend
+                .get_account(&address_hash)?
+                .unwrap_or_else(crate::state_backend::AccountState::empty);
+
+            if let Some(info) = &update.info {
+                account_state.nonce = info.nonce;
+                account_state.balance = info.balance;
+                account_state.code_hash = info.code_hash;
+            }
+
+            if update.removed_storage {
+                account_state.storage_root = crate::state_backend::AccountState::EMPTY_STORAGE_ROOT;
+            }
+
+            // Apply storage updates
+            for (storage_key, storage_value) in &update.added_storage {
+                let slot_hash = H256::from(keccak_hash(storage_key.as_bytes()));
+                backend.set_storage(address_hash, slot_hash, *storage_value)?;
+            }
+
+            backend.set_account(address_hash, account_state)?;
+        }
+
+        Ok(())
+    }
+
+    /// Checks if the given block hash matches the latest state in ethrex-db.
+    ///
+    /// Returns true if ethrex-db should be used for state queries for this block.
+    #[cfg(feature = "ethrex-db")]
+    pub fn is_ethrex_db_latest(&self, block_hash: BlockHash) -> bool {
+        if let Some(state_backend) = &self.state_backend {
+            if let Ok(backend) = state_backend.read() {
+                return backend.block_hash() == block_hash;
+            }
+        }
+        false
+    }
+
+    /// Gets account info from ethrex-db backend.
+    #[cfg(feature = "ethrex-db")]
+    pub fn get_account_info_ethrex_db(
+        &self,
+        address: Address,
+    ) -> Result<Option<AccountInfo>, StoreError> {
+        let Some(state_backend) = &self.state_backend else {
+            return Err(StoreError::Custom(
+                "ethrex-db state backend not configured".to_string(),
+            ));
+        };
+
+        let backend = state_backend
+            .read()
+            .map_err(|_| StoreError::Custom("Failed to acquire state backend lock".to_string()))?;
+
+        let account = backend.get_account_by_address(&address)?;
+        Ok(account.map(|state| AccountInfo {
+            code_hash: state.code_hash,
+            balance: state.balance,
+            nonce: state.nonce,
+        }))
+    }
+
+    /// Gets account state from ethrex-db backend by address hash.
+    #[cfg(feature = "ethrex-db")]
+    pub fn get_account_state_ethrex_db(
+        &self,
+        address_hash: H256,
+    ) -> Result<Option<AccountState>, StoreError> {
+        let Some(state_backend) = &self.state_backend else {
+            return Err(StoreError::Custom(
+                "ethrex-db state backend not configured".to_string(),
+            ));
+        };
+
+        let backend = state_backend
+            .read()
+            .map_err(|_| StoreError::Custom("Failed to acquire state backend lock".to_string()))?;
+
+        let account = backend.get_account(&address_hash)?;
+        Ok(account.map(|state| AccountState {
+            nonce: state.nonce,
+            balance: state.balance,
+            code_hash: state.code_hash,
+            storage_root: state.storage_root,
+        }))
+    }
+
+    /// Gets storage value from ethrex-db backend.
+    #[cfg(feature = "ethrex-db")]
+    pub fn get_storage_ethrex_db(
+        &self,
+        address: Address,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        let Some(state_backend) = &self.state_backend else {
+            return Err(StoreError::Custom(
+                "ethrex-db state backend not configured".to_string(),
+            ));
+        };
+
+        let backend = state_backend
+            .read()
+            .map_err(|_| StoreError::Custom("Failed to acquire state backend lock".to_string()))?;
+
+        let address_hash = H256::from(keccak_hash(address.as_bytes()));
+        let slot_hash = H256::from(keccak_hash(storage_key.as_bytes()));
+        backend.get_storage(&address_hash, &slot_hash)
+    }
+
+    /// Checks if the given state root matches the latest state in ethrex-db.
+    #[cfg(feature = "ethrex-db")]
+    pub fn is_ethrex_db_state_root(&self, state_root: H256) -> bool {
+        if let Some(state_backend) = &self.state_backend {
+            if let Ok(mut backend) = state_backend.write() {
+                if let Ok(current_root) = backend.compute_state_root() {
+                    return current_root == state_root;
+                }
+            }
+        }
+        false
+    }
+
     /// Sets the hash of the last header downloaded during a snap sync
     pub async fn set_header_download_checkpoint(
         &self,
@@ -1386,12 +1537,15 @@ impl Store {
             )?
             .map(|header| header.state_root)
             .unwrap_or_default();
-        let last_state_root = update_batch
+        let last_block = update_batch
             .blocks
             .last()
-            .ok_or(StoreError::UpdateBatchNoBlocks)?
-            .header
-            .state_root;
+            .ok_or(StoreError::UpdateBatchNoBlocks)?;
+        let last_state_root = last_block.header.state_root;
+        #[cfg(feature = "ethrex-db")]
+        let last_block_opt = Some((last_block.header.number, last_block.hash()));
+        #[cfg(not(feature = "ethrex-db"))]
+        let _ = last_block; // Avoid unused warning
         let trie_upd_worker_tx = self.trie_update_worker_tx.clone();
 
         let UpdateBatch {
@@ -1459,6 +1613,19 @@ impl Store {
             .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
         // After top-level is added, we can make the rest of the changes visible.
         tx.commit()?;
+
+        // Persist ethrex-db state after RocksDB commit
+        #[cfg(feature = "ethrex-db")]
+        if let Some(state_backend) = &self.state_backend {
+            if let Some((_block_number, _block_hash)) = last_block_opt {
+                if let Ok(mut backend) = state_backend.write() {
+                    // Commit the state to disk
+                    if let Err(e) = backend.commit() {
+                        tracing::warn!("Failed to commit ethrex-db state: {}", e);
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
@@ -1755,6 +1922,13 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
+        // Use ethrex-db for latest state
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db_latest(block_hash) {
+            return self.get_account_info_ethrex_db(address);
+        }
+
+        // Fall back to RocksDB trie for historical state
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -1777,6 +1951,13 @@ impl Store {
         block_hash: BlockHash,
         account_hash: H256,
     ) -> Result<Option<AccountState>, StoreError> {
+        // Use ethrex-db for latest state
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db_latest(block_hash) {
+            return self.get_account_state_ethrex_db(account_hash);
+        }
+
+        // Fall back to RocksDB trie for historical state
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -1847,14 +2028,45 @@ impl Store {
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
     ) -> Result<Option<AccountUpdatesList>, StoreError> {
+        // When ethrex-db is configured, use it exclusively for state storage
+        #[cfg(feature = "ethrex-db")]
+        if self.state_backend.is_some() {
+            // Apply updates to ethrex-db
+            self.sync_account_updates_to_ethrex_db(account_updates)?;
+
+            // Compute state root from ethrex-db
+            let state_trie_hash = self.compute_state_root_ethrex_db()?;
+
+            // Extract code updates (still stored in RocksDB)
+            let code_updates: Vec<(H256, Code)> = account_updates
+                .iter()
+                .filter_map(|update| {
+                    update.info.as_ref().and_then(|info| {
+                        update.code.as_ref().map(|code| (info.code_hash, code.clone()))
+                    })
+                })
+                .collect();
+
+            // Return with empty trie updates (state lives only in ethrex-db)
+            return Ok(Some(AccountUpdatesList {
+                state_trie_hash,
+                state_updates: Vec::new(),
+                storage_updates: Vec::new(),
+                code_updates,
+            }));
+        }
+
+        // Fall back to RocksDB trie when ethrex-db is not configured
         let Some(mut state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
 
-        Ok(Some(self.apply_account_updates_from_trie_batch(
+        let result = self.apply_account_updates_from_trie_batch(
             &mut state_trie,
             account_updates,
-        )?))
+        )?;
+
+        Ok(Some(result))
     }
 
     pub fn apply_account_updates_from_trie_batch<'a>(
@@ -2252,6 +2464,13 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
+        // Use ethrex-db for latest state
+        #[cfg(feature = "ethrex-db")]
+        if self.is_ethrex_db_state_root(state_root) {
+            return self.get_storage_ethrex_db(address, storage_key);
+        }
+
+        // Fall back to RocksDB trie for historical state
         let account_hash = hash_address_fixed(&address);
         let storage_root = if self.flatkeyvalue_computed(account_hash)? {
             // We will use FKVs, we don't need the root

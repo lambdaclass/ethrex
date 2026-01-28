@@ -738,6 +738,18 @@ impl Syncer {
                 &mut code_hash_collector,
             )
             .await?;
+
+            // Persist ethrex-db state to disk after account insertion
+            #[cfg(feature = "ethrex-db")]
+            {
+                info!("Persisting ethrex-db state after account insertion...");
+                store.persist_state_checkpoint_ethrex_db(
+                    pivot_header.number,
+                    pivot_header.hash(),
+                )?;
+                info!("ethrex-db state persisted successfully");
+            }
+
             info!(
                 "Finished inserting account ranges, total storage accounts: {}",
                 storage_accounts.accounts_with_storage_root.len()
@@ -848,6 +860,17 @@ impl Syncer {
                 &self.datadir,
             )
             .await?;
+
+            // Persist ethrex-db state to disk after storage insertion
+            #[cfg(feature = "ethrex-db")]
+            {
+                info!("Persisting ethrex-db state after storage insertion...");
+                store.persist_state_checkpoint_ethrex_db(
+                    pivot_header.number,
+                    pivot_header.hash(),
+                )?;
+                info!("ethrex-db state persisted after storage insertion");
+            }
 
             *METRICS.storage_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
