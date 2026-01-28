@@ -73,6 +73,20 @@ enum FKVGeneratorControlMessage {
 // 64mb
 const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
 
+// Address hash cache size (number of entries)
+// Inspired by go-ethereum's address hash caching optimization
+const ADDRESS_HASH_CACHE_SIZE: usize = 100_000;
+
+/// Global LRU cache for address to keccak hash mapping.
+/// Avoids repeated keccak256 computation for the same addresses.
+static ADDRESS_HASH_CACHE: std::sync::LazyLock<Mutex<LruCache<Address, H256, FxBuildHasher>>> =
+    std::sync::LazyLock::new(|| {
+        Mutex::new(LruCache::with_hasher(
+            std::num::NonZeroUsize::new(ADDRESS_HASH_CACHE_SIZE).unwrap(),
+            FxBuildHasher,
+        ))
+    });
+
 #[derive(Debug)]
 struct CodeCache {
     inner_cache: LruCache<H256, Code, FxBuildHasher>,
@@ -2845,11 +2859,19 @@ impl Iterator for AncestorIterator {
 }
 
 pub fn hash_address(address: &Address) -> Vec<u8> {
-    keccak_hash(address.to_fixed_bytes()).to_vec()
+    hash_address_fixed(address).to_fixed_bytes().to_vec()
 }
 
 fn hash_address_fixed(address: &Address) -> H256 {
-    keccak(address.to_fixed_bytes())
+    // Check cache first to avoid repeated keccak computation
+    let mut cache = ADDRESS_HASH_CACHE.lock().unwrap();
+    if let Some(&hash) = cache.get(address) {
+        return hash;
+    }
+    // Compute hash and cache it
+    let hash = keccak(address.to_fixed_bytes());
+    cache.put(*address, hash);
+    hash
 }
 
 pub fn hash_key(key: &H256) -> Vec<u8> {
