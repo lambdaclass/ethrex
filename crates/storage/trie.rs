@@ -3,8 +3,12 @@ use crate::api::tables::{
 };
 use crate::api::{StorageBackend, StorageLockedView};
 use crate::error::StoreError;
+use crate::fkv_keys::{account_fkv_key, restore_u256, storage_fkv_key};
 use crate::layering::apply_prefix;
 use ethrex_common::H256;
+use ethrex_common::types::AccountStateSlimCodec;
+use ethrex_rlp::decode::RLPDecode;
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
 use std::sync::Arc;
 
@@ -16,7 +20,6 @@ pub struct BackendTrieDB {
     /// Last flatkeyvalue path already generated
     last_computed_flatkeyvalue: Nibbles,
     nodes_table: &'static str,
-    fkv_table: &'static str,
     /// Storage trie address prefix (for storage tries)
     /// None for state tries, Some(address) for storage tries
     address_prefix: Option<H256>,
@@ -33,7 +36,6 @@ impl BackendTrieDB {
             db,
             last_computed_flatkeyvalue,
             nodes_table: ACCOUNT_TRIE_NODES,
-            fkv_table: ACCOUNT_FLATKEYVALUE,
             address_prefix: None,
         })
     }
@@ -48,7 +50,6 @@ impl BackendTrieDB {
             db,
             last_computed_flatkeyvalue,
             nodes_table: STORAGE_TRIE_NODES,
-            fkv_table: STORAGE_FLATKEYVALUE,
             address_prefix: None,
         })
     }
@@ -64,23 +65,12 @@ impl BackendTrieDB {
             db,
             last_computed_flatkeyvalue,
             nodes_table: STORAGE_TRIE_NODES,
-            fkv_table: STORAGE_FLATKEYVALUE,
             address_prefix: Some(address_prefix),
         })
     }
 
     fn make_key(&self, path: Nibbles) -> Vec<u8> {
         apply_prefix(self.address_prefix, path).into_vec()
-    }
-
-    /// Key might be for an account or storage slot
-    fn table_for_key(&self, key: &[u8]) -> &'static str {
-        let is_leaf = key.len() == 65 || key.len() == 131;
-        if is_leaf {
-            self.fkv_table
-        } else {
-            self.nodes_table
-        }
     }
 }
 
@@ -92,12 +82,65 @@ impl TrieDB for BackendTrieDB {
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let prefixed_key = self.make_key(key);
-        let table = self.table_for_key(&prefixed_key);
+
+        // Check if this is a leaf-length key (needs FKV lookup with binary key)
+        let is_account_leaf = prefixed_key.len() == 65;
+        let is_storage_leaf = prefixed_key.len() == 131;
+
         let tx = self.db.begin_read().map_err(|e| {
             TrieError::DbError(anyhow::anyhow!("Failed to begin read transaction: {}", e))
         })?;
-        tx.get(table, prefixed_key.as_ref())
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
+
+        if is_account_leaf {
+            // Convert nibble path to binary FKV key
+            let nibbles = Nibbles::from_hex(prefixed_key);
+            let account_hash = H256::from_slice(&nibbles.to_bytes());
+            let fkv_key = account_fkv_key(&account_hash);
+
+            // Read from FKV table and convert slim format back to original
+            let result = tx.get(ACCOUNT_FLATKEYVALUE, &fkv_key).map_err(|e| {
+                TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e))
+            })?;
+
+            match result {
+                Some(bytes) => {
+                    // Decode slim format and re-encode to original format
+                    let slim = AccountStateSlimCodec::decode(&bytes).map_err(|e| {
+                        TrieError::DbError(anyhow::anyhow!("Failed to decode slim account: {}", e))
+                    })?;
+                    Ok(Some(slim.0.encode_to_vec()))
+                }
+                None => Ok(None),
+            }
+        } else if is_storage_leaf {
+            // Extract address and slot hash from prefixed nibble path
+            // Format: [65 nibbles addr][1 nibble separator][65 nibbles slot]
+            let addr_nibbles = Nibbles::from_hex(prefixed_key[..65].to_vec());
+            let slot_nibbles = Nibbles::from_hex(prefixed_key[66..].to_vec());
+            let account_hash = H256::from_slice(&addr_nibbles.to_bytes());
+            let slot_hash = H256::from_slice(&slot_nibbles.to_bytes());
+            let fkv_key = storage_fkv_key(&account_hash, &slot_hash);
+
+            // Read from FKV table and restore U256 format
+            let result = tx.get(STORAGE_FLATKEYVALUE, &fkv_key).map_err(|e| {
+                TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e))
+            })?;
+
+            match result {
+                Some(bytes) => {
+                    // Restore U256 from stripped bytes and RLP-encode
+                    let u256 = restore_u256(&bytes);
+                    Ok(Some(u256.encode_to_vec()))
+                }
+                None => Ok(None),
+            }
+        } else {
+            // Internal node - read from trie nodes table
+            tx.get(self.nodes_table, prefixed_key.as_ref())
+                .map_err(|e| {
+                    TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e))
+                })
+        }
     }
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
@@ -106,8 +149,8 @@ impl TrieDB for BackendTrieDB {
         })?;
         for (key, value) in key_values {
             let prefixed_key = self.make_key(key);
-            let table = self.table_for_key(&prefixed_key);
-            tx.put_batch(table, vec![(prefixed_key, value)])
+            // Always write to trie nodes table - FKV is populated separately
+            tx.put_batch(self.nodes_table, vec![(prefixed_key, value)])
                 .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
         }
         tx.commit()
@@ -140,23 +183,6 @@ impl BackendTrieDBLocked {
             last_computed_flatkeyvalue,
         })
     }
-
-    /// Key is already prefixed
-    fn tx_for_key(&self, key: &Nibbles) -> &dyn StorageLockedView {
-        let is_leaf = key.len() == 65 || key.len() == 131;
-        let is_account = key.len() <= 65;
-        if is_leaf {
-            if is_account {
-                &*self.account_fkv_tx
-            } else {
-                &*self.storage_fkv_tx
-            }
-        } else if is_account {
-            &*self.account_trie_tx
-        } else {
-            &*self.storage_trie_tx
-        }
-    }
 }
 
 impl TrieDB for BackendTrieDBLocked {
@@ -165,9 +191,64 @@ impl TrieDB for BackendTrieDBLocked {
     }
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        let tx = self.tx_for_key(&key);
-        tx.get(key.as_ref())
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
+        // Check if this is a leaf-length key (needs FKV lookup with binary key)
+        let is_account_leaf = key.len() == 65;
+        let is_storage_leaf = key.len() == 131;
+
+        if is_account_leaf {
+            // Convert nibble path to binary FKV key
+            let account_hash = H256::from_slice(&key.to_bytes());
+            let fkv_key = account_fkv_key(&account_hash);
+
+            // Read from FKV table and convert slim format back to original
+            let result = self.account_fkv_tx.get(&fkv_key).map_err(|e| {
+                TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e))
+            })?;
+
+            match result {
+                Some(bytes) => {
+                    // Decode slim format and re-encode to original format
+                    let slim = AccountStateSlimCodec::decode(&bytes).map_err(|e| {
+                        TrieError::DbError(anyhow::anyhow!("Failed to decode slim account: {}", e))
+                    })?;
+                    Ok(Some(slim.0.encode_to_vec()))
+                }
+                None => Ok(None),
+            }
+        } else if is_storage_leaf {
+            // Extract address and slot hash from prefixed nibble path
+            // Format: [65 nibbles addr][1 nibble separator][65 nibbles slot]
+            let key_bytes = key.as_ref();
+            let addr_nibbles = Nibbles::from_hex(key_bytes[..65].to_vec());
+            let slot_nibbles = Nibbles::from_hex(key_bytes[66..].to_vec());
+            let account_hash = H256::from_slice(&addr_nibbles.to_bytes());
+            let slot_hash = H256::from_slice(&slot_nibbles.to_bytes());
+            let fkv_key = storage_fkv_key(&account_hash, &slot_hash);
+
+            // Read from FKV table and restore U256 format
+            let result = self.storage_fkv_tx.get(&fkv_key).map_err(|e| {
+                TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e))
+            })?;
+
+            match result {
+                Some(bytes) => {
+                    // Restore U256 from stripped bytes and RLP-encode
+                    let u256 = restore_u256(&bytes);
+                    Ok(Some(u256.encode_to_vec()))
+                }
+                None => Ok(None),
+            }
+        } else {
+            // Internal node - read from trie nodes table
+            let is_account = key.len() <= 65;
+            let tx = if is_account {
+                &*self.account_trie_tx
+            } else {
+                &*self.storage_trie_tx
+            };
+            tx.get(key.as_ref())
+                .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
+        }
     }
 
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {

@@ -75,14 +75,17 @@ pub const INVALID_CHAINS: &str = "invalid_ancestors";
 /// - [`Vec<u8>`] = `BlockHeaderRLP::from(block.header.clone()).bytes().clone()`
 pub const FULLSYNC_HEADERS: &str = "fullsync_headers";
 
-/// Account sate flat key-value store: [`Nibbles`] => [`Vec<u8>`]
-/// - [`Nibbles`] = `node_hash.as_ref()`
-/// - [`Vec<u8>`] = `node_data`
+/// Account state flat key-value store: [`[u8; 20]`] => [`Vec<u8>`]
+/// - Key: `[u8; 20]` = first 20 bytes of keccak256(address) (truncated address hash)
+/// - Value: `Vec<u8>` = slim RLP-encoded AccountState (using AccountStateSlimCodec)
 pub const ACCOUNT_FLATKEYVALUE: &str = "account_flatkeyvalue";
 
-/// Storage slots key-value store: [`Nibbles`] => [`Vec<u8>`]
-/// - [`Nibbles`] = `node_hash.as_ref()`
-/// - [`Vec<u8>`] = `node_data`
+/// Storage slots flat key-value store: [`[u8; 52]`] => [`Vec<u8>`]
+/// - Key: `[u8; 52]` = `[4B addr prefix][32B slot hash][16B addr suffix]`
+///   - First 4 bytes: address hash prefix (for grouping by account)
+///   - Next 32 bytes: full slot hash (keccak256(slot))
+///   - Last 16 bytes: address hash suffix (bytes 4-19 of address hash)
+/// - Value: `Vec<u8>` = U256 with leading zeros stripped
 pub const STORAGE_FLATKEYVALUE: &str = "storage_flatkeyvalue";
 
 pub const MISC_VALUES: &str = "misc_values";

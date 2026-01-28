@@ -14,6 +14,7 @@ use crate::{
     apply_prefix,
     backend::in_memory::InMemoryBackend,
     error::StoreError,
+    fkv_keys::{account_fkv_key, storage_fkv_key, strip_leading_zeros},
     layering::{TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
     trie::{BackendTrieDB, BackendTrieDBLocked},
@@ -24,9 +25,9 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
-        BlockNumber, ChainConfig, Code, ForkId, Genesis, GenesisAccount, Index, Receipt,
-        Transaction, block_execution_witness::ExecutionWitness,
+        AccountInfo, AccountState, AccountStateSlimCodec, AccountUpdate, Block, BlockBody,
+        BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, ForkId, Genesis, GenesisAccount,
+        Index, Receipt, Transaction, block_execution_witness::ExecutionWitness,
     },
     utils::keccak,
 };
@@ -55,6 +56,13 @@ use tracing::{debug, error, info};
 
 /// Maximum number of execution witnesses to keep in the database
 pub const MAX_WITNESSES: u64 = 128;
+
+/// FlatKeyValue schema version. Increment this when changing the FKV key/value format.
+/// Version 2: Binary key format (20-byte account keys, 52-byte storage keys)
+pub const FKV_SCHEMA_VERSION: u64 = 2;
+
+/// Key used to store the FKV schema version in MISC_VALUES table
+const FKV_SCHEMA_VERSION_KEY: &[u8] = b"fkv_schema_version";
 
 // We use one constant for in-memory and another for on-disk backends.
 // This is due to tests requiring state older than 128 blocks.
@@ -1340,6 +1348,9 @@ impl Store {
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
         let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(0);
 
+        // Check and migrate FKV schema if needed
+        migrate_fkv_schema_if_needed(&backend)?;
+
         let last_written = {
             let tx = backend.begin_read()?;
             let last_written = tx
@@ -2603,34 +2614,76 @@ fn apply_trie_updates(
 
     let mut write_tx = backend.begin_write()?;
 
-    // Before encoding, accounts have only the account address as their path, while storage keys have
-    // the account address (32 bytes) + storage path (up to 32 bytes).
-
     // Commit removes the bottom layer and returns it, this is the mutation step.
+    // Keys are in nibble format from the trie layer cache:
+    // - Account leaves: 65 nibbles (64 for 32-byte hash + 1 leaf flag)
+    // - Storage leaves: 131 nibbles (65 for prefixed addr with leaf flag + 1 separator + 65 for slot with leaf flag)
+    // Internal nodes have shorter paths.
     let nodes = trie_mut.commit(root).unwrap_or_default();
     let mut result = Ok(());
     for (key, value) in nodes {
-        let is_leaf = key.len() == 65 || key.len() == 131;
+        // Nibble-based key lengths for leaf detection
+        // Account leaf: 65 nibbles (64 + 1 leaf flag)
+        // Storage leaf: 131 nibbles (65 addr + 1 separator + 65 slot)
+        let is_account_leaf = key.len() == 65;
+        let is_storage_leaf = key.len() == 131;
+        let is_leaf = is_account_leaf || is_storage_leaf;
         let is_account = key.len() <= 65;
 
-        if is_leaf && key > last_written {
-            continue;
-        }
-        let table = if is_leaf {
-            if is_account {
-                &ACCOUNT_FLATKEYVALUE
-            } else {
-                &STORAGE_FLATKEYVALUE
+        if is_leaf {
+            // Skip if FKV for this key hasn't been generated yet
+            // Compare in nibble format (key is already nibbles)
+            if key > last_written {
+                continue;
             }
-        } else if is_account {
-            &ACCOUNT_TRIE_NODES
+
+            // Convert nibble path to binary FKV key
+            if is_account_leaf {
+                // Account leaf: convert nibbles to H256, then to binary FKV key
+                // The nibbles include a leaf flag at the end, remove it for conversion
+                let nibbles = Nibbles::from_hex(key.clone());
+                let account_hash = H256::from_slice(&nibbles.to_bytes());
+                let fkv_key = account_fkv_key(&account_hash);
+
+                // Encode using slim codec for FKV storage
+                if let Ok(account_state) = AccountState::decode(&value) {
+                    let slim_value = AccountStateSlimCodec(account_state).encode_to_vec();
+                    if value.is_empty() {
+                        result = write_tx.delete(ACCOUNT_FLATKEYVALUE, &fkv_key);
+                    } else {
+                        result = write_tx.put(ACCOUNT_FLATKEYVALUE, &fkv_key, &slim_value);
+                    }
+                }
+            } else {
+                // Storage leaf: extract address hash and slot hash from prefixed nibble path
+                // Format: [65 nibbles addr (with leaf flag)][1 nibble separator][65 nibbles slot (with leaf flag)]
+                // The addr part has nibbles 0-64 (65 total), separator at 65, slot at 66-130
+                let addr_nibbles = Nibbles::from_hex(key[..65].to_vec());
+                let slot_nibbles = Nibbles::from_hex(key[66..].to_vec());
+                let account_hash = H256::from_slice(&addr_nibbles.to_bytes());
+                let slot_hash = H256::from_slice(&slot_nibbles.to_bytes());
+                let fkv_key = storage_fkv_key(&account_hash, &slot_hash);
+
+                // Decode RLP U256, then strip leading zeros from raw bytes
+                if value.is_empty() {
+                    result = write_tx.delete(STORAGE_FLATKEYVALUE, &fkv_key);
+                } else if let Ok(u256) = U256::decode(&value) {
+                    let stripped_value = strip_leading_zeros(&u256.to_big_endian());
+                    result = write_tx.put(STORAGE_FLATKEYVALUE, &fkv_key, &stripped_value);
+                }
+            }
         } else {
-            &STORAGE_TRIE_NODES
-        };
-        if value.is_empty() {
-            result = write_tx.delete(table, &key);
-        } else {
-            result = write_tx.put(table, &key, &value);
+            // Internal trie node - keep in nibble format
+            let table = if is_account {
+                ACCOUNT_TRIE_NODES
+            } else {
+                STORAGE_TRIE_NODES
+            };
+            if value.is_empty() {
+                result = write_tx.delete(table, &key);
+            } else {
+                result = write_tx.put(table, &key, &value);
+            }
         }
         if result.is_err() {
             break;
@@ -2680,6 +2733,7 @@ fn flatkeyvalue_generator(
         let last_written = read_tx
             .get(MISC_VALUES, "last_written".as_bytes())?
             .unwrap_or_default();
+        // Progress tracking uses nibble format for compatibility with BackendTrieDB
         let last_written_account = last_written
             .get(0..64)
             .map(|v| Nibbles::from_hex(v.to_vec()))
@@ -2710,8 +2764,16 @@ fn flatkeyvalue_generator(
             };
             let account_state = AccountState::decode(&node.value)?;
             let account_hash = H256::from_slice(&path.to_bytes());
+
+            // Create binary FKV key (20 bytes)
+            let fkv_key = account_fkv_key(&account_hash);
+
+            // Encode using slim codec for FKV storage
+            let slim_value = AccountStateSlimCodec(account_state).encode_to_vec();
+
+            // Update progress in nibble format, store FKV with binary key
             write_txn.put(MISC_VALUES, "last_written".as_bytes(), path.as_ref())?;
-            write_txn.put(ACCOUNT_FLATKEYVALUE, path.as_ref(), &node.value)?;
+            write_txn.put(ACCOUNT_FLATKEYVALUE, &fkv_key, &slim_value)?;
             ctr += 1;
             if ctr > 10_000 {
                 write_txn.commit()?;
@@ -2735,13 +2797,23 @@ fn flatkeyvalue_generator(
                 iter_inner.advance(last_written_storage.to_bytes())?;
                 last_written_storage = Nibbles::default();
             }
-            iter_inner.try_for_each(|(path, node)| -> Result<(), StoreError> {
+            iter_inner.try_for_each(|(slot_path, node)| -> Result<(), StoreError> {
                 let Node::Leaf(node) = node else {
                     return Ok(());
                 };
-                let key = apply_prefix(Some(account_hash), path);
+                let slot_hash = H256::from_slice(&slot_path.to_bytes());
+
+                // Create binary FKV key (52 bytes)
+                let storage_fkv_key = storage_fkv_key(&account_hash, &slot_hash);
+
+                // Decode RLP U256, then strip leading zeros from raw bytes
+                let u256: U256 = U256::decode(&node.value)?;
+                let stripped_value = strip_leading_zeros(&u256.to_big_endian());
+
+                // Update progress in nibble format (with prefix), store FKV with binary key
+                let key = apply_prefix(Some(account_hash), slot_path);
                 write_txn.put(MISC_VALUES, "last_written".as_bytes(), key.as_ref())?;
-                write_txn.put(STORAGE_FLATKEYVALUE, key.as_ref(), &node.value)?;
+                write_txn.put(STORAGE_FLATKEYVALUE, &storage_fkv_key, &stripped_value)?;
                 ctr += 1;
                 if ctr > 10_000 {
                     write_txn.commit()?;
@@ -2950,4 +3022,51 @@ fn init_metadata_file(parent_path: &Path) -> Result<(), StoreError> {
 fn dir_is_empty(path: &Path) -> Result<bool, StoreError> {
     let is_empty = std::fs::read_dir(path)?.next().is_none();
     Ok(is_empty)
+}
+
+/// Check and migrate FKV schema if needed.
+///
+/// If the stored FKV schema version is less than the current version,
+/// this function clears the FKV tables and resets progress so the
+/// background generator can rebuild with the new format.
+fn migrate_fkv_schema_if_needed(backend: &Arc<dyn StorageBackend>) -> Result<(), StoreError> {
+    let tx = backend.begin_read()?;
+    let stored_version = tx
+        .get(MISC_VALUES, FKV_SCHEMA_VERSION_KEY)?
+        .map(|bytes| {
+            if bytes.len() >= 8 {
+                u64::from_le_bytes(bytes[..8].try_into().unwrap())
+            } else {
+                0
+            }
+        })
+        .unwrap_or(0); // No version stored means old schema (version 0/1)
+    drop(tx);
+
+    if stored_version >= FKV_SCHEMA_VERSION {
+        debug!("FKV schema version {stored_version} is current, no migration needed");
+        return Ok(());
+    }
+
+    info!(
+        "Migrating FKV schema from version {} to {}",
+        stored_version, FKV_SCHEMA_VERSION
+    );
+
+    // Clear FKV tables to force regeneration with new key format
+    backend.clear_table(ACCOUNT_FLATKEYVALUE)?;
+    backend.clear_table(STORAGE_FLATKEYVALUE)?;
+
+    // Reset progress tracking
+    let mut write_tx = backend.begin_write()?;
+    write_tx.delete(MISC_VALUES, "last_written".as_bytes())?;
+    write_tx.put(
+        MISC_VALUES,
+        FKV_SCHEMA_VERSION_KEY,
+        &FKV_SCHEMA_VERSION.to_le_bytes(),
+    )?;
+    write_tx.commit()?;
+
+    info!("FKV schema migration complete. FKV tables cleared for regeneration.");
+    Ok(())
 }
