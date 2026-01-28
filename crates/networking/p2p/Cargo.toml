@@ -56,6 +56,9 @@ hkdf = { version = "0.12.4", optional = true }
 
 rayon = "1.10.0"
 crossbeam.workspace = true
+once_cell = "1.19"
+parking_lot = "0.12"
+sysinfo = "0.32"
 
 [dev-dependencies]
 hex-literal.workspace = true
