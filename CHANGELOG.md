@@ -19,6 +19,7 @@
 
 - Remove `ethrex-threadpool` crate and move `ThreadPool` to `ethrex-trie` [#5925](https://github.com/lambdaclass/ethrex/pull/5925)
 - Add frame pointers setting to makefiles [#5746](https://github.com/lambdaclass/ethrex/pull/5746)
+- Remove `Mutex<Box<_>>` from `DatabaseLogger::store` to reduce contention [#5930](https://github.com/lambdaclass/ethrex/pull/5930)
 
 ### 2026-01-19
 
