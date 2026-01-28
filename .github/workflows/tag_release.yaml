@@ -22,6 +22,8 @@ env:
   # Work around frequent libgit2/submodule fetch flakiness in CI.
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   CARGO_NET_RETRY: "10"
+  # ere-compiler version for reproducible guest builds can be overridden
+  # via repository variable: vars.ERE_COMPILER_VERSION (default: 'latest')
 
 jobs:
   build-ethrex:
@@ -146,8 +148,20 @@ jobs:
           name: verification_keys
           path: verification_keys/
 
-  # There's a separate job to build the guest programs for SP1 and RISC0 since
-  # they need to be built without the l2 features.
+  # Reproducible guest builds using ere-compiler Docker images.
+  # Produces artifacts with naming convention: <EL_NAME>-<EL_VERSION>-<ZKVM_NAME>-<ZKVM_SDK_VERSION>
+  build-guest-ere:
+    # Only run ere-compiler builds for tagged releases
+    if: github.ref_type == 'tag'
+    uses: ./.github/workflows/build-guest-ere.yaml
+    with:
+      ere_version: ${{ vars.ERE_COMPILER_VERSION || 'latest' }}
+      ref_name: ${{ github.ref_name }}
+
+  # Native SDK builds for guest programs. Used for:
+  # - Verification key generation (SP1, RISC0)
+  # - Fallback builds when ere-compiler is not available
+  # - Main/branch builds (non-tagged releases)
   build-ethrex-guest:
     strategy:
       matrix:
@@ -226,50 +240,144 @@ jobs:
           name: ${{ matrix.zkvm }}_verification_keys
           path: ${{ matrix.zkvm }}_verification_keys/
 
-  # Creates ethrex-guests.tar.gz artifact including both SP1 and
-  # RISC0 elf and verification keys.
+  # Creates ethrex-guests.tar.gz artifact including SP1, RISC0, and ZisK
+  # ELFs, verification keys, and minisign signatures.
+  # For tagged releases, includes reproducible ere-compiler builds.
   package-ethrex-guest:
     needs:
       - build-ethrex-guest
+      - build-guest-ere
+    # Run even if build-guest-ere is skipped (non-tag builds)
+    if: always() && needs.build-ethrex-guest.result == 'success'
     runs-on: ubuntu-latest
     env:
       # Sanitize ref name by replacing '/' with '-' to match artifact names
       SANITIZED_REF: ${{ github.ref_name }}
+      # Check if signing secrets are available (for use in step conditions)
+      HAS_MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY != '' }}
+      HAS_MINISIGN_PUBLIC_KEY: ${{ secrets.MINISIGN_PUBLIC_KEY != '' }}
     steps:
       - name: Sanitize ref name
+        env:
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          SANITIZED=$(echo "${{ github.ref_name }}" | tr '/' '-')
+          SANITIZED=$(echo "$REF_NAME" | tr '/' '-')
           echo "SANITIZED_REF=$SANITIZED" >> $GITHUB_ENV
 
-      - name: Download SP1 elf artifact
+          # Compute ere-style version (e.g., v8.0.0 -> v8_0_0)
+          # Use sed to remove only the leading 'v' (not all 'v' characters)
+          ERE_VERSION=$(echo "$REF_NAME" | sed 's/^v//' | sed 's/\./_/g')
+          echo "ERE_VERSION=v$ERE_VERSION" >> $GITHUB_ENV
+
+      # Download native SDK artifacts (always available)
+      - name: Download SP1 elf artifact (native)
         uses: actions/download-artifact@v4
         with:
           name: ethrex-riscv32im-sp1-elf-${{ env.SANITIZED_REF }}
-          path: ethrex_guests/sp1/
+          path: ethrex_guests/native/sp1/
 
       - name: Download SP1 verification keys artifacts
         uses: actions/download-artifact@v4
         with:
           name: sp1_verification_keys
-          path: ethrex_guests/sp1/
+          path: ethrex_guests/verification_keys/sp1/
 
-      - name: Download RISC0 elf artifact
+      - name: Download RISC0 elf artifact (native)
         uses: actions/download-artifact@v4
         with:
           name: ethrex-riscv32im-risc0-elf-${{ env.SANITIZED_REF }}
-          path: ethrex_guests/risc0/
+          path: ethrex_guests/native/risc0/
 
       - name: Download RISC0 verification keys artifacts
         uses: actions/download-artifact@v4
         with:
           name: risc0_verification_keys
-          path: ethrex_guests/risc0/
+          path: ethrex_guests/verification_keys/risc0/
 
-      - name: Download ZisK elf artifact
+      - name: Download ZisK elf artifact (native)
         uses: actions/download-artifact@v4
         with:
           name: ethrex-riscv64ima-zisk-elf-${{ env.SANITIZED_REF }}
-          path: ethrex_guests/zisk/
+          path: ethrex_guests/native/zisk/
+
+      # Download ere-compiler artifacts (only for tagged releases)
+      - name: Download ere SP1 Program artifact
+        if: github.ref_type == 'tag' && needs.build-guest-ere.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex-${{ env.ERE_VERSION }}-sp1-v5_0_8
+          path: ethrex_guests/ere/
+
+      - name: Download ere SP1 ELF artifact
+        if: github.ref_type == 'tag' && needs.build-guest-ere.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex-${{ env.ERE_VERSION }}-sp1-v5_0_8-elf
+          path: ethrex_guests/ere/
+
+      - name: Download ere RISC0 Program artifact
+        if: github.ref_type == 'tag' && needs.build-guest-ere.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex-${{ env.ERE_VERSION }}-risc0-v3_0_3
+          path: ethrex_guests/ere/
+
+      - name: Download ere RISC0 ELF artifact
+        if: github.ref_type == 'tag' && needs.build-guest-ere.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex-${{ env.ERE_VERSION }}-risc0-v3_0_3-elf
+          path: ethrex_guests/ere/
+
+      - name: Download ere ZisK Program artifact
+        if: github.ref_type == 'tag' && needs.build-guest-ere.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex-${{ env.ERE_VERSION }}-zisk-v0_15_0
+          path: ethrex_guests/ere/
+
+      - name: Download ere ZisK ELF artifact
+        if: github.ref_type == 'tag' && needs.build-guest-ere.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex-${{ env.ERE_VERSION }}-zisk-v0_15_0-elf
+          path: ethrex_guests/ere/
+
+      - name: Install minisign
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y minisign
+
+      - name: Sign artifacts with minisign
+        if: env.HAS_MINISIGN_SECRET_KEY == 'true'
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          # Write secret key to temp file
+          echo "$MINISIGN_SECRET_KEY" > minisign.key
+
+          # Sign all ELF, Program, and verification key files
+          cd ethrex_guests
+          find . -type f \( -name "*-elf*" -o -name "*-vk*" -o -name "ethrex-v*" \) ! -name "*.minisig" | while read -r file; do
+            echo "Signing: $file"
+            echo "$MINISIGN_PASSWORD" | minisign -Sm "$file" -s ../minisign.key -x "$file.minisig" -t "$(basename "$file")"
+          done
+
+          # Clean up secret key
+          rm -f ../minisign.key
+
+      - name: Add public key
+        if: env.HAS_MINISIGN_PUBLIC_KEY == 'true'
+        env:
+          MINISIGN_PUBLIC_KEY: ${{ secrets.MINISIGN_PUBLIC_KEY }}
+        run: |
+          echo "$MINISIGN_PUBLIC_KEY" > ethrex_guests/minisign.pub
+
+      - name: List artifacts
+        run: |
+          echo "=== Guest artifacts ==="
+          find ethrex_guests -type f | sort
 
       - name: Archive ethrex guests
         run: |
@@ -347,7 +455,7 @@ jobs:
             echo "TAG_VERSION=main" >> $GITHUB_ENV
             echo "tag=main" >> $GITHUB_OUTPUT
           else
-            SANITIZED_REF=$(echo "$REF_NAME" | tr -d v | tr '/' '-')
+            SANITIZED_REF=$(echo "$REF_NAME" | sed 's/^v//' | tr '/' '-')
             echo "TAG_VERSION=$SANITIZED_REF" >> $GITHUB_ENV
             echo "tag=$SANITIZED_REF" >> $GITHUB_OUTPUT
           fi
@@ -417,6 +525,7 @@ jobs:
     needs:
       - build-ethrex
       - build-ethrex-guest
+      - build-guest-ere
       - build-docker
       - publish-docker
       - package-contracts

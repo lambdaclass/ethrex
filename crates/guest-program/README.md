@@ -155,9 +155,107 @@ Each subdirectory in `bin/` contains a guest implementation for a specific zkVM.
 2. **Execution**: The guest program re-executes blocks inside the zkVM
 3. **Output**: `ProgramOutput` contains the resulting state/receipts roots
 
+## Reproducible Builds
+
+ethrex guest programs support reproducible builds using [ere-compiler](https://github.com/eth-act/ere) Docker images. Reproducible builds ensure that anyone can independently verify the ELF binary used in proofs.
+
+### Why Reproducible Builds Matter
+
+- **Verifiability**: Anyone can build the same ELF and verify it matches what's used in production
+- **Trust**: No need to trust pre-built binaries; build from source and compare hashes
+- **Auditing**: Security auditors can verify the exact code being proven
+
+### Artifact Naming Convention
+
+Release artifacts follow the naming convention:
+```
+<EL_NAME>-<EL_VERSION>-<ZKVM_NAME>-<ZKVM_SDK_VERSION>
+```
+
+Examples:
+- `ethrex-v9_0_0-sp1-v5_0_8` (ere Program format)
+- `ethrex-v9_0_0-sp1-v5_0_8.elf` (raw ELF)
+- `ethrex-v9_0_0-risc0-v3_0_3` (ere Program format)
+- `ethrex-v9_0_0-zisk-v0_15_0.elf` (raw ELF)
+
+### Verifying Signatures
+
+All release artifacts are signed with [minisign](https://jedisct1.github.io/minisign/). To verify:
+
+```bash
+# Install minisign
+brew install minisign   # macOS
+sudo apt install minisign  # Linux
+
+# Download artifact and signature
+wget https://github.com/lambdaclass/ethrex/releases/download/vX.Y.Z/ethrex-guests.tar.gz
+tar -xzf ethrex-guests.tar.gz
+
+# Verify signature
+minisign -Vm ere/ethrex-v9_0_0-sp1-v5_0_8.elf -p minisign.pub
+# Output: Signature and comment signature verified
+```
+
+### Verifying Reproducibility
+
+To verify that a release artifact is reproducible:
+
+```bash
+# Run the verification script (requires Docker)
+./scripts/verify-reproducibility.sh zisk latest
+
+# Or specify a specific ere-compiler version
+./scripts/verify-reproducibility.sh sp1 0.2.0-abcd123
+```
+
+The script builds the guest program twice and compares SHA256 hashes.
+
+### Building Reproducible ELFs Locally
+
+```bash
+# Pull ere-compiler image
+docker pull ghcr.io/eth-act/ere/ere-compiler-zisk:latest
+
+# Build guest program
+docker run --rm \
+  -v $(pwd):/workspace:ro \
+  -v $(pwd)/output:/output \
+  ghcr.io/eth-act/ere/ere-compiler-zisk:latest \
+  --compiler-kind rust-customized \
+  --guest-path /workspace/crates/guest-program/bin/zisk \
+  --output-path /output/ethrex-zisk
+
+# Extract raw ELF from ere Program format
+python3 scripts/extract-elf/extract-elf.py output/ethrex-zisk output/ethrex-zisk.elf
+```
+
+### ere Program Format
+
+The ere-compiler outputs a serialized `Program` struct (bincode format) that contains:
+- Raw ELF bytes
+- Optional metadata
+
+The raw ELF can be extracted using the provided script at `scripts/extract-elf/extract-elf.py`.
+
+### Troubleshooting
+
+**Docker permission denied**
+```bash
+# Add your user to the docker group
+sudo usermod -aG docker $USER
+# Log out and back in
+```
+
+**Build hash mismatch**
+- Ensure you're using the same ere-compiler version
+- Check that the source code matches the release tag
+- Verify Docker images are pulled fresh: `docker pull ghcr.io/eth-act/ere/ere-compiler-<zkvm>:<version>`
+
 ## References
 
 - [SP1 Documentation](https://docs.succinct.xyz/docs/sp1/introduction)
 - [RISC Zero Documentation](https://dev.risczero.com/api)
 - [ZisK Documentation](https://0xpolygonhermez.github.io/zisk/)
 - [OpenVM Documentation](https://book.openvm.dev/)
+- [ere (Ethereum Reproducible Execution)](https://github.com/eth-act/ere)
+- [minisign](https://jedisct1.github.io/minisign/)
