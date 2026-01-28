@@ -218,7 +218,8 @@ fn finalize_non_privileged_execution(
         )?;
     }
 
-    ctx_result.gas_used = total_gas;
+    // Note: ctx_result.gas_used is already correctly set by refund_sender/refund_sender_fee_token
+    // based on EIP-7778 (pre-refund for Amsterdam+, post-refund for earlier forks)
 
     Ok(())
 }
