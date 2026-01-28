@@ -188,6 +188,7 @@ impl TestUnit {
                 .excess_blob_gas
                 .map(|v| v.as_u64()),
             requests_hash: self.genesis_block_header.requests_hash,
+            block_access_list_hash: self.genesis_block_header.block_access_list_hash,
         }
     }
 }
@@ -266,6 +267,7 @@ pub struct Header {
     pub excess_blob_gas: Option<U256>,
     pub parent_beacon_block_root: Option<H256>,
     pub requests_hash: Option<H256>,
+    pub block_access_list_hash: Option<H256>,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
