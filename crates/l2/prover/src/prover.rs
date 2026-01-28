@@ -2,9 +2,9 @@ use crate::{
     backend::{BackendType, ExecBackend, ProverBackend},
     config::ProverConfig,
 };
+use ethrex_guest_program::input::ProgramInput;
 use ethrex_l2::sequencer::{proof_coordinator::ProofData, utils::get_git_commit_hash};
 use ethrex_l2_common::prover::{BatchProof, ProofFormat};
-use guest_program::input::ProgramInput;
 use std::time::Duration;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -148,18 +148,23 @@ impl<B: ProverBackend> Prover<B> {
         };
 
         info!(%endpoint, "Received Response for batch_number: {batch_number}");
+        #[cfg(feature = "l2")]
+        let input = ProgramInput {
+            blocks: input.blocks,
+            execution_witness: input.execution_witness,
+            elasticity_multiplier: input.elasticity_multiplier,
+            blob_commitment: input.blob_commitment,
+            blob_proof: input.blob_proof,
+            fee_configs: input.fee_configs,
+        };
+        #[cfg(not(feature = "l2"))]
+        let input = ProgramInput {
+            blocks: input.blocks,
+            execution_witness: input.execution_witness,
+        };
         Ok(Some(ProverData {
             batch_number,
-            input: ProgramInput {
-                blocks: input.blocks,
-                execution_witness: input.execution_witness,
-                elasticity_multiplier: input.elasticity_multiplier,
-                #[cfg(feature = "l2")]
-                blob_commitment: input.blob_commitment,
-                #[cfg(feature = "l2")]
-                blob_proof: input.blob_proof,
-                fee_configs: Some(input.fee_configs),
-            },
+            input,
             format,
         }))
     }
