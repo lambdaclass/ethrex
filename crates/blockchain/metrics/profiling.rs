@@ -1,5 +1,7 @@
+use metrics::histogram;
 use prometheus::{HistogramTimer, HistogramVec, register_histogram_vec};
 use std::sync::LazyLock;
+use std::time::Instant;
 use tracing::{
     Subscriber,
     field::{Field, Visit},
@@ -15,8 +17,8 @@ pub static METRICS_BLOCK_PROCESSING_PROFILE: LazyLock<HistogramVec> =
 
 fn initialize_histogram_vec() -> HistogramVec {
     register_histogram_vec!(
-        "function_duration_seconds",
-        "Histogram of the run time of the functions in block processing and RPC handling",
+        "old_function_duration_seconds",
+        "[DEPRECATED] Histogram of the run time of the functions in block processing and RPC handling",
         &["namespace", "function_name"]
     )
     .unwrap()
@@ -28,7 +30,12 @@ fn initialize_histogram_vec() -> HistogramVec {
 pub struct FunctionProfilingLayer;
 
 /// Wrapper around [`HistogramTimer`] to avoid conflicts with other layers
-struct ProfileTimer(HistogramTimer);
+struct ProfileTimer {
+    prometheus_timer: HistogramTimer,
+    start_instant: Instant,
+    namespace: String,
+    function_name: String,
+}
 
 /// Span extension storing the profiling namespace selected by instrumentation. This needs to
 /// be a String instead of a &'static str because using the span macros we could recieve dynamically
@@ -91,13 +98,20 @@ where
 
                 let function_name = span.metadata().name();
 
-                METRICS_BLOCK_PROCESSING_PROFILE
+                let prometheus_timer = METRICS_BLOCK_PROCESSING_PROFILE
                     .with_label_values(&[namespace, function_name])
-                    .start_timer()
+                    .start_timer();
+
+                ProfileTimer {
+                    prometheus_timer,
+                    start_instant: Instant::now(),
+                    namespace: namespace.to_string(),
+                    function_name: function_name.to_string(),
+                }
             };
 
             // PERF: `extensions_mut` uses a Mutex internally (per span)
-            span.extensions_mut().insert(ProfileTimer(timer));
+            span.extensions_mut().insert(timer);
         }
     }
 
@@ -106,8 +120,17 @@ where
             .span(id)
             // PERF: `extensions_mut` uses a Mutex internally (per span)
             .and_then(|span| span.extensions_mut().remove::<ProfileTimer>());
-        if let Some(ProfileTimer(timer)) = timer {
-            timer.observe_duration();
+        if let Some(profile_timer) = timer {
+            profile_timer.prometheus_timer.observe_duration();
+
+            // Record to new metrics system for summary quantiles (p50, p90, p95, p99, p999)
+            let duration_secs = profile_timer.start_instant.elapsed().as_secs_f64();
+            histogram!(
+                "function_duration_seconds",
+                "namespace" => profile_timer.namespace,
+                "function_name" => profile_timer.function_name
+            )
+            .record(duration_secs);
         }
     }
 }

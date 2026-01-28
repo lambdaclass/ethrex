@@ -5,6 +5,10 @@ use std::sync::LazyLock;
 
 use crate::MetricsError;
 
+// Re-export metrics macros for recording to the new metrics-exporter-prometheus system
+// These will generate summary metrics with p50, p90, p95, p99, p999 quantiles
+use metrics::{gauge, histogram};
+
 pub static METRICS_BLOCKS: LazyLock<MetricsBlocks> = LazyLock::new(MetricsBlocks::default);
 
 #[derive(Debug, Clone)]
@@ -49,24 +53,24 @@ impl MetricsBlocks {
     pub fn new() -> Self {
         MetricsBlocks {
             gas_limit: Gauge::new(
-                "gas_limit",
-                "Keeps track of the percentage of gas limit used by the last processed block",
+                "old_gas_limit",
+                "[DEPRECATED] Keeps track of the percentage of gas limit used by the last processed block",
             )
             .expect("Failed to create gas_limit metric"),
             block_number: IntGauge::new(
-                "block_number",
-                "Keeps track of the block number for the last processed block",
+                "old_block_number",
+                "[DEPRECATED] Keeps track of the block number for the last processed block",
             )
             .expect("Failed to create block_number metric"),
             gigagas: Gauge::new(
-                "gigagas",
-                "Keeps track of the block execution throughput through gigagas/s",
+                "old_gigagas",
+                "[DEPRECATED] Keeps track of the block execution throughput through gigagas/s",
             )
             .expect("Failed to create gigagas metric"),
             gigagas_histogram: Histogram::with_opts(
                 HistogramOpts::new(
-                    "gigagas_histogram",
-                    "Histogram of the block execution throughput through gigagas/s",
+                    "old_gigagas_histogram",
+                    "[DEPRECATED] Histogram of the block execution throughput through gigagas/s",
                 )
                 .buckets({
                     let mut buckets = vec![0.0];
@@ -83,48 +87,48 @@ impl MetricsBlocks {
             )
             .expect("Failed to create gigagas_histogram metric"),
             gigagas_block_building: Gauge::new(
-                "gigagas_block_building",
-                "Keeps track of the block building throughput through gigagas/s",
+                "old_gigagas_block_building",
+                "[DEPRECATED] Keeps track of the block building throughput through gigagas/s",
             )
             .expect("Failed to create gigagas_block_building metric"),
             block_building_ms: IntGauge::new(
-                "block_building_ms",
-                "Keeps track of the block building throughput through miliseconds",
+                "old_block_building_ms",
+                "[DEPRECATED] Keeps track of the block building throughput through miliseconds",
             )
             .expect("Failed to create block_building_ms metric"),
             block_building_base_fee: IntGauge::new(
-                "block_building_base_fee",
-                "Keeps track of the block building base fee",
+                "old_block_building_base_fee",
+                "[DEPRECATED] Keeps track of the block building base fee",
             )
             .expect("Failed to create block_building_base_fee metric"),
             gas_used: Gauge::new(
-                "gas_used",
-                "Keeps track of the gas used in the last processed block",
+                "old_gas_used",
+                "[DEPRECATED] Keeps track of the gas used in the last processed block",
             )
             .expect("Failed to create gas_used metric"),
             head_height: IntGauge::new(
-                "head_height",
-                "Keeps track of the block number for the head of the chain",
+                "old_head_height",
+                "[DEPRECATED] Keeps track of the block number for the head of the chain",
             )
             .expect("Failed to create head_height metric"),
             execution_ms: IntGauge::new(
-                "execution_ms",
-                "Keeps track of the execution time spent in block execution in miliseconds",
+                "old_execution_ms",
+                "[DEPRECATED] Keeps track of the execution time spent in block execution in miliseconds",
             )
             .expect("Failed to create execution_ms metric"),
             merkle_ms: IntGauge::new(
-                "merkle_ms",
-                "Keeps track of the execution time spent in block merkelization in miliseconds",
+                "old_merkle_ms",
+                "[DEPRECATED] Keeps track of the execution time spent in block merkelization in miliseconds",
             )
             .expect("Failed to create merkle_ms metric"),
             store_ms: IntGauge::new(
-                "store_ms",
-                "Keeps track of the execution time spent in block storage in miliseconds",
+                "old_store_ms",
+                "[DEPRECATED] Keeps track of the execution time spent in block storage in miliseconds",
             )
             .expect("Failed to create store_ms metric"),
             transaction_count: IntGauge::new(
-                "transaction_count",
-                "Keeps track of transaction count in a block",
+                "old_transaction_count",
+                "[DEPRECATED] Keeps track of transaction count in a block",
             )
             .expect("Failed to create transaction_count metric"),
             validate_ms: IntGauge::new(
@@ -162,51 +166,70 @@ impl MetricsBlocks {
 
     pub fn set_transaction_count(&self, transaction_count: i64) {
         self.transaction_count.set(transaction_count);
+        // Record to new metrics system for summary quantiles
+        gauge!("block_transaction_count").set(transaction_count as f64);
     }
 
     pub fn set_execution_ms(&self, execution_ms: i64) {
         self.execution_ms.set(execution_ms);
+        // Record to new metrics system - this will generate p50, p90, p95, p99, p999 summaries
+        histogram!("block_execution_seconds").record(execution_ms as f64 / 1000.0);
     }
 
     pub fn set_merkle_ms(&self, merkle_ms: i64) {
         self.merkle_ms.set(merkle_ms);
+        // Record to new metrics system for summary quantiles
+        histogram!("block_merkle_seconds").record(merkle_ms as f64 / 1000.0);
     }
 
     pub fn set_store_ms(&self, store_ms: i64) {
         self.store_ms.set(store_ms);
+        // Record to new metrics system for summary quantiles
+        histogram!("block_store_seconds").record(store_ms as f64 / 1000.0);
     }
 
     pub fn set_latest_block_gas_limit(&self, gas_limit: f64) {
         self.gas_limit.set(gas_limit);
+        gauge!("block_gas_limit_ratio").set(gas_limit);
     }
 
     pub fn set_latest_gigagas(&self, gigagas: f64) {
         self.gigagas.set(gigagas);
         self.gigagas_histogram.observe(gigagas);
+        // Record to new metrics system - this will generate p50, p90, p95, p99, p999 summaries
+        histogram!("block_gigagas_per_second").record(gigagas);
     }
 
     pub fn set_latest_gigagas_block_building(&self, gigagas: f64) {
         self.gigagas_block_building.set(gigagas);
+        // Record to new metrics system for summary quantiles
+        histogram!("block_building_gigagas_per_second").record(gigagas);
     }
 
     pub fn set_block_building_ms(&self, ms: i64) {
         self.block_building_ms.set(ms);
+        // Record to new metrics system for summary quantiles
+        histogram!("block_building_seconds").record(ms as f64 / 1000.0);
     }
 
     pub fn set_block_building_base_fee(&self, base_fee: i64) {
         self.block_building_base_fee.set(base_fee);
+        gauge!("block_building_base_fee").set(base_fee as f64);
     }
 
     pub fn set_block_number(&self, block_number: u64) {
         self.block_number.set(block_number.cast_signed());
+        gauge!("block_number").set(block_number as f64);
     }
 
     pub fn set_head_height(&self, head_height: u64) {
         self.head_height.set(head_height.cast_signed());
+        gauge!("head_height").set(head_height as f64);
     }
 
     pub fn set_latest_gas_used(&self, gas_used: f64) {
         self.gas_used.set(gas_used);
+        gauge!("block_gas_used").set(gas_used);
     }
 
     pub fn set_validate_ms(&self, validate_ms: i64) {

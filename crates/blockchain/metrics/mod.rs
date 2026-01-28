@@ -12,6 +12,8 @@ pub mod p2p;
 pub mod process;
 #[cfg(feature = "api")]
 pub mod profiling;
+#[cfg(any(feature = "api", feature = "metrics"))]
+pub mod recorder;
 #[cfg(feature = "api")]
 pub mod rpc;
 #[cfg(any(feature = "api", feature = "transactions"))]
