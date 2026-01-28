@@ -44,26 +44,36 @@ pub fn blob_from_bytes(bytes: Bytes) -> Result<Blob, BlobsBundleError> {
     }
 
     let mut buf = [0u8; BYTES_PER_BLOB];
-    buf[..(bytes.len() * 32).div_ceil(31)].copy_from_slice(
-        &bytes
-            .chunks(31)
-            .map(|x| [&[0x00], x].concat())
-            .collect::<Vec<_>>()
-            .concat(),
-    );
+    let mut dst = 0usize;
+
+    for chunk in bytes.chunks(31) {
+        let len = chunk.len();
+        let needed = 1 + len;
+        if dst + needed > BYTES_PER_BLOB {
+            return Err(BlobsBundleError::BlobDataInvalidBytesLength);
+        }
+
+        buf[dst] = 0x00;
+        dst += 1;
+
+        buf[dst..dst + len].copy_from_slice(chunk);
+        dst += len;
+    }
 
     Ok(buf)
 }
 
 pub fn bytes_from_blob(blob: Bytes) -> [u8; SAFE_BYTES_PER_BLOB] {
     let mut buf = [0u8; SAFE_BYTES_PER_BLOB];
-    buf.copy_from_slice(
-        &blob
-            .chunks(32)
-            .map(|x| x[1..].to_vec())
-            .collect::<Vec<_>>()
-            .concat(),
-    );
+    let mut dst = 0usize;
+
+    for chunk in blob.chunks(32) {
+        let payload = &chunk[1..];
+        let len = payload.len();
+
+        buf[dst..dst + len].copy_from_slice(payload);
+        dst += len;
+    }
 
     buf
 }
