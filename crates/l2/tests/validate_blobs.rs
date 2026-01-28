@@ -2,7 +2,9 @@
 //!
 //! This test will fail fast when the genesis file is modified but the blobs haven't been regenerated.
 //!
-//! When this test fails, regenerate blobs following: docs/developers/l2/state-reconstruction-blobs.md
+//! When this test fails, regenerate blobs following:
+//! - docs/workflows/regenerate-blobs.md (agent workflow)
+//! - docs/developers/l2/state-reconstruction-blobs.md (step-by-step guide)
 
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
@@ -79,7 +81,8 @@ fn validate_blobs_match_genesis() {
         Expected parent_hash: {genesis_hash:#x}\n\
         Found parent_hash:    {blob_parent_hash:#x}\n\n\
         To fix this, regenerate the blobs following:\n\
-        docs/developers/l2/state-reconstruction-blobs.md\n\
+        - docs/workflows/regenerate-blobs.md (agent workflow)\n\
+        - docs/developers/l2/state-reconstruction-blobs.md (step-by-step guide)\n\
         ========================================================\n"
     );
 }

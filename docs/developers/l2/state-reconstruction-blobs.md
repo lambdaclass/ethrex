@@ -46,16 +46,18 @@ Running the node with the deposits of the rich accounts will create `N-1.blob` f
 
 ## 3. Run the L2 and capture six blobs
 
-Start the local L2 with a 20 seconds per commit so we have at least 6 batches with transactions:
+**Important:** Start the prover first, then the sequencer. This prevents the committer from getting stuck waiting for deposits to be verified.
 
-```sh
-COMPILE_CONTRACTS=true cargo run --release --bin ethrex --features l2,l2-sql -- l2 --dev --no-monitor --committer.commit-time 20000
-```
-
-In another terminal run:
+In the first terminal, start the prover:
 
 ```sh
 make init-prover-exec
+```
+
+In another terminal, start the L2 with a 20 seconds per commit so we have at least 6 batches with transactions:
+
+```sh
+COMPILE_CONTRACTS=true cargo run --release --bin ethrex --features l2,l2-sql -- l2 --dev --no-monitor --committer.commit-time 20000
 ```
 
 Once the sequencer has produced six batches you will see six files named `1-1.blob` through `6-1.blob`. Copy them into `fixtures/blobs/` (overwriting the existing files).
