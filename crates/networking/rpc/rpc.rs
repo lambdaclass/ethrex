@@ -46,7 +46,7 @@ use crate::utils::{
 use crate::{admin, net};
 use crate::{eth, mempool};
 use axum::extract::ws::WebSocket;
-use axum::extract::{DefaultBodyLimit, State, WebSocketUpgrade};
+use axum::extract::{State, WebSocketUpgrade};
 use axum::{Json, Router, http::StatusCode, routing::post};
 use axum_extra::{
     TypedHeader,
@@ -533,25 +533,27 @@ pub async fn start_api(
         }
     });
 
-    let authrpc_handler = move |ctx, auth, body| async move {
-        let _ = timer_sender.send(());
-        handle_authrpc_request(ctx, auth, body).await
-    };
+    // Use jsonrpsee for Auth-RPC (Engine API)
+    let authrpc_handle = crate::engine_jsonrpsee::start_authrpc_server(
+        authrpc_addr,
+        service_context.clone(),
+        timer_sender,
+    )
+    .await
+    .map_err(|e| RpcErr::Internal(format!("Failed to start jsonrpsee server: {e}")))?;
 
-    let authrpc_router = Router::new()
-        .route("/", post(authrpc_handler))
-        .with_state(service_context.clone())
-        // Bump the body limit for the engine API to 256MB
-        // This is needed to receive payloads bigger than the default limit of 2MB
-        .layer(DefaultBodyLimit::max(256 * 1024 * 1024));
-
-    let authrpc_listener = TcpListener::bind(authrpc_addr)
-        .await
-        .map_err(|error| RpcErr::Internal(error.to_string()))?;
-    let authrpc_server = axum::serve(authrpc_listener, authrpc_router)
-        .with_graceful_shutdown(shutdown_signal())
-        .into_future();
     info!("Starting Auth-RPC server at {authrpc_addr}");
+
+    // Spawn a task to handle graceful shutdown of jsonrpsee server
+    let authrpc_shutdown = {
+        let handle = authrpc_handle.clone();
+        async move {
+            shutdown_signal().await;
+            handle.stop().expect("Failed to stop jsonrpsee server");
+            handle.stopped().await;
+            Ok::<(), std::io::Error>(())
+        }
+    };
 
     if let Some(address) = ws_addr {
         let ws_handler = |ws: WebSocketUpgrade, ctx| async {
@@ -569,10 +571,10 @@ pub async fn start_api(
             .into_future();
         info!("Starting WS server at {address}");
 
-        let _ = tokio::try_join!(authrpc_server, http_server, ws_server)
+        let _ = tokio::try_join!(authrpc_shutdown, http_server, ws_server)
             .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
     } else {
-        let _ = tokio::try_join!(authrpc_server, http_server)
+        let _ = tokio::try_join!(authrpc_shutdown, http_server)
             .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
     }
 
