@@ -63,6 +63,7 @@ mod admin;
 mod authentication;
 pub mod debug;
 pub mod engine;
+pub mod engine_hyper;
 mod eth;
 mod mempool;
 mod net;
