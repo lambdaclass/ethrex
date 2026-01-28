@@ -72,7 +72,7 @@ jobs:
             }')
 
           # Try the API call
-          HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" https://api.moonshot.cn/v1/chat/completions \
+          HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" https://api.moonshot.ai/v1/chat/completions \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $KIMI_API_KEY" \
             -d "$REQUEST_BODY")
