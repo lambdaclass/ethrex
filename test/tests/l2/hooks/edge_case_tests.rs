@@ -120,25 +120,48 @@ fn create_eip1559_env(
 mod l1_gas_limit_tests {
     use super::*;
 
+    /// When L1 data gas + execution gas > gas_limit, the transaction MUST:
+    /// 1. Revert (is_success() == false)
+    /// 2. Consume ALL gas (gas_used == gas_limit)
+    /// 3. Undo any value transfer (recipient balance unchanged)
+    /// 4. Pay the L1 fee vault from remaining gas (gas_limit - execution_gas)
+    /// 5. Charge the sender for the full gas_limit
+    ///
+    /// L1 gas calculation:
+    ///   l1_fee = (l1_fee_per_blob_gas * GAS_PER_BLOB / SAFE_BYTES_PER_BLOB) * tx_size
+    ///   l1_gas = l1_fee / gas_price
+    ///
+    /// To cause L1 gas overflow with gas_limit just above intrinsic (22000):
+    /// - remaining_gas = 22000 - 21000 = 1000
+    /// - Need l1_gas > 1000
+    /// - With tx_size ~100 bytes, gas_price = 1 wei, need high l1_fee_per_blob_gas
     #[test]
     fn test_l1_gas_causes_revert_when_exceeding_limit() {
-        // This test verifies that when L1 data gas + execution gas > gas_limit,
-        // the transaction reverts and uses the full gas limit.
+        // Setup: sender with balance, recipient with 0, L1 fee vault with 0
+        // Include a value transfer to verify it gets undone on revert
+        let value_to_transfer = U256::from(1_000_000_000_000_000_000u128); // 1 ETH
+        let initial_sender_balance = U256::from(DEFAULT_SENDER_BALANCE);
+
         let mut db = create_test_db_with_accounts(vec![
-            (TEST_SENDER, U256::from(DEFAULT_SENDER_BALANCE), 0),
+            (TEST_SENDER, initial_sender_balance, 0),
             (TEST_RECIPIENT, U256::zero(), 0),
             (TEST_L1_FEE_VAULT, U256::zero(), 0),
+            (TEST_COINBASE, U256::zero(), 0),
         ]);
 
-        // Use a very low gas limit that might be exceeded by L1 gas
-        let gas_limit = 21_000u64;
-        let max_fee_per_gas = 1_000_000_000u64;
-        let max_priority_fee_per_gas = 100_000_000u64;
-        let base_fee = 100_000_000u64;
+        // Use gas_limit barely above intrinsic_gas so L1 gas easily overflows
+        // intrinsic_gas for simple transfer = 21000
+        // remaining_gas = 22000 - 21000 = 1000
+        let gas_limit = 22_000u64;
+
+        // Use very low gas_price (1 wei) so l1_gas = l1_fee / 1 = l1_fee (bigger number)
+        let max_fee_per_gas = 1u64; // 1 wei
+        let max_priority_fee_per_gas = 0u64;
+        let base_fee = 1u64; // 1 wei
 
         let tx = create_eip1559_tx(
             TEST_RECIPIENT,
-            U256::zero(),
+            value_to_transfer,
             gas_limit,
             max_fee_per_gas,
             max_priority_fee_per_gas,
@@ -154,47 +177,152 @@ mod l1_gas_limit_tests {
             false,
         );
 
-        // Configure a very high L1 fee that will push total gas over the limit
+        // Configure high L1 fee that will push total gas over the limit.
+        // l1_fee = (l1_fee_per_blob_gas * 131072 / 126976) * tx_size ≈ l1_fee_per_blob_gas * tx_size
+        // l1_gas = l1_fee / gas_price = l1_fee / 1 = l1_fee
+        // With tx_size ~100 bytes and l1_fee_per_blob_gas = 1000, l1_gas ≈ 100000 >> 1000
         let fee_config = FeeConfig {
             base_fee_vault: None,
             operator_fee_config: None,
             l1_fee_config: Some(L1FeeConfig {
                 l1_fee_vault: TEST_L1_FEE_VAULT,
-                l1_fee_per_blob_gas: 1_000_000_000, // Very high L1 fee
+                l1_fee_per_blob_gas: 1000, // This generates l1_gas >> remaining_gas
             }),
         };
 
-        let vm_result = create_test_l2_vm(&env, &mut db, &tx, fee_config);
+        let mut vm = create_test_l2_vm(&env, &mut db, &tx, fee_config).unwrap();
+        let report = vm.execute().unwrap();
 
-        if let Ok(mut vm) = vm_result {
-            let report = vm.execute();
+        // 1. Transaction MUST revert
+        assert!(
+            !report.is_success(),
+            "Transaction MUST revert when L1 gas + execution gas exceeds gas_limit"
+        );
 
-            // If L1 gas exceeds limit, the tx should either:
-            // 1. Fail execution
-            // 2. Revert (report.is_success() == false)
-            // 3. Use all available gas
-            if let Ok(report) = report {
-                // If tx reverted due to L1 gas, gas_used should equal gas_limit
-                if !report.is_success() {
-                    assert_eq!(
-                        report.gas_used, gas_limit,
-                        "Reverted tx due to L1 gas should use full gas limit"
-                    );
-                }
-            }
-        }
+        // 2. Transaction MUST consume ALL gas
+        assert_eq!(
+            report.gas_used, gas_limit,
+            "Reverted tx due to L1 gas overflow MUST use full gas_limit. \
+             Expected: {}, Got: {}",
+            gas_limit, report.gas_used
+        );
+
+        // 3. Value transfer MUST be undone - recipient should have 0
+        let recipient_balance = db.get_account(TEST_RECIPIENT).unwrap().info.balance;
+        assert_eq!(
+            recipient_balance,
+            U256::zero(),
+            "Value transfer MUST be undone on L1 gas revert. Recipient balance should be 0, got: {}",
+            recipient_balance
+        );
+
+        // 4. L1 fee vault receives payment from remaining gas
+        // l1_gas (recalculated) = gas_limit - actual_execution_gas = 22000 - 21000 = 1000
+        // l1_fee = 1000 * 1 = 1000 wei
+        let l1_vault_balance = db.get_account(TEST_L1_FEE_VAULT).unwrap().info.balance;
+        assert!(
+            l1_vault_balance > U256::zero(),
+            "L1 fee vault MUST receive payment from remaining gas (gas_limit - execution_gas). \
+             L1 vault balance: {}",
+            l1_vault_balance
+        );
+
+        // 5. Sender should be charged for full gas_limit
+        // Sender pays: gas_limit * gas_price = 22000 * 1 = 22000 wei
+        let sender_balance = db.get_account(TEST_SENDER).unwrap().info.balance;
+        let gas_cost = U256::from(gas_limit) * U256::from(max_fee_per_gas);
+        let expected_sender_balance = initial_sender_balance - gas_cost;
+        assert_eq!(
+            sender_balance, expected_sender_balance,
+            "Sender MUST be charged full gas_limit * gas_price. \
+             Expected: {}, Got: {}",
+            expected_sender_balance, sender_balance
+        );
     }
 
+    /// Edge case: when gas_limit == intrinsic_gas exactly, L1 fee vault gets 0
+    /// because all gas is consumed by execution, leaving nothing for L1 fee.
+    /// This is correct behavior but the sequencer absorbs the DA cost.
+    #[test]
+    fn test_l1_gas_revert_with_minimal_gas_limit_l1_vault_gets_zero() {
+        let initial_sender_balance = U256::from(DEFAULT_SENDER_BALANCE);
+
+        let mut db = create_test_db_with_accounts(vec![
+            (TEST_SENDER, initial_sender_balance, 0),
+            (TEST_RECIPIENT, U256::zero(), 0),
+            (TEST_L1_FEE_VAULT, U256::zero(), 0),
+        ]);
+
+        // gas_limit == intrinsic_gas for simple transfer
+        let gas_limit = 21_000u64;
+        let max_fee_per_gas = 1_000_000_000u64;
+        let base_fee = 100_000_000u64;
+
+        let tx = create_eip1559_tx(
+            TEST_RECIPIENT,
+            U256::zero(),
+            gas_limit,
+            max_fee_per_gas,
+            max_fee_per_gas - base_fee,
+            0,
+        );
+
+        let env = create_eip1559_env(
+            TEST_SENDER,
+            gas_limit,
+            U256::from(max_fee_per_gas),
+            U256::from(max_fee_per_gas - base_fee),
+            U256::from(base_fee),
+            false,
+        );
+
+        // High L1 fee to cause revert
+        let fee_config = FeeConfig {
+            base_fee_vault: None,
+            operator_fee_config: None,
+            l1_fee_config: Some(L1FeeConfig {
+                l1_fee_vault: TEST_L1_FEE_VAULT,
+                l1_fee_per_blob_gas: 10_000_000_000,
+            }),
+        };
+
+        let mut vm = create_test_l2_vm(&env, &mut db, &tx, fee_config).unwrap();
+        let report = vm.execute().unwrap();
+
+        // Must revert
+        assert!(!report.is_success(), "Transaction must revert");
+        assert_eq!(report.gas_used, gas_limit, "Must consume all gas");
+
+        // L1 fee vault gets 0 because:
+        // l1_gas = gas_limit - actual_execution_gas = 21000 - 21000 = 0
+        // This is an edge case where sequencer absorbs DA cost
+        let l1_vault_balance = db.get_account(TEST_L1_FEE_VAULT).unwrap().info.balance;
+        assert_eq!(
+            l1_vault_balance,
+            U256::zero(),
+            "When gas_limit == intrinsic_gas, L1 vault gets 0 (no remaining gas for L1 fee)"
+        );
+
+        // Sender still pays full gas_limit
+        let sender_balance = db.get_account(TEST_SENDER).unwrap().info.balance;
+        let gas_cost = U256::from(gas_limit) * U256::from(max_fee_per_gas);
+        assert_eq!(
+            sender_balance,
+            initial_sender_balance - gas_cost,
+            "Sender must pay full gas_limit even when L1 vault gets 0"
+        );
+    }
+
+    /// Test that when total gas (execution + L1) is within limit, tx succeeds
     #[test]
     fn test_l1_gas_exactly_at_limit() {
-        // Test behavior when L1 gas + execution gas exactly equals gas limit
         let mut db = create_test_db_with_accounts(vec![
             (TEST_SENDER, U256::from(DEFAULT_SENDER_BALANCE), 0),
             (TEST_RECIPIENT, U256::zero(), 0),
             (TEST_L1_FEE_VAULT, U256::zero(), 0),
         ]);
 
-        // Generous gas limit to avoid L1 gas overflow
+        // Generous gas limit to accommodate both execution and L1 gas
         let gas_limit = 100_000u64;
         let max_fee_per_gas = 1_000_000_000u64;
         let max_priority_fee_per_gas = 100_000_000u64;
@@ -218,20 +346,22 @@ mod l1_gas_limit_tests {
             false,
         );
 
-        // Moderate L1 fee
+        // Moderate L1 fee that won't cause revert
         let fee_config = FeeConfig {
             base_fee_vault: None,
             operator_fee_config: None,
             l1_fee_config: Some(L1FeeConfig {
                 l1_fee_vault: TEST_L1_FEE_VAULT,
-                l1_fee_per_blob_gas: 10,
+                l1_fee_per_blob_gas: 10, // Low L1 fee
             }),
         };
 
         let mut vm = create_test_l2_vm(&env, &mut db, &tx, fee_config).unwrap();
         let report = vm.execute().unwrap();
 
-        // Transaction should complete (either success or revert)
+        // Transaction should succeed
+        assert!(report.is_success(), "Transaction should succeed with sufficient gas");
+
         // gas_used should not exceed gas_limit
         assert!(
             report.gas_used <= gas_limit,
@@ -239,7 +369,15 @@ mod l1_gas_limit_tests {
             report.gas_used,
             gas_limit
         );
+
+        // L1 fee vault should receive some payment
+        let l1_vault_balance = db.get_account(TEST_L1_FEE_VAULT).unwrap().info.balance;
+        assert!(
+            l1_vault_balance > U256::zero(),
+            "L1 fee vault should receive payment for DA costs"
+        );
     }
+
 }
 
 // ============================================================================

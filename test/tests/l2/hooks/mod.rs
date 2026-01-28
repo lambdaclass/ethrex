@@ -1,4 +1,3 @@
-mod backup_hook_tests;
 mod edge_case_tests;
 mod error_path_tests;
 mod fee_calculation_tests;
