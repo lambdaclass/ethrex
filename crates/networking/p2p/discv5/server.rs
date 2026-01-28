@@ -37,6 +37,9 @@ use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
 use tracing::{debug, error, info, trace};
 
+/// Maximum number of ENRs per NODES message (limited by UDP packet size).
+/// See: https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire.md#nodes-response-0x04
+const MAX_ENRS_PER_MESSAGE: usize = 3;
 /// Interval between revalidation checks (how often we run the revalidation loop).
 const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(10);
 /// Nodes not validated within this interval are candidates for revalidation.
@@ -354,10 +357,43 @@ impl DiscoveryServer {
 
     async fn handle_find_node(
         &mut self,
-        _find_node_message: FindNodeMessage,
+        find_node_message: FindNodeMessage,
+        sender_id: H256,
     ) -> Result<(), DiscoveryServerError> {
-        // TODO: Handle FindNode requests
-        // (https://github.com/lambdaclass/ethrex/issues/5779)
+        // Get nodes at the requested distances from our local node
+        let nodes = self
+            .peer_table
+            .get_nodes_at_distances(self.local_node.node_id(), find_node_message.distances)
+            .await?;
+
+        // Get sender contact for sending response
+        let Some(contact) = self.peer_table.get_contact(sender_id).await? else {
+            trace!(from = %sender_id, "Received FINDNODE from unknown node, cannot respond");
+            return Ok(());
+        };
+
+        // Chunk nodes into multiple NODES messages if needed
+        let chunks: Vec<_> = nodes.chunks(MAX_ENRS_PER_MESSAGE).collect();
+
+        if chunks.is_empty() {
+            // Send empty response
+            let nodes_message = Message::Nodes(NodesMessage {
+                req_id: find_node_message.req_id,
+                total: 1,
+                nodes: vec![],
+            });
+            self.send_ordinary(&nodes_message, &contact.node).await?;
+        } else {
+            for chunk in &chunks {
+                let nodes_message = Message::Nodes(NodesMessage {
+                    req_id: find_node_message.req_id.clone(),
+                    total: chunks.len() as u64,
+                    nodes: chunk.to_vec(),
+                });
+                self.send_ordinary(&nodes_message, &contact.node).await?;
+            }
+        }
+
         Ok(())
     }
 
@@ -513,7 +549,7 @@ impl DiscoveryServer {
                 self.handle_pong(pong_message, sender_id).await?;
             }
             Message::FindNode(find_node_message) => {
-                self.handle_find_node(find_node_message).await?;
+                self.handle_find_node(find_node_message, sender_id).await?;
             }
             Message::Nodes(nodes_message) => {
                 self.handle_nodes_message(nodes_message).await?;
@@ -646,7 +682,7 @@ mod tests {
         peer_table::PeerTable,
         types::{Node, NodeRecord},
     };
-    use ethrex_storage::Store;
+    use ethrex_storage::{EngineType, Store};
     use rand::{SeedableRng, rngs::StdRng};
     use secp256k1::SecretKey;
     use std::sync::Arc;
@@ -667,8 +703,7 @@ mod tests {
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:30303").await.unwrap()),
             peer_table: PeerTable::spawn(
                 10,
-                Store::new("temp.db", ethrex_storage::EngineType::InMemory)
-                    .expect("Failed to start Storage Engine"),
+                Store::new("", EngineType::InMemory).expect("Failed to create store"),
             ),
             initial_lookup_interval: 1000.0,
             counter: 0,
