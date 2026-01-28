@@ -12,6 +12,7 @@ use crate::engine::{
         GetPayloadBodiesByHashV1Request, GetPayloadBodiesByRangeV1Request, GetPayloadV1Request,
         GetPayloadV2Request, GetPayloadV3Request, GetPayloadV4Request, NewPayloadV1Request,
         NewPayloadV2Request, NewPayloadV3Request, NewPayloadV4Request,
+        NewPayloadWithWitnessV3Request, NewPayloadWithWitnessV4Request,
     },
 };
 use crate::eth::client::Config;
@@ -197,6 +198,8 @@ pub struct RpcApiContext {
     pub gas_ceil: u64,
     /// Channel for sending blocks to the block executor worker thread.
     pub block_worker_channel: UnboundedSender<(oneshot::Sender<Result<(), ChainError>>, Block)>,
+    /// Whether `engine_newPayloadWithWitness` endpoints are enabled (experimental).
+    pub new_payload_with_witness: bool,
 }
 
 /// Client version information used for identification in the Engine API and P2P.
@@ -439,6 +442,7 @@ pub fn start_block_executor(
 /// * `log_filter_handler` - Optional handler for dynamic log level changes
 /// * `gas_ceil` - Maximum gas limit for payload building
 /// * `extra_data` - Extra data to include in mined blocks
+/// * `new_payload_with_witness` - Enable experimental `engine_newPayloadWithWitness` endpoints
 ///
 /// # Errors
 ///
@@ -463,6 +467,7 @@ pub async fn start_api(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: u64,
     extra_data: String,
+    new_payload_with_witness: bool,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -485,6 +490,7 @@ pub async fn start_api(
         log_filter_handler,
         gas_ceil,
         block_worker_channel,
+        new_payload_with_witness,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -801,6 +807,12 @@ pub async fn map_engine_requests(
         "engine_newPayloadV3" => NewPayloadV3Request::call(req, context).await,
         "engine_newPayloadV2" => NewPayloadV2Request::call(req, context).await,
         "engine_newPayloadV1" => NewPayloadV1Request::call(req, context).await,
+        "engine_newPayloadWithWitnessV3" if context.new_payload_with_witness => {
+            NewPayloadWithWitnessV3Request::call(req, context).await
+        }
+        "engine_newPayloadWithWitnessV4" if context.new_payload_with_witness => {
+            NewPayloadWithWitnessV4Request::call(req, context).await
+        }
         "engine_exchangeTransitionConfigurationV1" => {
             ExchangeTransitionConfigV1Req::call(req, context).await
         }

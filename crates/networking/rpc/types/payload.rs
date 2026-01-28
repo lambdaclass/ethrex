@@ -172,6 +172,9 @@ pub struct PayloadStatus {
     pub status: PayloadValidationStatus,
     pub latest_valid_hash: Option<H256>,
     pub validation_error: Option<String>,
+    /// RLP-encoded execution witness (only present on VALID status when requested).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub witness: Option<Bytes>,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -191,6 +194,7 @@ impl PayloadStatus {
             status: PayloadValidationStatus::Invalid,
             latest_valid_hash: Some(latest_valid_hash),
             validation_error: Some(error),
+            witness: None,
         }
     }
 
@@ -200,6 +204,7 @@ impl PayloadStatus {
             status: PayloadValidationStatus::Invalid,
             latest_valid_hash: None,
             validation_error: Some(error.to_string()),
+            witness: None,
         }
     }
 
@@ -209,6 +214,7 @@ impl PayloadStatus {
             status: PayloadValidationStatus::Invalid,
             latest_valid_hash: Some(hash),
             validation_error: None,
+            witness: None,
         }
     }
 
@@ -218,6 +224,7 @@ impl PayloadStatus {
             status: PayloadValidationStatus::Syncing,
             latest_valid_hash: None,
             validation_error: None,
+            witness: None,
         }
     }
 
@@ -227,14 +234,27 @@ impl PayloadStatus {
             status: PayloadValidationStatus::Valid,
             latest_valid_hash: Some(hash),
             validation_error: None,
+            witness: None,
         }
     }
+
     /// Creates a PayloadStatus with valid status and latest valid hash
     pub fn valid() -> Self {
         PayloadStatus {
             status: PayloadValidationStatus::Valid,
             latest_valid_hash: None,
             validation_error: None,
+            witness: None,
+        }
+    }
+
+    /// Creates a PayloadStatus with valid status, latest valid hash, and witness
+    pub fn valid_with_hash_and_witness(hash: BlockHash, witness: Bytes) -> Self {
+        PayloadStatus {
+            status: PayloadValidationStatus::Valid,
+            latest_valid_hash: Some(hash),
+            validation_error: None,
+            witness: Some(witness),
         }
     }
 }

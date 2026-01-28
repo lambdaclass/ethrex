@@ -297,6 +297,14 @@ pub struct Options {
         help_heading = "Node options"
     )]
     pub precompute_witnesses: bool,
+    #[arg(
+        long = "new-payload-with-witness",
+        action = ArgAction::SetTrue,
+        default_value = "false",
+        help = "Enable engine_newPayloadWithWitness endpoints (experimental)",
+        help_heading = "RPC options"
+    )]
+    pub new_payload_with_witness: bool,
 }
 
 impl Options {
@@ -374,6 +382,7 @@ impl Default for Options {
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
             max_blobs_per_block: None,
             precompute_witnesses: false,
+            new_payload_with_witness: false,
         }
     }
 }
