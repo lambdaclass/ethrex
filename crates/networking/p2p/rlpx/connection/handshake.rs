@@ -18,7 +18,7 @@ use ethrex_common::{H128, H256, H512, Signature};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
     decode::RLPDecode,
-    encode::RLPEncode,
+    encode::{RLPEncode, list_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
@@ -534,6 +534,14 @@ impl RLPEncode for AuthMessage {
             .encode_field(&self.version)
             .finish()
     }
+
+    fn length(&self) -> usize {
+        let payload_len = self.signature.length()
+            + self.public_key.length()
+            + self.nonce.length()
+            + self.version.length();
+        list_length(payload_len)
+    }
 }
 
 impl RLPDecode for AuthMessage {
@@ -588,6 +596,12 @@ impl RLPEncode for AckMessage {
             .encode_field(&self.nonce)
             .encode_field(&self.version)
             .finish()
+    }
+
+    fn length(&self) -> usize {
+        let payload_len =
+            self.ephemeral_pubkey.length() + self.nonce.length() + self.version.length();
+        list_length(payload_len)
     }
 }
 

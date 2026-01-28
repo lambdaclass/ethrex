@@ -51,52 +51,10 @@ pub const fn bytes_length(bytes_len: usize, first_byte: u8) -> usize {
     1 + be_len as usize + bytes_len // prefix + len(len) + payload
 }
 
-/// Struct implementing `BufMut`, but only counting the number of bytes pushed into the buffer.
-#[derive(Debug, Clone, Copy, Default)]
-struct ByteCounter {
-    count: usize,
-}
-
-unsafe impl BufMut for ByteCounter {
-    fn remaining_mut(&self) -> usize {
-        usize::MAX - self.count
-    }
-
-    unsafe fn advance_mut(&mut self, cnt: usize) {
-        self.count += cnt;
-    }
-
-    fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice {
-        unreachable!(
-            "shouldn't be reachable since all the functions that call this are reimplemented"
-        )
-    }
-
-    fn put<T: bytes::buf::Buf>(&mut self, src: T)
-    where
-        Self: Sized,
-    {
-        self.count += src.remaining();
-    }
-
-    fn put_bytes(&mut self, _val: u8, cnt: usize) {
-        self.count += cnt;
-    }
-
-    fn put_slice(&mut self, src: &[u8]) {
-        self.count += src.len()
-    }
-}
-
 pub trait RLPEncode {
     fn encode(&self, buf: &mut dyn BufMut);
 
-    fn length(&self) -> usize {
-        // Run the `encode` function, but only counting the bytes pushed.
-        let mut counter = ByteCounter::default();
-        self.encode(&mut counter);
-        counter.count
-    }
+    fn length(&self) -> usize;
 
     fn encode_to_vec(&self) -> Vec<u8> {
         let mut buf = Vec::new();

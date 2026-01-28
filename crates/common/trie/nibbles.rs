@@ -2,7 +2,7 @@ use std::{cmp, mem};
 
 use ethrex_rlp::{
     decode::RLPDecode,
-    encode::RLPEncode,
+    encode::{RLPEncode, list_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
@@ -212,6 +212,34 @@ impl Nibbles {
         Self::from_hex(compact_to_hex(compact))
     }
 
+    /// Returns the length of the compact-encoded nibbles when RLP-encoded as bytes.
+    /// This avoids allocating the compact representation just to measure its length.
+    pub fn compact_encoded_length(&self) -> usize {
+        // Compute the raw compact length (before RLP encoding)
+        let nibbles_len = if self.is_leaf() {
+            self.len().saturating_sub(1) // Remove leaf flag
+        } else {
+            self.len()
+        };
+        // Compact encoding: 1 prefix byte + nibbles_len / 2 packed bytes
+        let compact_len = 1 + nibbles_len / 2;
+
+        // The first byte of compact encoding:
+        // - Leaf + even: 0x20
+        // - Leaf + odd: 0x30 + nibble (max 0x3f)
+        // - Extension + even: 0x00
+        // - Extension + odd: 0x10 + nibble (max 0x1f)
+        // All are <= 0x7f, so for compact_len == 1, RLP encodes as single byte.
+        if compact_len == 1 {
+            1
+        } else if compact_len < 56 {
+            1 + compact_len
+        } else {
+            let be_len = compact_len.ilog2() / 8 + 1;
+            1 + be_len as usize + compact_len
+        }
+    }
+
     /// Returns true if the nibbles contain the leaf flag (16) at the end
     pub fn is_leaf(&self) -> bool {
         if self.is_empty() {
@@ -280,6 +308,12 @@ impl AsRef<[u8]> for Nibbles {
 impl RLPEncode for Nibbles {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         Encoder::new(buf).encode_field(&self.data).finish();
+    }
+
+    fn length(&self) -> usize {
+        // Encoded as a list containing self.data (Vec<u8>)
+        let payload_len = <[u8] as RLPEncode>::length(&self.data);
+        list_length(payload_len)
     }
 }
 

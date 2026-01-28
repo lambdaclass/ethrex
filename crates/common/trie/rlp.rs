@@ -5,7 +5,7 @@ use std::array;
 use ethrex_rlp::{
     constants::RLP_NULL,
     decode::{RLPDecode, decode_bytes},
-    encode::{RLPEncode, encode_length},
+    encode::{RLPEncode, encode_length, list_length},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
@@ -29,6 +29,14 @@ impl RLPEncode for BranchNode {
             }
         }
         <[u8] as RLPEncode>::encode(&self.value, buf);
+    }
+
+    fn length(&self) -> usize {
+        let value_len = <[u8] as RLPEncode>::length(&self.value);
+        let payload_len = self.choices.iter().fold(value_len, |acc, child| {
+            acc + RLPEncode::length(child.compute_hash_ref())
+        });
+        list_length(payload_len)
     }
 
     // Duplicated to prealloc the buffer and avoid calculating the payload length twice
@@ -63,6 +71,12 @@ impl RLPEncode for ExtensionNode {
         encoder = self.child.compute_hash().encode(encoder);
         encoder.finish();
     }
+
+    fn length(&self) -> usize {
+        let compact_len = self.prefix.compact_encoded_length();
+        let child_hash_len = RLPEncode::length(self.child.compute_hash_ref());
+        list_length(compact_len + child_hash_len)
+    }
 }
 
 impl RLPEncode for LeafNode {
@@ -72,6 +86,12 @@ impl RLPEncode for LeafNode {
             .encode_bytes(&self.value)
             .finish()
     }
+
+    fn length(&self) -> usize {
+        let compact_len = self.partial.compact_encoded_length();
+        let value_len = <[u8] as RLPEncode>::length(&self.value);
+        list_length(compact_len + value_len)
+    }
 }
 
 impl RLPEncode for Node {
@@ -80,6 +100,14 @@ impl RLPEncode for Node {
             Node::Branch(n) => n.encode(buf),
             Node::Extension(n) => n.encode(buf),
             Node::Leaf(n) => n.encode(buf),
+        }
+    }
+
+    fn length(&self) -> usize {
+        match self {
+            Node::Branch(n) => n.length(),
+            Node::Extension(n) => n.length(),
+            Node::Leaf(n) => n.length(),
         }
     }
 }
