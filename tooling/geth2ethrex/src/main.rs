@@ -33,6 +33,7 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::decode::decode_bytes;
 use ethrex_rlp::decode::decode_rlp_item;
 use ethrex_storage::EngineType;
+use ethrex_storage::FKV_COMPLETION_MARKER_LEN;
 use ethrex_storage::Store;
 use ethrex_trie::Nibbles;
 use ethrex_trie::Node;
@@ -345,7 +346,7 @@ fn geth2ethrex(mut store: Store, block_number: BlockNumber, args: &Args) -> eyre
         let migration_time = migration_start.elapsed().as_secs_f64();
         if args.fkv {
             store.generate_flatkeyvalue()?;
-            while store.last_written()? != vec![0xff; 131] {
+            while store.last_written()? != vec![0xff; FKV_COMPLETION_MARKER_LEN] {
                 std::thread::sleep(std::time::Duration::from_secs(60));
                 let current = store.last_written()?;
                 info!("FKV generation in progress. Current={current:?}");
@@ -363,7 +364,7 @@ fn geth2ethrex(mut store: Store, block_number: BlockNumber, args: &Args) -> eyre
         None,
     ))?;
     rt.block_on(store.load_initial_state())?;
-    if true {
+    if !args.skip_validation {
         // Run validations
         info!("Running validations");
         let state_root = header.state_root;
@@ -672,4 +673,10 @@ struct Args {
         default_value = "false"
     )]
     pub fkv: bool,
+    #[arg(
+        long = "skip-validation",
+        help = "If true, skips validation of the migrated data",
+        default_value = "false"
+    )]
+    pub skip_validation: bool,
 }
