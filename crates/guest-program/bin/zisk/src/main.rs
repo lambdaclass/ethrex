@@ -26,7 +26,7 @@ pub fn main() {
 
     println!("start revealing output");
     output.chunks_exact(4).enumerate().for_each(|(idx, bytes)| {
-        ziskos::set_output(idx, u32::from_be_bytes(bytes.try_into().unwrap()))
+        ziskos::set_output(idx, u32::from_le_bytes(bytes.try_into().unwrap()))
     });
     println!("finish revealing output");
 }
