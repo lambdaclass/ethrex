@@ -293,6 +293,7 @@ impl DiscoveryServer {
         let src_pubkey = if let Some(contact) = self.peer_table.get_contact(src_id).await? {
             compress_pubkey(contact.node.public_key)
         } else if let Some(record) = &authdata.record {
+            // TODO(#5829): Validate ENR signature before trusting its contents
             // Get public key from ENR in handshake
             let pairs = record.decode_pairs();
             pairs

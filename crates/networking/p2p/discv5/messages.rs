@@ -269,8 +269,9 @@ impl Ordinary {
 
         let src_id = H256::from_slice(&packet.header.authdata);
 
-        let message = Message::decode(&message)
-            .map_err(|_e| PacketCodecError::InvalidMessage(message.first().copied().unwrap_or(0)))?;
+        let message = Message::decode(&message).map_err(|_e| {
+            PacketCodecError::InvalidMessage(message.first().copied().unwrap_or(0))
+        })?;
         Ok(Ordinary { src_id, message })
     }
 }
@@ -512,7 +513,7 @@ impl Message {
     }
 
     pub fn decode(message: &[u8]) -> Result<Message, RLPDecodeError> {
-        let message_type = message[0];
+        let &message_type = message.first().ok_or(RLPDecodeError::InvalidLength)?;
         match message_type {
             0x01 => {
                 let ping = PingMessage::decode(&message[1..])?;
