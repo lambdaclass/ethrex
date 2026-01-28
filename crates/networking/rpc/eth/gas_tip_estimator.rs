@@ -70,7 +70,9 @@ impl GasTipEstimator {
             );
             return Err(RpcErr::Internal("Error calculating gas price".to_string()));
         }
-        let mut results = vec![];
+        // Preallocate for max possible samples: 21 blocks * 3 samples per block
+        // Inspired by geth's preallocate slice optimizations.
+        let mut results = Vec::with_capacity((BLOCK_RANGE_LOWER_BOUND_DEC as usize + 1) * TXS_SAMPLE_SIZE);
         // TODO: Estimating gas price involves querying multiple blocks
         // and doing some calculations with each of them, let's consider
         // caching this result, also we can have a specific DB method

@@ -1,0 +1,20 @@
+[package]
+name = "checkpointer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+
+[dependencies]
+ethrex = { workspace = true, features = ["l2"] }
+ethrex-blockchain.workspace = true
+ethrex-common.workspace = true
+ethrex-config.workspace = true
+ethrex-l2.workspace = true
+ethrex-l2-rpc.workspace = true
+ethrex-storage = { workspace = true, features = ["rocksdb"] }
+ethrex-storage-rollup = { workspace = true, features = ["sql"] }
+ethrex-vm.workspace = true
+
+tokio.workspace = true
+secp256k1.workspace = true

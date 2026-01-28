@@ -59,7 +59,9 @@ impl LEVM {
     ) -> Result<BlockExecutionResult, EvmError> {
         Self::prepare_block(block, db, vm_type)?;
 
-        let mut receipts = Vec::new();
+        // Preallocate receipts vector to avoid reallocations during block execution.
+        // Inspired by geth's preallocate slice optimizations.
+        let mut receipts = Vec::with_capacity(block.body.transactions.len());
         let mut cumulative_gas_used = 0;
 
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
@@ -112,7 +114,9 @@ impl LEVM {
 
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
-        let mut receipts = Vec::new();
+        // Preallocate receipts vector to avoid reallocations during block execution.
+        // Inspired by geth's preallocate slice optimizations.
+        let mut receipts = Vec::with_capacity(block.body.transactions.len());
         let mut cumulative_gas_used = 0;
 
         // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
