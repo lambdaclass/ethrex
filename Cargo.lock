@@ -4111,6 +4111,7 @@ dependencies = [
  "hex",
  "hex-literal 0.4.1",
  "lru 0.16.2",
+ "parking_lot",
  "rayon",
  "rocksdb",
  "rustc-hash 2.1.1",

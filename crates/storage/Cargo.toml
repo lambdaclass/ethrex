@@ -28,6 +28,7 @@ tokio = { workspace = true, features = ["rt"] }
 fastbloom = "0.14"
 rayon.workspace = true
 lru = "0.16.2"
+parking_lot.workspace = true
 
 [features]
 default = []
