@@ -14,10 +14,10 @@ use crate::{
     peer_table::{PeerTable, PeerTableError},
     rlpx::utils::compress_pubkey,
     types::{Node, NodeRecord},
-    utils::distance,
+    utils::{distance, node_id},
 };
 use bytes::{Bytes, BytesMut};
-use ethrex_common::H256;
+use ethrex_common::{H256, H512};
 use ethrex_storage::{Store, error::StoreError};
 use futures::StreamExt;
 use rand::{Rng, RngCore, rngs::OsRng};
@@ -299,9 +299,21 @@ impl DiscoveryServer {
                 return Ok(());
             }
             let pairs = record.decode_pairs();
-            pairs
+            let pubkey = pairs
                 .secp256k1
-                .and_then(|pk| PublicKey::from_slice(pk.as_bytes()).ok())
+                .and_then(|pk| PublicKey::from_slice(pk.as_bytes()).ok());
+
+            // Verify that the ENR's public key matches the claimed src_id
+            if let Some(pk) = &pubkey {
+                let uncompressed = pk.serialize_uncompressed();
+                let derived_node_id = node_id(&H512::from_slice(&uncompressed[1..]));
+                if derived_node_id != src_id {
+                    trace!(from = %src_id, "Handshake ENR node_id mismatch");
+                    return Ok(());
+                }
+            }
+
+            pubkey
         } else {
             None
         };
