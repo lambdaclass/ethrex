@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-01-27
+
+- Optimize prewarmer by grouping transactions by sender [#6047](https://github.com/lambdaclass/ethrex/pull/6047)
+
 ### 2026-01-23
 
 - Reuse cache in prewarm workers [#5999](https://github.com/lambdaclass/ethrex/pull/5999)
