@@ -26,7 +26,7 @@ These endpoints are only available when:
 
 The `/debug/pprof/allocs` endpoint is compatible with Grafana Pyroscope and can be scraped using Grafana Alloy's `pyroscope.scrape` component.
 
-See `~/Code/monitoring-stack` for Ansible configuration examples.
+See [lambdaclass/monitoring-stack](https://github.com/lambdaclass/monitoring-stack) for Ansible configuration examples.
 
 ## Manual Analysis
 
