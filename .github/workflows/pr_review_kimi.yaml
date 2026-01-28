@@ -49,54 +49,48 @@ jobs:
             exit 0
           fi
 
-          DIFF_CONTENT=$(cat pr_diff_truncated.txt | jq -Rs .)
+          DIFF_CONTENT=$(cat pr_diff_truncated.txt)
 
-          PROMPT="You are a senior code reviewer for ethrex, a Rust-based Ethereum execution client.
-
-          PR Title: ${{ steps.pr_info.outputs.title }}
-
-          Review this PR diff focusing on:
-          - Code correctness and potential bugs
-          - Security vulnerabilities (critical for blockchain code)
-          - Performance implications
-          - Rust best practices
-          - Error handling patterns
-
-          Be concise and specific. Provide line references when possible.
-
-          Diff:
-          "
-
-          RESPONSE=$(curl -s https://api.moonshot.cn/v1/chat/completions \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer $KIMI_API_KEY" \
-            -d "{
-              \"model\": \"moonshot-v1-128k\",
-              \"messages\": [
+          # Build the request body
+          REQUEST_BODY=$(jq -n \
+            --arg diff "$DIFF_CONTENT" \
+            --arg title "${{ steps.pr_info.outputs.title }}" \
+            '{
+              "model": "moonshot-v1-128k",
+              "messages": [
                 {
-                  \"role\": \"system\",
-                  \"content\": \"You are a senior Rust code reviewer specializing in blockchain and Ethereum implementations.\"
+                  "role": "system",
+                  "content": "You are a senior Rust code reviewer specializing in blockchain and Ethereum implementations."
                 },
                 {
-                  \"role\": \"user\",
-                  \"content\": $(echo "$PROMPT" | jq -Rs .)
-                },
-                {
-                  \"role\": \"user\",
-                  \"content\": $DIFF_CONTENT
+                  "role": "user",
+                  "content": ("You are a senior code reviewer for ethrex, a Rust-based Ethereum execution client.\n\nPR Title: " + $title + "\n\nReview this PR diff focusing on:\n- Code correctness and potential bugs\n- Security vulnerabilities (critical for blockchain code)\n- Performance implications\n- Rust best practices\n- Error handling patterns\n\nBe concise and specific. Provide line references when possible.\n\nDiff:\n" + $diff)
                 }
               ],
-              \"temperature\": 0.3,
-              \"max_tokens\": 4096
-            }")
+              "temperature": 0.3,
+              "max_tokens": 4096
+            }')
 
-          # Check for API errors
-          ERROR=$(echo "$RESPONSE" | jq -r '.error.message // empty')
-          if [ -n "$ERROR" ]; then
-            echo "API Error: $ERROR" > kimi_review.txt
+          # Try the API call
+          HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" https://api.moonshot.cn/v1/chat/completions \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $KIMI_API_KEY" \
+            -d "$REQUEST_BODY")
+
+          HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -n1)
+          RESPONSE=$(echo "$HTTP_RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "API Error (HTTP $HTTP_CODE): $RESPONSE" > kimi_review.txt
           else
-            REVIEW=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "Error: Unexpected API response"')
-            echo "$REVIEW" > kimi_review.txt
+            # Check for API errors in response
+            ERROR=$(echo "$RESPONSE" | jq -r '.error.message // empty')
+            if [ -n "$ERROR" ]; then
+              echo "API Error: $ERROR" > kimi_review.txt
+            else
+              REVIEW=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "Error: Unexpected API response"')
+              echo "$REVIEW" > kimi_review.txt
+            fi
           fi
 
       - name: Post review comment
