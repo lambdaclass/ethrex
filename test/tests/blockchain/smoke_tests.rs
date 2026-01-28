@@ -292,6 +292,7 @@ async fn new_block(store: &Store, parent: &BlockHeader) -> Block {
         random: H256::random(),
         withdrawals: Some(Vec::new()),
         beacon_root: Some(H256::random()),
+        slot_number: None,
         version: 1,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,

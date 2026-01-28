@@ -183,6 +183,7 @@ impl BlockProducer {
             random: H256::zero(),
             withdrawals: Default::default(),
             beacon_root: Some(head_beacon_block_root),
+            slot_number: None,
             version,
             elasticity_multiplier: self.elasticity_multiplier,
             gas_ceil: self.block_gas_limit,
