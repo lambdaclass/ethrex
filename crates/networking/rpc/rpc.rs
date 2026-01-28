@@ -507,7 +507,6 @@ pub async fn start_api(
 
     let http_router = Router::new()
         .route("/debug/pprof/allocs", axum::routing::get(handle_get_heap))
-        .route("/debug/pprof/heap", axum::routing::get(handle_get_heap))
         .route(
             "/debug/pprof/allocs/flamegraph",
             axum::routing::get(handle_get_heap_flamegraph),
