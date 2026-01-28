@@ -128,6 +128,17 @@ impl EthrexDbBackend {
         Ok(Self::new(db))
     }
 
+    /// Creates a new ethrex-db backend at the given path with a specific initial size.
+    ///
+    /// The size is specified in number of 4KB pages. For example:
+    /// - 16384 pages = 64MB (default)
+    /// - 262144 pages = 1GB
+    /// - 2097152 pages = 8GB
+    pub fn open_with_size(path: &Path, initial_pages: u32) -> Result<Self, StoreError> {
+        let db = PagedDb::open_with_size(path, initial_pages)?;
+        Ok(Self::new(db))
+    }
+
     /// Creates a new in-memory ethrex-db backend for testing.
     pub fn in_memory(pages: u32) -> Result<Self, StoreError> {
         let db = PagedDb::in_memory(pages)?;

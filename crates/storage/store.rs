@@ -1669,8 +1669,10 @@ impl Store {
                 let backend = Arc::new(RocksDBBackend::open(&path)?);
 
                 // ethrex-db for state storage (expects a file path, not directory)
+                // Using 8GB (2097152 pages × 4KB) to accommodate mainnet state
                 let state_db_path = db_path.join("ethrex_state.db");
-                let state_backend = EthrexDbBackend::open(&state_db_path)?;
+                const ETHREX_DB_INITIAL_PAGES: u32 = 2097152; // 8GB
+                let state_backend = EthrexDbBackend::open_with_size(&state_db_path, ETHREX_DB_INITIAL_PAGES)?;
 
                 Self::from_backend(
                     backend,
