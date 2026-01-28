@@ -42,6 +42,35 @@ impl SyncManager {
         datadir: PathBuf,
     ) -> Self {
         let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
+
+        // Auto-switch from snap to full sync if node already has synced state.
+        // A node is considered "synced" if:
+        // 1. It has blocks beyond the merge fork (post-merge state exists)
+        // 2. AND there's no ongoing snap sync (no header_download_checkpoint)
+        //
+        // The merge_netsplit_block threshold is used to avoid false positives in
+        // hive tests that start with pre-merge blocks. For post-merge networks
+        // where merge_netsplit_block is 0, any block > 0 indicates prior sync.
+        if snap_enabled.load(Ordering::Relaxed) {
+            let has_checkpoint = store
+                .get_header_download_checkpoint()
+                .await
+                .is_ok_and(|res| res.is_some());
+
+            if !has_checkpoint {
+                let latest_block = store.get_latest_block_number().await.unwrap_or(0);
+                let merge_block = store.get_chain_config().merge_netsplit_block.unwrap_or(0);
+
+                if latest_block > merge_block {
+                    info!(
+                        "Node has synced state (block {} > merge block {}), switching to full sync",
+                        latest_block, merge_block
+                    );
+                    snap_enabled.store(false, Ordering::Relaxed);
+                }
+            }
+        }
+
         let syncer = Arc::new(Mutex::new(Syncer::new(
             peer_handler,
             snap_enabled.clone(),
