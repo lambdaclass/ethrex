@@ -4216,6 +4216,7 @@ dependencies = [
  "lazy_static",
  "rayon",
  "rkyv",
+ "rustc-hash 2.1.1",
  "serde",
  "thiserror 2.0.17",
  "tracing",
