@@ -158,17 +158,21 @@ pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {
     }
 }
 
-/// Returns a detailed client version string with git info.
-pub fn get_client_version() -> String {
-    format!(
-        "{}/v{}-{}-{}/{}/rustc-v{}",
-        env!("CARGO_PKG_NAME"),
-        env!("CARGO_PKG_VERSION"),
-        env!("VERGEN_GIT_BRANCH"),
-        env!("VERGEN_GIT_SHA"),
-        env!("VERGEN_RUSTC_HOST_TRIPLE"),
-        env!("VERGEN_RUSTC_SEMVER")
+/// Returns a detailed client version struct with git info.
+pub fn get_client_version() -> ethrex_rpc::ClientVersion {
+    ethrex_rpc::ClientVersion::new(
+        env!("CARGO_PKG_NAME").to_string(),
+        env!("CARGO_PKG_VERSION").to_string(),
+        env!("VERGEN_GIT_BRANCH").to_string(),
+        env!("VERGEN_GIT_SHA").to_string(),
+        env!("VERGEN_RUSTC_HOST_TRIPLE").to_string(),
+        env!("VERGEN_RUSTC_SEMVER").to_string(),
     )
+}
+
+/// Returns a detailed client version string with git info (for clap attributes).
+pub fn get_client_version_string() -> String {
+    get_client_version().to_string()
 }
 
 /// Returns a minimal client version string without git info.
