@@ -5,6 +5,7 @@ use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
 use ethrex_p2p::sync::SyncMode;
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use serde_json::Value;
 use tokio::sync::oneshot;
@@ -215,6 +216,123 @@ impl RpcHandler for NewPayloadV4Request {
         // We use v3 since the execution payload remains the same.
         validate_execution_payload_v3(&self.payload)?;
         let payload_status = handle_new_payload_v3(
+            &self.payload,
+            context,
+            block,
+            self.expected_blob_versioned_hashes.clone(),
+        )
+        .await?;
+        serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+// NewPayloadWithWitness V3-V4 implementations (experimental)
+pub struct NewPayloadWithWitnessV3Request {
+    pub payload: ExecutionPayload,
+    pub expected_blob_versioned_hashes: Vec<H256>,
+    pub parent_beacon_block_root: H256,
+}
+
+impl RpcHandler for NewPayloadWithWitnessV3Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 3 {
+            return Err(RpcErr::BadParams("Expected 3 params".to_owned()));
+        }
+        Ok(NewPayloadWithWitnessV3Request {
+            payload: serde_json::from_value(params[0].clone())
+                .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
+            expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
+                .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
+            parent_beacon_block_root: serde_json::from_value(params[2].clone())
+                .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
+        })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let block = match get_block_from_payload(
+            &self.payload,
+            Some(self.parent_beacon_block_root),
+            None,
+        ) {
+            Ok(block) => block,
+            Err(err) => {
+                return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
+                    &err.to_string(),
+                ))?);
+            }
+        };
+        validate_fork(&block, Fork::Cancun, &context)?;
+        validate_execution_payload_v3(&self.payload)?;
+        let payload_status = handle_new_payload_with_witness_v3(
+            &self.payload,
+            context,
+            block,
+            self.expected_blob_versioned_hashes.clone(),
+        )
+        .await?;
+        serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+pub struct NewPayloadWithWitnessV4Request {
+    pub payload: ExecutionPayload,
+    pub expected_blob_versioned_hashes: Vec<H256>,
+    pub parent_beacon_block_root: H256,
+    pub execution_requests: Vec<EncodedRequests>,
+}
+
+impl RpcHandler for NewPayloadWithWitnessV4Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 4 {
+            return Err(RpcErr::BadParams("Expected 4 params".to_owned()));
+        }
+        Ok(NewPayloadWithWitnessV4Request {
+            payload: serde_json::from_value(params[0].clone())
+                .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
+            expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
+                .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
+            parent_beacon_block_root: serde_json::from_value(params[2].clone())
+                .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
+            execution_requests: serde_json::from_value(params[3].clone())
+                .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
+        })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        // validate the received requests
+        validate_execution_requests(&self.execution_requests)?;
+
+        let requests_hash = compute_requests_hash(&self.execution_requests);
+        let block = match get_block_from_payload(
+            &self.payload,
+            Some(self.parent_beacon_block_root),
+            Some(requests_hash),
+        ) {
+            Ok(block) => block,
+            Err(err) => {
+                return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
+                    &err.to_string(),
+                ))?);
+            }
+        };
+
+        let chain_config = context.storage.get_chain_config();
+
+        if !chain_config.is_prague_activated(block.header.timestamp) {
+            return Err(RpcErr::UnsuportedFork(format!(
+                "{:?}",
+                chain_config.get_fork(block.header.timestamp)
+            )));
+        }
+        // We use v3 since the execution payload remains the same.
+        validate_execution_payload_v3(&self.payload)?;
+        let payload_status = handle_new_payload_with_witness_v3(
             &self.payload,
             context,
             block,
@@ -642,6 +760,150 @@ async fn handle_new_payload_v3(
     }
 
     handle_new_payload_v1_v2(payload, block, context).await
+}
+
+async fn handle_new_payload_with_witness_v3(
+    payload: &ExecutionPayload,
+    context: RpcApiContext,
+    block: Block,
+    expected_blob_versioned_hashes: Vec<H256>,
+) -> Result<PayloadStatus, RpcErr> {
+    let Some(syncer) = &context.syncer else {
+        return Err(RpcErr::Internal(
+            "New payload requested but syncer is not initialized".to_string(),
+        ));
+    };
+
+    // V3 specific: validate blob hashes
+    let blob_versioned_hashes: Vec<H256> = block
+        .body
+        .transactions
+        .iter()
+        .flat_map(|tx| tx.blob_versioned_hashes())
+        .collect();
+
+    if expected_blob_versioned_hashes != blob_versioned_hashes {
+        return Ok(PayloadStatus::invalid_with_err(
+            "Invalid blob_versioned_hashes",
+        ));
+    }
+
+    // Validate block hash
+    if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
+        return Ok(PayloadStatus::invalid_with_err(&error_msg));
+    }
+
+    // Check for invalid ancestors
+    if let Some(status) = validate_ancestors(&block, &context).await? {
+        return Ok(status);
+    }
+
+    // We have validated ancestors, the parent is correct
+    let latest_valid_hash = block.header.parent_hash;
+
+    if syncer.sync_mode() == SyncMode::Snap {
+        debug!("Snap sync in progress, skipping new payload validation");
+        return Ok(PayloadStatus::syncing());
+    }
+
+    // Execute payload with witness generation
+    let payload_status =
+        try_execute_payload_with_witness(block, &context, latest_valid_hash).await?;
+    Ok(payload_status)
+}
+
+async fn try_execute_payload_with_witness(
+    block: Block,
+    context: &RpcApiContext,
+    latest_valid_hash: H256,
+) -> Result<PayloadStatus, RpcErr> {
+    let Some(syncer) = &context.syncer else {
+        return Err(RpcErr::Internal(
+            "New payload requested but syncer is not initialized".to_string(),
+        ));
+    };
+    let block_hash = block.hash();
+    let block_number = block.header.number;
+    let storage = &context.storage;
+
+    // Return the valid message directly if we already have it.
+    // For cached blocks, we try to get the witness from storage
+    if storage.get_block_header_by_hash(block_hash)?.is_some() {
+        // Block already exists, try to get witness from storage
+        if let Ok(Some(witness)) = storage.get_witness_by_number_and_hash(block_number, block_hash)
+        {
+            let rpc_witness = crate::debug::execution_witness::RpcExecutionWitness::try_from(witness)
+                .map_err(|e| RpcErr::Internal(format!("Failed to convert witness: {e}")))?;
+            let witness_bytes = rpc_witness.encode_to_vec();
+            return Ok(PayloadStatus::valid_with_hash_and_witness(
+                block_hash,
+                witness_bytes.into(),
+            ));
+        }
+        // No witness stored, return valid without witness
+        return Ok(PayloadStatus::valid_with_hash(block_hash));
+    }
+
+    // Execute and store the block with witness generation
+    debug!(%block_hash, %block_number, "Executing payload with witness");
+
+    match context.blockchain.add_block_pipeline_with_witness(block) {
+        Err(ChainError::ParentNotFound) => {
+            // Start sync
+            syncer.sync_to_head(block_hash);
+            Ok(PayloadStatus::syncing())
+        }
+        Err(ChainError::ParentStateNotFound) => {
+            let e = "Failed to obtain parent state";
+            error!("{e} for block {block_hash}");
+            Err(RpcErr::Internal(e.to_string()))
+        }
+        Err(ChainError::InvalidBlock(error)) => {
+            warn!("Error executing block: {error}");
+            context
+                .storage
+                .set_latest_valid_ancestor(block_hash, latest_valid_hash)
+                .await?;
+            Ok(PayloadStatus::invalid_with(
+                latest_valid_hash,
+                error.to_string(),
+            ))
+        }
+        Err(ChainError::EvmError(error)) => {
+            warn!("Error executing block: {error}");
+            context
+                .storage
+                .set_latest_valid_ancestor(block_hash, latest_valid_hash)
+                .await?;
+            Ok(PayloadStatus::invalid_with(
+                latest_valid_hash,
+                error.to_string(),
+            ))
+        }
+        Err(ChainError::StoreError(error)) => {
+            warn!("Error storing block: {error}");
+            Err(RpcErr::Internal(error.to_string()))
+        }
+        Err(e) => {
+            error!("{e} for block {block_hash}");
+            Err(RpcErr::Internal(e.to_string()))
+        }
+        Ok(witness) => {
+            debug!("Block with hash {block_hash} executed and added to storage successfully");
+            if let Some(witness) = witness {
+                let rpc_witness =
+                    crate::debug::execution_witness::RpcExecutionWitness::try_from(witness)
+                        .map_err(|e| RpcErr::Internal(format!("Failed to convert witness: {e}")))?;
+                let witness_bytes = rpc_witness.encode_to_vec();
+                Ok(PayloadStatus::valid_with_hash_and_witness(
+                    block_hash,
+                    witness_bytes.into(),
+                ))
+            } else {
+                Ok(PayloadStatus::valid_with_hash(block_hash))
+            }
+        }
+    }
 }
 
 // Elements of the list MUST be ordered by request_type in ascending order.

@@ -1516,6 +1516,25 @@ impl Blockchain {
     }
 
     pub fn add_block_pipeline(&self, block: Block) -> Result<(), ChainError> {
+        self.add_block_pipeline_inner(block, false).map(|_| ())
+    }
+
+    /// Execute the block pipeline and return the execution witness.
+    /// This is used by `engine_newPayloadWithWitness` endpoints.
+    pub fn add_block_pipeline_with_witness(
+        &self,
+        block: Block,
+    ) -> Result<Option<ExecutionWitness>, ChainError> {
+        self.add_block_pipeline_inner(block, true)
+    }
+
+    /// Internal implementation of add_block_pipeline that optionally generates and returns
+    /// the execution witness.
+    fn add_block_pipeline_inner(
+        &self,
+        block: Block,
+        generate_witness: bool,
+    ) -> Result<Option<ExecutionWitness>, ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -1523,7 +1542,11 @@ impl Blockchain {
             return Err(ChainError::ParentNotFound);
         };
 
-        let (mut vm, logger) = if self.options.precompute_witnesses && self.is_synced() {
+        // Enable witness logging if precompute_witnesses option is set OR if explicitly requested
+        let should_log_witness =
+            (self.options.precompute_witnesses && self.is_synced()) || generate_witness;
+
+        let (mut vm, logger) = if should_log_witness {
             // If witness pre-generation is enabled, we wrap the db with a logger
             // to track state access (block hashes, storage keys, codes) during execution
             // avoiding the need to re-execute the block later.
@@ -1566,7 +1589,8 @@ impl Blockchain {
             block.body.transactions.len(),
         );
 
-        if let Some(logger) = logger
+        // Generate witness if we have the logger and account updates
+        let witness = if let Some(logger) = logger
             && let Some(account_updates) = accumulated_updates
         {
             let block_hash = block.hash();
@@ -1576,8 +1600,14 @@ impl Blockchain {
                 parent_header,
                 &logger,
             )?;
-            self.storage
-                .store_witness(block_hash, block_number, witness)?;
+            // Store witness if precompute_witnesses option is enabled
+            if self.options.precompute_witnesses && self.is_synced() {
+                self.storage
+                    .store_witness(block_hash, block_number, witness.clone())?;
+            }
+            Some(witness)
+        } else {
+            None
         };
 
         let result = self.store_block(block, account_updates_list, res);
@@ -1604,7 +1634,10 @@ impl Blockchain {
             );
         }
 
-        result
+        result?;
+
+        // Return witness only if explicitly requested
+        Ok(if generate_witness { witness } else { None })
     }
 
     #[allow(clippy::too_many_arguments)]

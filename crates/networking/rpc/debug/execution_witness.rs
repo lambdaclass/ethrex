@@ -9,7 +9,12 @@ use ethrex_common::{
     },
     utils::keccak,
 };
-use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
+use ethrex_rlp::{
+    decode::RLPDecode,
+    encode::RLPEncode,
+    error::RLPDecodeError,
+    structs::{Decoder, Encoder},
+};
 use ethrex_storage::hash_address;
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeRef, Trie, TrieError};
 use serde::{Deserialize, Serialize};
@@ -40,6 +45,36 @@ pub struct RpcExecutionWitness {
         deserialize_with = "serde_utils::bytes::vec::deserialize"
     )]
     pub headers: Vec<Bytes>,
+}
+
+impl RLPEncode for RpcExecutionWitness {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.headers)
+            .encode_field(&self.codes)
+            .encode_field(&self.state)
+            .encode_field(&self.keys)
+            .finish();
+    }
+}
+
+impl RLPDecode for RpcExecutionWitness {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (headers, decoder) = decoder.decode_field("headers")?;
+        let (codes, decoder) = decoder.decode_field("codes")?;
+        let (state, decoder) = decoder.decode_field("state")?;
+        let (keys, decoder) = decoder.decode_field("keys")?;
+        Ok((
+            Self {
+                state,
+                keys,
+                codes,
+                headers,
+            },
+            decoder.finish()?,
+        ))
+    }
 }
 
 impl TryFrom<ExecutionWitness> for RpcExecutionWitness {

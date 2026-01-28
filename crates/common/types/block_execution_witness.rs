@@ -9,7 +9,11 @@ use crate::{
 use ethereum_types::{Address, H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::error::RLPDecodeError;
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_rlp::{
+    decode::RLPDecode,
+    encode::RLPEncode,
+    structs::{Decoder, Encoder},
+};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie, TrieError};
 use rkyv::with::{Identity, MapKV};
 use serde::{Deserialize, Serialize};
@@ -80,6 +84,56 @@ pub struct ExecutionWitness {
     /// are needed for stateless execution.
     #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
     pub keys: Vec<Vec<u8>>,
+}
+
+impl RLPEncode for ExecutionWitness {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        // Encode storage_trie_roots as a list of (address, node) pairs
+        let storage_roots: Vec<(Address, Node)> = self
+            .storage_trie_roots
+            .iter()
+            .map(|(addr, node)| (*addr, node.clone()))
+            .collect();
+
+        Encoder::new(buf)
+            .encode_field(&self.codes)
+            .encode_field(&self.block_headers_bytes)
+            .encode_field(&self.first_block_number)
+            .encode_field(&self.chain_config)
+            .encode_optional_field(&self.state_trie_root)
+            .encode_field(&storage_roots)
+            .encode_field(&self.keys)
+            .finish();
+    }
+}
+
+impl RLPDecode for ExecutionWitness {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (codes, decoder) = decoder.decode_field("codes")?;
+        let (block_headers_bytes, decoder) = decoder.decode_field("block_headers_bytes")?;
+        let (first_block_number, decoder) = decoder.decode_field("first_block_number")?;
+        let (chain_config, decoder) = decoder.decode_field("chain_config")?;
+        let (state_trie_root, decoder) = decoder.decode_optional_field();
+        let (storage_roots, decoder): (Vec<(Address, Node)>, _) =
+            decoder.decode_field("storage_trie_roots")?;
+        let (keys, decoder) = decoder.decode_field("keys")?;
+
+        let storage_trie_roots: BTreeMap<Address, Node> = storage_roots.into_iter().collect();
+
+        Ok((
+            Self {
+                codes,
+                block_headers_bytes,
+                first_block_number,
+                chain_config,
+                state_trie_root,
+                storage_trie_roots,
+                keys,
+            },
+            decoder.finish()?,
+        ))
+    }
 }
 
 #[derive(thiserror::Error, Debug)]

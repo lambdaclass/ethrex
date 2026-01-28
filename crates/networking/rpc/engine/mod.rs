@@ -15,7 +15,7 @@ pub type ExchangeCapabilitiesRequest = Vec<String>;
 
 /// List of capabilities that the execution layer client supports. Add new capabilities here.
 /// More info: https://github.com/ethereum/execution-apis/blob/main/src/engine/common.md#engine_exchangecapabilities
-pub const CAPABILITIES: [&str; 19] = [
+pub const CAPABILITIES: &[&str] = &[
     "engine_forkchoiceUpdatedV1",
     "engine_forkchoiceUpdatedV2",
     "engine_forkchoiceUpdatedV3",
@@ -35,6 +35,12 @@ pub const CAPABILITIES: [&str; 19] = [
     "engine_getBlobsV2",
     "engine_getBlobsV3",
     "engine_getClientVersionV1",
+];
+
+/// Additional capabilities enabled with --new-payload-with-witness flag (experimental).
+pub const WITNESS_CAPABILITIES: &[&str] = &[
+    "engine_newPayloadWithWitnessV3",
+    "engine_newPayloadWithWitnessV4",
 ];
 
 impl From<ExchangeCapabilitiesRequest> for RpcRequest {
@@ -60,7 +66,13 @@ impl RpcHandler for ExchangeCapabilitiesRequest {
             })
     }
 
-    async fn handle(&self, _context: RpcApiContext) -> Result<Value, RpcErr> {
-        Ok(json!(CAPABILITIES))
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        if context.new_payload_with_witness {
+            let mut capabilities: Vec<&str> = CAPABILITIES.to_vec();
+            capabilities.extend_from_slice(WITNESS_CAPABILITIES);
+            Ok(json!(capabilities))
+        } else {
+            Ok(json!(CAPABILITIES))
+        }
     }
 }
