@@ -322,7 +322,7 @@ pub mod vec_u8 {
         D: Deserializer<'de>,
     {
         let value = String::deserialize(d)?;
-        let bytes = hex::decode(value.trim_start_matches("0x"))
+        let bytes = hex_simd::decode_to_vec(value.trim_start_matches("0x"))
             .map_err(|e| D::Error::custom(e.to_string()))?;
         Ok(bytes)
     }
@@ -346,7 +346,7 @@ pub mod bytes {
         D: Deserializer<'de>,
     {
         let value = String::deserialize(d)?;
-        let bytes = hex::decode(value.trim_start_matches("0x"))
+        let bytes = hex_simd::decode_to_vec(value.trim_start_matches("0x"))
             .map_err(|e| D::Error::custom(e.to_string()))?;
         Ok(Bytes::from(bytes))
     }
@@ -368,7 +368,7 @@ pub mod bytes {
             let value = Vec::<String>::deserialize(d)?;
             let mut output = Vec::new();
             for str in value {
-                let bytes = hex::decode(str.trim_start_matches("0x"))
+                let bytes = hex_simd::decode_to_vec(str.trim_start_matches("0x"))
                     .map_err(|e| D::Error::custom(e.to_string()))?
                     .into();
                 output.push(bytes);
@@ -434,7 +434,7 @@ pub mod bytes48 {
             let value = Vec::<String>::deserialize(d)?;
             let mut output = Vec::new();
             for str in value {
-                let bytes = hex::decode(str.trim_start_matches("0x"))
+                let bytes = hex_simd::decode_to_vec(str.trim_start_matches("0x"))
                     .map_err(|e| D::Error::custom(e.to_string()))?;
                 if bytes.len() != 48 {
                     return Err(D::Error::custom(format!(
@@ -482,7 +482,7 @@ pub mod blob {
             let value = Vec::<String>::deserialize(deserializer)?;
             let mut output = Vec::new();
             for str in value {
-                let bytes = hex::decode(str.trim_start_matches("0x"))
+                let bytes = hex_simd::decode_to_vec(str.trim_start_matches("0x"))
                     .map_err(|e| D::Error::custom(e.to_string()))?;
                 if bytes.len() != BYTES_PER_BLOB {
                     return Err(D::Error::custom(format!(
