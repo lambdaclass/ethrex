@@ -1,12 +1,14 @@
 use crate::{
-    discv4::server::MAX_NODES_IN_NEIGHBORS_PACKET,
+    backend,
     discv5::session::Session,
     metrics::METRICS,
     rlpx::{connection::server::PeerConnection, p2p::Capability},
     types::{Node, NodeRecord},
     utils::distance,
 };
+use bytes::Bytes;
 use ethrex_common::H256;
+use ethrex_storage::Store;
 use indexmap::{IndexMap, map::Entry};
 use rand::seq::SliceRandom;
 use rustc_hash::FxHashSet;
@@ -36,6 +38,9 @@ const MAX_CONCURRENT_REQUESTS_PER_PEER: i64 = 100;
 pub const TARGET_PEERS: usize = 100;
 /// The target number of contacts to maintain in peer_table.
 const TARGET_CONTACTS: usize = 100_000;
+/// Maximum number of ENRs to return in a FindNode response (across all NODES messages).
+/// See: https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire.md#nodes-response-0x04
+const MAX_ENRS_PER_FINDNODE_RESPONSE: usize = 16;
 
 #[derive(Debug, Clone)]
 pub struct Contact {
@@ -43,9 +48,9 @@ pub struct Contact {
     /// The timestamp when the contact was last sent a ping.
     /// If None, the contact has never been pinged.
     pub validation_timestamp: Option<Instant>,
-    /// The hash of the last unacknowledged ping sent to this contact, or
+    /// The req_id of the last unacknowledged ping sent to this contact, or
     /// None if no ping was sent yet or it was already acknowledged.
-    pub ping_hash: Option<H256>,
+    pub ping_req_id: Option<Bytes>,
 
     /// The hash of the last unacknowledged ENRRequest sent to this contact, or
     /// None if no request was sent yet or it was already acknowledged.
@@ -72,12 +77,12 @@ impl Contact {
     }
 
     pub fn has_pending_ping(&self) -> bool {
-        self.ping_hash.is_some()
+        self.ping_req_id.is_some()
     }
 
-    pub fn record_ping_sent(&mut self, ping_hash: H256) {
+    pub fn record_ping_sent(&mut self, req_id: Bytes) {
         self.validation_timestamp = Some(Instant::now());
-        self.ping_hash = Some(ping_hash);
+        self.ping_req_id = Some(req_id);
     }
 
     pub fn record_enr_request_sent(&mut self, request_hash: H256) {
@@ -105,7 +110,7 @@ impl From<Node> for Contact {
         Self {
             node,
             validation_timestamp: None,
-            ping_hash: None,
+            ping_req_id: None,
             enr_request_hash: None,
             n_find_node_sent: 0,
             record: None,
@@ -159,9 +164,9 @@ pub struct PeerTable {
 }
 
 impl PeerTable {
-    pub fn spawn(target_peers: usize) -> PeerTable {
+    pub fn spawn(target_peers: usize, store: Store) -> PeerTable {
         PeerTable {
-            handle: PeerTableServer::new(target_peers).start(),
+            handle: PeerTableServer::new(target_peers, store).start(),
         }
     }
 
@@ -295,31 +300,31 @@ impl PeerTable {
         Ok(())
     }
 
-    /// Record ping sent, store the ping hash for later check
+    /// Record ping sent, store the req_id for later check
     pub async fn record_ping_sent(
         &mut self,
         node_id: &H256,
-        hash: H256,
+        req_id: Bytes,
     ) -> Result<(), PeerTableError> {
         self.handle
             .cast(CastMessage::RecordPingSent {
                 node_id: *node_id,
-                hash,
+                req_id,
             })
             .await?;
         Ok(())
     }
 
-    /// Record a pong received. Check previously saved hash and reset it if it matches
+    /// Record a pong received. Check previously saved req_id and reset it if it matches
     pub async fn record_pong_received(
         &mut self,
         node_id: &H256,
-        ping_hash: H256,
+        req_id: Bytes,
     ) -> Result<(), PeerTableError> {
         self.handle
             .cast(CastMessage::RecordPongReceived {
                 node_id: *node_id,
-                ping_hash,
+                req_id,
             })
             .await?;
         Ok(())
@@ -615,13 +620,20 @@ impl PeerTable {
     }
 
     /// Get closest nodes according to kademlia's distance
-    pub async fn get_closest_nodes(&mut self, node_id: &H256) -> Result<Vec<Node>, PeerTableError> {
+    pub async fn get_nodes_at_distances(
+        &mut self,
+        local_node_id: H256,
+        distances: Vec<u32>,
+    ) -> Result<Vec<NodeRecord>, PeerTableError> {
         match self
             .handle
-            .call(CallMessage::GetClosestNodes { node_id: *node_id })
+            .call(CallMessage::GetNodesAtDistances {
+                local_node_id,
+                distances,
+            })
             .await?
         {
-            OutMessage::Nodes(nodes) => Ok(nodes),
+            OutMessage::NodeRecords(records) => Ok(records),
             _ => unreachable!(),
         }
     }
@@ -663,16 +675,18 @@ struct PeerTableServer {
     already_tried_peers: FxHashSet<H256>,
     discarded_contacts: FxHashSet<H256>,
     target_peers: usize,
+    store: Store,
 }
 
 impl PeerTableServer {
-    pub(crate) fn new(target_peers: usize) -> Self {
+    pub(crate) fn new(target_peers: usize, store: Store) -> Self {
         Self {
             contacts: Default::default(),
             peers: Default::default(),
             already_tried_peers: Default::default(),
             discarded_contacts: Default::default(),
             target_peers,
+            store,
         }
     }
     // Internal functions //
@@ -735,6 +749,7 @@ impl PeerTableServer {
                 && !self.already_tried_peers.contains(&node_id)
                 && contact.knows_us
                 && !contact.unwanted
+                && contact.is_fork_id_valid == Some(true)
             {
                 self.already_tried_peers.insert(node_id);
 
@@ -750,11 +765,7 @@ impl PeerTableServer {
     fn get_contact_for_lookup(&self) -> Option<Contact> {
         self.contacts
             .values()
-            .filter(|c| {
-                c.n_find_node_sent < MAX_FIND_NODE_PER_PEER
-                    && !c.disposable
-                    && c.is_fork_id_valid != Some(false)
-            })
+            .filter(|c| c.n_find_node_sent < MAX_FIND_NODE_PER_PEER && !c.disposable)
             .collect::<Vec<_>>()
             .choose(&mut rand::rngs::OsRng)
             .cloned()
@@ -802,23 +813,19 @@ impl PeerTableServer {
         OutMessage::Contact(Box::new(contact.clone()))
     }
 
-    fn get_closest_nodes(&self, node_id: H256) -> Vec<Node> {
-        let mut nodes: Vec<(Node, usize)> = vec![];
-
-        for (contact_id, contact) in &self.contacts {
-            let distance = distance(&node_id, contact_id);
-            if nodes.len() < MAX_NODES_IN_NEIGHBORS_PACKET {
-                nodes.push((contact.node.clone(), distance));
-            } else {
-                for (i, (_, dis)) in &mut nodes.iter().enumerate() {
-                    if distance < *dis {
-                        nodes[i] = (contact.node.clone(), distance);
-                        break;
-                    }
+    fn get_nodes_at_distances(&self, local_node_id: H256, distances: &[u32]) -> Vec<NodeRecord> {
+        self.contacts
+            .iter()
+            .filter_map(|(contact_id, contact)| {
+                let d = distance(&local_node_id, contact_id) as u32;
+                if distances.contains(&d) {
+                    contact.record.clone()
+                } else {
+                    None
                 }
-            }
-        }
-        nodes.into_iter().map(|(node, _distance)| node).collect()
+            })
+            .take(MAX_ENRS_PER_FINDNODE_RESPONSE)
+            .collect()
     }
 
     async fn new_contacts(&mut self, nodes: Vec<Node>, local_node_id: H256) {
@@ -843,9 +850,16 @@ impl PeerTableServer {
                     && node_id != local_node_id
                 {
                     let mut contact = Contact::from(node);
-                    // TODO: validate fork_id from enr
-                    // (https://github.com/lambdaclass/ethrex/issues/5776)
-                    //contact.is_fork_id_valid = backend.is_fork_id_valid(&node_record).await.ok().or(Some(false));
+                    let is_fork_id_valid =
+                        if let Some(remote_fork_id) = node_record.decode_pairs().eth {
+                            backend::is_fork_id_valid(&self.store, &remote_fork_id)
+                                .await
+                                .ok()
+                                .or(Some(false))
+                        } else {
+                            Some(false)
+                        };
+                    contact.is_fork_id_valid = is_fork_id_valid;
                     contact.record = Some(node_record);
                     vacant_entry.insert(contact);
                     METRICS.record_new_discovery().await;
@@ -977,11 +991,11 @@ enum CastMessage {
     },
     RecordPingSent {
         node_id: H256,
-        hash: H256,
+        req_id: Bytes,
     },
     RecordPongReceived {
         node_id: H256,
-        ping_hash: H256,
+        req_id: Bytes,
     },
     RecordEnrRequestSent {
         node_id: H256,
@@ -1008,25 +1022,45 @@ enum CastMessage {
 #[derive(Clone, Debug)]
 enum CallMessage {
     PeerCount,
-    PeerCountByCapabilities { capabilities: Vec<Capability> },
+    PeerCountByCapabilities {
+        capabilities: Vec<Capability>,
+    },
     TargetReached,
     TargetPeersReached,
     TargetPeersCompletion,
     GetContactToInitiate,
     GetContactForLookup,
     GetContactForEnrLookup,
-    GetContact { node_id: H256 },
+    GetContact {
+        node_id: H256,
+    },
     GetContactsToRevalidate(Duration),
-    GetBestPeer { capabilities: Vec<Capability> },
-    GetScore { node_id: H256 },
+    GetBestPeer {
+        capabilities: Vec<Capability>,
+    },
+    GetScore {
+        node_id: H256,
+    },
     GetConnectedNodes,
     GetPeersWithCapabilities,
-    GetPeerConnections { capabilities: Vec<Capability> },
-    InsertIfNew { node: Node },
-    ValidateContact { node_id: H256, sender_ip: IpAddr },
-    GetClosestNodes { node_id: H256 },
+    GetPeerConnections {
+        capabilities: Vec<Capability>,
+    },
+    InsertIfNew {
+        node: Node,
+    },
+    ValidateContact {
+        node_id: H256,
+        sender_ip: IpAddr,
+    },
+    GetNodesAtDistances {
+        local_node_id: H256,
+        distances: Vec<u32>,
+    },
     GetPeersData,
-    GetRandomPeer { capabilities: Vec<Capability> },
+    GetRandomPeer {
+        capabilities: Vec<Capability>,
+    },
 }
 
 #[derive(Debug)]
@@ -1045,6 +1079,7 @@ pub enum OutMessage {
     TargetCompletion(f64),
     IsNew(bool),
     Nodes(Vec<Node>),
+    NodeRecords(Vec<NodeRecord>),
     Contact(Box<Contact>),
     InvalidContact,
     UnknownContact,
@@ -1173,9 +1208,12 @@ impl GenServer for PeerTableServer {
             CallMessage::ValidateContact { node_id, sender_ip } => {
                 CallResponse::Reply(self.validate_contact(node_id, sender_ip))
             }
-            CallMessage::GetClosestNodes { node_id } => {
-                CallResponse::Reply(Self::OutMsg::Nodes(self.get_closest_nodes(node_id)))
-            }
+            CallMessage::GetNodesAtDistances {
+                local_node_id,
+                distances,
+            } => CallResponse::Reply(Self::OutMsg::NodeRecords(
+                self.get_nodes_at_distances(local_node_id, &distances),
+            )),
             CallMessage::GetPeersData => CallResponse::Reply(OutMessage::PeersData(
                 self.peers.values().cloned().collect(),
             )),
@@ -1262,21 +1300,22 @@ impl GenServer for PeerTableServer {
                     .entry(node_id)
                     .and_modify(|peer_data| peer_data.score = MIN_SCORE_CRITICAL);
             }
-            CastMessage::RecordPingSent { node_id, hash } => {
+            CastMessage::RecordPingSent { node_id, req_id } => {
                 self.contacts
                     .entry(node_id)
-                    .and_modify(|contact| contact.record_ping_sent(hash));
+                    .and_modify(|contact| contact.record_ping_sent(req_id));
             }
-            CastMessage::RecordPongReceived { node_id, ping_hash } => {
-                // If entry does not exist or hash does not match, ignore pong record
-                // Otherwise, reset ping_hash
+            CastMessage::RecordPongReceived { node_id, req_id } => {
+                // If entry does not exist or req_id does not match, ignore
+                // Otherwise, reset ping_req_id
                 self.contacts.entry(node_id).and_modify(|contact| {
                     if contact
-                        .ping_hash
-                        .map(|value| value == ping_hash)
+                        .ping_req_id
+                        .as_ref()
+                        .map(|value| *value == req_id)
                         .unwrap_or(false)
                     {
-                        contact.ping_hash = None
+                        contact.ping_req_id = None
                     }
                 });
             }

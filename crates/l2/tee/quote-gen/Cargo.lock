@@ -2162,6 +2162,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-guest-program"
+version = "9.0.0"
+dependencies = [
+ "bytes",
+ "ethrex-common",
+ "ethrex-crypto",
+ "ethrex-l2-common",
+ "ethrex-rlp",
+ "ethrex-vm",
+ "hex",
+ "rkyv",
+ "serde 1.0.228",
+ "serde_with",
+ "thiserror 2.0.16",
+]
+
+[[package]]
 name = "ethrex-l2"
 version = "9.0.0"
 dependencies = [
@@ -2181,6 +2198,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-config",
  "ethrex-dev",
+ "ethrex-guest-program",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
  "ethrex-levm",
@@ -2194,7 +2212,6 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "futures",
- "guest_program",
  "hex",
  "jsonwebtoken 9.3.1",
  "lazy_static",
@@ -2227,7 +2244,6 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
- "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
  "hex",
@@ -2336,7 +2352,6 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-storage-rollup",
- "ethrex-threadpool",
  "ethrex-trie",
  "futures",
  "hex",
@@ -2457,9 +2472,9 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-rlp",
  "ethrex-trie",
+ "fastbloom",
  "hex",
  "lru 0.16.2",
- "qfilter",
  "rayon",
  "rustc-hash",
  "serde 1.0.228",
@@ -2489,13 +2504,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethrex-threadpool"
-version = "9.0.0"
-dependencies = [
- "crossbeam 0.8.4",
-]
-
-[[package]]
 name = "ethrex-trie"
 version = "9.0.0"
 dependencies = [
@@ -2506,7 +2514,6 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-crypto",
  "ethrex-rlp",
- "ethrex-threadpool",
  "hex",
  "lazy_static",
  "rkyv",
@@ -2535,6 +2542,7 @@ dependencies = [
  "lazy_static",
  "rayon",
  "rkyv",
+ "rustc-hash",
  "serde 1.0.228",
  "thiserror 2.0.16",
  "tracing",
@@ -2559,6 +2567,18 @@ dependencies = [
  "bit-set 0.8.0",
  "regex-automata",
  "regex-syntax",
+]
+
+[[package]]
+name = "fastbloom"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e7f34442dbe69c60fe8eaf58a8cafff81a1f278816d8ab4db255b3bef4ac3c4"
+dependencies = [
+ "getrandom 0.3.3",
+ "libm",
+ "rand 0.9.2",
+ "siphasher",
 ]
 
 [[package]]
@@ -2899,28 +2919,6 @@ dependencies = [
  "ff",
  "rand_core 0.6.4",
  "subtle",
-]
-
-[[package]]
-name = "guest_program"
-version = "9.0.0"
-dependencies = [
- "bincode",
- "bytes",
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-crypto",
- "ethrex-l2-common",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-trie",
- "ethrex-vm",
- "hex",
- "rkyv",
- "serde 1.0.228",
- "serde_json",
- "serde_with",
- "thiserror 2.0.16",
 ]
 
 [[package]]
@@ -4854,15 +4852,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "qfilter"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "746341cd2357c9a4df2d951522b4a8dd1ef553e543119899ad7bf87e938c8fbe"
-dependencies = [
- "xxhash-rust",
-]
-
-[[package]]
 name = "quote"
 version = "0.3.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4884,13 +4873,13 @@ dependencies = [
  "configfs-tsm",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-guest-program",
  "ethrex-l2",
  "ethrex-l2-common",
  "ethrex-rlp",
  "ethrex-rpc",
  "ethrex-storage",
  "ethrex-vm",
- "guest_program",
  "hex",
  "secp256k1",
  "serde 0.9.15",
@@ -7583,12 +7572,6 @@ checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
 dependencies = [
  "tap",
 ]
-
-[[package]]
-name = "xxhash-rust"
-version = "0.8.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
 
 [[package]]
 name = "yansi"

@@ -13,7 +13,7 @@ use crate::utils::{
     get_account_storages_snapshots_dir, get_code_hashes_snapshots_dir,
 };
 use crate::{
-    metrics::METRICS,
+    metrics::{CurrentStepValue, METRICS},
     peer_handler::{MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
 };
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
@@ -198,6 +198,9 @@ impl Syncer {
         // We validate that we have the folders that are being used empty, as we currently assume
         // they are. If they are not empty we empty the folder
         delete_leaves_folder(&self.datadir);
+
+        info!("Starting to download block headers from peers");
+
         loop {
             debug!("Requesting Block Headers from {current_head}");
 
@@ -297,6 +300,8 @@ impl Syncer {
                 break;
             };
         }
+
+        info!("All block headers downloaded successfully");
 
         self.snap_sync(&store, &mut block_sync_state).await?;
 
@@ -717,6 +722,9 @@ impl Syncer {
             info!("Finish downloading account ranges from peers");
 
             *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
+            METRICS
+                .current_step
+                .set(CurrentStepValue::InsertingAccountRanges);
             // We read the account leafs from the files in account_state_snapshots_dir, write it into
             // the trie to compute the nodes and stores the accounts with storages for later use
 
@@ -736,8 +744,8 @@ impl Syncer {
             );
             *METRICS.account_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
-            info!("Original state root: {state_root:?}");
-            info!("Computed state root after request_account_rages: {computed_state_root:?}");
+            debug!("Original state root: {state_root:?}");
+            debug!("Computed state root after request_account_rages: {computed_state_root:?}");
 
             *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
             // We start downloading the storage leafs. To do so, we need to be sure that the storage root
@@ -812,7 +820,7 @@ impl Syncer {
                     storage_accounts.accounts_with_storage_root.clear();
                 }
 
-                info!(
+                debug!(
                     "Ended request_storage_ranges with {} accounts with storage root unchanged and not downloaded yet and with {} big/healed accounts",
                     storage_accounts.accounts_with_storage_root.len(),
                     // These accounts are marked as heals if they're a big account. This is
@@ -822,7 +830,7 @@ impl Syncer {
                 if !block_is_stale(&pivot_header) {
                     break;
                 }
-                info!("We stopped because of staleness, restarting loop");
+                debug!("We stopped because of staleness, restarting loop");
             }
             info!("Finished request_storage_ranges");
             *METRICS.storage_tries_download_end_time.lock().await = Some(SystemTime::now());
@@ -904,7 +912,7 @@ impl Syncer {
         let mut seen_code_hashes = HashSet::new();
         let mut code_hashes_to_download = Vec::new();
 
-        info!("Starting download code hashes from peers");
+        info!("Starting download bytecodes from peers");
         for entry in std::fs::read_dir(&code_hashes_dir)
             .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
         {
@@ -920,7 +928,7 @@ impl Syncer {
                     code_hashes_to_download.push(hash);
 
                     if code_hashes_to_download.len() >= BYTECODE_CHUNK_SIZE {
-                        info!(
+                        debug!(
                             "Starting bytecode download of {} hashes",
                             code_hashes_to_download.len()
                         );
@@ -967,6 +975,8 @@ impl Syncer {
                 )
                 .await?;
         }
+
+        info!("Finished download bytecodes from peers");
 
         std::fs::remove_dir_all(code_hashes_dir)
             .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?;
@@ -1074,7 +1084,7 @@ pub async fn update_pivot(
         };
 
         let peer_score = peers.peer_table.get_score(&peer_id).await?;
-        info!(
+        debug!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
         let Some(pivot) = peers
@@ -1093,7 +1103,7 @@ pub async fn update_pivot(
 
         // Reward peer
         peers.peer_table.record_success(&peer_id).await?;
-        info!("Succesfully updated pivot");
+        debug!("Succesfully updated pivot");
         let block_headers = peers
             .request_block_headers(block_number + 1, pivot.hash())
             .await?
@@ -1516,9 +1526,8 @@ async fn insert_storages(
 ) -> Result<(), SyncError> {
     use crate::utils::get_rocksdb_temp_storage_dir;
     use crossbeam::channel::{bounded, unbounded};
-    use ethrex_threadpool::ThreadPool;
     use ethrex_trie::{
-        Nibbles, Node,
+        Nibbles, Node, ThreadPool,
         trie_sorted::{BUFFER_COUNT, SIZE_TO_WRITE_DB, trie_from_sorted_accounts},
     };
     use std::thread::scope;

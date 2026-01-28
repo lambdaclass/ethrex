@@ -8,7 +8,7 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
-use std::{array::TryFromSliceError, fmt::Display, net::IpAddr};
+use std::{array::TryFromSliceError, fmt::Display, net::SocketAddr};
 
 use crate::types::NodeRecord;
 
@@ -36,6 +36,10 @@ pub const DISTANCES_PER_FIND_NODE_MSG: u8 = 3;
 pub enum PacketCodecError {
     #[error("RLP decoding error")]
     RLPDecodeError(#[from] RLPDecodeError),
+    #[error("Packet header decoding error")]
+    InvalidHeader,
+    #[error("Message decoding error, message type: {0}")]
+    InvalidMessage(u8),
     #[error("Invalid packet size")]
     InvalidSize,
     #[error("Session not established yet")]
@@ -78,7 +82,8 @@ impl Packet {
 
         let mut cipher = <Aes128Ctr64BE as KeyIvInit>::new(dest_id[..16].into(), masking_iv.into());
 
-        let header = PacketHeader::decode(&mut cipher, encoded_packet)?;
+        let header = PacketHeader::decode(&mut cipher, encoded_packet)
+            .map_err(|_e| PacketCodecError::InvalidHeader)?;
         let encrypted_message = encoded_packet[header.header_end_offset..].to_vec();
         Ok(Packet {
             masking_iv: masking_iv.try_into()?,
@@ -274,7 +279,8 @@ impl Ordinary {
 
         let src_id = H256::from_slice(&packet.header.authdata);
 
-        let message = Message::decode(&message)?;
+        let message =
+            Message::decode(&message).map_err(|_e| PacketCodecError::InvalidMessage(message[0]))?;
         Ok(Ordinary { src_id, message })
     }
 
@@ -490,35 +496,35 @@ impl Message {
         }
     }
 
-    pub fn decode(encrypted_message: &[u8]) -> Result<Message, RLPDecodeError> {
-        let message_type = encrypted_message[0];
+    pub fn decode(message: &[u8]) -> Result<Message, RLPDecodeError> {
+        let message_type = message[0];
         match message_type {
             0x01 => {
-                let ping = PingMessage::decode(&encrypted_message[1..])?;
+                let ping = PingMessage::decode(&message[1..])?;
                 Ok(Message::Ping(ping))
             }
             0x02 => {
-                let pong = PongMessage::decode(&encrypted_message[1..])?;
+                let pong = PongMessage::decode(&message[1..])?;
                 Ok(Message::Pong(pong))
             }
             0x03 => {
-                let find_node_msg = FindNodeMessage::decode(&encrypted_message[1..])?;
+                let find_node_msg = FindNodeMessage::decode(&message[1..])?;
                 Ok(Message::FindNode(find_node_msg))
             }
             0x04 => {
-                let nodes_msg = NodesMessage::decode(&encrypted_message[1..])?;
+                let nodes_msg = NodesMessage::decode(&message[1..])?;
                 Ok(Message::Nodes(nodes_msg))
             }
             0x05 => {
-                let talk_req_msg = TalkReqMessage::decode(&encrypted_message[1..])?;
+                let talk_req_msg = TalkReqMessage::decode(&message[1..])?;
                 Ok(Message::TalkReq(talk_req_msg))
             }
             0x06 => {
-                let enr_response_msg = TalkResMessage::decode(&encrypted_message[1..])?;
+                let enr_response_msg = TalkResMessage::decode(&message[1..])?;
                 Ok(Message::TalkRes(enr_response_msg))
             }
             0x08 => {
-                let ticket_msg = TicketMessage::decode(&encrypted_message[1..])?;
+                let ticket_msg = TicketMessage::decode(&message[1..])?;
                 Ok(Message::Ticket(ticket_msg))
             }
             _ => Err(RLPDecodeError::MalformedData),
@@ -577,7 +583,7 @@ impl RLPDecode for PingMessage {
 pub struct PongMessage {
     pub req_id: Bytes,
     pub enr_seq: u64,
-    pub recipient_addr: IpAddr,
+    pub recipient_addr: SocketAddr,
 }
 
 impl RLPEncode for PongMessage {
@@ -585,23 +591,26 @@ impl RLPEncode for PongMessage {
         Encoder::new(buf)
             .encode_field(&self.req_id)
             .encode_field(&self.enr_seq)
-            .encode_field(&self.recipient_addr)
+            .encode_field(&self.recipient_addr.ip())
+            .encode_field(&self.recipient_addr.port())
             .finish();
     }
 }
 
 impl RLPDecode for PongMessage {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        use std::net::IpAddr;
         let decoder = Decoder::new(rlp)?;
         let (req_id, decoder) = decoder.decode_field("req_id")?;
         let (enr_seq, decoder) = decoder.decode_field("enr_seq")?;
-        let (recipient_addr, decoder) = decoder.decode_field("recipient_addr")?;
+        let (recipient_ip, decoder): (IpAddr, _) = decoder.decode_field("recipient_ip")?;
+        let (recipient_port, decoder): (u16, _) = decoder.decode_field("recipient_port")?;
 
         Ok((
             Self {
                 req_id,
                 enr_seq,
-                recipient_addr,
+                recipient_addr: SocketAddr::new(recipient_ip, recipient_port),
             },
             decoder.finish()?,
         ))
@@ -791,7 +800,10 @@ mod tests {
     use ethrex_common::{H264, H512};
     use hex_literal::hex;
     use secp256k1::SecretKey;
-    use std::{net::Ipv4Addr, str::FromStr};
+    use std::{
+        net::{Ipv4Addr, SocketAddr},
+        str::FromStr,
+    };
 
     // node-a-key = 0xeef77acb6c6a6eebc5b363a475ac583ec7eccdb42b6481424c60f59aa326547f
     // node-b-key = 0x66fb62bfbd66b9177a138c1e5cddbe4f7c30c343e94e68df8769459cb1cde628
@@ -1536,7 +1548,7 @@ mod tests {
         let pkt = PongMessage {
             req_id: Bytes::from_static(&[1, 2, 3, 4]),
             enr_seq: 4321,
-            recipient_addr: Ipv4Addr::BROADCAST.into(),
+            recipient_addr: SocketAddr::new(Ipv4Addr::BROADCAST.into(), 30303),
         };
 
         let buf = pkt.encode_to_vec();
