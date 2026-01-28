@@ -84,6 +84,7 @@ default = ["l2"]
 
 sp1 = ["ethrex-guest-program/sp1"]
 risc0 = ["ethrex-guest-program/risc0"]
+zisk = ["ethrex-guest-program/zisk"]
 
 rocksdb = []
 

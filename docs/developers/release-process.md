@@ -20,19 +20,19 @@ First, we need to update the version of the workspace package. You can find it i
 
 Then, we need to update three more `Cargo.toml` files that are not part of the workspace but fulfill the role of packages in the monorepo. These are located in the following paths:
 
-- `crates/l2/prover/src/guest_program/src/sp1/Cargo.toml`
-- `crates/l2/prover/src/guest_program/src/risc0/Cargo.toml`
-- `crates/l2/prover/src/guest_program/src/zisk/Cargo.toml`
-- `crates/l2/prover/src/guest_program/src/openvm/Cargo.toml`
+- `crates/guest-program/bin/sp1/Cargo.toml`
+- `crates/guest-program/bin/risc0/Cargo.toml`
+- `crates/guest-program/bin/zisk/Cargo.toml`
+- `crates/guest-program/bin/openvm/Cargo.toml`
 - `crates/l2/tee/quote-gen/Cargo.toml`
 
 After updating the version in the `Cargo.toml` files, we need to update the `Cargo.lock` files to reflect the new versions. Run `make update-cargo-lock` from the root directory to update all the `Cargo.lock` files in the repository. You should see changes in at most the following paths:
 
 - In the root directory
-- `crates/l2/prover/src/guest_program/src/sp1/Cargo.lock`
-- `crates/l2/prover/src/guest_program/src/risc0/Cargo.lock`
-- `crates/l2/prover/src/guest_program/src/zisk/Cargo.lock`
-- `crates/l2/prover/src/guest_program/src/openvm/Cargo.lock`
+- `crates/guest-program/bin/sp1/Cargo.lock`
+- `crates/guest-program/bin/risc0/Cargo.lock`
+- `crates/guest-program/bin/zisk/Cargo.lock`
+- `crates/guest-program/bin/openvm/Cargo.lock`
 - `crates/l2/tee/quote-gen/Cargo.lock`
 
 Then, go to the `CLI.md` file located in `docs/` and update the version of the `--builder.extra-data` flag default value to match the new version (for both ethrex and ethrex l2 sections).

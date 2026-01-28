@@ -59,6 +59,7 @@ interface ITimelock {
         uint256 batchNumber,
         bytes memory risc0BlockProof,
         bytes memory sp1ProofBytes,
+        bytes memory ziskProofBytes,
         bytes memory tdxSignature
     ) external;
 
