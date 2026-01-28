@@ -765,6 +765,22 @@ contract OnChainProposer is
         return publicInputs;
     }
 
+    /// @notice Debug function to get ZisK verification parameters for a batch
+    /// @dev Call this to compare with prover-generated values
+    function getZiskVerificationParams(
+        uint256 batchNumber
+    ) external view returns (
+        uint64[4] memory programVk,
+        bytes32 publicValuesHash,
+        bytes memory publicInputs
+    ) {
+        bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
+        bytes32 ziskVk = verificationKeys[batchCommitHash][ZISK_VERIFIER_ID];
+        programVk = _toZiskProgramVk(ziskVk);
+        publicInputs = _getPublicInputsFromCommitment(batchNumber);
+        publicValuesHash = sha256(publicInputs);
+    }
+
     /// @inheritdoc IOnChainProposer
     function revertBatch(
         uint256 batchNumber
