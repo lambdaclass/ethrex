@@ -11,7 +11,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
 use ethrex_storage::hash_address;
-use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeRef, Trie, TrieError};
+use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeRef, Trie, TrieError, encodedtrie::EncodedTrie};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::debug;
@@ -46,11 +46,20 @@ impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
     type Error = TrieError;
     fn try_from(value: ExecutionWitness) -> Result<Self, Self::Error> {
         let mut nodes = Vec::new();
-        if let Some(state_trie_root) = value.state_trie_root {
-            state_trie_root.encode_subtrie(&mut nodes)?;
+        if let Some(state_trie) = &value.state_trie {
+            // Extract individual encoded nodes from the contiguous buffer
+            for node in &state_trie.nodes {
+                if let Some((start, end)) = node.encoded_range {
+                    nodes.push(state_trie.encoded_data[start..end].to_vec());
+                }
+            }
         }
-        for node in value.storage_trie_roots.values() {
-            node.encode_subtrie(&mut nodes)?;
+        for storage_trie in value.storage_tries.values() {
+            for node in &storage_trie.nodes {
+                if let Some((start, end)) = node.encoded_range {
+                    nodes.push(storage_trie.encoded_data[start..end].to_vec());
+                }
+            }
         }
         Ok(Self {
             state: nodes.into_iter().map(Bytes::from).collect(),
@@ -112,20 +121,28 @@ pub fn execution_witness_from_rpc_chain_config(
         None
     };
 
+    let state_trie = if let Some(ref state_trie_root) = state_trie_root {
+        Some(EncodedTrie::try_from(state_trie_root).map_err(|e| {
+            GuestProgramStateError::Custom(format!("Failed to create EncodedTrie for state: {}", e))
+        })?)
+    } else {
+        None
+    };
+
     // get all storage trie roots and embed the rest of the trie into it
-    let state_trie = if let Some(state_trie_root) = &state_trie_root {
+    let state_trie_temp = if let Some(state_trie_root) = &state_trie_root {
         Trie::new_temp_with_root(state_trie_root.clone().into())
     } else {
         Trie::new_temp()
     };
-    let mut storage_trie_roots = BTreeMap::new();
+    let mut storage_tries = BTreeMap::new();
     for key in &rpc_witness.keys {
         if key.len() != 20 {
             continue; // not an address
         }
         let address = Address::from_slice(key);
         let hashed_address = hash_address(&address);
-        let Some(encoded_account) = state_trie.get(&hashed_address)? else {
+        let Some(encoded_account) = state_trie_temp.get(&hashed_address)? else {
             continue; // empty account, doesn't have a storage trie
         };
         let storage_root_hash = AccountState::decode(&encoded_account)?.storage_root;
@@ -141,7 +158,13 @@ pub fn execution_witness_from_rpc_chain_config(
                 "execution witness does not contain non-empty storage trie".to_string(),
             ));
         };
-        storage_trie_roots.insert(address, (*node).clone());
+        let encoded_trie = EncodedTrie::try_from(&*node).map_err(|e| {
+            GuestProgramStateError::Custom(format!(
+                "Failed to create EncodedTrie for storage: {}",
+                e
+            ))
+        })?;
+        storage_tries.insert(address, encoded_trie);
     }
 
     let witness = ExecutionWitness {
@@ -153,8 +176,8 @@ pub fn execution_witness_from_rpc_chain_config(
             .into_iter()
             .map(|b| b.to_vec())
             .collect(),
-        state_trie_root,
-        storage_trie_roots,
+        state_trie,
+        storage_tries,
         keys: rpc_witness.keys.into_iter().map(|b| b.to_vec()).collect(),
     };
 

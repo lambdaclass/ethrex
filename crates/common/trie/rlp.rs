@@ -23,7 +23,11 @@ impl RLPEncode for BranchNode {
         encode_length(payload_len, buf);
         for child in self.choices.iter() {
             match child.compute_hash_ref() {
-                NodeHash::Hashed(hash) => hash.0.encode(buf),
+                NodeHash::Hashed(hash) => {
+                    // RLP encode 32-byte string directly: 0xa0 prefix + 32 bytes
+                    buf.put_u8(0xa0);
+                    buf.put_slice(&hash.0);
+                }
                 NodeHash::Inline((_, 0)) => buf.put_u8(RLP_NULL),
                 NodeHash::Inline((encoded, len)) => buf.put_slice(&encoded[..*len as usize]),
             }
@@ -44,7 +48,11 @@ impl RLPEncode for BranchNode {
         encode_length(payload_len, &mut buf);
         for child in self.choices.iter() {
             match child.compute_hash_ref() {
-                NodeHash::Hashed(hash) => hash.0.encode(&mut buf),
+                NodeHash::Hashed(hash) => {
+                    // RLP encode 32-byte string directly: 0xa0 prefix + 32 bytes
+                    buf.push(0xa0);
+                    buf.extend_from_slice(&hash.0);
+                }
                 NodeHash::Inline((_, 0)) => buf.push(RLP_NULL),
                 NodeHash::Inline((encoded, len)) => {
                     buf.extend_from_slice(&encoded[..*len as usize])
@@ -67,10 +75,10 @@ impl RLPEncode for ExtensionNode {
 
 impl RLPEncode for LeafNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_bytes(&self.partial.encode_compact())
-            .encode_bytes(&self.value)
-            .finish()
+        let mut encoder = Encoder::new(buf);
+        encoder = encoder.encode_bytes(&self.partial.encode_compact());
+        encoder = encoder.encode_bytes(&self.value);
+        encoder.finish()
     }
 }
 
@@ -151,9 +159,12 @@ impl RLPDecode for Node {
     }
 }
 
-fn decode_child(rlp: &[u8]) -> NodeHash {
+pub fn decode_child(rlp: &[u8]) -> NodeHash {
     match decode_bytes(rlp) {
-        Ok((hash, &[])) if hash.len() == 32 => NodeHash::from_slice(hash),
+        Ok((hash, &[])) if hash.len() == 32 => {
+            let arr: [u8; 32] = hash.try_into().expect("length checked above");
+            NodeHash::Hashed(ethereum_types::H256(arr))
+        }
         Ok((&[], &[])) => NodeHash::default(),
         _ => NodeHash::from_slice(rlp),
     }

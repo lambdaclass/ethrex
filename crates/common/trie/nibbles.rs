@@ -101,10 +101,11 @@ impl Nibbles {
 
     /// If `prefix` is a prefix of self, move the offset after
     /// the prefix and return true, otherwise return false.
-    pub fn skip_prefix(&mut self, prefix: &Nibbles) -> bool {
-        if self.len() >= prefix.len() && &self.data[..prefix.len()] == prefix.as_ref() {
+    pub fn skip_prefix(&mut self, prefix: impl AsRef<[u8]>) -> bool {
+        let prefix = prefix.as_ref();
+        if self.len() >= prefix.len() && &self.data[..prefix.len()] == prefix {
             self.data = self.data[prefix.len()..].to_vec();
-            self.already_consumed.extend(&prefix.data);
+            self.already_consumed.extend(prefix);
             true
         } else {
             false
@@ -178,7 +179,8 @@ impl Nibbles {
     /// Taken from https://github.com/citahub/cita_trie/blob/master/src/nibbles.rs#L56
     /// Encodes the nibbles in compact form
     pub fn encode_compact(&self) -> Vec<u8> {
-        let mut compact = vec![];
+        // Pre-allocate capacity: 1 byte for prefix + up to (data.len() / 2) bytes for pairs
+        let mut compact = Vec::with_capacity((self.data.len() / 2) + 1);
         let is_leaf = self.is_leaf();
         let mut hex = if is_leaf {
             &self.data[0..self.data.len() - 1]

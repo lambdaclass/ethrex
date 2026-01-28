@@ -24,6 +24,9 @@ crossbeam.workspace = true
 rustc-hash.workspace = true
 rkyv.workspace = true
 
+[dev-dependencies]
+proptest = "1.6.0"
+
 [features]
 default = []
 

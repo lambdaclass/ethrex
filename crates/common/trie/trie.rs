@@ -1,4 +1,5 @@
 pub mod db;
+pub mod encodedtrie;
 pub mod error;
 pub mod logger;
 mod nibbles;

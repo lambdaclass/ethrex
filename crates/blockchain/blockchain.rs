@@ -80,6 +80,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
+use ethrex_trie::encodedtrie::EncodedTrie;
 use ethrex_trie::node::{BranchNode, ExtensionNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie};
 use ethrex_vm::backends::CachingDatabase;
@@ -1171,7 +1172,7 @@ impl Blockchain {
         } else {
             Trie::new_temp()
         };
-        let mut storage_trie_roots = BTreeMap::new();
+        let mut storage_tries = BTreeMap::new();
         for key in &keys {
             if key.len() != 20 {
                 continue; // not an address
@@ -1194,16 +1195,20 @@ impl Blockchain {
                     "execution witness does not contain non-empty storage trie".to_string(),
                 ));
             };
-            storage_trie_roots.insert(address, (*node).clone());
+            storage_tries.insert(address, EncodedTrie::try_from(&(*node))?);
         }
+
+        let state_trie = state_trie_root
+            .map(|n| EncodedTrie::try_from(&n))
+            .transpose()?;
 
         Ok(ExecutionWitness {
             codes,
             block_headers_bytes,
             first_block_number: first_block_header.number,
             chain_config: self.storage.get_chain_config(),
-            state_trie_root,
-            storage_trie_roots,
+            state_trie,
+            storage_tries,
             keys,
         })
     }
@@ -1439,13 +1444,22 @@ impl Blockchain {
             storage_trie_roots.insert(address, (*node).clone());
         }
 
+        let state_trie = state_trie_root
+            .as_ref()
+            .map(EncodedTrie::try_from)
+            .transpose()?;
+        let storage_tries = storage_trie_roots
+            .into_iter()
+            .map(|(k, v)| Ok((k, EncodedTrie::try_from(&v)?)))
+            .collect::<Result<_, ethrex_rlp::error::RLPDecodeError>>()?;
+
         Ok(ExecutionWitness {
             codes,
             block_headers_bytes,
             first_block_number: parent_header.number,
             chain_config: self.storage.get_chain_config(),
-            state_trie_root,
-            storage_trie_roots,
+            state_trie,
+            storage_tries,
             keys,
         })
     }
@@ -1986,19 +2000,17 @@ impl Blockchain {
         transaction: EIP4844Transaction,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, MempoolError> {
+        // Validate blobs bundle
+
         let fork = self.current_fork().await?;
+
+        blobs_bundle.validate(&transaction, fork)?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
         let hash = transaction.hash();
         if self.mempool.contains_tx(hash)? {
             return Ok(hash);
         }
-
-        // Validate blobs bundle after checking if it's already added.
-        if let Transaction::EIP4844Transaction(transaction) = &transaction {
-            blobs_bundle.validate(transaction, fork)?;
-        }
-
         let sender = transaction.sender()?;
 
         // Validate transaction
