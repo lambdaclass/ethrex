@@ -462,8 +462,11 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
     // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
     // NOT CHECKED: the blob price does not matter, fee token transactions do not support blobs
 
-    // (3) INSUFFICIENT_ACCOUNT_FUNDS
-    deduct_caller_fee_token(vm, gaslimit_price_product.saturating_mul(fee_token_ratio))?;
+    // ═══════════════════════════════════════════════════════════════════════════
+    // IMPORTANT: All validations that can fail MUST happen BEFORE fee deduction.
+    // Fee token storage changes via `transfer_fee_token` bypass the backup
+    // mechanism, so they cannot be rolled back if validation fails later.
+    // ═══════════════════════════════════════════════════════════════════════════
 
     // (4) INSUFFICIENT_MAX_FEE_PER_GAS
     default_hook::validate_sufficient_max_fee_per_gas(vm)?;
@@ -514,6 +517,11 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
 
     // Transaction is type 4 if authorization_list is Some
     // NOT CHECKED: fee token transactions are not type 4
+
+    // (3) INSUFFICIENT_ACCOUNT_FUNDS
+    // NOTE: Fee deduction is intentionally placed AFTER all validations above.
+    // This ensures that if any validation fails, fee tokens are never locked.
+    deduct_caller_fee_token(vm, gaslimit_price_product.saturating_mul(fee_token_ratio))?;
 
     default_hook::transfer_value(vm)?;
 
