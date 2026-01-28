@@ -1,7 +1,11 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
-use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::{
+    decode::RLPDecode,
+    encode::RLPEncode,
+    structs::{Decoder, Encoder},
+};
 use ethrex_trie::Trie;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
@@ -269,6 +273,199 @@ pub struct ChainConfig {
 
     #[serde(default)]
     pub enable_verkle_at_genesis: bool,
+}
+
+impl RLPEncode for ForkBlobSchedule {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.base_fee_update_fraction)
+            .encode_field(&(self.max as u64))
+            .encode_field(&(self.target as u64))
+            .finish();
+    }
+}
+
+impl RLPDecode for ForkBlobSchedule {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), ethrex_rlp::error::RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (base_fee_update_fraction, decoder) =
+            decoder.decode_field("base_fee_update_fraction")?;
+        let (max, decoder): (u64, _) = decoder.decode_field("max")?;
+        let (target, decoder): (u64, _) = decoder.decode_field("target")?;
+        Ok((
+            Self {
+                base_fee_update_fraction,
+                max: max as u32,
+                target: target as u32,
+            },
+            decoder.finish()?,
+        ))
+    }
+}
+
+impl RLPEncode for BlobSchedule {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.cancun)
+            .encode_field(&self.prague)
+            .encode_field(&self.osaka)
+            .encode_field(&self.bpo1)
+            .encode_field(&self.bpo2)
+            .encode_optional_field(&self.bpo3)
+            .encode_optional_field(&self.bpo4)
+            .encode_optional_field(&self.bpo5)
+            .encode_optional_field(&self.amsterdam)
+            .finish();
+    }
+}
+
+impl RLPDecode for BlobSchedule {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), ethrex_rlp::error::RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (cancun, decoder) = decoder.decode_field("cancun")?;
+        let (prague, decoder) = decoder.decode_field("prague")?;
+        let (osaka, decoder) = decoder.decode_field("osaka")?;
+        let (bpo1, decoder) = decoder.decode_field("bpo1")?;
+        let (bpo2, decoder) = decoder.decode_field("bpo2")?;
+        let (bpo3, decoder) = decoder.decode_optional_field();
+        let (bpo4, decoder) = decoder.decode_optional_field();
+        let (bpo5, decoder) = decoder.decode_optional_field();
+        let (amsterdam, decoder) = decoder.decode_optional_field();
+        Ok((
+            Self {
+                cancun,
+                prague,
+                osaka,
+                bpo1,
+                bpo2,
+                bpo3,
+                bpo4,
+                bpo5,
+                amsterdam,
+            },
+            decoder.finish()?,
+        ))
+    }
+}
+
+impl RLPEncode for ChainConfig {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.chain_id)
+            .encode_optional_field(&self.homestead_block)
+            .encode_optional_field(&self.dao_fork_block)
+            .encode_field(&self.dao_fork_support)
+            .encode_optional_field(&self.eip150_block)
+            .encode_optional_field(&self.eip155_block)
+            .encode_optional_field(&self.eip158_block)
+            .encode_optional_field(&self.byzantium_block)
+            .encode_optional_field(&self.constantinople_block)
+            .encode_optional_field(&self.petersburg_block)
+            .encode_optional_field(&self.istanbul_block)
+            .encode_optional_field(&self.muir_glacier_block)
+            .encode_optional_field(&self.berlin_block)
+            .encode_optional_field(&self.london_block)
+            .encode_optional_field(&self.arrow_glacier_block)
+            .encode_optional_field(&self.gray_glacier_block)
+            .encode_optional_field(&self.merge_netsplit_block)
+            .encode_optional_field(&self.shanghai_time)
+            .encode_optional_field(&self.cancun_time)
+            .encode_optional_field(&self.prague_time)
+            .encode_optional_field(&self.verkle_time)
+            .encode_optional_field(&self.osaka_time)
+            .encode_optional_field(&self.bpo1_time)
+            .encode_optional_field(&self.bpo2_time)
+            .encode_optional_field(&self.bpo3_time)
+            .encode_optional_field(&self.bpo4_time)
+            .encode_optional_field(&self.bpo5_time)
+            .encode_optional_field(&self.amsterdam_time)
+            .encode_optional_field(&self.terminal_total_difficulty)
+            .encode_field(&self.terminal_total_difficulty_passed)
+            .encode_field(&self.blob_schedule)
+            .encode_field(&self.deposit_contract_address)
+            .encode_field(&self.enable_verkle_at_genesis)
+            .finish();
+    }
+}
+
+impl RLPDecode for ChainConfig {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), ethrex_rlp::error::RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (chain_id, decoder) = decoder.decode_field("chain_id")?;
+        let (homestead_block, decoder) = decoder.decode_optional_field();
+        let (dao_fork_block, decoder) = decoder.decode_optional_field();
+        let (dao_fork_support, decoder) = decoder.decode_field("dao_fork_support")?;
+        let (eip150_block, decoder) = decoder.decode_optional_field();
+        let (eip155_block, decoder) = decoder.decode_optional_field();
+        let (eip158_block, decoder) = decoder.decode_optional_field();
+        let (byzantium_block, decoder) = decoder.decode_optional_field();
+        let (constantinople_block, decoder) = decoder.decode_optional_field();
+        let (petersburg_block, decoder) = decoder.decode_optional_field();
+        let (istanbul_block, decoder) = decoder.decode_optional_field();
+        let (muir_glacier_block, decoder) = decoder.decode_optional_field();
+        let (berlin_block, decoder) = decoder.decode_optional_field();
+        let (london_block, decoder) = decoder.decode_optional_field();
+        let (arrow_glacier_block, decoder) = decoder.decode_optional_field();
+        let (gray_glacier_block, decoder) = decoder.decode_optional_field();
+        let (merge_netsplit_block, decoder) = decoder.decode_optional_field();
+        let (shanghai_time, decoder) = decoder.decode_optional_field();
+        let (cancun_time, decoder) = decoder.decode_optional_field();
+        let (prague_time, decoder) = decoder.decode_optional_field();
+        let (verkle_time, decoder) = decoder.decode_optional_field();
+        let (osaka_time, decoder) = decoder.decode_optional_field();
+        let (bpo1_time, decoder) = decoder.decode_optional_field();
+        let (bpo2_time, decoder) = decoder.decode_optional_field();
+        let (bpo3_time, decoder) = decoder.decode_optional_field();
+        let (bpo4_time, decoder) = decoder.decode_optional_field();
+        let (bpo5_time, decoder) = decoder.decode_optional_field();
+        let (amsterdam_time, decoder) = decoder.decode_optional_field();
+        let (terminal_total_difficulty, decoder) = decoder.decode_optional_field();
+        let (terminal_total_difficulty_passed, decoder) =
+            decoder.decode_field("terminal_total_difficulty_passed")?;
+        let (blob_schedule, decoder) = decoder.decode_field("blob_schedule")?;
+        let (deposit_contract_address, decoder) =
+            decoder.decode_field("deposit_contract_address")?;
+        let (enable_verkle_at_genesis, decoder) =
+            decoder.decode_field("enable_verkle_at_genesis")?;
+        Ok((
+            Self {
+                chain_id,
+                homestead_block,
+                dao_fork_block,
+                dao_fork_support,
+                eip150_block,
+                eip155_block,
+                eip158_block,
+                byzantium_block,
+                constantinople_block,
+                petersburg_block,
+                istanbul_block,
+                muir_glacier_block,
+                berlin_block,
+                london_block,
+                arrow_glacier_block,
+                gray_glacier_block,
+                merge_netsplit_block,
+                shanghai_time,
+                cancun_time,
+                prague_time,
+                verkle_time,
+                osaka_time,
+                bpo1_time,
+                bpo2_time,
+                bpo3_time,
+                bpo4_time,
+                bpo5_time,
+                amsterdam_time,
+                terminal_total_difficulty,
+                terminal_total_difficulty_passed,
+                blob_schedule,
+                deposit_contract_address,
+                enable_verkle_at_genesis,
+            },
+            decoder.finish()?,
+        ))
+    }
 }
 
 lazy_static::lazy_static! {

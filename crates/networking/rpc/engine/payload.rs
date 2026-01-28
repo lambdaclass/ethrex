@@ -5,6 +5,7 @@ use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
 use ethrex_p2p::sync::SyncMode;
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use serde_json::Value;
 use tokio::sync::oneshot;
@@ -831,8 +832,7 @@ async fn try_execute_payload_with_witness(
         // Block already exists, try to get witness from storage
         if let Ok(Some(witness)) = storage.get_witness_by_number_and_hash(block_number, block_hash)
         {
-            let witness_bytes =
-                serde_json::to_vec(&witness).map_err(|e| RpcErr::Internal(e.to_string()))?;
+            let witness_bytes = witness.encode_to_vec();
             return Ok(PayloadStatus::valid_with_hash_and_witness(
                 block_hash,
                 witness_bytes.into(),
@@ -889,8 +889,7 @@ async fn try_execute_payload_with_witness(
         Ok(witness) => {
             debug!("Block with hash {block_hash} executed and added to storage successfully");
             if let Some(witness) = witness {
-                let witness_bytes =
-                    serde_json::to_vec(&witness).map_err(|e| RpcErr::Internal(e.to_string()))?;
+                let witness_bytes = witness.encode_to_vec();
                 Ok(PayloadStatus::valid_with_hash_and_witness(
                     block_hash,
                     witness_bytes.into(),
