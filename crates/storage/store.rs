@@ -73,6 +73,12 @@ enum FKVGeneratorControlMessage {
 // 64mb
 const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
 
+// Size of the empty storage address cache (number of addresses).
+// Tracks addresses confirmed to have no storage, avoiding repeated trie lookups.
+// Inspired by reth's bloom filter for empty storage slots (PR #21185) but using
+// an LRU cache instead for simplicity and correctness (bloom filters can't handle removals).
+const EMPTY_STORAGE_CACHE_SIZE: usize = 50_000;
+
 #[derive(Debug)]
 struct CodeCache {
     inner_cache: LruCache<H256, Code, FxBuildHasher>,
@@ -177,6 +183,11 @@ pub struct Store {
     /// those changes already affect the code hash stored in the account, and only
     /// may result in this cache having useless data.
     account_code_cache: Arc<Mutex<CodeCache>>,
+
+    /// Cache of addresses confirmed to have no storage (storage_root == EMPTY_TRIE_HASH).
+    /// Used to avoid repeated trie lookups for accounts with empty storage.
+    /// Entries are invalidated when storage is written for the address.
+    empty_storage_cache: Arc<Mutex<LruCache<Address, (), FxBuildHasher>>>,
 
     background_threads: Arc<ThreadList>,
 }
@@ -1362,6 +1373,10 @@ impl Store {
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
+            empty_storage_cache: Arc::new(Mutex::new(LruCache::with_hasher(
+                std::num::NonZeroUsize::new(EMPTY_STORAGE_CACHE_SIZE).unwrap(),
+                FxBuildHasher,
+            ))),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -1601,6 +1616,10 @@ impl Store {
             }
             // Store the added storage in the account's storage trie and compute its new root
             if !update.added_storage.is_empty() {
+                // Invalidate empty storage cache since this account is getting storage
+                if let Ok(mut cache) = self.empty_storage_cache.lock() {
+                    cache.pop(&update.address);
+                }
                 let mut storage_trie =
                     self.open_storage_trie(hashed_address, state_root, account_state.storage_root)?;
                 for (storage_key, storage_value) in &update.added_storage {
@@ -1681,6 +1700,10 @@ impl Store {
 
             // Store the added storage in the account's storage trie and compute its new root
             if !update.added_storage.is_empty() {
+                // Invalidate empty storage cache since this account is getting storage
+                if let Ok(mut cache) = self.empty_storage_cache.lock() {
+                    cache.pop(&update.address);
+                }
                 let (_witness, storage_trie) = match storage_tries.entry(update.address) {
                     Entry::Occupied(value) => value.into_mut(),
                     Entry::Vacant(vacant) => {
@@ -1962,7 +1985,19 @@ impl Store {
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
         let account_hash = hash_address_fixed(&address);
-        let storage_root = if self.flatkeyvalue_computed(account_hash)? {
+        let uses_fkv = self.flatkeyvalue_computed(account_hash)?;
+
+        // Check empty storage cache first (only for non-FKV path).
+        // This avoids trie lookups for accounts confirmed to have no storage.
+        if !uses_fkv {
+            if let Ok(cache) = self.empty_storage_cache.lock() {
+                if cache.contains(&address) {
+                    return Ok(None);
+                }
+            }
+        }
+
+        let storage_root = if uses_fkv {
             // We will use FKVs, we don't need the root
             *EMPTY_TRIE_HASH
         } else {
@@ -1971,6 +2006,16 @@ impl Store {
                 return Ok(None);
             };
             let account = AccountState::decode(&encoded_account)?;
+
+            // If storage_root is empty, cache this fact and return early.
+            // This avoids opening the storage trie for accounts with no storage.
+            if account.storage_root == *EMPTY_TRIE_HASH {
+                if let Ok(mut cache) = self.empty_storage_cache.lock() {
+                    cache.put(address, ());
+                }
+                return Ok(None);
+            }
+
             account.storage_root
         };
         let storage_trie = self.open_storage_trie(account_hash, state_root, storage_root)?;
