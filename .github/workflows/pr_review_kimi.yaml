@@ -31,18 +31,11 @@ jobs:
           # Truncate if too large (Kimi has context limits)
           head -c 100000 pr_diff.txt > pr_diff_truncated.txt
 
-      - name: Get PR info
-        id: pr_info
-        run: |
-          echo "title=${{ github.event.pull_request.title }}" >> $GITHUB_OUTPUT
-          echo "body<<EOF" >> $GITHUB_OUTPUT
-          echo "${{ github.event.pull_request.body }}" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
       - name: Kimi Code Review
         id: kimi_review
         env:
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           if [ -z "$KIMI_API_KEY" ]; then
             echo "Error: KIMI_API_KEY secret is not set" > kimi_review.txt
@@ -54,7 +47,7 @@ jobs:
           # Build the request body
           REQUEST_BODY=$(jq -n \
             --arg diff "$DIFF_CONTENT" \
-            --arg title "${{ steps.pr_info.outputs.title }}" \
+            --arg title "$PR_TITLE" \
             '{
               "model": "moonshot-v1-128k",
               "messages": [
