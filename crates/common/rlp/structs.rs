@@ -233,4 +233,13 @@ impl<'a> Encoder<'a> {
         <[u8] as RLPEncode>::encode(value, &mut self.temp_buf);
         self
     }
+
+    /// Expose buffer via a closure, useful for types which needs access to buffer.
+    pub fn encode_with<F>(mut self, f: F) -> Self
+    where
+        for<'f> F: FnOnce(&'f mut dyn BufMut),
+    {
+        f(&mut self.temp_buf);
+        self
+    }
 }
