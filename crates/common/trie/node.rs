@@ -8,6 +8,7 @@ pub use branch::BranchNode;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
+use rayon::prelude::*;
 use rkyv::{
     de::Pooling,
     rancor::Source,
@@ -178,12 +179,12 @@ impl NodeRef {
         }
     }
 
-    pub fn memoize_hashes(&self, buf: &mut Vec<u8>) {
+    pub fn memoize_hashes(&self) {
         if let NodeRef::Node(node, hash) = &self
             && hash.get().is_none()
         {
-            node.memoize_hashes(buf);
-            let _ = hash.set(node.compute_hash_no_alloc(buf));
+            node.memoize_hashes();
+            let _ = hash.set(node.compute_hash_no_alloc(&mut Vec::with_capacity(512)));
         }
     }
 
@@ -367,7 +368,7 @@ impl Node {
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
         let mut buf = Vec::new();
-        self.memoize_hashes(&mut buf);
+        self.memoize_hashes();
         match self {
             Node::Branch(n) => n.compute_hash_no_alloc(&mut buf),
             Node::Extension(n) => n.compute_hash_no_alloc(&mut buf),
@@ -377,7 +378,7 @@ impl Node {
 
     /// Computes the node's hash
     pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>) -> NodeHash {
-        self.memoize_hashes(buf);
+        self.memoize_hashes();
         match self {
             Node::Branch(n) => n.compute_hash_no_alloc(buf),
             Node::Extension(n) => n.compute_hash_no_alloc(buf),
@@ -386,15 +387,15 @@ impl Node {
     }
 
     /// Recursively memoizes the hashes of all nodes of the subtrie that has
-    /// `self` as root (post-order traversal)
-    pub fn memoize_hashes(&self, buf: &mut Vec<u8>) {
+    /// `self` as root (post-order traversal, parallelized for branch children)
+    pub fn memoize_hashes(&self) {
         match self {
             Node::Branch(n) => {
-                for child in &n.choices {
-                    child.memoize_hashes(buf);
-                }
+                n.choices.par_iter().for_each(|child| {
+                    child.memoize_hashes();
+                });
             }
-            Node::Extension(n) => n.child.memoize_hashes(buf),
+            Node::Extension(n) => n.child.memoize_hashes(),
             _ => {}
         }
     }
