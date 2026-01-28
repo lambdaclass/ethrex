@@ -18,6 +18,7 @@ pub struct Metrics {
     batch_commitment_gas: IntGaugeVec,
     batch_commitment_blob_gas: IntGaugeVec,
     batch_tx_count: IntGaugeVec,
+    registry: Registry,
 }
 
 impl Default for Metrics {
@@ -28,86 +29,126 @@ impl Default for Metrics {
 
 impl Metrics {
     pub fn new() -> Self {
+        let status_tracker = IntGaugeVec::new(
+            Opts::new(
+                "l2_blocks_tracker",
+                "Keeps track of the L2's status based on the L1's contracts",
+            ),
+            &["block_type"],
+        )
+        .unwrap();
+        let operations_tracker = IntGaugeVec::new(
+            Opts::new(
+                "l2_operations_tracker",
+                "Keeps track of the L2 deposits & withdrawals",
+            ),
+            &["operations_type"],
+        )
+        .unwrap();
+        let l1_gas_price =
+            IntGauge::new("l1_gas_price", "Keeps track of the l1 gas price").unwrap();
+        let l2_gas_price =
+            IntGauge::new("l2_gas_price", "Keeps track of the l2 gas price").unwrap();
+        let blob_usage = Gauge::new(
+            "l2_blob_usage",
+            "Keeps track of the percentage of blob usage for a batch commitment",
+        )
+        .unwrap();
+        let batch_size = IntGaugeVec::new(
+            Opts::new(
+                "batch_size",
+                "Batch size in blocks, labeled by batch number",
+            ),
+            &["batch_number"],
+        )
+        .unwrap();
+        let batch_gas_used = IntGaugeVec::new(
+            Opts::new(
+                "batch_gas_used",
+                "Batch total gas used, labeled by batch number",
+            ),
+            &["batch_number"],
+        )
+        .unwrap();
+        let batch_proving_time = IntGaugeVec::new(
+            Opts::new(
+                "batch_proving_time",
+                "Time it took to prove a batch in seconds, labeled by batch number",
+            ),
+            &["batch_number"],
+        )
+        .unwrap();
+        let batch_verification_gas = IntGaugeVec::new(
+            Opts::new(
+                "batch_verification_gas",
+                "Batch verification gas cost in L1, labeled by batch number",
+            ),
+            &["batch_number"],
+        )
+        .unwrap();
+        let batch_commitment_gas = IntGaugeVec::new(
+            Opts::new(
+                "batch_commitment_gas",
+                "Batch commitment gas cost in L1, labeled by batch number",
+            ),
+            &["batch_number"],
+        )
+        .unwrap();
+        let batch_commitment_blob_gas = IntGaugeVec::new(
+            Opts::new(
+                "batch_commitment_blob_gas",
+                "Batch commitment blob gas cost in L1, labeled by batch number",
+            ),
+            &["batch_number"],
+        )
+        .unwrap();
+        let batch_tx_count = IntGaugeVec::new(
+            Opts::new(
+                "batch_tx_count",
+                "Batch transaction count, labeled by batch number",
+            ),
+            &["batch_number"],
+        )
+        .unwrap();
+
+        let registry = Registry::new();
+        registry.register(Box::new(status_tracker.clone())).unwrap();
+        registry
+            .register(Box::new(operations_tracker.clone()))
+            .unwrap();
+        registry.register(Box::new(l1_gas_price.clone())).unwrap();
+        registry.register(Box::new(l2_gas_price.clone())).unwrap();
+        registry.register(Box::new(blob_usage.clone())).unwrap();
+        registry.register(Box::new(batch_size.clone())).unwrap();
+        registry.register(Box::new(batch_gas_used.clone())).unwrap();
+        registry
+            .register(Box::new(batch_proving_time.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(batch_verification_gas.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(batch_commitment_gas.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(batch_commitment_blob_gas.clone()))
+            .unwrap();
+        registry.register(Box::new(batch_tx_count.clone())).unwrap();
+
         Metrics {
-            status_tracker: IntGaugeVec::new(
-                Opts::new(
-                    "l2_blocks_tracker",
-                    "Keeps track of the L2's status based on the L1's contracts",
-                ),
-                &["block_type"],
-            )
-            .unwrap(),
-            operations_tracker: IntGaugeVec::new(
-                Opts::new(
-                    "l2_operations_tracker",
-                    "Keeps track of the L2 deposits & withdrawals",
-                ),
-                &["operations_type"],
-            )
-            .unwrap(),
-            l1_gas_price: IntGauge::new("l1_gas_price", "Keeps track of the l1 gas price").unwrap(),
-            l2_gas_price: IntGauge::new("l2_gas_price", "Keeps track of the l2 gas price").unwrap(),
-            blob_usage: Gauge::new(
-                "l2_blob_usage",
-                "Keeps track of the percentage of blob usage for a batch commitment",
-            )
-            .unwrap(),
-            batch_size: IntGaugeVec::new(
-                Opts::new(
-                    "batch_size",
-                    "Batch size in blocks, labeled by batch number",
-                ),
-                &["batch_number"],
-            )
-            .unwrap(),
-            batch_gas_used: IntGaugeVec::new(
-                Opts::new(
-                    "batch_gas_used",
-                    "Batch total gas used, labeled by batch number",
-                ),
-                &["batch_number"],
-            )
-            .unwrap(),
-            batch_proving_time: IntGaugeVec::new(
-                Opts::new(
-                    "batch_proving_time",
-                    "Time it took to prove a batch in seconds, labeled by batch number",
-                ),
-                &["batch_number"],
-            )
-            .unwrap(),
-            batch_verification_gas: IntGaugeVec::new(
-                Opts::new(
-                    "batch_verification_gas",
-                    "Batch verification gas cost in L1, labeled by batch number",
-                ),
-                &["batch_number"],
-            )
-            .unwrap(),
-            batch_commitment_gas: IntGaugeVec::new(
-                Opts::new(
-                    "batch_commitment_gas",
-                    "Batch commitment gas cost in L1, labeled by batch number",
-                ),
-                &["batch_number"],
-            )
-            .unwrap(),
-            batch_commitment_blob_gas: IntGaugeVec::new(
-                Opts::new(
-                    "batch_commitment_blob_gas",
-                    "Batch commitment blob gas cost in L1, labeled by batch number",
-                ),
-                &["batch_number"],
-            )
-            .unwrap(),
-            batch_tx_count: IntGaugeVec::new(
-                Opts::new(
-                    "batch_tx_count",
-                    "Batch transaction count, labeled by batch number",
-                ),
-                &["batch_number"],
-            )
-            .unwrap(),
+            status_tracker,
+            operations_tracker,
+            l1_gas_price,
+            l2_gas_price,
+            blob_usage,
+            batch_size,
+            batch_gas_used,
+            batch_proving_time,
+            batch_verification_gas,
+            batch_commitment_gas,
+            batch_commitment_blob_gas,
+            batch_tx_count,
+            registry,
         }
     }
 
@@ -238,35 +279,8 @@ impl Metrics {
     }
 
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
-        let r = Registry::new();
-
-        r.register(Box::new(self.status_tracker.clone()))
-            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
-        r.register(Box::new(self.l1_gas_price.clone()))
-            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
-        r.register(Box::new(self.l2_gas_price.clone()))
-            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
-        r.register(Box::new(self.operations_tracker.clone()))
-            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
-        r.register(Box::new(self.blob_usage.clone()))
-            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
-        r.register(Box::new(self.batch_size.clone()))
-            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
-        r.register(Box::new(self.batch_gas_used.clone()))
-            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
-        r.register(Box::new(self.batch_proving_time.clone()))
-            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
-        r.register(Box::new(self.batch_verification_gas.clone()))
-            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
-        r.register(Box::new(self.batch_commitment_gas.clone()))
-            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
-        r.register(Box::new(self.batch_commitment_blob_gas.clone()))
-            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
-        r.register(Box::new(self.batch_tx_count.clone()))
-            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
-
         let encoder = TextEncoder::new();
-        let metric_families = r.gather();
+        let metric_families = self.registry.gather();
 
         let mut buffer = Vec::new();
         encoder
