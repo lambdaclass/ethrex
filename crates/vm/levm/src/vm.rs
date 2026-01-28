@@ -95,7 +95,7 @@ impl Substate {
             accessed_storage_slots,
             created_accounts: FxHashSet::default(),
             refunded_gas: 0,
-            transient_storage: TransientStorage::new(),
+            transient_storage: TransientStorage::default(),
             logs: Vec::new(),
         }
     }
