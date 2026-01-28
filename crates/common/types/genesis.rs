@@ -51,6 +51,10 @@ pub struct Genesis {
     #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
     pub excess_blob_gas: Option<u64>,
     pub requests_hash: Option<H256>,
+    // Amsterdam fork fields (EIP-7928)
+    pub block_access_list_hash: Option<H256>,
+    #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
+    pub slot_number: Option<u64>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -692,6 +696,10 @@ impl Genesis {
             .is_prague_activated(self.timestamp)
             .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH));
 
+        // Amsterdam fork fields - these are optional and only included if present in genesis
+        let block_access_list_hash = self.block_access_list_hash;
+        let slot_number = self.slot_number;
+
         BlockHeader {
             parent_hash: H256::zero(),
             ommers_hash: *DEFAULT_OMMERS_HASH,
@@ -714,6 +722,8 @@ impl Genesis {
             excess_blob_gas,
             parent_beacon_block_root,
             requests_hash,
+            block_access_list_hash,
+            slot_number,
             ..Default::default()
         }
     }
