@@ -13,7 +13,7 @@ use crate::utils::{
     get_account_storages_snapshots_dir, get_code_hashes_snapshots_dir,
 };
 use crate::{
-    metrics::METRICS,
+    metrics::{CurrentStepValue, METRICS},
     peer_handler::{MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
 };
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
@@ -722,6 +722,9 @@ impl Syncer {
             info!("Finish downloading account ranges from peers");
 
             *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
+            METRICS
+                .current_step
+                .set(CurrentStepValue::InsertingAccountRanges);
             // We read the account leafs from the files in account_state_snapshots_dir, write it into
             // the trie to compute the nodes and stores the accounts with storages for later use
 
