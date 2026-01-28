@@ -60,12 +60,19 @@ pub enum InternalError {
 #[derive(Parser, Debug, Default)]
 pub struct EFTestRunnerOptions {
     /// For running tests of specific forks.
+    // Amsterdam fork removed until EIPs are implemented.
+    // To re-enable: add "Amsterdam" back to default_value after implementing:
+    // - EIP-7928: Block-Level Access Lists
+    // - EIP-7708: ETH Transfers Emit a Log
+    // - EIP-7778: Block Gas Accounting without Refunds
+    // - EIP-7843: SLOTNUM Opcode
+    // - EIP-8024: DUPN/SWAPN/EXCHANGE
     #[arg(
         long,
         value_name = "FORK",
         value_delimiter = ',',
         value_parser=parse_fork,
-        default_value = "Paris,Shanghai,Cancun,Prague,Osaka,Amsterdam"
+        default_value = "Paris,Shanghai,Cancun,Prague,Osaka"
     )]
     pub forks: Option<Vec<Fork>>,
     /// For running specific .json files
