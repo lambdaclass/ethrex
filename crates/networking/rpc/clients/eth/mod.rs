@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    debug::execution_witness::RpcExecutionWitness,
     eth::client::EthConfigResponse,
     mempool::MempoolContent,
     types::{
@@ -10,29 +9,24 @@ use crate::{
         receipt::{RpcLog, RpcReceipt},
         transaction::RpcTransaction,
     },
-    utils::{RpcErrorResponse, RpcRequest, RpcSuccessResponse},
+    utils::{RpcRequest, RpcResponse},
 };
 use bytes::Bytes;
 use errors::{EthClientError, RpcRequestError};
 use ethrex_common::{
     Address, H256, U256,
-    types::{AuthorizationTupleEntry, BlobsBundle, Block, GenericTransaction, TxKind},
+    types::{
+        AuthorizationTupleEntry, BlobsBundle, Block, GenericTransaction, TxKind,
+        block_execution_witness::RpcExecutionWitness,
+    },
     utils::decode_hex,
 };
 use ethrex_rlp::decode::RLPDecode;
 use reqwest::{Client, Url};
-use serde::Deserialize;
 use serde_json::{Value, json};
 use tracing::{debug, trace, warn};
 
 pub mod errors;
-
-#[derive(Deserialize, Debug)]
-#[serde(untagged)]
-pub enum RpcResponse {
-    Success(RpcSuccessResponse),
-    Error(RpcErrorResponse),
-}
 
 #[derive(Debug, Clone)]
 pub struct EthClient {

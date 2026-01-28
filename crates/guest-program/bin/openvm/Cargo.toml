@@ -21,7 +21,6 @@ ethrex-vm = { path = "../../../vm", default-features = false, features = [
 ethrex-common = { path = "../../../common", default-features = false, features = [
     "openvm",
 ] }
-ethrex-blockchain = { path = "../../../blockchain", default-features = false }
 
 ethrex-guest-program = { path = "../..", default-features = false }
 
