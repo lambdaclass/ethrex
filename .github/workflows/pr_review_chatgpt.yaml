@@ -29,12 +29,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        with:
-          openai_engine: gpt-4o
-          language: en
-          review_comment_lgtm: false
-          max_tokens: 4096
-          prompt: |
+          MODEL: gpt-4o
+          LANGUAGE: English
+          MAX_TOKENS: 4096
+          PROMPT: |
             You are a senior code reviewer for ethrex, a Rust-based Ethereum execution client.
 
             Review this PR focusing on:
