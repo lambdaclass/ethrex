@@ -142,6 +142,16 @@ pub struct BlockHeader {
     #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
     #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
     pub requests_hash: Option<H256>,
+    // Amsterdam fork fields (EIP-7928)
+    #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
+    #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
+    pub block_access_list_hash: Option<H256>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "crate::serde_utils::u64::hex_str_opt",
+        default = "Option::default"
+    )]
+    pub slot_number: Option<u64>,
 }
 
 // Needs a explicit impl due to the hash OnceLock.
@@ -170,6 +180,8 @@ impl PartialEq for BlockHeader {
             excess_blob_gas,
             parent_beacon_block_root,
             requests_hash,
+            block_access_list_hash,
+            slot_number,
         } = self;
 
         parent_hash == &other.parent_hash
@@ -191,6 +203,8 @@ impl PartialEq for BlockHeader {
             && difficulty == &other.difficulty
             && ommers_hash == &other.ommers_hash
             && requests_hash == &other.requests_hash
+            && block_access_list_hash == &other.block_access_list_hash
+            && slot_number == &other.slot_number
             && logs_bloom == &other.logs_bloom
             && extra_data == &other.extra_data
     }
@@ -220,6 +234,8 @@ impl RLPEncode for BlockHeader {
             .encode_optional_field(&self.excess_blob_gas)
             .encode_optional_field(&self.parent_beacon_block_root)
             .encode_optional_field(&self.requests_hash)
+            .encode_optional_field(&self.block_access_list_hash)
+            .encode_optional_field(&self.slot_number)
             .finish();
     }
 }
@@ -249,6 +265,8 @@ impl RLPDecode for BlockHeader {
         let (excess_blob_gas, decoder) = decoder.decode_optional_field();
         let (parent_beacon_block_root, decoder) = decoder.decode_optional_field();
         let (requests_hash, decoder) = decoder.decode_optional_field();
+        let (block_access_list_hash, decoder) = decoder.decode_optional_field();
+        let (slot_number, decoder) = decoder.decode_optional_field();
 
         Ok((
             BlockHeader {
@@ -274,6 +292,8 @@ impl RLPDecode for BlockHeader {
                 excess_blob_gas,
                 parent_beacon_block_root,
                 requests_hash,
+                block_access_list_hash,
+                slot_number,
             },
             decoder.finish()?,
         ))

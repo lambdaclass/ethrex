@@ -700,7 +700,7 @@ pub fn fork_to_spec_id(fork: Fork) -> SpecId {
         Fork::BPO3 => SpecId::OSAKA,
         Fork::BPO4 => SpecId::OSAKA,
         Fork::BPO5 => SpecId::OSAKA,
-        Fork::Amsterdam => todo!(),
+        Fork::Amsterdam => SpecId::OSAKA, // Amsterdam maps to OSAKA until revm adds AMSTERDAM SpecId
     }
 }
 

@@ -32,6 +32,8 @@ pub fn migrate_block_header(header: LibmdbxBlockHeader) -> BlockHeader {
         excess_blob_gas: header.excess_blob_gas,
         parent_beacon_block_root: header.parent_beacon_block_root,
         requests_hash: header.requests_hash,
+        block_access_list_hash: None,
+        slot_number: None,
     }
 }
 
