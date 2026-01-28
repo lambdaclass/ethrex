@@ -261,7 +261,6 @@ impl<'a> VM<'a> {
     pub fn op_extcodesize(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
         let address_was_cold = !self.substate.add_accessed_address(address);
-        // Optimized: only fetch code length, not full bytecode
         let account_code_length = self.db.get_code_length(address)?.into();
 
         let current_call_frame = &mut self.current_call_frame;

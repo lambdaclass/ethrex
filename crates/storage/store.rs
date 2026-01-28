@@ -784,7 +784,7 @@ impl Store {
     pub async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
         let hash_key = code.hash.0.to_vec();
         let buf = encode_code(&code);
-        let metadata_buf = (code.bytecode.len() as u64).to_be_bytes().to_vec();
+        let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
 
         // Write both code and metadata atomically
         let backend = self.backend.clone();
@@ -1389,7 +1389,7 @@ impl Store {
 
         for (code_hash, code) in update_batch.code_updates {
             let buf = encode_code(&code);
-            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes().to_vec();
+            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
             tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
             tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
         }
