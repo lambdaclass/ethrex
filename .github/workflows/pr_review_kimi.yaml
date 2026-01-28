@@ -60,11 +60,11 @@ jobs:
               "messages": [
                 {
                   "role": "system",
-                  "content": "You are a senior Rust code reviewer specializing in blockchain and Ethereum implementations."
+                  "content": "You are a senior code reviewer for ethrex, a Rust-based Ethereum execution client."
                 },
                 {
                   "role": "user",
-                  "content": ("You are a senior code reviewer for ethrex, a Rust-based Ethereum execution client.\n\nPR Title: " + $title + "\n\nReview this PR diff focusing on:\n- Code correctness and potential bugs\n- Security vulnerabilities (critical for blockchain code)\n- Performance implications\n- Rust best practices\n- Error handling patterns\n\nBe concise and specific. Provide line references when possible.\n\nDiff:\n" + $diff)
+                  "content": ("PR Title: " + $title + "\n\nReview this PR focusing on:\n- Code correctness and potential bugs\n- Security vulnerabilities (critical for blockchain code)\n- Performance implications\n- Rust best practices and idiomatic patterns\n- Memory safety and proper error handling\n- Code readability and maintainability\n\nEthereum-specific considerations:\n- EVM opcode correctness and gas accounting\n- Consensus rules and EIP compliance\n- State trie and storage operations\n- RLP encoding/decoding correctness\n- Transaction and block validation logic\n\nBe concise and specific. Provide line references when suggesting changes.\nIf the code looks good, acknowledge it briefly.\n\nDiff:\n" + $diff)
                 }
               ],
               "temperature": 0.3,

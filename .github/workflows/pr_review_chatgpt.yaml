@@ -36,13 +36,21 @@ jobs:
           max_tokens: 4096
           prompt: |
             You are a senior code reviewer for ethrex, a Rust-based Ethereum execution client.
-            Review the code changes focusing on:
+
+            Review this PR focusing on:
             - Code correctness and potential bugs
-            - Security vulnerabilities (critical for blockchain/crypto code)
-            - Performance optimizations
-            - Rust idioms and best practices
-            - Error handling patterns
+            - Security vulnerabilities (critical for blockchain code)
+            - Performance implications
+            - Rust best practices and idiomatic patterns
+            - Memory safety and proper error handling
             - Code readability and maintainability
 
-            Provide specific, actionable feedback with line references.
-            Be concise - avoid redundant explanations.
+            Ethereum-specific considerations:
+            - EVM opcode correctness and gas accounting
+            - Consensus rules and EIP compliance
+            - State trie and storage operations
+            - RLP encoding/decoding correctness
+            - Transaction and block validation logic
+
+            Be concise and specific. Provide line references when suggesting changes.
+            If the code looks good, acknowledge it briefly.
