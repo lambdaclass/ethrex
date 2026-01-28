@@ -15,7 +15,6 @@ use ethrex_levm::errors::{ExecutionReport, VMError};
 pub use revm::primitives::hardfork::SpecId;
 use serde::{Deserialize, Serialize};
 use spinoff::{Color, Spinner, spinners::Dots};
-use std::str::FromStr;
 
 pub mod levm_runner;
 pub mod revm_db;
