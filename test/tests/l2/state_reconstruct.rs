@@ -28,6 +28,7 @@ use std::fs;
 // 5. blob_5: Batch of blocks 17 through 21
 //
 // - Each block contains exactly 10 deposit transactions
+#[ignore] // Requires L2 running - use --ignored flag
 #[tokio::test]
 async fn test_state_reconstruct() {
     let pks_path = std::env::var("PRIVATE_KEYS_PATH")

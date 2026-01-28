@@ -99,6 +99,7 @@ pub fn read_env_file_by_config() {
     }
 }
 
+#[ignore] // Requires L2 running - use --ignored flag
 #[tokio::test]
 async fn test_shared_bridge() -> Result<()> {
     test_counter().await?;
@@ -516,6 +517,7 @@ async fn test_counter() -> Result<()> {
     Ok(())
 }
 
+#[ignore] // Requires L2 running - use --ignored flag
 #[tokio::test]
 async fn test_forced_inclusion() {
     // The porpuse of this test is to verify that an L2 (L2A) that ignores messages from another L2 (L2B)

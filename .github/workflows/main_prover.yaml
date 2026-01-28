@@ -124,7 +124,7 @@ jobs:
           make init-prover-sp1 GPU=true &
           docker logs --follow ethrex_l2 & DOCKER_LOGS_L2_PID=$!
           docker logs --follow ethrex_l1 & DOCKER_LOGS_L1_PID=$!
-          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --ignored --nocapture --test-threads=1
           killall ethrex -s SIGINT
           kill $DOCKER_LOGS_L2_PID || true
           kill $DOCKER_LOGS_L1_PID || true

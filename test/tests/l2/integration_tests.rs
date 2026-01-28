@@ -100,6 +100,7 @@ const DEFAULT_ON_CHAIN_PROPOSER_ADDRESS: Address = H160([
 const DEFAULT_RICH_KEYS_FILE_PATH: &str = "../fixtures/keys/private_keys_l1.txt";
 const DEFAULT_TEST_KEYS_FILE_PATH: &str = "../fixtures/keys/private_keys_tests.txt";
 
+#[ignore] // Requires L2 running - use --ignored flag
 #[tokio::test]
 async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     read_env_file_by_config();
