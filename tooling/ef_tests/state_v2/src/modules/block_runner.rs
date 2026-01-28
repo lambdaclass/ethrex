@@ -49,10 +49,17 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
 
     let (receipts, gas_used) = match execution_result {
         Ok(report) => {
+            // EIP-7778: Set gas_spent for Amsterdam+ receipts
+            let gas_spent = if test_case.fork >= Fork::Amsterdam {
+                Some(report.gas_spent)
+            } else {
+                None
+            };
             let receipt = Receipt::new(
                 tx.tx_type(),
                 report.is_success(),
                 report.gas_used,
+                gas_spent,
                 report.logs.clone(),
             );
             (vec![receipt], report.gas_used)
