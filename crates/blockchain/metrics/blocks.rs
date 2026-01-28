@@ -24,6 +24,19 @@ pub struct MetricsBlocks {
     store_ms: IntGauge,
     /// Keeps track of the head block number
     head_height: IntGauge,
+    // Pipeline-specific metrics
+    /// Block validation time in milliseconds
+    validate_ms: IntGauge,
+    /// Time spent on merkle operations concurrent with execution
+    merkle_concurrent_ms: IntGauge,
+    /// Time spent draining merkle queue after execution completes
+    merkle_drain_ms: IntGauge,
+    /// Percentage of merkle work done concurrently with execution
+    merkle_overlap_pct: IntGauge,
+    /// Total warmer thread execution time in milliseconds
+    warmer_ms: IntGauge,
+    /// Warmer finished early (positive) or late (negative) relative to exec, in ms
+    warmer_early_ms: IntGauge,
 }
 
 impl Default for MetricsBlocks {
@@ -39,17 +52,17 @@ impl MetricsBlocks {
                 "gas_limit",
                 "Keeps track of the percentage of gas limit used by the last processed block",
             )
-            .unwrap(),
+            .expect("Failed to create gas_limit metric"),
             block_number: IntGauge::new(
                 "block_number",
                 "Keeps track of the block number for the last processed block",
             )
-            .unwrap(),
+            .expect("Failed to create block_number metric"),
             gigagas: Gauge::new(
                 "gigagas",
                 "Keeps track of the block execution throughput through gigagas/s",
             )
-            .unwrap(),
+            .expect("Failed to create gigagas metric"),
             gigagas_histogram: Histogram::with_opts(
                 HistogramOpts::new(
                     "gigagas_histogram",
@@ -58,62 +71,92 @@ impl MetricsBlocks {
                 .buckets({
                     let mut buckets = vec![0.0];
                     // 0.0 is added separately; next 5 buckets cover 0.03 to 0.15 Ggas (30 Mgas resolution)
-                    buckets.extend(prometheus::linear_buckets(0.03, 0.03, 5).unwrap());
+                    buckets.extend(prometheus::linear_buckets(0.03, 0.03, 5).expect("Invalid bucket params"));
                     // 0.16 to 1.5 Ggas (10 Mgas resolution) -- 0.15 is covered by the previous bucket range
-                    buckets.extend(prometheus::linear_buckets(0.16, 0.01, 135).unwrap());
+                    buckets.extend(prometheus::linear_buckets(0.16, 0.01, 135).expect("Invalid bucket params"));
                     // 1.6 to 2.0 Ggas (100 Mgas resolution)
-                    buckets.extend(prometheus::linear_buckets(1.6, 0.1, 5).unwrap());
+                    buckets.extend(prometheus::linear_buckets(1.6, 0.1, 5).expect("Invalid bucket params"));
                     // High values
                     buckets.extend(vec![2.5, 3.0, 4.0, 5.0, 10.0, 20.0]);
                     buckets
                 }),
             )
-            .unwrap(),
+            .expect("Failed to create gigagas_histogram metric"),
             gigagas_block_building: Gauge::new(
                 "gigagas_block_building",
                 "Keeps track of the block building throughput through gigagas/s",
             )
-            .unwrap(),
+            .expect("Failed to create gigagas_block_building metric"),
             block_building_ms: IntGauge::new(
                 "block_building_ms",
                 "Keeps track of the block building throughput through miliseconds",
             )
-            .unwrap(),
+            .expect("Failed to create block_building_ms metric"),
             block_building_base_fee: IntGauge::new(
                 "block_building_base_fee",
                 "Keeps track of the block building base fee",
             )
-            .unwrap(),
+            .expect("Failed to create block_building_base_fee metric"),
             gas_used: Gauge::new(
                 "gas_used",
                 "Keeps track of the gas used in the last processed block",
             )
-            .unwrap(),
+            .expect("Failed to create gas_used metric"),
             head_height: IntGauge::new(
                 "head_height",
                 "Keeps track of the block number for the head of the chain",
             )
-            .unwrap(),
+            .expect("Failed to create head_height metric"),
             execution_ms: IntGauge::new(
                 "execution_ms",
                 "Keeps track of the execution time spent in block execution in miliseconds",
             )
-            .unwrap(),
+            .expect("Failed to create execution_ms metric"),
             merkle_ms: IntGauge::new(
                 "merkle_ms",
                 "Keeps track of the execution time spent in block merkelization in miliseconds",
             )
-            .unwrap(),
+            .expect("Failed to create merkle_ms metric"),
             store_ms: IntGauge::new(
                 "store_ms",
                 "Keeps track of the execution time spent in block storage in miliseconds",
             )
-            .unwrap(),
+            .expect("Failed to create store_ms metric"),
             transaction_count: IntGauge::new(
                 "transaction_count",
                 "Keeps track of transaction count in a block",
             )
-            .unwrap(),
+            .expect("Failed to create transaction_count metric"),
+            validate_ms: IntGauge::new(
+                "validate_ms",
+                "Block validation time in milliseconds",
+            )
+            .expect("Failed to create validate_ms metric"),
+            merkle_concurrent_ms: IntGauge::new(
+                "merkle_concurrent_ms",
+                "Time spent on merkle operations concurrent with execution in milliseconds",
+            )
+            .expect("Failed to create merkle_concurrent_ms metric"),
+            merkle_drain_ms: IntGauge::new(
+                "merkle_drain_ms",
+                "Time spent draining merkle queue after execution completes in milliseconds",
+            )
+            .expect("Failed to create merkle_drain_ms metric"),
+            merkle_overlap_pct: IntGauge::new(
+                "merkle_overlap_pct",
+                "Percentage of merkle work done concurrently with execution",
+            )
+            .expect("Failed to create merkle_overlap_pct metric"),
+            warmer_ms: IntGauge::new(
+                "warmer_ms",
+                "Total warmer thread execution time in milliseconds",
+            )
+            .expect("Failed to create warmer_ms metric"),
+            warmer_early_ms: IntGauge::new(
+                "warmer_early_ms",
+                "Warmer finished early (positive) or late (negative) relative to exec in milliseconds",
+            )
+            .expect("Failed to create warmer_early_ms metric"),
         }
     }
 
@@ -166,6 +209,30 @@ impl MetricsBlocks {
         self.gas_used.set(gas_used);
     }
 
+    pub fn set_validate_ms(&self, validate_ms: i64) {
+        self.validate_ms.set(validate_ms);
+    }
+
+    pub fn set_merkle_concurrent_ms(&self, merkle_concurrent_ms: i64) {
+        self.merkle_concurrent_ms.set(merkle_concurrent_ms);
+    }
+
+    pub fn set_merkle_drain_ms(&self, merkle_drain_ms: i64) {
+        self.merkle_drain_ms.set(merkle_drain_ms);
+    }
+
+    pub fn set_merkle_overlap_pct(&self, merkle_overlap_pct: i64) {
+        self.merkle_overlap_pct.set(merkle_overlap_pct);
+    }
+
+    pub fn set_warmer_ms(&self, warmer_ms: i64) {
+        self.warmer_ms.set(warmer_ms);
+    }
+
+    pub fn set_warmer_early_ms(&self, warmer_early_ms: i64) {
+        self.warmer_early_ms.set(warmer_early_ms);
+    }
+
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         if self.block_number.get() <= 0 {
             return Ok(String::new());
@@ -198,6 +265,18 @@ impl MetricsBlocks {
         r.register(Box::new(self.merkle_ms.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.transaction_count.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.validate_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.merkle_concurrent_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.merkle_drain_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.merkle_overlap_pct.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.warmer_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.warmer_early_ms.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();

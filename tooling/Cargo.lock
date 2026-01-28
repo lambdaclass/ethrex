@@ -2570,11 +2570,11 @@ dependencies = [
  "datatest-stable",
  "ethrex-blockchain",
  "ethrex-common 9.0.0",
+ "ethrex-guest-program",
  "ethrex-prover",
  "ethrex-rlp 9.0.0",
  "ethrex-storage 9.0.0",
  "ethrex-vm",
- "guest_program",
  "hex",
  "lazy_static",
  "regex",
@@ -3336,6 +3336,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-guest-program"
+version = "9.0.0"
+dependencies = [
+ "bytes",
+ "ethrex-common 9.0.0",
+ "ethrex-crypto",
+ "ethrex-l2-common",
+ "ethrex-rlp 9.0.0",
+ "ethrex-vm",
+ "hex",
+ "rkyv",
+ "serde",
+ "serde_with",
+ "sp1-build",
+ "sp1-sdk",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "ethrex-l2"
 version = "9.0.0"
 dependencies = [
@@ -3355,6 +3374,7 @@ dependencies = [
  "ethrex-common 9.0.0",
  "ethrex-config",
  "ethrex-dev",
+ "ethrex-guest-program",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
  "ethrex-levm",
@@ -3368,7 +3388,6 @@ dependencies = [
  "ethrex-trie 9.0.0",
  "ethrex-vm",
  "futures",
- "guest_program",
  "hex",
  "jsonwebtoken 9.3.1",
  "lazy_static",
@@ -3401,7 +3420,6 @@ dependencies = [
  "ethrex-common 9.0.0",
  "ethrex-crypto",
  "ethrex-rlp 9.0.0",
- "ethrex-storage 9.0.0",
  "ethrex-trie 9.0.0",
  "ethrex-vm",
  "hex",
@@ -3511,7 +3529,6 @@ dependencies = [
  "ethrex-rlp 9.0.0",
  "ethrex-storage 9.0.0",
  "ethrex-storage-rollup",
- "ethrex-threadpool",
  "ethrex-trie 9.0.0",
  "futures",
  "hex",
@@ -3548,13 +3565,13 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
  "ethrex-common 9.0.0",
+ "ethrex-guest-program",
  "ethrex-l2",
  "ethrex-l2-common",
  "ethrex-rlp 9.0.0",
  "ethrex-sdk",
  "ethrex-storage 9.0.0",
  "ethrex-vm",
- "guest_program",
  "hex",
  "kzg-rs",
  "rkyv",
@@ -3703,9 +3720,9 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-rlp 9.0.0",
  "ethrex-trie 9.0.0",
+ "fastbloom",
  "hex",
  "lru 0.16.2",
- "qfilter",
  "rayon",
  "rocksdb",
  "rustc-hash 2.1.1",
@@ -3733,13 +3750,6 @@ dependencies = [
  "rkyv",
  "thiserror 2.0.17",
  "tracing",
-]
-
-[[package]]
-name = "ethrex-threadpool"
-version = "9.0.0"
-dependencies = [
- "crossbeam 0.8.4",
 ]
 
 [[package]]
@@ -3774,7 +3784,6 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-crypto",
  "ethrex-rlp 9.0.0",
- "ethrex-threadpool",
  "hex",
  "lazy_static",
  "rkyv",
@@ -3801,7 +3810,9 @@ dependencies = [
  "ethrex-rlp 9.0.0",
  "ethrex-trie 9.0.0",
  "lazy_static",
+ "rayon",
  "rkyv",
+ "rustc-hash 2.1.1",
  "serde",
  "thiserror 2.0.17",
  "tracing",
@@ -3837,6 +3848,18 @@ dependencies = [
  "bit-set 0.8.0",
  "regex-automata",
  "regex-syntax",
+]
+
+[[package]]
+name = "fastbloom"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e7f34442dbe69c60fe8eaf58a8cafff81a1f278816d8ab4db255b3bef4ac3c4"
+dependencies = [
+ "getrandom 0.3.4",
+ "libm",
+ "rand 0.9.2",
+ "siphasher",
 ]
 
 [[package]]
@@ -4307,30 +4330,6 @@ dependencies = [
  "ff 0.13.1",
  "rand_core 0.6.4",
  "subtle",
-]
-
-[[package]]
-name = "guest_program"
-version = "9.0.0"
-dependencies = [
- "bincode",
- "bytes",
- "ethrex-blockchain",
- "ethrex-common 9.0.0",
- "ethrex-crypto",
- "ethrex-l2-common",
- "ethrex-rlp 9.0.0",
- "ethrex-storage 9.0.0",
- "ethrex-trie 9.0.0",
- "ethrex-vm",
- "hex",
- "rkyv",
- "serde",
- "serde_json",
- "serde_with",
- "sp1-build",
- "sp1-sdk",
- "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -7171,15 +7170,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.110",
-]
-
-[[package]]
-name = "qfilter"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "746341cd2357c9a4df2d951522b4a8dd1ef553e543119899ad7bf87e938c8fbe"
-dependencies = [
- "xxhash-rust",
 ]
 
 [[package]]
@@ -11241,12 +11231,6 @@ checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
 dependencies = [
  "tap",
 ]
-
-[[package]]
-name = "xxhash-rust"
-version = "0.8.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
 
 [[package]]
 name = "yansi"
