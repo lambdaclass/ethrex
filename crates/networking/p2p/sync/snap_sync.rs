@@ -7,8 +7,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 #[cfg(feature = "rocksdb")]
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 
 use ethrex_blockchain::Blockchain;
@@ -46,10 +46,13 @@ use ethrex_common::U256;
 use ethrex_rlp::encode::RLPEncode;
 
 /// Persisted State during the Block Sync phase for SnapSync
-#[derive(Clone)]
 pub struct SnapBlockSyncState {
     pub block_hashes: Vec<H256>,
     store: Store,
+    /// Channel to receive headers from background download task
+    header_receiver: Option<tokio::sync::mpsc::Receiver<Vec<BlockHeader>>>,
+    /// Flag indicating whether background header download is complete
+    download_complete: Option<Arc<AtomicBool>>,
 }
 
 impl SnapBlockSyncState {
@@ -57,7 +60,36 @@ impl SnapBlockSyncState {
         Self {
             block_hashes: Vec::new(),
             store,
+            header_receiver: None,
+            download_complete: None,
         }
+    }
+
+    /// Sets up the channel for receiving headers from the background download task
+    pub fn set_header_channel(
+        &mut self,
+        receiver: tokio::sync::mpsc::Receiver<Vec<BlockHeader>>,
+        download_complete: Arc<AtomicBool>,
+    ) {
+        self.header_receiver = Some(receiver);
+        self.download_complete = Some(download_complete);
+    }
+
+    /// Non-blocking method to receive incoming headers from the background task
+    pub fn try_receive_headers(&mut self) -> Option<Vec<BlockHeader>> {
+        if let Some(receiver) = &mut self.header_receiver {
+            receiver.try_recv().ok()
+        } else {
+            None
+        }
+    }
+
+    /// Check if the background header download is complete
+    pub fn is_download_complete(&self) -> bool {
+        self.download_complete
+            .as_ref()
+            .map(|flag| flag.load(Ordering::Acquire))
+            .unwrap_or(true)
     }
 
     /// Obtain the current head from where to start or resume block sync
@@ -94,47 +126,37 @@ impl SnapBlockSyncState {
     }
 }
 
-/// Performs snap sync cycle - fetches state via snap protocol while downloading blocks in parallel
-pub async fn sync_cycle_snap(
-    peers: &mut PeerHandler,
-    blockchain: Arc<Blockchain>,
-    snap_enabled: &std::sync::atomic::AtomicBool,
-    sync_head: H256,
+/// Downloads block headers in the background, sending them via channel.
+/// This allows state download to proceed in parallel with header download.
+#[allow(clippy::too_many_arguments)]
+async fn download_headers_background(
+    mut peers: PeerHandler,
     store: Store,
-    datadir: &Path,
+    start_number: u64,
+    sync_head: H256,
+    header_sender: tokio::sync::mpsc::Sender<Vec<BlockHeader>>,
+    download_complete: Arc<AtomicBool>,
+    blockchain: Arc<Blockchain>,
+    snap_enabled: Arc<AtomicBool>,
 ) -> Result<(), SyncError> {
-    // Request all block headers between the current head and the sync head
-    // We will begin from the current head so that we download the earliest state first
-    // This step is not parallelized
-    let mut block_sync_state = SnapBlockSyncState::new(store.clone());
-    // Check if we have some blocks downloaded from a previous sync attempt
-    // This applies only to snap sync—full sync always starts fetching headers
-    // from the canonical block, which updates as new block headers are fetched.
-    let mut current_head = block_sync_state.get_current_head().await?;
-    let mut current_head_number = store
-        .get_block_number(current_head)
-        .await?
-        .ok_or(SyncError::BlockNumber(current_head))?;
-    info!(
-        "Syncing from current head {:?} to sync_head {:?}",
-        current_head, sync_head
-    );
+    let mut current_head_number = start_number;
+    let mut attempts = 0;
+
     let pending_block = match store.get_pending_block(sync_head).await {
         Ok(res) => res,
         Err(e) => return Err(e.into()),
     };
 
-    let mut attempts = 0;
-
     loop {
-        debug!("Requesting Block Headers from {current_head}");
+        debug!("Background: Requesting Block Headers from number {current_head_number}");
 
         let Some(mut block_headers) = peers
             .request_block_headers(current_head_number, sync_head)
             .await?
         else {
             if attempts > MAX_HEADER_FETCH_ATTEMPTS {
-                warn!("Sync failed to find target block header, aborting");
+                warn!("Background: Sync failed to find target block header, aborting");
+                download_complete.store(true, Ordering::Release);
                 return Ok(());
             }
             attempts += 1;
@@ -142,13 +164,7 @@ pub async fn sync_cycle_snap(
             continue;
         };
 
-        debug!("Sync Log 1: In snap sync");
-        debug!(
-            "Sync Log 2: State block hashes len {}",
-            block_sync_state.block_hashes.len()
-        );
-
-        let (first_block_hash, first_block_number, first_block_parent_hash) =
+        let (first_block_hash, first_block_number, _first_block_parent_hash) =
             match block_headers.first() {
                 Some(header) => (header.hash(), header.number, header.parent_hash),
                 None => continue,
@@ -157,27 +173,34 @@ pub async fn sync_cycle_snap(
             Some(header) => (header.hash(), header.number),
             None => continue,
         };
-        // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
-        // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
+
+        // Handle reorg case where sync head is not reachable
+        let current_head = store
+            .get_block_header(current_head_number)?
+            .map(|h| h.hash())
+            .unwrap_or(first_block_hash);
+
         if first_block_hash == last_block_hash
             && first_block_hash == current_head
             && current_head != sync_head
         {
-            // There is no path to the sync head this goes back until it find a common ancerstor
-            warn!("Sync failed to find target block header, going back to the previous parent");
-            current_head = first_block_parent_hash;
+            warn!(
+                "Background: Sync failed to find target block header, going back to the previous parent"
+            );
+            // We can't easily go back in the background task, so we just continue with the current head
+            // The update_pivot mechanism will handle this case
+            tokio::time::sleep(Duration::from_millis(100)).await;
             continue;
         }
 
         debug!(
-            "Received {} block headers| First Number: {} Last Number: {}",
+            "Background: Received {} block headers| First Number: {} Last Number: {}",
             block_headers.len(),
             first_block_number,
             last_block_number
         );
 
-        // If we have a pending block from new_payload request
-        // attach it to the end if it matches the parent_hash of the latest received header
+        // Attach pending block if it matches
         if let Some(ref block) = pending_block
             && block.header.parent_hash == last_block_hash
         {
@@ -195,47 +218,141 @@ pub async fn sync_cycle_snap(
         }
 
         // Update current fetch head
-        current_head = last_block_hash;
         current_head_number = last_block_number;
 
-        // If the sync head is not 0 we search to fullsync
+        // Check for full sync case - if we're close to head, switch to full sync
         let head_found = sync_head_found && store.get_latest_block_number().await? > 0;
-        // Or the head is very close to 0
         let head_close_to_0 = last_block_number < MIN_FULL_BLOCKS;
 
         if head_found || head_close_to_0 {
-            // Too few blocks for a snap sync, switching to full sync
-            info!("Sync head is found, switching to FullSync");
+            info!("Background: Sync head is found, will switch to FullSync");
             snap_enabled.store(false, Ordering::Relaxed);
+            // Send remaining headers and signal completion
+            if block_headers.len() > 1 {
+                let _ = header_sender.send(block_headers).await;
+            }
+            download_complete.store(true, Ordering::Release);
+            // The main task will handle the full sync switch
             return super::full::sync_cycle_full(
-                peers,
+                &mut peers,
                 blockchain,
                 tokio_util::sync::CancellationToken::new(),
                 sync_head,
-                store.clone(),
+                store,
             )
             .await;
         }
 
-        // Discard the first header as we already have it
-        if block_headers.len() > 1 {
-            let block_headers_iter = block_headers.into_iter().skip(1);
-
-            block_sync_state
-                .process_incoming_headers(block_headers_iter)
-                .await?;
+        // Send headers through channel (skip the first as we already have it)
+        if block_headers.len() > 1 && header_sender.send(block_headers).await.is_err() {
+            debug!("Background: Header receiver dropped, stopping download");
+            break;
         }
 
         if sync_head_found {
+            debug!("Background: Sync head found, header download complete");
             break;
-        };
+        }
     }
 
+    download_complete.store(true, Ordering::Release);
+    Ok(())
+}
+
+/// Performs snap sync cycle - fetches state via snap protocol while downloading blocks in parallel
+/// Header download now runs in the background, allowing state download to start immediately.
+pub async fn sync_cycle_snap(
+    peers: &mut PeerHandler,
+    blockchain: Arc<Blockchain>,
+    snap_enabled: &std::sync::atomic::AtomicBool,
+    sync_head: H256,
+    store: Store,
+    datadir: &Path,
+) -> Result<(), SyncError> {
+    let mut block_sync_state = SnapBlockSyncState::new(store.clone());
+    // Check if we have some blocks downloaded from a previous sync attempt
+    let current_head = block_sync_state.get_current_head().await?;
+    let current_head_number = store
+        .get_block_number(current_head)
+        .await?
+        .ok_or(SyncError::BlockNumber(current_head))?;
+    info!(
+        "Syncing from current head {:?} (number: {}) to sync_head {:?}",
+        current_head, current_head_number, sync_head
+    );
+
+    // Create channel for header communication between background task and main snap_sync
+    let (header_sender, header_receiver) = tokio::sync::mpsc::channel(100);
+    let download_complete = Arc::new(AtomicBool::new(false));
+
+    // Setup block_sync_state with channel receiver
+    block_sync_state.set_header_channel(header_receiver, download_complete.clone());
+
+    // Create Arc wrapper for snap_enabled so we can share it with the background task
+    let snap_enabled_arc = Arc::new(AtomicBool::new(snap_enabled.load(Ordering::Relaxed)));
+
+    // Spawn background header download task
+    let peers_clone = peers.clone();
+    let store_clone = store.clone();
+    let blockchain_clone = blockchain.clone();
+    let snap_enabled_clone = snap_enabled_arc.clone();
+    let header_download_handle = tokio::spawn(async move {
+        download_headers_background(
+            peers_clone,
+            store_clone,
+            current_head_number,
+            sync_head,
+            header_sender,
+            download_complete,
+            blockchain_clone,
+            snap_enabled_clone,
+        )
+        .await
+    });
+
+    info!("Background header download started, proceeding with state download");
+
+    // State download starts IMMEDIATELY (no waiting for all headers)
     snap_sync(peers, &store, &mut block_sync_state, datadir).await?;
+
+    // Wait for background task to complete
+    match header_download_handle.await {
+        Ok(Ok(())) => {
+            debug!("Background header download completed successfully");
+        }
+        Ok(Err(e)) => {
+            warn!("Background header download failed: {e}");
+            // The state download completed, so we can continue
+        }
+        Err(e) => {
+            warn!("Background header download task panicked: {e}");
+        }
+    }
+
+    // Sync the snap_enabled state back from the Arc
+    if !snap_enabled_arc.load(Ordering::Relaxed) {
+        snap_enabled.store(false, Ordering::Relaxed);
+    }
 
     store.clear_snap_state().await?;
     snap_enabled.store(false, Ordering::Relaxed);
 
+    Ok(())
+}
+
+/// Helper function to process any pending headers from the background download task
+async fn process_pending_headers(
+    block_sync_state: &mut SnapBlockSyncState,
+) -> Result<(), SyncError> {
+    while let Some(headers) = block_sync_state.try_receive_headers() {
+        if !headers.is_empty() {
+            // Skip the first header as we already have it (same as in original code)
+            let headers_iter = headers.into_iter().skip(1);
+            block_sync_state
+                .process_incoming_headers(headers_iter)
+                .await?;
+        }
+    }
     Ok(())
 }
 
@@ -250,6 +367,21 @@ pub async fn snap_sync(
     // - Fetch each block's body and its receipt via eth p2p requests
     // - Fetch the pivot block's state via snap p2p requests
     // - Execute blocks after the pivot (like in full-sync)
+
+    // Wait for initial headers from background task if we don't have any yet
+    // This ensures we have at least one header to use as pivot
+    while block_sync_state.block_hashes.is_empty() {
+        if block_sync_state.is_download_complete() {
+            return Err(SyncError::NoBlockHeaders);
+        }
+        // Process any available headers
+        process_pending_headers(block_sync_state).await?;
+        if block_sync_state.block_hashes.is_empty() {
+            debug!("Waiting for initial headers from background task...");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
     let pivot_hash = block_sync_state
         .block_hashes
         .last()
@@ -259,9 +391,13 @@ pub async fn snap_sync(
         .ok_or(SyncError::CorruptDB)?;
 
     while block_is_stale(&pivot_header) {
-        pivot_header =
-            update_pivot(pivot_header.number, pivot_header.timestamp, peers, block_sync_state)
-                .await?;
+        pivot_header = update_pivot(
+            pivot_header.number,
+            pivot_header.timestamp,
+            peers,
+            block_sync_state,
+        )
+        .await?;
     }
     debug!(
         "Selected block {} as pivot for snap sync",
@@ -296,6 +432,9 @@ pub async fn snap_sync(
             )
             .await?;
         info!("Finish downloading account ranges from peers");
+
+        // Process any headers received during account range download
+        process_pending_headers(block_sync_state).await?;
 
         *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
         METRICS
@@ -388,8 +527,10 @@ pub async fn snap_sync(
                     );
                 }
 
-                warn!("Storage could not be downloaded after multiple attempts. Marking for healing.
-                    This could impact snap sync time (healing may take a while).");
+                warn!(
+                    "Storage could not be downloaded after multiple attempts. Marking for healing.
+                    This could impact snap sync time (healing may take a while)."
+                );
 
                 storage_accounts.accounts_with_storage_root.clear();
             }
@@ -401,6 +542,10 @@ pub async fn snap_sync(
                 // because we don't know if the storage root is still valid
                 storage_accounts.healed_accounts.len(),
             );
+
+            // Process any headers received during storage range download
+            process_pending_headers(block_sync_state).await?;
+
             if !block_is_stale(&pivot_header) {
                 break;
             }
@@ -467,6 +612,9 @@ pub async fn snap_sync(
             &mut global_storage_leafs_healed,
         )
         .await?;
+
+        // Process any headers received during healing
+        process_pending_headers(block_sync_state).await?;
     }
     *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
@@ -487,8 +635,8 @@ pub async fn snap_sync(
     let mut code_hashes_to_download = Vec::new();
 
     info!("Starting download code hashes from peers");
-    for entry in
-        std::fs::read_dir(&code_hashes_dir).map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
+    for entry in std::fs::read_dir(&code_hashes_dir)
+        .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
     {
         let entry = entry.map_err(|_| SyncError::CorruptPath)?;
         let snapshot_contents = std::fs::read(entry.path())
@@ -561,6 +709,9 @@ pub async fn snap_sync(
         .ok_or(SyncError::CorruptDB)?;
 
     store.add_block(block).await?;
+
+    // Final processing of any remaining headers before forkchoice update
+    process_pending_headers(block_sync_state).await?;
 
     let numbers_and_hashes = block_sync_state
         .block_hashes

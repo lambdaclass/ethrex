@@ -297,8 +297,14 @@ pub async fn heal_storage_trie(
                 )
                 .expect("We shouldn't be getting store errors"); // TODO: if we have a store error we should stop
             }
-            Err(RequestStorageTrieNodesError { request_id, source: _err }) => {
-                let inflight_request = state.requests.remove(&request_id).expect("request disappeared");
+            Err(RequestStorageTrieNodesError {
+                request_id,
+                source: _err,
+            }) => {
+                let inflight_request = state
+                    .requests
+                    .remove(&request_id)
+                    .expect("request disappeared");
                 state.failed_downloads += 1;
                 state
                     .download_queue

@@ -3,6 +3,7 @@
 //! This module contains all the client-side snap protocol request methods
 //! implemented as extension methods on PeerHandler.
 
+use crate::rlpx::message::Message as RLPxMessage;
 use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_handler::PeerHandler,
@@ -32,7 +33,6 @@ use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
-use crate::rlpx::message::Message as RLPxMessage;
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     path::Path,
@@ -81,7 +81,6 @@ struct StorageTask {
     end_hash: Option<H256>,
 }
 
-
 /// Snap sync client methods for PeerHandler
 impl PeerHandler {
     /// Requests an account range from any suitable peer given the state trie's root and the starting hash and the limit hash.
@@ -111,7 +110,9 @@ impl PeerHandler {
 
         let chunk_count = 800;
         let range = limit_u256 - start_u256;
-        let chunk_count = U256::from(chunk_count).min(range.max(U256::one())).as_usize();
+        let chunk_count = U256::from(chunk_count)
+            .min(range.max(U256::one()))
+            .as_usize();
         let chunk_size = range / chunk_count;
 
         // list of tasks to be executed
@@ -161,11 +162,14 @@ impl PeerHandler {
                     .zip(current_account_states)
                     .collect::<Vec<(H256, AccountState)>>();
 
-                if !std::fs::exists(account_state_snapshots_dir)
-                    .map_err(|_| SnapError::SnapshotDir("State snapshots directory does not exist".to_string()))?
-                {
-                    std::fs::create_dir_all(account_state_snapshots_dir)
-                        .map_err(|_| SnapError::SnapshotDir("Failed to create state snapshots directory".to_string()))?;
+                if !std::fs::exists(account_state_snapshots_dir).map_err(|_| {
+                    SnapError::SnapshotDir("State snapshots directory does not exist".to_string())
+                })? {
+                    std::fs::create_dir_all(account_state_snapshots_dir).map_err(|_| {
+                        SnapError::SnapshotDir(
+                            "Failed to create state snapshots directory".to_string(),
+                        )
+                    })?;
                 }
 
                 let account_state_snapshots_dir_cloned = account_state_snapshots_dir.to_path_buf();
@@ -290,11 +294,12 @@ impl PeerHandler {
                 .zip(current_account_states)
                 .collect::<Vec<(H256, AccountState)>>();
 
-            if !std::fs::exists(account_state_snapshots_dir)
-                .map_err(|_| SnapError::SnapshotDir("State snapshots directory does not exist".to_string()))?
-            {
-                std::fs::create_dir_all(account_state_snapshots_dir)
-                    .map_err(|_| SnapError::SnapshotDir("Failed to create state snapshots directory".to_string()))?;
+            if !std::fs::exists(account_state_snapshots_dir).map_err(|_| {
+                SnapError::SnapshotDir("State snapshots directory does not exist".to_string())
+            })? {
+                std::fs::create_dir_all(account_state_snapshots_dir).map_err(|_| {
+                    SnapError::SnapshotDir("Failed to create state snapshots directory".to_string())
+                })?;
             }
 
             let path = get_account_state_snapshot_file(account_state_snapshots_dir, chunk_file);
@@ -305,7 +310,12 @@ impl PeerHandler {
                         err.error
                     )
                 })
-                .map_err(|_| SnapError::SnapshotDir(format!("Failed to write state snapshot chunk {}", chunk_file)))?;
+                .map_err(|_| {
+                    SnapError::SnapshotDir(format!(
+                        "Failed to write state snapshot chunk {}",
+                        chunk_file
+                    ))
+                })?;
         }
 
         METRICS
@@ -605,11 +615,14 @@ impl PeerHandler {
                 let current_account_storages = std::mem::take(&mut current_account_storages);
                 let snapshot = current_account_storages.into_values().collect::<Vec<_>>();
 
-                if !std::fs::exists(account_storages_snapshots_dir)
-                    .map_err(|_| SnapError::SnapshotDir("Storage snapshots directory does not exist".to_string()))?
-                {
-                    std::fs::create_dir_all(account_storages_snapshots_dir)
-                        .map_err(|_| SnapError::SnapshotDir("Failed to create storage snapshots directory".to_string()))?;
+                if !std::fs::exists(account_storages_snapshots_dir).map_err(|_| {
+                    SnapError::SnapshotDir("Storage snapshots directory does not exist".to_string())
+                })? {
+                    std::fs::create_dir_all(account_storages_snapshots_dir).map_err(|_| {
+                        SnapError::SnapshotDir(
+                            "Failed to create storage snapshots directory".to_string(),
+                        )
+                    })?;
                 }
                 let account_storages_snapshots_dir_cloned =
                     account_storages_snapshots_dir.to_path_buf();
@@ -686,7 +699,10 @@ impl PeerHandler {
                             tasks_queue_not_started.push_back(task);
                             task_count += 1;
 
-                            let acc_hash = *accounts_by_root_hash[remaining_start].1.get(0).ok_or(SnapError::InternalError("Empty accounts vector".to_owned()))?;
+                            let acc_hash =
+                                *accounts_by_root_hash[remaining_start].1.first().ok_or(
+                                    SnapError::InternalError("Empty accounts vector".to_owned()),
+                                )?;
                             let (_, old_intervals) = account_storage_roots
                                 .accounts_with_storage_root
                                 .get_mut(&acc_hash).ok_or(SnapError::InternalError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
@@ -772,8 +788,9 @@ impl PeerHandler {
 
                         let chunk_count = (missing_storage_range / chunk_size).as_usize().max(1);
 
-                        let first_acc_hash = *accounts_by_root_hash[remaining_start].1
-                            .get(0)
+                        let first_acc_hash = *accounts_by_root_hash[remaining_start]
+                            .1
+                            .first()
                             .ok_or(SnapError::InternalError("Empty accounts vector".to_owned()))?;
 
                         let maybe_old_intervals = account_storage_roots
@@ -795,10 +812,9 @@ impl PeerHandler {
                                 }
                             } else {
                                 // TODO: DRY
-                                account_storage_roots.accounts_with_storage_root.insert(
-                                    first_acc_hash,
-                                    (None, vec![]),
-                                );
+                                account_storage_roots
+                                    .accounts_with_storage_root
+                                    .insert(first_acc_hash, (None, vec![]));
                                 let (_, intervals) = account_storage_roots
                                     .accounts_with_storage_root
                                     .get_mut(&first_acc_hash)
@@ -831,10 +847,9 @@ impl PeerHandler {
                                 debug!("Split big storage account into {chunk_count} chunks.");
                             }
                         } else {
-                            account_storage_roots.accounts_with_storage_root.insert(
-                                first_acc_hash,
-                                (None, vec![]),
-                            );
+                            account_storage_roots
+                                .accounts_with_storage_root
+                                .insert(first_acc_hash, (None, vec![]));
                             let (_, intervals) = account_storage_roots
                                 .accounts_with_storage_root
                                 .get_mut(&first_acc_hash)
@@ -996,16 +1011,23 @@ impl PeerHandler {
         {
             let snapshot = current_account_storages.into_values().collect::<Vec<_>>();
 
-            if !std::fs::exists(account_storages_snapshots_dir)
-                .map_err(|_| SnapError::SnapshotDir("Storage snapshots directory does not exist".to_string()))?
-            {
-                std::fs::create_dir_all(account_storages_snapshots_dir)
-                    .map_err(|_| SnapError::SnapshotDir("Failed to create storage snapshots directory".to_string()))?;
+            if !std::fs::exists(account_storages_snapshots_dir).map_err(|_| {
+                SnapError::SnapshotDir("Storage snapshots directory does not exist".to_string())
+            })? {
+                std::fs::create_dir_all(account_storages_snapshots_dir).map_err(|_| {
+                    SnapError::SnapshotDir(
+                        "Failed to create storage snapshots directory".to_string(),
+                    )
+                })?;
             }
             let path =
                 get_account_storages_snapshot_file(account_storages_snapshots_dir, chunk_index);
-            dump_storages_to_file(&path, snapshot)
-                .map_err(|_| SnapError::SnapshotDir(format!("Failed to write storage snapshot chunk {}", chunk_index)))?;
+            dump_storages_to_file(&path, snapshot).map_err(|_| {
+                SnapError::SnapshotDir(format!(
+                    "Failed to write storage snapshot chunk {}",
+                    chunk_index
+                ))
+            })?;
         }
         disk_joinset
             .join_all()
@@ -1145,9 +1167,7 @@ async fn request_account_range_worker(
     state_root: H256,
     tx: tokio::sync::mpsc::Sender<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>,
 ) -> Result<(), SnapError> {
-    debug!(
-        "Requesting account range from peer {peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
-    );
+    debug!("Requesting account range from peer {peer_id}, chunk: {chunk_start:?} - {chunk_end:?}");
     let request_id = rand::random();
     let request = RLPxMessage::GetAccountRange(GetAccountRange {
         id: request_id,
