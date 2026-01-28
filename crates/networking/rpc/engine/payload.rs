@@ -832,7 +832,9 @@ async fn try_execute_payload_with_witness(
         // Block already exists, try to get witness from storage
         if let Ok(Some(witness)) = storage.get_witness_by_number_and_hash(block_number, block_hash)
         {
-            let witness_bytes = witness.encode_to_vec();
+            let rpc_witness = crate::debug::execution_witness::RpcExecutionWitness::try_from(witness)
+                .map_err(|e| RpcErr::Internal(format!("Failed to convert witness: {e}")))?;
+            let witness_bytes = rpc_witness.encode_to_vec();
             return Ok(PayloadStatus::valid_with_hash_and_witness(
                 block_hash,
                 witness_bytes.into(),
@@ -889,7 +891,10 @@ async fn try_execute_payload_with_witness(
         Ok(witness) => {
             debug!("Block with hash {block_hash} executed and added to storage successfully");
             if let Some(witness) = witness {
-                let witness_bytes = witness.encode_to_vec();
+                let rpc_witness =
+                    crate::debug::execution_witness::RpcExecutionWitness::try_from(witness)
+                        .map_err(|e| RpcErr::Internal(format!("Failed to convert witness: {e}")))?;
+                let witness_bytes = rpc_witness.encode_to_vec();
                 Ok(PayloadStatus::valid_with_hash_and_witness(
                     block_hash,
                     witness_bytes.into(),
