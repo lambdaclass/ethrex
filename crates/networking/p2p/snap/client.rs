@@ -699,9 +699,10 @@ impl PeerHandler {
                             tasks_queue_not_started.push_back(task);
                             task_count += 1;
 
-                            let acc_hash = *accounts_by_root_hash[remaining_start].1.get(0).ok_or(
-                                SnapError::InternalError("Empty accounts vector".to_owned()),
-                            )?;
+                            let acc_hash =
+                                *accounts_by_root_hash[remaining_start].1.first().ok_or(
+                                    SnapError::InternalError("Empty accounts vector".to_owned()),
+                                )?;
                             let (_, old_intervals) = account_storage_roots
                                 .accounts_with_storage_root
                                 .get_mut(&acc_hash).ok_or(SnapError::InternalError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
@@ -789,7 +790,7 @@ impl PeerHandler {
 
                         let first_acc_hash = *accounts_by_root_hash[remaining_start]
                             .1
-                            .get(0)
+                            .first()
                             .ok_or(SnapError::InternalError("Empty accounts vector".to_owned()))?;
 
                         let maybe_old_intervals = account_storage_roots
