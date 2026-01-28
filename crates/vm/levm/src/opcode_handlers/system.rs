@@ -726,14 +726,15 @@ impl<'a> VM<'a> {
         self.increment_account_nonce(new_address)?; // 0 -> 1
         self.transfer(deployer, new_address, value)?;
 
+        self.substate.push_backup();
+        self.substate.add_created_account(new_address); // Mostly for SELFDESTRUCT during initcode.
+
         // EIP-7708: Emit transfer log for nonzero-value CREATE/CREATE2
+        // Must be after push_backup() so the log reverts if the child context reverts
         if self.env.config.fork >= Fork::Amsterdam && !value.is_zero() {
             let log = create_eth_transfer_log(deployer, new_address, value);
             self.substate.add_log(log);
         }
-
-        self.substate.push_backup();
-        self.substate.add_created_account(new_address); // Mostly for SELFDESTRUCT during initcode.
 
         Ok(OpcodeResult::Continue)
     }
@@ -871,15 +872,17 @@ impl<'a> VM<'a> {
             // Transfer value from caller to callee.
             if should_transfer_value {
                 self.transfer(msg_sender, to, value)?;
-
-                // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE
-                if self.env.config.fork >= Fork::Amsterdam && !value.is_zero() {
-                    let log = create_eth_transfer_log(msg_sender, to, value);
-                    self.substate.add_log(log);
-                }
             }
 
             self.substate.push_backup();
+
+            // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE
+            // Must be after push_backup() so the log reverts if the child context reverts
+            if should_transfer_value && self.env.config.fork >= Fork::Amsterdam && !value.is_zero()
+            {
+                let log = create_eth_transfer_log(msg_sender, to, value);
+                self.substate.add_log(log);
+            }
         }
 
         Ok(OpcodeResult::Continue)

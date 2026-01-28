@@ -469,14 +469,12 @@ fn test_call_with_value_revert() {
         .execute();
 
     assert!(report.is_success(), "Transaction should succeed");
-    // NOTE: Current implementation emits the transfer log even when the callee reverts.
-    // The log is added BEFORE push_backup(), so it persists even when child context reverts.
-    assert_eq!(
-        report.logs.len(),
-        1,
-        "Transfer log is emitted even when callee reverts"
+    // EIP-7708: When callee reverts, the transfer log should also revert.
+    // The log is added AFTER push_backup(), so it correctly reverts with the child context.
+    assert!(
+        report.logs.is_empty(),
+        "Transfer log should NOT be emitted when callee reverts"
     );
-    assert_transfer_log(&report.logs[0], contract_addr, callee, call_value);
 }
 
 #[test]
