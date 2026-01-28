@@ -66,10 +66,9 @@ pub struct Options {
     #[arg(
         long = "datadir",
         value_name = "DATABASE_DIRECTORY",
-        help = "If the datadir is the word `memory`, ethrex will use the InMemory Engine",
         default_value = default_datadir().into_os_string(),
-        help = "Receives the name of the directory where the Database is located.",
-        long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
+        help = "Base directory for the database. Network name is appended for public networks.",
+        long_help = "Base directory where the database is stored. For public networks (mainnet, hoodi, holesky, sepolia), the network name is automatically appended as a subdirectory (e.g., <datadir>/mainnet). For dev mode, a 'dev' subdirectory is used. If the value is 'memory', an in-memory engine is used instead.",
         help_heading = "Node options",
         env = "ETHREX_DATADIR"
     )]
