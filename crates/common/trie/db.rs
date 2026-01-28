@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use ethereum_types::H256;
 use ethrex_rlp::encode::RLPEncode;
 
@@ -12,17 +13,17 @@ pub type NodeMap = Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>;
 
 pub trait TrieDB: Send + Sync {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError>;
-    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError>;
+    fn put_batch(&self, key_values: Vec<(Nibbles, Bytes)>) -> Result<(), TrieError>;
     // TODO: replace putbatch with this function.
     fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {
         self.put_batch(
             key_values
                 .iter()
-                .map(|node| (node.0.clone(), node.1.encode_to_vec()))
+                .map(|node| (node.0.clone(), node.1.encode_to_vec().into()))
                 .collect(),
         )
     }
-    fn put(&self, key: Nibbles, value: Vec<u8>) -> Result<(), TrieError> {
+    fn put(&self, key: Nibbles, value: Bytes) -> Result<(), TrieError> {
         self.put_batch(vec![(key, value)])
     }
     /// Commits any pending changes to the underlying storage
@@ -107,12 +108,12 @@ impl TrieDB for InMemoryTrieDB {
             .cloned())
     }
 
-    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, key_values: Vec<(Nibbles, Bytes)>) -> Result<(), TrieError> {
         let mut db = self.inner.lock().map_err(|_| TrieError::LockError)?;
 
         for (key, value) in key_values {
             let prefixed_key = self.apply_prefix(key);
-            db.insert(prefixed_key.into_vec(), value);
+            db.insert(prefixed_key.into_vec(), value.to_vec());
         }
 
         Ok(())

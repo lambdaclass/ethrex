@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use crate::api::tables::{
     ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
 };
@@ -97,17 +98,18 @@ impl TrieDB for BackendTrieDB {
             TrieError::DbError(anyhow::anyhow!("Failed to begin read transaction: {}", e))
         })?;
         tx.get(table, prefixed_key.as_ref())
+            .map(|opt| opt.map(|b| b.to_vec()))
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
     }
 
-    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, key_values: Vec<(Nibbles, Bytes)>) -> Result<(), TrieError> {
         let mut tx = self.db.begin_write().map_err(|e| {
             TrieError::DbError(anyhow::anyhow!("Failed to begin write transaction: {}", e))
         })?;
         for (key, value) in key_values {
             let prefixed_key = self.make_key(key);
             let table = self.table_for_key(&prefixed_key);
-            tx.put_batch(table, vec![(prefixed_key, value)])
+            tx.put_batch(table, &[(&prefixed_key, value.as_ref())])
                 .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
         }
         tx.commit()
@@ -167,10 +169,11 @@ impl TrieDB for BackendTrieDBLocked {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let tx = self.tx_for_key(&key);
         tx.get(key.as_ref())
+            .map(|opt| opt.map(|b| b.to_vec()))
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
     }
 
-    fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, _key_values: Vec<(Nibbles, Bytes)>) -> Result<(), TrieError> {
         // Read-only locked storage, should not be used for puts
         Err(TrieError::DbError(anyhow::anyhow!("trie is read-only")))
     }

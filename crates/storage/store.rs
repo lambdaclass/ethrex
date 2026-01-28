@@ -318,8 +318,7 @@ impl Store {
 
             txn.put(HEADERS, &hash_key, &header_value)?;
 
-            let number_key = block_number.to_le_bytes().to_vec();
-            txn.put(BLOCK_NUMBERS, &hash_key, &number_key)?;
+            txn.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
         }
         txn.commit()?;
         Ok(())
@@ -400,7 +399,7 @@ impl Store {
             for number in numbers {
                 let Some(hash) = txn
                     .get(CANONICAL_BLOCK_HASHES, number.to_le_bytes().as_slice())?
-                    .map(|bytes| H256::decode(bytes.as_slice()))
+                    .map(|bytes| H256::decode(&bytes[..]))
                     .transpose()?
                 else {
                     block_bodies.push(None);
@@ -409,7 +408,7 @@ impl Store {
                 let hash_key = hash.encode_to_vec();
                 let block_body_opt = txn
                     .get(BODIES, &hash_key)?
-                    .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
+                    .map(|bytes| BlockBodyRLP::from_bytes(bytes.to_vec()).to())
                     .transpose()
                     .map_err(StoreError::from)?;
 
@@ -437,7 +436,7 @@ impl Store {
 
                 let Some(block_body) = txn
                     .get(BODIES, &hash_key)?
-                    .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
+                    .map(|bytes| BlockBodyRLP::from_bytes(bytes.to_vec()).to())
                     .transpose()
                     .map_err(StoreError::from)?
                 else {
@@ -591,7 +590,7 @@ impl Store {
                         CANONICAL_BLOCK_HASHES,
                         block_number.to_le_bytes().as_slice(),
                     )?
-                    .map(|bytes| H256::decode(bytes.as_slice()))
+                    .map(|bytes| H256::decode(&bytes[..]))
                     .transpose()?
                 };
 
@@ -659,7 +658,7 @@ impl Store {
         let key = (block_hash, index).encode_to_vec();
         self.read_async(RECEIPTS, key)
             .await?
-            .map(|bytes| Receipt::decode(bytes.as_slice()))
+            .map(|bytes| Receipt::decode(&bytes[..]))
             .transpose()
             .map_err(StoreError::from)
     }
@@ -787,7 +786,7 @@ impl Store {
                     CANONICAL_BLOCK_HASHES,
                     block_number.to_le_bytes().as_slice(),
                 )?
-                .map(|bytes| H256::decode(bytes.as_slice()))
+                .map(|bytes| H256::decode(&bytes[..]))
                 .transpose()
                 .map_err(StoreError::from)
         })
@@ -947,7 +946,7 @@ impl Store {
             let key = (*block_hash, index).encode_to_vec();
             match txn.get(RECEIPTS, key.as_slice())? {
                 Some(receipt_bytes) => {
-                    let receipt = Receipt::decode(receipt_bytes.as_slice())?;
+                    let receipt = Receipt::decode(&receipt_bytes[..])?;
                     receipts.push(receipt);
                     index += 1;
                 }
@@ -976,7 +975,7 @@ impl Store {
         self.backend
             .begin_read()?
             .get(SNAP_STATE, &key)?
-            .map(|bytes| H256::decode(bytes.as_slice()))
+            .map(|bytes| H256::decode(&bytes[..]))
             .transpose()
             .map_err(StoreError::from)
     }
@@ -1004,7 +1003,7 @@ impl Store {
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read_async(INVALID_CHAINS, block.as_bytes().to_vec())
             .await?
-            .map(|bytes| H256::decode(bytes.as_slice()))
+            .map(|bytes| H256::decode(&bytes[..]))
             .transpose()
             .map_err(StoreError::from)
     }
@@ -1017,7 +1016,7 @@ impl Store {
         let txn = self.backend.begin_read()?;
         txn.get(BLOCK_NUMBERS, &block_hash.encode_to_vec())?
             .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
+                let array: [u8; 8] = bytes[..]
                     .try_into()
                     .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
                 Ok(BlockNumber::from_le_bytes(array))
@@ -1039,7 +1038,7 @@ impl Store {
             CANONICAL_BLOCK_HASHES,
             block_number.to_le_bytes().as_slice(),
         )?
-        .map(|bytes| H256::decode(bytes.as_slice()))
+        .map(|bytes| H256::decode(&bytes[..]))
         .transpose()
         .map_err(StoreError::from)
     }
@@ -1130,7 +1129,7 @@ impl Store {
 
         tokio::task::spawn_blocking(move || {
             let txn = backend.begin_read()?;
-            txn.get(table, &key)
+            txn.get(table, &key).map(|opt| opt.map(|b| b.to_vec()))
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -1141,7 +1140,7 @@ impl Store {
     pub fn read(&self, table: &'static str, key: Vec<u8>) -> Result<Option<Vec<u8>>, StoreError> {
         let backend = self.backend.clone();
         let txn = backend.begin_read()?;
-        txn.get(table, &key)
+        txn.get(table, &key).map(|opt| opt.map(|b| b.to_vec()))
     }
 
     /// Helper method for batch writes
@@ -1156,7 +1155,8 @@ impl Store {
 
         tokio::task::spawn_blocking(move || {
             let mut txn = backend.begin_write()?;
-            txn.put_batch(table, batch_ops)?;
+            let refs: Vec<_> = batch_ops.iter().map(|(k, v)| (k.as_slice(), v.as_slice())).collect();
+            txn.put_batch(table, &refs)?;
             txn.commit()
         })
         .await
@@ -1171,7 +1171,8 @@ impl Store {
     ) -> Result<(), StoreError> {
         let backend = self.backend.clone();
         let mut txn = backend.begin_write()?;
-        txn.put_batch(table, batch_ops)?;
+        let refs: Vec<_> = batch_ops.iter().map(|(k, v)| (k.as_slice(), v.as_slice())).collect();
+        txn.put_batch(table, &refs)?;
         txn.commit()
     }
 
@@ -1344,6 +1345,7 @@ impl Store {
             let tx = backend.begin_read()?;
             let last_written = tx
                 .get(MISC_VALUES, "last_written".as_bytes())?
+                .map(|b| b.to_vec())
                 .unwrap_or_else(|| vec![0u8; 64]);
             if last_written == [0xff] {
                 vec![0xff; 64]
@@ -1771,14 +1773,16 @@ impl Store {
         }
 
         let (state_root, account_trie_nodes) = genesis_state_trie.collect_changes_since_last_hash();
-        let account_trie_nodes = account_trie_nodes
+        let account_trie_nodes: Vec<_> = account_trie_nodes
             .into_iter()
             .map(|(path, n)| (apply_prefix(None, path).into_vec(), n))
-            .collect::<Vec<_>>();
+            .collect();
 
         let mut tx = self.backend.begin_write()?;
-        tx.put_batch(ACCOUNT_TRIE_NODES, account_trie_nodes)?;
-        tx.put_batch(STORAGE_TRIE_NODES, storage_trie_nodes)?;
+        let account_refs: Vec<_> = account_trie_nodes.iter().map(|(k, v)| (k.as_slice(), v.as_slice())).collect();
+        let storage_refs: Vec<_> = storage_trie_nodes.iter().map(|(k, v)| (k.as_slice(), v.as_slice())).collect();
+        tx.put_batch(ACCOUNT_TRIE_NODES, &account_refs)?;
+        tx.put_batch(STORAGE_TRIE_NODES, &storage_refs)?;
         tx.commit()?;
 
         Ok(state_root)
@@ -2485,7 +2489,7 @@ impl Store {
             CANONICAL_BLOCK_HASHES,
             block_number.to_le_bytes().as_slice(),
         )?
-        .map(|bytes| H256::decode(bytes.as_slice()))
+        .map(|bytes| H256::decode(&bytes[..]))
         .transpose()
         .map_err(StoreError::from)
     }
@@ -2509,7 +2513,7 @@ impl Store {
         let hash_key = block_hash.encode_to_vec();
         let header_value = txn.get(HEADERS, hash_key.as_slice())?;
         let mut header = header_value
-            .map(|bytes| BlockHeaderRLP::from_bytes(bytes).to())
+            .map(|bytes| BlockHeaderRLP::from_bytes(bytes.to_vec()).to())
             .transpose()
             .map_err(StoreError::from)?;
         header.as_mut().inspect(|h| {
@@ -2664,7 +2668,7 @@ fn flatkeyvalue_generator(
         // First time generating the FKV. Remove all FKV entries just in case
         backend.clear_table(ACCOUNT_FLATKEYVALUE)?;
         backend.clear_table(STORAGE_FLATKEYVALUE)?;
-    } else if last_written == [0xff] {
+    } else if &last_written[..] == [0xff] {
         // FKV was already generated
         info!("FlatKeyValue already generated. Skipping.");
         return Ok(());
@@ -2696,7 +2700,7 @@ fn flatkeyvalue_generator(
         let mut iter = Trie::open(
             Box::new(BackendTrieDB::new_for_accounts(
                 backend.clone(),
-                last_written.clone(),
+                last_written.to_vec(),
             )?),
             state_root,
         )

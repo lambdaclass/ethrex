@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use ethrex_common::H256;
 use fastbloom::AtomicBloomFilter;
 use rayon::prelude::*;
@@ -221,7 +222,7 @@ impl TrieDB for TrieWrapper {
         self.db.get(key)
     }
 
-    fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, _key_values: Vec<(Nibbles, Bytes)>) -> Result<(), TrieError> {
         // TODO: Get rid of this.
         unimplemented!("This function should not be called");
     }
