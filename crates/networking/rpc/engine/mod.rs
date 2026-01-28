@@ -23,8 +23,6 @@ pub const CAPABILITIES: &[&str] = &[
     "engine_newPayloadV2",
     "engine_newPayloadV3",
     "engine_newPayloadV4",
-    "engine_newPayloadWithWitnessV3",
-    "engine_newPayloadWithWitnessV4",
     "engine_getPayloadV1",
     "engine_getPayloadV2",
     "engine_getPayloadV3",
@@ -37,6 +35,12 @@ pub const CAPABILITIES: &[&str] = &[
     "engine_getBlobsV2",
     "engine_getBlobsV3",
     "engine_getClientVersionV1",
+];
+
+/// Additional capabilities enabled with --new-payload-with-witness flag (experimental).
+pub const WITNESS_CAPABILITIES: &[&str] = &[
+    "engine_newPayloadWithWitnessV3",
+    "engine_newPayloadWithWitnessV4",
 ];
 
 impl From<ExchangeCapabilitiesRequest> for RpcRequest {
@@ -62,7 +66,13 @@ impl RpcHandler for ExchangeCapabilitiesRequest {
             })
     }
 
-    async fn handle(&self, _context: RpcApiContext) -> Result<Value, RpcErr> {
-        Ok(json!(CAPABILITIES))
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        if context.new_payload_with_witness {
+            let mut capabilities: Vec<&str> = CAPABILITIES.to_vec();
+            capabilities.extend_from_slice(WITNESS_CAPABILITIES);
+            Ok(json!(capabilities))
+        } else {
+            Ok(json!(CAPABILITIES))
+        }
     }
 }
