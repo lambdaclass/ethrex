@@ -42,6 +42,10 @@ ethrex-sdk.workspace = true
 # Enable SQL for tests so we don't need `cargo test -p ethrex-test --features sql`.
 ethrex-storage-rollup = { workspace = true, features = ["sql"] }
 anyhow.workspace = true
+# L2 integration tests dependencies
+ethrex-l2.workspace = true
+ethrex-l2-rpc.workspace = true
+reqwest.workspace = true
 
 [[test]]
 name = "ethrex_tests"

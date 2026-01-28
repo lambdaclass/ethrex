@@ -73,7 +73,7 @@ fn on_chain_proposer_address() -> Address {
 }
 
 pub fn read_env_file_by_config() {
-    let env_file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../cmd/.env");
+    let env_file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../cmd/.env");
     let Ok(env_file) = File::open(env_file_path) else {
         println!(".env file not found, skipping");
         return;
@@ -226,7 +226,7 @@ async fn deploy_l1_erc20(
     signer: &Signer,
     sender_address: Address,
 ) -> Result<Address> {
-    let init_code_bytes = std::fs::read("../../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin")
+    let init_code_bytes = std::fs::read("../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin")
         .context("failed to read L1 ERC20 bytecode file")?;
     let init_code_l1 =
         hex::decode(init_code_bytes).context("failed to decode L1 ERC20 bytecode")?;
@@ -251,8 +251,8 @@ fn build_fee_token_bytecode(l1_erc20_contract_address: Address) -> Result<Vec<u8
     let contracts_path = Path::new("contracts");
     get_contract_dependencies(contracts_path);
 
-    let fee_token_path = Path::new("../../crates/l2/contracts/src/example");
-    let interfaces_path = Path::new("../../crates/l2/contracts/src/l2");
+    let fee_token_path = Path::new("../crates/l2/contracts/src/example");
+    let interfaces_path = Path::new("../crates/l2/contracts/src/l2");
     let remappings = [(
         "@openzeppelin/contracts",
         contracts_path

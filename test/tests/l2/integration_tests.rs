@@ -97,8 +97,8 @@ const DEFAULT_ON_CHAIN_PROPOSER_ADDRESS: Address = H160([
     0x25, 0x4c, 0xa1, 0x1d,
 ]);
 
-const DEFAULT_RICH_KEYS_FILE_PATH: &str = "../../fixtures/keys/private_keys_l1.txt";
-const DEFAULT_TEST_KEYS_FILE_PATH: &str = "../../fixtures/keys/private_keys_tests.txt";
+const DEFAULT_RICH_KEYS_FILE_PATH: &str = "../fixtures/keys/private_keys_l1.txt";
+const DEFAULT_TEST_KEYS_FILE_PATH: &str = "../fixtures/keys/private_keys_tests.txt";
 
 #[tokio::test]
 async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
@@ -546,7 +546,7 @@ async fn test_erc20_roundtrip(
     let rich_address = rich_wallet_signer.address();
 
     let init_code_l1 = hex::decode(std::fs::read(
-        "../../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin",
+        "../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin",
     )?)?;
 
     println!("test_erc20_roundtrip: Deploying ERC20 token on L1");
@@ -773,7 +773,7 @@ async fn test_aliasing(
     rich_wallet_private_key: SecretKey,
 ) -> Result<FeesDetails> {
     println!("Testing aliasing");
-    let init_code_l1 = hex::decode(std::fs::read("../../fixtures/contracts/caller/Caller.bin")?)?;
+    let init_code_l1 = hex::decode(std::fs::read("../fixtures/contracts/caller/Caller.bin")?)?;
     let caller_l1 = test_deploy_l1(&l1_client, &init_code_l1, &rich_wallet_private_key).await?;
     let send_to_l2_calldata = encode_calldata(
         "sendToL2((address,uint256,uint256,bytes))",
@@ -828,7 +828,7 @@ async fn test_erc20_failed_deposit(
     let rich_address = rich_wallet_signer.address();
 
     let init_code_l1 = hex::decode(std::fs::read(
-        "../../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin",
+        "../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin",
     )?)?;
 
     println!("test_erc20_failed_deposit: Deploying ERC20 token on L1");
@@ -1218,7 +1218,7 @@ async fn test_privileged_spammer(
     rich_wallet_private_key: SecretKey,
 ) -> Result<FeesDetails> {
     let init_code_l1 = hex::decode(std::fs::read(
-        "../../fixtures/contracts/deposit_spammer/DepositSpammer.bin",
+        "../fixtures/contracts/deposit_spammer/DepositSpammer.bin",
     )?)?;
     let caller_l1 = test_deploy_l1(&l1_client, &init_code_l1, &rich_wallet_private_key).await?;
     for _ in 0..50 {
@@ -2052,8 +2052,8 @@ async fn test_fee_token(
     let contracts_path = Path::new("contracts");
     get_contract_dependencies(contracts_path);
 
-    let fee_token_path = Path::new("../../crates/l2/contracts/src/example");
-    let interfaces_path = Path::new("../../crates/l2/contracts/src/l2");
+    let fee_token_path = Path::new("../crates/l2/contracts/src/example");
+    let interfaces_path = Path::new("../crates/l2/contracts/src/l2");
     let remappings = [(
         "@openzeppelin/contracts",
         contracts_path
@@ -2475,7 +2475,7 @@ async fn get_fee_vault_balance(l2_client: &EthClient, vault_address: Option<Addr
 }
 
 pub fn read_env_file_by_config() {
-    let env_file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../cmd/.env");
+    let env_file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../cmd/.env");
     let Ok(env_file) = File::open(env_file_path) else {
         println!(".env file not found, skipping");
         return;
