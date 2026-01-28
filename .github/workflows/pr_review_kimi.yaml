@@ -44,6 +44,11 @@ jobs:
         env:
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
         run: |
+          if [ -z "$KIMI_API_KEY" ]; then
+            echo "Error: KIMI_API_KEY secret is not set" > kimi_review.txt
+            exit 0
+          fi
+
           DIFF_CONTENT=$(cat pr_diff_truncated.txt | jq -Rs .)
 
           PROMPT="You are a senior code reviewer for ethrex, a Rust-based Ethereum execution client.
@@ -85,10 +90,14 @@ jobs:
               \"max_tokens\": 4096
             }")
 
-          REVIEW=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "Error: Could not get review from Kimi API"')
-
-          # Save review to file for the comment step
-          echo "$REVIEW" > kimi_review.txt
+          # Check for API errors
+          ERROR=$(echo "$RESPONSE" | jq -r '.error.message // empty')
+          if [ -n "$ERROR" ]; then
+            echo "API Error: $ERROR" > kimi_review.txt
+          else
+            REVIEW=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "Error: Unexpected API response"')
+            echo "$REVIEW" > kimi_review.txt
+          fi
 
       - name: Post review comment
         env:
