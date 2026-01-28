@@ -113,11 +113,14 @@ impl<'a> VM<'a> {
         self.current_call_frame
             .increase_consumed_gas(gas_cost::SELFBALANCE)?;
 
-        let balance = self
-            .db
-            .get_account(self.current_call_frame.to)?
-            .info
-            .balance;
+        let address = self.current_call_frame.to;
+        let balance = self.db.get_account(address)?.info.balance;
+
+        // Record address touch for BAL per EIP-7928
+        // SELFBALANCE has "Pre-state Cost: None" so always succeeds
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(address);
+        }
 
         self.current_call_frame.stack.push(balance)?;
         Ok(OpcodeResult::Continue)
