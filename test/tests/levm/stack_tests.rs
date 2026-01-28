@@ -542,10 +542,10 @@ fn test_dupn_underflow() {
 
     let absolute_offset = stack.offset + 17;
     // This would be caught by the bounds check in the opcode
-    assert!(absolute_offset < 1024); // STACK_LIMIT
+    // With 3 elements (offset = 1021), trying to access depth 17 gives 1021 + 17 = 1038
+    // which exceeds STACK_LIMIT, indicating underflow
+    assert!(absolute_offset >= 1024); // STACK_LIMIT
 
-    // But accessing it would give us uninitialized data, which the opcode prevents
-    // by checking if absolute_offset >= stack.values.len() (which is always STACK_LIMIT)
     // The real check is: does the stack have enough elements?
     // Stack has 3 elements, so max valid depth is 2 (0-indexed)
     assert!(stack.len() < 17);
