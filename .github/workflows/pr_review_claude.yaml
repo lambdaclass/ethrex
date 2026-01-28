@@ -1,0 +1,52 @@
+name: PR Review - Claude
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  pull_request_review_comment:
+    types: [created]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  claude-review:
+    name: Claude Code Review
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Claude Code Review
+        uses: anthropics/claude-code-action@beta
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          model: claude-sonnet-4-20250514
+          trigger_phrase: "@claude"
+          timeout_minutes: 30
+          direct_prompt: |
+            You are a senior code reviewer for ethrex, a Rust-based Ethereum execution client.
+            Review this PR focusing on:
+            - Code correctness and potential bugs
+            - Security vulnerabilities (especially important for blockchain code)
+            - Performance implications
+            - Rust best practices and idiomatic patterns
+            - Memory safety and proper error handling
+            - Consistency with the existing codebase style
+
+            Be concise but thorough. Provide specific line references when suggesting changes.
+            If the code looks good, acknowledge it briefly.

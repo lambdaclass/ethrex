@@ -1,0 +1,48 @@
+name: PR Review - ChatGPT
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  chatgpt-review:
+    name: ChatGPT Code Review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: ChatGPT Code Review
+        uses: anc95/ChatGPT-CodeReview@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        with:
+          openai_engine: gpt-4o
+          language: en
+          review_comment_lgtm: false
+          max_tokens: 4096
+          prompt: |
+            You are a senior code reviewer for ethrex, a Rust-based Ethereum execution client.
+            Review the code changes focusing on:
+            - Code correctness and potential bugs
+            - Security vulnerabilities (critical for blockchain/crypto code)
+            - Performance optimizations
+            - Rust idioms and best practices
+            - Error handling patterns
+            - Code readability and maintainability
+
+            Provide specific, actionable feedback with line references.
+            Be concise - avoid redundant explanations.

@@ -1,0 +1,104 @@
+name: PR Review - Kimi
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  kimi-review:
+    name: Kimi Code Review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get PR diff
+        id: diff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr diff ${{ github.event.pull_request.number }} > pr_diff.txt
+          # Truncate if too large (Kimi has context limits)
+          head -c 100000 pr_diff.txt > pr_diff_truncated.txt
+
+      - name: Get PR info
+        id: pr_info
+        run: |
+          echo "title=${{ github.event.pull_request.title }}" >> $GITHUB_OUTPUT
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "${{ github.event.pull_request.body }}" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Kimi Code Review
+        id: kimi_review
+        env:
+          KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+        run: |
+          DIFF_CONTENT=$(cat pr_diff_truncated.txt | jq -Rs .)
+
+          PROMPT="You are a senior code reviewer for ethrex, a Rust-based Ethereum execution client.
+
+          PR Title: ${{ steps.pr_info.outputs.title }}
+
+          Review this PR diff focusing on:
+          - Code correctness and potential bugs
+          - Security vulnerabilities (critical for blockchain code)
+          - Performance implications
+          - Rust best practices
+          - Error handling patterns
+
+          Be concise and specific. Provide line references when possible.
+
+          Diff:
+          "
+
+          RESPONSE=$(curl -s https://api.moonshot.cn/v1/chat/completions \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $KIMI_API_KEY" \
+            -d "{
+              \"model\": \"moonshot-v1-128k\",
+              \"messages\": [
+                {
+                  \"role\": \"system\",
+                  \"content\": \"You are a senior Rust code reviewer specializing in blockchain and Ethereum implementations.\"
+                },
+                {
+                  \"role\": \"user\",
+                  \"content\": $(echo "$PROMPT" | jq -Rs .)
+                },
+                {
+                  \"role\": \"user\",
+                  \"content\": $DIFF_CONTENT
+                }
+              ],
+              \"temperature\": 0.3,
+              \"max_tokens\": 4096
+            }")
+
+          REVIEW=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "Error: Could not get review from Kimi API"')
+
+          # Save review to file for the comment step
+          echo "$REVIEW" > kimi_review.txt
+
+      - name: Post review comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REVIEW_CONTENT=$(cat kimi_review.txt)
+
+          gh pr comment ${{ github.event.pull_request.number }} --body "## Kimi AI Code Review
+
+          $REVIEW_CONTENT
+
+          ---
+          *Automated review by Kimi (Moonshot AI)*"
