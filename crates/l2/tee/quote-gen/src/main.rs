@@ -3,7 +3,6 @@ mod sender;
 use configfs_tsm::create_tdx_quote;
 use ethrex_common::Bytes;
 use ethrex_common::utils::keccak;
-use ethrex_l2::sequencer::utils::get_git_commit_hash;
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofCalldata, ProverType},
@@ -14,6 +13,11 @@ use secp256k1::{Message, SecretKey, generate_keypair, rand};
 use sender::{get_batch, submit_proof, submit_quote};
 use std::time::Duration;
 use tokio::time::sleep;
+
+/// Returns the git commit hash of the current build.
+fn get_git_commit_hash() -> String {
+    env!("VERGEN_GIT_SHA").to_string()
+}
 
 const POLL_INTERVAL_MS: u64 = 5000;
 

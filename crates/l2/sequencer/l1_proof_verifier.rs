@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use aligned_sdk::{
-    aggregation_layer::{
+    blockchain::{
         AggregationModeVerificationData, ProofStatus, ProofVerificationAggModeError,
-        check_proof_verification as aligned_check_proof_verification,
+        provider::ProofAggregationServiceProvider,
     },
-    common::types::Network,
+    types::Network,
 };
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_common::{
@@ -13,7 +13,10 @@ use ethrex_l2_common::{
     prover::{BatchProof, ProverType},
 };
 use ethrex_l2_rpc::signer::Signer;
-use ethrex_l2_sdk::{calldata::encode_calldata, get_last_verified_batch, get_risc0_vk, get_sp1_vk};
+use ethrex_l2_sdk::{
+    calldata::encode_calldata, get_last_verified_batch, get_risc0_vk_for_batch,
+    get_sp1_vk_for_batch,
+};
 use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, eth::errors::RpcRequestError},
@@ -63,9 +66,8 @@ struct L1ProofVerifier {
     proof_verify_interval_ms: u64,
     network: Network,
     rollup_store: StoreRollup,
-    sp1_vk: [u8; 32],
-    risc0_vk: [u8; 32],
     needed_proof_types: Vec<ProverType>,
+    from_block: Option<u64>,
 }
 
 impl L1ProofVerifier {
@@ -88,9 +90,6 @@ impl L1ProofVerifier {
         )?;
         let beacon_urls = parse_beacon_urls(&aligned_cfg.beacon_urls);
 
-        let sp1_vk = get_sp1_vk(&eth_client, committer_cfg.on_chain_proposer_address).await?;
-        let risc0_vk = get_risc0_vk(&eth_client, committer_cfg.on_chain_proposer_address).await?;
-
         Ok(Self {
             eth_client,
             beacon_urls,
@@ -100,9 +99,8 @@ impl L1ProofVerifier {
             timelock_address: committer_cfg.timelock_address,
             proof_verify_interval_ms: aligned_cfg.aligned_verifier_interval_ms,
             rollup_store,
-            sp1_vk,
-            risc0_vk,
             needed_proof_types,
+            from_block: aligned_cfg.from_block,
         })
     }
 
@@ -158,6 +156,9 @@ impl L1ProofVerifier {
                 break;
             }
 
+            // Fetch VKs for this batch from the contract
+            let (sp1_vk, risc0_vk) = self.get_vks_for_batch(batch_number).await?;
+
             let mut aggregated_proofs_for_batch = HashMap::new();
             let mut current_batch_public_inputs = None;
 
@@ -178,10 +179,13 @@ impl L1ProofVerifier {
                     current_batch_public_inputs = Some(public_inputs.clone());
                 }
 
-                let verification_data = self.verification_data(prover_type, public_inputs)?;
+                // Create verification_data to get the commitment
+                let verification_data =
+                    Self::verification_data(prover_type, public_inputs.clone(), sp1_vk, risc0_vk)?;
                 let commitment = H256(verification_data.commitment());
-                if let Some((merkle_root, merkle_path)) =
-                    self.check_proof_aggregation(verification_data).await?
+                if let Some((merkle_root, merkle_path)) = self
+                    .check_proof_aggregation(prover_type, public_inputs, sp1_vk, risc0_vk)
+                    .await?
                 {
                     info!(
                         ?batch_number,
@@ -205,6 +209,12 @@ impl L1ProofVerifier {
                 break;
             }
 
+            // Note: RISC0 merkle proofs are collected even though RISC0 is not currently
+            // supported by Aligned in aggregation mode. These will be empty arrays since
+            // needed_proof_types won't include RISC0 when aligned mode is enabled.
+            // The contract's verifyBatchesAligned() accepts these empty arrays and skips
+            // RISC0 verification when REQUIRE_RISC0_PROOF is false.
+            // This code path is preserved for future compatibility when Aligned re-enables RISC0.
             let sp1_merkle_proof =
                 self.proof_of_inclusion(&aggregated_proofs_for_batch, ProverType::SP1);
             let risc0_merkle_proof =
@@ -284,18 +294,39 @@ impl L1ProofVerifier {
             .unwrap_or_else(|| Value::Array(vec![]))
     }
 
-    fn verification_data(
+    /// Fetches the verification keys for a batch from the contract.
+    async fn get_vks_for_batch(
         &self,
+        batch_number: u64,
+    ) -> Result<([u8; 32], [u8; 32]), ProofVerifierError> {
+        let sp1_vk = get_sp1_vk_for_batch(
+            &self.eth_client,
+            self.on_chain_proposer_address,
+            batch_number,
+        )
+        .await?;
+        let risc0_vk = get_risc0_vk_for_batch(
+            &self.eth_client,
+            self.on_chain_proposer_address,
+            batch_number,
+        )
+        .await?;
+        Ok((sp1_vk, risc0_vk))
+    }
+
+    fn verification_data(
         prover_type: ProverType,
         public_inputs: Vec<u8>,
+        sp1_vk: [u8; 32],
+        risc0_vk: [u8; 32],
     ) -> Result<AggregationModeVerificationData, ProofVerifierError> {
         let verification_data = match prover_type {
             ProverType::SP1 => AggregationModeVerificationData::SP1 {
-                vk: self.sp1_vk,
+                vk: sp1_vk,
                 public_inputs,
             },
             ProverType::RISC0 => AggregationModeVerificationData::Risc0 {
-                image_id: self.risc0_vk,
+                image_id: risc0_vk,
                 public_inputs,
             },
             unsupported_type => {
@@ -329,9 +360,14 @@ impl L1ProofVerifier {
     /// Checks if the received proof was aggregated by Aligned.
     async fn check_proof_aggregation(
         &self,
-        verification_data: AggregationModeVerificationData,
+        prover_type: ProverType,
+        public_inputs: Vec<u8>,
+        sp1_vk: [u8; 32],
+        risc0_vk: [u8; 32],
     ) -> Result<Option<(H256, Vec<[u8; 32]>)>, ProofVerifierError> {
-        let proof_status = self.check_proof_verification(&verification_data).await?;
+        let proof_status = self
+            .check_proof_verification(prover_type, public_inputs, sp1_vk, risc0_vk)
+            .await?;
 
         let (merkle_root, merkle_path) = match proof_status {
             ProofStatus::Verified {
@@ -357,22 +393,41 @@ impl L1ProofVerifier {
     /// Performs the call to the aligned proof verification function with retries over multiple RPC URLs and beacon URLs.
     async fn check_proof_verification(
         &self,
-        verification_data: &AggregationModeVerificationData,
+        prover_type: ProverType,
+        public_inputs: Vec<u8>,
+        sp1_vk: [u8; 32],
+        risc0_vk: [u8; 32],
     ) -> Result<ProofStatus, ProofVerifierError> {
         for rpc_url in &self.eth_client.urls {
             for beacon_url in &self.beacon_urls {
-                match aligned_check_proof_verification(
-                    verification_data,
+                // Create a provider for each RPC/beacon combination
+                let provider = ProofAggregationServiceProvider::new(
                     self.network.clone(),
-                    rpc_url.as_str().into(),
+                    rpc_url.to_string(),
                     beacon_url.clone(),
-                    None,
-                )
-                .await
+                );
+
+                // Recreate verification data for each attempt (it doesn't implement Clone)
+                let verification_data =
+                    Self::verification_data(prover_type, public_inputs.clone(), sp1_vk, risc0_vk)?;
+
+                match provider
+                    .check_proof_verification(self.from_block, verification_data)
+                    .await
                 {
                     Ok(proof_status) => return Ok(proof_status),
-                    Err(ProofVerificationAggModeError::BeaconClient(_)) => continue,
-                    Err(ProofVerificationAggModeError::EthereumProviderError(_)) => break,
+                    Err(ProofVerificationAggModeError::BeaconClient(e)) => {
+                        warn!(
+                            "Beacon client error when checking proof verification with RPC URL {rpc_url} and Beacon URL {beacon_url}: {e:?}. Trying next combination.",
+                        );
+                        continue;
+                    }
+                    Err(ProofVerificationAggModeError::EthereumProviderError(e)) => {
+                        warn!(
+                            "Ethereum provider error when checking proof verification with RPC URL {rpc_url} and Beacon URL {beacon_url}: {e:?}. Trying next combination.",
+                        );
+                        continue;
+                    }
                     Err(e) => return Err(ProofVerifierError::InternalError(format!("{e:?}"))),
                 }
             }
