@@ -50,6 +50,13 @@ pub struct ExecutionPayload {
         default
     )]
     pub excess_blob_gas: Option<u64>,
+    // ExecutionPayloadV4 fields (EIP-7843)
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "serde_utils::u64::hex_str_opt",
+        default
+    )]
+    pub slot_number: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -132,6 +139,7 @@ impl ExecutionPayload {
             parent_beacon_block_root,
             // TODO: set the value properly
             requests_hash,
+            slot_number: self.slot_number,
             ..Default::default()
         };
 
@@ -162,6 +170,7 @@ impl ExecutionPayload {
             withdrawals: block.body.withdrawals,
             blob_gas_used: block.header.blob_gas_used,
             excess_blob_gas: block.header.excess_blob_gas,
+            slot_number: block.header.slot_number,
         }
     }
 }

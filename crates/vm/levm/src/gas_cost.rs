@@ -62,6 +62,7 @@ pub const SELFBALANCE: u64 = 5;
 pub const BASEFEE: u64 = 2;
 pub const BLOBHASH: u64 = 3;
 pub const BLOBBASEFEE: u64 = 2;
+pub const SLOTNUM: u64 = 2;
 pub const POP: u64 = 2;
 pub const MLOAD_STATIC: u64 = 3;
 pub const MSTORE_STATIC: u64 = 3;

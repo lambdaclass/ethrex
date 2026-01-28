@@ -84,6 +84,7 @@ pub struct BuildPayloadArgs {
     pub random: H256,
     pub withdrawals: Option<Vec<Withdrawal>>,
     pub beacon_root: Option<H256>,
+    pub slot_number: Option<u64>,
     pub version: u8,
     pub elasticity_multiplier: u64,
     pub gas_ceil: u64,
@@ -170,6 +171,7 @@ pub fn create_payload(
         requests_hash: chain_config
             .is_prague_activated(args.timestamp)
             .then_some(*DEFAULT_REQUESTS_HASH),
+        slot_number: args.slot_number,
         ..Default::default()
     };
 
