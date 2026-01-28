@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use crate::api::tables::{
     ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
     CANONICAL_BLOCK_HASHES, FULLSYNC_HEADERS, HEADERS, RECEIPTS, STORAGE_FLATKEYVALUE,
@@ -280,7 +281,7 @@ pub struct RocksDBReadTx {
 }
 
 impl StorageReadView for RocksDBReadTx {
-    fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+    fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Bytes>, StoreError> {
         let cf = self
             .db
             .cf_handle(table)
@@ -288,6 +289,7 @@ impl StorageReadView for RocksDBReadTx {
 
         self.db
             .get_cf(&cf, key)
+            .map(|opt| opt.map(Bytes::from))
             .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
     }
 
@@ -331,7 +333,7 @@ impl StorageWriteBatch for RocksDBWriteTx {
     fn put_batch(
         &mut self,
         table: &'static str,
-        batch: Vec<(Vec<u8>, Vec<u8>)>,
+        batch: &[(&[u8], &[u8])],
     ) -> Result<(), StoreError> {
         let cf = self
             .db
@@ -375,9 +377,10 @@ pub struct RocksDBLocked {
 }
 
 impl StorageLockedView for RocksDBLocked {
-    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+    fn get(&self, key: &[u8]) -> Result<Option<Bytes>, StoreError> {
         self.lock
             .get_cf(&self.cf, key)
+            .map(|opt| opt.map(Bytes::from))
             .map_err(|e| StoreError::Custom(format!("Failed to get:{e:?}")))
     }
 }

@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use ethereum_types::H256;
 use rkyv::{Archive, Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
@@ -37,5 +38,22 @@ impl Eq for ArchivedH256Wrapper {}
 impl Hash for ArchivedH256Wrapper {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.0.hash(state);
+    }
+}
+
+#[derive(Archive, Serialize, Deserialize)]
+#[rkyv(remote = Bytes)]
+pub struct BytesWrapper {
+    #[rkyv(getter = bytes_to_vec)]
+    bytes: Vec<u8>,
+}
+
+fn bytes_to_vec(bytes: &Bytes) -> Vec<u8> {
+    bytes.to_vec()
+}
+
+impl From<BytesWrapper> for Bytes {
+    fn from(value: BytesWrapper) -> Self {
+        Self::from(value.bytes)
     }
 }
