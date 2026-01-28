@@ -13,8 +13,8 @@ use ethrex_rlp::decode::RLPDecode;
 use std::fs::File;
 use std::io::BufReader;
 
-const GENESIS_PATH: &str = "../../fixtures/genesis/l2.json";
-const FIRST_BLOB_PATH: &str = "../../fixtures/blobs/1-1.blob";
+const GENESIS_PATH: &str = "../fixtures/genesis/l2.json";
+const FIRST_BLOB_PATH: &str = "../fixtures/blobs/1-1.blob";
 
 /// Validates that the fixture blobs are compatible with the current genesis file.
 ///
@@ -27,7 +27,7 @@ const FIRST_BLOB_PATH: &str = "../../fixtures/blobs/1-1.blob";
 fn validate_blobs_match_genesis() {
     // Load genesis file and compute the genesis block hash
     let genesis_file =
-        File::open(GENESIS_PATH).expect("Failed to open genesis file. Run from crates/l2.");
+        File::open(GENESIS_PATH).expect("Failed to open genesis file. Run from test/ directory.");
     let reader = BufReader::new(genesis_file);
     let genesis: Genesis =
         serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
@@ -36,7 +36,7 @@ fn validate_blobs_match_genesis() {
 
     // Read the first blob file
     let blob_bytes = std::fs::read(FIRST_BLOB_PATH)
-        .expect("Failed to read first blob file. Run from crates/l2.");
+        .expect("Failed to read first blob file. Run from test/ directory.");
 
     assert_eq!(
         blob_bytes.len(),
