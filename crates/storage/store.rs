@@ -1,7 +1,7 @@
-#[cfg(feature = "rocksdb")]
-use crate::backend::rocksdb::RocksDBBackend;
 #[cfg(feature = "ethrex-db")]
 use crate::backend::ethrex_db::EthrexDbBackend;
+#[cfg(feature = "rocksdb")]
+use crate::backend::rocksdb::RocksDBBackend;
 #[cfg(feature = "ethrex-db")]
 use crate::state_backend::StateStorageBackend;
 use crate::{
@@ -286,6 +286,41 @@ impl Store {
     #[cfg(feature = "ethrex-db")]
     pub fn ethrex_db_state(&self) -> Option<&Arc<std::sync::RwLock<EthrexDbBackend>>> {
         self.state_backend.as_ref()
+    }
+
+    /// Check if an account exists in ethrex-db (used for healing).
+    ///
+    /// When ethrex-db is enabled, accounts are stored directly in ethrex-db's PagedStateTrie,
+    /// not as trie nodes in RocksDB. This method allows state healing to check account
+    /// existence without querying RocksDB trie tables which would always return "missing".
+    #[cfg(feature = "ethrex-db")]
+    pub fn account_exists_in_ethrex_db(&self, address_hash: &H256) -> Result<bool, StoreError> {
+        if let Some(backend) = &self.state_backend {
+            let backend = backend
+                .read()
+                .map_err(|_| StoreError::Custom("Lock error".into()))?;
+            return Ok(backend.get_account(address_hash)?.is_some());
+        }
+        Ok(false)
+    }
+
+    /// Check if a storage slot exists in ethrex-db (used for healing).
+    ///
+    /// Similar to `account_exists_in_ethrex_db`, this checks storage slot existence
+    /// in ethrex-db instead of RocksDB trie tables during state healing.
+    #[cfg(feature = "ethrex-db")]
+    pub fn storage_exists_in_ethrex_db(
+        &self,
+        address_hash: &H256,
+        slot_hash: &H256,
+    ) -> Result<bool, StoreError> {
+        if let Some(backend) = &self.state_backend {
+            let backend = backend
+                .read()
+                .map_err(|_| StoreError::Custom("Lock error".into()))?;
+            return Ok(backend.get_storage(address_hash, slot_hash)?.is_some());
+        }
+        Ok(false)
     }
 
     /// Add a block in a single transaction.
@@ -1672,7 +1707,8 @@ impl Store {
                 // Using 8GB (2097152 pages × 4KB) to accommodate mainnet state
                 let state_db_path = db_path.join("ethrex_state.db");
                 const ETHREX_DB_INITIAL_PAGES: u32 = 2097152; // 8GB
-                let state_backend = EthrexDbBackend::open_with_size(&state_db_path, ETHREX_DB_INITIAL_PAGES)?;
+                let state_backend =
+                    EthrexDbBackend::open_with_size(&state_db_path, ETHREX_DB_INITIAL_PAGES)?;
 
                 Self::from_backend(
                     backend,
@@ -2044,7 +2080,10 @@ impl Store {
                 .iter()
                 .filter_map(|update| {
                     update.info.as_ref().and_then(|info| {
-                        update.code.as_ref().map(|code| (info.code_hash, code.clone()))
+                        update
+                            .code
+                            .as_ref()
+                            .map(|code| (info.code_hash, code.clone()))
                     })
                 })
                 .collect();
@@ -2063,10 +2102,8 @@ impl Store {
             return Ok(None);
         };
 
-        let result = self.apply_account_updates_from_trie_batch(
-            &mut state_trie,
-            account_updates,
-        )?;
+        let result =
+            self.apply_account_updates_from_trie_batch(&mut state_trie, account_updates)?;
 
         Ok(Some(result))
     }

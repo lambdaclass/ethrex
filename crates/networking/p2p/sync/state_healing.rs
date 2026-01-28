@@ -358,7 +358,7 @@ fn heal_state_batch(
     for node in nodes.into_iter() {
         let path = batch.remove(0);
         let (missing_children_count, missing_children) =
-            node_missing_children(&node, &path.path, trie.db())?;
+            node_missing_children(&node, &path.path, trie.db(), &store)?;
         batch.extend(missing_children);
         if missing_children_count == 0 {
             commit_node(
@@ -412,10 +412,15 @@ fn commit_node(
 }
 
 /// Returns the partial paths to the node's children if they are not already part of the trie state
+///
+/// When ethrex-db is enabled, leaf nodes (64 nibbles = account hash) are checked against
+/// ethrex-db instead of RocksDB trie tables, since ethrex-db stores accounts directly
+/// rather than as trie nodes.
 pub fn node_missing_children(
     node: &Node,
     path: &Nibbles,
     trie_state: &dyn TrieDB,
+    store: &Store,
 ) -> Result<(u64, Vec<RequestMetadata>), TrieError> {
     let mut paths: Vec<RequestMetadata> = Vec::new();
     let mut missing_children_count = 0_u64;
@@ -426,6 +431,28 @@ pub fn node_missing_children(
                 if !child.is_valid() {
                     continue;
                 }
+
+                // For ethrex-db: leaf nodes (64 nibbles) are accounts - check ethrex-db directly
+                #[cfg(feature = "ethrex-db")]
+                if store.has_ethrex_db_state() && child_path.len() == 64 {
+                    let address_hash = H256::from_slice(&child_path.to_bytes());
+                    if store
+                        .account_exists_in_ethrex_db(&address_hash)
+                        .unwrap_or(false)
+                    {
+                        continue; // Account exists in ethrex-db, skip
+                    }
+                    // Account missing - need to heal
+                    missing_children_count += 1;
+                    paths.push(RequestMetadata {
+                        hash: child.compute_hash().finalize(),
+                        path: child_path,
+                        parent_path: path.clone(),
+                    });
+                    continue;
+                }
+
+                // Default: check RocksDB trie (for non-ethrex-db or non-leaf nodes)
                 let validity = child
                     .get_node_checked(trie_state, child_path.clone())
                     .inspect_err(|_| {
@@ -437,11 +464,11 @@ pub fn node_missing_children(
                 }
 
                 missing_children_count += 1;
-                paths.extend(vec![RequestMetadata {
+                paths.push(RequestMetadata {
                     hash: child.compute_hash().finalize(),
                     path: child_path,
                     parent_path: path.clone(),
-                }]);
+                });
             }
         }
         Node::Extension(node) => {
@@ -449,6 +476,29 @@ pub fn node_missing_children(
             if !node.child.is_valid() {
                 return Ok((0, vec![]));
             }
+
+            // For ethrex-db: leaf nodes (64 nibbles) are accounts - check ethrex-db directly
+            #[cfg(feature = "ethrex-db")]
+            if store.has_ethrex_db_state() && child_path.len() == 64 {
+                let address_hash = H256::from_slice(&child_path.to_bytes());
+                if store
+                    .account_exists_in_ethrex_db(&address_hash)
+                    .unwrap_or(false)
+                {
+                    return Ok((0, vec![])); // Account exists in ethrex-db, no children missing
+                }
+                // Account missing - need to heal
+                return Ok((
+                    1,
+                    vec![RequestMetadata {
+                        hash: node.child.compute_hash().finalize(),
+                        path: child_path,
+                        parent_path: path.clone(),
+                    }],
+                ));
+            }
+
+            // Default: check RocksDB trie (for non-ethrex-db or non-leaf nodes)
             let validity = node
                 .child
                 .get_node_checked(trie_state, child_path.clone())
@@ -459,13 +509,17 @@ pub fn node_missing_children(
             }
             missing_children_count += 1;
 
-            paths.extend(vec![RequestMetadata {
+            paths.push(RequestMetadata {
                 hash: node.child.compute_hash().finalize(),
                 path: child_path,
                 parent_path: path.clone(),
-            }]);
+            });
         }
         _ => {}
     }
+
+    // Suppress unused variable warning when ethrex-db feature is disabled
+    let _ = store;
+
     Ok((missing_children_count, paths))
 }

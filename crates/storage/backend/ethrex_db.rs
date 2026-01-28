@@ -189,16 +189,15 @@ impl StateStorageBackend for EthrexDbBackend {
             .map(|data| account_data_to_state(&data)))
     }
 
-    fn get_account_by_address(&self, address: &Address) -> Result<Option<AccountState>, StoreError> {
+    fn get_account_by_address(
+        &self,
+        address: &Address,
+    ) -> Result<Option<AccountState>, StoreError> {
         let address_hash = H256::from(keccak_hash(address.as_bytes()));
         self.get_account(&address_hash)
     }
 
-    fn set_account(
-        &mut self,
-        address_hash: H256,
-        account: AccountState,
-    ) -> Result<(), StoreError> {
+    fn set_account(&mut self, address_hash: H256, account: AccountState) -> Result<(), StoreError> {
         let mut trie = self
             .state_trie
             .write()
@@ -445,7 +444,11 @@ impl StateStorageBackend for EthrexDbBackend {
         Ok(trie.flush_storage_tries())
     }
 
-    fn persist_checkpoint(&mut self, block_number: u64, block_hash: H256) -> Result<(), StoreError> {
+    fn persist_checkpoint(
+        &mut self,
+        block_number: u64,
+        block_hash: H256,
+    ) -> Result<(), StoreError> {
         self.current_block = block_number;
         self.current_block_hash = block_hash;
 
@@ -509,14 +512,16 @@ impl StateWitness {
 
     /// Returns the number of unique accounts accessed.
     pub fn account_count(&self) -> usize {
-        let mut keys: std::collections::HashSet<H256> = self.accounts_read.keys().copied().collect();
+        let mut keys: std::collections::HashSet<H256> =
+            self.accounts_read.keys().copied().collect();
         keys.extend(self.accounts_written.keys().copied());
         keys.len()
     }
 
     /// Returns the number of unique storage slots accessed.
     pub fn storage_count(&self) -> usize {
-        let mut keys: std::collections::HashSet<(H256, H256)> = self.storage_read.keys().copied().collect();
+        let mut keys: std::collections::HashSet<(H256, H256)> =
+            self.storage_read.keys().copied().collect();
         keys.extend(self.storage_written.keys().copied());
         keys.len()
     }
@@ -600,7 +605,9 @@ impl<B: StateStorageBackend> LoggingStateBackend<B> {
             return;
         }
         if let Ok(mut witness) = self.witness.lock() {
-            witness.storage_read.insert((*address_hash, *slot_hash), *value);
+            witness
+                .storage_read
+                .insert((*address_hash, *slot_hash), *value);
         }
     }
 
@@ -609,7 +616,9 @@ impl<B: StateStorageBackend> LoggingStateBackend<B> {
             return;
         }
         if let Ok(mut witness) = self.witness.lock() {
-            witness.accounts_written.insert(*address_hash, account.cloned());
+            witness
+                .accounts_written
+                .insert(*address_hash, account.cloned());
         }
     }
 
@@ -618,7 +627,9 @@ impl<B: StateStorageBackend> LoggingStateBackend<B> {
             return;
         }
         if let Ok(mut witness) = self.witness.lock() {
-            witness.storage_written.insert((*address_hash, *slot_hash), *value);
+            witness
+                .storage_written
+                .insert((*address_hash, *slot_hash), *value);
         }
     }
 }
@@ -632,7 +643,10 @@ impl<B: StateStorageBackend> StateStorageBackend for LoggingStateBackend<B> {
         Ok(result)
     }
 
-    fn get_account_by_address(&self, address: &Address) -> Result<Option<AccountState>, StoreError> {
+    fn get_account_by_address(
+        &self,
+        address: &Address,
+    ) -> Result<Option<AccountState>, StoreError> {
         let result = self.inner.get_account_by_address(address)?;
         if let Some(ref account) = result {
             let address_hash = H256::from(keccak_hash(address.as_bytes()));
@@ -651,7 +665,11 @@ impl<B: StateStorageBackend> StateStorageBackend for LoggingStateBackend<B> {
         self.inner.delete_account(address_hash)
     }
 
-    fn get_storage(&self, address_hash: &H256, slot_hash: &H256) -> Result<Option<U256>, StoreError> {
+    fn get_storage(
+        &self,
+        address_hash: &H256,
+        slot_hash: &H256,
+    ) -> Result<Option<U256>, StoreError> {
         let result = self.inner.get_storage(address_hash, slot_hash)?;
         if let Some(ref value) = result {
             self.log_storage_read(address_hash, slot_hash, value);
@@ -659,7 +677,12 @@ impl<B: StateStorageBackend> StateStorageBackend for LoggingStateBackend<B> {
         Ok(result)
     }
 
-    fn set_storage(&mut self, address_hash: H256, slot_hash: H256, value: U256) -> Result<(), StoreError> {
+    fn set_storage(
+        &mut self,
+        address_hash: H256,
+        slot_hash: H256,
+        value: U256,
+    ) -> Result<(), StoreError> {
         self.log_storage_write(&address_hash, &slot_hash, &value);
         self.inner.set_storage(address_hash, slot_hash, value)
     }
@@ -693,26 +716,44 @@ impl<B: StateStorageBackend> StateStorageBackend for LoggingStateBackend<B> {
         self.inner.get_account_proof(address)
     }
 
-    fn get_storage_proofs(&self, address: &Address, slots: &[H256]) -> Result<Vec<Vec<Vec<u8>>>, StoreError> {
+    fn get_storage_proofs(
+        &self,
+        address: &Address,
+        slots: &[H256],
+    ) -> Result<Vec<Vec<Vec<u8>>>, StoreError> {
         self.inner.get_storage_proofs(address, slots)
     }
 
-    fn iter_accounts_from(&self, start: &H256) -> Result<Box<dyn Iterator<Item = (H256, AccountState)> + '_>, StoreError> {
+    fn iter_accounts_from(
+        &self,
+        start: &H256,
+    ) -> Result<Box<dyn Iterator<Item = (H256, AccountState)> + '_>, StoreError> {
         self.inner.iter_accounts_from(start)
     }
 
-    fn iter_storage_from(&self, address_hash: &H256, start: &H256) -> Result<Box<dyn Iterator<Item = (H256, U256)> + '_>, StoreError> {
+    fn iter_storage_from(
+        &self,
+        address_hash: &H256,
+        start: &H256,
+    ) -> Result<Box<dyn Iterator<Item = (H256, U256)> + '_>, StoreError> {
         self.inner.iter_storage_from(address_hash, start)
     }
 
-    fn set_accounts_batch(&mut self, accounts: Vec<(H256, AccountState)>) -> Result<(), StoreError> {
+    fn set_accounts_batch(
+        &mut self,
+        accounts: Vec<(H256, AccountState)>,
+    ) -> Result<(), StoreError> {
         for (address_hash, account) in &accounts {
             self.log_account_write(address_hash, Some(account));
         }
         self.inner.set_accounts_batch(accounts)
     }
 
-    fn set_storage_batch(&mut self, address_hash: H256, slots: Vec<(H256, U256)>) -> Result<(), StoreError> {
+    fn set_storage_batch(
+        &mut self,
+        address_hash: H256,
+        slots: Vec<(H256, U256)>,
+    ) -> Result<(), StoreError> {
         for (slot_hash, value) in &slots {
             self.log_storage_write(&address_hash, slot_hash, value);
         }
@@ -723,7 +764,11 @@ impl<B: StateStorageBackend> StateStorageBackend for LoggingStateBackend<B> {
         self.inner.flush_storage_tries()
     }
 
-    fn persist_checkpoint(&mut self, block_number: u64, block_hash: H256) -> Result<(), StoreError> {
+    fn persist_checkpoint(
+        &mut self,
+        block_number: u64,
+        block_hash: H256,
+    ) -> Result<(), StoreError> {
         self.inner.persist_checkpoint(block_number, block_hash)
     }
 
@@ -763,10 +808,11 @@ mod tests {
         let slot_hash = H256::from([2u8; 32]);
         let value = U256::from(12345);
 
-        backend
-            .set_storage(address_hash, slot_hash, value)
+        backend.set_storage(address_hash, slot_hash, value).unwrap();
+        let retrieved = backend
+            .get_storage(&address_hash, &slot_hash)
+            .unwrap()
             .unwrap();
-        let retrieved = backend.get_storage(&address_hash, &slot_hash).unwrap().unwrap();
 
         assert_eq!(retrieved, value);
     }
@@ -884,7 +930,9 @@ mod tests {
         };
 
         // Write should be logged
-        logging_backend.set_account(address_hash, account.clone()).unwrap();
+        logging_backend
+            .set_account(address_hash, account.clone())
+            .unwrap();
 
         {
             let w = witness.lock().unwrap();
@@ -912,7 +960,9 @@ mod tests {
         let value = U256::from(12345);
 
         // Write storage
-        logging_backend.set_storage(address_hash, slot_hash, value).unwrap();
+        logging_backend
+            .set_storage(address_hash, slot_hash, value)
+            .unwrap();
 
         {
             let w = witness.lock().unwrap();
@@ -921,7 +971,9 @@ mod tests {
         }
 
         // Read storage
-        let _ = logging_backend.get_storage(&address_hash, &slot_hash).unwrap();
+        let _ = logging_backend
+            .get_storage(&address_hash, &slot_hash)
+            .unwrap();
 
         {
             let w = witness.lock().unwrap();

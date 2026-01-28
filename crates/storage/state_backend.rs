@@ -115,7 +115,8 @@ pub trait StateStorageBackend: Debug + Send + Sync {
     fn get_account(&self, address_hash: &H256) -> Result<Option<AccountState>, StoreError>;
 
     /// Gets an account by its address (will hash internally).
-    fn get_account_by_address(&self, address: &Address) -> Result<Option<AccountState>, StoreError>;
+    fn get_account_by_address(&self, address: &Address)
+    -> Result<Option<AccountState>, StoreError>;
 
     /// Sets an account by its hashed address.
     fn set_account(&mut self, address_hash: H256, account: AccountState) -> Result<(), StoreError>;
@@ -128,7 +129,11 @@ pub trait StateStorageBackend: Debug + Send + Sync {
     // =========================================================================
 
     /// Gets a storage value by hashed address and hashed slot.
-    fn get_storage(&self, address_hash: &H256, slot_hash: &H256) -> Result<Option<U256>, StoreError>;
+    fn get_storage(
+        &self,
+        address_hash: &H256,
+        slot_hash: &H256,
+    ) -> Result<Option<U256>, StoreError>;
 
     /// Sets a storage value by hashed address and hashed slot.
     /// Setting to zero deletes the slot.
@@ -195,10 +200,8 @@ pub trait StateStorageBackend: Debug + Send + Sync {
     // =========================================================================
 
     /// Sets multiple accounts in batch (optimized for snap sync).
-    fn set_accounts_batch(
-        &mut self,
-        accounts: Vec<(H256, AccountState)>,
-    ) -> Result<(), StoreError>;
+    fn set_accounts_batch(&mut self, accounts: Vec<(H256, AccountState)>)
+    -> Result<(), StoreError>;
 
     /// Sets multiple storage slots in batch (optimized for snap sync).
     fn set_storage_batch(
@@ -212,7 +215,8 @@ pub trait StateStorageBackend: Debug + Send + Sync {
     fn flush_storage_tries(&mut self) -> Result<usize, StoreError>;
 
     /// Persists current state as a checkpoint (for incremental snap sync).
-    fn persist_checkpoint(&mut self, block_number: u64, block_hash: H256) -> Result<(), StoreError>;
+    fn persist_checkpoint(&mut self, block_number: u64, block_hash: H256)
+    -> Result<(), StoreError>;
 
     /// Finalizes state persistence (called at end of snap sync).
     fn persist_final(&mut self, block_number: u64, block_hash: H256) -> Result<(), StoreError>;

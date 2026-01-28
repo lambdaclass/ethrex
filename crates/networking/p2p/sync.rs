@@ -743,10 +743,8 @@ impl Syncer {
             #[cfg(feature = "ethrex-db")]
             {
                 info!("Persisting ethrex-db state after account insertion...");
-                store.persist_state_checkpoint_ethrex_db(
-                    pivot_header.number,
-                    pivot_header.hash(),
-                )?;
+                store
+                    .persist_state_checkpoint_ethrex_db(pivot_header.number, pivot_header.hash())?;
                 info!("ethrex-db state persisted successfully");
             }
 
@@ -865,10 +863,8 @@ impl Syncer {
             #[cfg(feature = "ethrex-db")]
             {
                 info!("Persisting ethrex-db state after storage insertion...");
-                store.persist_state_checkpoint_ethrex_db(
-                    pivot_header.number,
-                    pivot_header.hash(),
-                )?;
+                store
+                    .persist_state_checkpoint_ethrex_db(pivot_header.number, pivot_header.hash())?;
                 info!("ethrex-db state persisted after storage insertion");
             }
 
@@ -1686,9 +1682,7 @@ async fn insert_storages(
 
 /// Converts ethrex_common AccountState to ethrex_storage AccountState format.
 #[cfg(feature = "ethrex-db")]
-fn convert_account_state(
-    state: &AccountState,
-) -> ethrex_storage::state_backend::AccountState {
+fn convert_account_state(state: &AccountState) -> ethrex_storage::state_backend::AccountState {
     ethrex_storage::state_backend::AccountState {
         nonce: state.nonce,
         balance: state.balance,

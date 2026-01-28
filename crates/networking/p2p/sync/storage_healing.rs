@@ -596,6 +596,10 @@ fn get_initial_downloads(
 
 /// Returns the full paths to the node's missing children and grandchildren
 /// and the number of direct missing children
+///
+/// When ethrex-db is enabled, leaf nodes (64 nibbles = storage slot hash) are checked
+/// against ethrex-db instead of RocksDB trie tables, since ethrex-db stores storage
+/// slots directly rather than as trie nodes.
 pub fn determine_missing_children(
     node_response: &NodeResponse,
     store: &Store,
@@ -603,11 +607,9 @@ pub fn determine_missing_children(
     let mut paths = Vec::new();
     let mut count = 0;
     let node = node_response.node.clone();
+    let address_hash = H256::from_slice(&node_response.node_request.acc_path.to_bytes());
     let trie = store
-        .open_direct_storage_trie(
-            H256::from_slice(&node_response.node_request.acc_path.to_bytes()),
-            *EMPTY_TRIE_HASH,
-        )
+        .open_direct_storage_trie(address_hash, *EMPTY_TRIE_HASH)
         .inspect_err(|_| {
             debug!("Malformed data when opening the storage trie in determine missing children")
         })?;
@@ -623,6 +625,29 @@ pub fn determine_missing_children(
                 if !child.is_valid() {
                     continue;
                 }
+
+                // For ethrex-db: leaf nodes (64 nibbles) are storage slots - check ethrex-db directly
+                #[cfg(feature = "ethrex-db")]
+                if store.has_ethrex_db_state() && child_path.len() == 64 {
+                    let slot_hash = H256::from_slice(&child_path.to_bytes());
+                    if store
+                        .storage_exists_in_ethrex_db(&address_hash, &slot_hash)
+                        .unwrap_or(false)
+                    {
+                        continue; // Storage slot exists in ethrex-db, skip
+                    }
+                    // Storage slot missing - need to heal
+                    count += 1;
+                    paths.push(NodeRequest {
+                        acc_path: node_response.node_request.acc_path.clone(),
+                        storage_path: child_path,
+                        parent: node_response.node_request.storage_path.clone(),
+                        hash: child.compute_hash().finalize(),
+                    });
+                    continue;
+                }
+
+                // Default: check RocksDB trie (for non-ethrex-db or non-leaf nodes)
                 let validity = child
                     .get_node_checked(trie_state, child_path.clone())
                     .inspect_err(|_| {
@@ -635,12 +660,12 @@ pub fn determine_missing_children(
                 }
                 count += 1;
 
-                paths.extend(vec![NodeRequest {
+                paths.push(NodeRequest {
                     acc_path: node_response.node_request.acc_path.clone(),
                     storage_path: child_path,
                     parent: node_response.node_request.storage_path.clone(),
                     hash: child.compute_hash().finalize(),
-                }]);
+                });
             }
         }
         Node::Extension(node) => {
@@ -648,6 +673,30 @@ pub fn determine_missing_children(
             if !node.child.is_valid() {
                 return Ok((vec![], 0));
             }
+
+            // For ethrex-db: leaf nodes (64 nibbles) are storage slots - check ethrex-db directly
+            #[cfg(feature = "ethrex-db")]
+            if store.has_ethrex_db_state() && child_path.len() == 64 {
+                let slot_hash = H256::from_slice(&child_path.to_bytes());
+                if store
+                    .storage_exists_in_ethrex_db(&address_hash, &slot_hash)
+                    .unwrap_or(false)
+                {
+                    return Ok((vec![], 0)); // Storage slot exists in ethrex-db, no children missing
+                }
+                // Storage slot missing - need to heal
+                return Ok((
+                    vec![NodeRequest {
+                        acc_path: node_response.node_request.acc_path.clone(),
+                        storage_path: child_path,
+                        parent: node_response.node_request.storage_path.clone(),
+                        hash: node.child.compute_hash().finalize(),
+                    }],
+                    1,
+                ));
+            }
+
+            // Default: check RocksDB trie (for non-ethrex-db or non-leaf nodes)
             let validity = node
                 .child
                 .get_node_checked(trie_state, child_path.clone())
@@ -659,12 +708,12 @@ pub fn determine_missing_children(
             }
             count += 1;
 
-            paths.extend(vec![NodeRequest {
+            paths.push(NodeRequest {
                 acc_path: node_response.node_request.acc_path.clone(),
                 storage_path: child_path,
                 parent: node_response.node_request.storage_path.clone(),
                 hash: node.child.compute_hash().finalize(),
-            }]);
+            });
         }
         _ => {}
     }
