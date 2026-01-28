@@ -178,13 +178,15 @@ impl Nibbles {
     /// Taken from https://github.com/citahub/cita_trie/blob/master/src/nibbles.rs#L56
     /// Encodes the nibbles in compact form
     pub fn encode_compact(&self) -> Vec<u8> {
-        let mut compact = vec![];
         let is_leaf = self.is_leaf();
         let mut hex = if is_leaf {
             &self.data[0..self.data.len() - 1]
         } else {
             &self.data[0..]
         };
+        // Preallocate: 1 prefix byte + half the nibbles (2 nibbles per byte)
+        // Inspired by reth's allocation hot path optimizations
+        let mut compact = Vec::with_capacity(1 + (hex.len() + 1) / 2);
         // node type    path length    |    prefix    hexchar
         // --------------------------------------------------
         // extension    even           |    0000      0x0

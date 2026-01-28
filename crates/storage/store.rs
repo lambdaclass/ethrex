@@ -394,7 +394,9 @@ impl Store {
         let backend = self.backend.clone();
         tokio::task::spawn_blocking(move || {
             let numbers: Vec<BlockNumber> = (from..=to).collect();
-            let mut block_bodies = Vec::new();
+            // Preallocate to avoid reallocations during the loop
+            // Inspired by go-ethereum's preallocation optimizations
+            let mut block_bodies = Vec::with_capacity(numbers.len());
 
             let txn = backend.begin_read()?;
             for number in numbers {
@@ -431,7 +433,9 @@ impl Store {
         // TODO: Implement read bulk
         tokio::task::spawn_blocking(move || {
             let txn = backend.begin_read()?;
-            let mut block_bodies = Vec::new();
+            // Preallocate to avoid reallocations during the loop
+            // Inspired by go-ethereum's preallocation optimizations
+            let mut block_bodies = Vec::with_capacity(hashes.len());
             for hash in hashes {
                 let hash_key = hash.encode_to_vec();
 
@@ -1074,7 +1078,9 @@ impl Store {
         &self,
         account_codes: Vec<(H256, Code)>,
     ) -> Result<(), StoreError> {
-        let mut batch_items = Vec::new();
+        // Preallocate to avoid reallocations during the loop
+        // Inspired by go-ethereum's preallocation optimizations
+        let mut batch_items = Vec::with_capacity(account_codes.len());
         for (code_hash, code) in account_codes {
             let buf = encode_code(&code);
             batch_items.push((code_hash.as_bytes().to_vec(), buf));
@@ -1191,7 +1197,9 @@ impl Store {
         start: BlockNumber,
         limit: u64,
     ) -> Result<Vec<Option<BlockHeader>>, StoreError> {
-        let mut res = vec![];
+        // Preallocate to avoid reallocations during the loop
+        // Inspired by go-ethereum's preallocation optimizations
+        let mut res = Vec::with_capacity(limit as usize);
         let read_tx = self.backend.begin_read()?;
         // TODO: use read_bulk here
         for key in start..start + limit {
