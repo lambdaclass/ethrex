@@ -27,13 +27,17 @@ use super::{ExtensionNode, Node, ValueOrHash};
 )]
 pub struct LeafNode {
     pub partial: Nibbles,
+    #[rkyv(with = crate::rkyv_utils::BytesWrapper)]
     pub value: ValueRLP,
 }
 
 impl LeafNode {
     /// Creates a new leaf node and stores the given (path, value) pair
-    pub const fn new(partial: Nibbles, value: ValueRLP) -> Self {
-        Self { partial, value }
+    pub fn new(partial: Nibbles, value: impl Into<ValueRLP>) -> Self {
+        Self {
+            partial,
+            value: value.into(),
+        }
     }
 
     /// Returns the stored value if the given path matches the stored path
@@ -180,7 +184,7 @@ mod test {
 
     #[test]
     fn new() {
-        let node = LeafNode::new(Default::default(), Default::default());
+        let node = LeafNode::new(Default::default(), ValueRLP::default());
         assert_eq!(node.value, ValueRLP::default());
     }
 
@@ -192,7 +196,7 @@ mod test {
 
         assert_eq!(
             node.get(Nibbles::from_bytes(&[0x12])).unwrap(),
-            Some(vec![0x12, 0x34, 0x56, 0x78]),
+            Some(vec![0x12, 0x34, 0x56, 0x78].into()),
         );
     }
 
@@ -233,7 +237,7 @@ mod test {
             Some(Node::Branch(x)) => x,
             _ => panic!("expected a branch node"),
         };
-        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
+        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value.into()));
     }
 
     #[test]
@@ -251,7 +255,7 @@ mod test {
         assert!(matches!(node, Some(Node::Extension(_))));
         assert_eq!(
             node.unwrap().get(trie.db.as_ref(), path).unwrap(),
-            Some(value)
+            Some(value.into())
         );
     }
 
@@ -270,7 +274,7 @@ mod test {
         assert!(matches!(node, Some(Node::Extension(_))));
         assert_eq!(
             node.unwrap().get(trie.db.as_ref(), path).unwrap(),
-            Some(value)
+            Some(value.into())
         );
     }
 
@@ -289,7 +293,7 @@ mod test {
         assert!(matches!(node, Some(Node::Extension(_))));
         assert_eq!(
             node.unwrap().get(trie.db.as_ref(), path).unwrap(),
-            Some(value)
+            Some(value.into())
         );
     }
 
@@ -310,7 +314,7 @@ mod test {
         let (node, value) = node.remove(Nibbles::from_bytes(&[0x12, 0x34])).unwrap();
 
         assert!(node.is_none());
-        assert_eq!(value, Some(vec![0x12, 0x34, 0x56, 0x78]));
+        assert_eq!(value, Some(vec![0x12, 0x34, 0x56, 0x78].into()));
     }
 
     #[test]

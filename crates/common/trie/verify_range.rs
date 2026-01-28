@@ -5,7 +5,7 @@ use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::decode::RLPDecode;
 
 use crate::{
-    ProofTrie, Trie, TrieError, ValueRLP,
+    ProofTrie, Trie, TrieError,
     nibbles::Nibbles,
     node::{Node, NodeRef},
     node_hash::NodeHash,
@@ -13,11 +13,11 @@ use crate::{
 
 /// Verifies that the key value range belongs to the trie with the given root given the edge proofs for the range
 /// Also returns true if there is more state to be fetched (aka if there are more keys to the right of the given range)
-pub fn verify_range(
+pub fn verify_range<V: AsRef<[u8]>>(
     root: H256,
     left_bound: &H256,
     keys: &[H256],
-    values: &[ValueRLP],
+    values: &[V],
     proof: &[Vec<u8>],
 ) -> Result<bool, TrieError> {
     // Validate range
@@ -37,7 +37,7 @@ pub fn verify_range(
         }
     }
     // Check for empty values
-    if values.iter().any(|value| value.is_empty()) {
+    if values.iter().any(|value| value.as_ref().is_empty()) {
         return Err(TrieError::Verify(String::from(
             "value range contains empty value",
         )));
@@ -49,7 +49,7 @@ pub fn verify_range(
     if proof.is_empty() {
         // Check that the trie constructed from the given keys and values has the expected root
         for (key, value) in keys.iter().zip(values.iter()) {
-            trie.insert(key.0.to_vec(), value.clone())?;
+            trie.insert(key.0.to_vec(), value.as_ref().to_vec())?;
         }
         let hash = trie.hash()?;
         if hash != root {
@@ -90,7 +90,7 @@ pub fn verify_range(
             (*left_bound, Some(*last_key)),
             Some(*keys.first().unwrap()),
         )?;
-        if result.left_value != values[0] {
+        if result.left_value != values[0].as_ref() {
             return Err(TrieError::Verify(
                 "correct proof but invalid data".to_string(),
             ));
@@ -113,7 +113,7 @@ pub fn verify_range(
 
     // Reconstruct the internal nodes by inserting the elements on the range
     for (key, value) in keys.iter().zip(values.iter()) {
-        trie.insert(key.0.to_vec(), value.clone())?;
+        trie.insert(key.0.to_vec(), value.as_ref().to_vec())?;
     }
 
     // Fill up the state with the nodes from the proof
@@ -244,13 +244,13 @@ fn process_proof_nodes(
                     current_path.clone(),
                     node.child,
                 )?;
-                Vec::new()
+                Default::default()
             }
             Node::Leaf(node) => node.value,
         };
 
         if !value.is_empty() && current_path == bounds.0 {
-            left_value = value.clone();
+            left_value = value.to_vec();
         }
     }
 

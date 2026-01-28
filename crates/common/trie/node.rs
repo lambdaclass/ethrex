@@ -150,7 +150,7 @@ impl NodeRef {
                 node.encode(&mut buf);
                 let hash = *hash.get_or_init(|| NodeHash::from_encoded(&buf));
                 if let Node::Leaf(leaf) = node.as_ref() {
-                    acc.push((path.concat(&leaf.partial), leaf.value.clone()));
+                    acc.push((path.concat(&leaf.partial), leaf.value.to_vec()));
                 }
                 acc.push((path, buf));
 
@@ -240,6 +240,12 @@ impl From<ValueRLP> for ValueOrHash {
     }
 }
 
+impl From<Vec<u8>> for ValueOrHash {
+    fn from(value: Vec<u8>) -> Self {
+        Self::Value(value.into())
+    }
+}
+
 impl From<NodeHash> for ValueOrHash {
     fn from(value: NodeHash) -> Self {
         Self::Hash(value)
@@ -268,7 +274,7 @@ impl Default for Node {
         // empty leaf node as a placeholder
         Self::Leaf(LeafNode {
             partial: Nibbles::from_bytes(&[]),
-            value: Vec::new(),
+            value: Default::default(),
         })
     }
 }

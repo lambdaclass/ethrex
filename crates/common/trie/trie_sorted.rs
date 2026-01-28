@@ -90,7 +90,7 @@ fn create_parent(current_node: &CenterSide, closest_nibbles: &Nibbles) -> StackE
         path: new_parent_nibbles,
         element: BranchNode {
             choices: BranchNode::EMPTY_CHOICES,
-            value: vec![],
+            value: Default::default(),
         },
     }
 }
@@ -131,7 +131,7 @@ fn add_current_to_parent_and_write_queue(
             top_path,
             LeafNode {
                 partial: path,
-                value: value.clone(),
+                value: value.clone().into(),
             }
             .into(),
         ),

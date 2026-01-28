@@ -1,5 +1,6 @@
 use std::array;
 
+use bytes::Bytes;
 // Contains RLP encoding and decoding implementations for Trie Nodes
 // This encoding is only used to store the nodes in the DB, it is not the encoding used for hash computation
 use ethrex_rlp::{
@@ -115,7 +116,7 @@ impl RLPDecode for Node {
                         decode_bytes(rlp_items[1].expect("we already checked the length"))?;
                     LeafNode {
                         partial: path,
-                        value: value.to_vec(),
+                        value: Bytes::copy_from_slice(value),
                     }
                     .into()
                 } else {
@@ -137,7 +138,7 @@ impl RLPDecode for Node {
                     decode_bytes(rlp_items[16].expect("we already checked the length"))?;
                 BranchNode {
                     choices,
-                    value: value.to_vec(),
+                    value: Bytes::copy_from_slice(value),
                 }
                 .into()
             }
