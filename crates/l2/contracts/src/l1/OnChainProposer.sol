@@ -486,17 +486,12 @@ contract OnChainProposer is
             bytes memory ziskPublicValues = abi.encodePacked(
                 sha256(publicInputs)
             );
-            try
-                IZiskVerifier(ZISK_VERIFIER_ADDRESS).verifySnarkProof(
-                    programVk,
-                    ziskPublicValues,
-                    ziskProofBytes
-                )
-            {} catch {
-                revert(
-                    "017" // OnChainProposer: Invalid ZisK proof failed proof verification
-                );
-            }
+            // Call without try/catch to let ZiskVerifier errors propagate (e.g., InvalidProof())
+            IZiskVerifier(ZISK_VERIFIER_ADDRESS).verifySnarkProof(
+                programVk,
+                ziskPublicValues,
+                ziskProofBytes
+            );
         }
 
         if (REQUIRE_TDX_PROOF) {
