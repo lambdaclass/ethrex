@@ -47,7 +47,8 @@ use crate::{admin, net};
 use crate::{eth, mempool};
 use axum::extract::ws::WebSocket;
 use axum::extract::{DefaultBodyLimit, State, WebSocketUpgrade};
-use axum::{Json, Router, http::StatusCode, routing::post};
+use axum::response::IntoResponse;
+use axum::{Router, http::StatusCode, http::header, routing::post};
 use axum_extra::{
     TypedHeader,
     headers::{Authorization, authorization::Bearer},
@@ -56,7 +57,9 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
 use ethrex_common::types::Block;
-use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
+use ethrex_metrics::rpc::{
+    RpcOutcome, record_async_duration, record_full_rpc_duration, record_rpc_outcome,
+};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
@@ -69,7 +72,7 @@ use std::{
     future::IntoFuture,
     net::SocketAddr,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::net::TcpListener;
 use tokio::sync::{
@@ -591,56 +594,87 @@ pub async fn shutdown_signal() {
 async fn handle_http_request(
     State(service_context): State<RpcApiContext>,
     body: String,
-) -> Result<Json<Value>, StatusCode> {
-    let res = match serde_json::from_str::<RpcRequestWrapper>(&body) {
+) -> impl IntoResponse {
+    let bytes = handle_http_request_inner(service_context, body).await;
+    ([(header::CONTENT_TYPE, "application/json")], bytes)
+}
+
+async fn handle_http_request_inner(service_context: RpcApiContext, body: String) -> Vec<u8> {
+    // Start timing before JSON parsing to capture full request duration
+    let start = Instant::now();
+
+    match serde_json::from_str::<RpcRequestWrapper>(&body) {
         Ok(RpcRequestWrapper::Single(request)) => {
+            let method = request.method.as_str();
             let res = map_http_requests(&request, service_context).await;
-            rpc_response(request.id, res).map_err(|_| StatusCode::BAD_REQUEST)?
+            let bytes = rpc_response_bytes(request.id, res).unwrap_or_default();
+
+            // Record full request duration for single request
+            record_full_rpc_duration("rpc", method, start);
+            bytes
         }
         Ok(RpcRequestWrapper::Multiple(requests)) => {
             let mut responses = Vec::new();
             for req in requests {
                 let res = map_http_requests(&req, service_context.clone()).await;
-                responses.push(rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?);
+                responses.push(rpc_response(req.id, res).unwrap_or_default());
             }
-            serde_json::to_value(responses).map_err(|_| StatusCode::BAD_REQUEST)?
+            // For batch requests, record as "batch" since there are multiple methods
+            let bytes = serde_json::to_vec(&responses).unwrap_or_default();
+            record_full_rpc_duration("rpc", "batch", start);
+            bytes
         }
-        Err(_) => rpc_response(
+        Err(_) => rpc_response_bytes(
             RpcRequestId::String("".to_string()),
             Err(RpcErr::BadParams("Invalid request body".to_string())),
         )
-        .map_err(|_| StatusCode::BAD_REQUEST)?,
-    };
-    Ok(Json(res))
+        .unwrap_or_default(),
+    }
 }
 
 pub async fn handle_authrpc_request(
     State(service_context): State<RpcApiContext>,
     auth_header: Option<TypedHeader<Authorization<Bearer>>>,
     body: String,
-) -> Result<Json<Value>, StatusCode> {
+) -> impl IntoResponse {
+    // Start timing before JSON parsing to capture full request duration
+    let start = Instant::now();
+
     let req: RpcRequest = match serde_json::from_str(&body) {
         Ok(req) => req,
         Err(_) => {
-            return Ok(Json(
-                rpc_response(
-                    RpcRequestId::String("".to_string()),
-                    Err(RpcErr::BadParams("Invalid request body".to_string())),
-                )
-                .map_err(|_| StatusCode::BAD_REQUEST)?,
-            ));
+            let bytes = rpc_response_bytes(
+                RpcRequestId::String("".to_string()),
+                Err(RpcErr::BadParams("Invalid request body".to_string())),
+            )
+            .unwrap_or_default();
+            return ([(header::CONTENT_TYPE, "application/json")], bytes);
         }
     };
+
+    // Extract namespace and method for metrics
+    let namespace = match req.namespace() {
+        Ok(RpcNamespace::Engine) => "engine",
+        _ => "rpc",
+    };
+    let method = req.method.as_str();
+
     match authenticate(&service_context.node_data.jwt_secret, auth_header) {
-        Err(error) => Ok(Json(
-            rpc_response(req.id, Err(error)).map_err(|_| StatusCode::BAD_REQUEST)?,
-        )),
+        Err(error) => {
+            let bytes = rpc_response_bytes(req.id, Err(error)).unwrap_or_default();
+            ([(header::CONTENT_TYPE, "application/json")], bytes)
+        }
         Ok(()) => {
             // Proceed with the request
             let res = map_authrpc_requests(&req, service_context).await;
-            Ok(Json(
-                rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?,
-            ))
+
+            // Serialize response directly to bytes (avoids double serialization)
+            let bytes = rpc_response_bytes(req.id, res).unwrap_or_default();
+
+            // Record full request duration including JSON parsing, auth, and response serialization
+            record_full_rpc_duration(namespace, method, start);
+
+            ([(header::CONTENT_TYPE, "application/json")], bytes)
         }
     }
 }
@@ -655,10 +689,8 @@ async fn handle_websocket(mut socket: WebSocket, state: State<RpcApiContext>) {
         };
 
         // ok-clone: increase arc reference count
-        let Ok(response) = handle_http_request(state.clone(), body)
-            .await
-            .map(|res| res.to_string())
-        else {
+        let response_bytes = handle_http_request_inner(state.0.clone(), body).await;
+        let Ok(response) = String::from_utf8(response_bytes) else {
             return;
         };
 
@@ -884,6 +916,25 @@ where
             result,
         }),
         Err(error) => serde_json::to_value(RpcErrorResponse {
+            id,
+            jsonrpc: "2.0".to_string(),
+            error: error.into(),
+        }),
+    }?)
+}
+
+/// Serializes an RPC response directly to bytes, avoiding double serialization.
+pub fn rpc_response_bytes<E>(id: RpcRequestId, res: Result<Value, E>) -> Result<Vec<u8>, RpcErr>
+where
+    E: Into<RpcErrorMetadata>,
+{
+    Ok(match res {
+        Ok(result) => serde_json::to_vec(&RpcSuccessResponse {
+            id,
+            jsonrpc: "2.0".to_string(),
+            result,
+        }),
+        Err(error) => serde_json::to_vec(&RpcErrorResponse {
             id,
             jsonrpc: "2.0".to_string(),
             error: error.into(),
