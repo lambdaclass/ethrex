@@ -17313,40 +17313,68 @@ Long-term research directions and second-order ideas are intentionally out of sc
 </div>
 <hr />
 <h2 id="execution"><a class="header" href="#execution">Execution</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Item</th><th>Priority</th><th>Status</th><th>Description</th></tr></thead><tbody>
-<tr><td>Replace BTreeMap with FxHashMap</td><td>0</td><td>In Progress</td><td>Replace BTreeMap/BTreeSet with FxHashMap/FxHashSet</td></tr>
-<tr><td>Skip Zero-Initialization in Memory Resize</td><td>0</td><td>Pending</td><td>Use unsafe set_len (EVM spec says expanded memory is zero)</td></tr>
-<tr><td>Remove RefCell from Memory</td><td>0</td><td>Pending</td><td>Consider using UnsafeCell with manual safety guarantees, or restructure to avoid shared ownership.</td></tr>
-<tr><td>Try out PEVM</td><td>0</td><td>In Progress</td><td>Benchmark again against pevm</td></tr>
-<tr><td>Inline Hot Opcodes</td><td>0</td><td>In Progress</td><td>Opcodes call a function in a jump table when some of the most used ones could perform better being inlined instead</td></tr>
-<tr><td>Test ECPairing libraries</td><td>0</td><td>Pending</td><td>Benchmark arkworks pairing in levm</td></tr>
-<tr><td>PGO/BOLT</td><td>0</td><td>Pending</td><td>Try out both <a href="https://doc.rust-lang.org/beta/rustc/profile-guided-optimization.html">PGO</a> and <a href="https://github.com/llvm/llvm-project/tree/main/bolt">BOLT</a> to see if we can improve perf</td></tr>
-<tr><td>Use an arena allocator for substate tracking</td><td>0</td><td>Pending</td><td>Substates are currently a linked list allocated through boxing. Consider using an arena allocator (e.g. bumpalo) for them</td></tr>
-<tr><td>ruint</td><td>0</td><td>Pending</td><td>Try out <a href="https://github.com/recmo/uint">ruint</a> as the <code>U256</code> library to see if it improves performance. Part of SIMD initiative</td></tr>
-<tr><td>Nibbles</td><td>1</td><td>Pending</td><td>Nibbles are currently stored as a byte (<code>u8</code>), when they could be stored compactly as actual nibbles in memory and reduce by half their representation size</td></tr>
-<tr><td>RLP Duplication</td><td>1</td><td>Pending</td><td>Check whether we are encoding/decoding something twice (clearly unnecessary)</td></tr>
-<tr><td>Object pooling</td><td>2</td><td>Pending</td><td>Reuse EVM stack frames to reduce allocations and improve performance</td></tr>
-<tr><td>Avoid clones in hot path</td><td>2</td><td>Pending</td><td>Avoid Clone on Account Load and check rest of the hot path</td></tr>
-<tr><td>SIMD Everywhere</td><td>2</td><td>Pending</td><td>There are some libraries that can be replaced by others that use SIMD instructions for better performance</td></tr>
+<div class="table-wrapper"><table><thead><tr><th>Item</th><th>Issue</th><th>Priority</th><th>Status</th><th>Description</th></tr></thead><tbody>
+<tr><td>Replace BTreeMap with FxHashMap</td><td>#5757</td><td>0</td><td>Discarded (small regression)</td><td>Replace BTreeMap/BTreeSet with FxHashMap/FxHashSet</td></tr>
+<tr><td>Use FxHashset for access lists</td><td>#5800</td><td>0</td><td>Done (8% improvement)</td><td>Replace HashSet with FxHashset</td></tr>
+<tr><td>Skip Zero-Initialization in Memory Resize</td><td>#5755</td><td>0</td><td>Measure #5774</td><td>Use unsafe set_len (EVM spec says expanded memory is zero)</td></tr>
+<tr><td>Remove RefCell from Memory</td><td>#5756</td><td>0</td><td>Measure #5793</td><td>Consider using UnsafeCell with manual safety guarantees, or restructure to avoid shared ownership.</td></tr>
+<tr><td>Try out PEVM</td><td></td><td>0</td><td>Done. Simple integration caused regression.</td><td>Benchmark again against pevm</td></tr>
+<tr><td>Inline Hot Opcodes</td><td>#5752</td><td>0</td><td>Done. 0 to 20% speedup depending on the time.</td><td>Opcodes call a function in a jump table when some of the most used ones could perform better being inlined instead</td></tr>
+<tr><td>Test ECPairing libraries</td><td>#5758</td><td>0</td><td>Done (#5792). Used Arkworks. 2x speedup on those specific operations.</td><td>Benchmark arkworks pairing in levm</td></tr>
+<tr><td>PGO/BOLT</td><td>#5759</td><td>0</td><td>In progress (#5775)</td><td>Try out both <a href="https://doc.rust-lang.org/beta/rustc/profile-guided-optimization.html">PGO</a> and <a href="https://github.com/llvm/llvm-project/tree/main/bolt">BOLT</a> to see if we can improve perf</td></tr>
+<tr><td>Use an arena allocator for substate tracking</td><td>#5754</td><td>0</td><td>Discarded (#5791). Regression of 10% in mainnet.</td><td>Substates are currently a linked list allocated through boxing. Consider using an arena allocator (e.g. bumpalo) for them</td></tr>
+<tr><td>ruint</td><td>#5760</td><td>0</td><td>Discarded simple approach. Regression.</td><td>Try out <a href="https://github.com/recmo/uint">ruint</a> as the <code>U256</code> library to see if it improves performance. Part of SIMD initiative</td></tr>
+<tr><td>Nibbles</td><td>#5801</td><td>1</td><td>Measure #5912 and #5932</td><td>Nibbles are currently stored as a byte (<code>u8</code>), when they could be stored compactly as actual nibbles in memory and reduce by half their representation size. Also we may stack-allocate their buffers instead of heap-allocated vecs.</td></tr>
+<tr><td>RLP Duplication</td><td>#5949</td><td>1</td><td>Pending</td><td>Check whether we are encoding/decoding something twice (clearly unnecessary)</td></tr>
+<tr><td>Object pooling</td><td>#5934</td><td>2</td><td>Pending</td><td>Reuse EVM stack frames to reduce allocations and improve performance</td></tr>
+<tr><td>Avoid clones in hot path</td><td>#5753</td><td>2</td><td>Measure #5809 on mainnet</td><td>Avoid Clone on Account Load and check rest of the hot path</td></tr>
+<tr><td>SIMD Everywhere</td><td></td><td>2</td><td>Pending</td><td>There are some libraries that can be replaced by others that use SIMD instructions for better performance</td></tr>
+<tr><td>EXTCODESIZE without full bytecode</td><td></td><td>1</td><td>Pending</td><td>EXTCODESIZE loads entire bytecode just to get length. Add <code>get_account_code_size()</code> or store code length alongside code (<code>crates/vm/levm/src/opcode_handlers/environment.rs:260-274</code>)</td></tr>
+<tr><td>TransactionQueue data structure</td><td></td><td>1</td><td>Pending</td><td><code>TransactionQueue</code> uses <code>Vec</code> with <code>remove(0)</code> which is O(n). Replace with <code>BinaryHeap</code>/<code>BTreeSet</code> or <code>VecDeque</code> for O(log n) or O(1) operations (<code>crates/blockchain/payload.rs:708-820</code>)</td></tr>
 </tbody></table>
 </div>
 <hr />
 <h2 id="io"><a class="header" href="#io">IO</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Item</th><th>Issue</th><th>Priority</th><th>Status</th><th>Description</th></tr></thead><tbody>
+<tr><td>Add Block Cache (RocksDB)</td><td>#5935</td><td>0</td><td>Pending</td><td>Currently there is no explicit block cache, relying on OS page cache. Also try row cache</td></tr>
+<tr><td>Use Two-Level Index (RocksDB)</td><td>#5936</td><td>0</td><td>Pending</td><td>Use Two-Level Index with Partitioned Filters</td></tr>
+<tr><td>Enable unordered writes for State (RocksDB)</td><td>#5937</td><td>0</td><td>Pending</td><td>For <code>ACCOUNT_TRIE_NODES, STORAGE_TRIE_NODES cf_opts.set_unordered_write(true);</code> Faster writes when we don't need strict ordering</td></tr>
+<tr><td>Increase Bloom Filter (RocksDB)</td><td>#5938</td><td>0</td><td>Pending</td><td>Change and benchmark higher bits per key for state tables</td></tr>
+<tr><td>Consider LZ4 for State Tables (RocksDB)</td><td>#5939</td><td>0</td><td>Pending</td><td>Trades CPU for smaller DB and potentially better cache utilization</td></tr>
+<tr><td>Page caching + readahead</td><td>#5940</td><td>0</td><td>Pending</td><td>Use for trie iteration, sync operations</td></tr>
+<tr><td>Optimize for Point Lookups (RocksDB)</td><td>#5941</td><td>0</td><td>Pending</td><td>Adds hash index inside FlatKeyValue for faster point lookups</td></tr>
+<tr><td>Modify block size (RocksDB)</td><td>#5942</td><td>0</td><td>Pending</td><td>Benchmark different block size configurations</td></tr>
+<tr><td>Memory-Mapped Reads (RocksDB)</td><td>#5943</td><td>0</td><td>Pending</td><td>Can be an improvement on high-RAM systems</td></tr>
+<tr><td>Increase layers commit threshold</td><td>#5944</td><td>0</td><td>Pending</td><td>For read-heavy workloads with plenty of RAM</td></tr>
+<tr><td>Remove locks</td><td>#5945</td><td>1</td><td>Pending</td><td>Check if there are still some unnecessary locks, e.g. in the VM we have one</td></tr>
+<tr><td>Benchmark bloom filter</td><td>#5946</td><td>1</td><td>Pending</td><td>Review trie layer's bloom filter, remove it or test other libraries/configurations</td></tr>
+<tr><td>Use multiget on trie traversal</td><td>#4949</td><td>1</td><td>Pending</td><td>Using multiget on trie traversal might reduce read time</td></tr>
+<tr><td>Bulk reads for block bodies</td><td></td><td>1</td><td>Pending</td><td>Implement <code>multi_get</code> for <code>get_block_bodies</code> and <code>get_block_bodies_by_hash</code> which currently loop over per-key reads (<code>crates/storage/store.rs:388-454</code>)</td></tr>
+<tr><td>Canonical tx index</td><td></td><td>1</td><td>Pending</td><td>Transaction location lookup does O(k) prefix scans. Add a canonical-tx index table or DUPSORT layout for O(1) lookups (<code>crates/storage/store.rs:562-606</code>)</td></tr>
+<tr><td>Reduce trie cache Mutex contention</td><td></td><td>1</td><td>Pending</td><td><code>trie_cache</code> is behind <code>Arc&lt;Mutex&lt;Arc&lt;TrieLayerCache&gt;&gt;&gt;</code>. Use <code>ArcSwap</code> or <code>RwLock</code> for lock-free reads (<code>crates/storage/store.rs:159,1360</code>)</td></tr>
+<tr><td>Reduce LatestBlockHeaderCache contention</td><td></td><td>1</td><td>Pending</td><td><code>LatestBlockHeaderCache</code> uses Mutex for every read. Use <code>ArcSwap</code> for atomic pointer swaps (<code>crates/storage/store.rs:2880-2894</code>)</td></tr>
+<tr><td>Use Bytes/Arc in trie layer cache</td><td></td><td>2</td><td>Pending</td><td>Trie layer cache clones <code>Vec&lt;u8&gt;</code> values on every read. Use <code>Bytes</code> or <code>Arc&lt;[u8]&gt;</code> to reduce allocations (<code>crates/storage/layering.rs:57,63</code>)</td></tr>
+<tr><td>Split hot vs cold data</td><td></td><td>2</td><td>Pending</td><td>Geth "freezer/ancients" pattern: store recent state in fast KV store, push old bodies/receipts to append-only ancient store to reduce compaction pressure</td></tr>
+<tr><td>Configurable cache budgets</td><td></td><td>2</td><td>Pending</td><td>Expose cache split for DB/trie/snapshot as runtime config. Currently hardcoded in ethrex</td></tr>
+<tr><td>Toggle compaction during sync</td><td></td><td>2</td><td>Pending</td><td>Disable RocksDB compaction during snap sync for higher write throughput, then compact after (Nethermind pattern). Wire <code>disable_compaction/enable_compaction</code> into sync stages</td></tr>
+<tr><td>Spawned</td><td>#5947</td><td>3</td><td>Pending</td><td><a href="https://github.com/lambdaclass/spawned"><em>Spawnify</em></a> io intensive components/flows. Mempool and Snapsync are top priorities</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="rpc"><a class="header" href="#rpc">RPC</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Item</th><th>Priority</th><th>Status</th><th>Description</th></tr></thead><tbody>
-<tr><td>Add Block Cache (RocksDB)</td><td>0</td><td>Pending</td><td>Currently there is no explicit block cache, relying on OS page cache. Also try row cache</td></tr>
-<tr><td>Use Two-Level Index (RocksDB)</td><td>0</td><td>Pending</td><td>Use Two-Level Index with Partitioned Filters</td></tr>
-<tr><td>Enable unordered writes for State (RocksDB)</td><td>0</td><td>Pending</td><td>For <code>ACCOUNT_TRIE_NODES, STORAGE_TRIE_NODES cf_opts.set_unordered_write(true);</code> Faster writes when we don't need strict ordering</td></tr>
-<tr><td>Increase Bloom Filter (RocksDB)</td><td>0</td><td>Pending</td><td>Change and benchmark higher bits per key for state tables</td></tr>
-<tr><td>Consider LZ4 for State Tables (RocksDB)</td><td>0</td><td>Pending</td><td>Trades CPU for smaller DB and potentially better cache utilization</td></tr>
-<tr><td>Add Read-Ahead for Sequential Scans (RocksDB)</td><td>0</td><td>Pending</td><td>Use for trie iteration, sync operations</td></tr>
-<tr><td>Optimize for Point Lookups (RocksDB)</td><td>0</td><td>Pending</td><td>Adds hash index inside FlatKeyValue for faster point lookups</td></tr>
-<tr><td>Modify block size (RocksDB)</td><td>0</td><td>Pending</td><td>Benchmark different block size configurations</td></tr>
-<tr><td>Memory-Mapped Reads (RocksDB)</td><td>0</td><td>Pending</td><td>Can be an improvement on high-RAM systems</td></tr>
-<tr><td>Increase layers commit threshold</td><td>0</td><td>Pending</td><td>For read-heavy workloads with plenty of RAM</td></tr>
-<tr><td>Remove locks</td><td>1</td><td>Pending</td><td>Check if there are still some unnecessary locks, e.g. in the VM we have one</td></tr>
-<tr><td>Benchmark bloom filter</td><td>1</td><td>Pending</td><td>Review trie layer's bloom filter, remove it or test other libraries/configurations</td></tr>
-<tr><td>Use multiget on trie traversal</td><td>1</td><td>Pending</td><td>Using multiget on trie traversal might reduce read time</td></tr>
-<tr><td>Spawned</td><td>3</td><td>Pending</td><td><a href="https://github.com/lambdaclass/spawned"><em>Spawnify</em></a> io intensive components/flows. Mempool and Snapsync are top priorities</td></tr>
+<tr><td>Parallel tx decoding</td><td>0</td><td>Pending</td><td>Use rayon to decode transactions in parallel. Currently sequential at ~5-10μs per tx</td></tr>
+<tr><td>simd-json</td><td>0</td><td>Pending</td><td>Replace serde_json with simd-json for SIMD-accelerated JSON parsing</td></tr>
+<tr><td>Remove payload.clone()</td><td>0</td><td>Pending</td><td>Avoid cloning <code>ExecutionPayload</code> in <code>get_block_from_payload</code> (<code>crates/networking/rpc/engine/payload.rs:674</code>). Use references or owned values directly</td></tr>
+<tr><td>Remove params.clone()</td><td>0</td><td>Pending</td><td>Avoid cloning params before <code>serde_json::from_value()</code>. Use references instead of <code>params[i].clone()</code> in RPC handlers (<code>crates/networking/rpc/engine/payload.rs</code>)</td></tr>
+<tr><td>Use Bytes instead of String</td><td>0</td><td>Pending</td><td>Change HTTP body extraction from <code>String</code> to <code>Bytes</code> and use <code>serde_json::from_slice()</code> instead of <code>from_str()</code> to avoid UTF-8 validation overhead (<code>crates/networking/rpc/rpc.rs:536,563</code>)</td></tr>
+<tr><td>RawValue for params</td><td>1</td><td>Pending</td><td>Use <code>Option&lt;Vec&lt;serde_json::value::RawValue&gt;&gt;</code> instead of <code>Option&lt;Vec&lt;Value&gt;&gt;</code> in <code>RpcRequest</code> to defer parsing until needed (<code>crates/networking/rpc/utils.rs:242</code>)</td></tr>
+<tr><td>Parallel tx root</td><td>1</td><td>Pending</td><td>Parallelize <code>compute_transactions_root</code> which computes ~400 keccak256 hashes for 200 txs (<code>crates/blockchain/payload.rs:671</code>)</td></tr>
+<tr><td>phf method routing</td><td>2</td><td>Pending</td><td>Replace match statements with <code>phf::Map</code> for O(1) RPC method dispatch instead of O(n) string comparisons (<code>crates/networking/rpc/rpc.rs:652-765</code>)</td></tr>
+<tr><td>Pre-create JWT decoder</td><td>2</td><td>Pending</td><td>Cache <code>DecodingKey</code> and <code>Validation</code> at startup instead of creating them on every auth request (<code>crates/networking/rpc/authentication.rs:43-46</code>)</td></tr>
+<tr><td>HTTP/2 support</td><td>3</td><td>Pending</td><td>Add HTTP/2 support for reduced latency through multiplexing</td></tr>
+<tr><td>Direct response serialization</td><td>3</td><td>Pending</td><td>Serialize responses directly to the output buffer instead of intermediate Value</td></tr>
+<tr><td>TCP tuning</td><td>3</td><td>Pending</td><td>Tune TCP settings (nodelay, buffer sizes) for lower latency</td></tr>
 </tbody></table>
 </div>
 <hr />
