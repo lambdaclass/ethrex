@@ -347,7 +347,7 @@ jobs:
 
       - name: Build test
         run: |
-          cargo test -p ethrex-test l2:: --features l2 --no-run --release
+          cargo test -p ethrex-test l2:: --no-run --release
 
       - name: Start Web3Signer
         if: matrix.web3signer
