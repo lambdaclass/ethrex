@@ -242,6 +242,20 @@ fn call_no_value_bytecode(target: Address, opcode: u8) -> Bytes {
     Bytes::from(bytecode)
 }
 
+/// Creates bytecode for a contract that CALLs itself (ADDRESS) with a given value
+fn call_self_with_value_bytecode(value: U256) -> Bytes {
+    let mut bytecode = Vec::new();
+    bytecode.extend_from_slice(&[0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00]); // retSize, retOffset, argsSize, argsOffset
+    bytecode.push(0x7f); // PUSH32 value
+    bytecode.extend_from_slice(&value.to_big_endian());
+    bytecode.push(0x30); // ADDRESS - pushes current contract address
+    bytecode.push(0x5a); // GAS
+    bytecode.push(0xf1); // CALL
+    bytecode.push(0x50); // POP
+    bytecode.push(0x00); // STOP
+    Bytes::from(bytecode)
+}
+
 fn selfdestruct_bytecode(beneficiary: Address) -> Bytes {
     let mut bytecode = Vec::new();
     bytecode.push(0x73); // PUSH20
@@ -415,6 +429,26 @@ fn test_transfer_to_contract() {
     assert_transfer_log(&report.logs[0], sender, contract_addr, transfer_value);
 }
 
+#[test]
+fn test_self_transfer_no_log() {
+    // EIP-7708: Transfer logs should only be emitted for transfers to DIFFERENT accounts
+    // A transaction where origin == to (self-transfer) should NOT emit a log
+    let sender = Address::from_low_u64_be(SENDER);
+    let transfer_value = U256::from(1000);
+
+    let report = TestBuilder::new()
+        .account(sender, eoa(U256::from(DEFAULT_BALANCE)))
+        .to(sender) // Self-transfer: sender sends to themselves
+        .value(transfer_value)
+        .execute();
+
+    assert!(report.is_success(), "Transaction should succeed");
+    assert!(
+        report.logs.is_empty(),
+        "Self-transfer should NOT emit a Transfer log"
+    );
+}
+
 // ==================== CALL/CALLCODE Tests ====================
 
 #[test]
@@ -498,6 +532,35 @@ fn test_top_level_transaction_revert_no_transfer_log() {
     assert!(
         report.logs.is_empty(),
         "Transfer log should NOT be emitted when top-level transaction reverts"
+    );
+}
+
+#[test]
+fn test_call_self_with_value_no_log() {
+    // EIP-7708: Transfer logs should only be emitted for CALLs to DIFFERENT accounts
+    // A contract CALLing itself with value should NOT emit a Transfer log
+    let sender = Address::from_low_u64_be(SENDER);
+    let contract_addr = Address::from_low_u64_be(CONTRACT);
+    let call_value = U256::from(100);
+
+    let report = TestBuilder::new()
+        .account(sender, eoa(U256::from(DEFAULT_BALANCE)))
+        .account(
+            contract_addr,
+            contract_funded(
+                U256::from(10000),
+                call_self_with_value_bytecode(call_value),
+                0,
+            ),
+        )
+        .to(contract_addr)
+        .execute();
+
+    assert!(report.is_success(), "Transaction should succeed");
+    // No Transfer log should be emitted because the contract is CALLing itself
+    assert!(
+        report.logs.is_empty(),
+        "CALL to self should NOT emit a Transfer log"
     );
 }
 
