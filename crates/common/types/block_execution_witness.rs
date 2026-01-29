@@ -4,7 +4,7 @@ use bytes::Bytes;
 
 use crate::rkyv_utils::H160Wrapper;
 use crate::serde_utils;
-use crate::types::{Block, Code};
+use crate::types::{Block, Code, CodeMetadata};
 use crate::{
     constants::EMPTY_KECCACK_HASH,
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
@@ -448,6 +448,32 @@ impl GuestProgramState {
                     hex::encode(code_hash)
                 );
                 Ok(Code::default())
+            }
+        }
+    }
+
+    /// Retrieves code metadata (length) for a specific code hash.
+    /// This is an optimized path for EXTCODESIZE opcode.
+    pub fn get_code_metadata(
+        &self,
+        code_hash: H256,
+    ) -> Result<CodeMetadata, GuestProgramStateError> {
+        use crate::constants::EMPTY_KECCACK_HASH;
+
+        if code_hash == *EMPTY_KECCACK_HASH {
+            return Ok(CodeMetadata { length: 0 });
+        }
+        match self.codes_hashed.get(&code_hash) {
+            Some(code) => Ok(CodeMetadata {
+                length: code.bytecode.len() as u64,
+            }),
+            None => {
+                // Same as get_account_code - default to empty for missing bytecode
+                println!(
+                    "Missing bytecode for hash {} in witness. Defaulting to empty code metadata.",
+                    hex::encode(code_hash)
+                );
+                Ok(CodeMetadata { length: 0 })
             }
         }
     }

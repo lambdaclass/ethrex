@@ -5,6 +5,7 @@ use ethrex_common::H256;
 use ethrex_common::U256;
 use ethrex_common::types::Account;
 use ethrex_common::types::Code;
+use ethrex_common::types::CodeMetadata;
 use ethrex_common::utils::ZERO_U256;
 
 use super::Database;
@@ -28,6 +29,7 @@ pub struct GeneralizedDatabase {
     pub current_accounts_state: CacheDB,
     pub initial_accounts_state: CacheDB,
     pub codes: FxHashMap<H256, Code>,
+    pub code_metadata: FxHashMap<H256, CodeMetadata>,
     pub tx_backup: Option<CallFrameBackup>,
 }
 
@@ -39,6 +41,7 @@ impl GeneralizedDatabase {
             initial_accounts_state: Default::default(),
             tx_backup: None,
             codes: Default::default(),
+            code_metadata: Default::default(),
         }
     }
 
@@ -62,6 +65,7 @@ impl GeneralizedDatabase {
             initial_accounts_state: levm_accounts,
             tx_backup: None,
             codes,
+            code_metadata: Default::default(),
         }
     }
 
@@ -113,6 +117,51 @@ impl GeneralizedDatabase {
     pub fn get_account_code(&mut self, address: Address) -> Result<&Code, InternalError> {
         let code_hash = self.get_account(address)?.info.code_hash;
         self.get_code(code_hash)
+    }
+
+    /// Gets code metadata immutably given the code hash.
+    pub fn get_code_metadata(&mut self, code_hash: H256) -> Result<&CodeMetadata, InternalError> {
+        match self.code_metadata.entry(code_hash) {
+            Entry::Occupied(entry) => Ok(entry.into_mut()),
+            Entry::Vacant(entry) => {
+                // First ensure code is loaded into cache by calling get_code
+                // This handles witness fallbacks and other code loading logic correctly
+                #[expect(clippy::as_conversions, reason = "same sized types (on 64bit)")]
+                let code_length = {
+                    // Note: `self.get_code(code_hash)` has been inlined due to mutability borrow issues.
+                    //   To avoid this inlinement, self.get_code has to be moved into `self.codes` so that it's called
+                    //   like this: `self.codes.get(code_hash)`.
+                    let code = match self.codes.entry(code_hash) {
+                        Entry::Occupied(entry) => entry.into_mut(),
+                        Entry::Vacant(entry) => {
+                            entry.insert(self.store.get_account_code(code_hash)?)
+                        }
+                    };
+
+                    code.bytecode.len() as u64
+                };
+
+                let metadata = CodeMetadata {
+                    length: code_length,
+                };
+
+                // Insert into cache and return reference
+                Ok(entry.insert(metadata))
+            }
+        }
+    }
+
+    /// Convenience method to get code length by address (optimized for EXTCODESIZE).
+    pub fn get_code_length(&mut self, address: Address) -> Result<usize, InternalError> {
+        use ethrex_common::constants::EMPTY_KECCACK_HASH;
+
+        let code_hash = self.get_account(address)?.info.code_hash;
+        if code_hash == *EMPTY_KECCACK_HASH {
+            return Ok(0);
+        }
+        let metadata = self.get_code_metadata(code_hash)?;
+        #[expect(clippy::as_conversions, reason = "same sized types (on 64bit)")]
+        Ok(metadata.length as usize)
     }
 
     /// Gets storage slot from Database, storing in initial_accounts_state for efficiency when getting AccountUpdates.
@@ -250,6 +299,7 @@ impl GeneralizedDatabase {
         self.initial_accounts_state.clear();
         self.current_accounts_state.clear();
         self.codes.clear();
+        self.code_metadata.clear();
         Ok(account_updates)
     }
 
