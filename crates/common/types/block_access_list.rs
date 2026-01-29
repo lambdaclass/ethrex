@@ -1,12 +1,46 @@
 #![allow(dead_code)]
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes};
 use ethereum_types::{Address, H256, U256};
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, structs};
+use ethrex_rlp::{
+    decode::RLPDecode,
+    encode::{RLPEncode, encode_length, list_length},
+    structs,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::constants::EMPTY_BLOCK_ACCESS_LIST_HASH;
 use crate::utils::keccak;
+
+/// Encode a slice of items in sorted order without cloning.
+fn encode_sorted_by<T, K, F>(items: &[T], buf: &mut dyn BufMut, key_fn: F)
+where
+    T: RLPEncode,
+    K: Ord,
+    F: Fn(&T) -> K,
+{
+    if items.is_empty() {
+        buf.put_u8(0xc0);
+        return;
+    }
+    let mut indices: Vec<usize> = (0..items.len()).collect();
+    indices.sort_by(|&i, &j| key_fn(&items[i]).cmp(&key_fn(&items[j])));
+
+    let payload_len: usize = items.iter().map(|item| item.length()).sum();
+    encode_length(payload_len, buf);
+    for &i in &indices {
+        items[i].encode(buf);
+    }
+}
+
+/// Calculate the encoded length of a sorted list.
+fn sorted_list_length<T: RLPEncode>(items: &[T]) -> usize {
+    if items.is_empty() {
+        return 1;
+    }
+    let payload_len: usize = items.iter().map(|item| item.length()).sum();
+    list_length(payload_len)
+}
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct StorageChange {
@@ -46,14 +80,11 @@ pub struct SlotChange {
 }
 
 impl RLPEncode for SlotChange {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        let mut slot_changes = self.slot_changes.clone();
-        slot_changes.sort_by(|a, b| a.block_access_index.cmp(&b.block_access_index));
-
-        structs::Encoder::new(buf)
-            .encode_field(&self.slot)
-            .encode_field(&slot_changes)
-            .finish();
+    fn encode(&self, buf: &mut dyn BufMut) {
+        let payload_len = self.slot.length() + sorted_list_length(&self.slot_changes);
+        encode_length(payload_len, buf);
+        self.slot.encode(buf);
+        encode_sorted_by(&self.slot_changes, buf, |s| s.block_access_index);
     }
 }
 
@@ -171,30 +202,21 @@ pub struct AccountChanges {
 }
 
 impl RLPEncode for AccountChanges {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        let mut storage_changes = self.storage_changes.clone();
-        storage_changes.sort_by(|a, b| a.slot.cmp(&b.slot));
+    fn encode(&self, buf: &mut dyn BufMut) {
+        let payload_len = self.address.length()
+            + sorted_list_length(&self.storage_changes)
+            + sorted_list_length(&self.storage_reads)
+            + sorted_list_length(&self.balance_changes)
+            + sorted_list_length(&self.nonce_changes)
+            + sorted_list_length(&self.code_changes);
 
-        let mut storage_reads = self.storage_reads.clone();
-        storage_reads.sort();
-
-        let mut balance_changes = self.balance_changes.clone();
-        balance_changes.sort_by(|a, b| a.block_access_index.cmp(&b.block_access_index));
-
-        let mut nonce_changes = self.nonce_changes.clone();
-        nonce_changes.sort_by(|a, b| a.block_access_index.cmp(&b.block_access_index));
-
-        let mut code_changes = self.code_changes.clone();
-        code_changes.sort_by(|a, b| a.block_access_index.cmp(&b.block_access_index));
-
-        structs::Encoder::new(buf)
-            .encode_field(&self.address)
-            .encode_field(&storage_changes)
-            .encode_field(&storage_reads)
-            .encode_field(&balance_changes)
-            .encode_field(&nonce_changes)
-            .encode_field(&code_changes)
-            .finish();
+        encode_length(payload_len, buf);
+        self.address.encode(buf);
+        encode_sorted_by(&self.storage_changes, buf, |s| s.slot);
+        encode_sorted_by(&self.storage_reads, buf, |s| *s);
+        encode_sorted_by(&self.balance_changes, buf, |b| b.block_access_index);
+        encode_sorted_by(&self.nonce_changes, buf, |n| n.block_access_index);
+        encode_sorted_by(&self.code_changes, buf, |c| c.block_access_index);
     }
 }
 
@@ -239,10 +261,8 @@ impl BlockAccessList {
 }
 
 impl RLPEncode for BlockAccessList {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        let mut sorted = self.inner.clone();
-        sorted.sort_by(|a, b| a.address.cmp(&b.address));
-        sorted.encode(buf);
+    fn encode(&self, buf: &mut dyn BufMut) {
+        encode_sorted_by(&self.inner, buf, |a| a.address);
     }
 }
 
