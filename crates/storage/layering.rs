@@ -17,18 +17,30 @@ const FALSE_POSITIVE_RATE: f64 = 0.02;
 /// Extracts a u64 hash directly from a nibble path.
 ///
 /// Since nibble paths are derived from Keccak256 hashes, they already have
-/// excellent distribution. We can extract the first 8 bytes (16 nibbles)
+/// excellent distribution. We extract the LAST 8 bytes (16 nibbles)
 /// directly as a u64, avoiding redundant hashing.
+///
+/// Using the last bytes is important for storage trie paths which have the
+/// structure: `hash(address) + separator + hash(storage_key)`. Using first
+/// bytes would cause all storage slots from the same contract to collide.
 ///
 /// For short paths (internal trie nodes), we fall back to FxHash.
 #[inline]
 fn path_to_hash(path: &[u8]) -> u64 {
-    if path.len() >= 16 {
-        // First 16 nibbles = first 8 bytes of original Keccak256 hash
+    let mut len = path.len();
+
+    // Skip leaf flag (16) if present at the end
+    if len > 0 && path[len - 1] == 16 {
+        len -= 1;
+    }
+
+    if len >= 16 {
+        // Last 16 nibbles = last 8 bytes of the path's hash portion
         // Each nibble is stored as a byte with value 0-15
         let mut bytes = [0u8; 8];
+        let start = len - 16;
         for i in 0..8 {
-            bytes[i] = (path[i * 2] << 4) | path[i * 2 + 1];
+            bytes[i] = (path[start + i * 2] << 4) | path[start + i * 2 + 1];
         }
         u64::from_le_bytes(bytes)
     } else {
