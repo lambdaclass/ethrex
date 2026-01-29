@@ -233,7 +233,7 @@ impl LEVM {
 
                 // Execute transactions sequentially within sender group
                 // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
-                for tx in txs {
+                for tx in &txs {
                     let _ = Self::execute_tx_in_block(
                         tx,
                         sender,
@@ -242,6 +242,8 @@ impl LEVM {
                         vm_type,
                         stack_pool,
                     );
+                }
+                for tx in txs {
                     tx.hash();
                 }
             },
