@@ -242,6 +242,7 @@ impl LEVM {
                         vm_type,
                         stack_pool,
                     );
+                    tx.hash();
                 }
             },
         );
