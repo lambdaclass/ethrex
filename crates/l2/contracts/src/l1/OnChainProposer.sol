@@ -483,13 +483,18 @@ contract OnChainProposer is
                 ZISK_VERIFIER_ID
             ];
             uint64[4] memory programVk = _toZiskProgramVk(ziskVk);
-            // ZisK publicValues format: count (4 bytes big-endian) + output values
+            // ZisK publicValues format: count (4 bytes big-endian) + output values + padding to 256 bytes
             // The guest program outputs sha256(publicInputs) as 8 u32 values (32 bytes / 4 = 8).
-            // This count must match the number of ziskos::set_output() calls in the guest.
-            bytes memory ziskPublicValues = abi.encodePacked(
-                uint32(8),
-                sha256(publicInputs)
-            );
+            // SNARK proof was generated with 256-byte publics, so we must match that format.
+            bytes memory ziskPublicValues = new bytes(256);
+            bytes32 outputHash = sha256(publicInputs);
+            // count = 8 (big-endian u32)
+            ziskPublicValues[3] = 0x08;
+            // Copy 32-byte hash at offset 4
+            for (uint256 i = 0; i < 32; i++) {
+                ziskPublicValues[4 + i] = outputHash[i];
+            }
+            // Rest is already zeros from new bytes(256)
             // Call without try/catch to let ZiskVerifier errors propagate (e.g., InvalidProof())
             IZiskVerifier(ZISK_VERIFIER_ADDRESS).verifySnarkProof(
                 programVk,
@@ -527,10 +532,8 @@ contract OnChainProposer is
         bytes32 vk
     ) internal pure returns (uint64[4] memory out) {
         uint256 word = uint256(vk);
-        // VK file stores uint64 values in little-endian byte order.
-        // ZisK's hashPublicValues uses these bytes directly via bytes8(uint64).
-        // bytes8(uint64) produces big-endian bytes, so we DON'T swap here.
-        // This way bytes8(out[i]) produces the original file bytes.
+        // Extract uint64 values from bytes32 without byte swapping.
+        // The VK file bytes are stored in the same order they should be used.
         out[0] = uint64(word >> 192);
         out[1] = uint64(word >> 128);
         out[2] = uint64(word >> 64);
@@ -791,7 +794,12 @@ contract OnChainProposer is
         programVk = _toZiskProgramVk(rawVk);
         publicInputs = _getPublicInputsFromCommitment(batchNumber);
         publicInputsHash = sha256(publicInputs);
-        ziskPublicValues = abi.encodePacked(uint32(8), publicInputsHash);
+        // Match the 256-byte format used by SNARK proof generation
+        ziskPublicValues = new bytes(256);
+        ziskPublicValues[3] = 0x08;
+        for (uint256 i = 0; i < 32; i++) {
+            ziskPublicValues[4 + i] = publicInputsHash[i];
+        }
     }
 
     /// @inheritdoc IOnChainProposer

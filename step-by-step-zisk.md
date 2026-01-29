@@ -200,7 +200,50 @@ rex call <CONTRACT_ADDRESS> "VERSION()" --rpc-url <L1_RPC_URL>
 
 After the ZisK setup is complete, follow these steps to run the L2 with ZisK proving.
 
-### 12. Deploy L1 Contracts
+### 12. Verify VK matches ELF (CRITICAL - DO NOT SKIP)
+
+> [!CAUTION]
+> **MANDATORY CHECK BEFORE DEPLOYING.** A VK mismatch causes `InvalidProof` errors (0x09bde339) that require full redeployment. You will waste 15+ minutes per proof attempt if this is wrong.
+
+**The VK must be regenerated from the PROVER'S EMBEDDED ELF, not the source ELF.**
+
+The prover binary writes its embedded ELF to `crates/l2/prover/ethrex-guest-zisk`. This is the ELF that actually gets used for proving. Always generate the VK from THIS file:
+
+```bash
+# Step 1: Ensure the prover has written its embedded ELF
+# (Run the prover once briefly, or check if the file exists)
+ls -la crates/l2/prover/ethrex-guest-zisk
+
+# Step 2: Generate VK from the PROVER'S ELF (not the source ELF!)
+cargo-zisk rom-vkey \
+    -e crates/l2/prover/ethrex-guest-zisk \
+    -k ~/.zisk/provingKey \
+    -o /tmp/correct-vk
+
+# Step 3: Compare with existing VK file
+if ! diff -q /tmp/correct-vk crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk > /dev/null 2>&1; then
+    echo "VK MISMATCH! Updating VK file..."
+    cp /tmp/correct-vk crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk
+    echo "VK updated. You MUST redeploy contracts."
+else
+    echo "VK matches. Safe to proceed."
+fi
+```
+
+> [!WARNING]
+> **Common mistake:** Running `rom-vkey` on `crates/guest-program/bin/zisk/target/.../ethrex-guest-zisk` instead of `crates/l2/prover/ethrex-guest-zisk`. Even if the ELF hashes are identical, the cache file naming can cause different VK outputs. Always use the prover's ELF path.
+
+> [!IMPORTANT]
+> **Guest program byte ordering:** The guest program outputs SHA256 hash via `ziskos::set_output()`. ZisK internally writes u32 values as little-endian bytes. To preserve the original SHA256 bytes in public values, the guest MUST use `from_le_bytes` (same as aligned_layer):
+> ```rust
+> // CORRECT: sha256[A,B,C,D] → from_le_bytes → u32(0xDCBA) → ZisK writes LE → [A,B,C,D]
+> output.chunks_exact(4).for_each(|(idx, bytes)| {
+>     ziskos::set_output(idx, u32::from_le_bytes(bytes.try_into().unwrap()))
+> });
+> ```
+> Using `from_be_bytes` causes bytes to be reversed within each 4-byte chunk, which breaks verification.
+
+### 13. Deploy L1 Contracts
 
 Deploy the L1 contracts with ZisK verification enabled:
 
@@ -216,7 +259,7 @@ make -C crates/l2 deploy-l1
 > - `ETHREX_DEPLOYER_ZISK_VERIFIER_ADDRESS` is the verifier contract address from step 11
 > - Save the deployed contract addresses for the next step
 
-### 13. Start the L2 Node
+### 14. Start the L2 Node
 
 ```bash
 ZISK=true ETHREX_NO_MONITOR=true ETHREX_LOG_LEVEL=debug make -C crates/l2 init-l2 | grep -E "INFO|WARN|ERROR"
@@ -225,7 +268,7 @@ ZISK=true ETHREX_NO_MONITOR=true ETHREX_LOG_LEVEL=debug make -C crates/l2 init-l
 > [!IMPORTANT]
 > Both committer and proof coordinator accounts must be funded on L1.
 
-### 14. Start the Prover
+### 15. Start the Prover
 
 In a separate terminal, start the ZisK prover:
 

@@ -39,11 +39,10 @@ pub fn main() {
     println!("finish hashing output");
 
     println!("start revealing output");
-    // ZisK stores set_output values in big-endian in the SNARK proof.
-    // SHA256 outputs bytes in big-endian order, so we use from_be_bytes
-    // to preserve the byte order for the on-chain verifier.
+    // Match aligned_layer exactly: use from_le_bytes
+    // https://github.com/yetanotherco/aligned_layer/pull/2228
     output.chunks_exact(4).enumerate().for_each(|(idx, bytes)| {
-        ziskos::set_output(idx, u32::from_be_bytes(bytes.try_into().unwrap()))
+        ziskos::set_output(idx, u32::from_le_bytes(bytes.try_into().unwrap()))
     });
     println!("finish revealing output");
 }
