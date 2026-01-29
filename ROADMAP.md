@@ -47,7 +47,7 @@ This is a WIP document and it requires better descriptions; it's supposed to be 
 | Avoid clones in hot path | #5753 | 2 | Measure #5809 on mainnet | Avoid Clone on Account Load and check rest of the hot path |
 | SIMD Everywhere | | 2 | Pending | There are some libraries that can be replaced by others that use SIMD instructions for better performance |
 | EXTCODESIZE without full bytecode | | 1 | Done (#6034). Improvement of 25%. | EXTCODESIZE loads entire bytecode just to get length. Add `get_account_code_size()` or store code length alongside code (`crates/vm/levm/src/opcode_handlers/environment.rs:260-274`) |
-| TransactionQueue data structure | | 1 | Pending | `TransactionQueue` uses `Vec` with `remove(0)` which is O(n). Replace with `BinaryHeap`/`BTreeSet` or `VecDeque` for O(log n) or O(1) operations (`crates/blockchain/payload.rs:708-820`) |
+| TransactionQueue data structure | | 1 | Discarded. It is not significant within the critical path. | `TransactionQueue` uses `Vec` with `remove(0)` which is O(n). Replace with `BinaryHeap`/`BTreeSet` or `VecDeque` for O(log n) or O(1) operations (`crates/blockchain/payload.rs:708-820`) |
 
 ---
 
