@@ -270,6 +270,34 @@ impl From<BlockBody> for ExecutionPayloadBody {
     }
 }
 
+/// ExecutionPayloadBody V2 - includes Block Access List for EIP-7928
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionPayloadBodyV2 {
+    pub transactions: Vec<EncodedTransaction>,
+    pub withdrawals: Option<Vec<Withdrawal>>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "serde_utils::block_access_list::rlp_str_opt",
+        default
+    )]
+    pub block_access_list: Option<BlockAccessList>,
+}
+
+impl ExecutionPayloadBodyV2 {
+    pub fn from_body_with_bal(body: BlockBody, bal: Option<BlockAccessList>) -> Self {
+        Self {
+            transactions: body
+                .transactions
+                .iter()
+                .map(EncodedTransaction::encode)
+                .collect(),
+            withdrawals: body.withdrawals,
+            block_access_list: bal,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionPayloadResponse {

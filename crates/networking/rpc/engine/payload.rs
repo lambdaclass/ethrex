@@ -12,7 +12,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::payload::{
-    ExecutionPayload, ExecutionPayloadBody, ExecutionPayloadResponse, PayloadStatus,
+    ExecutionPayload, ExecutionPayloadBody, ExecutionPayloadBodyV2, ExecutionPayloadResponse,
+    PayloadStatus,
 };
 use crate::utils::RpcErr;
 use crate::utils::{RpcRequest, parse_json_hex};
@@ -583,6 +584,119 @@ fn build_payload_body_response(bodies: Vec<Option<BlockBody>>) -> Result<Value, 
         .map(|body| body.map(Into::into))
         .collect();
     serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
+}
+
+// ==================== V2 Body Methods (EIP-7928) ====================
+
+pub struct GetPayloadBodiesByHashV2Request {
+    pub hashes: Vec<BlockHash>,
+}
+
+impl RpcHandler for GetPayloadBodiesByHashV2Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 1 {
+            return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
+        };
+
+        Ok(GetPayloadBodiesByHashV2Request {
+            hashes: serde_json::from_value(params[0].clone())?,
+        })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        if self.hashes.len() as u64 >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
+            return Err(RpcErr::TooLargeRequest);
+        }
+
+        let mut bodies: Vec<Option<ExecutionPayloadBodyV2>> = Vec::new();
+        for hash in &self.hashes {
+            let block = context.storage.get_block_by_hash(*hash).await?;
+            let result = match block {
+                Some(block) => {
+                    let bal = context
+                        .blockchain
+                        .generate_bal_for_block(&block)
+                        .map_err(|e| RpcErr::Internal(e.to_string()))?;
+                    Some(ExecutionPayloadBodyV2::from_body_with_bal(block.body, bal))
+                }
+                None => None,
+            };
+            bodies.push(result);
+        }
+
+        serde_json::to_value(bodies).map_err(|e| RpcErr::Internal(e.to_string()))
+    }
+}
+
+pub struct GetPayloadBodiesByRangeV2Request {
+    start: BlockNumber,
+    count: u64,
+}
+
+impl RpcHandler for GetPayloadBodiesByRangeV2Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 2 {
+            return Err(RpcErr::BadParams("Expected 2 params".to_owned()));
+        };
+        let start = parse_json_hex(&params[0]).map_err(|_| RpcErr::BadHexFormat(0))?;
+        let count = parse_json_hex(&params[1]).map_err(|_| RpcErr::BadHexFormat(1))?;
+        if start < 1 {
+            return Err(RpcErr::WrongParam("start".to_owned()));
+        }
+        if count < 1 {
+            return Err(RpcErr::WrongParam("count".to_owned()));
+        }
+        Ok(GetPayloadBodiesByRangeV2Request { start, count })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        if self.count >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
+            return Err(RpcErr::TooLargeRequest);
+        }
+        let latest_block_number = context.storage.get_latest_block_number().await?;
+        // NOTE: we truncate the range because the spec says we "MUST NOT return trailing
+        // null values if the request extends past the current latest known block"
+        let last = latest_block_number.min(self.start + self.count - 1);
+
+        // Bulk fetch bodies (like V1)
+        let block_bodies = context.storage.get_block_bodies(self.start, last).await?;
+
+        let mut bodies: Vec<Option<ExecutionPayloadBodyV2>> = Vec::new();
+        for (i, body_opt) in block_bodies.into_iter().enumerate() {
+            let block_number = self.start + i as u64;
+            let result = match body_opt {
+                Some(body) => {
+                    // Get header for this block
+                    let header =
+                        context
+                            .storage
+                            .get_block_header(block_number)?
+                            .ok_or_else(|| {
+                                RpcErr::Internal(format!(
+                                    "Header not found for block {block_number}"
+                                ))
+                            })?;
+                    let block = Block { header, body };
+
+                    let bal = context
+                        .blockchain
+                        .generate_bal_for_block(&block)
+                        .map_err(|e| RpcErr::Internal(e.to_string()))?;
+                    Some(ExecutionPayloadBodyV2::from_body_with_bal(block.body, bal))
+                }
+                None => None,
+            };
+            bodies.push(result);
+        }
+
+        serde_json::to_value(bodies).map_err(|e| RpcErr::Internal(e.to_string()))
+    }
 }
 
 fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPayload, RpcErr> {

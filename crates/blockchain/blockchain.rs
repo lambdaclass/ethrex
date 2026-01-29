@@ -59,6 +59,7 @@ use ethrex_common::constants::{EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
 // Re-export stateless validation functions for backwards compatibility
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::EIP4844Transaction;
+use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
@@ -303,6 +304,32 @@ impl Blockchain {
         }
 
         Ok((execution_result, account_updates))
+    }
+
+    /// Generates Block Access List by re-executing a block.
+    /// Returns None for pre-Amsterdam blocks.
+    /// This is used by engine_getPayloadBodiesByHashV2 and engine_getPayloadBodiesByRangeV2.
+    pub fn generate_bal_for_block(
+        &self,
+        block: &Block,
+    ) -> Result<Option<BlockAccessList>, ChainError> {
+        let chain_config = self.storage.get_chain_config();
+
+        // Pre-Amsterdam blocks don't have BAL
+        if !chain_config.is_amsterdam_activated(block.header.timestamp) {
+            return Ok(None);
+        }
+
+        // Find parent header
+        let parent_header = find_parent_header(&block.header, &self.storage)?;
+
+        // Create VM and execute block with BAL recording
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
+        let mut vm = self.new_evm(vm_db)?;
+
+        let (_execution_result, bal) = vm.execute_block(block, true)?;
+
+        Ok(bal)
     }
 
     /// Executes a block withing a new vm instance and state
