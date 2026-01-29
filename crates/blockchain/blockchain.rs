@@ -488,6 +488,7 @@ impl Blockchain {
 
         let mut account_state: FxHashMap<H256, PreMerkelizedAccountState> = Default::default();
         let mut code_updates: Vec<(H256, Code)> = vec![];
+        let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
 
         // Accumulator for witness generation (only used if precompute_witnesses is true)
         let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
@@ -515,7 +516,9 @@ impl Blockchain {
             }
 
             for update in updates {
-                let hashed_address = keccak(update.address);
+                let hashed_address = *hashed_address_cache
+                    .entry(update.address)
+                    .or_insert_with(|| keccak(update.address));
                 let account_bucket = hashed_address.as_fixed_bytes()[0] >> 4;
                 workers_tx[account_bucket as usize]
                     .send(MerklizationRequest::LoadAccount(hashed_address))
@@ -727,11 +730,10 @@ impl Blockchain {
                 MerklizationRequest::LoadAccount(prefix) => match accounts.entry(prefix) {
                     Entry::Occupied(_) => {}
                     Entry::Vacant(vacant_entry) => {
-                        let pathrlp = prefix.as_bytes().to_vec();
-                        let account_state = match state_trie.get(&pathrlp)? {
+                        let account_state = match state_trie.get(prefix.as_bytes())? {
                             Some(rlp) => {
                                 let state = AccountState::decode(&rlp)?;
-                                state_trie.insert(pathrlp, rlp)?;
+                                state_trie.insert(prefix.as_bytes().to_vec(), rlp)?;
                                 state
                             }
                             None => AccountState::default(),
@@ -774,11 +776,11 @@ impl Blockchain {
                     }
                     storage_nodes.push((hashed_account, state.nodes));
 
-                    let pathrlp = hashed_account.as_bytes().to_vec();
+                    let path = hashed_account.as_bytes();
                     let old_state = match accounts.entry(hashed_account) {
                         Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
                         Entry::Vacant(vacant_entry) => {
-                            let account_state = match state_trie.get(&pathrlp)? {
+                            let account_state = match state_trie.get(path)? {
                                 Some(rlp) => AccountState::decode(&rlp)?,
                                 None => AccountState::default(),
                             };
@@ -795,9 +797,9 @@ impl Blockchain {
                         old_state.code_hash = info.code_hash;
                     }
                     if *old_state != AccountState::default() {
-                        state_trie.insert(pathrlp, old_state.encode_to_vec())?;
+                        state_trie.insert(path.to_vec(), old_state.encode_to_vec())?;
                     } else {
-                        state_trie.remove(&pathrlp)?;
+                        state_trie.remove(path)?;
                     }
                 }
                 MerklizationRequest::CollectStorages { tx } => {
