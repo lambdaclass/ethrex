@@ -84,8 +84,8 @@ This is a WIP document and it requires better descriptions; it's supposed to be 
 
 | Item | Priority | Status | Description |
 |-----|----------|--------|-------------|
-| Parallel tx decoding | 0 | Pending | Use rayon to decode transactions in parallel. Currently sequential at ~5-10μs per tx |
-| simd-json | 0 | Pending | Replace serde_json with simd-json for SIMD-accelerated JSON parsing |
+| Parallel tx decoding | 0 | Discarded | Use rayon to decode transactions in parallel. Currently sequential at ~5-10μs per tx |
+| simd-json | 0 | Discarded | Replace serde_json with simd-json for SIMD-accelerated JSON parsing |
 | Remove payload.clone() | 0 | Pending | Avoid cloning `ExecutionPayload` in `get_block_from_payload` (`crates/networking/rpc/engine/payload.rs:674`). Use references or owned values directly |
 | Remove params.clone() | 0 | Pending | Avoid cloning params before `serde_json::from_value()`. Use references instead of `params[i].clone()` in RPC handlers (`crates/networking/rpc/engine/payload.rs`) |
 | Use Bytes instead of String | 0 | Pending | Change HTTP body extraction from `String` to `Bytes` and use `serde_json::from_slice()` instead of `from_str()` to avoid UTF-8 validation overhead (`crates/networking/rpc/rpc.rs:536,563`) |
