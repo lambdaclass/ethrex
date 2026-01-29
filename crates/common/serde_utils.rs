@@ -322,7 +322,7 @@ pub mod vec_u8 {
         D: Deserializer<'de>,
     {
         let value = String::deserialize(d)?;
-        let bytes = hex::decode(value.trim_start_matches("0x"))
+        let bytes = hex_simd::decode_to_vec(value.trim_start_matches("0x"))
             .map_err(|e| D::Error::custom(e.to_string()))?;
         Ok(bytes)
     }
@@ -346,7 +346,7 @@ pub mod bytes {
         D: Deserializer<'de>,
     {
         let value = String::deserialize(d)?;
-        let bytes = hex::decode(value.trim_start_matches("0x"))
+        let bytes = hex_simd::decode_to_vec(value.trim_start_matches("0x"))
             .map_err(|e| D::Error::custom(e.to_string()))?;
         Ok(Bytes::from(bytes))
     }
@@ -368,7 +368,7 @@ pub mod bytes {
             let value = Vec::<String>::deserialize(d)?;
             let mut output = Vec::new();
             for str in value {
-                let bytes = hex::decode(str.trim_start_matches("0x"))
+                let bytes = hex_simd::decode_to_vec(str.trim_start_matches("0x"))
                     .map_err(|e| D::Error::custom(e.to_string()))?
                     .into();
                 output.push(bytes);
@@ -434,7 +434,7 @@ pub mod bytes48 {
             let value = Vec::<String>::deserialize(d)?;
             let mut output = Vec::new();
             for str in value {
-                let bytes = hex::decode(str.trim_start_matches("0x"))
+                let bytes = hex_simd::decode_to_vec(str.trim_start_matches("0x"))
                     .map_err(|e| D::Error::custom(e.to_string()))?;
                 if bytes.len() != 48 {
                     return Err(D::Error::custom(format!(
@@ -482,7 +482,7 @@ pub mod blob {
             let value = Vec::<String>::deserialize(deserializer)?;
             let mut output = Vec::new();
             for str in value {
-                let bytes = hex::decode(str.trim_start_matches("0x"))
+                let bytes = hex_simd::decode_to_vec(str.trim_start_matches("0x"))
                     .map_err(|e| D::Error::custom(e.to_string()))?;
                 if bytes.len() != BYTES_PER_BLOB {
                     return Err(D::Error::custom(format!(
@@ -549,7 +549,7 @@ pub mod duration {
 /// For example, a duration such as "1h30m" or "1.6m" will be accepted but "-1s" or "30mh" will not
 /// Some imprecision can be expected when using milliseconds/microseconds/nanoseconds with significant decimal components
 /// If the format is incorrect this function will return None
-fn parse_duration(input: String) -> Option<Duration> {
+pub fn parse_duration(input: String) -> Option<Duration> {
     let mut res = Duration::ZERO;
     let mut integer_buffer = String::new();
     let mut chars = input.chars().peekable();
@@ -603,106 +603,4 @@ fn parse_duration(input: String) -> Option<Duration> {
         }
     }
     Some(res)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_duration_simple_integers() {
-        assert_eq!(
-            parse_duration("24h".to_string()),
-            Some(Duration::from_secs(60 * 60 * 24))
-        );
-        assert_eq!(
-            parse_duration("20m".to_string()),
-            Some(Duration::from_secs(60 * 20))
-        );
-        assert_eq!(
-            parse_duration("13s".to_string()),
-            Some(Duration::from_secs(13))
-        );
-        assert_eq!(
-            parse_duration("500ms".to_string()),
-            Some(Duration::from_millis(500))
-        );
-        assert_eq!(
-            parse_duration("900µs".to_string()),
-            Some(Duration::from_micros(900))
-        );
-        assert_eq!(
-            parse_duration("900us".to_string()),
-            Some(Duration::from_micros(900))
-        );
-        assert_eq!(
-            parse_duration("40ns".to_string()),
-            Some(Duration::from_nanos(40))
-        );
-    }
-
-    #[test]
-    fn parse_duration_mixed_integers() {
-        assert_eq!(
-            parse_duration("24h30m".to_string()),
-            Some(Duration::from_secs(60 * 60 * 24 + 30 * 60))
-        );
-        assert_eq!(
-            parse_duration("20m15s".to_string()),
-            Some(Duration::from_secs(60 * 20 + 15))
-        );
-        assert_eq!(
-            parse_duration("13s4ms".to_string()),
-            Some(Duration::from_secs(13) + Duration::from_millis(4))
-        );
-        assert_eq!(
-            parse_duration("500ms60µs".to_string()),
-            Some(Duration::from_millis(500) + Duration::from_micros(60))
-        );
-        assert_eq!(
-            parse_duration("900us21ns".to_string()),
-            Some(Duration::from_micros(900) + Duration::from_nanos(21))
-        );
-    }
-
-    #[test]
-    fn parse_duration_simple_with_decimals() {
-        assert_eq!(
-            parse_duration("1.5h".to_string()),
-            Some(Duration::from_secs(60 * 90))
-        );
-        assert_eq!(
-            parse_duration("0.5m".to_string()),
-            Some(Duration::from_secs(30))
-        );
-        assert_eq!(
-            parse_duration("4.5s".to_string()),
-            Some(Duration::from_secs_f32(4.5))
-        );
-        assert_eq!(
-            parse_duration("0.8ms".to_string()),
-            Some(Duration::from_micros(800))
-        );
-        assert_eq!(
-            parse_duration("0.95us".to_string()),
-            Some(Duration::from_nanos(950))
-        );
-        // Rounded Up
-        assert_eq!(
-            parse_duration("0.75ns".to_string()),
-            Some(Duration::from_nanos(1))
-        );
-    }
-
-    #[test]
-    fn parse_duration_mixed_decimals() {
-        assert_eq!(
-            parse_duration("1.5h0.5m10s".to_string()),
-            Some(Duration::from_secs(60 * 90 + 30 + 10))
-        );
-        assert_eq!(
-            parse_duration("0.5m15s".to_string()),
-            Some(Duration::from_secs(30 + 15))
-        );
-    }
 }

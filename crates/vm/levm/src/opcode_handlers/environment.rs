@@ -132,6 +132,7 @@ impl<'a> VM<'a> {
     }
 
     // CALLDATACOPY operation
+    #[expect(clippy::arithmetic_side_effects, reason = "bound checked")]
     pub fn op_calldatacopy(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         let [dest_offset, calldata_offset, size] = *current_call_frame.stack.pop()?;
@@ -154,47 +155,22 @@ impl<'a> VM<'a> {
 
         // offset is out of bounds, so fill zeroes
         if calldata_offset >= calldata_len {
-            current_call_frame.memory.store_zeros(dest_offset, size)?;
+            current_call_frame
+                .memory
+                .store_data_zero_padded(dest_offset, &[], size)?;
             return Ok(OpcodeResult::Continue);
         }
 
-        #[expect(
-            clippy::arithmetic_side_effects,
-            clippy::indexing_slicing,
-            reason = "bounds checked"
-        )]
-        {
-            // we already verified calldata_len >= calldata_offset
-            let available_data = calldata_len - calldata_offset;
-            let copy_size = size.min(available_data);
-            let zero_fill_size = size - copy_size;
+        // We already verified calldata_len >= calldata_offset.
+        let available_data = calldata_len - calldata_offset;
+        let copy_size = size.min(available_data);
+        #[expect(clippy::indexing_slicing, reason = "bounds checked")]
+        let src_slice = &current_call_frame.calldata[calldata_offset..calldata_offset + copy_size];
+        current_call_frame
+            .memory
+            .store_data_zero_padded(dest_offset, src_slice, size)?;
 
-            if zero_fill_size == 0 {
-                // no zero padding needed
-
-                // calldata_offset + copy_size can't overflow because its the min of size and (calldata_len - calldata_offset).
-                let src_slice =
-                    &current_call_frame.calldata[calldata_offset..calldata_offset + copy_size];
-                current_call_frame
-                    .memory
-                    .store_data(dest_offset, src_slice)?;
-            } else {
-                let mut data = vec![0u8; size];
-
-                let available_data = calldata_len - calldata_offset;
-                let copy_size = size.min(available_data);
-
-                if copy_size > 0 {
-                    data[..copy_size].copy_from_slice(
-                        &current_call_frame.calldata[calldata_offset..calldata_offset + copy_size],
-                    );
-                }
-
-                current_call_frame.memory.store_data(dest_offset, &data)?;
-            }
-
-            Ok(OpcodeResult::Continue)
-        }
+        Ok(OpcodeResult::Continue)
     }
 
     // CODESIZE operation
@@ -245,28 +221,27 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        let mut data = vec![0u8; size];
-        if code_offset < current_call_frame.bytecode.bytecode.len() {
-            let diff = current_call_frame
-                .bytecode
-                .bytecode
-                .len()
-                .wrapping_sub(code_offset);
-            let final_size = size.min(diff);
-            let end = code_offset.wrapping_add(final_size);
+        let code_len = current_call_frame.bytecode.bytecode.len();
 
+        #[expect(clippy::arithmetic_side_effects)]
+        let slice = if code_offset < code_len {
+            let available_data = code_len - code_offset;
+            let copy_size = size.min(available_data);
+            let end = code_offset + copy_size;
             #[expect(unsafe_code, reason = "bounds checked beforehand")]
             unsafe {
-                data.get_unchecked_mut(..final_size).copy_from_slice(
-                    current_call_frame
-                        .bytecode
-                        .bytecode
-                        .get_unchecked(code_offset..end),
-                );
+                current_call_frame
+                    .bytecode
+                    .bytecode
+                    .get_unchecked(code_offset..end)
             }
-        }
+        } else {
+            &[]
+        };
 
-        current_call_frame.memory.store_data(dest_offset, &data)?;
+        current_call_frame
+            .memory
+            .store_data_zero_padded(dest_offset, slice, size)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -286,8 +261,7 @@ impl<'a> VM<'a> {
     pub fn op_extcodesize(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
         let address_was_cold = !self.substate.add_accessed_address(address);
-        // FIXME: a bit wasteful to fetch the whole code just to get the length.
-        let account_code_length = self.db.get_account_code(address)?.bytecode.len().into();
+        let account_code_length = self.db.get_code_length(address)?.into();
 
         let current_call_frame = &mut self.current_call_frame;
 
@@ -340,22 +314,24 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        let mut data = vec![0u8; size];
-        if offset < bytecode.bytecode.len() {
-            let diff = bytecode.bytecode.len().wrapping_sub(offset);
-            let final_size = size.min(diff);
-            let end = offset.wrapping_add(final_size);
+        let code_len = bytecode.bytecode.len();
 
+        #[expect(clippy::arithmetic_side_effects)]
+        let slice = if offset < code_len {
+            let available_data = code_len - offset;
+            let copy_size = size.min(available_data);
+            let end = offset + copy_size;
             #[expect(unsafe_code, reason = "bounds checked beforehand")]
             unsafe {
-                data.get_unchecked_mut(..final_size)
-                    .copy_from_slice(bytecode.bytecode.get_unchecked(offset..end));
+                bytecode.bytecode.get_unchecked(offset..end)
             }
-        }
+        } else {
+            &[]
+        };
 
         self.current_call_frame
             .memory
-            .store_data(dest_offset, &data)?;
+            .store_data_zero_padded(dest_offset, slice, size)?;
 
         Ok(OpcodeResult::Continue)
     }

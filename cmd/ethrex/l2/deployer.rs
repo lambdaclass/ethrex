@@ -141,7 +141,7 @@ pub struct DeployerOptions {
         env = "ETHREX_DEPLOYER_GENESIS_L1_PATH",
         required_if_eq("deposit_rich", "true"),
         help_heading = "Deployer options",
-        help = "Path to the genesis file. The default is ../../fixtures/genesis/l1-dev.json"
+        help = "Path to the genesis file. The default is ../../fixtures/genesis/l1.json"
     )]
     pub genesis_l1_path: Option<PathBuf>,
     #[arg(
@@ -398,7 +398,7 @@ impl Default for DeployerOptions {
             env_file_path: Some(PathBuf::from(".env")),
             deposit_rich: true,
             private_keys_file_path: None,
-            genesis_l1_path: Some("../../fixtures/genesis/l1-dev.json".into()),
+            genesis_l1_path: Some("../../fixtures/genesis/l1.json".into()),
             genesis_l2_path: "../../fixtures/genesis/l2.json".into(),
             // 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
             committer_l1_address: H160([
@@ -1015,17 +1015,17 @@ fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, Depl
         let vk_path = {
             let path = match &prover_type {
                 ProverType::RISC0 => format!(
-                    "{}/../../crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk",
+                    "{}/../../crates/l2/prover/src/ethrex_guest_program/src/risc0/out/riscv32im-risc0-vk",
                     env!("CARGO_MANIFEST_DIR")
                 ),
                 // Aligned requires the vk's 32 bytes hash, while the L1 verifier requires
                 // the hash as a bn254 F_r element.
                 ProverType::SP1 if opts.aligned => format!(
-                    "{}/../../crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32",
+                    "{}/../../crates/l2/prover/src/ethrex_guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32",
                     env!("CARGO_MANIFEST_DIR")
                 ),
                 ProverType::SP1 if !opts.aligned => format!(
-                    "{}/../../crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254",
+                    "{}/../../crates/l2/prover/src/ethrex_guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254",
                     env!("CARGO_MANIFEST_DIR")
                 ),
                 // other types don't have a verification key
