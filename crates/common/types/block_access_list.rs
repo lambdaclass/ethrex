@@ -687,16 +687,36 @@ impl BlockAccessListRecorder {
 
     /// Records a balance change.
     /// Should be called after every balance modification.
+    /// Per EIP-7928, only the final balance per (address, block_access_index) is recorded.
+    /// If multiple balance changes occur within the same transaction, only the last one matters.
+    /// Note: SYSTEM_ADDRESS balance changes are excluded (system calls backup/restore it).
     pub fn record_balance_change(&mut self, address: Address, post_balance: U256) {
+        // SYSTEM_ADDRESS balance changes from system contract calls should not be recorded
+        // (system calls backup and restore SYSTEM_ADDRESS state)
+        if address == SYSTEM_ADDRESS {
+            return;
+        }
+
         // Track initial balance for round-trip detection
         self.initial_balances.entry(address).or_insert(post_balance);
 
-        self.balance_changes
-            .entry(address)
-            .or_default()
-            .push((self.current_index, post_balance));
+        let changes = self.balance_changes.entry(address).or_default();
+        // Update the last entry if it's for the same block_access_index,
+        // otherwise push a new entry
+        if let Some(last) = changes.last_mut() {
+            if last.0 == self.current_index {
+                // Update the balance for this index (same transaction)
+                last.1 = post_balance;
+            } else {
+                // New transaction, push new entry
+                changes.push((self.current_index, post_balance));
+            }
+        } else {
+            // First entry
+            changes.push((self.current_index, post_balance));
+        }
 
-        // Mark address as touched (include SYSTEM_ADDRESS for actual state changes)
+        // Mark address as touched
         self.touched_addresses.insert(address);
     }
 
@@ -718,12 +738,17 @@ impl BlockAccessListRecorder {
     /// - Contracts performing CREATE/CREATE2
     /// - Deployed contracts
     /// - EIP-7702 authorities
+    /// Note: SYSTEM_ADDRESS nonce changes from system calls are excluded.
     pub fn record_nonce_change(&mut self, address: Address, post_nonce: u64) {
+        // SYSTEM_ADDRESS nonce changes from system contract calls should not be recorded
+        if address == SYSTEM_ADDRESS {
+            return;
+        }
         self.nonce_changes
             .entry(address)
             .or_default()
             .push((self.current_index, post_nonce));
-        // Mark address as touched (include SYSTEM_ADDRESS for actual state changes)
+        // Mark address as touched
         self.touched_addresses.insert(address);
     }
 
