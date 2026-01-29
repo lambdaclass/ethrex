@@ -92,7 +92,7 @@ use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{
-    Arc, Mutex, RwLock,
+    Arc, RwLock,
     atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc::{Receiver, channel},
 };
@@ -954,7 +954,7 @@ impl Blockchain {
             let vm_db: DynVmDatabase =
                 Box::new(StoreVmDatabase::new(self.storage.clone(), parent_header)?);
 
-            let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
+            let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
             let mut vm = match self.options.r#type {
                 BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
@@ -1552,7 +1552,7 @@ impl Blockchain {
                 parent_header.clone(),
             )?);
 
-            let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
+            let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
             let vm = match self.options.r#type.clone() {
                 BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),

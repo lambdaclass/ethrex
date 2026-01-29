@@ -274,9 +274,8 @@ impl<'a> VM<'a> {
         self.current_call_frame
             .increase_consumed_gas(gas_cost::extcodesize(address_was_cold)?)?;
 
-        // State access AFTER gas check passes
-        // FIXME: a bit wasteful to fetch the whole code just to get the length.
-        let account_code_length = self.db.get_account_code(address)?.bytecode.len().into();
+        // State access AFTER gas check passes (using optimized code length lookup)
+        let account_code_length = self.db.get_code_length(address)?.into();
 
         // Record address touch for BAL (after gas check passes)
         if let Some(recorder) = self.db.bal_recorder.as_mut() {
