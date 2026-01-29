@@ -42,17 +42,38 @@ fn path_to_hash(path: &[u8]) -> u64 {
 /// A hasher that extracts hash values directly from nibble paths.
 ///
 /// This is safe because nibble paths are derived from Keccak256 hashes,
-/// so they already have uniform distribution. We just extract the first
-/// 8 bytes (16 nibbles) as the hash value.
+/// so they already have uniform distribution. We extract the first
+/// 8 bytes (16 nibbles) as the primary hash value.
+///
+/// The hasher accumulates multiple writes by XORing with the existing hash,
+/// since the Hasher trait's write() can be called multiple times.
 #[derive(Default)]
 struct NibblePathHasher {
     hash: u64,
+    /// Track if this is the first write (the actual path data)
+    has_data: bool,
 }
 
 impl Hasher for NibblePathHasher {
     #[inline]
     fn write(&mut self, bytes: &[u8]) {
-        self.hash = path_to_hash(bytes);
+        if !self.has_data {
+            // First write is the actual path data - use our optimized extraction
+            self.hash = path_to_hash(bytes);
+            self.has_data = true;
+        } else {
+            // Subsequent writes (e.g., length): mix in using FxHash's algorithm
+            // This handles the case where HashMap calls write multiple times
+            for byte in bytes {
+                self.hash = self.hash.rotate_left(5) ^ (*byte as u64);
+            }
+        }
+    }
+
+    #[inline]
+    fn write_usize(&mut self, i: usize) {
+        // Mix in the length using FxHash-style mixing
+        self.hash = self.hash.wrapping_mul(0x517cc1b727220a95) ^ (i as u64);
     }
 
     #[inline]
