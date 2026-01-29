@@ -381,14 +381,12 @@ jobs:
           ETHREX_LOG_LEVEL=debug docker compose up --detach ethrex_l1
 
       - name: Install rex
-        if: ${{ matrix.based }}
         run: |
-          cd ..
-          git clone https://github.com/lambdaclass/rex.git
-          cd rex
+          git clone https://github.com/lambdaclass/rex.git /tmp/rex
+          cd /tmp/rex
           git checkout 18466ec1c3dbcbbf22a68fc1f850d660cb2fbf1f
-          make cli
-          echo "rex install successfully at $(which rex)"
+          cargo build --release
+          sudo cp target/release/rex /usr/local/bin
 
       - name: Deploy contracts
         run: |
@@ -455,6 +453,29 @@ jobs:
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
           ETHREX_LOG_LEVEL=debug \
           docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach --no-deps ethrex_l2
+
+      - name: Wait for L2 deposits to be processed
+        run: |
+          # Wait until rich account deposits are processed on L2
+          # Get the first rich account address from private key
+          FIRST_RICH_PK=$(head -n1 fixtures/keys/private_keys_l1.txt)
+          RICH_ADDRESS=$(rex address --from-private-key "$FIRST_RICH_PK")
+          echo "Waiting for rich account $RICH_ADDRESS deposits to be processed on L2..."
+          MAX_TRIES=300
+          SLEEP_SECS=2
+          for i in $(seq 1 $MAX_TRIES); do
+            echo "Checking L2 balance... (attempt $i)"
+            if balance_output=$(rex balance "$RICH_ADDRESS" http://localhost:1729 2>/dev/null); then
+              balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
+              if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
+                echo "Rich account has balance on L2: ${balance_wei} wei"
+                exit 0
+              fi
+            fi
+            sleep "${SLEEP_SECS}"
+          done
+          echo "Timed out waiting for L2 deposits to be processed"
+          exit 1
 
       - name: Run test
         run: |
@@ -552,6 +573,29 @@ jobs:
           ETHREX_PROOF_COORDINATOR_ADDRESS=0.0.0.0 \
           ETHREX_LOG_LEVEL=debug \
           docker compose -f docker-compose.yaml -f docker-compose-l2-tdx.yaml up --detach --no-deps ethrex_l2
+
+      - name: Wait for L2 deposits to be processed
+        run: |
+          # Wait until rich account deposits are processed on L2
+          # Get the first rich account address from private key
+          FIRST_RICH_PK=$(head -n1 fixtures/keys/private_keys_l1.txt)
+          RICH_ADDRESS=$(rex address --from-private-key "$FIRST_RICH_PK")
+          echo "Waiting for rich account $RICH_ADDRESS deposits to be processed on L2..."
+          MAX_TRIES=300
+          SLEEP_SECS=2
+          for i in $(seq 1 $MAX_TRIES); do
+            echo "Checking L2 balance... (attempt $i)"
+            if balance_output=$(rex balance "$RICH_ADDRESS" http://localhost:1729 2>/dev/null); then
+              balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
+              if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
+                echo "Rich account has balance on L2: ${balance_wei} wei"
+                exit 0
+              fi
+            fi
+            sleep "${SLEEP_SECS}"
+          done
+          echo "Timed out waiting for L2 deposits to be processed"
+          exit 1
 
       - name: Run test
         run: |
@@ -652,6 +696,14 @@ jobs:
 
       - name: Install solc
         uses: ./.github/actions/install-solc
+
+      - name: Install rex
+        run: |
+          git clone https://github.com/lambdaclass/rex.git /tmp/rex
+          cd /tmp/rex
+          git checkout 18466ec1c3dbcbbf22a68fc1f850d660cb2fbf1f
+          cargo build --release
+          sudo cp target/release/rex /usr/local/bin
 
       - name: Build prover
         run: |
@@ -784,6 +836,52 @@ jobs:
           ETHREX_LOG_LEVEL=debug \
           ETHREX_WATCHER_ROUTER_ADDRESS=$ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS \
           docker compose -f docker-compose.yaml -f docker-compose-l2-shared-bridge.overrides.yaml up --detach --no-deps ethrex_l2_b
+
+      - name: Wait for L2A deposits to be processed
+        run: |
+          # Wait until rich account deposits are processed on L2A
+          # Get the first rich account address from private key
+          FIRST_RICH_PK=$(head -n1 fixtures/keys/private_keys_l1.txt)
+          RICH_ADDRESS=$(rex address --from-private-key "$FIRST_RICH_PK")
+          echo "Waiting for rich account $RICH_ADDRESS deposits to be processed on L2A..."
+          MAX_TRIES=300
+          SLEEP_SECS=2
+          for i in $(seq 1 $MAX_TRIES); do
+            echo "Checking L2A balance... (attempt $i)"
+            if balance_output=$(rex balance "$RICH_ADDRESS" http://localhost:1729 2>/dev/null); then
+              balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
+              if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
+                echo "Rich account has balance on L2A: ${balance_wei} wei"
+                exit 0
+              fi
+            fi
+            sleep "${SLEEP_SECS}"
+          done
+          echo "Timed out waiting for L2A deposits to be processed"
+          exit 1
+
+      - name: Wait for L2B deposits to be processed
+        run: |
+          # Wait until rich account deposits are processed on L2B
+          # Get the first rich account address from private key
+          FIRST_RICH_PK=$(head -n1 fixtures/keys/private_keys_l1.txt)
+          RICH_ADDRESS=$(rex address --from-private-key "$FIRST_RICH_PK")
+          echo "Waiting for rich account $RICH_ADDRESS deposits to be processed on L2B..."
+          MAX_TRIES=300
+          SLEEP_SECS=2
+          for i in $(seq 1 $MAX_TRIES); do
+            echo "Checking L2B balance... (attempt $i)"
+            if balance_output=$(rex balance "$RICH_ADDRESS" http://localhost:1730 2>/dev/null); then
+              balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
+              if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
+                echo "Rich account has balance on L2B: ${balance_wei} wei"
+                exit 0
+              fi
+            fi
+            sleep "${SLEEP_SECS}"
+          done
+          echo "Timed out waiting for L2B deposits to be processed"
+          exit 1
 
       - name: Run Shared Bridge Tests
         if: matrix.forced_inclusion == false
