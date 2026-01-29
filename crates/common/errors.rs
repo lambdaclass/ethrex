@@ -18,6 +18,8 @@ pub enum EcdsaError {
     ))]
     #[error("k256 error: {0}")]
     K256(#[from] k256::ecdsa::Error),
+    #[error("recovery id error: exceeds u64::MAX")]
+    RecoveryIdOverflow,
 }
 
 /// Errors that occur during block validation.
