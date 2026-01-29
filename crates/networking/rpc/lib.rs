@@ -62,11 +62,11 @@
 mod admin;
 mod authentication;
 pub mod debug;
-mod engine;
+pub mod engine;
 mod eth;
 mod mempool;
 mod net;
-mod rpc;
+pub mod rpc;
 mod tracing;
 
 pub mod clients;
@@ -76,8 +76,7 @@ pub use clients::{EngineClient, EthClient};
 
 pub use rpc::{start_api, start_block_executor};
 
-#[cfg(test)]
-mod test_utils;
+pub mod test_utils;
 
 // TODO: These exports are needed by ethrex-l2-rpc, but we do not want to
 // export them in the public API of this crate.
@@ -88,7 +87,7 @@ pub use eth::{
     transaction::EstimateGasRequest,
 };
 pub use rpc::{
-    NodeData, RpcApiContext, RpcHandler, RpcRequestWrapper, map_debug_requests, map_eth_requests,
-    map_http_requests, rpc_response, shutdown_signal,
+    ClientVersion, NodeData, RpcApiContext, RpcHandler, RpcRequestWrapper, map_debug_requests,
+    map_eth_requests, map_http_requests, rpc_response, shutdown_signal,
 };
 pub use utils::{RpcErr, RpcErrorMetadata, RpcNamespace};
