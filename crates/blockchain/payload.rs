@@ -1,6 +1,6 @@
 use std::{
     cmp::{Ordering, max},
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     ops::Div,
     sync::Arc,
     time::{Duration, Instant},
@@ -705,12 +705,11 @@ pub fn apply_plain_transaction(
 }
 
 /// A struct representing suitable mempool transactions waiting to be included in a block
-// TODO: Consider using VecDequeue instead of Vec
 pub struct TransactionQueue {
     // The first transaction for each account along with its tip, sorted by highest tip
-    heads: Vec<HeadTransaction>,
+    heads: VecDeque<HeadTransaction>,
     // The remaining txs grouped by account and sorted by nonce
-    txs: HashMap<Address, Vec<MempoolTransaction>>,
+    txs: HashMap<Address, VecDeque<MempoolTransaction>>,
     // Base Fee stored for tip calculations
     base_fee: Option<u64>,
 }
@@ -738,14 +737,17 @@ impl From<HeadTransaction> for Transaction {
 impl TransactionQueue {
     /// Creates a new TransactionQueue from a set of transactions grouped by sender and sorted by nonce
     fn new(
-        mut txs: HashMap<Address, Vec<MempoolTransaction>>,
+        txs: HashMap<Address, Vec<MempoolTransaction>>,
         base_fee: Option<u64>,
     ) -> Result<Self, ChainError> {
-        let mut heads = Vec::with_capacity(100);
-        for (_, txs) in txs.iter_mut() {
+        let mut heads = Vec::with_capacity(txs.len());
+        let mut txs_deque: HashMap<Address, VecDeque<MempoolTransaction>> =
+            HashMap::with_capacity(txs.len());
+
+        for (addr, mut sender_txs) in txs {
             // Pull the first tx from each list and add it to the heads list
             // This should be a newly filtered tx list so we are guaranteed to have a first element
-            let head_tx = txs.remove(0);
+            let head_tx = sender_txs.remove(0);
             heads.push(HeadTransaction {
                 // We already ran this method when filtering the transactions from the mempool so it shouldn't fail
                 tip: head_tx
@@ -755,12 +757,14 @@ impl TransactionQueue {
                     ))?,
                 tx: head_tx,
             });
+            // Convert remaining txs to VecDeque
+            txs_deque.insert(addr, VecDeque::from(sender_txs));
         }
-        // Sort heads by higest tip (and lowest timestamp if tip is equal)
+        // Sort heads by highest tip (and lowest timestamp if tip is equal)
         heads.sort();
         Ok(TransactionQueue {
-            heads,
-            txs,
+            heads: VecDeque::from(heads),
+            txs: txs_deque,
             base_fee,
         })
     }
@@ -779,25 +783,25 @@ impl TransactionQueue {
     /// Returns the head transaction with the highest tip
     /// If there is more than one transaction with the highest tip, return the one with the lowest timestamp
     pub fn peek(&self) -> Option<HeadTransaction> {
-        self.heads.first().cloned()
+        self.heads.front().cloned()
     }
 
     /// Removes current head transaction and all transactions from the given sender
     pub fn pop(&mut self) {
-        if !self.is_empty() {
-            let sender = self.heads.remove(0).tx.sender();
-            self.txs.remove(&sender);
+        if let Some(head) = self.heads.pop_front() {
+            self.txs.remove(&head.tx.sender());
         }
     }
 
     /// Remove the top transaction
     /// Add a tx from the same sender to the head transactions
     pub fn shift(&mut self) -> Result<(), ChainError> {
-        let tx = self.heads.remove(0);
-        if let Some(txs) = self.txs.get_mut(&tx.tx.sender()) {
-            // Fetch next head
-            if !txs.is_empty() {
-                let head_tx = txs.remove(0);
+        let Some(removed) = self.heads.pop_front() else {
+            return Ok(());
+        };
+        if let Some(sender_txs) = self.txs.get_mut(&removed.tx.sender()) {
+            // Fetch next head from same sender
+            if let Some(head_tx) = sender_txs.pop_front() {
                 let head = HeadTransaction {
                     // We already ran this method when filtering the transactions from the mempool so it shouldn't fail
                     tip: head_tx.effective_gas_tip(self.base_fee).ok_or(
@@ -807,9 +811,9 @@ impl TransactionQueue {
                     )?,
                     tx: head_tx,
                 };
-                // Insert head into heads list while maintaing order
+                // Insert head into heads list while maintaining order
                 let index = match self.heads.binary_search(&head) {
-                    Ok(index) => index, // Same ordering shouldn't be possible when adding timestamps
+                    Ok(index) => index,
                     Err(index) => index,
                 };
                 self.heads.insert(index, head);
