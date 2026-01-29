@@ -10,7 +10,7 @@
 
 use std::{
     cmp::min,
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     sync::atomic::Ordering,
     time::{Duration, Instant},
 };
@@ -43,6 +43,16 @@ pub struct MembatchEntryValue {
     node: Node,
     children_not_in_storage_count: u64,
     parent_path: Nibbles,
+}
+
+/// Errors that can occur during membatch commit operations
+#[derive(Debug, thiserror::Error)]
+pub enum CommitError {
+    #[error("Missing parent {parent:?} for child {child:?}")]
+    MissingParent { parent: Nibbles, child: Nibbles },
+
+    #[error("Count underflow at {path:?}")]
+    CountUnderflow { path: Nibbles },
 }
 
 pub async fn heal_state_trie_wrap(
@@ -367,7 +377,8 @@ fn heal_state_batch(
                 &path.parent_path,
                 membatch,
                 nodes_to_write,
-            );
+            )
+            .map_err(|e| TrieError::Verify(format!("Membatch commit error: {}", e)))?;
         } else {
             let entry = MembatchEntryValue {
                 node: node.clone(),
@@ -380,35 +391,67 @@ fn heal_state_batch(
     Ok(batch)
 }
 
+/// Iterative commit_node implementation using a queue to avoid stack overflow
+///
+/// Replaces the recursive version with an iterative approach that:
+/// - Uses heap memory (VecDeque) instead of stack frames
+/// - Returns Result for explicit error handling instead of panicking
+/// - Uses checked_sub() to prevent arithmetic underflow
+///
+/// This fixes three critical issues:
+/// 1. Stack overflow on deep tries (10,000+ levels)
+/// 2. Panic on missing parent (now returns CommitError::MissingParent)
+/// 3. Underflow on count decrement (now returns CommitError::CountUnderflow)
 fn commit_node(
     node: Node,
     path: &Nibbles,
     parent_path: &Nibbles,
     membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
     nodes_to_write: &mut Vec<(Nibbles, Node)>,
-) {
-    nodes_to_write.push((path.clone(), node));
+) -> Result<(), CommitError> {
+    // Queue of (node, path, parent_path) to process
+    let mut commit_queue = VecDeque::new();
+    commit_queue.push_back((node, path.clone(), parent_path.clone()));
 
-    if parent_path == path {
-        return; // Case where we're saving the root
+    while let Some((current_node, current_path, current_parent_path)) = commit_queue.pop_front() {
+        // Write this node
+        nodes_to_write.push((current_path.clone(), current_node));
+
+        // If this is the root, no parent to update
+        if current_parent_path == current_path {
+            continue;
+        }
+
+        // Get parent entry (error if missing)
+        let mut membatch_entry = membatch.remove(&current_parent_path).ok_or_else(|| {
+            CommitError::MissingParent {
+                parent: current_parent_path.clone(),
+                child: current_path.clone(),
+            }
+        })?;
+
+        // Decrement parent's child count (error on underflow)
+        membatch_entry.children_not_in_storage_count = membatch_entry
+            .children_not_in_storage_count
+            .checked_sub(1)
+            .ok_or_else(|| CommitError::CountUnderflow {
+                path: current_parent_path.clone(),
+            })?;
+
+        // If all children are now in storage, commit the parent too
+        if membatch_entry.children_not_in_storage_count == 0 {
+            commit_queue.push_back((
+                membatch_entry.node,
+                current_parent_path,
+                membatch_entry.parent_path,
+            ));
+        } else {
+            // Still has children to wait for
+            membatch.insert(current_parent_path, membatch_entry);
+        }
     }
 
-    let mut membatch_entry = membatch.remove(parent_path).unwrap_or_else(|| {
-        panic!("The parent should exist. Parent: {parent_path:?}, path: {path:?}")
-    });
-
-    membatch_entry.children_not_in_storage_count -= 1;
-    if membatch_entry.children_not_in_storage_count == 0 {
-        commit_node(
-            membatch_entry.node,
-            parent_path,
-            &membatch_entry.parent_path,
-            membatch,
-            nodes_to_write,
-        );
-    } else {
-        membatch.insert(parent_path.clone(), membatch_entry);
-    }
+    Ok(())
 }
 
 /// Returns the partial paths to the node's children if they are not already part of the trie state

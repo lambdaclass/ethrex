@@ -962,25 +962,10 @@ impl Store {
     // Snap State methods
 
     /// Sets the hash of the last header downloaded during a snap sync
-    pub async fn set_header_download_checkpoint(
-        &self,
-        block_hash: BlockHash,
-    ) -> Result<(), StoreError> {
-        let key = snap_state_key(SnapStateIndex::HeaderDownloadCheckpoint);
-        let value = block_hash.encode_to_vec();
-        self.write_async(SNAP_STATE, key, value).await
-    }
-
-    /// Gets the hash of the last header downloaded during a snap sync
-    pub async fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
-        let key = snap_state_key(SnapStateIndex::HeaderDownloadCheckpoint);
-        self.backend
-            .begin_read()?
-            .get(SNAP_STATE, &key)?
-            .map(|bytes| H256::decode(bytes.as_slice()))
-            .transpose()
-            .map_err(StoreError::from)
-    }
+    // NOTE: Header download checkpointing has been removed as part of the bucket architecture
+    // simplification. Crash during snap sync now results in full resync (acceptable trade-off).
+    // The HeaderDownloadCheckpoint enum value is kept in SnapStateIndex for backwards
+    // compatibility but is no longer used.
 
     /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
     /// when processing an invalid payload. To provide this, we must track invalid chains.
@@ -2890,6 +2875,8 @@ fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {
     (index as u8).encode_to_vec()
 }
 
+// NOTE: Currently unused after checkpoint removal, but kept for potential future snap state operations
+#[allow(dead_code)]
 fn snap_state_key(index: SnapStateIndex) -> Vec<u8> {
     (index as u8).encode_to_vec()
 }
