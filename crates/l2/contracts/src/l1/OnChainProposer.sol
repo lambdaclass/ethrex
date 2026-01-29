@@ -483,7 +483,11 @@ contract OnChainProposer is
                 ZISK_VERIFIER_ID
             ];
             uint64[4] memory programVk = _toZiskProgramVk(ziskVk);
+            // ZisK publicValues format: count (4 bytes big-endian) + output values
+            // The guest program outputs sha256(publicInputs) as 8 u32 values (32 bytes / 4 = 8).
+            // This count must match the number of ziskos::set_output() calls in the guest.
             bytes memory ziskPublicValues = abi.encodePacked(
+                uint32(8),
                 sha256(publicInputs)
             );
             // Call without try/catch to let ZiskVerifier errors propagate (e.g., InvalidProof())
