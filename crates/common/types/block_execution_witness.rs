@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use bytes::Bytes;
+
 use crate::rkyv_utils::H160Wrapper;
+use crate::serde_utils;
 use crate::types::{Block, Code, CodeMetadata};
 use crate::{
     constants::EMPTY_KECCACK_HASH,
@@ -80,6 +83,59 @@ pub struct ExecutionWitness {
     /// are needed for stateless execution.
     #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
     pub keys: Vec<Vec<u8>>,
+}
+
+/// RPC-friendly representation of an execution witness.
+///
+/// This is the format returned by the `debug_executionWitness` RPC method.
+/// The trie nodes are pre-serialized (via `encode_subtrie`) to avoid
+/// expensive traversal on every RPC request.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RpcExecutionWitness {
+    #[serde(
+        serialize_with = "serde_utils::bytes::vec::serialize",
+        deserialize_with = "serde_utils::bytes::vec::deserialize"
+    )]
+    pub state: Vec<Bytes>,
+    #[serde(
+        serialize_with = "serde_utils::bytes::vec::serialize",
+        deserialize_with = "serde_utils::bytes::vec::deserialize"
+    )]
+    pub keys: Vec<Bytes>,
+    #[serde(
+        serialize_with = "serde_utils::bytes::vec::serialize",
+        deserialize_with = "serde_utils::bytes::vec::deserialize"
+    )]
+    pub codes: Vec<Bytes>,
+    #[serde(
+        serialize_with = "serde_utils::bytes::vec::serialize",
+        deserialize_with = "serde_utils::bytes::vec::deserialize"
+    )]
+    pub headers: Vec<Bytes>,
+}
+
+impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
+    type Error = TrieError;
+
+    fn try_from(value: ExecutionWitness) -> Result<Self, Self::Error> {
+        let mut nodes = Vec::new();
+        if let Some(state_trie_root) = value.state_trie_root {
+            state_trie_root.encode_subtrie(&mut nodes)?;
+        }
+        for node in value.storage_trie_roots.values() {
+            node.encode_subtrie(&mut nodes)?;
+        }
+        Ok(Self {
+            state: nodes.into_iter().map(Bytes::from).collect(),
+            keys: value.keys.into_iter().map(Bytes::from).collect(),
+            codes: value.codes.into_iter().map(Bytes::from).collect(),
+            headers: value
+                .block_headers_bytes
+                .into_iter()
+                .map(Bytes::from)
+                .collect(),
+        })
+    }
 }
 
 #[derive(thiserror::Error, Debug)]

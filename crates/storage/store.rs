@@ -26,7 +26,8 @@ use ethrex_common::{
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
         BlockNumber, ChainConfig, Code, CodeMetadata, ForkId, Genesis, GenesisAccount, Index,
-        Receipt, Transaction, block_execution_witness::ExecutionWitness,
+        Receipt, Transaction,
+        block_execution_witness::{ExecutionWitness, RpcExecutionWitness},
     },
     utils::keccak,
 };
@@ -1889,14 +1890,21 @@ impl Store {
         composite_key
     }
 
+    /// Stores a pre-serialized execution witness for a block.
+    ///
+    /// The witness is converted to RPC format (RpcExecutionWitness) before storage
+    /// to avoid expensive `encode_subtrie` traversal on every read. This pre-computes
+    /// the serialization at write time instead of read time.
     pub fn store_witness(
         &self,
         block_hash: BlockHash,
         block_number: u64,
         witness: ExecutionWitness,
     ) -> Result<(), StoreError> {
+        // Convert to RPC format once at storage time
+        let rpc_witness = RpcExecutionWitness::try_from(witness)?;
         let key = Self::make_witness_key(block_number, &block_hash);
-        let value = serde_json::to_vec(&witness)?;
+        let value = serde_json::to_vec(&rpc_witness)?;
         self.write(EXECUTION_WITNESSES, key, value)?;
         // Clean up old witnesses (keep only last 128)
         self.cleanup_old_witnesses(block_number)
@@ -1961,15 +1969,33 @@ impl Store {
         Ok(Some(u64::from_le_bytes(array)))
     }
 
+    /// Returns the raw JSON bytes of a cached witness for a block.
+    ///
+    /// This is the most efficient method for the RPC handler since it avoids
+    /// deserialization and re-serialization. The bytes can be parsed directly
+    /// as a JSON Value for the RPC response.
+    pub fn get_witness_json_bytes(
+        &self,
+        block_number: u64,
+        block_hash: BlockHash,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        let key = Self::make_witness_key(block_number, &block_hash);
+        self.read(EXECUTION_WITNESSES, key)
+    }
+
+    /// Returns the deserialized RpcExecutionWitness for a block.
+    ///
+    /// Prefer `get_witness_json_bytes` when you need to return the witness
+    /// as JSON (e.g., for RPC responses) to avoid re-serialization.
     pub fn get_witness_by_number_and_hash(
         &self,
         block_number: u64,
         block_hash: BlockHash,
-    ) -> Result<Option<ExecutionWitness>, StoreError> {
+    ) -> Result<Option<RpcExecutionWitness>, StoreError> {
         let key = Self::make_witness_key(block_number, &block_hash);
         match self.read(EXECUTION_WITNESSES, key)? {
             Some(value) => {
-                let witness: ExecutionWitness = serde_json::from_slice(&value)?;
+                let witness: RpcExecutionWitness = serde_json::from_slice(&value)?;
                 Ok(Some(witness))
             }
             None => Ok(None),
