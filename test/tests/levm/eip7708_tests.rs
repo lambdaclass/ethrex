@@ -478,6 +478,30 @@ fn test_call_with_value_revert() {
 }
 
 #[test]
+fn test_top_level_transaction_revert_no_transfer_log() {
+    // When a top-level transaction with value reverts, the EIP-7708 Transfer log
+    // should NOT be included in the transaction receipt.
+    let sender = Address::from_low_u64_be(SENDER);
+    let contract_addr = Address::from_low_u64_be(CONTRACT);
+    let transfer_value = U256::from(1000);
+
+    let report = TestBuilder::new()
+        .account(sender, eoa(U256::from(DEFAULT_BALANCE)))
+        .account(contract_addr, contract(revert_bytecode()))
+        .to(contract_addr)
+        .value(transfer_value)
+        .execute();
+
+    // Transaction should fail (revert)
+    assert!(!report.is_success(), "Transaction should revert");
+    // No logs should be emitted when transaction reverts
+    assert!(
+        report.logs.is_empty(),
+        "Transfer log should NOT be emitted when top-level transaction reverts"
+    );
+}
+
+#[test]
 fn test_delegatecall_no_log() {
     let sender = Address::from_low_u64_be(SENDER);
     let contract_addr = Address::from_low_u64_be(CONTRACT);
