@@ -125,7 +125,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"reth-mainnet-1:6060\", quantile=\"0.999\"}",
+              "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second{instance=\"reth-mainnet-1:6060\", quantile=\"0.999\"}",
               "hide": false,
               "legendFormat": "reth mainnet p99.9",
               "range": true,
@@ -137,12 +137,25 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"reth-mainnet-1:6060\", quantile=\"0.5\"}",
+              "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second{instance=\"reth-mainnet-1:6060\", quantile=\"0.5\"}",
               "hide": false,
               "instant": false,
               "legendFormat": "reth mainnet p50",
               "range": true,
               "refId": "E"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+              },
+              "editorMode": "code",
+              "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second_last{instance=\"reth-mainnet-1:6060\"}",
+              "hide": false,
+              "instant": false,
+              "legendFormat": "reth mainnet last",
+              "range": true,
+              "refId": "H"
             },
             {
               "datasource": {
@@ -330,7 +343,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "builder",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-mainnet-rpc:6060\", quantile=\"0.999\"}",
+              "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second{instance=\"eth-mainnet-rpc:6060\", quantile=\"0.999\"}",
               "hide": false,
               "legendFormat": "reth mainnet p99.9",
               "range": true,
@@ -342,7 +355,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-mainnet-rpc:6060\", quantile=\"0.5\"}",
+              "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second{instance=\"eth-mainnet-rpc:6060\", quantile=\"0.5\"}",
               "hide": false,
               "instant": false,
               "legendFormat": "reth mainnet p50",
@@ -518,7 +531,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "builder",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-mainnet-rpc:6060\", quantile=\"0.999\"}",
+              "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second{instance=\"eth-mainnet-rpc:6060\", quantile=\"0.999\"}",
               "hide": false,
               "legendFormat": "reth mainnet p99.9",
               "range": true,
@@ -734,7 +747,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "builder",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-mainnet-rpc:6060\", quantile=\"0.999\"}",
+              "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second{instance=\"eth-mainnet-rpc:6060\", quantile=\"0.999\"}",
               "hide": false,
               "legendFormat": "reth mainnet p99.9",
               "range": true,
@@ -1132,7 +1145,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-hoodi-reth-lighthouse:6060\", quantile=\"0.999\"}",
+              "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second{instance=\"eth-hoodi-reth-lighthouse:6060\", quantile=\"0.999\"}",
               "hide": false,
               "legendFormat": "reth hoodi p99.9",
               "range": true,
@@ -1144,7 +1157,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-hoodi-reth-lighthouse:6060\", quantile=\"0.5\"}",
+              "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second{instance=\"eth-hoodi-reth-lighthouse:6060\", quantile=\"0.5\"}",
               "hide": false,
               "instant": false,
               "legendFormat": "reth hoodi p50",
@@ -1307,7 +1320,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-hoodi-reth-lighthouse:6060\", quantile=\"0.999\"}",
+              "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second{instance=\"eth-hoodi-reth-lighthouse:6060\", quantile=\"0.999\"}",
               "hide": false,
               "legendFormat": "reth hoodi p99.9",
               "range": true,
@@ -1508,7 +1521,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-sepolia-reth-lighthouse:6060\", quantile=\"0.999\"}",
+              "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second{instance=\"eth-sepolia-reth-lighthouse:6060\", quantile=\"0.999\"}",
               "hide": false,
               "legendFormat": "reth sepolia p99.9",
               "range": true,
@@ -1520,7 +1533,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-sepolia-reth-lighthouse:6060\", quantile=\"0.5\"}",
+              "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second{instance=\"eth-sepolia-reth-lighthouse:6060\", quantile=\"0.5\"}",
               "hide": false,
               "instant": false,
               "legendFormat": "reth sepolia p50",
@@ -1683,7 +1696,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-sepolia-reth-lighthouse:6060\", quantile=\"0.999\"}",
+              "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second{instance=\"eth-sepolia-reth-lighthouse:6060\", quantile=\"0.999\"}",
               "hide": false,
               "legendFormat": "reth sepolia p99.9",
               "range": true,
