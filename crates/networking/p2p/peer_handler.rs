@@ -873,15 +873,11 @@ impl PeerHandler {
             }
             // Unzip & validate response
             let proof = encodable_to_proof(&proof);
-            let (account_hashes, account_states): (Vec<_>, Vec<_>) = accounts
-                .clone()
-                .into_iter()
-                .map(|unit| (unit.hash, unit.account))
-                .unzip();
-            let encoded_accounts = account_states
+            let account_hashes: Vec<H256> = accounts.iter().map(|unit| unit.hash).collect();
+            let encoded_accounts: Vec<Vec<u8>> = accounts
                 .iter()
-                .map(|acc| acc.encode_to_vec())
-                .collect::<Vec<_>>();
+                .map(|unit| unit.account.encode_to_vec())
+                .collect();
 
             let Ok(should_continue) = verify_range(
                 state_root,
