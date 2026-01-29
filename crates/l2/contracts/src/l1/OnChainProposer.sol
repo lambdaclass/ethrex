@@ -527,23 +527,14 @@ contract OnChainProposer is
         bytes32 vk
     ) internal pure returns (uint64[4] memory out) {
         uint256 word = uint256(vk);
-        // VK file stores uint64 values in little-endian order (RISC-V native)
-        // Solidity extracts in big-endian, so we need to swap bytes
-        out[0] = _swapBytes64(uint64(word >> 192));
-        out[1] = _swapBytes64(uint64(word >> 128));
-        out[2] = _swapBytes64(uint64(word >> 64));
-        out[3] = _swapBytes64(uint64(word));
-    }
-
-    function _swapBytes64(uint64 x) internal pure returns (uint64) {
-        return ((x & 0xff) << 56) |
-               ((x & 0xff00) << 40) |
-               ((x & 0xff0000) << 24) |
-               ((x & 0xff000000) << 8) |
-               ((x & 0xff00000000) >> 8) |
-               ((x & 0xff0000000000) >> 24) |
-               ((x & 0xff000000000000) >> 40) |
-               ((x & 0xff00000000000000) >> 56);
+        // VK file stores uint64 values in little-endian byte order.
+        // ZisK's hashPublicValues uses these bytes directly via bytes8(uint64).
+        // bytes8(uint64) produces big-endian bytes, so we DON'T swap here.
+        // This way bytes8(out[i]) produces the original file bytes.
+        out[0] = uint64(word >> 192);
+        out[1] = uint64(word >> 128);
+        out[2] = uint64(word >> 64);
+        out[3] = uint64(word);
     }
 
     /// @inheritdoc IOnChainProposer
