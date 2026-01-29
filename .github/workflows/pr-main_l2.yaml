@@ -463,7 +463,7 @@ jobs:
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec &
           docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
           docker logs --follow ethrex_l1 | grep -E "INFO|WARN|ERROR" &
-          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test -p ethrex-test l2:: --release -- --ignored --nocapture --test-threads=1
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test -p ethrex-test l2_integration_test:: --release -- --ignored --nocapture --test-threads=1
           killall ethrex -s SIGINT
 
   integration-test-tdx:
@@ -569,7 +569,7 @@ jobs:
           tail -f tdx_prover.log &
           cd ../../
           docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
-          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test -p ethrex-test l2:: --release -- --ignored --nocapture --test-threads=1
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test -p ethrex-test l2_integration_test --release -- --ignored --nocapture --test-threads=1
           pkill -9 -f ethrex_tdx_prover
 
   state-diff-test:
@@ -800,10 +800,10 @@ jobs:
           cp ../../cmd/.env_l2a ../../cmd/.env
           export $(xargs < ../../cmd/.env_l2a)
           cargo test -p ethrex-test shared_bridge --release -- --ignored --nocapture --test-threads=1
-          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH=true cargo test -p ethrex-test l2:: --release -- --ignored --nocapture --test-threads=1
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH=true cargo test -p ethrex-test l2_integration_test --release -- --ignored --nocapture --test-threads=1
           cp ../../cmd/.env_l2b ../../cmd/.env
           export $(xargs < ../../cmd/.env_l2b)
-          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH=true INTEGRATION_TEST_L2_RPC=http://localhost:1730 cargo test -p ethrex-test l2:: --release -- --ignored --nocapture --test-threads=1
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH=true INTEGRATION_TEST_L2_RPC=http://localhost:1730 cargo test -p ethrex-test l2_integration_test --release -- --ignored --nocapture --test-threads=1
           cp ../../cmd/.env_l2a ../../cmd/.env
           export $(xargs < ../../cmd/.env_l2a)
           cargo test -p ethrex-test shared_bridge --release -- --ignored --nocapture --test-threads=1
