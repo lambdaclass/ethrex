@@ -230,33 +230,6 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
 
 // In Cancun the only addresses destroyed are contracts created in this transaction
 pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
-    // EIP-7708: Emit Selfdestruct logs for accounts with non-zero balance
-    // This handles the case where a contract receives ETH after being flagged for SELFDESTRUCT
-    // Must emit in lexicographical order of address
-    if vm.env.config.fork >= Fork::Amsterdam {
-        let mut addresses_with_balance: Vec<(Address, U256)> = vm
-            .substate
-            .iter_selfdestruct()
-            .filter_map(|addr| {
-                let balance = vm.db.get_account(*addr).ok()?.info.balance;
-                if !balance.is_zero() {
-                    Some((*addr, balance))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        // Sort by address (lexicographical order per EIP-7708)
-        addresses_with_balance.sort_by_key(|(addr, _)| *addr);
-
-        for (addr, balance) in addresses_with_balance {
-            let log = create_selfdestruct_log(addr, balance);
-            vm.substate.add_log(log);
-        }
-    }
-
-    // Delete the accounts
     for address in vm.substate.iter_selfdestruct() {
         let account_to_remove = vm.db.get_account_mut(*address)?;
         vm.current_call_frame
@@ -510,18 +483,7 @@ pub fn deduct_caller(
 /// Transfer msg_value to transaction recipient
 pub fn transfer_value(vm: &mut VM<'_>) -> Result<(), VMError> {
     if !vm.is_create()? {
-        let value = vm.current_call_frame.msg_value;
-        let to = vm.current_call_frame.to;
-
-        vm.increase_account_balance(to, value)?;
-
-        // EIP-7708: Emit transfer log for nonzero-value transactions to DIFFERENT accounts
-        // Self-transfers (origin == to) should NOT emit a log per the EIP spec
-        let from = vm.env.origin;
-        if vm.env.config.fork >= Fork::Amsterdam && !value.is_zero() && from != to {
-            let log = create_eth_transfer_log(from, to, value);
-            vm.substate.add_log(log);
-        }
+        vm.increase_account_balance(vm.current_call_frame.to, vm.current_call_frame.msg_value)?;
     }
     Ok(())
 }
