@@ -632,12 +632,15 @@ impl Blockchain {
 
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
 
-        Ok((AccountUpdatesList {
-            state_trie_hash,
-            state_updates,
-            storage_updates,
-            code_updates,
-        }, accumulated_updates))
+        Ok((
+            AccountUpdatesList {
+                state_trie_hash,
+                state_updates,
+                storage_updates,
+                code_updates,
+            },
+            accumulated_updates,
+        ))
     }
 
     fn load_trie(
