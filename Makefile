@@ -5,8 +5,15 @@
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
+# Frame pointers for profiling (default off, set FRAME_POINTERS=1 to enable)
+FRAME_POINTERS ?= 0
+
+ifeq ($(FRAME_POINTERS),1)
+PROFILING_CFG := --config .cargo/profiling.toml
+endif
+
 build: ## 🔨 Build the client
-	cargo build --workspace
+	cargo build $(PROFILING_CFG) --workspace
 
 lint-l1:
 	cargo clippy --lib --bins -F debug,sync-test \
@@ -28,7 +35,7 @@ CRATE ?= *
 # CAUTION: It is important that the ethrex-l2 crate remains excluded here,
 # as its tests depend on external setup that is not handled by this Makefile.
 test: ## 🧪 Run each crate's tests
-	cargo test -p '$(CRATE)' --workspace --exclude ethrex-l2
+	cargo test $(PROFILING_CFG) -p '$(CRATE)' --workspace --exclude ethrex-l2
 
 clean: clean-vectors ## 🧹 Remove build artifacts
 	cargo clean
@@ -45,7 +52,7 @@ run-image: build-image ## 🏃 Run the Docker image
 	docker run --rm -p 127.0.0.1:8545:8545 ethrex:main --http.addr 0.0.0.0
 
 dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
-	cargo run --release -- \
+	cargo run $(PROFILING_CFG) --release -- \
 		--dev \
 		--datadir memory
 
@@ -158,16 +165,16 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	--datadir test_ethrex
 
 load-test: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
-	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t eth-transfers
+	cargo run $(PROFILING_CFG) --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t eth-transfers
 
 load-test-erc20:
-	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t erc20
+	cargo run $(PROFILING_CFG) --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t erc20
 
 load-test-fibonacci:
-	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t fibonacci
+	cargo run $(PROFILING_CFG) --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t fibonacci
 
 load-test-io:
-	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t io-heavy
+	cargo run $(PROFILING_CFG) --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t io-heavy
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --force --datadir test_ethrex
