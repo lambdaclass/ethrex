@@ -2804,7 +2804,11 @@ fn flatkeyvalue_generator(
             }
             Err(err) => return Err(err),
             Ok(()) => {
-                write_txn.put(MISC_VALUES, "last_written".as_bytes(), &[0xff])?;
+                write_txn.put(
+                    MISC_VALUES,
+                    "last_written".as_bytes(),
+                    &[0xff; FKV_COMPLETION_MARKER_LEN],
+                )?;
                 write_txn.commit()?;
                 *last_computed_fkv
                     .lock()
