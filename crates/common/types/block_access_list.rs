@@ -738,6 +738,7 @@ impl BlockAccessListRecorder {
     /// - Contracts performing CREATE/CREATE2
     /// - Deployed contracts
     /// - EIP-7702 authorities
+    ///
     /// Note: SYSTEM_ADDRESS nonce changes from system calls are excluded.
     pub fn record_nonce_change(&mut self, address: Address, post_nonce: u64) {
         // SYSTEM_ADDRESS nonce changes from system contract calls should not be recorded
