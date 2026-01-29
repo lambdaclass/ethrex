@@ -217,7 +217,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             })
             .collect();
 
-        let guest_program_state = GuestProgramState {
+        let ethrex_guest_program_state = GuestProgramState {
             codes_hashed,
             state_trie,
             storage_tries,
@@ -229,7 +229,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             verified_storage_roots: BTreeMap::new(),
         };
 
-        Ok(guest_program_state)
+        Ok(ethrex_guest_program_state)
     }
 }
 
