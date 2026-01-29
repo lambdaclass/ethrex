@@ -354,7 +354,7 @@ impl DiscoveryServer {
             .set_session_info(src_id, session.clone())
             .await?;
 
-        // Decrypt and handle the contained message
+        // Decrypt the message and build the handshake
         let mut encrypted = packet.encrypted_message.clone();
         decrypt_message(&session.inbound_key, &packet, &mut encrypted)?;
         let message = Message::decode(&encrypted)?;
