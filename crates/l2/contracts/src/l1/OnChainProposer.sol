@@ -776,6 +776,24 @@ contract OnChainProposer is
         publicValuesHash = sha256(publicInputs);
     }
 
+    /// @notice DEBUG: Get full ZisK verification data including raw bytes
+    function getZiskDebugData(
+        uint256 batchNumber
+    ) external view returns (
+        bytes32 rawVk,
+        uint64[4] memory programVk,
+        bytes memory publicInputs,
+        bytes32 publicInputsHash,
+        bytes memory ziskPublicValues
+    ) {
+        bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
+        rawVk = verificationKeys[batchCommitHash][ZISK_VERIFIER_ID];
+        programVk = _toZiskProgramVk(rawVk);
+        publicInputs = _getPublicInputsFromCommitment(batchNumber);
+        publicInputsHash = sha256(publicInputs);
+        ziskPublicValues = abi.encodePacked(uint32(8), publicInputsHash);
+    }
+
     /// @inheritdoc IOnChainProposer
     function revertBatch(
         uint256 batchNumber

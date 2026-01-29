@@ -13,6 +13,12 @@ ziskos::entrypoint!(main);
 pub fn main() {
     println!("start reading input");
     let input = ziskos::read_input();
+
+    // DEBUG: Hash of raw input bytes
+    let input_hash = Sha256::digest(&input);
+    println!("[ZISK DEBUG] Input bytes len: {}", input.len());
+    println!("[ZISK DEBUG] Input SHA256: {:x}", input_hash);
+
     let input = rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap();
     println!("finish reading input");
 
@@ -21,7 +27,15 @@ pub fn main() {
     println!("finish execution");
 
     println!("start hashing output");
-    let output = Sha256::digest(output.encode());
+    let encoded_output = output.encode();
+
+    // DEBUG: Show the encoded output details
+    println!("[ZISK DEBUG] ProgramOutput.encode() len: {}", encoded_output.len());
+    let encoded_hash = Sha256::digest(&encoded_output);
+    println!("[ZISK DEBUG] ProgramOutput.encode() SHA256: {:x}", encoded_hash);
+
+    let output = Sha256::digest(&encoded_output);
+    println!("[ZISK DEBUG] Output hash (what we commit): {:x}", output);
     println!("finish hashing output");
 
     println!("start revealing output");
