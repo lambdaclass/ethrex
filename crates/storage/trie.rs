@@ -81,17 +81,22 @@ impl TrieDB for BackendTrieDB {
     }
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        let prefixed_key = self.make_key(key);
+        let prefixed_key = self.make_key(key.clone());
 
-        // Check if this is a leaf-length key (needs FKV lookup with binary key)
+        // Check if this is a leaf-length key
         let is_account_leaf = prefixed_key.len() == 65;
         let is_storage_leaf = prefixed_key.len() == 131;
+        let is_leaf = is_account_leaf || is_storage_leaf;
+
+        // Only use FKV tables if FKV has been computed for this key
+        // Otherwise, read from trie nodes table (e.g., during snapsync)
+        let use_fkv = is_leaf && self.flatkeyvalue_computed(key);
 
         let tx = self.db.begin_read().map_err(|e| {
             TrieError::DbError(anyhow::anyhow!("Failed to begin read transaction: {}", e))
         })?;
 
-        if is_account_leaf {
+        if use_fkv && is_account_leaf {
             // Convert nibble path to binary FKV key
             let nibbles = Nibbles::from_hex(prefixed_key);
             let account_hash = H256::from_slice(&nibbles.to_bytes());
@@ -112,7 +117,7 @@ impl TrieDB for BackendTrieDB {
                 }
                 None => Ok(None),
             }
-        } else if is_storage_leaf {
+        } else if use_fkv && is_storage_leaf {
             // Extract address and slot hash from prefixed nibble path
             // Format: [65 nibbles addr][1 nibble separator][65 nibbles slot]
             let addr_nibbles = Nibbles::from_hex(prefixed_key[..65].to_vec());
@@ -135,7 +140,7 @@ impl TrieDB for BackendTrieDB {
                 None => Ok(None),
             }
         } else {
-            // Internal node - read from trie nodes table
+            // Internal node or FKV not computed - read from trie nodes table
             tx.get(self.nodes_table, prefixed_key.as_ref())
                 .map_err(|e| {
                     TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e))
@@ -194,8 +199,13 @@ impl TrieDB for BackendTrieDBLocked {
         // Check if this is a leaf-length key (needs FKV lookup with binary key)
         let is_account_leaf = key.len() == 65;
         let is_storage_leaf = key.len() == 131;
+        let is_leaf = is_account_leaf || is_storage_leaf;
 
-        if is_account_leaf {
+        // Only use FKV tables if FKV has been computed for this key
+        // Otherwise, read from trie nodes table (e.g., during snapsync)
+        let use_fkv = is_leaf && self.flatkeyvalue_computed(key.clone());
+
+        if use_fkv && is_account_leaf {
             // Convert nibble path to binary FKV key
             let account_hash = H256::from_slice(&key.to_bytes());
             let fkv_key = account_fkv_key(&account_hash);
@@ -215,7 +225,7 @@ impl TrieDB for BackendTrieDBLocked {
                 }
                 None => Ok(None),
             }
-        } else if is_storage_leaf {
+        } else if use_fkv && is_storage_leaf {
             // Extract address and slot hash from prefixed nibble path
             // Format: [65 nibbles addr][1 nibble separator][65 nibbles slot]
             let key_bytes = key.as_ref();
@@ -239,7 +249,7 @@ impl TrieDB for BackendTrieDBLocked {
                 None => Ok(None),
             }
         } else {
-            // Internal node - read from trie nodes table
+            // Internal node or FKV not computed - read from trie nodes table
             let is_account = key.len() <= 65;
             let tx = if is_account {
                 &*self.account_trie_tx
