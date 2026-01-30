@@ -415,6 +415,60 @@ print(f'[{values[0]},{values[1]},{values[2]},{values[3]}]')
 # These MUST match! If they don't, the VK byte ordering is wrong.
 ```
 
+### Check Public Values Match
+
+After a proof is generated, verify the publicValues from the proof file match what the contract computes:
+
+```bash
+# Get the publicValues from the proof file (256 bytes)
+PUBLICS_FILE=crates/l2/prover/zisk_output/snark_proof/final_snark_publics.bin
+PROOF_PUBLICS=$(xxd -p $PUBLICS_FILE | tr -d '\n')
+echo "Proof publicValues: 0x$PROOF_PUBLICS"
+
+# Get the publicValues from contract (for batch 0)
+# This computes: [4-byte count=8][32-byte sha256(publicInputs)][220-byte padding]
+cast call <ON_CHAIN_PROPOSER_ADDRESS> \
+    "debugGetFinalPublicValues(uint256)(bytes)" 0 \
+    --rpc-url <L1_RPC_URL>
+
+# These MUST match! If they don't, either:
+# - The batch number is wrong (proof was for a different batch)
+# - The publicInputs hash differs (different batch data)
+```
+
+**Step-by-step debugging if they don't match:**
+
+```bash
+# 1. Check the first 36 bytes (count + hash) - easier to compare
+cast call <ON_CHAIN_PROPOSER_ADDRESS> \
+    "debugGetPublicValuesPrefix(uint256)(bytes)" 0 \
+    --rpc-url <L1_RPC_URL>
+
+# Compare with proof file's first 36 bytes
+xxd -p $PUBLICS_FILE | head -c 72  # 36 bytes = 72 hex chars
+
+# 2. Check the sha256 hash separately
+cast call <ON_CHAIN_PROPOSER_ADDRESS> \
+    "debugGetPublicInputsHash(uint256)(bytes32)" 0 \
+    --rpc-url <L1_RPC_URL>
+
+# 3. Get the raw publicInputs that are hashed
+cast call <ON_CHAIN_PROPOSER_ADDRESS> \
+    "debugGetPublicInputs(uint256)(bytes)" 0 \
+    --rpc-url <L1_RPC_URL>
+```
+
+**Understanding publicValues format:**
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  ZisK publicValues (256 bytes)                                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Bytes 0-3:   0x00000008 (count = 8 u32s = 32 bytes of actual output)      │
+│  Bytes 4-35:  sha256(publicInputs) - the batch data hash                    │
+│  Bytes 36-255: 0x00...00 (padding to 256 bytes)                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
 ### Test Manual Verification
 
 After generating a proof, test it manually:
