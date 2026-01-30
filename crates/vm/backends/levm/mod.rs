@@ -37,6 +37,7 @@ use ethrex_levm::{
     vm::VM,
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rustc_hash::FxHashMap;
 use std::cmp::min;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -196,7 +197,12 @@ impl LEVM {
         Ok(BlockExecutionResult { receipts, requests })
     }
 
-    /// Pre-warms state by executing all transactions in parallel.
+    /// Pre-warms state by executing all transactions in parallel, grouped by sender.
+    ///
+    /// Transactions from the same sender are executed sequentially within their group
+    /// to ensure correct nonce and balance propagation. Different sender groups run
+    /// in parallel. This approach (inspired by Nethermind's per-sender prewarmer)
+    /// improves warmup accuracy by avoiding nonce mismatches within sender groups.
     ///
     /// The `store` parameter should be a `CachingDatabase`-wrapped store so that
     /// parallel workers can benefit from shared caching. The same cache should
@@ -208,28 +214,37 @@ impl LEVM {
     ) -> Result<(), EvmError> {
         let mut db = GeneralizedDatabase::new(store.clone());
 
-        block
-            .body
-            .get_transactions_with_sender()
-            .map_err(|error| {
-                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-            })?
-            .into_par_iter()
-            .for_each_with(
-                Vec::with_capacity(STACK_LIMIT),
-                |stack_pool, (tx, tx_sender)| {
-                    // Each worker uses the shared caching store
-                    let mut db = GeneralizedDatabase::new(store.clone());
+        let txs_with_sender = block.body.get_transactions_with_sender().map_err(|error| {
+            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+        })?;
+
+        // Group transactions by sender for sequential execution within groups
+        let mut sender_groups: FxHashMap<Address, Vec<&Transaction>> = FxHashMap::default();
+        for (tx, sender) in &txs_with_sender {
+            sender_groups.entry(*sender).or_default().push(tx);
+        }
+
+        // Parallel across sender groups, sequential within each group
+        sender_groups.into_par_iter().for_each_with(
+            Vec::with_capacity(STACK_LIMIT),
+            |stack_pool, (sender, txs)| {
+                // Each sender group gets its own db instance for state propagation
+                let mut group_db = GeneralizedDatabase::new(store.clone());
+
+                // Execute transactions sequentially within sender group
+                // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
+                for tx in txs {
                     let _ = Self::execute_tx_in_block(
                         tx,
-                        tx_sender,
+                        sender,
                         &block.header,
-                        &mut db,
+                        &mut group_db,
                         vm_type,
                         stack_pool,
                     );
-                },
-            );
+                }
+            },
+        );
 
         for withdrawal in block
             .body
