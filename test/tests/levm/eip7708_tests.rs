@@ -15,8 +15,8 @@ use ethrex_common::{
     Address, H256, U256,
     constants::EMPTY_TRIE_HASH,
     types::{
-        Account, AccountState, ChainConfig, Code, EIP1559Transaction, Fork, Log, Transaction,
-        TxKind,
+        Account, AccountState, ChainConfig, Code, CodeMetadata, EIP1559Transaction, Fork, Log,
+        Transaction, TxKind,
     },
 };
 use ethrex_levm::{
@@ -82,6 +82,17 @@ impl Database for TestDatabase {
             }
         }
         Ok(Code::default())
+    }
+
+    fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
+        for acc in self.accounts.values() {
+            if acc.info.code_hash == code_hash {
+                return Ok(CodeMetadata {
+                    length: acc.code.bytecode.len() as u64,
+                });
+            }
+        }
+        Ok(CodeMetadata { length: 0 })
     }
 }
 
