@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-01-30
+
+- Parallelize header download with state download during snap sync [#6059](https://github.com/lambdaclass/ethrex/pull/6059)
+
 ### 2026-01-27
 
 - Optimize prewarmer by grouping transactions by sender [#6047](https://github.com/lambdaclass/ethrex/pull/6047)
