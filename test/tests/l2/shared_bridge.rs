@@ -125,6 +125,17 @@ async fn test_transfer_erc_20() -> Result<()> {
     let sender_address = signer.address();
     println!("test_transfer_erc_20: Sender address: {sender_address:?}");
 
+    let sender_l2a_balance = l2a_client
+        .get_balance(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+    let sender_l2b_balance = l2b_client
+        .get_balance(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+    println!(
+        "test_transfer_erc_20: sender_address={:#x}, initial L2A balance={} wei, initial L2B balance={} wei",
+        sender_address, sender_l2a_balance, sender_l2b_balance
+    );
+
     let l1_erc20_contract_address = deploy_l1_erc20(&l1_client, &signer, sender_address).await?;
     let fee_token_contract = build_fee_token_bytecode(l1_erc20_contract_address)?;
     let (l2a_erc20_contract_address, _) = deploy_l2_erc20(
@@ -378,6 +389,15 @@ async fn test_counter() -> Result<()> {
         .get_balance(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await
         .expect("Error getting balance");
+
+    println!(
+        "test_counter: sender_address={:#x}, initial L2B balance={} wei",
+        sender_address, sender_balance
+    );
+    println!(
+        "test_counter: receiver_address={:#x}, initial L2A balance={} wei",
+        receiver_address, receiver_balance
+    );
 
     let private_key = SecretKey::from_str(SENDER_PRIVATE_KEY).unwrap();
     let value = U256::from(VALUE);
