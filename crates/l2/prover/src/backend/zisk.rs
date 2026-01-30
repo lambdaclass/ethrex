@@ -224,7 +224,9 @@ impl ZiskBackend {
             let proof_bytes = std::fs::read(&proof_path).map_err(BackendError::proving)?;
 
             // DEBUG: Log the SNARK public values (what the guest output)
-            let publics_path = output_dir.join("snark_proof").join("final_snark_publics.bin");
+            let publics_path = output_dir
+                .join("snark_proof")
+                .join("final_snark_publics.bin");
             if let Ok(publics_bytes) = std::fs::read(&publics_path) {
                 warn!(
                     publics_len = publics_bytes.len(),

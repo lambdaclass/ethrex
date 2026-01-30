@@ -478,15 +478,17 @@ contract OnChainProposer is
         }
 
         if (REQUIRE_ZISK_PROOF) {
-            // Use public helper functions - same code path for verify and debugging
             uint64[4] memory programVk = getZiskVk(batchNumber);
             bytes memory ziskPublicValues = buildZiskPublicValues(publicInputs);
-            // Call without try/catch to let ZiskVerifier errors propagate (e.g., InvalidProof())
-            IZiskVerifier(ZISK_VERIFIER_ADDRESS).verifySnarkProof(
-                programVk,
-                ziskPublicValues,
-                ziskProofBytes
-            );
+            try
+                IZiskVerifier(ZISK_VERIFIER_ADDRESS).verifySnarkProof(
+                    programVk,
+                    ziskPublicValues,
+                    ziskProofBytes
+                )
+            {} catch {
+                revert("017"); // OnChainProposer: Invalid ZisK proof
+            }
         }
 
         if (REQUIRE_TDX_PROOF) {
@@ -519,7 +521,7 @@ contract OnChainProposer is
     /// but bytes32 is read as big-endian. This swaps bytes within each uint64.
     function toZiskProgramVk(
         bytes32 vk
-    ) public pure returns (uint64[4] memory out) {
+    ) public view returns (uint64[4] memory out) {
         uint256 word = uint256(vk);
         out[0] = swapBytes64(uint64(word >> 192));
         out[1] = swapBytes64(uint64(word >> 128));
@@ -528,7 +530,7 @@ contract OnChainProposer is
     }
 
     /// @notice Swaps bytes within a uint64 (reverses byte order).
-    function swapBytes64(uint64 x) public pure returns (uint64) {
+    function swapBytes64(uint64 x) public view returns (uint64) {
         return
             ((x & 0xFF00000000000000) >> 56) |
             ((x & 0x00FF000000000000) >> 40) |
@@ -543,7 +545,7 @@ contract OnChainProposer is
     /// @notice Swaps bytes within each 4-byte word of a bytes32.
     /// ZisK writes the sha256 hash as little-endian u32 words, but Solidity's
     /// sha256() returns big-endian. This function converts between them.
-    function swapHashBytes(bytes32 hash) public pure returns (bytes32) {
+    function swapHashBytes(bytes32 hash) public view returns (bytes32) {
         uint256 word = uint256(hash);
         uint256 result = 0;
         // Process 8 chunks of 4 bytes (32 bits) each
@@ -783,70 +785,22 @@ contract OnChainProposer is
         return publicInputs;
     }
 
-    /// @notice Get all ZisK verification data for a batch (uses same helpers as verify)
-    function getZiskVerificationData(
-        uint256 batchNumber
-    )
-        external
-        view
-        returns (
-            bytes32 rawVk,
-            uint64[4] memory programVk,
-            bytes memory publicInputs,
-            bytes32 publicInputsHash,
-            bytes memory ziskPublicValues
-        )
-    {
-        rawVk = getZiskRawVk(batchNumber);
-        programVk = getZiskVk(batchNumber);
-        publicInputs = getPublicInputs(batchNumber);
-        publicInputsHash = getPublicInputsHash(batchNumber);
-        ziskPublicValues = buildZiskPublicValuesForBatch(batchNumber);
-    }
-
-    // ============== ZISK PUBLIC HELPER FUNCTIONS ==============
-    // These functions are used by verify() and can also be called directly for debugging.
-    // This ensures debug output always matches the actual verification behavior.
-
-    /// @notice Get the raw VK bytes32 for a batch (before conversion)
-    function getZiskRawVk(uint256 batchNumber) public view returns (bytes32 rawVk) {
-        bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
-        rawVk = verificationKeys[batchCommitHash][ZISK_VERIFIER_ID];
-    }
-
-    /// @notice Get the converted VK as uint64[4] for a batch (used by verifier)
+    /// @notice Get the converted VK as uint64[4] for a batch.
     function getZiskVk(uint256 batchNumber) public view returns (uint64[4] memory programVk) {
-        bytes32 rawVk = getZiskRawVk(batchNumber);
+        bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
+        bytes32 rawVk = verificationKeys[batchCommitHash][ZISK_VERIFIER_ID];
         programVk = toZiskProgramVk(rawVk);
     }
 
-    /// @notice Get the publicInputs bytes for a batch (what gets hashed)
-    function getPublicInputs(uint256 batchNumber) public view returns (bytes memory publicInputs) {
-        publicInputs = _getPublicInputsFromCommitment(batchNumber);
-    }
-
-    /// @notice Get sha256(publicInputs) for a batch (before byte swapping)
-    function getPublicInputsHash(uint256 batchNumber) public view returns (bytes32 hash) {
-        bytes memory publicInputs = getPublicInputs(batchNumber);
-        hash = sha256(publicInputs);
-    }
-
-    /// @notice Build the 256-byte ZisK publicValues from publicInputs bytes
-    /// Format: [4-byte count=8][32-byte swapped hash][220-byte padding]
+    /// @notice Build the 256-byte ZisK publicValues from publicInputs bytes.
     function buildZiskPublicValues(bytes memory publicInputs) public view returns (bytes memory ziskPublicValues) {
         bytes32 outputHash = sha256(publicInputs);
         bytes32 swappedHash = swapHashBytes(outputHash);
         ziskPublicValues = new bytes(256);
-        ziskPublicValues[3] = 0x08; // count = 8 (big-endian u32)
+        ziskPublicValues[3] = 0x08;
         for (uint256 i = 0; i < 32; i++) {
             ziskPublicValues[4 + i] = swappedHash[i];
         }
-    }
-
-    /// @notice Build the 256-byte ZisK publicValues for a batch number
-    function buildZiskPublicValuesForBatch(uint256 batchNumber) public view returns (bytes memory ziskPublicValues) {
-        bytes memory publicInputs = getPublicInputs(batchNumber);
-        ziskPublicValues = buildZiskPublicValues(publicInputs);
     }
 
     /// @inheritdoc IOnChainProposer

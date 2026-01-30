@@ -575,7 +575,7 @@ const SP1_VERIFIER_BYTECODE: &[u8] = include_bytes!(concat!(
     "/contracts/solc_out/SP1Verifier.bytecode"
 ));
 
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,bool,bool,bool,bool,address,address,address,address,bytes32,bytes32,bytes32,bytes32,address,uint256,address)";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,bool,bool,bool,bool,bool,address,address,address,address,address,bytes32,bytes32,bytes32,bytes32,bytes32,address,uint256,address)";
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,bool,bool,bool,bool,bool,address,address,address,address,address,bytes32,bytes32,bytes32,bytes32,bytes32,uint256,address)";
 const INITIALIZE_TIMELOCK_SIGNATURE: &str = "initialize(uint256,address[],address,address,address)";
 
@@ -1199,14 +1199,17 @@ async fn initialize_contracts(
             Value::Address(opts.on_chain_proposer_owner),
             Value::Bool(opts.risc0),
             Value::Bool(opts.sp1),
+            Value::Bool(opts.zisk),
             Value::Bool(opts.tdx),
             Value::Bool(opts.aligned),
             Value::Address(contract_addresses.risc0_verifier_address),
             Value::Address(contract_addresses.sp1_verifier_address),
+            Value::Address(contract_addresses.zisk_verifier_address),
             Value::Address(contract_addresses.tdx_verifier_address),
             Value::Address(contract_addresses.aligned_aggregator_address),
             Value::FixedBytes(sp1_vk),
             Value::FixedBytes(risc0_vk),
+            Value::FixedBytes(zisk_vk.clone()),
             Value::FixedBytes(commit_hash.0.to_vec().into()),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Address(contract_addresses.sequencer_registry_address),
