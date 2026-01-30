@@ -2,16 +2,36 @@ fn main() {
     println!("cargo::rerun-if-changed=build.rs");
 
     #[cfg(all(not(clippy), feature = "risc0"))]
-    build_risc0_program();
+    {
+        // Track RISC0 guest program source changes
+        println!("cargo::rerun-if-changed=bin/risc0/src");
+        println!("cargo::rerun-if-changed=bin/risc0/Cargo.toml");
+        build_risc0_program();
+    }
 
     #[cfg(all(not(clippy), feature = "sp1"))]
-    build_sp1_program();
+    {
+        // Track SP1 guest program source changes
+        println!("cargo::rerun-if-changed=bin/sp1/src");
+        println!("cargo::rerun-if-changed=bin/sp1/Cargo.toml");
+        build_sp1_program();
+    }
 
     #[cfg(all(not(clippy), feature = "zisk"))]
-    build_zisk_program();
+    {
+        // Track ZisK guest program source changes
+        println!("cargo::rerun-if-changed=bin/zisk/src");
+        println!("cargo::rerun-if-changed=bin/zisk/Cargo.toml");
+        build_zisk_program();
+    }
 
     #[cfg(all(not(clippy), feature = "openvm"))]
-    build_openvm_program();
+    {
+        // Track OpenVM guest program source changes
+        println!("cargo::rerun-if-changed=bin/openvm/src");
+        println!("cargo::rerun-if-changed=bin/openvm/Cargo.toml");
+        build_openvm_program();
+    }
 }
 
 #[cfg(all(not(clippy), feature = "risc0"))]
