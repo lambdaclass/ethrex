@@ -9922,36 +9922,43 @@ leaf3 = {value, concat(k, path)} # New leaf replacing branch1 and leaf2
 }
 
 </style>
-<h1 id="comparative-analysis-debug_executionwitness-latency-using-pre-generated-vs-on-demand-execution-witnesses"><a class="header" href="#comparative-analysis-debug_executionwitness-latency-using-pre-generated-vs-on-demand-execution-witnesses">Comparative Analysis: <code>debug_executionWitness</code> Latency Using Pre-Generated vs On-Demand Execution Witnesses</a></h1>
-<p>This document presents the results of measurements conducted to analyze the latency improvements of the <code>debug_executionWitness</code> RPC method when execution witnesses are pre-generated during payload execution and stored in the database for a period of time (128 blocks), compared to generating them on demand.</p>
+<h1 id="comparative-analysis-debug_executionwitness-latency"><a class="header" href="#comparative-analysis-debug_executionwitness-latency">Comparative Analysis: <code>debug_executionWitness</code> Latency</a></h1>
+<p>This document presents the results of measurements conducted to analyze the latency improvements of the <code>debug_executionWitness</code> RPC method across different configurations.</p>
 <div class="mdbook-alerts mdbook-alerts-note">
 <p class="mdbook-alerts-title">
   <span class="mdbook-alerts-icon"></span>
   note
 </p>
 <p>All measurements were obtained using an RPC node running on the same machine, avoiding network-related latency.</p>
+<p>Each configuration was measured over a different block range at different points in time. While block characteristics vary, the sample sizes are large enough to provide meaningful comparisons.</p>
 </div>
+<h2 id="configurations"><a class="header" href="#configurations">Configurations</a></h2>
+<ul>
+<li><strong>Pre-Serialized</strong> <em>(added in <a href="https://github.com/lambdaclass/ethrex/pull/5956">PR #5956</a>)</em>: Execution witnesses are generated during payload execution, converted to <code>RpcExecutionWitness</code>, and stored as pre-serialized JSON bytes in the database. On read, the bytes are parsed directly to <code>serde_json::Value</code> without any additional traversal or serialization.</li>
+<li><strong>Pre-Generated</strong>: Execution witnesses are generated during payload execution and stored in the database (but require <code>encode_subtrie()</code> traversal and serialization on each read).</li>
+<li><strong>On-Demand</strong>: Execution witnesses are generated when calling <code>debug_executionWitness</code>.</li>
+</ul>
 <h2 id="measurements"><a class="header" href="#measurements">Measurements</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Pre-Generated</th><th>On-Demand</th></tr></thead><tbody>
-<tr><td><strong>Total Blocks Analyzed</strong></td><td>176</td><td>176</td></tr>
-<tr><td><strong>Min Time</strong></td><td>3 ms</td><td>56 ms</td></tr>
-<tr><td><strong>Max Time</strong></td><td>255 ms</td><td>521 ms</td></tr>
-<tr><td><strong>Average Time</strong></td><td>131 ms</td><td>242 ms</td></tr>
-<tr><td><strong>Median Time</strong></td><td>130 ms</td><td>224 ms</td></tr>
-<tr><td><strong>Block Range</strong></td><td>24191178 – 24191353</td><td>24190748 – 24190923</td></tr>
+<div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Pre-Serialized</th><th>Pre-Generated</th><th>On-Demand</th></tr></thead><tbody>
+<tr><td><strong>Total Blocks Analyzed</strong></td><td>199</td><td>176</td><td>176</td></tr>
+<tr><td><strong>Min Time</strong></td><td>6 ms</td><td>3 ms</td><td>56 ms</td></tr>
+<tr><td><strong>Max Time</strong></td><td>268 ms</td><td>255 ms</td><td>521 ms</td></tr>
+<tr><td><strong>Average Time</strong></td><td>94 ms</td><td>131 ms</td><td>242 ms</td></tr>
+<tr><td><strong>Median Time</strong></td><td>91 ms</td><td>130 ms</td><td>224 ms</td></tr>
+<tr><td><strong>Block Range</strong></td><td>24335714 – 24335912</td><td>24191178 – 24191353</td><td>24190748 – 24190923</td></tr>
 </tbody></table>
 </div>
 <h2 id="conclusions"><a class="header" href="#conclusions">Conclusions</a></h2>
+<h3 id="pre-serialized-vs-on-demand"><a class="header" href="#pre-serialized-vs-on-demand">Pre-Serialized vs On-Demand</a></h3>
+<p>The average latency drops from <strong>242 ms (on-demand)</strong> to <strong>94 ms (pre-serialized)</strong>, representing an improvement of approximately <strong>61%</strong>. Median latency shows a similar improvement, decreasing from <strong>224 ms</strong> to <strong>91 ms</strong>.</p>
+<h3 id="pre-serialized-vs-pre-generated"><a class="header" href="#pre-serialized-vs-pre-generated">Pre-Serialized vs Pre-Generated</a></h3>
+<p>The average latency drops from <strong>131 ms (pre-generated)</strong> to <strong>94 ms (pre-serialized)</strong>, representing an additional improvement of approximately <strong>28%</strong>. This improvement comes from eliminating the <code>encode_subtrie()</code> depth-first traversal that was previously performed on every read to convert <code>ExecutionWitness</code> to <code>RpcExecutionWitness</code>.</p>
+<h3 id="pre-generated-vs-on-demand"><a class="header" href="#pre-generated-vs-on-demand">Pre-Generated vs On-Demand</a></h3>
 <p>The average latency drops from <strong>242 ms (on-demand)</strong> to <strong>131 ms (pre-generated)</strong>, representing an improvement of approximately <strong>46%</strong>. Median latency shows a similar improvement, decreasing from <strong>224 ms</strong> to <strong>130 ms</strong>.</p>
-<p>Pre-generated execution witnesses exhibit a much tighter latency distribution. The maximum observed latency is reduced by more than half (<strong>521 ms → 255 ms</strong>).</p>
-<p>On-demand requests frequently experience high-latency spikes due to witness generation at request time. Pre-generating execution witnesses during payload execution effectively eliminates most of these spikes and results in more predictable response times.</p>
+<h3 id="overall"><a class="header" href="#overall">Overall</a></h3>
+<p>Pre-serialized execution witnesses exhibit the tightest latency distribution. On-demand requests frequently experience high-latency spikes due to witness generation at request time. Pre-generating and pre-serializing execution witnesses during payload execution effectively eliminates most of these spikes and results in more predictable response times.</p>
 <h2 id="how-these-measurements-were-done"><a class="header" href="#how-these-measurements-were-done">How These Measurements Were Done</a></h2>
 <p>These metrics were obtained from an <code>ethrex</code> node synced to the Ethereum mainnet.</p>
-<p>Two configurations were compared:</p>
-<ul>
-<li><strong>Pre-Generated</strong>: Execution witnesses are generated during payload execution and stored in the database.</li>
-<li><strong>On-Demand</strong>: Execution witnesses are generated when calling <code>debug_executionWitness</code>.</li>
-</ul>
 <p>Each configuration was measured over a contiguous range of blocks, and latency was recorded for each request.</p>
 <h2 id="how-to-get-metrics"><a class="header" href="#how-to-get-metrics">How to Get Metrics</a></h2>
 <ol>
@@ -9980,6 +9987,210 @@ Use the <code>--precompute-witnesses</code> flag to generate and store execution
 </ol>
 <h2 id="appendix-1"><a class="header" href="#appendix-1">Appendix</a></h2>
 <h3 id="full-measurement-data"><a class="header" href="#full-measurement-data">Full Measurement Data</a></h3>
+<h4 id="pre-serialized"><a class="header" href="#pre-serialized">Pre-Serialized</a></h4>
+<p><em>Total blocks analyzed: 199</em></p>
+<div class="table-wrapper"><table><thead><tr><th style="text-align: right">Block Number</th><th style="text-align: right">Time (ms)</th></tr></thead><tbody>
+<tr><td style="text-align: right">24335714</td><td style="text-align: right">110</td></tr>
+<tr><td style="text-align: right">24335715</td><td style="text-align: right">87</td></tr>
+<tr><td style="text-align: right">24335716</td><td style="text-align: right">97</td></tr>
+<tr><td style="text-align: right">24335717</td><td style="text-align: right">71</td></tr>
+<tr><td style="text-align: right">24335718</td><td style="text-align: right">62</td></tr>
+<tr><td style="text-align: right">24335719</td><td style="text-align: right">105</td></tr>
+<tr><td style="text-align: right">24335720</td><td style="text-align: right">62</td></tr>
+<tr><td style="text-align: right">24335721</td><td style="text-align: right">72</td></tr>
+<tr><td style="text-align: right">24335722</td><td style="text-align: right">33</td></tr>
+<tr><td style="text-align: right">24335723</td><td style="text-align: right">98</td></tr>
+<tr><td style="text-align: right">24335724</td><td style="text-align: right">95</td></tr>
+<tr><td style="text-align: right">24335725</td><td style="text-align: right">139</td></tr>
+<tr><td style="text-align: right">24335726</td><td style="text-align: right">61</td></tr>
+<tr><td style="text-align: right">24335727</td><td style="text-align: right">88</td></tr>
+<tr><td style="text-align: right">24335728</td><td style="text-align: right">81</td></tr>
+<tr><td style="text-align: right">24335729</td><td style="text-align: right">97</td></tr>
+<tr><td style="text-align: right">24335730</td><td style="text-align: right">73</td></tr>
+<tr><td style="text-align: right">24335731</td><td style="text-align: right">126</td></tr>
+<tr><td style="text-align: right">24335732</td><td style="text-align: right">112</td></tr>
+<tr><td style="text-align: right">24335733</td><td style="text-align: right">120</td></tr>
+<tr><td style="text-align: right">24335734</td><td style="text-align: right">66</td></tr>
+<tr><td style="text-align: right">24335735</td><td style="text-align: right">106</td></tr>
+<tr><td style="text-align: right">24335736</td><td style="text-align: right">87</td></tr>
+<tr><td style="text-align: right">24335737</td><td style="text-align: right">97</td></tr>
+<tr><td style="text-align: right">24335738</td><td style="text-align: right">161</td></tr>
+<tr><td style="text-align: right">24335739</td><td style="text-align: right">27</td></tr>
+<tr><td style="text-align: right">24335740</td><td style="text-align: right">114</td></tr>
+<tr><td style="text-align: right">24335741</td><td style="text-align: right">85</td></tr>
+<tr><td style="text-align: right">24335742</td><td style="text-align: right">133</td></tr>
+<tr><td style="text-align: right">24335743</td><td style="text-align: right">36</td></tr>
+<tr><td style="text-align: right">24335744</td><td style="text-align: right">164</td></tr>
+<tr><td style="text-align: right">24335745</td><td style="text-align: right">129</td></tr>
+<tr><td style="text-align: right">24335746</td><td style="text-align: right">44</td></tr>
+<tr><td style="text-align: right">24335747</td><td style="text-align: right">46</td></tr>
+<tr><td style="text-align: right">24335748</td><td style="text-align: right">36</td></tr>
+<tr><td style="text-align: right">24335749</td><td style="text-align: right">141</td></tr>
+<tr><td style="text-align: right">24335750</td><td style="text-align: right">145</td></tr>
+<tr><td style="text-align: right">24335751</td><td style="text-align: right">119</td></tr>
+<tr><td style="text-align: right">24335752</td><td style="text-align: right">112</td></tr>
+<tr><td style="text-align: right">24335753</td><td style="text-align: right">78</td></tr>
+<tr><td style="text-align: right">24335754</td><td style="text-align: right">82</td></tr>
+<tr><td style="text-align: right">24335755</td><td style="text-align: right">142</td></tr>
+<tr><td style="text-align: right">24335756</td><td style="text-align: right">21</td></tr>
+<tr><td style="text-align: right">24335757</td><td style="text-align: right">131</td></tr>
+<tr><td style="text-align: right">24335758</td><td style="text-align: right">99</td></tr>
+<tr><td style="text-align: right">24335759</td><td style="text-align: right">77</td></tr>
+<tr><td style="text-align: right">24335760</td><td style="text-align: right">107</td></tr>
+<tr><td style="text-align: right">24335761</td><td style="text-align: right">97</td></tr>
+<tr><td style="text-align: right">24335762</td><td style="text-align: right">132</td></tr>
+<tr><td style="text-align: right">24335763</td><td style="text-align: right">78</td></tr>
+<tr><td style="text-align: right">24335764</td><td style="text-align: right">83</td></tr>
+<tr><td style="text-align: right">24335765</td><td style="text-align: right">48</td></tr>
+<tr><td style="text-align: right">24335766</td><td style="text-align: right">131</td></tr>
+<tr><td style="text-align: right">24335767</td><td style="text-align: right">83</td></tr>
+<tr><td style="text-align: right">24335768</td><td style="text-align: right">60</td></tr>
+<tr><td style="text-align: right">24335769</td><td style="text-align: right">59</td></tr>
+<tr><td style="text-align: right">24335770</td><td style="text-align: right">147</td></tr>
+<tr><td style="text-align: right">24335771</td><td style="text-align: right">75</td></tr>
+<tr><td style="text-align: right">24335772</td><td style="text-align: right">70</td></tr>
+<tr><td style="text-align: right">24335773</td><td style="text-align: right">146</td></tr>
+<tr><td style="text-align: right">24335774</td><td style="text-align: right">78</td></tr>
+<tr><td style="text-align: right">24335775</td><td style="text-align: right">104</td></tr>
+<tr><td style="text-align: right">24335776</td><td style="text-align: right">94</td></tr>
+<tr><td style="text-align: right">24335777</td><td style="text-align: right">97</td></tr>
+<tr><td style="text-align: right">24335778</td><td style="text-align: right">106</td></tr>
+<tr><td style="text-align: right">24335779</td><td style="text-align: right">91</td></tr>
+<tr><td style="text-align: right">24335780</td><td style="text-align: right">57</td></tr>
+<tr><td style="text-align: right">24335781</td><td style="text-align: right">60</td></tr>
+<tr><td style="text-align: right">24335782</td><td style="text-align: right">186</td></tr>
+<tr><td style="text-align: right">24335783</td><td style="text-align: right">122</td></tr>
+<tr><td style="text-align: right">24335784</td><td style="text-align: right">53</td></tr>
+<tr><td style="text-align: right">24335785</td><td style="text-align: right">143</td></tr>
+<tr><td style="text-align: right">24335786</td><td style="text-align: right">79</td></tr>
+<tr><td style="text-align: right">24335787</td><td style="text-align: right">83</td></tr>
+<tr><td style="text-align: right">24335788</td><td style="text-align: right">100</td></tr>
+<tr><td style="text-align: right">24335789</td><td style="text-align: right">68</td></tr>
+<tr><td style="text-align: right">24335790</td><td style="text-align: right">114</td></tr>
+<tr><td style="text-align: right">24335791</td><td style="text-align: right">64</td></tr>
+<tr><td style="text-align: right">24335792</td><td style="text-align: right">102</td></tr>
+<tr><td style="text-align: right">24335793</td><td style="text-align: right">132</td></tr>
+<tr><td style="text-align: right">24335794</td><td style="text-align: right">67</td></tr>
+<tr><td style="text-align: right">24335795</td><td style="text-align: right">111</td></tr>
+<tr><td style="text-align: right">24335796</td><td style="text-align: right">73</td></tr>
+<tr><td style="text-align: right">24335797</td><td style="text-align: right">96</td></tr>
+<tr><td style="text-align: right">24335798</td><td style="text-align: right">77</td></tr>
+<tr><td style="text-align: right">24335799</td><td style="text-align: right">38</td></tr>
+<tr><td style="text-align: right">24335800</td><td style="text-align: right">171</td></tr>
+<tr><td style="text-align: right">24335801</td><td style="text-align: right">140</td></tr>
+<tr><td style="text-align: right">24335802</td><td style="text-align: right">78</td></tr>
+<tr><td style="text-align: right">24335803</td><td style="text-align: right">105</td></tr>
+<tr><td style="text-align: right">24335804</td><td style="text-align: right">75</td></tr>
+<tr><td style="text-align: right">24335805</td><td style="text-align: right">107</td></tr>
+<tr><td style="text-align: right">24335806</td><td style="text-align: right">84</td></tr>
+<tr><td style="text-align: right">24335807</td><td style="text-align: right">78</td></tr>
+<tr><td style="text-align: right">24335808</td><td style="text-align: right">39</td></tr>
+<tr><td style="text-align: right">24335809</td><td style="text-align: right">107</td></tr>
+<tr><td style="text-align: right">24335810</td><td style="text-align: right">108</td></tr>
+<tr><td style="text-align: right">24335811</td><td style="text-align: right">146</td></tr>
+<tr><td style="text-align: right">24335812</td><td style="text-align: right">82</td></tr>
+<tr><td style="text-align: right">24335813</td><td style="text-align: right">118</td></tr>
+<tr><td style="text-align: right">24335814</td><td style="text-align: right">87</td></tr>
+<tr><td style="text-align: right">24335815</td><td style="text-align: right">86</td></tr>
+<tr><td style="text-align: right">24335816</td><td style="text-align: right">82</td></tr>
+<tr><td style="text-align: right">24335817</td><td style="text-align: right">97</td></tr>
+<tr><td style="text-align: right">24335818</td><td style="text-align: right">106</td></tr>
+<tr><td style="text-align: right">24335819</td><td style="text-align: right">31</td></tr>
+<tr><td style="text-align: right">24335820</td><td style="text-align: right">158</td></tr>
+<tr><td style="text-align: right">24335821</td><td style="text-align: right">86</td></tr>
+<tr><td style="text-align: right">24335822</td><td style="text-align: right">71</td></tr>
+<tr><td style="text-align: right">24335823</td><td style="text-align: right">77</td></tr>
+<tr><td style="text-align: right">24335824</td><td style="text-align: right">73</td></tr>
+<tr><td style="text-align: right">24335825</td><td style="text-align: right">113</td></tr>
+<tr><td style="text-align: right">24335826</td><td style="text-align: right">41</td></tr>
+<tr><td style="text-align: right">24335827</td><td style="text-align: right">137</td></tr>
+<tr><td style="text-align: right">24335828</td><td style="text-align: right">92</td></tr>
+<tr><td style="text-align: right">24335829</td><td style="text-align: right">81</td></tr>
+<tr><td style="text-align: right">24335830</td><td style="text-align: right">100</td></tr>
+<tr><td style="text-align: right">24335831</td><td style="text-align: right">119</td></tr>
+<tr><td style="text-align: right">24335832</td><td style="text-align: right">80</td></tr>
+<tr><td style="text-align: right">24335833</td><td style="text-align: right">85</td></tr>
+<tr><td style="text-align: right">24335834</td><td style="text-align: right">6</td></tr>
+<tr><td style="text-align: right">24335835</td><td style="text-align: right">45</td></tr>
+<tr><td style="text-align: right">24335836</td><td style="text-align: right">171</td></tr>
+<tr><td style="text-align: right">24335837</td><td style="text-align: right">134</td></tr>
+<tr><td style="text-align: right">24335838</td><td style="text-align: right">268</td></tr>
+<tr><td style="text-align: right">24335839</td><td style="text-align: right">79</td></tr>
+<tr><td style="text-align: right">24335840</td><td style="text-align: right">169</td></tr>
+<tr><td style="text-align: right">24335841</td><td style="text-align: right">158</td></tr>
+<tr><td style="text-align: right">24335842</td><td style="text-align: right">23</td></tr>
+<tr><td style="text-align: right">24335843</td><td style="text-align: right">164</td></tr>
+<tr><td style="text-align: right">24335844</td><td style="text-align: right">97</td></tr>
+<tr><td style="text-align: right">24335845</td><td style="text-align: right">104</td></tr>
+<tr><td style="text-align: right">24335846</td><td style="text-align: right">93</td></tr>
+<tr><td style="text-align: right">24335847</td><td style="text-align: right">19</td></tr>
+<tr><td style="text-align: right">24335848</td><td style="text-align: right">119</td></tr>
+<tr><td style="text-align: right">24335849</td><td style="text-align: right">78</td></tr>
+<tr><td style="text-align: right">24335850</td><td style="text-align: right">121</td></tr>
+<tr><td style="text-align: right">24335851</td><td style="text-align: right">79</td></tr>
+<tr><td style="text-align: right">24335852</td><td style="text-align: right">138</td></tr>
+<tr><td style="text-align: right">24335853</td><td style="text-align: right">74</td></tr>
+<tr><td style="text-align: right">24335854</td><td style="text-align: right">92</td></tr>
+<tr><td style="text-align: right">24335855</td><td style="text-align: right">106</td></tr>
+<tr><td style="text-align: right">24335856</td><td style="text-align: right">82</td></tr>
+<tr><td style="text-align: right">24335857</td><td style="text-align: right">83</td></tr>
+<tr><td style="text-align: right">24335858</td><td style="text-align: right">74</td></tr>
+<tr><td style="text-align: right">24335859</td><td style="text-align: right">77</td></tr>
+<tr><td style="text-align: right">24335860</td><td style="text-align: right">41</td></tr>
+<tr><td style="text-align: right">24335861</td><td style="text-align: right">91</td></tr>
+<tr><td style="text-align: right">24335862</td><td style="text-align: right">17</td></tr>
+<tr><td style="text-align: right">24335863</td><td style="text-align: right">91</td></tr>
+<tr><td style="text-align: right">24335864</td><td style="text-align: right">118</td></tr>
+<tr><td style="text-align: right">24335865</td><td style="text-align: right">109</td></tr>
+<tr><td style="text-align: right">24335866</td><td style="text-align: right">85</td></tr>
+<tr><td style="text-align: right">24335867</td><td style="text-align: right">84</td></tr>
+<tr><td style="text-align: right">24335868</td><td style="text-align: right">74</td></tr>
+<tr><td style="text-align: right">24335869</td><td style="text-align: right">73</td></tr>
+<tr><td style="text-align: right">24335870</td><td style="text-align: right">90</td></tr>
+<tr><td style="text-align: right">24335871</td><td style="text-align: right">102</td></tr>
+<tr><td style="text-align: right">24335872</td><td style="text-align: right">85</td></tr>
+<tr><td style="text-align: right">24335873</td><td style="text-align: right">109</td></tr>
+<tr><td style="text-align: right">24335874</td><td style="text-align: right">42</td></tr>
+<tr><td style="text-align: right">24335875</td><td style="text-align: right">72</td></tr>
+<tr><td style="text-align: right">24335876</td><td style="text-align: right">130</td></tr>
+<tr><td style="text-align: right">24335877</td><td style="text-align: right">67</td></tr>
+<tr><td style="text-align: right">24335878</td><td style="text-align: right">109</td></tr>
+<tr><td style="text-align: right">24335879</td><td style="text-align: right">102</td></tr>
+<tr><td style="text-align: right">24335880</td><td style="text-align: right">75</td></tr>
+<tr><td style="text-align: right">24335881</td><td style="text-align: right">120</td></tr>
+<tr><td style="text-align: right">24335882</td><td style="text-align: right">74</td></tr>
+<tr><td style="text-align: right">24335883</td><td style="text-align: right">85</td></tr>
+<tr><td style="text-align: right">24335884</td><td style="text-align: right">82</td></tr>
+<tr><td style="text-align: right">24335885</td><td style="text-align: right">94</td></tr>
+<tr><td style="text-align: right">24335886</td><td style="text-align: right">95</td></tr>
+<tr><td style="text-align: right">24335887</td><td style="text-align: right">57</td></tr>
+<tr><td style="text-align: right">24335888</td><td style="text-align: right">108</td></tr>
+<tr><td style="text-align: right">24335889</td><td style="text-align: right">41</td></tr>
+<tr><td style="text-align: right">24335890</td><td style="text-align: right">131</td></tr>
+<tr><td style="text-align: right">24335891</td><td style="text-align: right">156</td></tr>
+<tr><td style="text-align: right">24335892</td><td style="text-align: right">105</td></tr>
+<tr><td style="text-align: right">24335893</td><td style="text-align: right">119</td></tr>
+<tr><td style="text-align: right">24335894</td><td style="text-align: right">91</td></tr>
+<tr><td style="text-align: right">24335895</td><td style="text-align: right">64</td></tr>
+<tr><td style="text-align: right">24335896</td><td style="text-align: right">139</td></tr>
+<tr><td style="text-align: right">24335897</td><td style="text-align: right">144</td></tr>
+<tr><td style="text-align: right">24335898</td><td style="text-align: right">86</td></tr>
+<tr><td style="text-align: right">24335899</td><td style="text-align: right">40</td></tr>
+<tr><td style="text-align: right">24335900</td><td style="text-align: right">52</td></tr>
+<tr><td style="text-align: right">24335901</td><td style="text-align: right">180</td></tr>
+<tr><td style="text-align: right">24335902</td><td style="text-align: right">121</td></tr>
+<tr><td style="text-align: right">24335903</td><td style="text-align: right">42</td></tr>
+<tr><td style="text-align: right">24335904</td><td style="text-align: right">66</td></tr>
+<tr><td style="text-align: right">24335905</td><td style="text-align: right">70</td></tr>
+<tr><td style="text-align: right">24335906</td><td style="text-align: right">92</td></tr>
+<tr><td style="text-align: right">24335907</td><td style="text-align: right">104</td></tr>
+<tr><td style="text-align: right">24335908</td><td style="text-align: right">82</td></tr>
+<tr><td style="text-align: right">24335909</td><td style="text-align: right">85</td></tr>
+<tr><td style="text-align: right">24335910</td><td style="text-align: right">78</td></tr>
+<tr><td style="text-align: right">24335911</td><td style="text-align: right">97</td></tr>
+<tr><td style="text-align: right">24335912</td><td style="text-align: right">86</td></tr>
+</tbody></table>
+</div>
 <h4 id="pre-generated"><a class="header" href="#pre-generated">Pre-Generated</a></h4>
 <p><em>Total blocks analyzed: 176</em></p>
 <div class="table-wrapper"><table><thead><tr><th style="text-align: right">Block Number</th><th style="text-align: right">Time (ms)</th></tr></thead><tbody>
@@ -17329,8 +17540,8 @@ Long-term research directions and second-order ideas are intentionally out of sc
 <tr><td>Object pooling</td><td>#5934</td><td>2</td><td>Pending</td><td>Reuse EVM stack frames to reduce allocations and improve performance</td></tr>
 <tr><td>Avoid clones in hot path</td><td>#5753</td><td>2</td><td>Measure #5809 on mainnet</td><td>Avoid Clone on Account Load and check rest of the hot path</td></tr>
 <tr><td>SIMD Everywhere</td><td></td><td>2</td><td>Pending</td><td>There are some libraries that can be replaced by others that use SIMD instructions for better performance</td></tr>
-<tr><td>EXTCODESIZE without full bytecode</td><td></td><td>1</td><td>Pending</td><td>EXTCODESIZE loads entire bytecode just to get length. Add <code>get_account_code_size()</code> or store code length alongside code (<code>crates/vm/levm/src/opcode_handlers/environment.rs:260-274</code>)</td></tr>
-<tr><td>TransactionQueue data structure</td><td></td><td>1</td><td>Pending</td><td><code>TransactionQueue</code> uses <code>Vec</code> with <code>remove(0)</code> which is O(n). Replace with <code>BinaryHeap</code>/<code>BTreeSet</code> or <code>VecDeque</code> for O(log n) or O(1) operations (<code>crates/blockchain/payload.rs:708-820</code>)</td></tr>
+<tr><td>EXTCODESIZE without full bytecode</td><td></td><td>1</td><td>Done (#6034). Improvement of 25%.</td><td>EXTCODESIZE loads entire bytecode just to get length. Add <code>get_account_code_size()</code> or store code length alongside code (<code>crates/vm/levm/src/opcode_handlers/environment.rs:260-274</code>)</td></tr>
+<tr><td>TransactionQueue data structure</td><td></td><td>1</td><td>Discarded. It is not significant within the critical path.</td><td><code>TransactionQueue</code> uses <code>Vec</code> with <code>remove(0)</code> which is O(n). Replace with <code>BinaryHeap</code>/<code>BTreeSet</code> or <code>VecDeque</code> for O(log n) or O(1) operations (<code>crates/blockchain/payload.rs:708-820</code>)</td></tr>
 </tbody></table>
 </div>
 <hr />
