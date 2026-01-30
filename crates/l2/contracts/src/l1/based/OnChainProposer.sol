@@ -153,18 +153,34 @@ contract OnChainProposer is
 
         // Risc0 constants
         REQUIRE_RISC0_PROOF = requireRisc0Proof;
+        require(
+            !REQUIRE_RISC0_PROOF || r0verifier != address(0),
+            "OnChainProposer: missing RISC0 verifier address"
+        );
         RISC0_VERIFIER_ADDRESS = r0verifier;
 
         // SP1 constants
         REQUIRE_SP1_PROOF = requireSp1Proof;
+        require(
+            !REQUIRE_SP1_PROOF || sp1verifier != address(0),
+            "OnChainProposer: missing SP1 verifier address"
+        );
         SP1_VERIFIER_ADDRESS = sp1verifier;
 
         // ZisK constants
         REQUIRE_ZISK_PROOF = requireZisKProof;
+        require(
+            !REQUIRE_ZISK_PROOF || ziskVerifier != address(0),
+            "OnChainProposer: missing ZisK verifier address"
+        );
         ZISK_VERIFIER_ADDRESS = ziskVerifier;
 
         // TDX constants
         REQUIRE_TDX_PROOF = requireTdxProof;
+        require(
+            !REQUIRE_TDX_PROOF || tdxverifier != address(0),
+            "OnChainProposer: missing TDX verifier address"
+        );
         TDX_VERIFIER_ADDRESS = tdxverifier;
 
         // Aligned Layer constants

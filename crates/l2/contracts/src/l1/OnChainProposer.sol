@@ -192,7 +192,7 @@ contract OnChainProposer is
         );
         require(
             !REQUIRE_ZISK_PROOF || ziskVk != bytes32(0),
-            "OnChainProposer: missing ZISK verification key"
+            "OnChainProposer: missing ZisK verification key"
         );
         verificationKeys[commitHash][SP1_VERIFIER_ID] = sp1Vk;
         verificationKeys[commitHash][RISC0_VERIFIER_ID] = risc0Vk;
