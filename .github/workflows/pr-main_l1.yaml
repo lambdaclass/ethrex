@@ -59,6 +59,34 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
+      - name: Check dual license
+        run: |
+          # Check license files exist
+          if [ ! -f LICENSE-MIT ]; then
+            echo "::error::LICENSE-MIT file is missing"
+            exit 1
+          fi
+          if [ ! -f LICENSE-APACHE ]; then
+            echo "::error::LICENSE-APACHE file is missing"
+            exit 1
+          fi
+
+          # Check all main workspace packages have correct license
+          MISSING=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | \
+            jq -r '.packages[] | select(.license != "MIT OR Apache-2.0") | .name')
+          if [ -n "$MISSING" ]; then
+            echo "::error::The following packages do not have 'MIT OR Apache-2.0' license: $MISSING"
+            exit 1
+          fi
+
+          # Check all tooling workspace packages have correct license
+          MISSING_TOOLING=$(cd tooling && cargo metadata --format-version 1 --no-deps 2>/dev/null | \
+            jq -r '.packages[] | select(.license != "MIT OR Apache-2.0") | .name')
+          if [ -n "$MISSING_TOOLING" ]; then
+            echo "::error::The following tooling packages do not have 'MIT OR Apache-2.0' license: $MISSING_TOOLING"
+            exit 1
+          fi
+
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
 
