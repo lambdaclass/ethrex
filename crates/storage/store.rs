@@ -2791,7 +2791,7 @@ fn flatkeyvalue_generator(
         // First time generating the FKV. Remove all FKV entries just in case
         backend.clear_table(ACCOUNT_FLATKEYVALUE)?;
         backend.clear_table(STORAGE_FLATKEYVALUE)?;
-    } else if &last_written[..] == [0xff] {
+    } else if last_written[..] == [0xff] {
         // FKV was already generated
         info!("FlatKeyValue already generated. Skipping.");
         return Ok(());
