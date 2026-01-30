@@ -153,39 +153,84 @@ done
 header_text="Daily performance report (24-hour average)"
 
 # Generate text report for GitHub/Telegram (full version on separate line)
+# Sorted by performance value (descending)
 {
   echo "# ${header_text}"
   echo
+
+  # Build sortable entries: "value client"
+  sort_entries=()
   if [[ -n "$ethrex_value" ]]; then
-    printf "• ethrex: %.3f Ggas/s (mean)\n  %s\n" "$ethrex_value" "$version_ethrex"
+    sort_entries+=("$ethrex_value ethrex")
   fi
   if [[ -n "$reth_value" ]]; then
-    printf "• reth: %.3f Ggas/s (mean)\n  %s\n" "$reth_value" "$version_reth"
+    sort_entries+=("$reth_value reth")
   fi
   if [[ -n "$geth_p50" || -n "$geth_p999" ]]; then
-    printf "• geth: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)\n  %s\n" "${geth_p50:-0}" "${geth_p999:-0}" "$version_geth"
+    sort_entries+=("${geth_p50:-0} geth")
   fi
   if [[ -n "$nether_value" ]]; then
-    printf "• nethermind: %.3f Ggas/s (mean)\n  %s\n" "$nether_value" "$version_nethermind"
+    sort_entries+=("$nether_value nethermind")
   fi
+
+  # Sort by value and print each client
+  while read -r value client; do
+    case "$client" in
+      ethrex)
+        printf "• ethrex: %.3f Ggas/s (mean)\n  %s\n" "$ethrex_value" "$version_ethrex"
+        ;;
+      reth)
+        printf "• reth: %.3f Ggas/s (mean)\n  %s\n" "$reth_value" "$version_reth"
+        ;;
+      geth)
+        printf "• geth: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)\n  %s\n" "${geth_p50:-0}" "${geth_p999:-0}" "$version_geth"
+        ;;
+      nethermind)
+        printf "• nethermind: %.3f Ggas/s (mean)\n  %s\n" "$nether_value" "$version_nethermind"
+        ;;
+    esac
+  done < <(printf '%s\n' "${sort_entries[@]}" | sort -rn)
 } >"${OUTPUT_DIR}/performance_report_github.txt"
 
 # Generate Slack message with code block table (truncated versions)
+# Sorted by performance value (descending)
 slack_table='```'$'\n'
 slack_table+='Client       Version                  Performance'$'\n'
 slack_table+='-------------------------------------------------------'$'\n'
+
+# Build sortable entries: "value client"
+slack_sort_entries=()
 if [[ -n "$ethrex_value" ]]; then
-  slack_table+=$(printf "%-12s %-24s %.3f Ggas/s (mean)" "ethrex" "$version_ethrex_short" "$ethrex_value")$'\n'
+  slack_sort_entries+=("$ethrex_value ethrex")
 fi
 if [[ -n "$reth_value" ]]; then
-  slack_table+=$(printf "%-12s %-24s %.3f Ggas/s (mean)" "reth" "$version_reth_short" "$reth_value")$'\n'
+  slack_sort_entries+=("$reth_value reth")
 fi
 if [[ -n "$geth_p50" || -n "$geth_p999" ]]; then
-  slack_table+=$(printf "%-12s %-24s %.3f Ggas/s (p50) / %.3f Ggas/s (p99.9)" "geth" "$version_geth_short" "${geth_p50:-0}" "${geth_p999:-0}")$'\n'
+  slack_sort_entries+=("${geth_p50:-0} geth")
 fi
 if [[ -n "$nether_value" ]]; then
-  slack_table+=$(printf "%-12s %-24s %.3f Ggas/s (mean)" "nethermind" "$version_nethermind_short" "$nether_value")$'\n'
+  slack_sort_entries+=("$nether_value nethermind")
 fi
+
+# Sort by value and append each client row
+while read -r value client; do
+  case "$client" in
+    ethrex)
+      slack_table+=$(printf "%-12s %-24s %.3f Ggas/s (mean)" "ethrex" "$version_ethrex_short" "$ethrex_value")$'\n'
+      ;;
+    reth)
+      slack_table+=$(printf "%-12s %-24s %.3f Ggas/s (mean)" "reth" "$version_reth_short" "$reth_value")$'\n'
+      ;;
+    geth)
+      slack_table+=$(printf "%-12s %-24s %.3f Ggas/s (p50) / %.3f Ggas/s (p99.9)" "geth" "$version_geth_short" "${geth_p50:-0}" "${geth_p999:-0}")$'\n'
+      ;;
+    nethermind)
+      slack_table+=$(printf "%-12s %-24s %.3f Ggas/s (mean)" "nethermind" "$version_nethermind_short" "$nether_value")$'\n'
+      ;;
+  esac
+done < <(printf '%s\n' "${slack_sort_entries[@]}" | sort -rn)
+
 slack_table+='```'
 
 jq -n --arg header "$header_text" --arg table "$slack_table" '{

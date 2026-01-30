@@ -1,8 +1,12 @@
 #![allow(dead_code)]
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes};
 use ethereum_types::{Address, H160, H256, U256};
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, structs};
+use ethrex_rlp::{
+    decode::RLPDecode,
+    encode::{RLPEncode, encode_length, list_length},
+    structs,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -15,6 +19,36 @@ pub const SYSTEM_ADDRESS: Address = H160([
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFE,
 ]);
+
+/// Encode a slice of items in sorted order without cloning.
+fn encode_sorted_by<T, K, F>(items: &[T], buf: &mut dyn BufMut, key_fn: F)
+where
+    T: RLPEncode,
+    K: Ord,
+    F: Fn(&T) -> K,
+{
+    if items.is_empty() {
+        buf.put_u8(0xc0);
+        return;
+    }
+    let mut indices: Vec<usize> = (0..items.len()).collect();
+    indices.sort_by(|&i, &j| key_fn(&items[i]).cmp(&key_fn(&items[j])));
+
+    let payload_len: usize = items.iter().map(|item| item.length()).sum();
+    encode_length(payload_len, buf);
+    for &i in &indices {
+        items[i].encode(buf);
+    }
+}
+
+/// Calculate the encoded length of a sorted list.
+fn sorted_list_length<T: RLPEncode>(items: &[T]) -> usize {
+    if items.is_empty() {
+        return 1;
+    }
+    let payload_len: usize = items.iter().map(|item| item.length()).sum();
+    list_length(payload_len)
+}
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct StorageChange {
@@ -100,28 +134,11 @@ impl SlotChange {
 }
 
 impl RLPEncode for SlotChange {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        // Check if already sorted (common case when built from BlockAccessListRecorder)
-        let is_sorted = self
-            .slot_changes
-            .windows(2)
-            .all(|w| w[0].block_access_index <= w[1].block_access_index);
-
-        if is_sorted {
-            // Encode directly without cloning
-            structs::Encoder::new(buf)
-                .encode_field(&self.slot)
-                .encode_field(&self.slot_changes)
-                .finish();
-        } else {
-            // Clone and sort only when necessary
-            let mut slot_changes = self.slot_changes.clone();
-            slot_changes.sort_by(|a, b| a.block_access_index.cmp(&b.block_access_index));
-            structs::Encoder::new(buf)
-                .encode_field(&self.slot)
-                .encode_field(&slot_changes)
-                .finish();
-        }
+    fn encode(&self, buf: &mut dyn BufMut) {
+        let payload_len = self.slot.length() + sorted_list_length(&self.slot_changes);
+        encode_length(payload_len, buf);
+        self.slot.encode(buf);
+        encode_sorted_by(&self.slot_changes, buf, |s| s.block_access_index);
     }
 }
 
@@ -380,78 +397,21 @@ impl AccountChanges {
 }
 
 impl RLPEncode for AccountChanges {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        // Check if vectors are already sorted (common case when built from BlockAccessListRecorder)
-        let storage_changes_sorted = self
-            .storage_changes
-            .windows(2)
-            .all(|w| w[0].slot <= w[1].slot);
-        let storage_reads_sorted = self.storage_reads.windows(2).all(|w| w[0] <= w[1]);
-        let balance_changes_sorted = self
-            .balance_changes
-            .windows(2)
-            .all(|w| w[0].block_access_index <= w[1].block_access_index);
-        let nonce_changes_sorted = self
-            .nonce_changes
-            .windows(2)
-            .all(|w| w[0].block_access_index <= w[1].block_access_index);
-        let code_changes_sorted = self
-            .code_changes
-            .windows(2)
-            .all(|w| w[0].block_access_index <= w[1].block_access_index);
+    fn encode(&self, buf: &mut dyn BufMut) {
+        let payload_len = self.address.length()
+            + sorted_list_length(&self.storage_changes)
+            + sorted_list_length(&self.storage_reads)
+            + sorted_list_length(&self.balance_changes)
+            + sorted_list_length(&self.nonce_changes)
+            + sorted_list_length(&self.code_changes);
 
-        // If all are sorted, encode directly without any cloning
-        if storage_changes_sorted
-            && storage_reads_sorted
-            && balance_changes_sorted
-            && nonce_changes_sorted
-            && code_changes_sorted
-        {
-            structs::Encoder::new(buf)
-                .encode_field(&self.address)
-                .encode_field(&self.storage_changes)
-                .encode_field(&self.storage_reads)
-                .encode_field(&self.balance_changes)
-                .encode_field(&self.nonce_changes)
-                .encode_field(&self.code_changes)
-                .finish();
-            return;
-        }
-
-        // Clone and sort only the vectors that need it
-        let mut storage_changes = self.storage_changes.clone();
-        if !storage_changes_sorted {
-            storage_changes.sort_by(|a, b| a.slot.cmp(&b.slot));
-        }
-
-        let mut storage_reads = self.storage_reads.clone();
-        if !storage_reads_sorted {
-            storage_reads.sort();
-        }
-
-        let mut balance_changes = self.balance_changes.clone();
-        if !balance_changes_sorted {
-            balance_changes.sort_by(|a, b| a.block_access_index.cmp(&b.block_access_index));
-        }
-
-        let mut nonce_changes = self.nonce_changes.clone();
-        if !nonce_changes_sorted {
-            nonce_changes.sort_by(|a, b| a.block_access_index.cmp(&b.block_access_index));
-        }
-
-        let mut code_changes = self.code_changes.clone();
-        if !code_changes_sorted {
-            code_changes.sort_by(|a, b| a.block_access_index.cmp(&b.block_access_index));
-        }
-
-        structs::Encoder::new(buf)
-            .encode_field(&self.address)
-            .encode_field(&storage_changes)
-            .encode_field(&storage_reads)
-            .encode_field(&balance_changes)
-            .encode_field(&nonce_changes)
-            .encode_field(&code_changes)
-            .finish();
+        encode_length(payload_len, buf);
+        self.address.encode(buf);
+        encode_sorted_by(&self.storage_changes, buf, |s| s.slot);
+        encode_sorted_by(&self.storage_reads, buf, |s| *s);
+        encode_sorted_by(&self.balance_changes, buf, |b| b.block_access_index);
+        encode_sorted_by(&self.nonce_changes, buf, |n| n.block_access_index);
+        encode_sorted_by(&self.code_changes, buf, |c| c.block_access_index);
     }
 }
 
@@ -524,19 +484,8 @@ impl BlockAccessList {
 }
 
 impl RLPEncode for BlockAccessList {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        // Check if already sorted by address (common case when built from BlockAccessListRecorder)
-        let is_sorted = self.inner.windows(2).all(|w| w[0].address <= w[1].address);
-
-        if is_sorted {
-            // Encode directly without cloning
-            self.inner.encode(buf);
-        } else {
-            // Clone and sort only when necessary
-            let mut sorted = self.inner.clone();
-            sorted.sort_by(|a, b| a.address.cmp(&b.address));
-            sorted.encode(buf);
-        }
+    fn encode(&self, buf: &mut dyn BufMut) {
+        encode_sorted_by(&self.inner, buf, |a| a.address);
     }
 }
 
