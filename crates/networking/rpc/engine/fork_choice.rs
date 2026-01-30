@@ -11,7 +11,9 @@ use tracing::{debug, info, warn};
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
     types::{
-        fork_choice::{ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3, PayloadAttributesV4},
+        fork_choice::{
+            ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3, PayloadAttributesV4,
+        },
         payload::PayloadStatus,
     },
     utils::RpcErr,
