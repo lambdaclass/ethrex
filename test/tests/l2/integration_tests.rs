@@ -1121,6 +1121,11 @@ async fn test_deposit(
         .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
+    println!(
+        "test_deposit: rich_wallet_address={:#x}, initial L2 balance={} wei",
+        rich_wallet_address, deposit_recipient_l2_initial_balance
+    );
+
     let bridge_initial_balance = l1_client
         .get_balance(bridge_address()?, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
