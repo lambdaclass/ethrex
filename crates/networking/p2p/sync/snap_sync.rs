@@ -103,6 +103,22 @@ impl SnapBlockSyncState {
         }
     }
 
+    /// Waits for headers from the background task with a timeout.
+    ///
+    /// # Returns
+    /// - `Some(headers)` if headers were received before the timeout
+    /// - `None` if the timeout elapsed or the channel was closed/not configured
+    pub async fn recv_headers_timeout(&mut self, timeout: Duration) -> Option<Vec<BlockHeader>> {
+        if let Some(receiver) = &mut self.header_receiver {
+            tokio::time::timeout(timeout, receiver.recv())
+                .await
+                .ok()
+                .flatten()
+        } else {
+            None
+        }
+    }
+
     /// Returns the current status of the background header download task.
     ///
     /// # Returns
@@ -415,11 +431,16 @@ pub async fn snap_sync(
             info!("Snap sync aborted: switching to full sync");
             return Ok(());
         }
-        // Process any available headers
-        process_pending_headers(block_sync_state).await?;
-        if block_sync_state.block_hashes.is_empty() {
-            debug!("Waiting for initial headers from background task...");
-            tokio::time::sleep(Duration::from_millis(100)).await;
+        // Wait for headers with timeout (allows periodic check of abort conditions)
+        debug!("Waiting for initial headers from background task...");
+        if let Some(headers) = block_sync_state
+            .recv_headers_timeout(Duration::from_millis(100))
+            .await
+            && !headers.is_empty()
+        {
+            block_sync_state
+                .process_incoming_headers(headers.into_iter().skip(1))
+                .await?;
         }
     }
 
