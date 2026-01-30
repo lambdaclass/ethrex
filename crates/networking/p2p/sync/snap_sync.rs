@@ -359,7 +359,14 @@ pub async fn sync_cycle_snap(
     info!("Background header download started, proceeding with state download");
 
     // State download starts IMMEDIATELY (no waiting for all headers)
-    snap_sync(peers, &store, &mut block_sync_state, datadir, &snap_enabled_arc).await?;
+    snap_sync(
+        peers,
+        &store,
+        &mut block_sync_state,
+        datadir,
+        &snap_enabled_arc,
+    )
+    .await?;
 
     // Wait for background task to complete
     match header_download_handle.await {
