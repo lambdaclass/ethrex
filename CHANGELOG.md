@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-01-30
+
+- Use `Bytes` for trie values to enable O(1) clones [#6057](https://github.com/lambdaclass/ethrex/pull/6057)
+
 ### 2026-01-27
 
 - Optimize prewarmer by grouping transactions by sender [#6047](https://github.com/lambdaclass/ethrex/pull/6047)
