@@ -2,52 +2,153 @@
 
 This guide covers the **one-time setup** required to run ethrex L2 with the ZisK prover backend.
 
-## Proof Flow Overview
+## Understanding ZisK Components
+
+### Proof Flow Overview
 
 ZisK uses a two-stage proving system:
 
 ```
-Program Execution → STARK Proof → SNARK Proof → On-chain Verification
-                    (GPU/CPU)      (CPU)           (sequencer)
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           ZisK Proof Generation                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐  │
+│   │   Guest     │    │   STARK     │    │   SNARK     │    │  On-chain   │  │
+│   │  Program    │───>│   Proof     │───>│   Proof     │───>│ Verification│  │
+│   │ Execution   │    │  (GPU/CPU)  │    │   (CPU)     │    │             │  │
+│   └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘  │
+│         │                  │                  │                   │          │
+│         ▼                  ▼                  ▼                   ▼          │
+│   Uses: ELF         Uses: provingKey   Uses: provingKeySnark  Uses: VK      │
+│                     Creates: STARK      Creates: SNARK         (Program VK) │
+│                     proof               proof + publics                      │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-| Stage | Proving Key | Hardware | Purpose |
-|-------|-------------|----------|---------|
-| STARK | `~/.zisk/provingKey` | GPU (fast) or CPU | Generate large proof |
-| SNARK | `~/.zisk/provingKeySnark` | CPU | Compress for on-chain verification |
+### Key Files and Their Purpose
+
+| File | What It Is | Where It Lives | When It's Created |
+|------|------------|----------------|-------------------|
+| **Guest ELF** | Compiled guest program (RISC-V binary) | `crates/guest-program/bin/zisk/out/` | `cargo-zisk build` |
+| **Program VK** | Merkle root hash of the ROM (32 bytes) | `crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk` | `cargo-zisk rom-setup` or `cargo-zisk rom-vkey` |
+| **STARK Proving Key** | Large key for STARK proof generation | `~/.zisk/provingKey/` | Downloaded (25GB+) |
+| **SNARK Proving Key** | Key for SNARK wrapping | `~/.zisk/provingKeySnark/` | Downloaded |
+| **ZiskVerifier.sol** | On-chain verifier contract | `~/.zisk/provingKeySnark/final/` | Part of SNARK proving key tarball |
+| **ROM Cache Files** | Pre-computed ROM data for proving | `~/.zisk/cache/` | `cargo-zisk rom-setup` |
+
+### Understanding the VK (Verification Key)
+
+**There are TWO different "VK" concepts in ZisK:**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        VK Confusion Clarified                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  1. PROGRAM VK (what we call "VK" in ethrex)                                │
+│     ├── What: Merkle root hash of your compiled guest program's ROM         │
+│     ├── Size: 32 bytes (4 x uint64 packed as big-endian)                    │
+│     ├── File: crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk          │
+│     ├── Created by: `cargo-zisk rom-setup` (as side effect) or              │
+│     │               `cargo-zisk rom-vkey` (explicitly)                       │
+│     ├── Used by: OnChainProposer contract for proof verification            │
+│     └── Changes when: Guest program code changes                            │
+│                                                                              │
+│  2. SNARK VERIFICATION KEY (embedded in PlonkVerifier.sol)                  │
+│     ├── What: Cryptographic constants for the PLONK verifier circuit        │
+│     ├── Size: Many field elements (embedded in contract bytecode)           │
+│     ├── File: Part of PlonkVerifier.sol in provingKeySnark/final/           │
+│     ├── Created by: ZisK team (part of the trusted setup)                   │
+│     ├── Used by: ZiskVerifier.sol for SNARK proof verification              │
+│     └── Changes when: NEVER (it's part of the proving key)                  │
+│                                                                              │
+│  CRITICAL: These must be used together correctly:                           │
+│  - The SNARK proof is verified against the SNARK VK (in PlonkVerifier)      │
+│  - The PROGRAM VK is hashed with publicValues to create the SNARK input     │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### How On-Chain Verification Works
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    On-Chain Verification Flow                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  OnChainProposer.verify() receives:                                         │
+│  ├── batchNumber                                                            │
+│  ├── proof (768 bytes - the SNARK proof)                                    │
+│  └── publicInputs (batch data)                                              │
+│                                                                              │
+│  Step 1: Get stored Program VK                                              │
+│  ┌──────────────────────────────────────────────────────────────┐           │
+│  │  bytes32 ziskVk = verificationKeys[commitHash][ZISK_ID];     │           │
+│  │  uint64[4] programVk = _toZiskProgramVk(ziskVk);             │           │
+│  │                                                              │           │
+│  │  Conversion: bytes32 → uint64[4]                             │           │
+│  │  vk[0] = uint64(word >> 192)  // first 8 bytes               │           │
+│  │  vk[1] = uint64(word >> 128)  // next 8 bytes                │           │
+│  │  vk[2] = uint64(word >> 64)   // next 8 bytes                │           │
+│  │  vk[3] = uint64(word)         // last 8 bytes                │           │
+│  └──────────────────────────────────────────────────────────────┘           │
+│                                                                              │
+│  Step 2: Build publicValues (256 bytes)                                     │
+│  ┌──────────────────────────────────────────────────────────────┐           │
+│  │  bytes32 outputHash = sha256(publicInputs);                  │           │
+│  │  publicValues[0..3] = 0x00000008  // count = 8 u32s          │           │
+│  │  publicValues[4..35] = outputHash // the sha256 hash         │           │
+│  │  publicValues[36..255] = 0x00...  // padding                 │           │
+│  └──────────────────────────────────────────────────────────────┘           │
+│                                                                              │
+│  Step 3: Call ZiskVerifier.verifySnarkProof()                               │
+│  ┌──────────────────────────────────────────────────────────────┐           │
+│  │  // Inside ZiskVerifier.sol:                                 │           │
+│  │  digest = sha256(programVk || publicValues) % FIELD_MOD      │           │
+│  │  PlonkVerifier.verifyProof(proof, [digest])                  │           │
+│  └──────────────────────────────────────────────────────────────┘           │
+│                                                                              │
+│  The proof verifies that:                                                   │
+│  - A program with merkle root = programVk                                   │
+│  - Was executed and produced output = publicValues                          │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### VK Byte Ordering
+
+**This is critical and a common source of bugs:**
+
+```
+ROM Setup outputs root hash as 4 uint64 values:
+  [17951655398561329467, 12219912878120779724, 11007752846151204199, 8887639580373120299]
+
+These must be stored as 32 bytes in BIG-ENDIAN order:
+  [0] = 17951655398561329467 = 0xf92117791978b13b → bytes: f9 21 17 79 19 78 b1 3b
+  [1] = 12219912878120779724 = 0xa995da04ce9c3fcc → bytes: a9 95 da 04 ce 9c 3f cc
+  [2] = 11007752846151204199 = 0x98c364e45a233d67 → bytes: 98 c3 64 e4 5a 23 3d 67
+  [3] = 8887639580373120299  = 0x7b573d1c0fd7752b → bytes: 7b 57 3d 1c 0f d7 75 2b
+
+Final VK file (32 bytes):
+  f92117791978b13ba995da04ce9c3fcc98c364e45a233d677b573d1c0fd7752b
+
+When contract reads this as bytes32 and does:
+  uint64(word >> 192) = 0xf92117791978b13b = 17951655398561329467 ✓
+```
+
+---
 
 ## One-Time Setup
 
-### 1. Build the ZisK Guest ELF
+### 1. Build the Prover (includes ELF, ROM setup, and VK)
 
-The guest program ELF must be built using the ZisK toolchain (`cargo-zisk`), not standard cargo:
-
-```bash
-cd crates/guest-program/bin/zisk
-cargo-zisk build --release --features l2
-```
-
-This compiles the guest program to `target/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk`.
-
-Copy the ELF to the expected output location (for the deployer to find the VK):
-
-```bash
-mkdir -p out
-cp target/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk out/riscv64ima-zisk-elf
-```
-
-> [!NOTE]
-> **Two ELF paths are used:**
-> - `target/.../ethrex-guest-zisk` - Use this for ROM setup (step 7) and VK generation (step 9). The filename matters for cache file naming.
-> - `out/riscv64ima-zisk-elf` - Copy destination for the deployer to find the VK file.
-
-> [!IMPORTANT]
-> **When to rebuild the ELF:**
-> - After modifying any code in `crates/guest-program/`
-> - After pulling changes that affect the guest program
-> - The Makefile target `build-prover-zisk` does NOT rebuild the ELF - it only builds the prover binary
-
-### 2. Build the Prover Binary
+**What this does:** The prover build command does EVERYTHING automatically:
+1. Builds the guest program ELF using the ZisK toolchain
+2. Runs ROM setup (creates cache files in `~/.zisk/cache/`)
+3. Generates the VK file
+4. Builds the prover binary
 
 **With GPU acceleration (recommended):**
 ```bash
@@ -59,30 +160,58 @@ COMPILE_CONTRACTS=true make -C crates/l2 build-prover-zisk GPU=true
 COMPILE_CONTRACTS=true make -C crates/l2 build-prover-zisk
 ```
 
-The prover binary embeds the ELF from step 1. If you rebuild the ELF, you must also rebuild the prover binary to pick up the changes.
+**What gets created:**
+- `crates/guest-program/bin/zisk/target/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk` - Guest ELF
+- `crates/guest-program/bin/zisk/out/riscv64ima-zisk-elf` - Copy of ELF
+- `crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk` - VK file (32 bytes)
+- `~/.zisk/cache/ethrex-guest-zisk-<hash>-*.bin` - ROM cache files
+- `target/release/ethrex` - Prover binary
 
-### 3. Clone and build ZisK
+**Verify it worked:**
+```bash
+# Check ELF was built
+file crates/guest-program/bin/zisk/out/riscv64ima-zisk-elf
+# Should show: ELF 64-bit LSB executable, UCB RISC-V
+
+# Check VK was generated (should be 32 bytes)
+ls -la crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk
+xxd crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk
+
+# Check cache files were created
+ls ~/.zisk/cache/ | grep ethrex-guest-zisk
+```
+
+> [!NOTE]
+> The build.rs in `crates/guest-program` automatically runs `cargo-zisk rom-setup` and `cargo-zisk rom-vkey`.
+> You only need to run these manually if you want to regenerate with different options.
+
+> [!IMPORTANT]
+> **When to rebuild:**
+> - After modifying any code in `crates/guest-program/`
+> - After pulling changes that affect the guest program
+> - The build will automatically regenerate the ELF, run ROM setup, and update the VK
+
+### 2. Install ZisK Tools (prerequisite for step 1)
+
+**What this does:** Installs the ZisK command-line tools (`cargo-zisk`, `ziskemu`, etc.) that are used by the build process.
 
 ```bash
 git clone git@github.com:0xPolygonHermez/zisk.git
 cd zisk && git checkout pre-develop-0.16.0
-```
-
-```bash
 cargo build --release
 ```
 
-### 4. Install ZisK binaries
+Follow the [ZisK installation guide](https://github.com/0xPolygonHermez/zisk/blob/feature/bn128/book/getting_started/installation.md#option-2-building-from-source) steps 3-7 to install binaries to `~/.zisk/bin`.
 
-Follow steps 3 to 7 in the [ZisK installation guide](https://github.com/0xPolygonHermez/zisk/blob/feature/bn128/book/getting_started/installation.md#option-2-building-from-source).
+**Verify it worked:**
+```bash
+cargo-zisk --version
+# Should show version info
+```
 
-This installs `cargo-zisk`, `ziskemu`, and `libzisk_witness.so` to `~/.zisk/bin`.
+### 3. Build GPU Binary (if using GPU)
 
-### 4b. Build and install GPU binary (if using GPU)
-
-The GPU-built binary crashes during SNARK proof generation, so you need **two separate binaries**:
-- **CPU binary** (`cargo-zisk`): Used for SNARK proofs - already installed in step 4
-- **GPU binary** (`cargo-zisk-gpu`): Used for STARK proofs - build now
+**What this does:** Builds a separate GPU-accelerated binary for STARK proofs. You need TWO binaries because the GPU binary crashes during SNARK generation.
 
 ```bash
 cd <PATH_TO_ZISK_REPO>
@@ -90,78 +219,44 @@ cargo build --release --features gpu
 cp target/release/cargo-zisk ~/.zisk/bin/cargo-zisk-gpu
 ```
 
-> [!NOTE]
-> The default `cargo-zisk` (CPU) will be used for SNARK proofs. Set `ZISK_STARK_BINARY=cargo-zisk-gpu` to use GPU acceleration for STARK proofs.
+**Why two binaries?**
+- `cargo-zisk` (CPU): Used for SNARK proofs (GPU version crashes)
+- `cargo-zisk-gpu`: Used for STARK proofs (much faster)
 
-### 5. Download proving keys
+### 4. Download Proving Keys
+
+**What this does:** Downloads the trusted setup proving keys. These are large cryptographic parameters needed for proof generation.
 
 ```bash
-# STARK proving key
+# STARK proving key (~25GB)
 wget https://storage.googleapis.com/zisk-setup/zisk-provingkey-pre-0.16.0.tar.gz
 
-# SNARK proving key
+# SNARK proving key (~25GB)
 wget https://storage.googleapis.com/zisk-setup/zisk-provingkey-pre-0.16.0-plonk.tar.gz
 ```
 
-### 6. Extract proving keys
+### 5. Extract Proving Keys
 
 ```bash
 tar -xzf zisk-provingkey-pre-0.16.0.tar.gz -C ~/.zisk/
 tar -xzf zisk-provingkey-pre-0.16.0-plonk.tar.gz -C ~/.zisk/
 ```
 
-After extraction you should have:
-- `~/.zisk/provingKey/` - STARK proving key
-- `~/.zisk/provingKeySnark/` - SNARK proving key
-
-### 7. ROM setup (once per ELF)
-
-This step must be run whenever the guest program ELF changes:
-
+**Verify extraction:**
 ```bash
-cargo-zisk rom-setup -e <PATH_TO_ELF> -k ~/.zisk/provingKey
+ls ~/.zisk/provingKey/
+# Should contain many .bin and .json files
+
+ls ~/.zisk/provingKeySnark/final/
+# Should contain ZiskVerifier.sol, PlonkVerifier.sol, final.zkey, etc.
 ```
 
-For ethrex, use the **cargo output path** (not the copied `out/` path):
-```bash
-cargo-zisk rom-setup \
-    -e crates/guest-program/bin/zisk/target/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk \
-    -k ~/.zisk/provingKey
-```
+### 6. Compile Verifier Contract
 
-> [!IMPORTANT]
-> **ELF path matters for cache file naming!** ROM setup creates cache files named `<elf-filename>-<hash>-*.bin`. The prover looks for files with prefix `ethrex-guest-zisk-<hash>`. If you run ROM setup with a different path (e.g., `out/riscv64ima-zisk-elf`), the cache files will have the wrong prefix and the prover will fail with "Path does not exist" errors.
-
-### 8. Verify setup (optional)
-
-```bash
-cargo-zisk check-setup -k ~/.zisk/provingKey -a
-```
-
-### 9. Generate verification key
-
-Generate the VK for your ELF (needed for on-chain verification):
-
-```bash
-cargo-zisk rom-vkey \
-    -e crates/guest-program/bin/zisk/target/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk \
-    -k ~/.zisk/provingKey \
-    -o crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk
-```
-
-This outputs the VK root hash and saves it to the path where the deployer expects it.
-
-### 10. Compile the verifier contract
+**What this does:** Compiles the ZiskVerifier.sol contract that will verify proofs on-chain.
 
 > [!CAUTION]
-> **CRITICAL**: The verifier contract MUST come from the SNARK proving key folder (`~/.zisk/provingKeySnark/final/`), NOT from the ZisK repo. The PlonkVerifier.sol contains verification key constants that must match the proving key used to generate proofs. Using the wrong verifier will cause all proof verifications to fail.
-
-The SNARK proving key tarball includes the matching verifier contracts:
-- `~/.zisk/provingKeySnark/final/ZiskVerifier.sol`
-- `~/.zisk/provingKeySnark/final/PlonkVerifier.sol`
-- `~/.zisk/provingKeySnark/final/IZiskVerifier.sol`
-
-Compile using solc:
+> **Use the contract from provingKeySnark, NOT from the ZisK repo!** The PlonkVerifier.sol contains verification key constants that must match your proving key.
 
 ```bash
 cd ~/.zisk/provingKeySnark/final
@@ -171,9 +266,13 @@ solc --optimize --abi --bin \
     ZiskVerifier.sol
 ```
 
-### 11. Deploy the verifier contract
+**Verify compilation:**
+```bash
+ls ~/.zisk/provingKeySnark/final/build/
+# Should contain ZiskVerifier.bin and ZiskVerifier.abi
+```
 
-Deploy to L1 (or your target chain):
+### 7. Deploy Verifier Contract
 
 ```bash
 rex deploy --private-key <PRIVATE_KEY> \
@@ -181,98 +280,201 @@ rex deploy --private-key <PRIVATE_KEY> \
     --rpc-url <L1_RPC_URL>
 ```
 
-Output:
-```
-Contract deployed at: 0x937bC1A524f22dE858203b2cbBAD073A98FfF0B5
-```
+**Save the deployed address!** You'll need it for L2 deployment.
 
-Verify deployment:
+**Verify deployment:**
 ```bash
 rex call <CONTRACT_ADDRESS> "VERSION()" --rpc-url <L1_RPC_URL>
+# Returns "v0.15.0" (version string is outdated but contract works)
 ```
 
-> [!NOTE]
-> The contract returns `"v0.15.0"` even when using the `pre-develop-0.16.0` proving keys. This is expected - the version string in the contract template hasn't been updated by the ZisK team. What matters is that the PlonkVerifier verification key constants match the proving key, not the version string.
+---
 
-**Note:** Configure the deployed verifier address in your L2 sequencer config.
+## Manual ROM Setup and VK Generation (optional)
+
+The prover build (step 1) runs these automatically, but you may need to run them manually for debugging or to regenerate with different options.
+
+### Manual ROM Setup
+
+**What this does:** Pre-computes ROM data for your guest program:
+- Converts the ELF to ZisK's internal format
+- Computes the merkle tree of the ROM
+- Generates cache files for faster proving
+- **Outputs the root hash** (this becomes your Program VK!)
+
+```bash
+cargo-zisk rom-setup \
+    -e crates/guest-program/bin/zisk/target/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk \
+    -k ~/.zisk/provingKey
+```
+
+**Expected output:**
+```
+Computing setup for ROM ...
+Computing ELF hash
+Computing merkle root
+Computing custom trace ROM
+Root hash: [17951655398561329467, 12219912878120779724, 11007752846151204199, 8887639580373120299]
+ROM setup successfully completed at /home/user/.zisk/cache
+```
+
+**The Root Hash IS your Program VK!** These 4 uint64 values identify your specific guest program.
+
+> [!IMPORTANT]
+> **ELF filename matters!** Cache files are named after the ELF filename. Use `ethrex-guest-zisk` (the cargo output name), not `riscv64ima-zisk-elf`.
+
+### Manual VK Generation
+
+**What this does:** Creates the 32-byte VK file that the deployer reads when initializing contracts.
+
+```bash
+cargo-zisk rom-vkey \
+    -e crates/guest-program/bin/zisk/target/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk \
+    -k ~/.zisk/provingKey \
+    -o crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk
+```
+
+**Verify the VK file:**
+```bash
+xxd crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk
+# Should show 32 bytes (2 lines of 16 bytes each)
+# The bytes should be big-endian encoding of the root hash
+```
+
+**Convert root hash to expected VK bytes (for verification):**
+```python
+# Python script to verify VK matches root hash
+root_hash = [17951655398561329467, 12219912878120779724, 11007752846151204199, 8887639580373120299]
+import struct
+vk = struct.pack(">QQQQ", *root_hash)  # Big-endian!
+print(vk.hex())
+# Compare with: xxd -p out/riscv64ima-zisk-vk | tr -d '\n'
+```
+
+---
+
+## Verifying Your Setup
+
+### Check VK Matches ELF
+
+Before deploying contracts, verify the VK file matches your ELF:
+
+```bash
+# Method 1: Re-run rom-vkey and compare
+cargo-zisk rom-vkey \
+    -e crates/guest-program/bin/zisk/target/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk \
+    -k ~/.zisk/provingKey \
+    -o /tmp/check-vk
+
+diff crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk /tmp/check-vk
+# No output = files match
+```
+
+```bash
+# Method 2: Verify byte order manually
+xxd crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk
+
+# First 8 bytes should be big-endian encoding of root_hash[0]
+# Example: if root_hash[0] = 17951655398561329467 = 0xf92117791978b13b
+# Then first 8 bytes should be: f9 21 17 79 19 78 b1 3b
+```
+
+### Check Contract Has Correct VK
+
+After deploying contracts, verify the VK was stored correctly:
+
+```bash
+# Get the stored VK from contract (raw bytes32)
+cast call <ON_CHAIN_PROPOSER_ADDRESS> \
+    "debugGetRawVk(uint256)(bytes32)" 0 \
+    --rpc-url <L1_RPC_URL>
+
+# Compare with your VK file
+xxd -p crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk | tr -d '\n'
+# These should match!
+```
+
+**Important:** Also verify the converted VK matches (this is what the verifier actually uses):
+
+```bash
+# Get the converted VK from contract (uint64[4] array)
+# Use batchNumber=0 to check the VK for the first batch
+cast call <ON_CHAIN_PROPOSER_ADDRESS> \
+    "debugGetConvertedVk(uint256)(uint64[4])" 0 \
+    --rpc-url <L1_RPC_URL>
+
+# Convert your local VK file to uint64 array and compare
+VK_FILE=crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk
+python3 -c "
+import struct
+data = open('$VK_FILE', 'rb').read()
+values = struct.unpack('<4Q', data)  # 4 little-endian uint64s
+print(f'[{values[0]},{values[1]},{values[2]},{values[3]}]')
+"
+
+# These MUST match! If they don't, the VK byte ordering is wrong.
+```
+
+### Test Manual Verification
+
+After generating a proof, test it manually:
+
+```bash
+# Get proof files
+ls crates/l2/prover/zisk_output/snark_proof/
+# final_snark_proof.bin (768 bytes)
+# final_snark_publics.bin (256 bytes)
+
+# Convert VK file to uint64 array (VK is stored in little-endian)
+VK_FILE=crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk
+VK_ARRAY=$(python3 -c "
+import struct
+data = open('$VK_FILE', 'rb').read()
+values = struct.unpack('<4Q', data)  # 4 little-endian uint64s
+print(f'[{values[0]},{values[1]},{values[2]},{values[3]}]')
+")
+echo "VK array: $VK_ARRAY"
+
+# Call verifier directly
+PROOF=$(xxd -p crates/l2/prover/zisk_output/snark_proof/final_snark_proof.bin | tr -d '\n')
+PUBLICS=$(xxd -p crates/l2/prover/zisk_output/snark_proof/final_snark_publics.bin | tr -d '\n')
+
+cast call <ZISK_VERIFIER_ADDRESS> \
+    "verifySnarkProof(uint64[4],bytes,bytes)" \
+    "$VK_ARRAY" \
+    "0x$PUBLICS" \
+    "0x$PROOF" \
+    --rpc-url <L1_RPC_URL>
+
+# Empty return (0x) = success
+# 0x09bde339 = InvalidProof (VK or publicValues mismatch)
+```
+
+---
 
 ## Running the L2
 
-After the ZisK setup is complete, follow these steps to run the L2 with ZisK proving.
-
-### 12. Verify VK matches ELF (CRITICAL - DO NOT SKIP)
-
-> [!CAUTION]
-> **MANDATORY CHECK BEFORE DEPLOYING.** A VK mismatch causes `InvalidProof` errors (0x09bde339) that require full redeployment. You will waste 15+ minutes per proof attempt if this is wrong.
-
-**The VK must be regenerated from the PROVER'S EMBEDDED ELF, not the source ELF.**
-
-The prover binary writes its embedded ELF to `crates/l2/prover/ethrex-guest-zisk`. This is the ELF that actually gets used for proving. Always generate the VK from THIS file:
-
-```bash
-# Step 1: Ensure the prover has written its embedded ELF
-# (Run the prover once briefly, or check if the file exists)
-ls -la crates/l2/prover/ethrex-guest-zisk
-
-# Step 2: Generate VK from the PROVER'S ELF (not the source ELF!)
-cargo-zisk rom-vkey \
-    -e crates/l2/prover/ethrex-guest-zisk \
-    -k ~/.zisk/provingKey \
-    -o /tmp/correct-vk
-
-# Step 3: Compare with existing VK file
-if ! diff -q /tmp/correct-vk crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk > /dev/null 2>&1; then
-    echo "VK MISMATCH! Updating VK file..."
-    cp /tmp/correct-vk crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk
-    echo "VK updated. You MUST redeploy contracts."
-else
-    echo "VK matches. Safe to proceed."
-fi
-```
-
-> [!WARNING]
-> **Common mistake:** Running `rom-vkey` on `crates/guest-program/bin/zisk/target/.../ethrex-guest-zisk` instead of `crates/l2/prover/ethrex-guest-zisk`. Even if the ELF hashes are identical, the cache file naming can cause different VK outputs. Always use the prover's ELF path.
-
-> [!IMPORTANT]
-> **Guest program byte ordering:** The guest program outputs SHA256 hash via `ziskos::set_output()`. ZisK internally writes u32 values as little-endian bytes. To preserve the original SHA256 bytes in public values, the guest MUST use `from_le_bytes` (same as aligned_layer):
-> ```rust
-> // CORRECT: sha256[A,B,C,D] → from_le_bytes → u32(0xDCBA) → ZisK writes LE → [A,B,C,D]
-> output.chunks_exact(4).for_each(|(idx, bytes)| {
->     ziskos::set_output(idx, u32::from_le_bytes(bytes.try_into().unwrap()))
-> });
-> ```
-> Using `from_be_bytes` causes bytes to be reversed within each 4-byte chunk, which breaks verification.
-
-### 13. Deploy L1 Contracts
-
-Deploy the L1 contracts with ZisK verification enabled:
+### 8. Deploy L1 Contracts
 
 ```bash
 COMPILE_CONTRACTS=true \
 ETHREX_L2_ZISK=true \
-ETHREX_DEPLOYER_ZISK_VERIFIER_ADDRESS=0x8b12ca58bb4a5cf859bf0d6a17384729e978587d \
+ETHREX_DEPLOYER_ZISK_VERIFIER_ADDRESS=<VERIFIER_ADDRESS_FROM_STEP_7> \
 ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true \
 make -C crates/l2 deploy-l1
 ```
 
-> [!NOTE]
-> - `ETHREX_DEPLOYER_ZISK_VERIFIER_ADDRESS` is the verifier contract address from step 11
-> - Save the deployed contract addresses for the next step
+**What happens:** The deployer reads `crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk` and stores it in the OnChainProposer contract.
 
-### 14. Start the L2 Node
+### 9. Start L2 Node
 
 ```bash
 ZISK=true ETHREX_NO_MONITOR=true ETHREX_LOG_LEVEL=debug make -C crates/l2 init-l2 | grep -E "INFO|WARN|ERROR"
 ```
 
-> [!IMPORTANT]
-> Both committer and proof coordinator accounts must be funded on L1.
+### 10. Start Prover
 
-### 15. Start the Prover
-
-In a separate terminal, start the ZisK prover:
-
-**With GPU acceleration (recommended):**
+**With GPU:**
 ```bash
 ZISK_STARK_BINARY=cargo-zisk-gpu make -C crates/l2 init-prover-zisk GPU=true
 ```
@@ -282,140 +484,77 @@ ZISK_STARK_BINARY=cargo-zisk-gpu make -C crates/l2 init-prover-zisk GPU=true
 make -C crates/l2 init-prover-zisk
 ```
 
-> [!NOTE]
-> `ZISK_SNARK_BINARY` defaults to `cargo-zisk` (CPU version), which is correct. Only `ZISK_STARK_BINARY` needs to be set for GPU acceleration.
-
-The prover automatically:
-1. Receives batch input from the proof coordinator
-2. Runs STARK proof generation (GPU binary if configured)
-3. Runs SNARK proof generation (must use CPU binary)
-4. Submits proof back to coordinator
-5. Sequencer verifies on-chain
-
-## ZisK Environment Variables (optional)
-
-The prover uses sensible defaults, but you can override paths and binaries:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ZISK_HOME` | `~/.zisk` | ZisK home directory |
-| `ZISK_ELF_PATH` | embedded | Path to guest ELF |
-| `ZISK_PROVING_KEY_PATH` | `~/.zisk/provingKey` | STARK proving key |
-| `ZISK_PROVING_KEY_SNARK_PATH` | `~/.zisk/provingKeySnark` | SNARK proving key |
-| `ZISK_STARK_BINARY` | `cargo-zisk` | Binary for STARK proof (use GPU version) |
-| `ZISK_SNARK_BINARY` | `cargo-zisk` | Binary for SNARK proof (must be CPU version) |
+---
 
 ## Troubleshooting
 
-### Executable stack error
-```
-Dynamic library error: ~/.zisk/provingKeySnark/final/final.so: cannot enable executable stack
-```
-Fix:
-```bash
-patchelf --clear-execstack ~/.zisk/provingKeySnark/final/final.so
-```
+### InvalidProof (0x09bde339)
 
-### SNARK proof segfault
-```
-Segmentation fault (core dumped) cargo-zisk prove-snark ...
-```
-The GPU-built binary crashes during SNARK generation. Use a CPU-built binary for SNARK proofs:
-```bash
-export ZISK_SNARK_BINARY=cargo-zisk-cpu
-```
+**Cause:** VK mismatch between contract and proof.
 
-### MerkleHash assertion error
-```
-Failed assert in template/function VerifyMerkleHash line 51
-```
-This is intermittent - the prover will retry automatically.
+**Debug steps:**
+1. Check VK in contract matches VK file
+2. Verify VK file was generated from the same ELF used for proving
+3. Check byte ordering (must be big-endian)
 
-### Missing SNARK proving key
-```
-Failed to read file /home/admin/.zisk/provingKeySnark/recursivef/recursivef.starkinfo.json
-```
-The SNARK proving key is missing. Download and extract it:
-```bash
-wget https://storage.googleapis.com/zisk-setup/zisk-provingkey-pre-0.16.0-plonk.tar.gz
-tar -xzf zisk-provingkey-pre-0.16.0-plonk.tar.gz -C ~/.zisk/
-```
+### "Path does not exist" for cache files
 
-### Library path issues
-```bash
-export LD_LIBRARY_PATH=$HOME/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib
-```
+**Cause:** ROM setup was run with wrong ELF filename.
 
-### Cache file not found (Path does not exist)
-```
-Path does not exist: ~/.zisk/provingKey/rom/ethrex-guest-zisk-68cb2244...-mt.bin
-```
-This happens when ROM setup was run with a different ELF path than expected. The prover looks for cache files with prefix `ethrex-guest-zisk-<hash>`, but ROM setup creates files named after the ELF filename.
-
-**Fix:** Re-run ROM setup with the correct ELF path:
+**Fix:** Re-run ROM setup with correct path:
 ```bash
 cargo-zisk rom-setup \
     -e crates/guest-program/bin/zisk/target/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk \
     -k ~/.zisk/provingKey
 ```
 
-### ELF hash mismatch after code changes
-If you modified guest program code but the prover still uses old cache files:
-1. Rebuild the ELF: `cd crates/guest-program/bin/zisk && cargo-zisk build --release --features l2`
-2. Re-run ROM setup (step 7)
-3. Regenerate VK (step 9)
-4. Rebuild prover binary (step 2) - it embeds the ELF
+### SNARK proof segfault
+
+**Cause:** Using GPU binary for SNARK proof.
+
+**Fix:** Ensure `ZISK_SNARK_BINARY=cargo-zisk` (CPU version).
+
+### Executable stack error
+
+```bash
+patchelf --clear-execstack ~/.zisk/provingKeySnark/final/final.so
+```
 
 ---
 
-## Manual Proving (for debugging)
+## Quick Reference
 
-If you need to manually generate proofs (e.g., for debugging):
+### File Locations Summary
 
-### Generate STARK proof
-Use the GPU binary for faster STARK proof generation:
-```bash
-cargo-zisk-gpu prove \
-    -e <PATH_TO_ELF> \
-    -i <PATH_TO_INPUT> \
-    -k ~/.zisk/provingKey \
-    -o <OUTPUT_PATH> \
-    -a -u -f
-```
+| Purpose | Location |
+|---------|----------|
+| Guest ELF (source) | `crates/guest-program/bin/zisk/target/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk` |
+| Guest ELF (for deployer) | `crates/guest-program/bin/zisk/out/riscv64ima-zisk-elf` |
+| Program VK file | `crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk` |
+| ROM cache files | `~/.zisk/cache/ethrex-guest-zisk-<hash>-*.bin` |
+| STARK proving key | `~/.zisk/provingKey/` |
+| SNARK proving key | `~/.zisk/provingKeySnark/` |
+| Verifier contracts | `~/.zisk/provingKeySnark/final/ZiskVerifier.sol` |
+| Generated proofs | `crates/l2/prover/zisk_output/snark_proof/` |
 
-### Generate SNARK proof
-Use the CPU binary (GPU binary will segfault):
-```bash
-mkdir -p <OUTPUT_PATH>/proofs
-cargo-zisk-cpu prove-snark \
-    -k ~/.zisk/provingKeySnark \
-    -p <OUTPUT_PATH>/vadcop_final_proof.bin \
-    -o <OUTPUT_PATH>
-```
-
-This generates:
-- `<OUTPUT_PATH>/proofs/final_snark_proof.hex`
-- `<OUTPUT_PATH>/proofs/final_snark_publics.hex`
-
-### Verify proof on-chain (manually)
+### Command Cheatsheet
 
 ```bash
-rex call <VERIFIER_CONTRACT_ADDRESS> \
-    "verifySnarkProof(uint64[4],bytes,bytes)" \
-    "[<VK_ROOT_HASH>]" \
-    `cat <OUTPUT_PATH>/proofs/final_snark_publics.hex` \
-    `cat <OUTPUT_PATH>/proofs/final_snark_proof.hex` \
-    --rpc-url <L1_RPC_URL>
-```
+# Build ELF
+cargo-zisk build --release --features l2
 
-Example:
-```bash
-rex call 0xa0c79e7f98c9914c337d5b010af208b98f23f117 \
-    "verifySnarkProof(uint64[4],bytes,bytes)" \
-    "[3121973382251281428,1947533496960916486,15830689218699704550,16339664693968653792]" \
-    `cat zisk-output/proofs/final_snark_publics.hex` \
-    `cat zisk-output/proofs/final_snark_proof.hex` \
-    --rpc-url http://localhost:8545
-```
+# ROM setup (run after ELF changes)
+cargo-zisk rom-setup -e <ELF_PATH> -k ~/.zisk/provingKey
 
-Returns `0x` (empty bytes) on success.
+# Generate VK file
+cargo-zisk rom-vkey -e <ELF_PATH> -k ~/.zisk/provingKey -o <VK_OUTPUT_PATH>
+
+# Check setup
+cargo-zisk check-setup -k ~/.zisk/provingKey -a
+
+# Manual STARK proof
+cargo-zisk-gpu prove -e <ELF> -i <INPUT> -k ~/.zisk/provingKey -o <OUTPUT> -a -u -f
+
+# Manual SNARK proof
+cargo-zisk prove-snark -k ~/.zisk/provingKeySnark -p <STARK_PROOF> -o <OUTPUT>
+```
