@@ -523,7 +523,17 @@ impl Blockchain {
                 workers_tx[account_bucket as usize]
                     .send(MerklizationRequest::LoadAccount(hashed_address))
                     .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                if update.removed_storage | update.removed {
+                if update.removed {
+                    // Match old behavior: remove account, skip all storage processing
+                    let state = account_state.entry(hashed_address).or_default();
+                    *state = PreMerkelizedAccountState {
+                        info: Some(Default::default()),
+                        ..Default::default()
+                    };
+                    continue;
+                }
+
+                if update.removed_storage {
                     for tx in &workers_tx {
                         tx.send(MerklizationRequest::Delete(hashed_address))
                             .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
@@ -546,13 +556,6 @@ impl Blockchain {
                         code_updates.push((info.code_hash, code));
                     }
                     state.info = Some(info);
-                }
-
-                if update.removed {
-                    *state = PreMerkelizedAccountState {
-                        info: Some(Default::default()),
-                        ..Default::default()
-                    };
                 }
             }
         }
