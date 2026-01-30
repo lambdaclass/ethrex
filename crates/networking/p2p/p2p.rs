@@ -67,6 +67,7 @@
 //! - `experimental-discv5`: Enable discv5 node discovery (experimental)
 
 pub(crate) mod backend;
+pub mod backfill;
 pub mod discv4;
 #[cfg(feature = "experimental-discv5")]
 pub mod discv5;

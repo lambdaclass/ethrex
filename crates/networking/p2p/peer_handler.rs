@@ -9,6 +9,7 @@ use crate::{
             BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
             HashOrNumber,
         },
+        eth::receipts::GetReceipts,
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES},
         snap::{
@@ -26,7 +27,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{
     BigEndianHash, H256, U256,
-    types::{AccountState, BlockBody, BlockHeader, validate_block_body},
+    types::{AccountState, BlockBody, BlockHeader, Receipt, validate_block_body},
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
@@ -597,6 +598,91 @@ impl PeerHandler {
             if validation_success {
                 return Ok(Some(res));
             }
+        }
+        Ok(None)
+    }
+
+    /// Internal method to request receipts from any suitable peer given their block hashes
+    /// Returns the receipts or None if:
+    /// - There are no available peers (the node just started up or was rejected by all other nodes)
+    /// - The requested peer did not return a valid response in the given time limit
+    async fn request_receipts_inner(
+        &mut self,
+        block_hashes: &[H256],
+    ) -> Result<Option<(Vec<Vec<Receipt>>, H256)>, PeerHandlerError> {
+        let block_hashes_len = block_hashes.len();
+        let request_id = rand::random();
+        let request = RLPxMessage::GetReceipts(GetReceipts {
+            id: request_id,
+            block_hashes: block_hashes.to_vec(),
+        });
+        match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
+            None => Ok(None),
+            Some((peer_id, mut connection)) => {
+                let response = PeerHandler::make_request(
+                    &mut self.peer_table,
+                    peer_id,
+                    &mut connection,
+                    request,
+                    PEER_REPLY_TIMEOUT,
+                )
+                .await;
+
+                let receipts = match response {
+                    Ok(RLPxMessage::Receipts68(msg)) => {
+                        if msg.get_id() != request_id {
+                            warn!(
+                                "Receipt response ID mismatch from peer {peer_id}, penalizing peer..."
+                            );
+                            self.peer_table.record_failure(&peer_id).await?;
+                            return Ok(None);
+                        }
+                        msg.get_receipts()
+                    }
+                    Ok(RLPxMessage::Receipts69(msg)) => {
+                        if msg.id != request_id {
+                            warn!(
+                                "Receipt response ID mismatch from peer {peer_id}, penalizing peer..."
+                            );
+                            self.peer_table.record_failure(&peer_id).await?;
+                            return Ok(None);
+                        }
+                        msg.receipts
+                    }
+                    _ => {
+                        warn!("Didn't receive receipts from peer, penalizing peer {peer_id}...");
+                        self.peer_table.record_failure(&peer_id).await?;
+                        return Ok(None);
+                    }
+                };
+
+                // Check that the response is not empty and does not contain more receipts than the ones requested
+                if !receipts.is_empty() && receipts.len() <= block_hashes_len {
+                    self.peer_table.record_success(&peer_id).await?;
+                    return Ok(Some((receipts, peer_id)));
+                }
+
+                warn!("Invalid receipts response from peer, penalizing peer {peer_id}...");
+                self.peer_table.record_failure(&peer_id).await?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// Requests receipts from any suitable peer given their block hashes
+    /// Returns the requested receipts or None if:
+    /// - There are no available peers (the node just started up or was rejected by all other nodes)
+    /// - No peer returned a valid response in the given time and retry limits
+    pub async fn request_receipts(
+        &mut self,
+        block_hashes: &[H256],
+    ) -> Result<Option<Vec<Vec<Receipt>>>, PeerHandlerError> {
+        for _ in 0..REQUEST_RETRY_ATTEMPTS {
+            let Some((receipts, _peer_id)) = self.request_receipts_inner(block_hashes).await?
+            else {
+                continue; // Retry on empty response
+            };
+            return Ok(Some(receipts));
         }
         Ok(None)
     }

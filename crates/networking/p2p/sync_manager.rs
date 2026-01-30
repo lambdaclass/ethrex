@@ -17,6 +17,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::{
+    backfill::BackfillManager,
     peer_handler::PeerHandler,
     sync::{SyncMode, Syncer},
 };
@@ -30,6 +31,7 @@ pub struct SyncManager {
     syncer: Arc<Mutex<Syncer>>,
     last_fcu_head: Arc<Mutex<H256>>,
     store: Store,
+    backfill_manager: Option<Arc<BackfillManager>>,
 }
 
 impl SyncManager {
@@ -43,17 +45,23 @@ impl SyncManager {
     ) -> Self {
         let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
         let syncer = Arc::new(Mutex::new(Syncer::new(
-            peer_handler,
+            peer_handler.clone(),
             snap_enabled.clone(),
-            cancel_token,
+            cancel_token.clone(),
             blockchain,
             datadir,
+        )));
+        let backfill_manager = Some(Arc::new(BackfillManager::new(
+            store.clone(),
+            peer_handler,
+            cancel_token,
         )));
         let sync_manager = Self {
             snap_enabled,
             syncer,
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: store.clone(),
+            backfill_manager,
         };
         // If the node was in the middle of a sync and then re-started we must resume syncing
         // Otherwise we will incorreclty assume the node is already synced and work on invalid state
@@ -86,7 +94,12 @@ impl SyncManager {
 
     /// Disables snapsync mode
     pub fn disable_snap(&self) {
-        self.snap_enabled.store(false, Ordering::Relaxed);
+        let was_snap_enabled = self.snap_enabled.swap(false, Ordering::Relaxed);
+
+        // Only spawn backfill if we were actually running snap sync
+        if was_snap_enabled && let Some(ref manager) = self.backfill_manager {
+            manager.clone().spawn();
+        }
     }
 
     /// Updates the last fcu head. This may be used on the next sync cycle if needed

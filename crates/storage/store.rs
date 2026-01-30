@@ -1068,6 +1068,23 @@ impl Store {
             .map_err(StoreError::from)
     }
 
+    /// Sets the body backfill checkpoint (last completed block).
+    pub async fn set_body_backfill_checkpoint(&self, block: u64) -> Result<(), StoreError> {
+        let key = snap_state_key(SnapStateIndex::BodyBackfillCheckpoint);
+        let value = block.encode_to_vec();
+        self.write_async(SNAP_STATE, key, value).await
+    }
+
+    /// Gets the body backfill checkpoint.
+    pub async fn get_body_backfill_checkpoint(&self) -> Result<Option<u64>, StoreError> {
+        let key = snap_state_key(SnapStateIndex::BodyBackfillCheckpoint);
+        let value = self.backend.begin_read()?.get(SNAP_STATE, &key)?;
+        match value {
+            Some(bytes) => Ok(Some(u64::decode(&bytes)?)),
+            None => Ok(None),
+        }
+    }
+
     /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
     /// when processing an invalid payload. To provide this, we must track invalid chains.
     ///
