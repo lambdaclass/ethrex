@@ -313,7 +313,7 @@ pub async fn sync_cycle_snap(
     info!("Background header download started, proceeding with state download");
 
     // State download starts IMMEDIATELY (no waiting for all headers)
-    snap_sync(peers, &store, &mut block_sync_state, datadir).await?;
+    snap_sync(peers, &store, &mut block_sync_state, datadir, &snap_enabled_arc).await?;
 
     // Wait for background task to complete
     match header_download_handle.await {
@@ -340,6 +340,11 @@ pub async fn sync_cycle_snap(
     Ok(())
 }
 
+/// Returns true if snap sync should be aborted (full sync was triggered by background task)
+fn should_abort_snap_sync(snap_enabled: &Arc<AtomicBool>) -> bool {
+    !snap_enabled.load(Ordering::Relaxed)
+}
+
 /// Helper function to process any pending headers from the background download task
 async fn process_pending_headers(
     block_sync_state: &mut SnapBlockSyncState,
@@ -362,6 +367,7 @@ pub async fn snap_sync(
     store: &Store,
     block_sync_state: &mut SnapBlockSyncState,
     datadir: &Path,
+    snap_enabled: &Arc<AtomicBool>,
 ) -> Result<(), SyncError> {
     // snap-sync: launch tasks to fetch blocks and state in parallel
     // - Fetch each block's body and its receipt via eth p2p requests
@@ -373,6 +379,11 @@ pub async fn snap_sync(
     while block_sync_state.block_hashes.is_empty() {
         if block_sync_state.is_download_complete() {
             return Err(SyncError::NoBlockHeaders);
+        }
+        // Check if we should abort (full sync triggered)
+        if should_abort_snap_sync(snap_enabled) {
+            info!("Snap sync aborted: switching to full sync");
+            return Ok(());
         }
         // Process any available headers
         process_pending_headers(block_sync_state).await?;
@@ -435,6 +446,12 @@ pub async fn snap_sync(
 
         // Process any headers received during account range download
         process_pending_headers(block_sync_state).await?;
+
+        // Check if we should abort (full sync triggered)
+        if should_abort_snap_sync(snap_enabled) {
+            info!("Snap sync aborted: switching to full sync");
+            return Ok(());
+        }
 
         *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
         METRICS
@@ -546,6 +563,12 @@ pub async fn snap_sync(
             // Process any headers received during storage range download
             process_pending_headers(block_sync_state).await?;
 
+            // Check if we should abort (full sync triggered)
+            if should_abort_snap_sync(snap_enabled) {
+                info!("Snap sync aborted: switching to full sync");
+                return Ok(());
+            }
+
             if !block_is_stale(&pivot_header) {
                 break;
             }
@@ -615,6 +638,12 @@ pub async fn snap_sync(
 
         // Process any headers received during healing
         process_pending_headers(block_sync_state).await?;
+
+        // Check if we should abort (full sync triggered)
+        if should_abort_snap_sync(snap_enabled) {
+            info!("Snap sync aborted: switching to full sync");
+            return Ok(());
+        }
     }
     *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
