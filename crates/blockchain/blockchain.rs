@@ -760,7 +760,15 @@ impl Blockchain {
                     let trie = match tree.entry(prefix) {
                         Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
                         Entry::Vacant(vacant_entry) => {
-                            vacant_entry.insert(self.load_trie(parent_header, Some(prefix))?)
+                            let storage_root = match state_trie.get(prefix.as_bytes())? {
+                                Some(rlp) => AccountState::decode(&rlp)?.storage_root,
+                                None => *EMPTY_TRIE_HASH,
+                            };
+                            vacant_entry.insert(self.storage.open_storage_trie(
+                                prefix,
+                                parent_header.state_root,
+                                storage_root,
+                            )?)
                         }
                     };
                     if value.is_zero() {
