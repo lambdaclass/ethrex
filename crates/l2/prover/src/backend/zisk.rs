@@ -234,8 +234,7 @@ impl ZiskBackend {
                     "[ZISK DEBUG] SNARK public values (guest output)"
                 );
                 // Extract the SHA256 hash (bytes 4-36, after the count header)
-                if publics_bytes.len() >= 36 {
-                    let guest_output_hash = &publics_bytes[4..36];
+                if let Some(guest_output_hash) = publics_bytes.get(4..36) {
                     warn!(
                         guest_output_sha256 = %hex::encode(guest_output_hash),
                         "[ZISK DEBUG] Guest program output (sha256 of ProgramOutput.encode())"
