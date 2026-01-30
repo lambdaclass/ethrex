@@ -4,7 +4,10 @@ use crate::{
     db::gen_db::GeneralizedDatabase,
     debug::DebugMode,
     environment::Environment,
-    errors::{ContextResult, ExecutionReport, InternalError, OpcodeResult, VMError},
+    errors::{
+        ContextResult, ExceptionalHalt, ExecutionReport, InternalError, OpcodeResult, TxResult,
+        VMError,
+    },
     hooks::{
         backup_hook::BackupHook,
         hook::{Hook, get_hooks},
@@ -500,6 +503,17 @@ impl<'a> VM<'a> {
 
     /// Main execution loop.
     pub fn run_execution(&mut self) -> Result<ContextResult, VMError> {
+        // If gas is already exhausted (negative), fail immediately.
+        // This can happen when intrinsic gas exceeds the gas limit in privileged L2 transactions.
+        // Without this check, casting negative gas_remaining to u64 would wrap to a huge value.
+        if self.current_call_frame.gas_remaining < 0 {
+            return Ok(ContextResult {
+                result: TxResult::Revert(ExceptionalHalt::OutOfGas.into()),
+                gas_used: self.current_call_frame.gas_limit,
+                output: Bytes::new(),
+            });
+        }
+
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         if precompiles::is_precompile(
             &self.current_call_frame.to,
