@@ -70,7 +70,6 @@ contract OnChainProposer is
     address public PICO_VERIFIER_ADDRESS;
     address public RISC0_VERIFIER_ADDRESS;
     address public SP1_VERIFIER_ADDRESS;
-    address public ZISK_VERIFIER_ADDRESS;
     address public TDX_VERIFIER_ADDRESS;
     address public SEQUENCER_REGISTRY;
 
@@ -92,8 +91,6 @@ contract OnChainProposer is
     bool public REQUIRE_RISC0_PROOF;
     /// @notice True if a SP1 proof is required for batch verification.
     bool public REQUIRE_SP1_PROOF;
-    /// @notice True if a ZisK proof is required for batch verification.
-    bool public REQUIRE_ZISK_PROOF;
     /// @notice True if a TDX proof is required for batch verification.
     bool public REQUIRE_TDX_PROOF;
 
@@ -106,6 +103,12 @@ contract OnChainProposer is
     /// @notice Verification keys keyed by git commit hash (keccak of the commit SHA string) and verifier type.
     mapping(bytes32 commitHash => mapping(uint8 verifierId => bytes32 vk))
         public verificationKeys;
+
+    /// @notice ZisK verifier address. Appended to preserve storage layout.
+    address public ZISK_VERIFIER_ADDRESS;
+
+    /// @notice True if a ZisK proof is required for batch verification.
+    bool public REQUIRE_ZISK_PROOF;
 
     modifier onlyLeaderSequencer() {
         require(
@@ -449,9 +452,7 @@ contract OnChainProposer is
                     ziskProofBytes
                 )
             {} catch {
-                revert(
-                    "OnChainProposer: Invalid ZisK proof failed proof verification"
-                );
+                revert("017"); // OnChainProposer: Invalid ZisK proof
             }
         }
 
@@ -640,7 +641,7 @@ contract OnChainProposer is
     /// @notice Converts a bytes32 VK to uint64[4] array for ZisK verifier.
     function toZiskProgramVk(
         bytes32 vk
-    ) public view returns (uint64[4] memory out) {
+    ) public pure returns (uint64[4] memory out) {
         uint256 word = uint256(vk);
         out[0] = swapBytes64(uint64(word >> 192));
         out[1] = swapBytes64(uint64(word >> 128));
@@ -649,7 +650,7 @@ contract OnChainProposer is
     }
 
     /// @notice Swaps bytes within a uint64 (reverses byte order).
-    function swapBytes64(uint64 x) public view returns (uint64) {
+    function swapBytes64(uint64 x) public pure returns (uint64) {
         return
             ((x & 0xFF00000000000000) >> 56) |
             ((x & 0x00FF000000000000) >> 40) |
@@ -662,7 +663,7 @@ contract OnChainProposer is
     }
 
     /// @notice Swaps bytes within each 4-byte word of a bytes32.
-    function swapHashBytes(bytes32 hash) public view returns (bytes32) {
+    function swapHashBytes(bytes32 hash) public pure returns (bytes32) {
         uint256 word = uint256(hash);
         uint256 result = 0;
         for (uint256 i = 0; i < 8; i++) {
@@ -677,11 +678,13 @@ contract OnChainProposer is
         return bytes32(result);
     }
 
+    uint256 constant ZISK_PUBLIC_VALUES_SIZE = 256;
+
     /// @notice Build the 256-byte ZisK publicValues from publicInputs bytes
-    function buildZiskPublicValues(bytes memory publicInputs) public view returns (bytes memory ziskPublicValues) {
+    function buildZiskPublicValues(bytes memory publicInputs) public pure returns (bytes memory ziskPublicValues) {
         bytes32 outputHash = sha256(publicInputs);
         bytes32 swappedHash = swapHashBytes(outputHash);
-        ziskPublicValues = new bytes(256);
+        ziskPublicValues = new bytes(ZISK_PUBLIC_VALUES_SIZE);
         ziskPublicValues[3] = 0x08;
         for (uint256 i = 0; i < 32; i++) {
             ziskPublicValues[4 + i] = swappedHash[i];

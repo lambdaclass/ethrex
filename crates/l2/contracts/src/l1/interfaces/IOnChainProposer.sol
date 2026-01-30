@@ -59,7 +59,7 @@ interface IOnChainProposer {
     /// @notice Upgrades the ZisK verification key that represents the sequencer's code.
     /// @param new_vk new verification key for ZisK verifier
     /// @param commit_hash git commit hash that produced the new verification key
-    function upgradeZISKVerificationKey(
+    function upgradeZisKVerificationKey(
         bytes32 commit_hash,
         bytes32 new_vk
     ) external;

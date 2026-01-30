@@ -10,7 +10,7 @@ use std::{
     process::{Command, Stdio},
     time::{Duration, Instant},
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::backend::{BackendError, ProverBackend};
 
@@ -223,21 +223,21 @@ impl ZiskBackend {
             let proof_path = output_dir.join("snark_proof").join("final_snark_proof.bin");
             let proof_bytes = std::fs::read(&proof_path).map_err(BackendError::proving)?;
 
-            // DEBUG: Log the SNARK public values (what the guest output)
+            // Log the SNARK public values (what the guest output)
             let publics_path = output_dir
                 .join("snark_proof")
                 .join("final_snark_publics.bin");
             if let Ok(publics_bytes) = std::fs::read(&publics_path) {
-                warn!(
+                debug!(
                     publics_len = publics_bytes.len(),
                     publics_hex = %hex::encode(&publics_bytes),
-                    "[ZISK DEBUG] SNARK public values (guest output)"
+                    "SNARK public values (guest output)"
                 );
                 // Extract the SHA256 hash (bytes 4-36, after the count header)
                 if let Some(guest_output_hash) = publics_bytes.get(4..36) {
-                    warn!(
+                    debug!(
                         guest_output_sha256 = %hex::encode(guest_output_hash),
-                        "[ZISK DEBUG] Guest program output (sha256 of ProgramOutput.encode())"
+                        "Guest program output (sha256 of ProgramOutput.encode())"
                     );
                 }
             }
@@ -258,12 +258,12 @@ impl ProverBackend for ZiskBackend {
         let input_bytes =
             rkyv::to_bytes::<rkyv::rancor::Error>(input).map_err(BackendError::serialization)?;
 
-        // DEBUG: Log the hash of the serialized input
+        // Log the hash of the serialized input
         let input_hash = Sha256::digest(input_bytes.as_slice());
-        warn!(
+        debug!(
             input_len = input_bytes.len(),
             input_sha256 = %hex::encode(input_hash),
-            "[ZISK DEBUG] Serialized ProgramInput"
+            "Serialized ProgramInput"
         );
 
         std::fs::write(INPUT_PATH, input_bytes.as_slice()).map_err(BackendError::serialization)?;
