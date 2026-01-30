@@ -434,7 +434,7 @@
       },
       "id": 100,
       "panels": [],
-      "title": "Per-block Comparisons MAINNET",
+      "title": "Per-block Difference (ethrex vs others) MAINNET",
       "type": "row"
     },
     {
@@ -442,7 +442,7 @@
         "type": "prometheus",
         "uid": "prom-001"
       },
-      "description": "Per-block latency comparison using 'last' metrics",
+      "description": "Throughput difference: positive = ethrex is faster. Shows (ethrex - other) in gas/s.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -450,9 +450,9 @@
           },
           "custom": {
             "axisBorderShow": false,
-            "axisCenteredZero": false,
+            "axisCenteredZero": true,
             "axisColorMode": "text",
-            "axisLabel": "Duration (ms)",
+            "axisLabel": "gas/s difference",
             "axisPlacement": "auto",
             "barAlignment": 0,
             "barWidthFactor": 0.6,
@@ -479,7 +479,7 @@
               "mode": "none"
             },
             "thresholdsStyle": {
-              "mode": "off"
+              "mode": "line+area"
             }
           },
           "mappings": [],
@@ -487,18 +487,53 @@
             "mode": "absolute",
             "steps": [
               {
+                "color": "red",
+                "value": null
+              },
+              {
                 "color": "green",
                 "value": 0
               }
             ]
           },
-          "unit": "ms"
+          "unit": "si:gas"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex - nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex - reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 10,
-        "w": 12,
+        "w": 24,
         "x": 0,
         "y": 23
       },
@@ -508,7 +543,7 @@
         "legend": {
           "calcs": [
             "mean",
-            "max"
+            "lastNotNull"
           ],
           "displayMode": "list",
           "placement": "bottom",
@@ -528,25 +563,12 @@
             "uid": "prom-001"
           },
           "editorMode": "code",
-          "expr": "max without (BuildTimestamp,Commit,Version) (nethermind_last_block_processing_time_in_ms{instance=\"nethermind-mainnet-1:6060\"})",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "nethermind (last block)",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prom-001"
-          },
-          "editorMode": "code",
-          "expr": "gigagas{job=\"ethrex L1\",instance=~\"$instance(:\\\\d+)?$\"} * 1000000000 / (gas_used{job=\"ethrex L1\",instance=~\"$instance(:\\\\d+)?$\"} + 1)",
+          "expr": "gigagas{job=\"ethrex L1\",instance=\"ethrex-mainnet-1:6063\"} * 1000000000",
           "hide": true,
           "instant": false,
-          "legendFormat": "ethrex (last block) - derived",
+          "legendFormat": "ethrex",
           "range": true,
-          "refId": "B"
+          "refId": "ETHREX"
         },
         {
           "datasource": {
@@ -554,21 +576,63 @@
             "uid": "prom-001"
           },
           "editorMode": "code",
-          "expr": "execution_ms{job=\"ethrex L1\",instance=~\"$instance(:\\\\d+)?$\"}",
-          "hide": false,
+          "expr": "nethermind_mgas_per_sec{instance=\"nethermind-mainnet-1:6060\"} * 1000000",
+          "hide": true,
           "instant": false,
-          "legendFormat": "{{instance}} (last block)",
+          "legendFormat": "nethermind",
           "range": true,
-          "refId": "C"
+          "refId": "NETHERMIND"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second_last{instance=\"reth-mainnet-1:6060\"}",
+          "hide": true,
+          "instant": false,
+          "legendFormat": "reth",
+          "range": true,
+          "refId": "RETH"
+        },
+        {
+          "datasource": {
+            "name": "Expression",
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "$ETHREX - $NETHERMIND",
+          "hide": false,
+          "refId": "DIFF_NETHERMIND",
+          "type": "math"
+        },
+        {
+          "datasource": {
+            "name": "Expression",
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "$ETHREX - $RETH",
+          "hide": false,
+          "refId": "DIFF_RETH",
+          "type": "math"
         }
       ],
-      "title": "ethrex vs nethermind - Latency (per-block)",
+      "title": "Throughput Difference (positive = ethrex faster)",
       "transformations": [
         {
           "id": "renameByRegex",
           "options": {
-            "regex": "^([^:]+):\\d+.*$",
-            "renamePattern": "ethrex $1 (last block)"
+            "regex": "DIFF_NETHERMIND",
+            "renamePattern": "ethrex - nethermind"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DIFF_RETH",
+            "renamePattern": "ethrex - reth"
           }
         }
       ],
@@ -579,7 +643,7 @@
         "type": "prometheus",
         "uid": "prom-001"
       },
-      "description": "Per-block latency comparison using 'last' metrics",
+      "description": "Latency difference: positive = ethrex is faster (lower latency). Shows (other - ethrex) in ms.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -587,9 +651,9 @@
           },
           "custom": {
             "axisBorderShow": false,
-            "axisCenteredZero": false,
+            "axisCenteredZero": true,
             "axisColorMode": "text",
-            "axisLabel": "Duration (ms)",
+            "axisLabel": "ms difference",
             "axisPlacement": "auto",
             "barAlignment": 0,
             "barWidthFactor": 0.6,
@@ -616,13 +680,17 @@
               "mode": "none"
             },
             "thresholdsStyle": {
-              "mode": "off"
+              "mode": "line+area"
             }
           },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
               {
                 "color": "green",
                 "value": 0
@@ -631,13 +699,44 @@
           },
           "unit": "ms"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind - ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth - ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 10,
-        "w": 12,
-        "x": 12,
-        "y": 23
+        "w": 24,
+        "x": 0,
+        "y": 33
       },
       "id": 102,
       "interval": "10s",
@@ -645,7 +744,7 @@
         "legend": {
           "calcs": [
             "mean",
-            "max"
+            "lastNotNull"
           ],
           "displayMode": "list",
           "placement": "bottom",
@@ -659,6 +758,32 @@
       },
       "pluginVersion": "12.2.0",
       "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "execution_ms{job=\"ethrex L1\",instance=\"ethrex-mainnet-1:6063\"}",
+          "hide": true,
+          "instant": false,
+          "legendFormat": "ethrex",
+          "range": true,
+          "refId": "ETHREX"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "max without (BuildTimestamp,Commit,Version) (nethermind_last_block_processing_time_in_ms{instance=\"nethermind-mainnet-1:6060\"})",
+          "hide": true,
+          "instant": false,
+          "legendFormat": "nethermind",
+          "range": true,
+          "refId": "NETHERMIND"
+        },
         {
           "datasource": {
             "type": "prometheus",
@@ -666,279 +791,49 @@
           },
           "editorMode": "code",
           "expr": "reth_consensus_engine_beacon_new_payload_last{instance=\"reth-mainnet-1:6060\"} * 1000",
-          "hide": false,
+          "hide": true,
           "instant": false,
-          "legendFormat": "reth (last block)",
+          "legendFormat": "reth",
           "range": true,
-          "refId": "A"
+          "refId": "RETH"
         },
         {
           "datasource": {
-            "type": "prometheus",
-            "uid": "prom-001"
+            "name": "Expression",
+            "type": "__expr__",
+            "uid": "__expr__"
           },
-          "editorMode": "code",
-          "expr": "execution_ms{job=\"ethrex L1\",instance=~\"$instance(:\\\\d+)?$\"}",
+          "expression": "$NETHERMIND - $ETHREX",
           "hide": false,
-          "instant": false,
-          "legendFormat": "{{instance}} (last block)",
-          "range": true,
-          "refId": "B"
+          "refId": "DIFF_NETHERMIND",
+          "type": "math"
+        },
+        {
+          "datasource": {
+            "name": "Expression",
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "$RETH - $ETHREX",
+          "hide": false,
+          "refId": "DIFF_RETH",
+          "type": "math"
         }
       ],
-      "title": "ethrex vs reth - Latency (per-block)",
+      "title": "Latency Difference (positive = ethrex faster)",
       "transformations": [
         {
           "id": "renameByRegex",
           "options": {
-            "regex": "^([^:]+):\\d+.*$",
-            "renamePattern": "ethrex $1 (last block)"
+            "regex": "DIFF_NETHERMIND",
+            "renamePattern": "nethermind - ethrex"
           }
-        }
-      ],
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prom-001"
-      },
-      "description": "Per-block throughput comparison using 'last' metrics",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": true,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              }
-            ]
-          },
-          "unit": "si:gas"
         },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 10,
-        "w": 12,
-        "x": 0,
-        "y": 33
-      },
-      "id": 103,
-      "interval": "10s",
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean"
-          ],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "12.2.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prom-001"
-          },
-          "editorMode": "code",
-          "expr": "nethermind_mgas_per_sec{instance=\"nethermind-mainnet-1:6060\"} * 1000000",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "nethermind (last block)",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prom-001"
-          },
-          "editorMode": "code",
-          "expr": "gigagas{job=\"ethrex L1\",instance=~\"$instance(:\\\\d+)?$\"} * 1000000000",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "{{instance}} (last block)",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "ethrex vs nethermind - Throughput Mgas/s (per-block)",
-      "transformations": [
         {
           "id": "renameByRegex",
           "options": {
-            "regex": "^([^:]+):\\d+.*$",
-            "renamePattern": "ethrex $1 (last block)"
-          }
-        }
-      ],
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prom-001"
-      },
-      "description": "Per-block throughput comparison using 'last' metrics",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": true,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              }
-            ]
-          },
-          "unit": "si:gas"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 10,
-        "w": 12,
-        "x": 12,
-        "y": 33
-      },
-      "id": 104,
-      "interval": "10s",
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean"
-          ],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "12.2.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prom-001"
-          },
-          "editorMode": "code",
-          "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second_last{instance=\"reth-mainnet-1:6060\"}",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "reth (last block)",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prom-001"
-          },
-          "editorMode": "code",
-          "expr": "gigagas{job=\"ethrex L1\",instance=~\"$instance(:\\\\d+)?$\"} * 1000000000",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "{{instance}} (last block)",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "ethrex vs reth - Throughput Mgas/s (per-block)",
-      "transformations": [
-        {
-          "id": "renameByRegex",
-          "options": {
-            "regex": "^([^:]+):\\d+.*$",
-            "renamePattern": "ethrex $1 (last block)"
+            "regex": "DIFF_RETH",
+            "renamePattern": "reth - ethrex"
           }
         }
       ],
