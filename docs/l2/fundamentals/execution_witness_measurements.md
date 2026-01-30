@@ -1,37 +1,50 @@
-# Comparative Analysis: `debug_executionWitness` Latency Using Pre-Generated vs On-Demand Execution Witnesses
+# Comparative Analysis: `debug_executionWitness` Latency
 
-This document presents the results of measurements conducted to analyze the latency improvements of the `debug_executionWitness` RPC method when execution witnesses are pre-generated during payload execution and stored in the database for a period of time (128 blocks), compared to generating them on demand.
+This document presents the results of measurements conducted to analyze the latency improvements of the `debug_executionWitness` RPC method across different configurations.
 
 > [!NOTE]
 > All measurements were obtained using an RPC node running on the same machine, avoiding network-related latency.
+>
+> Each configuration was measured over a different block range at different points in time. While block characteristics vary, the sample sizes are large enough to provide meaningful comparisons.
+
+## Configurations
+
+- **Pre-Serialized** *(added in [PR #5956](https://github.com/lambdaclass/ethrex/pull/5956))*: Execution witnesses are generated during payload execution, converted to `RpcExecutionWitness`, and stored as pre-serialized JSON bytes in the database. On read, the bytes are parsed directly to `serde_json::Value` without any additional traversal or serialization.
+- **Pre-Generated**: Execution witnesses are generated during payload execution and stored in the database (but require `encode_subtrie()` traversal and serialization on each read).
+- **On-Demand**: Execution witnesses are generated when calling `debug_executionWitness`.
 
 ## Measurements
 
-| Metric | Pre-Generated | On-Demand |
-|-------|---------------|-----------|
-| **Total Blocks Analyzed** | 176 | 176 |
-| **Min Time** | 3 ms | 56 ms |
-| **Max Time** | 255 ms | 521 ms |
-| **Average Time** | 131 ms | 242 ms |
-| **Median Time** | 130 ms | 224 ms |
-| **Block Range** | 24191178 – 24191353 | 24190748 – 24190923 |
+| Metric | Pre-Serialized | Pre-Generated | On-Demand |
+|-------|----------------|---------------|-----------|
+| **Total Blocks Analyzed** | 199 | 176 | 176 |
+| **Min Time** | 6 ms | 3 ms | 56 ms |
+| **Max Time** | 268 ms | 255 ms | 521 ms |
+| **Average Time** | 94 ms | 131 ms | 242 ms |
+| **Median Time** | 91 ms | 130 ms | 224 ms |
+| **Block Range** | 24335714 – 24335912 | 24191178 – 24191353 | 24190748 – 24190923 |
 
 ## Conclusions
 
+### Pre-Serialized vs On-Demand
+
+The average latency drops from **242 ms (on-demand)** to **94 ms (pre-serialized)**, representing an improvement of approximately **61%**. Median latency shows a similar improvement, decreasing from **224 ms** to **91 ms**.
+
+### Pre-Serialized vs Pre-Generated
+
+The average latency drops from **131 ms (pre-generated)** to **94 ms (pre-serialized)**, representing an additional improvement of approximately **28%**. This improvement comes from eliminating the `encode_subtrie()` depth-first traversal that was previously performed on every read to convert `ExecutionWitness` to `RpcExecutionWitness`.
+
+### Pre-Generated vs On-Demand
+
 The average latency drops from **242 ms (on-demand)** to **131 ms (pre-generated)**, representing an improvement of approximately **46%**. Median latency shows a similar improvement, decreasing from **224 ms** to **130 ms**.
 
-Pre-generated execution witnesses exhibit a much tighter latency distribution. The maximum observed latency is reduced by more than half (**521 ms → 255 ms**).
+### Overall
 
-On-demand requests frequently experience high-latency spikes due to witness generation at request time. Pre-generating execution witnesses during payload execution effectively eliminates most of these spikes and results in more predictable response times.
+Pre-serialized execution witnesses exhibit the tightest latency distribution. On-demand requests frequently experience high-latency spikes due to witness generation at request time. Pre-generating and pre-serializing execution witnesses during payload execution effectively eliminates most of these spikes and results in more predictable response times.
 
 ## How These Measurements Were Done
 
 These metrics were obtained from an `ethrex` node synced to the Ethereum mainnet.
-
-Two configurations were compared:
-
-- **Pre-Generated**: Execution witnesses are generated during payload execution and stored in the database.
-- **On-Demand**: Execution witnesses are generated when calling `debug_executionWitness`.
 
 Each configuration was measured over a contiguous range of blocks, and latency was recorded for each request.
 
@@ -60,6 +73,212 @@ Each configuration was measured over a contiguous range of blocks, and latency w
 ## Appendix
 
 ### Full Measurement Data
+
+#### Pre-Serialized
+
+*Total blocks analyzed: 199*
+
+| Block Number | Time (ms) |
+|-------------:|----------:|
+| 24335714 | 110 |
+| 24335715 | 87 |
+| 24335716 | 97 |
+| 24335717 | 71 |
+| 24335718 | 62 |
+| 24335719 | 105 |
+| 24335720 | 62 |
+| 24335721 | 72 |
+| 24335722 | 33 |
+| 24335723 | 98 |
+| 24335724 | 95 |
+| 24335725 | 139 |
+| 24335726 | 61 |
+| 24335727 | 88 |
+| 24335728 | 81 |
+| 24335729 | 97 |
+| 24335730 | 73 |
+| 24335731 | 126 |
+| 24335732 | 112 |
+| 24335733 | 120 |
+| 24335734 | 66 |
+| 24335735 | 106 |
+| 24335736 | 87 |
+| 24335737 | 97 |
+| 24335738 | 161 |
+| 24335739 | 27 |
+| 24335740 | 114 |
+| 24335741 | 85 |
+| 24335742 | 133 |
+| 24335743 | 36 |
+| 24335744 | 164 |
+| 24335745 | 129 |
+| 24335746 | 44 |
+| 24335747 | 46 |
+| 24335748 | 36 |
+| 24335749 | 141 |
+| 24335750 | 145 |
+| 24335751 | 119 |
+| 24335752 | 112 |
+| 24335753 | 78 |
+| 24335754 | 82 |
+| 24335755 | 142 |
+| 24335756 | 21 |
+| 24335757 | 131 |
+| 24335758 | 99 |
+| 24335759 | 77 |
+| 24335760 | 107 |
+| 24335761 | 97 |
+| 24335762 | 132 |
+| 24335763 | 78 |
+| 24335764 | 83 |
+| 24335765 | 48 |
+| 24335766 | 131 |
+| 24335767 | 83 |
+| 24335768 | 60 |
+| 24335769 | 59 |
+| 24335770 | 147 |
+| 24335771 | 75 |
+| 24335772 | 70 |
+| 24335773 | 146 |
+| 24335774 | 78 |
+| 24335775 | 104 |
+| 24335776 | 94 |
+| 24335777 | 97 |
+| 24335778 | 106 |
+| 24335779 | 91 |
+| 24335780 | 57 |
+| 24335781 | 60 |
+| 24335782 | 186 |
+| 24335783 | 122 |
+| 24335784 | 53 |
+| 24335785 | 143 |
+| 24335786 | 79 |
+| 24335787 | 83 |
+| 24335788 | 100 |
+| 24335789 | 68 |
+| 24335790 | 114 |
+| 24335791 | 64 |
+| 24335792 | 102 |
+| 24335793 | 132 |
+| 24335794 | 67 |
+| 24335795 | 111 |
+| 24335796 | 73 |
+| 24335797 | 96 |
+| 24335798 | 77 |
+| 24335799 | 38 |
+| 24335800 | 171 |
+| 24335801 | 140 |
+| 24335802 | 78 |
+| 24335803 | 105 |
+| 24335804 | 75 |
+| 24335805 | 107 |
+| 24335806 | 84 |
+| 24335807 | 78 |
+| 24335808 | 39 |
+| 24335809 | 107 |
+| 24335810 | 108 |
+| 24335811 | 146 |
+| 24335812 | 82 |
+| 24335813 | 118 |
+| 24335814 | 87 |
+| 24335815 | 86 |
+| 24335816 | 82 |
+| 24335817 | 97 |
+| 24335818 | 106 |
+| 24335819 | 31 |
+| 24335820 | 158 |
+| 24335821 | 86 |
+| 24335822 | 71 |
+| 24335823 | 77 |
+| 24335824 | 73 |
+| 24335825 | 113 |
+| 24335826 | 41 |
+| 24335827 | 137 |
+| 24335828 | 92 |
+| 24335829 | 81 |
+| 24335830 | 100 |
+| 24335831 | 119 |
+| 24335832 | 80 |
+| 24335833 | 85 |
+| 24335834 | 6 |
+| 24335835 | 45 |
+| 24335836 | 171 |
+| 24335837 | 134 |
+| 24335838 | 268 |
+| 24335839 | 79 |
+| 24335840 | 169 |
+| 24335841 | 158 |
+| 24335842 | 23 |
+| 24335843 | 164 |
+| 24335844 | 97 |
+| 24335845 | 104 |
+| 24335846 | 93 |
+| 24335847 | 19 |
+| 24335848 | 119 |
+| 24335849 | 78 |
+| 24335850 | 121 |
+| 24335851 | 79 |
+| 24335852 | 138 |
+| 24335853 | 74 |
+| 24335854 | 92 |
+| 24335855 | 106 |
+| 24335856 | 82 |
+| 24335857 | 83 |
+| 24335858 | 74 |
+| 24335859 | 77 |
+| 24335860 | 41 |
+| 24335861 | 91 |
+| 24335862 | 17 |
+| 24335863 | 91 |
+| 24335864 | 118 |
+| 24335865 | 109 |
+| 24335866 | 85 |
+| 24335867 | 84 |
+| 24335868 | 74 |
+| 24335869 | 73 |
+| 24335870 | 90 |
+| 24335871 | 102 |
+| 24335872 | 85 |
+| 24335873 | 109 |
+| 24335874 | 42 |
+| 24335875 | 72 |
+| 24335876 | 130 |
+| 24335877 | 67 |
+| 24335878 | 109 |
+| 24335879 | 102 |
+| 24335880 | 75 |
+| 24335881 | 120 |
+| 24335882 | 74 |
+| 24335883 | 85 |
+| 24335884 | 82 |
+| 24335885 | 94 |
+| 24335886 | 95 |
+| 24335887 | 57 |
+| 24335888 | 108 |
+| 24335889 | 41 |
+| 24335890 | 131 |
+| 24335891 | 156 |
+| 24335892 | 105 |
+| 24335893 | 119 |
+| 24335894 | 91 |
+| 24335895 | 64 |
+| 24335896 | 139 |
+| 24335897 | 144 |
+| 24335898 | 86 |
+| 24335899 | 40 |
+| 24335900 | 52 |
+| 24335901 | 180 |
+| 24335902 | 121 |
+| 24335903 | 42 |
+| 24335904 | 66 |
+| 24335905 | 70 |
+| 24335906 | 92 |
+| 24335907 | 104 |
+| 24335908 | 82 |
+| 24335909 | 85 |
+| 24335910 | 78 |
+| 24335911 | 97 |
+| 24335912 | 86 |
 
 #### Pre-Generated
 
