@@ -524,7 +524,13 @@ impl Blockchain {
                     .send(MerklizationRequest::LoadAccount(hashed_address))
                     .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                 if update.removed {
-                    // Match old behavior: remove account, skip all storage processing
+                    // Match old behavior: remove account, skip added_storage processing.
+                    // Send Delete to clear any existing storage in workers so the
+                    // storage root becomes EMPTY_TRIE_HASH during collection.
+                    for tx in &workers_tx {
+                        tx.send(MerklizationRequest::Delete(hashed_address))
+                            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+                    }
                     let state = account_state.entry(hashed_address).or_default();
                     *state = PreMerkelizedAccountState {
                         info: Some(Default::default()),
