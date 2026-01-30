@@ -117,6 +117,29 @@ jobs:
           docker cp contract_deployer:/env/.env cmd/.env
           cat cmd/.env
 
+      - name: Wait for L2 deposits to be processed
+        run: |
+          # Wait until test account deposits are processed on L2
+          # Get the first test account private key (last line, since tests use pop())
+          FIRST_TEST_PK=$(tail -n1 fixtures/keys/private_keys_tests.txt)
+          RICH_ADDRESS=$(rex address --from-private-key "$FIRST_TEST_PK")
+          echo "Waiting for test account $RICH_ADDRESS deposits to be processed on L2..."
+          MAX_TRIES=300
+          SLEEP_SECS=2
+          for i in $(seq 1 $MAX_TRIES); do
+            echo "Checking L2 balance... (attempt $i)"
+            if balance_output=$(rex balance "$RICH_ADDRESS" http://localhost:1729 2>/dev/null); then
+              balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
+              if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
+                echo "Rich account has balance on L2: ${balance_wei} wei"
+                exit 0
+              fi
+            fi
+            sleep "${SLEEP_SECS}"
+          done
+          echo "Timed out waiting for L2 deposits to be processed"
+          exit 1
+
       - name: Run test
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
