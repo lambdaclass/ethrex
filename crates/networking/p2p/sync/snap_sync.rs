@@ -45,6 +45,25 @@ use ethrex_common::U256;
 #[cfg(not(feature = "rocksdb"))]
 use ethrex_rlp::encode::RLPEncode;
 
+/// Status of the background header download task
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DownloadStatus {
+    /// No background download task was started
+    NotStarted,
+    /// Background download is in progress
+    InProgress,
+    /// Background download has completed
+    Complete,
+}
+
+impl DownloadStatus {
+    /// Returns true if no more headers are expected from the background task
+    /// (either because it completed or was never started)
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Self::Complete | Self::NotStarted)
+    }
+}
+
 /// Persisted State during the Block Sync phase for SnapSync
 pub struct SnapBlockSyncState {
     pub block_hashes: Vec<H256>,
@@ -84,12 +103,23 @@ impl SnapBlockSyncState {
         }
     }
 
-    /// Check if the background header download is complete
-    pub fn is_download_complete(&self) -> bool {
-        self.download_complete
-            .as_ref()
-            .map(|flag| flag.load(Ordering::Acquire))
-            .unwrap_or(true)
+    /// Returns the current status of the background header download task.
+    ///
+    /// # Returns
+    /// - `DownloadStatus::NotStarted` - No background download task was configured
+    /// - `DownloadStatus::InProgress` - Background task is still downloading headers
+    /// - `DownloadStatus::Complete` - Background task has finished downloading all headers
+    pub fn download_status(&self) -> DownloadStatus {
+        match &self.download_complete {
+            None => DownloadStatus::NotStarted,
+            Some(flag) => {
+                if flag.load(Ordering::Acquire) {
+                    DownloadStatus::Complete
+                } else {
+                    DownloadStatus::InProgress
+                }
+            }
+        }
     }
 
     /// Obtain the current head from where to start or resume block sync
@@ -377,7 +407,7 @@ pub async fn snap_sync(
     // Wait for initial headers from background task if we don't have any yet
     // This ensures we have at least one header to use as pivot
     while block_sync_state.block_hashes.is_empty() {
-        if block_sync_state.is_download_complete() {
+        if block_sync_state.download_status().is_terminal() {
             return Err(SyncError::NoBlockHeaders);
         }
         // Check if we should abort (full sync triggered)
