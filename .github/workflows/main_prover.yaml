@@ -122,7 +122,7 @@ jobs:
           # Wait until test account deposits are processed on L2
           # Get the first test account private key (last line, since tests use pop())
           FIRST_TEST_PK=$(tail -n1 fixtures/keys/private_keys_tests.txt)
-          RICH_ADDRESS=$(rex address --from-private-key "$FIRST_TEST_PK")
+          RICH_ADDRESS=$(rex address --private-key "$FIRST_TEST_PK")
           echo "Waiting for test account $RICH_ADDRESS deposits to be processed on L2..."
           MAX_TRIES=300
           SLEEP_SECS=2
