@@ -452,7 +452,7 @@ mod test {
             .unwrap();
 
         assert_eq!(new_node.choices, node.choices);
-        assert_eq!(new_node.value, Into::<ValueRLP>::into(value));
+        assert_eq!(new_node.value, ValueRLP::from(value));
     }
 
     #[test]
