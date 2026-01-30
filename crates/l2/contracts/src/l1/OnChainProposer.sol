@@ -532,12 +532,23 @@ contract OnChainProposer is
         bytes32 vk
     ) internal pure returns (uint64[4] memory out) {
         uint256 word = uint256(vk);
-        // Extract uint64 values from bytes32 without byte swapping.
-        // The VK file bytes are stored in the same order they should be used.
-        out[0] = uint64(word >> 192);
-        out[1] = uint64(word >> 128);
-        out[2] = uint64(word >> 64);
-        out[3] = uint64(word);
+        // The VK file is written in little-endian by cargo-zisk rom-vkey,
+        // but bytes32 is read as big-endian. We need to swap bytes within each uint64.
+        out[0] = _swapBytes64(uint64(word >> 192));
+        out[1] = _swapBytes64(uint64(word >> 128));
+        out[2] = _swapBytes64(uint64(word >> 64));
+        out[3] = _swapBytes64(uint64(word));
+    }
+
+    function _swapBytes64(uint64 x) internal pure returns (uint64) {
+        return ((x & 0xFF00000000000000) >> 56) |
+               ((x & 0x00FF000000000000) >> 40) |
+               ((x & 0x0000FF0000000000) >> 24) |
+               ((x & 0x000000FF00000000) >> 8) |
+               ((x & 0x00000000FF000000) << 8) |
+               ((x & 0x0000000000FF0000) << 24) |
+               ((x & 0x000000000000FF00) << 40) |
+               ((x & 0x00000000000000FF) << 56);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -800,6 +811,78 @@ contract OnChainProposer is
         for (uint256 i = 0; i < 32; i++) {
             ziskPublicValues[4 + i] = publicInputsHash[i];
         }
+    }
+
+    // ============== GRANULAR DEBUG FUNCTIONS ==============
+
+    /// @notice DEBUG: Step 1 - Get raw VK bytes32 before conversion
+    function debugGetRawVk(uint256 batchNumber) external view returns (bytes32 rawVk) {
+        bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
+        rawVk = verificationKeys[batchCommitHash][ZISK_VERIFIER_ID];
+    }
+
+    /// @notice DEBUG: Step 2 - Get VK after _toZiskProgramVk conversion
+    function debugGetConvertedVk(uint256 batchNumber) external view returns (uint64[4] memory programVk) {
+        bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
+        bytes32 rawVk = verificationKeys[batchCommitHash][ZISK_VERIFIER_ID];
+        programVk = _toZiskProgramVk(rawVk);
+    }
+
+    /// @notice DEBUG: Get publicInputs bytes (what we hash)
+    function debugGetPublicInputs(uint256 batchNumber) external view returns (bytes memory publicInputs) {
+        publicInputs = _getPublicInputsFromCommitment(batchNumber);
+    }
+
+    /// @notice DEBUG: Step 1 of publicValues - sha256(publicInputs)
+    function debugGetPublicInputsHash(uint256 batchNumber) external view returns (bytes32 hash) {
+        bytes memory publicInputs = _getPublicInputsFromCommitment(batchNumber);
+        hash = sha256(publicInputs);
+    }
+
+    /// @notice DEBUG: Step 2 of publicValues - 256 bytes with count=8 at byte[3]
+    function debugGetPublicValuesWithCount(uint256 batchNumber) external view returns (bytes memory ziskPublicValues) {
+        ziskPublicValues = new bytes(256);
+        ziskPublicValues[3] = 0x08;
+        // Note: hash not yet copied, just showing count placement
+    }
+
+    /// @notice DEBUG: Step 3 of publicValues - final 256 bytes ready for verifier
+    function debugGetFinalPublicValues(uint256 batchNumber) external view returns (bytes memory ziskPublicValues) {
+        bytes memory publicInputs = _getPublicInputsFromCommitment(batchNumber);
+        bytes32 outputHash = sha256(publicInputs);
+        ziskPublicValues = new bytes(256);
+        ziskPublicValues[3] = 0x08;
+        for (uint256 i = 0; i < 32; i++) {
+            ziskPublicValues[4 + i] = outputHash[i];
+        }
+    }
+
+    /// @notice DEBUG: Get first 36 bytes of publicValues (count + hash) as hex for comparison
+    function debugGetPublicValuesPrefix(uint256 batchNumber) external view returns (bytes memory prefix) {
+        bytes memory publicInputs = _getPublicInputsFromCommitment(batchNumber);
+        bytes32 outputHash = sha256(publicInputs);
+        prefix = new bytes(36);
+        prefix[3] = 0x08; // count = 8
+        for (uint256 i = 0; i < 32; i++) {
+            prefix[4 + i] = outputHash[i];
+        }
+    }
+
+    /// @notice DEBUG: Compare VK conversion - returns both raw and converted for easy comparison
+    function debugCompareVk(uint256 batchNumber) external view returns (
+        bytes32 rawVk,
+        uint64 vk0,
+        uint64 vk1,
+        uint64 vk2,
+        uint64 vk3
+    ) {
+        bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
+        rawVk = verificationKeys[batchCommitHash][ZISK_VERIFIER_ID];
+        uint64[4] memory programVk = _toZiskProgramVk(rawVk);
+        vk0 = programVk[0];
+        vk1 = programVk[1];
+        vk2 = programVk[2];
+        vk3 = programVk[3];
     }
 
     /// @inheritdoc IOnChainProposer
