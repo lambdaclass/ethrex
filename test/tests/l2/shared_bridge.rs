@@ -713,6 +713,7 @@ async fn compile_and_deploy_counter(
     rich_wallet_private_key: SecretKey,
 ) -> Result<Address> {
     let contracts_path = Path::new("contracts");
+    let counter_path = Path::new("../crates/l2/contracts/src/example");
 
     get_contract_dependencies(contracts_path);
     let remappings = [(
@@ -721,16 +722,16 @@ async fn compile_and_deploy_counter(
             .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
     )];
     compile_contract(
-        contracts_path,
-        &contracts_path.join("src/example/Counter.sol"),
+        counter_path,
+        &counter_path.join("Counter.sol"),
         false,
         false,
         Some(&remappings),
-        &[contracts_path],
+        &[counter_path, contracts_path],
         None,
     )?;
     let init_code_l2 = hex::decode(String::from_utf8(std::fs::read(
-        "contracts/solc_out/Counter.bin",
+        counter_path.join("solc_out/Counter.bin"),
     )?)?)?;
 
     let counter = test_deploy(
