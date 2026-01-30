@@ -208,12 +208,213 @@
       "type": "timeseries"
     },
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "description": "Latency difference: positive = ethrex is faster (lower latency). Shows (other - ethrex) in ms.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": true,
+            "axisColorMode": "text",
+            "axisLabel": "ms difference",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "line+area"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          },
+          "unit": "ms"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind - ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth - ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "id": 102,
+      "interval": "10s",
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "(sum by (instance) (increase(rpc_request_duration_seconds_sum{job=\"ethrex L1\", instance=\"ethrex-mainnet-1:3701\", method=\"engine_newPayloadV4\", namespace=\"engine\"}[18s])) / sum by (instance) (increase(rpc_request_duration_seconds_count{job=\"ethrex L1\", instance=\"ethrex-mainnet-1:3701\", method=\"engine_newPayloadV4\", namespace=\"engine\"}[18s]))) * 1000",
+          "hide": true,
+          "instant": false,
+          "legendFormat": "ethrex",
+          "range": true,
+          "refId": "ETHREX"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "max without (BuildTimestamp,Commit,Version) (nethermind_last_block_processing_time_in_ms{instance=\"nethermind-mainnet-1:6060\"})",
+          "hide": true,
+          "instant": false,
+          "legendFormat": "nethermind",
+          "range": true,
+          "refId": "NETHERMIND"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "reth_consensus_engine_beacon_new_payload_last{instance=\"reth-mainnet-1:6060\"} * 1000",
+          "hide": true,
+          "instant": false,
+          "legendFormat": "reth",
+          "range": true,
+          "refId": "RETH"
+        },
+        {
+          "datasource": {
+            "name": "Expression",
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "$NETHERMIND - $ETHREX",
+          "hide": false,
+          "refId": "DIFF_NETHERMIND",
+          "type": "math"
+        },
+        {
+          "datasource": {
+            "name": "Expression",
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "$RETH - $ETHREX",
+          "hide": false,
+          "refId": "DIFF_RETH",
+          "type": "math"
+        }
+      ],
+      "title": "Latency Difference (positive = ethrex faster)",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DIFF_NETHERMIND",
+            "renamePattern": "nethermind - ethrex"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DIFF_RETH",
+            "renamePattern": "reth - ethrex"
+          }
+        }
+      ],
+      "type": "timeseries"
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 9
+        "y": 19
       },
       "id": 14,
       "panels": [],
@@ -287,7 +488,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 10
+        "y": 20
       },
       "id": 13,
       "interval": "10s",
@@ -425,19 +626,6 @@
       "type": "timeseries"
     },
     {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 22
-      },
-      "id": 100,
-      "panels": [],
-      "title": "Per-block Difference (ethrex vs others) MAINNET",
-      "type": "row"
-    },
-    {
       "datasource": {
         "type": "prometheus",
         "uid": "prom-001"
@@ -535,7 +723,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 23
+        "y": 32
       },
       "id": 101,
       "interval": "10s",
@@ -563,7 +751,7 @@
             "uid": "prom-001"
           },
           "editorMode": "code",
-          "expr": "gigagas{job=\"ethrex L1\",instance=\"ethrex-mainnet-1:6063\"} * 1000000000",
+          "expr": "gigagas{job=\"ethrex L1\",instance=\"ethrex-mainnet-1:3701\"} * 1000000000",
           "hide": true,
           "instant": false,
           "legendFormat": "ethrex",
@@ -639,213 +827,12 @@
       "type": "timeseries"
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prom-001"
-      },
-      "description": "Latency difference: positive = ethrex is faster (lower latency). Shows (other - ethrex) in ms.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": true,
-            "axisColorMode": "text",
-            "axisLabel": "ms difference",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": true,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "line+area"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": 0
-              }
-            ]
-          },
-          "unit": "ms"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "nethermind - ethrex"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "blue",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "reth - ethrex"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "orange",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 10,
-        "w": 24,
-        "x": 0,
-        "y": 33
-      },
-      "id": 102,
-      "interval": "10s",
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "lastNotNull"
-          ],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "12.2.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prom-001"
-          },
-          "editorMode": "code",
-          "expr": "execution_ms{job=\"ethrex L1\",instance=\"ethrex-mainnet-1:6063\"}",
-          "hide": true,
-          "instant": false,
-          "legendFormat": "ethrex",
-          "range": true,
-          "refId": "ETHREX"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prom-001"
-          },
-          "editorMode": "code",
-          "expr": "max without (BuildTimestamp,Commit,Version) (nethermind_last_block_processing_time_in_ms{instance=\"nethermind-mainnet-1:6060\"})",
-          "hide": true,
-          "instant": false,
-          "legendFormat": "nethermind",
-          "range": true,
-          "refId": "NETHERMIND"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prom-001"
-          },
-          "editorMode": "code",
-          "expr": "reth_consensus_engine_beacon_new_payload_last{instance=\"reth-mainnet-1:6060\"} * 1000",
-          "hide": true,
-          "instant": false,
-          "legendFormat": "reth",
-          "range": true,
-          "refId": "RETH"
-        },
-        {
-          "datasource": {
-            "name": "Expression",
-            "type": "__expr__",
-            "uid": "__expr__"
-          },
-          "expression": "$NETHERMIND - $ETHREX",
-          "hide": false,
-          "refId": "DIFF_NETHERMIND",
-          "type": "math"
-        },
-        {
-          "datasource": {
-            "name": "Expression",
-            "type": "__expr__",
-            "uid": "__expr__"
-          },
-          "expression": "$RETH - $ETHREX",
-          "hide": false,
-          "refId": "DIFF_RETH",
-          "type": "math"
-        }
-      ],
-      "title": "Latency Difference (positive = ethrex faster)",
-      "transformations": [
-        {
-          "id": "renameByRegex",
-          "options": {
-            "regex": "DIFF_NETHERMIND",
-            "renamePattern": "nethermind - ethrex"
-          }
-        },
-        {
-          "id": "renameByRegex",
-          "options": {
-            "regex": "DIFF_RETH",
-            "renamePattern": "reth - ethrex"
-          }
-        }
-      ],
-      "type": "timeseries"
-    },
-    {
       "collapsed": true,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 43
+        "y": 42
       },
       "id": 5,
       "panels": [
@@ -1010,7 +997,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 23
+        "y": 43
       },
       "id": 8,
       "panels": [
@@ -1386,7 +1373,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 24
+        "y": 44
       },
       "id": 10,
       "panels": [
