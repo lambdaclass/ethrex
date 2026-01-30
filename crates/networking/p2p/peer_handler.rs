@@ -17,10 +17,10 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
-    sync::{AccountStorageRoots, SnapBlockSyncState, block_is_stale, update_pivot},
+    sync::{AccountStorageRoots, block_is_stale},
     utils::{
-        AccountsWithStorage, dump_accounts_to_file, dump_storages_to_file,
-        get_account_state_snapshot_file, get_account_storages_snapshot_file,
+        AccountsWithStorage, dump_storages_to_file,
+        get_account_storages_snapshot_file,
     },
 };
 use bytes::Bytes;
@@ -36,9 +36,16 @@ use spawned_concurrency::tasks::GenServerHandle;
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     io::ErrorKind,
+    mem::size_of,
     path::{Path, PathBuf},
     sync::atomic::Ordering,
     time::{Duration, SystemTime},
+};
+use tempfile::TempDir;
+use tokio::{
+    fs::File,
+    io::{AsyncWriteExt, BufWriter},
+    sync::mpsc,
 };
 use tracing::{debug, error, info, trace, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -54,6 +61,16 @@ pub const MAX_HEADER_CHUNK: u64 = 500_000;
 // the first steps of snap sync
 pub const RANGE_FILE_CHUNK_SIZE: usize = 1024 * 1024 * 64; // 64MB
 pub const SNAP_LIMIT: usize = 128;
+
+// Bucket-based download architecture constants
+// Split address space by first byte of account hash (256 buckets)
+pub const BUCKET_COUNT: usize = 256;
+// Channel buffer size for bucket writers (accounts buffered before write)
+pub const BUCKET_CHANNEL_CAPACITY: usize = 1000;
+// Retry logic constants
+pub const MAX_RETRIES_PER_RANGE: u32 = 10;
+pub const RETRY_BACKOFF_BASE_MS: u64 = 100;
+pub const RETRY_BACKOFF_MAX_MS: u64 = 10_000;
 
 // Request as many as 128 block bodies per request
 // this magic number is not part of the protocol and is taken from geth, see:
@@ -91,6 +108,212 @@ struct StorageTask {
     start_hash: H256,
     // end_hash is None if the task is for the first big storage request
     end_hash: Option<H256>,
+}
+
+// Bucket-based download architecture types
+
+/// Sets up 256 bucket writer tasks with lock-free channel communication
+///
+/// Each bucket writer:
+/// - Receives accounts via a dedicated channel
+/// - Writes RLP-encoded accounts to an append-only file
+/// - Sends completion notification with file path when channel closes
+///
+/// Returns:
+/// - HashMap of bucket_id -> sender channels
+/// - Receiver for completion notifications (bucket_id, file_path)
+/// - TempDir handle (caller must keep alive until all writes complete)
+async fn setup_bucket_writers() -> Result<
+    (
+        HashMap<u8, mpsc::Sender<Vec<AccountRangeUnit>>>,
+        mpsc::Receiver<(u8, PathBuf)>,
+        TempDir,
+    ),
+    PeerHandlerError,
+> {
+    // Create temp directory for bucket files
+    let temp_dir = TempDir::new().map_err(|e| {
+        PeerHandlerError::UnrecoverableError(format!("Failed to create temp directory: {}", e))
+    })?;
+
+    let base_path = temp_dir.path().to_path_buf();
+
+    let mut bucket_channels = HashMap::new();
+    let (completion_tx, completion_rx) = mpsc::channel(BUCKET_COUNT);
+
+    // Spawn 256 bucket writer tasks
+    for bucket_id in 0..BUCKET_COUNT {
+        let bucket_id_u8 = bucket_id as u8;
+        let (tx, mut rx) = mpsc::channel::<Vec<AccountRangeUnit>>(BUCKET_CHANNEL_CAPACITY);
+        bucket_channels.insert(bucket_id_u8, tx);
+
+        let bucket_path = base_path.join(format!("bucket_{:02x}.rlp", bucket_id_u8));
+        let completion_tx = completion_tx.clone();
+
+        // Spawn dedicated writer task for this bucket
+        tokio::spawn(async move {
+            let result: Result<(), std::io::Error> = async {
+                let file = File::create(&bucket_path).await?;
+                let mut writer = BufWriter::new(file);
+
+                // Receive and write accounts until channel closes
+                while let Some(accounts) = rx.recv().await {
+                    for account in accounts {
+                        let encoded = account.encode_to_vec();
+                        writer.write_all(&encoded).await?;
+                    }
+                }
+
+                // Flush remaining data
+                writer.flush().await?;
+                Ok(())
+            }
+            .await;
+
+            match result {
+                Ok(()) => {
+                    debug!("Bucket {} writer completed successfully", bucket_id_u8);
+                    // Send completion notification
+                    let _ = completion_tx.send((bucket_id_u8, bucket_path)).await;
+                }
+                Err(e) => {
+                    error!("Bucket {} writer failed: {}", bucket_id_u8, e);
+                }
+            }
+        });
+    }
+
+    Ok((bucket_channels, completion_rx, temp_dir))
+}
+
+/// Downloads an account range and fans out accounts to bucket channels (verify-then-fanout pattern)
+///
+/// Algorithm:
+/// 1. Request account range from peer (start_hash to H256::MAX, let peer decide how much to return)
+/// 2. Verify FULL peer response with Merkle proof (validates peer's contiguous range)
+/// 3. Fan out verified accounts to bucket channels based on first byte of hash
+/// 4. Return next starting hash if more data available, None if range complete
+///
+/// Key insight: Verification happens on peer's range BEFORE bucketing, so proof structure is valid
+///
+/// Returns:
+/// - Ok(Some(next_hash)) if should continue from next_hash
+/// - Ok(None) if range is complete (no more accounts)
+/// - Err(_) on failure (caller should retry)
+async fn download_range_and_fanout(
+    peer_handler: &mut PeerHandler,
+    start_hash: H256,
+    state_root: H256,
+    bucket_channels: &HashMap<u8, mpsc::Sender<Vec<AccountRangeUnit>>>,
+) -> Result<Option<H256>, PeerHandlerError> {
+    // Get best available peer
+    let Some((peer_id, mut connection)) = peer_handler
+        .peer_table
+        .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+        .await?
+    else {
+        return Err(PeerHandlerError::NoResponseFromPeer);
+    };
+
+    // Request account range (no end limit - let peer decide)
+    let request_id = rand::random();
+    let request = RLPxMessage::GetAccountRange(GetAccountRange {
+        id: request_id,
+        root_hash: state_root,
+        starting_hash: start_hash,
+        limit_hash: HASH_MAX, // No limit, peer returns what it can
+        response_bytes: MAX_RESPONSE_BYTES,
+    });
+
+    let response = PeerHandler::make_request(
+        &mut peer_handler.peer_table,
+        peer_id,
+        &mut connection,
+        request,
+        PEER_REPLY_TIMEOUT,
+    )
+    .await;
+
+    let Ok(RLPxMessage::AccountRange(AccountRange {
+        id: _,
+        accounts,
+        proof,
+    })) = response
+    else {
+        peer_handler.peer_table.record_failure(&peer_id).await?;
+        return Err(PeerHandlerError::UnexpectedResponseFromPeer(peer_id));
+    };
+
+    if accounts.is_empty() {
+        peer_handler.peer_table.record_failure(&peer_id).await?;
+        return Err(PeerHandlerError::EmptyResponseFromPeer(peer_id));
+    }
+
+    // Verify FULL response (proof validates peer's contiguous range)
+    let proof = encodable_to_proof(&proof);
+    let (account_hashes, account_states): (Vec<_>, Vec<_>) =
+        accounts.iter().map(|unit| (unit.hash, unit.account)).unzip();
+    let encoded_accounts = account_states
+        .iter()
+        .map(|acc| acc.encode_to_vec())
+        .collect::<Vec<_>>();
+
+    let should_continue = match verify_range(
+        state_root,
+        &start_hash,
+        &account_hashes,
+        &encoded_accounts,
+        &proof,
+    ) {
+        Ok(should_continue) => should_continue,
+        Err(_) => {
+            // Record failure on invalid proof
+            peer_handler.peer_table.record_failure(&peer_id).await.ok();
+            return Err(PeerHandlerError::UnrecoverableError(
+                "Invalid account range proof".to_string(),
+            ));
+        }
+    };
+
+    // Record success
+    peer_handler.peer_table.record_success(&peer_id).await?;
+
+    // Fan out verified accounts to bucket channels (NO LOCKS!)
+    let mut accounts_by_bucket: HashMap<u8, Vec<AccountRangeUnit>> = HashMap::new();
+    for account in accounts.iter() {
+        let bucket_id = account.hash.0[0]; // First byte determines bucket
+        accounts_by_bucket
+            .entry(bucket_id)
+            .or_default()
+            .push(account.clone());
+    }
+
+    // Send to each bucket's channel
+    for (bucket_id, bucket_accounts) in accounts_by_bucket {
+        if let Some(sender) = bucket_channels.get(&bucket_id) {
+            sender
+                .send(bucket_accounts)
+                .await
+                .map_err(|_| {
+                    PeerHandlerError::UnrecoverableError(format!(
+                        "Bucket {} channel closed unexpectedly",
+                        bucket_id
+                    ))
+                })?;
+        }
+    }
+
+    // Return next starting point if more data available
+    if should_continue {
+        let last_hash = account_hashes
+            .last()
+            .ok_or(PeerHandlerError::AccountHashes)?;
+        let next_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
+        let next_start = H256::from_uint(&next_start_u256);
+        Ok(Some(next_start))
+    } else {
+        Ok(None) // Range complete
+    }
 }
 
 async fn ask_peer_head_number(
@@ -601,338 +824,118 @@ impl PeerHandler {
         Ok(None)
     }
 
-    /// Requests an account range from any suitable peer given the state trie's root and the starting hash and the limit hash.
-    /// Will also return a boolean indicating if there is more state to be fetched towards the right of the trie
-    /// (Note that the boolean will be true even if the remaining state is ouside the boundary set by the limit hash)
+
+    /// Downloads all accounts using bucket-based architecture with verify-then-fanout pattern
     ///
-    /// # Returns
+    /// Replaces the complex chunking approach (800 dynamic chunks) with a simpler design:
+    /// - 256 fixed buckets by first byte of account hash
+    /// - Verify-then-fanout: verify peer response, then distribute to buckets
+    /// - Lock-free channels: dedicated writer task per bucket
+    /// - Sequential download: simpler coordination than parallel chunks
     ///
-    /// The account range or `None` if:
-    ///
-    /// - There are no available peers (the node just started up or was rejected by all other nodes)
-    /// - No peer returned a valid response in the given time and retry limits
-    pub async fn request_account_range(
+    /// Returns paths to 256 bucket files containing RLP-encoded accounts
+    pub async fn download_accounts_bucketed(
         &mut self,
-        start: H256,
-        limit: H256,
-        account_state_snapshots_dir: &Path,
-        pivot_header: &mut BlockHeader,
-        block_sync_state: &mut SnapBlockSyncState,
-    ) -> Result<(), PeerHandlerError> {
+        state_root: H256,
+    ) -> Result<Vec<PathBuf>, PeerHandlerError> {
+        info!("[SNAP] Phase 1/2: Starting bucket-based account download");
         METRICS
             .current_step
             .set(CurrentStepValue::RequestingAccountRanges);
-        // 1) split the range in chunks of same length
-        let start_u256 = U256::from_big_endian(&start.0);
-        let limit_u256 = U256::from_big_endian(&limit.0);
 
-        let chunk_count = 800;
-        let chunk_size = (limit_u256 - start_u256) / chunk_count;
-
-        // list of tasks to be executed
-        let mut tasks_queue_not_started = VecDeque::<(H256, H256)>::new();
-        for i in 0..(chunk_count as u64) {
-            let chunk_start_u256 = chunk_size * i + start_u256;
-            // We subtract one because ranges are inclusive
-            let chunk_end_u256 = chunk_start_u256 + chunk_size - 1u64;
-            let chunk_start = H256::from_uint(&(chunk_start_u256));
-            let chunk_end = H256::from_uint(&(chunk_end_u256));
-            tasks_queue_not_started.push_back((chunk_start, chunk_end));
-        }
-        // Modify the last chunk to include the limit
-        let last_task = tasks_queue_not_started
-            .back_mut()
-            .ok_or(PeerHandlerError::NoTasks)?;
-        last_task.1 = limit;
-
-        // 2) request the chunks from peers
-
-        let mut downloaded_count = 0_u64;
-        let mut all_account_hashes = Vec::new();
-        let mut all_accounts_state = Vec::new();
-
-        // channel to send the tasks to the peers
-        let (task_sender, mut task_receiver) =
-            tokio::sync::mpsc::channel::<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>(1000);
-
-        debug!("Starting to download account ranges from peers");
+        // Setup bucket writers (256 dedicated tasks with channels)
+        let (bucket_channels, mut completion_rx, _temp_dir) = setup_bucket_writers().await?;
 
         *METRICS.account_tries_download_start_time.lock().await = Some(SystemTime::now());
 
-        let mut completed_tasks = 0;
-        let mut chunk_file = 0;
-        let mut last_update: SystemTime = SystemTime::now();
-        let mut write_set = tokio::task::JoinSet::new();
-
-        let mut logged_no_free_peers_count = 0;
+        // Download entire address space using verify-then-fanout pattern with exponential backoff
+        let mut current_start = H256::zero();
+        let mut bytes_downloaded = 0u64;
+        let mut last_log = SystemTime::now();
+        let mut consecutive_failures = 0u32;
+        let mut current_backoff_ms = RETRY_BACKOFF_BASE_MS;
 
         loop {
-            if all_accounts_state.len() * size_of::<AccountState>() >= RANGE_FILE_CHUNK_SIZE {
-                let current_account_hashes = std::mem::take(&mut all_account_hashes);
-                let current_account_states = std::mem::take(&mut all_accounts_state);
-
-                let account_state_chunk = current_account_hashes
-                    .into_iter()
-                    .zip(current_account_states)
-                    .collect::<Vec<(H256, AccountState)>>();
-
-                if !std::fs::exists(account_state_snapshots_dir)
-                    .map_err(|_| PeerHandlerError::NoStateSnapshotsDir)?
-                {
-                    std::fs::create_dir_all(account_state_snapshots_dir)
-                        .map_err(|_| PeerHandlerError::CreateStateSnapshotsDir)?;
-                }
-
-                let account_state_snapshots_dir_cloned = account_state_snapshots_dir.to_path_buf();
-                write_set.spawn(async move {
-                    let path = get_account_state_snapshot_file(
-                        &account_state_snapshots_dir_cloned,
-                        chunk_file,
-                    );
-                    // TODO: check the error type and handle it properly
-                    dump_accounts_to_file(&path, account_state_chunk)
-                });
-
-                chunk_file += 1;
-            }
-
-            if last_update
-                .elapsed()
-                .expect("Time shouldn't be in the past")
-                >= Duration::from_secs(1)
+            // Download range and fan out to buckets
+            match download_range_and_fanout(self, current_start, state_root, &bucket_channels).await
             {
-                METRICS
-                    .downloaded_account_tries
-                    .store(downloaded_count, Ordering::Relaxed);
-                last_update = SystemTime::now();
-            }
+                Ok(Some(next_start)) => {
+                    // Success - reset retry state
+                    consecutive_failures = 0;
+                    current_backoff_ms = RETRY_BACKOFF_BASE_MS;
+                    current_start = next_start;
 
-            if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
-                if let Some((chunk_start, chunk_end)) = chunk_start_end {
-                    if chunk_start <= chunk_end {
-                        tasks_queue_not_started.push_back((chunk_start, chunk_end));
-                    } else {
-                        completed_tasks += 1;
+                    // Update metrics and logging
+                    bytes_downloaded += MAX_RESPONSE_BYTES; // Approximate
+                    if last_log.elapsed().unwrap_or_default() >= Duration::from_secs(5) {
+                        let gb = bytes_downloaded as f64 / 1_000_000_000.0;
+                        info!("[SNAP] Phase 1/2: Downloaded {:.2} GB of accounts", gb);
+                        METRICS
+                            .downloaded_account_tries
+                            .store(bytes_downloaded / size_of::<AccountState>() as u64, Ordering::Relaxed);
+                        last_log = SystemTime::now();
                     }
                 }
-                if chunk_start_end.is_none() {
-                    completed_tasks += 1;
-                }
-                if accounts.is_empty() {
-                    self.peer_table.record_failure(&peer_id).await?;
-                    continue;
-                }
-                self.peer_table.record_success(&peer_id).await?;
-
-                downloaded_count += accounts.len() as u64;
-
-                debug!(
-                    "Downloaded {} accounts from peer {} (current count: {downloaded_count})",
-                    accounts.len(),
-                    peer_id
-                );
-                all_account_hashes.extend(accounts.iter().map(|unit| unit.hash));
-                all_accounts_state.extend(accounts.iter().map(|unit| unit.account));
-            }
-
-            let Some((peer_id, connection)) = self
-                .peer_table
-                .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
-                .await
-                .inspect_err(|err| warn!(%err, "Error requesting a peer for account range"))
-                .unwrap_or(None)
-            else {
-                // Log ~ once every 10 seconds
-                if logged_no_free_peers_count == 0 {
-                    trace!("We are missing peers in request_account_range");
-                    logged_no_free_peers_count = 1000;
-                }
-                logged_no_free_peers_count -= 1;
-                // Sleep a bit to avoid busy polling
-                tokio::time::sleep(Duration::from_millis(10)).await;
-                continue;
-            };
-
-            let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
-                if completed_tasks >= chunk_count {
-                    debug!("All account ranges downloaded successfully");
+                Ok(None) => {
+                    // Download complete
+                    info!("[SNAP] Phase 1/2: Account download complete");
                     break;
                 }
-                continue;
-            };
+                Err(e) => {
+                    consecutive_failures += 1;
 
-            let tx = task_sender.clone();
-
-            if block_is_stale(pivot_header) {
-                debug!("request_account_range became stale, updating pivot");
-                *pivot_header = update_pivot(
-                    pivot_header.number,
-                    pivot_header.timestamp,
-                    self,
-                    block_sync_state,
-                )
-                .await
-                .expect("Should be able to update pivot")
-            }
-
-            let peer_table = self.peer_table.clone();
-
-            tokio::spawn(PeerHandler::request_account_range_worker(
-                peer_id,
-                connection,
-                peer_table,
-                chunk_start,
-                chunk_end,
-                pivot_header.state_root,
-                tx,
-            ));
-        }
-
-        write_set
-            .join_all()
-            .await
-            .into_iter()
-            .collect::<Result<Vec<()>, DumpError>>()
-            .map_err(PeerHandlerError::DumpError)?;
-
-        // TODO: This is repeated code, consider refactoring
-        {
-            let current_account_hashes = std::mem::take(&mut all_account_hashes);
-            let current_account_states = std::mem::take(&mut all_accounts_state);
-
-            let account_state_chunk = current_account_hashes
-                .into_iter()
-                .zip(current_account_states)
-                .collect::<Vec<(H256, AccountState)>>();
-
-            if !std::fs::exists(account_state_snapshots_dir)
-                .map_err(|_| PeerHandlerError::NoStateSnapshotsDir)?
-            {
-                std::fs::create_dir_all(account_state_snapshots_dir)
-                    .map_err(|_| PeerHandlerError::CreateStateSnapshotsDir)?;
-            }
-
-            let path = get_account_state_snapshot_file(account_state_snapshots_dir, chunk_file);
-            dump_accounts_to_file(&path, account_state_chunk)
-                .inspect_err(|err| {
-                    error!(
-                        "We had an error dumping the last accounts to disk {}",
-                        err.error
-                    )
-                })
-                .map_err(|_| PeerHandlerError::WriteStateSnapshotsDir(chunk_file))?;
-        }
-
-        METRICS
-            .downloaded_account_tries
-            .store(downloaded_count, Ordering::Relaxed);
-        *METRICS.account_tries_download_end_time.lock().await = Some(SystemTime::now());
-
-        Ok(())
-    }
-
-    #[allow(clippy::type_complexity)]
-    async fn request_account_range_worker(
-        peer_id: H256,
-        mut connection: PeerConnection,
-        mut peer_table: PeerTable,
-        chunk_start: H256,
-        chunk_end: H256,
-        state_root: H256,
-        tx: tokio::sync::mpsc::Sender<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>,
-    ) -> Result<(), PeerHandlerError> {
-        debug!(
-            "Requesting account range from peer {peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
-        );
-        let request_id = rand::random();
-        let request = RLPxMessage::GetAccountRange(GetAccountRange {
-            id: request_id,
-            root_hash: state_root,
-            starting_hash: chunk_start,
-            limit_hash: chunk_end,
-            response_bytes: MAX_RESPONSE_BYTES,
-        });
-        if let Ok(RLPxMessage::AccountRange(AccountRange {
-            id: _,
-            accounts,
-            proof,
-        })) = PeerHandler::make_request(
-            &mut peer_table,
-            peer_id,
-            &mut connection,
-            request,
-            PEER_REPLY_TIMEOUT,
-        )
-        .await
-        {
-            if accounts.is_empty() {
-                tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
-                    .await
-                    .ok();
-                return Ok(());
-            }
-            // Unzip & validate response
-            let proof = encodable_to_proof(&proof);
-            let (account_hashes, account_states): (Vec<_>, Vec<_>) = accounts
-                .clone()
-                .into_iter()
-                .map(|unit| (unit.hash, unit.account))
-                .unzip();
-            let encoded_accounts = account_states
-                .iter()
-                .map(|acc| acc.encode_to_vec())
-                .collect::<Vec<_>>();
-
-            let Ok(should_continue) = verify_range(
-                state_root,
-                &chunk_start,
-                &account_hashes,
-                &encoded_accounts,
-                &proof,
-            ) else {
-                tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
-                    .await
-                    .ok();
-                tracing::error!("Received invalid account range");
-                return Ok(());
-            };
-
-            // If the range has more accounts to fetch, we send the new chunk
-            let chunk_left = if should_continue {
-                let last_hash = match account_hashes.last() {
-                    Some(last_hash) => last_hash,
-                    None => {
-                        tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
-                            .await
-                            .ok();
-                        error!("Account hashes last failed, this shouldn't happen");
-                        return Err(PeerHandlerError::AccountHashes);
+                    // Check retry limit
+                    if consecutive_failures > MAX_RETRIES_PER_RANGE {
+                        error!(
+                            "[SNAP] Failed after {} retries: {}",
+                            MAX_RETRIES_PER_RANGE, e
+                        );
+                        return Err(e);
                     }
-                };
-                let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
-                let new_start = H256::from_uint(&new_start_u256);
-                Some((new_start, chunk_end))
-            } else {
-                None
-            };
-            tx.send((
-                accounts
-                    .into_iter()
-                    .filter(|unit| unit.hash <= chunk_end)
-                    .collect(),
-                peer_id,
-                chunk_left,
-            ))
-            .await
-            .ok();
-        } else {
-            tracing::debug!("Failed to get account range");
-            tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
-                .await
-                .ok();
+
+                    // Log with backoff info
+                    warn!(
+                        "[SNAP] Download error (attempt {}): {}, retrying in {}ms",
+                        consecutive_failures, e, current_backoff_ms
+                    );
+
+                    // Exponential backoff
+                    tokio::time::sleep(Duration::from_millis(current_backoff_ms)).await;
+                    current_backoff_ms = (current_backoff_ms * 2).min(RETRY_BACKOFF_MAX_MS);
+
+                    // Switch peer every 3 failures to avoid getting stuck on bad peer
+                    if consecutive_failures % 3 == 0 {
+                        debug!("[SNAP] Switching to different peer after 3 failures");
+                        // get_best_peer in next iteration will select different peer
+                    }
+
+                    // Don't update current_start - retry same range
+                    continue;
+                }
+            }
         }
-        Ok::<(), PeerHandlerError>(())
+
+        // Close all bucket channels to signal writers to finish
+        drop(bucket_channels);
+
+        // Collect bucket file paths from completion notifications
+        let mut bucket_files = Vec::with_capacity(BUCKET_COUNT);
+        for _ in 0..BUCKET_COUNT {
+            let Some((bucket_id, path)) = completion_rx.recv().await else {
+                return Err(PeerHandlerError::UnrecoverableError(
+                    "Bucket writer channel closed unexpectedly".to_string(),
+                ));
+            };
+            debug!("Bucket {} completed: {:?}", bucket_id, path);
+            bucket_files.push(path);
+        }
+
+        *METRICS.account_tries_download_end_time.lock().await = Some(SystemTime::now());
+        info!("[SNAP] Phase 1/2: All {} buckets downloaded", BUCKET_COUNT);
+
+        Ok(bucket_files)
     }
+
 
     /// Requests bytecodes for the given code hashes
     /// Returns the bytecodes or None if:

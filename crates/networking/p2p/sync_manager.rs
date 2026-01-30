@@ -55,15 +55,8 @@ impl SyncManager {
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: store.clone(),
         };
-        // If the node was in the middle of a sync and then re-started we must resume syncing
-        // Otherwise we will incorreclty assume the node is already synced and work on invalid state
-        if store
-            .get_header_download_checkpoint()
-            .await
-            .is_ok_and(|res| res.is_some())
-        {
-            sync_manager.start_sync();
-        }
+        // NOTE: Checkpoint-based sync resumption has been removed.
+        // After restart, sync will start fresh if needed when sync_to_head() is called.
         sync_manager
     }
 
@@ -133,16 +126,8 @@ impl SyncManager {
                 }
                 // Start the sync cycle
                 syncer.start_sync(sync_head, store.clone()).await;
-                // Continue to the next sync cycle if we have an ongoing snap sync (aka if we still have snap sync checkpoints stored)
-                if store
-                    .get_header_download_checkpoint()
-                    .await
-                    .ok()
-                    .flatten()
-                    .is_none()
-                {
-                    break;
-                }
+                // NOTE: Checkpoint-based continuation has been removed. Sync completes in one cycle.
+                break;
             }
         });
     }

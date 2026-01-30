@@ -51,8 +51,8 @@ pub const TRANSACTION_LOCATIONS: &str = "transaction_locations";
 pub const CHAIN_DATA: &str = "chain_data";
 
 /// Snap state column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = `snap_state_key(SnapStateIndex::HeaderDownloadCheckpoint)`
-/// - [`Vec<u8>`] = `block_hash.encode_to_vec()`
+/// Used for storing various snap sync state information.
+/// NOTE: HeaderDownloadCheckpoint is no longer used (checkpointing removed).
 pub const SNAP_STATE: &str = "snap_state";
 
 /// Account State trie nodes column family: [`Nibbles`] => [`Vec<u8>`]

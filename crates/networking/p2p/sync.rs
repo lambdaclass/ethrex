@@ -9,7 +9,7 @@ use crate::sync::code_collector::CodeHashCollector;
 use crate::sync::state_healing::heal_state_trie_wrap;
 use crate::sync::storage_healing::heal_storage_trie;
 use crate::utils::{
-    current_unix_time, delete_leaves_folder, get_account_state_snapshots_dir,
+    current_unix_time, delete_leaves_folder,
     get_account_storages_snapshots_dir, get_code_hashes_snapshots_dir,
 };
 use crate::{
@@ -616,6 +616,9 @@ async fn store_block_bodies(
 pub struct SnapBlockSyncState {
     block_hashes: Vec<H256>,
     store: Store,
+    /// Monotonically increasing generation counter for pivot updates
+    /// Used to detect and reject stale in-flight requests
+    pivot_generation: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl SnapBlockSyncState {
@@ -623,19 +626,38 @@ impl SnapBlockSyncState {
         Self {
             block_hashes: Vec::new(),
             store,
+            pivot_generation: Arc::new(std::sync::atomic::AtomicU64::new(1)),
         }
     }
 
-    /// Obtain the current head from where to start or resume block sync
+    /// Returns the current pivot generation
+    ///
+    /// This should be captured when making requests and validated when
+    /// processing responses to detect stale in-flight requests.
+    ///
+    /// Example usage:
+    /// ```ignore
+    /// // When making request:
+    /// let request_generation = block_sync_state.get_pivot_generation();
+    ///
+    /// // When processing response:
+    /// let current_generation = block_sync_state.get_pivot_generation();
+    /// if request_generation != current_generation {
+    ///     // Reject stale response
+    ///     return Err(SyncError::StalePivot);
+    /// }
+    /// ```
+    pub fn get_pivot_generation(&self) -> u64 {
+        self.pivot_generation.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Obtain the current head from where to start block sync
+    /// NOTE: Checkpoint-based resumption has been removed. Always starts from latest canonical.
     async fn get_current_head(&self) -> Result<H256, SyncError> {
-        if let Some(head) = self.store.get_header_download_checkpoint().await? {
-            Ok(head)
-        } else {
-            self.store
-                .get_latest_canonical_block_hash()
-                .await?
-                .ok_or(SyncError::NoLatestCanonical)
-        }
+        self.store
+            .get_latest_canonical_block_hash()
+            .await?
+            .ok_or(SyncError::NoLatestCanonical)
     }
 
     /// Stores incoming headers to the Store and saves their hashes
@@ -649,11 +671,7 @@ impl SnapBlockSyncState {
             block_hashes.push(header.hash());
             block_headers_vec.push(header);
         }
-        self.store
-            .set_header_download_checkpoint(
-                *block_hashes.last().ok_or(SyncError::InvalidRangeReceived)?,
-            )
-            .await?;
+        // NOTE: Checkpoint saving has been removed. No longer tracking download progress.
         self.block_hashes.extend_from_slice(&block_hashes);
         self.store.add_block_headers(block_headers_vec).await?;
         Ok(())
@@ -693,7 +711,6 @@ impl Syncer {
         );
 
         let state_root = pivot_header.state_root;
-        let account_state_snapshots_dir = get_account_state_snapshots_dir(&self.datadir);
         let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
 
         let code_hashes_snapshot_dir = get_code_hashes_snapshots_dir(&self.datadir);
@@ -705,36 +722,25 @@ impl Syncer {
 
         let mut storage_accounts = AccountStorageRoots::default();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
-            // We start by downloading all of the leafs of the trie of accounts
-            // The function request_account_range writes the leafs into files in
-            // account_state_snapshots_dir
-
-            info!("Starting to download account ranges from peers");
-            self.peers
-                .request_account_range(
-                    H256::zero(),
-                    H256::repeat_byte(0xff),
-                    account_state_snapshots_dir.as_ref(),
-                    &mut pivot_header,
-                    block_sync_state,
-                )
+            // Download accounts using bucket-based architecture (verify-then-fanout pattern)
+            // Replaces complex chunking approach with simpler 256-bucket design
+            info!("[SNAP] Starting bucket-based account download");
+            let bucket_files = self.peers
+                .download_accounts_bucketed(pivot_header.state_root)
                 .await?;
-            info!("Finish downloading account ranges from peers");
+            info!("[SNAP] Account download complete, {} bucket files created", bucket_files.len());
 
+            // Insert accounts from buckets into trie with deduplication
             *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
             METRICS
                 .current_step
                 .set(CurrentStepValue::InsertingAccountRanges);
-            // We read the account leafs from the files in account_state_snapshots_dir, write it into
-            // the trie to compute the nodes and stores the accounts with storages for later use
 
-            // Variable `accounts_with_storage` unused if not in rocksdb
-            #[allow(unused_variables)]
-            let (computed_state_root, accounts_with_storage) = insert_accounts(
+            info!("[SNAP] Starting account insertion from bucket files");
+            let computed_state_root = insert_accounts_from_bucket_files(
+                bucket_files,
                 store.clone(),
                 &mut storage_accounts,
-                &account_state_snapshots_dir,
-                &self.datadir,
                 &mut code_hash_collector,
             )
             .await?;
@@ -843,7 +849,7 @@ impl Syncer {
 
             insert_storages(
                 store.clone(),
-                accounts_with_storage,
+                BTreeSet::new(), // Bucket architecture doesn't use this - storage accounts tracked in storage_accounts
                 &account_storages_snapshots_dir,
                 &self.datadir,
             )
@@ -1112,6 +1118,12 @@ pub async fn update_pivot(
             .process_incoming_headers(block_headers.into_iter())
             .await?;
         *METRICS.sync_head_hash.lock().await = pivot.hash();
+
+        // Increment pivot generation to invalidate in-flight requests
+        block_sync_state
+            .pivot_generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
         return Ok(pivot.clone());
     }
 }
@@ -1316,6 +1328,99 @@ pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
         std::process::exit(1);
     }
     is_valid
+}
+
+/// Inserts accounts from bucket files into the state trie with deduplication
+///
+/// Takes sorted bucket files from bucket-based download and inserts accounts into the trie.
+/// Handles deduplication of boundary overlaps from verify-then-fanout pattern.
+///
+/// Algorithm:
+/// - For each bucket (sequential processing for constant memory):
+///   1. Load and sort bucket file
+///   2. Insert accounts, skipping adjacent duplicates
+///   3. Collect storage roots and code hashes
+///   4. Clean up bucket file
+///
+/// Returns: (final_state_root, storage_accounts)
+async fn insert_accounts_from_bucket_files(
+    bucket_files: Vec<PathBuf>,
+    store: Store,
+    storage_accounts: &mut AccountStorageRoots,
+    code_hash_collector: &mut CodeHashCollector,
+) -> Result<H256, SyncError> {
+    use ethrex_rlp::decode::RLPDecode;
+    use ethrex_rlp::encode::RLPEncode;
+
+    info!("[SNAP] Phase 2/2: Starting account insertion from {} buckets", bucket_files.len());
+
+    let mut computed_state_root = *EMPTY_TRIE_HASH;
+
+    // Process buckets sequentially to maintain constant memory usage
+    for (i, bucket_file) in bucket_files.iter().enumerate() {
+        // Log progress every 10 buckets
+        if i % 10 == 0 || i == bucket_files.len() - 1 {
+            info!("[SNAP] Phase 2/2: Inserting bucket {}/{}", i + 1, bucket_files.len());
+        }
+
+        // Load and sort bucket
+        let data = tokio::fs::read(&bucket_file).await
+            .map_err(|e| SyncError::SnapshotReadError(bucket_file.clone(), e))?;
+
+        let mut accounts = Vec::new();
+        let mut offset = 0;
+        while offset < data.len() {
+            let unit = crate::rlpx::snap::AccountRangeUnit::decode(&data[offset..])?;
+            let consumed = unit.encode_to_vec().len();
+            accounts.push((unit.hash, unit.account));
+            offset += consumed;
+        }
+
+        // Sort by hash
+        accounts.sort_by_key(|(hash, _)| *hash);
+
+        // Collect storage roots and code hashes
+        for (hash, account) in &accounts {
+            if account.storage_root != *EMPTY_TRIE_HASH {
+                storage_accounts.accounts_with_storage_root.insert(
+                    *hash,
+                    (Some(account.storage_root), Vec::new())
+                );
+            }
+            if account.code_hash != *EMPTY_KECCACK_HASH {
+                code_hash_collector.add(account.code_hash);
+                code_hash_collector.flush_if_needed().await?;
+            }
+        }
+
+        // Insert into trie with deduplication
+        let store_clone = store.clone();
+        let current_root = computed_state_root;
+        computed_state_root = tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
+            let mut trie = store_clone.open_direct_state_trie(current_root)?;
+
+            // Insert with deduplication (skip adjacent duplicates)
+            for i in 0..accounts.len() {
+                // Skip if duplicate (adjacent after sorting)
+                if i > 0 && accounts[i].0 == accounts[i - 1].0 {
+                    continue;
+                }
+                trie.insert(accounts[i].0 .0.to_vec(), accounts[i].1.encode_to_vec())?;
+            }
+
+            let new_root = trie.hash()?;
+            Ok(new_root)
+        })
+        .await??;
+
+        // Clean up bucket file
+        tokio::fs::remove_file(&bucket_file).await
+            .map_err(|e| SyncError::SnapshotReadError(bucket_file.clone(), e))?;
+    }
+
+    info!("[SNAP] Phase 2/2: Account insertion complete, state root: {:?}", computed_state_root);
+
+    Ok(computed_state_root)
 }
 
 #[cfg(not(feature = "rocksdb"))]

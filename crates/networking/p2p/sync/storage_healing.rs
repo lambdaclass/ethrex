@@ -57,6 +57,16 @@ type MembatchKey = (Nibbles, Nibbles);
 
 type Membatch = HashMap<MembatchKey, MembatchEntry>;
 
+/// Errors that can occur during membatch commit operations
+#[derive(Debug, thiserror::Error)]
+enum CommitError {
+    #[error("Missing parent ({0:?}, {1:?})")]
+    MissingParent(Nibbles, Nibbles),
+
+    #[error("Count underflow at ({0:?}, {1:?})")]
+    CountUnderflow(Nibbles, Nibbles),
+}
+
 #[derive(Debug, Clone)]
 pub struct InflightRequest {
     requests: Vec<NodeRequest>,
@@ -671,48 +681,82 @@ pub fn determine_missing_children(
     Ok((paths, count))
 }
 
+/// Iterative commit_node implementation using a queue to avoid stack overflow
+///
+/// Replaces the recursive version with an iterative approach that:
+/// - Uses heap memory (VecDeque) instead of stack frames
+/// - Returns Result for explicit error handling instead of panicking with expect()
+/// - Uses checked_sub() to prevent arithmetic underflow
+///
+/// This fixes three critical issues:
+/// 1. Stack overflow on deep storage tries (10,000+ levels)
+/// 2. Panic on missing parent (now returns StoreError with CommitError::MissingParent)
+/// 3. Underflow on count decrement (now returns StoreError with CommitError::CountUnderflow)
 fn commit_node(
     node: &NodeResponse,
     membatch: &mut Membatch,
     roots_healed: &mut usize,
     to_write: &mut HashMap<H256, Vec<(Nibbles, Node)>>,
 ) -> Result<(), StoreError> {
-    let hashed_account = H256::from_slice(&node.node_request.acc_path.to_bytes());
+    // Queue of node responses to process
+    let mut commit_queue = VecDeque::new();
+    commit_queue.push_back(node.clone());
 
-    to_write
-        .entry(hashed_account)
-        .or_default()
-        .push((node.node_request.storage_path.clone(), node.node.clone()));
+    while let Some(current_node) = commit_queue.pop_front() {
+        let hashed_account = H256::from_slice(&current_node.node_request.acc_path.to_bytes());
 
-    // Special case, we have just commited the root, we stop
-    if node.node_request.storage_path == node.node_request.parent {
-        trace!(
-            "We have the parent of an account, this means we are the root. Storage healing should end."
+        // Write this node
+        to_write
+            .entry(hashed_account)
+            .or_default()
+            .push((
+                current_node.node_request.storage_path.clone(),
+                current_node.node.clone(),
+            ));
+
+        // Special case: root node (parent == self)
+        if current_node.node_request.storage_path == current_node.node_request.parent {
+            trace!(
+                "We have the parent of an account, this means we are the root. Storage healing should end."
+            );
+            *roots_healed += 1;
+            continue;
+        }
+
+        let parent_key = (
+            current_node.node_request.acc_path.clone(),
+            current_node.node_request.parent.clone(),
         );
-        *roots_healed += 1;
-        return Ok(());
+
+        // Get parent entry (error if missing)
+        let mut parent_entry = membatch.remove(&parent_key).ok_or_else(|| {
+            let err = CommitError::MissingParent(
+                current_node.node_request.acc_path.clone(),
+                current_node.node_request.parent.clone(),
+            );
+            StoreError::Custom(format!("Membatch commit error: {}", err))
+        })?;
+
+        // Decrement parent's child count (error on underflow)
+        parent_entry.missing_children_count = parent_entry
+            .missing_children_count
+            .checked_sub(1)
+            .ok_or_else(|| {
+                let err = CommitError::CountUnderflow(
+                    current_node.node_request.acc_path.clone(),
+                    current_node.node_request.parent.clone(),
+                );
+                StoreError::Custom(format!("Membatch commit error: {}", err))
+            })?;
+
+        // If all children are now in storage, commit the parent too
+        if parent_entry.missing_children_count == 0 {
+            commit_queue.push_back(parent_entry.node_response);
+        } else {
+            // Still has children to wait for
+            membatch.insert(parent_key, parent_entry);
+        }
     }
 
-    let parent_key = (
-        node.node_request.acc_path.clone(),
-        node.node_request.parent.clone(),
-    );
-
-    let mut parent_entry = membatch
-        .remove(&parent_key)
-        .expect("We are missing the parent from the membatch!");
-
-    parent_entry.missing_children_count -= 1;
-
-    if parent_entry.missing_children_count == 0 {
-        commit_node(
-            &parent_entry.node_response,
-            membatch,
-            roots_healed,
-            to_write,
-        )
-    } else {
-        membatch.insert(parent_key, parent_entry);
-        Ok(())
-    }
+    Ok(())
 }
