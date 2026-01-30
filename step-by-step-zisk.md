@@ -386,7 +386,7 @@ After deploying contracts, verify the VK was stored correctly:
 ```bash
 # Get the stored VK from contract (raw bytes32)
 cast call <ON_CHAIN_PROPOSER_ADDRESS> \
-    "debugGetRawVk(uint256)(bytes32)" 0 \
+    "getZiskRawVk(uint256)(bytes32)" 1 \
     --rpc-url <L1_RPC_URL>
 
 # Compare with your VK file
@@ -398,9 +398,8 @@ xxd -p crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk | tr -d '\n'
 
 ```bash
 # Get the converted VK from contract (uint64[4] array)
-# Use batchNumber=0 to check the VK for the first batch
 cast call <ON_CHAIN_PROPOSER_ADDRESS> \
-    "debugGetConvertedVk(uint256)(uint64[4])" 0 \
+    "getZiskVk(uint256)(uint64[4])" 1 \
     --rpc-url <L1_RPC_URL>
 
 # Convert your local VK file to uint64 array and compare
@@ -415,6 +414,16 @@ print(f'[{values[0]},{values[1]},{values[2]},{values[3]}]')
 # These MUST match! If they don't, the VK byte ordering is wrong.
 ```
 
+**You can also test the VK conversion directly using the public helper:**
+
+```bash
+# Convert any bytes32 VK to uint64[4] using the contract's helper
+VK_HEX=$(xxd -p crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk | tr -d '\n')
+cast call <ON_CHAIN_PROPOSER_ADDRESS> \
+    "toZiskProgramVk(bytes32)(uint64[4])" "0x$VK_HEX" \
+    --rpc-url <L1_RPC_URL>
+```
+
 ### Check Public Values Match
 
 After a proof is generated, verify the publicValues from the proof file match what the contract computes:
@@ -425,10 +434,10 @@ PUBLICS_FILE=crates/l2/prover/zisk_output/snark_proof/final_snark_publics.bin
 PROOF_PUBLICS=$(xxd -p $PUBLICS_FILE | tr -d '\n')
 echo "Proof publicValues: 0x$PROOF_PUBLICS"
 
-# Get the publicValues from contract (for batch 0)
-# This computes: [4-byte count=8][32-byte sha256(publicInputs)][220-byte padding]
+# Get the publicValues from contract (for batch 1 - first proven batch)
+# Uses the SAME function as verify() - guaranteed to match
 cast call <ON_CHAIN_PROPOSER_ADDRESS> \
-    "debugGetFinalPublicValues(uint256)(bytes)" 0 \
+    "buildZiskPublicValuesForBatch(uint256)(bytes)" 1 \
     --rpc-url <L1_RPC_URL>
 
 # These MUST match! If they don't, either:
@@ -439,23 +448,56 @@ cast call <ON_CHAIN_PROPOSER_ADDRESS> \
 **Step-by-step debugging if they don't match:**
 
 ```bash
-# 1. Check the first 36 bytes (count + hash) - easier to compare
+# 1. Get the sha256 hash (raw, before byte swapping)
 cast call <ON_CHAIN_PROPOSER_ADDRESS> \
-    "debugGetPublicValuesPrefix(uint256)(bytes)" 0 \
+    "getPublicInputsHash(uint256)(bytes32)" 1 \
     --rpc-url <L1_RPC_URL>
 
-# Compare with proof file's first 36 bytes
-xxd -p $PUBLICS_FILE | head -c 72  # 36 bytes = 72 hex chars
-
-# 2. Check the sha256 hash separately
+# 2. Test the hash byte swapping using the public helper
+# ZisK expects the hash with bytes swapped within each 4-byte word
+HASH=<hash_from_step_1>
 cast call <ON_CHAIN_PROPOSER_ADDRESS> \
-    "debugGetPublicInputsHash(uint256)(bytes32)" 0 \
+    "swapHashBytes(bytes32)(bytes32)" $HASH \
     --rpc-url <L1_RPC_URL>
 
 # 3. Get the raw publicInputs that are hashed
 cast call <ON_CHAIN_PROPOSER_ADDRESS> \
-    "debugGetPublicInputs(uint256)(bytes)" 0 \
+    "getPublicInputs(uint256)(bytes)" 1 \
     --rpc-url <L1_RPC_URL>
+
+# 4. Get ALL verification data at once
+cast call <ON_CHAIN_PROPOSER_ADDRESS> \
+    "getZiskVerificationData(uint256)(bytes32,uint64[4],bytes,bytes32,bytes)" 1 \
+    --rpc-url <L1_RPC_URL>
+```
+
+### Public Helper Functions
+
+The OnChainProposer contract exposes these helper functions. They are used by `verify()` internally, so calling them for debugging guarantees you see the same values:
+
+| Function | Description |
+|----------|-------------|
+| `getZiskRawVk(uint256)` | Get raw bytes32 VK for a batch |
+| `getZiskVk(uint256)` | Get converted uint64[4] VK for a batch (used by verifier) |
+| `getPublicInputs(uint256)` | Get publicInputs bytes for a batch |
+| `getPublicInputsHash(uint256)` | Get sha256(publicInputs) for a batch |
+| `buildZiskPublicValues(bytes)` | Build 256-byte publicValues from publicInputs |
+| `buildZiskPublicValuesForBatch(uint256)` | Build 256-byte publicValues for a batch |
+| `getZiskVerificationData(uint256)` | Get all verification data at once |
+| `toZiskProgramVk(bytes32)` | Convert any bytes32 to uint64[4] |
+| `swapBytes64(uint64)` | Reverse byte order in a uint64 |
+| `swapHashBytes(bytes32)` | Swap bytes within each 4-byte word |
+
+**Example usage:**
+```bash
+# Test VK conversion
+cast call <ADDR> "toZiskProgramVk(bytes32)(uint64[4])" 0x<vk_hex>
+
+# Test hash byte swapping
+cast call <ADDR> "swapHashBytes(bytes32)(bytes32)" 0x<hash_hex>
+
+# Get all data for batch 1
+cast call <ADDR> "getZiskVerificationData(uint256)(bytes32,uint64[4],bytes,bytes32,bytes)" 1
 ```
 
 **Understanding publicValues format:**

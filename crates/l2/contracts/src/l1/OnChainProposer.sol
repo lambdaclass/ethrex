@@ -478,23 +478,9 @@ contract OnChainProposer is
         }
 
         if (REQUIRE_ZISK_PROOF) {
-            bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
-            bytes32 ziskVk = verificationKeys[batchCommitHash][
-                ZISK_VERIFIER_ID
-            ];
-            uint64[4] memory programVk = _toZiskProgramVk(ziskVk);
-            // ZisK publicValues format: count (4 bytes big-endian) + output values + padding to 256 bytes
-            // The guest program outputs sha256(publicInputs) as 8 u32 values (32 bytes / 4 = 8).
-            // SNARK proof was generated with 256-byte publics, so we must match that format.
-            bytes memory ziskPublicValues = new bytes(256);
-            bytes32 outputHash = sha256(publicInputs);
-            // count = 8 (big-endian u32)
-            ziskPublicValues[3] = 0x08;
-            // Copy 32-byte hash at offset 4
-            for (uint256 i = 0; i < 32; i++) {
-                ziskPublicValues[4 + i] = outputHash[i];
-            }
-            // Rest is already zeros from new bytes(256)
+            // Use public helper functions - same code path for verify and debugging
+            uint64[4] memory programVk = getZiskVk(batchNumber);
+            bytes memory ziskPublicValues = buildZiskPublicValues(publicInputs);
             // Call without try/catch to let ZiskVerifier errors propagate (e.g., InvalidProof())
             IZiskVerifier(ZISK_VERIFIER_ADDRESS).verifySnarkProof(
                 programVk,
@@ -528,27 +514,50 @@ contract OnChainProposer is
         emit BatchVerified(lastVerifiedBatch);
     }
 
-    function _toZiskProgramVk(
+    /// @notice Converts a bytes32 VK to uint64[4] array for ZisK verifier.
+    /// The VK file is written in little-endian by cargo-zisk rom-vkey,
+    /// but bytes32 is read as big-endian. This swaps bytes within each uint64.
+    function toZiskProgramVk(
         bytes32 vk
-    ) internal pure returns (uint64[4] memory out) {
+    ) public pure returns (uint64[4] memory out) {
         uint256 word = uint256(vk);
-        // The VK file is written in little-endian by cargo-zisk rom-vkey,
-        // but bytes32 is read as big-endian. We need to swap bytes within each uint64.
-        out[0] = _swapBytes64(uint64(word >> 192));
-        out[1] = _swapBytes64(uint64(word >> 128));
-        out[2] = _swapBytes64(uint64(word >> 64));
-        out[3] = _swapBytes64(uint64(word));
+        out[0] = swapBytes64(uint64(word >> 192));
+        out[1] = swapBytes64(uint64(word >> 128));
+        out[2] = swapBytes64(uint64(word >> 64));
+        out[3] = swapBytes64(uint64(word));
     }
 
-    function _swapBytes64(uint64 x) internal pure returns (uint64) {
-        return ((x & 0xFF00000000000000) >> 56) |
-               ((x & 0x00FF000000000000) >> 40) |
-               ((x & 0x0000FF0000000000) >> 24) |
-               ((x & 0x000000FF00000000) >> 8) |
-               ((x & 0x00000000FF000000) << 8) |
-               ((x & 0x0000000000FF0000) << 24) |
-               ((x & 0x000000000000FF00) << 40) |
-               ((x & 0x00000000000000FF) << 56);
+    /// @notice Swaps bytes within a uint64 (reverses byte order).
+    function swapBytes64(uint64 x) public pure returns (uint64) {
+        return
+            ((x & 0xFF00000000000000) >> 56) |
+            ((x & 0x00FF000000000000) >> 40) |
+            ((x & 0x0000FF0000000000) >> 24) |
+            ((x & 0x000000FF00000000) >> 8) |
+            ((x & 0x00000000FF000000) << 8) |
+            ((x & 0x0000000000FF0000) << 24) |
+            ((x & 0x000000000000FF00) << 40) |
+            ((x & 0x00000000000000FF) << 56);
+    }
+
+    /// @notice Swaps bytes within each 4-byte word of a bytes32.
+    /// ZisK writes the sha256 hash as little-endian u32 words, but Solidity's
+    /// sha256() returns big-endian. This function converts between them.
+    function swapHashBytes(bytes32 hash) public pure returns (bytes32) {
+        uint256 word = uint256(hash);
+        uint256 result = 0;
+        // Process 8 chunks of 4 bytes (32 bits) each
+        for (uint256 i = 0; i < 8; i++) {
+            uint256 shift = (7 - i) * 32;
+            uint32 chunk = uint32(word >> shift);
+            // Swap bytes within the 4-byte chunk
+            uint32 swapped = ((chunk & 0xFF000000) >> 24) |
+                             ((chunk & 0x00FF0000) >> 8) |
+                             ((chunk & 0x0000FF00) << 8) |
+                             ((chunk & 0x000000FF) << 24);
+            result |= uint256(swapped) << shift;
+        }
+        return bytes32(result);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -774,115 +783,70 @@ contract OnChainProposer is
         return publicInputs;
     }
 
-    /// @notice Debug function to get ZisK verification parameters for a batch
-    /// @dev Call this to compare with prover-generated values
-    function getZiskVerificationParams(
+    /// @notice Get all ZisK verification data for a batch (uses same helpers as verify)
+    function getZiskVerificationData(
         uint256 batchNumber
-    ) external view returns (
-        uint64[4] memory programVk,
-        bytes32 publicValuesHash,
-        bytes memory publicInputs
-    ) {
-        bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
-        bytes32 ziskVk = verificationKeys[batchCommitHash][ZISK_VERIFIER_ID];
-        programVk = _toZiskProgramVk(ziskVk);
-        publicInputs = _getPublicInputsFromCommitment(batchNumber);
-        publicValuesHash = sha256(publicInputs);
+    )
+        external
+        view
+        returns (
+            bytes32 rawVk,
+            uint64[4] memory programVk,
+            bytes memory publicInputs,
+            bytes32 publicInputsHash,
+            bytes memory ziskPublicValues
+        )
+    {
+        rawVk = getZiskRawVk(batchNumber);
+        programVk = getZiskVk(batchNumber);
+        publicInputs = getPublicInputs(batchNumber);
+        publicInputsHash = getPublicInputsHash(batchNumber);
+        ziskPublicValues = buildZiskPublicValuesForBatch(batchNumber);
     }
 
-    /// @notice DEBUG: Get full ZisK verification data including raw bytes
-    function getZiskDebugData(
-        uint256 batchNumber
-    ) external view returns (
-        bytes32 rawVk,
-        uint64[4] memory programVk,
-        bytes memory publicInputs,
-        bytes32 publicInputsHash,
-        bytes memory ziskPublicValues
-    ) {
-        bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
-        rawVk = verificationKeys[batchCommitHash][ZISK_VERIFIER_ID];
-        programVk = _toZiskProgramVk(rawVk);
-        publicInputs = _getPublicInputsFromCommitment(batchNumber);
-        publicInputsHash = sha256(publicInputs);
-        // Match the 256-byte format used by SNARK proof generation
-        ziskPublicValues = new bytes(256);
-        ziskPublicValues[3] = 0x08;
-        for (uint256 i = 0; i < 32; i++) {
-            ziskPublicValues[4 + i] = publicInputsHash[i];
-        }
-    }
+    // ============== ZISK PUBLIC HELPER FUNCTIONS ==============
+    // These functions are used by verify() and can also be called directly for debugging.
+    // This ensures debug output always matches the actual verification behavior.
 
-    // ============== GRANULAR DEBUG FUNCTIONS ==============
-
-    /// @notice DEBUG: Step 1 - Get raw VK bytes32 before conversion
-    function debugGetRawVk(uint256 batchNumber) external view returns (bytes32 rawVk) {
+    /// @notice Get the raw VK bytes32 for a batch (before conversion)
+    function getZiskRawVk(uint256 batchNumber) public view returns (bytes32 rawVk) {
         bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
         rawVk = verificationKeys[batchCommitHash][ZISK_VERIFIER_ID];
     }
 
-    /// @notice DEBUG: Step 2 - Get VK after _toZiskProgramVk conversion
-    function debugGetConvertedVk(uint256 batchNumber) external view returns (uint64[4] memory programVk) {
-        bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
-        bytes32 rawVk = verificationKeys[batchCommitHash][ZISK_VERIFIER_ID];
-        programVk = _toZiskProgramVk(rawVk);
+    /// @notice Get the converted VK as uint64[4] for a batch (used by verifier)
+    function getZiskVk(uint256 batchNumber) public view returns (uint64[4] memory programVk) {
+        bytes32 rawVk = getZiskRawVk(batchNumber);
+        programVk = toZiskProgramVk(rawVk);
     }
 
-    /// @notice DEBUG: Get publicInputs bytes (what we hash)
-    function debugGetPublicInputs(uint256 batchNumber) external view returns (bytes memory publicInputs) {
+    /// @notice Get the publicInputs bytes for a batch (what gets hashed)
+    function getPublicInputs(uint256 batchNumber) public view returns (bytes memory publicInputs) {
         publicInputs = _getPublicInputsFromCommitment(batchNumber);
     }
 
-    /// @notice DEBUG: Step 1 of publicValues - sha256(publicInputs)
-    function debugGetPublicInputsHash(uint256 batchNumber) external view returns (bytes32 hash) {
-        bytes memory publicInputs = _getPublicInputsFromCommitment(batchNumber);
+    /// @notice Get sha256(publicInputs) for a batch (before byte swapping)
+    function getPublicInputsHash(uint256 batchNumber) public view returns (bytes32 hash) {
+        bytes memory publicInputs = getPublicInputs(batchNumber);
         hash = sha256(publicInputs);
     }
 
-    /// @notice DEBUG: Step 2 of publicValues - 256 bytes with count=8 at byte[3]
-    function debugGetPublicValuesWithCount(uint256 batchNumber) external view returns (bytes memory ziskPublicValues) {
-        ziskPublicValues = new bytes(256);
-        ziskPublicValues[3] = 0x08;
-        // Note: hash not yet copied, just showing count placement
-    }
-
-    /// @notice DEBUG: Step 3 of publicValues - final 256 bytes ready for verifier
-    function debugGetFinalPublicValues(uint256 batchNumber) external view returns (bytes memory ziskPublicValues) {
-        bytes memory publicInputs = _getPublicInputsFromCommitment(batchNumber);
+    /// @notice Build the 256-byte ZisK publicValues from publicInputs bytes
+    /// Format: [4-byte count=8][32-byte swapped hash][220-byte padding]
+    function buildZiskPublicValues(bytes memory publicInputs) public view returns (bytes memory ziskPublicValues) {
         bytes32 outputHash = sha256(publicInputs);
+        bytes32 swappedHash = swapHashBytes(outputHash);
         ziskPublicValues = new bytes(256);
-        ziskPublicValues[3] = 0x08;
+        ziskPublicValues[3] = 0x08; // count = 8 (big-endian u32)
         for (uint256 i = 0; i < 32; i++) {
-            ziskPublicValues[4 + i] = outputHash[i];
+            ziskPublicValues[4 + i] = swappedHash[i];
         }
     }
 
-    /// @notice DEBUG: Get first 36 bytes of publicValues (count + hash) as hex for comparison
-    function debugGetPublicValuesPrefix(uint256 batchNumber) external view returns (bytes memory prefix) {
-        bytes memory publicInputs = _getPublicInputsFromCommitment(batchNumber);
-        bytes32 outputHash = sha256(publicInputs);
-        prefix = new bytes(36);
-        prefix[3] = 0x08; // count = 8
-        for (uint256 i = 0; i < 32; i++) {
-            prefix[4 + i] = outputHash[i];
-        }
-    }
-
-    /// @notice DEBUG: Compare VK conversion - returns both raw and converted for easy comparison
-    function debugCompareVk(uint256 batchNumber) external view returns (
-        bytes32 rawVk,
-        uint64 vk0,
-        uint64 vk1,
-        uint64 vk2,
-        uint64 vk3
-    ) {
-        bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
-        rawVk = verificationKeys[batchCommitHash][ZISK_VERIFIER_ID];
-        uint64[4] memory programVk = _toZiskProgramVk(rawVk);
-        vk0 = programVk[0];
-        vk1 = programVk[1];
-        vk2 = programVk[2];
-        vk3 = programVk[3];
+    /// @notice Build the 256-byte ZisK publicValues for a batch number
+    function buildZiskPublicValuesForBatch(uint256 batchNumber) public view returns (bytes memory ziskPublicValues) {
+        bytes memory publicInputs = getPublicInputs(batchNumber);
+        ziskPublicValues = buildZiskPublicValues(publicInputs);
     }
 
     /// @inheritdoc IOnChainProposer
