@@ -739,7 +739,7 @@ impl Store {
             .get(ACCOUNT_CODE_METADATA, code_hash.as_bytes())?
         {
             let length =
-                u64::from_be_bytes(bytes.try_into().map_err(|_| {
+                u64::from_be_bytes(bytes.as_ref().try_into().map_err(|_| {
                     StoreError::Custom("Invalid metadata length encoding".to_string())
                 })?);
             CodeMetadata { length }
