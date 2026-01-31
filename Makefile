@@ -22,7 +22,7 @@ lint-l1:
 lint-l2:
 	cargo clippy --all-targets -F debug,sync-test,l2,l2-sql \
 		--workspace --exclude ethrex-prover --exclude ethrex-guest-program \
-		--release -- -D warnings
+		--release -- -D warnings -D clippy::unused_async
 
 lint-gpu:
 	cargo clippy --all-targets -F debug,sync-test,l2,l2-sql,,sp1,risc0,gpu \
