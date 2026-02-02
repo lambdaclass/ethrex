@@ -46,8 +46,8 @@ This is a WIP document and it requires better descriptions; it's supposed to be 
 | Object pooling | #5934 | 2 | Pending | Reuse EVM stack frames to reduce allocations and improve performance |
 | Avoid clones in hot path | #5753 | 2 | Measure #5809 on mainnet | Avoid Clone on Account Load and check rest of the hot path |
 | SIMD Everywhere | | 2 | Pending | There are some libraries that can be replaced by others that use SIMD instructions for better performance |
-| EXTCODESIZE without full bytecode | | 1 | Pending | EXTCODESIZE loads entire bytecode just to get length. Add `get_account_code_size()` or store code length alongside code (`crates/vm/levm/src/opcode_handlers/environment.rs:260-274`) |
-| TransactionQueue data structure | | 1 | Pending | `TransactionQueue` uses `Vec` with `remove(0)` which is O(n). Replace with `BinaryHeap`/`BTreeSet` or `VecDeque` for O(log n) or O(1) operations (`crates/blockchain/payload.rs:708-820`) |
+| EXTCODESIZE without full bytecode | | 1 | Done (#6034). Improvement of 25%. | EXTCODESIZE loads entire bytecode just to get length. Add `get_account_code_size()` or store code length alongside code (`crates/vm/levm/src/opcode_handlers/environment.rs:260-274`) |
+| TransactionQueue data structure | | 1 | Discarded. It is not significant within the critical path. | `TransactionQueue` uses `Vec` with `remove(0)` which is O(n). Replace with `BinaryHeap`/`BTreeSet` or `VecDeque` for O(log n) or O(1) operations (`crates/blockchain/payload.rs:708-820`) |
 
 ---
 
@@ -84,8 +84,8 @@ This is a WIP document and it requires better descriptions; it's supposed to be 
 
 | Item | Priority | Status | Description |
 |-----|----------|--------|-------------|
-| Parallel tx decoding | 0 | Pending | Use rayon to decode transactions in parallel. Currently sequential at ~5-10μs per tx |
-| simd-json | 0 | Pending | Replace serde_json with simd-json for SIMD-accelerated JSON parsing |
+| Parallel tx decoding | 0 | Discarded | Use rayon to decode transactions in parallel. Currently sequential at ~5-10μs per tx |
+| simd-json | 0 | Discarded | Replace serde_json with simd-json for SIMD-accelerated JSON parsing |
 | Remove payload.clone() | 0 | Pending | Avoid cloning `ExecutionPayload` in `get_block_from_payload` (`crates/networking/rpc/engine/payload.rs:674`). Use references or owned values directly |
 | Remove params.clone() | 0 | Pending | Avoid cloning params before `serde_json::from_value()`. Use references instead of `params[i].clone()` in RPC handlers (`crates/networking/rpc/engine/payload.rs`) |
 | Use Bytes instead of String | 0 | Pending | Change HTTP body extraction from `String` to `Bytes` and use `serde_json::from_slice()` instead of `from_str()` to avoid UTF-8 validation overhead (`crates/networking/rpc/rpc.rs:536,563`) |
