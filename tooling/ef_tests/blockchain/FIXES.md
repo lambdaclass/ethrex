@@ -2,17 +2,17 @@
 
 **Started:** 2026-02-02
 **Completed:** In Progress
-**Total Iterations:** 4
+**Total Iterations:** 6
 **Final Status:** ❌ In Progress
 
 ---
 
 ## Summary
 - Initial failures: 64
-- Current failures: 54
-- Total fixes applied: 4
-- Tests fixed: 13+ (64 → 54)
-- Failed attempts: 1
+- Current failures: 47
+- Total fixes applied: 5
+- Tests fixed: 17 (64 → 47)
+- Failed attempts: 2
 
 ---
 
@@ -164,6 +164,14 @@
 - **Test(s):** Multiple tests
 - **Approach:** Modified `build()` to skip adding `AccountChanges` where `is_empty()` returns true
 - **Why it failed:** Caused regression (58 → 112 failures). Some tests EXPECT empty accounts in the BAL (e.g., failed CREATE target addresses that were touched but have no state changes after revert)
+- **Reverted:** Yes
+
+### Attempt #2 — Record coinbase as touched in pay_coinbase
+- **Iteration:** 5
+- **Test(s):** Investigated `test_bal_coinbase_zero_tip` (was actually PASSING)
+- **Approach:** Added `recorder.record_touched_address(vm.env.coinbase)` to pay_coinbase regardless of fee amount
+- **Why it failed:** Caused regression (54 → 58 failures). The test was already passing. The fix incorrectly added coinbase to withdrawal-only blocks where it shouldn't appear.
+- **New failures:** test_bal_empty_block_no_coinbase, test_bal_withdrawal_empty_block, test_bal_withdrawal_no_evm_execution, etc.
 - **Reverted:** Yes
 
 ---
