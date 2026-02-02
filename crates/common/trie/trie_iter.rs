@@ -51,7 +51,7 @@ impl TrieIterator {
             };
             match next_node.as_ref() {
                 Node::Branch(branch_node) => {
-                    // Add all children to the stack (in reverse order so we process first child frist)
+                    // Add all children to the stack (in reverse order so we process first child first)
                     let Some(choice) = target_nibbles.next_choice() else {
                         return Ok(());
                     };
