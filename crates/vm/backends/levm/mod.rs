@@ -63,12 +63,16 @@ impl LEVM {
         let fork = chain_config.fork(block.header.timestamp);
 
         let mut receipts = Vec::new();
-        let mut cumulative_gas_used = 0;
+        // Cumulative gas for receipts (POST-REFUND per EIP-7778)
+        let mut cumulative_gas_used = 0_u64;
+        // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
+        let mut block_gas_used = 0_u64;
 
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
-            if cumulative_gas_used + tx.gas_limit() > block.header.gas_limit {
+            // Use block_gas_used for limit check (pre-refund for Amsterdam+)
+            if block_gas_used + tx.gas_limit() > block.header.gas_limit {
                 return Err(EvmError::Transaction(format!(
                     "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
                     block.header.gas_limit,
@@ -78,8 +82,11 @@ impl LEVM {
 
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
 
-            // EIP-7778: Block accounting uses gas_used (pre-refund for Amsterdam+)
-            cumulative_gas_used += report.gas_used;
+            // EIP-7778: Separate gas tracking
+            // - gas_spent (POST-REFUND) for receipt cumulative_gas_used
+            // - gas_used (PRE-REFUND for Amsterdam+) for block accounting
+            cumulative_gas_used += report.gas_spent;
+            block_gas_used += report.gas_used;
 
             // EIP-7778: Set gas_spent for Amsterdam+ receipts
             let gas_spent = if fork >= Fork::Amsterdam {
@@ -111,7 +118,11 @@ impl LEVM {
             VMType::L2(_) => Default::default(),
         };
 
-        Ok(BlockExecutionResult { receipts, requests })
+        Ok(BlockExecutionResult {
+            receipts,
+            requests,
+            block_gas_used,
+        })
     }
 
     pub fn execute_block_pipeline(
@@ -129,7 +140,10 @@ impl LEVM {
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
         let mut receipts = Vec::new();
-        let mut cumulative_gas_used = 0;
+        // Cumulative gas for receipts (POST-REFUND per EIP-7778)
+        let mut cumulative_gas_used = 0_u64;
+        // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
+        let mut block_gas_used = 0_u64;
 
         // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
         // The value itself can be safely changed.
@@ -138,7 +152,8 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
-            if cumulative_gas_used + tx.gas_limit() > block.header.gas_limit {
+            // Use block_gas_used for limit check (pre-refund for Amsterdam+)
+            if block_gas_used + tx.gas_limit() > block.header.gas_limit {
                 return Err(EvmError::Transaction(format!(
                     "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
                     block.header.gas_limit,
@@ -161,8 +176,11 @@ impl LEVM {
                 tx_since_last_flush += 1;
             }
 
-            // EIP-7778: Block accounting uses gas_used (pre-refund for Amsterdam+)
-            cumulative_gas_used += report.gas_used;
+            // EIP-7778: Separate gas tracking
+            // - gas_spent (POST-REFUND) for receipt cumulative_gas_used
+            // - gas_used (PRE-REFUND for Amsterdam+) for block accounting
+            cumulative_gas_used += report.gas_spent;
+            block_gas_used += report.gas_used;
 
             // EIP-7778: Set gas_spent for Amsterdam+ receipts
             let gas_spent = if fork >= Fork::Amsterdam {
@@ -220,7 +238,11 @@ impl LEVM {
         };
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
-        Ok(BlockExecutionResult { receipts, requests })
+        Ok(BlockExecutionResult {
+            receipts,
+            requests,
+            block_gas_used,
+        })
     }
 
     /// Pre-warms state by executing all transactions in parallel, grouped by sender.
