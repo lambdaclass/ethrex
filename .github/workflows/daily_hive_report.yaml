@@ -116,7 +116,7 @@ jobs:
         run: |
           FLAGS='--sim.parallelism 4 --sim.loglevel 1'
           if [[ "$SIMULATION" == "ethereum/eels/consume-engine" || "$SIMULATION" == "ethereum/eels/consume-rlp" ]]; then
-            FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@v3.0.1/fixtures_develop.tar.gz"
+            FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.1.0/fixtures_bal.tar.gz"
             FLAGS+=" --sim.buildarg branch=forks/amsterdam"
             FLAGS+=" --client.checktimelimit=180s"
           fi

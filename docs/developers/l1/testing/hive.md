@@ -9,7 +9,7 @@ This project uses three key repositories for Hive testing:
 1. **[ethereum/hive](https://github.com/ethereum/hive)** - The main Hive testing framework
    - Current commit: `0921fb7833e3de180eacdc9f26de6e51dcab0dba`
 2. **[ethereum/execution-spec-tests](https://github.com/ethereum/execution-spec-tests)** - Test fixtures and vectors
-   - Current version: `bal@v3.0.1` (Amsterdam fork support)
+   - Current version: `bal@v5.1.0` (Amsterdam fork support)
 3. **[ethereum/execution-specs](https://github.com/ethereum/execution-specs)** - Fork specifications
    - Current branch: `forks/amsterdam`
 
@@ -286,7 +286,7 @@ HIVE_BRANCH ?= master
 
 ```yaml
 # execution-spec-tests fixtures and branch
-FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@v3.0.1/fixtures_develop.tar.gz"
+FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.1.0/fixtures_bal.tar.gz"
 FLAGS+=" --sim.buildarg branch=forks/amsterdam"
 ```
 
@@ -298,7 +298,7 @@ FLAGS+=" --sim.buildarg branch=forks/amsterdam"
 Both contain:
 
 ```
-https://github.com/ethereum/execution-spec-tests/releases/download/bal@v3.0.1/fixtures_develop.tar.gz
+https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.1.0/fixtures_bal.tar.gz
 ```
 
 ## Updating Repository Versions
