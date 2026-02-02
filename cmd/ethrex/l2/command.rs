@@ -611,7 +611,7 @@ impl Command {
                 info!("Pausing contract {}", opts.contract_address);
                 opts.call_contract(PAUSE_CONTRACT_SELECTOR, vec![])
                     .await
-                    .inspect(|_| info!("Succesfully paused contract"))?;
+                    .inspect(|_| info!("Successfully paused contract"))?;
             }
             Command::Unpause {
                 contract_call_options: opts,
@@ -619,7 +619,7 @@ impl Command {
                 info!("Unpausing contract {}", opts.contract_address);
                 opts.call_contract(UNPAUSE_CONTRACT_SELECTOR, vec![])
                     .await
-                    .inspect(|_| info!("Succesfully unpaused contract"))?;
+                    .inspect(|_| info!("Successfully unpaused contract"))?;
             }
             Command::Deploy { options } => {
                 deploy_l1_contracts(options).await?;
@@ -686,7 +686,7 @@ async fn delete_batch_from_rollup_store(batch: u64, rollup_store_dir: &Path) -> 
         .and_then(|kept_blocks| kept_blocks.iter().max().cloned())
         .unwrap_or(0);
     rollup_store.revert_to_batch(batch).await?;
-    info!("Succesfully deleted batch from rollup store");
+    info!("Successfully deleted batch from rollup store");
     Ok(last_kept_block)
 }
 

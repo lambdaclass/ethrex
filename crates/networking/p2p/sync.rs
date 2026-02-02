@@ -1103,7 +1103,7 @@ pub async fn update_pivot(
 
         // Reward peer
         peers.peer_table.record_success(&peer_id).await?;
-        debug!("Succesfully updated pivot");
+        debug!("Successfully updated pivot");
         let block_headers = peers
             .request_block_headers(block_number + 1, pivot.hash())
             .await?
@@ -1257,7 +1257,7 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
     .expect("We should be able to create threads");
 
     if validated.is_ok() {
-        info!("Succesfully validated tree, {state_root} found");
+        info!("Successfully validated tree, {state_root} found");
     } else {
         error!("We have failed the validation of the state tree");
         std::process::exit(1);
