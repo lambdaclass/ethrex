@@ -35,6 +35,7 @@ version = "9.0.0"
 edition = "2024"
 authors = ["LambdaClass"]
 documentation = "https://docs.ethrex.xyz"
+license = "MIT OR Apache-2.0"
 
 [profile.dev]
 debug = 2

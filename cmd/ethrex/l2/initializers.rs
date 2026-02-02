@@ -5,7 +5,8 @@ use crate::initializers::{
 };
 use crate::l2::{L2Options, SequencerOptions};
 use crate::utils::{
-    NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
+    NodeConfigFile, get_client_version, get_client_version_string, init_datadir,
+    read_jwtsecret_file, store_node_config_file,
 };
 use ethrex_blockchain::{Blockchain, BlockchainType, L2Config};
 use ethrex_common::fd_limit::raise_fd_limit;
@@ -246,7 +247,7 @@ pub async fn init_l2(
             peer_table.clone(),
             store.clone(),
             blockchain.clone(),
-            get_client_version(),
+            get_client_version_string(),
             #[cfg(feature = "l2")]
             Some(P2PBasedContext {
                 store_rollup: rollup_store.clone(),
