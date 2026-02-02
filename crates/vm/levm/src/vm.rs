@@ -501,6 +501,13 @@ impl<'a> VM<'a> {
         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
         self.current_call_frame.call_frame_backup.clear();
 
+        // EIP-7928: Take a BAL checkpoint AFTER clearing the backup. This captures the state
+        // after prepare_execution (nonce increment, etc.) but before actual execution.
+        // When the top-level call fails, we restore to this checkpoint so that inner call
+        // state changes (like value transfers) are reverted from the BAL.
+        self.current_call_frame.call_frame_backup.bal_checkpoint =
+            self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
+
         if self.is_create()? {
             // Create contract, reverting the Tx if address is already occupied.
             if let Some(context_result) = self.handle_create_transaction()? {
