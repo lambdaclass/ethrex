@@ -22,15 +22,22 @@ pub fn build_challenge_data(masking_iv: &[u8], static_header: &[u8], authdata: &
     data
 }
 
-/// Derives initiator/recipient keys from the handshake
+/// Derives session keys from the handshake.
+/// - `secret_key`: The secret key for ECDH (ephemeral for initiator, static for recipient)
+/// - `public_key`: The public key for ECDH (dest static for initiator, ephemeral for recipient)
+/// - `node_id_a`: The initiator's node ID
+/// - `node_id_b`: The recipient's node ID
+/// - `challenge_data`: The challenge data from WHOAREYOU
+/// - `is_initiator`: True if we are the initiator (node A), false if recipient (node B)
 pub fn derive_session_keys(
-    ephemeral_key: &SecretKey,
-    dest_pubkey: &PublicKey,
+    secret_key: &SecretKey,
+    public_key: &PublicKey,
     node_id_a: &H256,
     node_id_b: &H256,
     challenge_data: &[u8],
+    is_initiator: bool,
 ) -> Session {
-    let shared_secret = compressed_shared_secret(dest_pubkey, ephemeral_key);
+    let shared_secret = compressed_shared_secret(public_key, secret_key);
     let hkdf = Hkdf::<Sha256>::new(Some(challenge_data), &shared_secret);
 
     let mut kdf_info = b"discovery v5 key agreement".to_vec();
@@ -41,9 +48,21 @@ pub fn derive_session_keys(
     hkdf.expand(&kdf_info, &mut key_data)
         .expect("key_data is 32 bytes long, it can never fail");
 
+    // First 16 bytes are initiator's outbound key, second 16 are recipient's outbound key
+    let mut initiator_key = [0u8; 16];
+    let mut recipient_key = [0u8; 16];
+    initiator_key.copy_from_slice(&key_data[..16]);
+    recipient_key.copy_from_slice(&key_data[16..]);
+
+    let (outbound_key, inbound_key) = if is_initiator {
+        (initiator_key, recipient_key)
+    } else {
+        (recipient_key, initiator_key)
+    };
+
     Session {
-        outbound_key: key_data[..16].try_into().expect("sizes always match"),
-        inbound_key: key_data[16..].try_into().expect("sizes always match"),
+        outbound_key,
+        inbound_key,
     }
 }
 
@@ -67,6 +86,28 @@ pub fn create_id_signature(
     let digest = Sha256::digest(&id_signature_input);
     let message = SecpMessage::from_digest_slice(&digest).expect("32 byte digest");
     SECP256K1.sign_ecdsa(&message, static_key)
+}
+
+/// Verifies the id-signature from the handshake
+pub fn verify_id_signature(
+    src_pubkey: &PublicKey,
+    challenge_data: &[u8],
+    ephemeral_pubkey: &[u8],
+    node_id_b: &H256,
+    signature: &Signature,
+) -> bool {
+    let mut id_signature_input = b"discovery v5 identity proof".to_vec();
+    id_signature_input.extend_from_slice(challenge_data);
+    id_signature_input.extend_from_slice(ephemeral_pubkey);
+    id_signature_input.extend_from_slice(node_id_b.as_bytes());
+
+    let digest = Sha256::digest(&id_signature_input);
+    let Ok(message) = SecpMessage::from_digest_slice(&digest) else {
+        return false;
+    };
+    SECP256K1
+        .verify_ecdsa(&message, signature, src_pubkey)
+        .is_ok()
 }
 
 /// Creates a secret through elliptic-curve Diffie-Hellman key agreement
@@ -114,6 +155,7 @@ mod tests {
             &node_id_a,
             &node_id_b,
             &challenge_data,
+            true, // initiator
         );
         assert_eq!(
             session.outbound_key,
@@ -148,5 +190,15 @@ mod tests {
                 "94852a1e2318c4e5e9d422c98eaf19d1d90d876b29cd06ca7cb7546d0fff7b484fe86c09a064fe72bdbef73ba8e9c34df0cd2b53e9d65528c2c7f336d5dfc6e6"
             )
         );
+
+        // Verify the signature
+        let src_pubkey = static_key.public_key(secp256k1::SECP256K1);
+        assert!(verify_id_signature(
+            &src_pubkey,
+            &challenge_data,
+            &ephemeral_pubkey,
+            &node_id_b,
+            &signature
+        ));
     }
 }
