@@ -863,19 +863,43 @@ impl BlockAccessListRecorder {
 
     /// Restores state to a checkpoint, keeping touched_addresses intact.
     ///
-    /// This truncates all state change vectors back to their lengths at checkpoint time,
-    /// removing any changes made after the checkpoint was created.
-    /// Storage reads are fully restored from the snapshot, which correctly handles
-    /// the case where a slot that was read is later written (removed from reads)
-    /// and then reverted (must reappear as a read).
+    /// Per EIP-7928: "State changes from reverted calls are discarded, but all accessed
+    /// addresses must be included." This means:
+    /// - Storage reads from reverted calls PERSIST (reads are accesses, not state changes)
+    /// - Storage writes from reverted calls become READS (slot was accessed but value unchanged)
+    /// - Balance/nonce/code changes are discarded
     pub fn restore(&mut self, checkpoint: BlockAccessListCheckpoint) {
-        // Restore storage_reads from snapshot.
-        // This correctly handles reverted writes: if a slot was originally a read,
-        // then written (removing it from reads), and then reverted, it will be
-        // restored as a read.
-        self.storage_reads = checkpoint.storage_reads_snapshot;
+        // Step 1: Collect slots that were written after checkpoint (to convert to reads)
+        let mut reverted_write_slots: BTreeMap<Address, BTreeSet<U256>> = BTreeMap::new();
+        for (addr, slots) in &self.storage_writes {
+            let checkpoint_lens = checkpoint.storage_writes_len.get(addr);
+            for (slot, changes) in slots {
+                let checkpoint_len = checkpoint_lens.and_then(|m| m.get(slot)).copied().unwrap_or(0);
+                if changes.len() > checkpoint_len {
+                    // This slot had writes after the checkpoint - convert to read
+                    reverted_write_slots.entry(*addr).or_default().insert(*slot);
+                }
+            }
+        }
 
-        // Restore storage_writes: truncate change vectors
+        // Step 2: Keep current reads (new reads during reverted call persist)
+        // Step 3: Restore reads that became writes (union with snapshot)
+        for (addr, snapshot_reads) in checkpoint.storage_reads_snapshot {
+            let current_reads = self.storage_reads.entry(addr).or_default();
+            for slot in snapshot_reads {
+                current_reads.insert(slot);
+            }
+        }
+
+        // Step 4: Convert reverted writes to reads
+        for (addr, slots) in reverted_write_slots {
+            let current_reads = self.storage_reads.entry(addr).or_default();
+            for slot in slots {
+                current_reads.insert(slot);
+            }
+        }
+
+        // Step 5: Truncate storage_writes (keep only writes from before checkpoint)
         self.storage_writes.retain(|addr, slots| {
             if let Some(slot_lens) = checkpoint.storage_writes_len.get(addr) {
                 slots.retain(|slot, changes| {
