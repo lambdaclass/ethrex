@@ -189,14 +189,12 @@ header_text="Daily performance report (24-hour average)"
         printf "• nethermind: %.3f Ggas/s (mean)\n  %s\n" "$nether_value" "$version_nethermind"
         ;;
     esac
-  done < <(printf '%s\n' "${sort_entries[@]}" | sort -rn)
+  done < <(printf '%s\n' "${sort_entries[@]}" | LC_ALL=C sort -rn)
 } >"${OUTPUT_DIR}/performance_report_github.txt"
 
-# Generate Slack message with code block table (truncated versions)
+# Generate Slack message (simple format, similar to Telegram)
 # Sorted by performance value (descending)
-slack_table='```'$'\n'
-slack_table+='Client       Version                  Performance'$'\n'
-slack_table+='-------------------------------------------------------'$'\n'
+slack_text=""
 
 # Build sortable entries: "value client"
 slack_sort_entries=()
@@ -213,29 +211,27 @@ if [[ -n "$nether_value" ]]; then
   slack_sort_entries+=("$nether_value nethermind")
 fi
 
-# Sort by value and append each client row
+# Sort by value and append each client entry
 while read -r value client; do
   case "$client" in
     ethrex)
-      slack_table+=$(printf "%-12s %-24s %.3f Ggas/s (mean)" "ethrex" "$version_ethrex_short" "$ethrex_value")$'\n'
+      slack_text+=$(printf "• *ethrex*: %.3f Ggas/s (mean)\n  %s" "$ethrex_value" "$version_ethrex")$'\n'
       ;;
     reth)
-      slack_table+=$(printf "%-12s %-24s %.3f Ggas/s (mean)" "reth" "$version_reth_short" "$reth_value")$'\n'
+      slack_text+=$(printf "• *reth*: %.3f Ggas/s (mean)\n  %s" "$reth_value" "$version_reth")$'\n'
       ;;
     geth)
-      slack_table+=$(printf "%-12s %-24s %.3f Ggas/s (p50) / %.3f Ggas/s (p99.9)" "geth" "$version_geth_short" "${geth_p50:-0}" "${geth_p999:-0}")$'\n'
+      slack_text+=$(printf "• *geth*: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)\n  %s" "${geth_p50:-0}" "${geth_p999:-0}" "$version_geth")$'\n'
       ;;
     nethermind)
-      slack_table+=$(printf "%-12s %-24s %.3f Ggas/s (mean)" "nethermind" "$version_nethermind_short" "$nether_value")$'\n'
+      slack_text+=$(printf "• *nethermind*: %.3f Ggas/s (mean)\n  %s" "$nether_value" "$version_nethermind")$'\n'
       ;;
   esac
-done < <(printf '%s\n' "${slack_sort_entries[@]}" | sort -rn)
+done < <(printf '%s\n' "${slack_sort_entries[@]}" | LC_ALL=C sort -rn)
 
-slack_table+='```'
-
-jq -n --arg header "$header_text" --arg table "$slack_table" '{
+jq -n --arg header "$header_text" --arg text "$slack_text" '{
   "blocks": [
     { "type": "header", "text": { "type": "plain_text", "text": $header } },
-    { "type": "section", "text": { "type": "mrkdwn", "text": $table } }
+    { "type": "section", "text": { "type": "mrkdwn", "text": $text } }
   ]
 }' >"${OUTPUT_DIR}/performance_report_slack.json"
