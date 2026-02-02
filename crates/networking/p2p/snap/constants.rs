@@ -71,6 +71,13 @@ pub const REQUEST_RETRY_ATTEMPTS: u32 = 5;
 /// Maximum number of concurrent in-flight requests during storage healing.
 pub const MAX_IN_FLIGHT_REQUESTS: u32 = 77;
 
+/// Maximum number of concurrent in-flight requests during account range downloads.
+pub const MAX_ACCOUNT_RANGE_IN_FLIGHT_REQUESTS: u32 = 50;
+
+/// Number of tasks to dispatch per iteration when downloading account ranges.
+/// This enables batch dispatching to improve peer utilization.
+pub const ACCOUNT_RANGE_BATCH_DISPATCH_SIZE: usize = 10;
+
 // =============================================================================
 // BLOCK SYNC CONFIGURATION
 // =============================================================================

@@ -11,7 +11,9 @@
 //! - `client`: Client-side request methods for PeerHandler
 //! - `constants`: Protocol constants and configuration values
 //! - `error`: Unified error types for snap protocol operations
+//! - `chunk_manager`: Adaptive chunk sizing for optimized downloads
 
+pub mod chunk_manager;
 pub mod client;
 pub mod constants;
 pub mod error;
@@ -31,3 +33,6 @@ pub use client::{RequestMetadata, RequestStorageTrieNodesError};
 
 // Re-export crate-internal helper functions
 pub(crate) use server::encodable_to_proof;
+
+// Re-export chunk manager
+pub use chunk_manager::AdaptiveChunkManager;

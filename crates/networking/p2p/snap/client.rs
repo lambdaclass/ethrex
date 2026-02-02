@@ -17,7 +17,9 @@ use crate::{
             GetStorageRanges, GetTrieNodes, StorageRanges, TrieNodes,
         },
     },
-    snap::{constants::*, encodable_to_proof, error::SnapError},
+    snap::{
+        chunk_manager::AdaptiveChunkManager, constants::*, encodable_to_proof, error::SnapError,
+    },
     sync::{AccountStorageRoots, SnapBlockSyncState, block_is_stale, update_pivot},
     utils::{
         AccountsWithStorage, dump_accounts_to_file, dump_storages_to_file,
@@ -81,6 +83,20 @@ struct StorageTask {
     end_hash: Option<H256>,
 }
 
+/// Tracks an in-flight account range request for bounded parallelism.
+struct AccountRangeInflightRequest {
+    dispatched_at: std::time::Instant,
+}
+
+/// Result from an account range worker task
+struct AccountRangeTaskResult {
+    request_id: u64,
+    accounts: Vec<AccountRangeUnit>,
+    peer_id: H256,
+    /// If Some, contains the remaining chunk (start, end) that still needs downloading
+    chunk_left: Option<(H256, H256)>,
+}
+
 /// Snap sync client methods for PeerHandler
 impl PeerHandler {
     /// Requests an account range from any suitable peer given the state trie's root and the starting hash and the limit hash.
@@ -104,13 +120,18 @@ impl PeerHandler {
         METRICS
             .current_step
             .set(CurrentStepValue::RequestingAccountRanges);
+
+        // Create adaptive chunk manager for peer performance tracking
+        let mut chunk_manager = AdaptiveChunkManager::new(start, limit);
+
         // 1) split the range in chunks of same length
         let start_u256 = U256::from_big_endian(&start.0);
         let limit_u256 = U256::from_big_endian(&limit.0);
 
-        let chunk_count = 800;
+        // Use the chunk manager's default count instead of hardcoded value
+        let base_chunk_count = AdaptiveChunkManager::default_chunk_count();
         let range = limit_u256 - start_u256;
-        let chunk_count = U256::from(chunk_count)
+        let chunk_count = U256::from(base_chunk_count)
             .min(range.max(U256::one()))
             .as_usize();
         let chunk_size = range / chunk_count;
@@ -137,9 +158,12 @@ impl PeerHandler {
         let mut all_account_hashes = Vec::new();
         let mut all_accounts_state = Vec::new();
 
-        // channel to send the tasks to the peers
+        // Channel to receive results from worker tasks
         let (task_sender, mut task_receiver) =
-            tokio::sync::mpsc::channel::<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>(1000);
+            tokio::sync::mpsc::channel::<AccountRangeTaskResult>(1000);
+
+        // Track in-flight requests for bounded parallelism
+        let mut in_flight_requests: HashMap<u64, AccountRangeInflightRequest> = HashMap::new();
 
         info!("Starting to download account ranges from peers");
 
@@ -152,7 +176,95 @@ impl PeerHandler {
 
         let mut logged_no_free_peers_count = 0;
 
+        // Interval for periodic operations (metrics update, disk flush checks)
+        let mut periodic_interval = tokio::time::interval(Duration::from_millis(100));
+
         loop {
+            // Use select! for event-driven architecture instead of busy polling
+            tokio::select! {
+                // Wait for a response from a worker task
+                result = task_receiver.recv() => {
+                    let Some(result) = result else {
+                        // Channel closed, all senders dropped
+                        warn!("Task receiver channel closed unexpectedly");
+                        break;
+                    };
+
+                    let AccountRangeTaskResult {
+                        request_id,
+                        accounts,
+                        peer_id,
+                        chunk_left,
+                    } = result;
+
+                    // Remove from in-flight tracking and get dispatch time for latency calculation
+                    let dispatched_at = in_flight_requests
+                        .remove(&request_id)
+                        .map(|req| req.dispatched_at);
+
+                    // Handle remaining chunk if any
+                    if let Some((chunk_start, chunk_end)) = chunk_left {
+                        if chunk_start <= chunk_end {
+                            tasks_queue_not_started.push_back((chunk_start, chunk_end));
+                        } else {
+                            completed_tasks += 1;
+                        }
+                    } else {
+                        completed_tasks += 1;
+                    }
+
+                    // Score peer based on response
+                    if accounts.is_empty() {
+                        self.peer_table.record_failure(&peer_id).await?;
+                    } else {
+                        // Calculate latency and record success with latency tracking
+                        let latency_ms = if let Some(dispatched_at) = dispatched_at {
+                            let latency = dispatched_at.elapsed().as_millis() as u64;
+                            self.peer_table
+                                .record_success_with_latency(&peer_id, latency)
+                                .await?;
+                            latency
+                        } else {
+                            // Fallback if we don't have timing info (shouldn't happen)
+                            self.peer_table.record_success(&peer_id).await?;
+                            0
+                        };
+
+                        // Record response in chunk manager for adaptive sizing
+                        chunk_manager.record_response(peer_id, accounts.len(), latency_ms);
+
+                        downloaded_count += accounts.len() as u64;
+
+                        // Log performance stats periodically (every 10 responses)
+                        if let Some((throughput, count)) = chunk_manager.get_peer_stats(&peer_id)
+                            && count % 10 == 0
+                        {
+                            debug!(
+                                "Peer {} throughput: {:.2} accounts/ms (over {} responses)",
+                                peer_id, throughput, count
+                            );
+                        }
+
+                        debug!(
+                            "Downloaded {} accounts from peer {} (current count: {downloaded_count}, in_flight: {})",
+                            accounts.len(),
+                            peer_id,
+                            in_flight_requests.len()
+                        );
+                        all_account_hashes.extend(accounts.iter().map(|unit| unit.hash));
+                        all_accounts_state.extend(accounts.iter().map(|unit| unit.account));
+                    }
+                }
+
+                // Periodic tick for housekeeping tasks
+                _ = periodic_interval.tick() => {
+                    // This branch handles periodic operations without busy polling
+                }
+            }
+
+            // === Post-event processing (runs after either branch) ===
+
+            // Flush to disk if buffer is large enough
             if all_accounts_state.len() * size_of::<AccountState>() >= RANGE_FILE_CHUNK_SIZE {
                 let current_account_hashes = std::mem::take(&mut all_account_hashes);
                 let current_account_states = std::mem::take(&mut all_accounts_state);
@@ -185,6 +297,7 @@ impl PeerHandler {
                 chunk_file += 1;
             }
 
+            // Update metrics periodically
             if last_update
                 .elapsed()
                 .expect("Time shouldn't be in the past")
@@ -196,62 +309,29 @@ impl PeerHandler {
                 last_update = SystemTime::now();
             }
 
-            if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
-                if let Some((chunk_start, chunk_end)) = chunk_start_end {
-                    if chunk_start <= chunk_end {
-                        tasks_queue_not_started.push_back((chunk_start, chunk_end));
-                    } else {
-                        completed_tasks += 1;
-                    }
-                }
-                if chunk_start_end.is_none() {
-                    completed_tasks += 1;
-                }
-                if accounts.is_empty() {
-                    self.peer_table.record_failure(&peer_id).await?;
-                    continue;
-                }
-                self.peer_table.record_success(&peer_id).await?;
-
-                downloaded_count += accounts.len() as u64;
-
-                debug!(
-                    "Downloaded {} accounts from peer {} (current count: {downloaded_count})",
-                    accounts.len(),
-                    peer_id
-                );
-                all_account_hashes.extend(accounts.iter().map(|unit| unit.hash));
-                all_accounts_state.extend(accounts.iter().map(|unit| unit.account));
+            // Check if we're done
+            if completed_tasks >= chunk_count
+                && tasks_queue_not_started.is_empty()
+                && in_flight_requests.is_empty()
+            {
+                info!("All account ranges downloaded successfully");
+                break;
             }
 
-            let Some((peer_id, connection)) = self
-                .peer_table
-                .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
-                .await
-                .inspect_err(|err| warn!(%err, "Error requesting a peer for account range"))
-                .unwrap_or(None)
-            else {
-                // Log ~ once every 10 seconds
-                if logged_no_free_peers_count == 0 {
-                    trace!("We are missing peers in request_account_range");
-                    logged_no_free_peers_count = 1000;
-                }
-                logged_no_free_peers_count -= 1;
-                // Sleep a bit to avoid busy polling
-                tokio::time::sleep(Duration::from_millis(10)).await;
+            // Calculate available capacity for new requests
+            let available_slots = (MAX_ACCOUNT_RANGE_IN_FLIGHT_REQUESTS as usize)
+                .saturating_sub(in_flight_requests.len());
+
+            // Dispatch multiple tasks if capacity available (up to batch size)
+            let tasks_to_dispatch = available_slots
+                .min(ACCOUNT_RANGE_BATCH_DISPATCH_SIZE.min(tasks_queue_not_started.len()));
+
+            if tasks_to_dispatch == 0 {
+                // No capacity or no tasks - select! will wait for next event
                 continue;
-            };
+            }
 
-            let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
-                if completed_tasks >= chunk_count {
-                    info!("All account ranges downloaded successfully");
-                    break;
-                }
-                continue;
-            };
-
-            let tx = task_sender.clone();
-
+            // Check for stale pivot once per dispatch batch
             if block_is_stale(pivot_header) {
                 info!("request_account_range became stale, updating pivot");
                 *pivot_header = update_pivot(
@@ -264,17 +344,54 @@ impl PeerHandler {
                 .expect("Should be able to update pivot")
             }
 
-            let peer_table = self.peer_table.clone();
+            // Dispatch tasks
+            for _ in 0..tasks_to_dispatch {
+                let Some((peer_id, connection)) = self
+                    .peer_table
+                    .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+                    .await
+                    .inspect_err(|err| warn!(%err, "Error requesting a peer for account range"))
+                    .unwrap_or(None)
+                else {
+                    // Log ~ once every 10 seconds
+                    if logged_no_free_peers_count == 0 {
+                        trace!("We are missing peers in request_account_range");
+                        logged_no_free_peers_count = 1000;
+                    }
+                    logged_no_free_peers_count -= 1;
+                    // No peers available, break out of dispatch loop
+                    break;
+                };
 
-            tokio::spawn(request_account_range_worker(
-                peer_id,
-                connection,
-                peer_table,
-                chunk_start,
-                chunk_end,
-                pivot_header.state_root,
-                tx,
-            ));
+                let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
+                    // No more tasks to dispatch
+                    break;
+                };
+
+                let request_id: u64 = rand::random();
+                let tx = task_sender.clone();
+                let peer_table = self.peer_table.clone();
+                let state_root = pivot_header.state_root;
+
+                // Track the in-flight request for latency calculation
+                in_flight_requests.insert(
+                    request_id,
+                    AccountRangeInflightRequest {
+                        dispatched_at: std::time::Instant::now(),
+                    },
+                );
+
+                tokio::spawn(request_account_range_worker(
+                    request_id,
+                    peer_id,
+                    connection,
+                    peer_table,
+                    chunk_start,
+                    chunk_end,
+                    state_root,
+                    tx,
+                ));
+            }
         }
 
         write_set
@@ -1157,20 +1274,22 @@ impl PeerHandler {
     }
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 async fn request_account_range_worker(
+    request_id: u64,
     peer_id: H256,
     mut connection: PeerConnection,
     mut peer_table: PeerTable,
     chunk_start: H256,
     chunk_end: H256,
     state_root: H256,
-    tx: tokio::sync::mpsc::Sender<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>,
+    tx: tokio::sync::mpsc::Sender<AccountRangeTaskResult>,
 ) -> Result<(), SnapError> {
     debug!("Requesting account range from peer {peer_id}, chunk: {chunk_start:?} - {chunk_end:?}");
-    let request_id = rand::random();
+    // Use a random protocol-level request ID (different from our tracking request_id)
+    let protocol_request_id = rand::random();
     let request = RLPxMessage::GetAccountRange(GetAccountRange {
-        id: request_id,
+        id: protocol_request_id,
         root_hash: state_root,
         starting_hash: chunk_start,
         limit_hash: chunk_end,
@@ -1190,9 +1309,14 @@ async fn request_account_range_worker(
     .await
     {
         if accounts.is_empty() {
-            tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
-                .await
-                .ok();
+            tx.send(AccountRangeTaskResult {
+                request_id,
+                accounts: Vec::new(),
+                peer_id,
+                chunk_left: Some((chunk_start, chunk_end)),
+            })
+            .await
+            .ok();
             return Ok(());
         }
         // Unzip & validate response
@@ -1214,9 +1338,14 @@ async fn request_account_range_worker(
             &encoded_accounts,
             &proof,
         ) else {
-            tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
-                .await
-                .ok();
+            tx.send(AccountRangeTaskResult {
+                request_id,
+                accounts: Vec::new(),
+                peer_id,
+                chunk_left: Some((chunk_start, chunk_end)),
+            })
+            .await
+            .ok();
             tracing::error!("Received invalid account range");
             return Ok(());
         };
@@ -1226,9 +1355,14 @@ async fn request_account_range_worker(
             let last_hash = match account_hashes.last() {
                 Some(last_hash) => last_hash,
                 None => {
-                    tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
-                        .await
-                        .ok();
+                    tx.send(AccountRangeTaskResult {
+                        request_id,
+                        accounts: Vec::new(),
+                        peer_id,
+                        chunk_left: Some((chunk_start, chunk_end)),
+                    })
+                    .await
+                    .ok();
                     error!("Account hashes last failed, this shouldn't happen");
                     return Err(SnapError::NoAccountHashes);
                 }
@@ -1239,21 +1373,27 @@ async fn request_account_range_worker(
         } else {
             None
         };
-        tx.send((
-            accounts
+        tx.send(AccountRangeTaskResult {
+            request_id,
+            accounts: accounts
                 .into_iter()
                 .filter(|unit| unit.hash <= chunk_end)
                 .collect(),
             peer_id,
             chunk_left,
-        ))
+        })
         .await
         .ok();
     } else {
         tracing::debug!("Failed to get account range");
-        tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
-            .await
-            .ok();
+        tx.send(AccountRangeTaskResult {
+            request_id,
+            accounts: Vec::new(),
+            peer_id,
+            chunk_left: Some((chunk_start, chunk_end)),
+        })
+        .await
+        .ok();
     }
     Ok::<(), SnapError>(())
 }

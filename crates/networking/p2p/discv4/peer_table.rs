@@ -128,6 +128,10 @@ pub struct PeerData {
     score: i64,
     /// Track the amount of concurrent requests this peer is handling
     requests: i64,
+    /// Exponential moving average of response latency in milliseconds
+    latency_ema_ms: f64,
+    /// Number of completed requests (used for EMA calculation)
+    completed_requests: u64,
 }
 
 impl PeerData {
@@ -145,6 +149,8 @@ impl PeerData {
             connection,
             score: Default::default(),
             requests: Default::default(),
+            latency_ema_ms: 0.0,
+            completed_requests: 0,
         }
     }
 }
@@ -245,6 +251,22 @@ impl PeerTable {
     pub async fn record_success(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
         self.handle
             .cast(CastMessage::RecordSuccess { node_id: *node_id })
+            .await?;
+        Ok(())
+    }
+
+    /// Record a successful request with latency information for peer scoring.
+    /// Updates the peer's score, latency EMA, and completed request count.
+    pub async fn record_success_with_latency(
+        &mut self,
+        node_id: &H256,
+        latency_ms: u64,
+    ) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::RecordSuccessWithLatency {
+                node_id: *node_id,
+                latency_ms,
+            })
             .await?;
         Ok(())
     }
@@ -631,9 +653,18 @@ impl PeerTableServer {
     // Internal functions //
 
     // Weighting function used to select best peer
-    // TODO: Review this formula and weight constants.
-    fn weight_peer(&self, score: &i64, requests: &i64) -> i64 {
-        score * SCORE_WEIGHT - requests * REQUESTS_WEIGHT
+    // Lower latency peers get a bonus (up to 25 points for sub-100ms latency)
+    fn weight_peer(&self, score: &i64, requests: &i64, latency_ema_ms: f64) -> i64 {
+        // Base weight from score and requests
+        let base_weight = score * SCORE_WEIGHT - requests * REQUESTS_WEIGHT;
+
+        // Latency bonus: lower latency = higher bonus
+        // Max latency considered is 5000ms, beyond which there's no bonus
+        // Fast peers (<100ms) get full bonus, slow peers (>5000ms) get none
+        let latency_factor = 1.0 - (latency_ema_ms.min(5000.0) / 5000.0);
+        let latency_bonus = (latency_factor * 50.0 * 0.5) as i64; // Max bonus of 25
+
+        base_weight + latency_bonus
     }
 
     // Returns if the peer has room for more connections given the current score
@@ -660,12 +691,18 @@ impl PeerTableServer {
                     // if the peer doesn't have the channel open, we skip it.
                     let connection = peer_data.connection.clone()?;
 
-                    // We return the id, the score and the channel to connect with.
-                    Some((*id, peer_data.score, peer_data.requests, connection))
+                    // We return the id, the score, requests, latency and the channel to connect with.
+                    Some((
+                        *id,
+                        peer_data.score,
+                        peer_data.requests,
+                        peer_data.latency_ema_ms,
+                        connection,
+                    ))
                 }
             })
-            .max_by_key(|(_, score, reqs, _)| self.weight_peer(score, reqs))
-            .map(|(k, _, _, v)| (k, v))
+            .max_by_key(|(_, score, reqs, latency, _)| self.weight_peer(score, reqs, *latency))
+            .map(|(k, _, _, _, v)| (k, v))
     }
 
     fn prune(&mut self) {
@@ -895,6 +932,10 @@ enum CastMessage {
     },
     RecordSuccess {
         node_id: H256,
+    },
+    RecordSuccessWithLatency {
+        node_id: H256,
+        latency_ms: u64,
     },
     RecordFailure {
         node_id: H256,
@@ -1167,6 +1208,29 @@ impl GenServer for PeerTableServer {
                 self.peers
                     .entry(node_id)
                     .and_modify(|peer_data| peer_data.score = (peer_data.score + 1).min(MAX_SCORE));
+            }
+            CastMessage::RecordSuccessWithLatency {
+                node_id,
+                latency_ms,
+            } => {
+                self.peers.entry(node_id).and_modify(|peer_data| {
+                    // Update score
+                    peer_data.score = (peer_data.score + 1).min(MAX_SCORE);
+
+                    // Update latency EMA using exponential moving average
+                    // Alpha = 0.2 gives more weight to recent measurements while smoothing
+                    const EMA_ALPHA: f64 = 0.2;
+                    let latency = latency_ms as f64;
+                    if peer_data.completed_requests == 0 {
+                        // First measurement, use it directly
+                        peer_data.latency_ema_ms = latency;
+                    } else {
+                        // EMA = alpha * new_value + (1 - alpha) * old_ema
+                        peer_data.latency_ema_ms =
+                            EMA_ALPHA * latency + (1.0 - EMA_ALPHA) * peer_data.latency_ema_ms;
+                    }
+                    peer_data.completed_requests += 1;
+                });
             }
             CastMessage::RecordFailure { node_id } => {
                 self.peers
