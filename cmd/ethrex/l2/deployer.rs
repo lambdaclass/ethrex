@@ -588,7 +588,7 @@ const ROUTER_REGISTER_SIGNATURE: &str = "register(uint256,address)";
 // Gas limit for deploying and initializing contracts
 // Needed to avoid estimating gas of initializations when the
 // deploy transaction is still pending
-const TRANSACTION_GAS_LIMIT: u64 = 15_000_000;
+const TRANSACTION_GAS_LIMIT: u64 = 10_000_000;
 
 #[derive(Clone)]
 pub struct ContractAddresses {

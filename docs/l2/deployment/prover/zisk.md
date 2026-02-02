@@ -18,7 +18,7 @@ cd zisk && git checkout pre-develop-0.16.0
 cargo build --release
 ```
 
-Follow the [ZisK installation guide](https://github.com/0xPolygonHermez/zisk/blob/feature/bn128/book/getting_started/installation.md#option-2-building-from-source) steps 3-7 to install binaries to `~/.zisk/bin`.
+Follow the [ZisK installation guide](https://github.com/0xPolygonHermez/zisk/blob/pre-develop-0.16.0/book/getting_started/installation.md#option-2-building-from-source) steps 3-7 to install binaries to `~/.zisk/bin`.
 
 **Verify:**
 ```bash

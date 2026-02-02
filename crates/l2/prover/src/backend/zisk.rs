@@ -185,8 +185,6 @@ impl ZiskBackend {
                 output_dir = %output_dir.display(),
                 "ZisK prove complete; starting snark wrapping"
             );
-            std::fs::create_dir_all(cwd.join("tmp")).map_err(BackendError::proving)?;
-            std::fs::create_dir_all(output_dir.join("proofs")).map_err(BackendError::proving)?;
             let snark_key_path = resolve_proving_key_snark_path();
             let snark_key_path_str = snark_key_path.to_string_lossy();
             let path_to_proof_str = path_to_proof.to_string_lossy();
@@ -300,7 +298,7 @@ impl ProverBackend for ZiskBackend {
         let batch_proof = match format {
             ProofFormat::Compressed => BatchProof::ProofBytes(ProofBytes {
                 prover_type: ProverType::ZisK,
-                proof: bincode::serialize(&proof.0).map_err(BackendError::batch_proof)?,
+                proof: proof.0,
                 public_values: vec![],
             }),
             ProofFormat::Groth16 => BatchProof::ProofCalldata(ProofCalldata {

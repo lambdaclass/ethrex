@@ -269,7 +269,7 @@ contract OnChainProposer is
         // we don't want to restrict setting the vk to zero
         // as we may want to disable the version
         verificationKeys[commit_hash][ZISK_VERIFIER_ID] = new_vk;
-        emit VerificationKeyUpgraded("ZISK", commit_hash, new_vk);
+        emit VerificationKeyUpgraded("ZisK", commit_hash, new_vk);
     }
 
     /// @inheritdoc IOnChainProposer
