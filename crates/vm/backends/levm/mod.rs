@@ -72,18 +72,9 @@ impl LEVM {
 
         Self::prepare_block(block, db, vm_type)?;
 
-        // Record coinbase if block has txs or withdrawals (per EIP-7928)
-        if record_bal {
-            let has_txs_or_withdrawals = !block.body.transactions.is_empty()
-                || block
-                    .body
-                    .withdrawals
-                    .as_ref()
-                    .is_some_and(|w| !w.is_empty());
-            if has_txs_or_withdrawals && let Some(recorder) = db.bal_recorder_mut() {
-                recorder.record_touched_address(block.header.coinbase);
-            }
-        }
+        // Note: Coinbase is NOT pre-recorded here. Per EIP-7928, the coinbase should only
+        // appear in the BAL if it has actual state changes (receives priority fees).
+        // The increase_account_balance call in pay_coinbase will record the balance change.
 
         let mut receipts = Vec::new();
         // Cumulative gas for receipts (POST-REFUND per EIP-7778)

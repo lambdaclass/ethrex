@@ -1,59 +1,53 @@
 # EF Tests Work Log
 
 ## Current Investigation
-**Iteration:** 2
-**Focusing on:** Remaining BlockAccessListHashMismatch failures (58 total)
-**Working hypothesis:** Additional BAL tracking issues remain for specific scenarios
+**Iteration:** 4
+**Status:** Fix #4 applied - balance checkpoint/restore integrity
+**Working hypothesis:** Need to investigate remaining failures for patterns
 
 ## Test Summary
 - Total tests: 6158
-- Passed: 6100
-- Failed: 58
-- Previous failures: 64
-
-## Breakdown of Remaining Failures
-- 30 EIP-7928 BAL tests (down from 31)
-- 21 EIP-7708 ETH transfer log tests (unchanged)
-- 4 EIP-7778 gas accounting tests (unchanged)
-- 3 EIP-8024 tests (down from 8) - still BAL-related errors
+- Passed: 6104
+- Failed: 54
+- Previous failures: 58
+- Lowest failure count: 54
 
 ## Key Findings
 
-### Fix #2 Applied - Net-zero storage write filtering
-- Added `tx_initial_storage` to track pre-transaction storage values
-- Added `capture_pre_storage()` method for first-write-wins capture
-- Added `filter_net_zero_storage()` to convert net-zero writes to reads
-- Modified `record_storage_write()` to deduplicate same-index writes
-- Filtering happens at transaction boundaries and before build()
+### Fix #4 Applied - Balance checkpoint/restore integrity
+- The `record_balance_change` function was updating balance entries in-place
+- This broke checkpoint/restore because checkpoints capture LENGTH, not VALUES
+- Fixed by always pushing new entries, then taking only the final balance in build()
+- This ensures truncation to checkpoint length preserves the correct values
+- Tests fixed: 4 (58 → 54)
 
-### Remaining Issues to Investigate
-1. EIP-7708 ETH transfer logs - may need ETH transfer tracking in BAL
-2. EIP-7778 gas accounting - may be separate from BAL issues
-3. EIP-7928 specific tests - likely edge cases in:
-   - 7702 delegation scenarios
-   - Withdrawal handling
-   - Precompile interactions
-   - OOG (out-of-gas) scenarios
+### Debugging Approach
+- Added debug output to validation.rs (enabled with DEBUG_BAL=1)
+- Added debug output to build() and restore() (enabled with DEBUG_BAL_BUILD=1)
+- Traced through balance_changes to find the root cause
+- Key insight: checkpoint was taken with len=1, but the value at index 0 was being updated in-place
 
 ## Code Locations Identified
-- `crates/common/types/block_access_list.rs:531` - BlockAccessListRecorder struct
-- `crates/common/types/block_access_list.rs:574` - set_block_access_index (triggers filtering)
-- `crates/common/types/block_access_list.rs:630` - filter_net_zero_storage
-- `crates/common/types/block_access_list.rs:676` - capture_pre_storage
-- `crates/vm/levm/src/db/gen_db.rs:676` - calls capture_pre_storage before writes
-- `/data2/edgar/work/execution-specs/src/ethereum/forks/amsterdam/state_tracker.py` - reference impl
+- `crates/common/types/block_access_list.rs:738` - record_balance_change (now always pushes)
+- `crates/common/types/block_access_list.rs:874-895` - build() balance filtering (now takes only final)
+- `crates/common/types/block_access_list.rs:957` - restore() function
+- `crates/common/validation.rs:173` - BAL hash validation (has debug output)
 
 ## Attempted Approaches
 1. Fix #1: Revert handling - storage reads persist on revert ✓ (3 tests fixed)
 2. Fix #2: Net-zero storage filtering ✓ (6 tests fixed)
+3. Fix #3: Remove premature coinbase addition ✓ (no regression)
+4. Fix #4: Balance checkpoint/restore integrity ✓ (4 tests fixed)
+5. Failed: Filter out empty accounts from BAL ✗ (caused regression)
 
 ## Next Steps
-1. [ ] Investigate EIP-7708 ETH transfer log failures
-2. [ ] Check if ETH transfers need separate BAL tracking (balance changes vs transfer logs)
-3. [ ] Investigate EIP-7778 gas accounting - may be unrelated to BAL
-4. [ ] Look at remaining EIP-7928 edge cases (7702, withdrawals, precompiles)
+1. [ ] Analyze remaining 54 failures for common patterns
+2. [ ] Check EIP-7708 ETH transfer log tests specifically
+3. [ ] Check EIP-7778 gas accounting tests
+4. [ ] Investigate EIP-7702 delegation edge cases
 
 ## Notes
-- All remaining failures are BlockAccessListHashMismatch (plus a few ReceiptsRootMismatch)
-- EIP-7708 defines ETH transfer logs - may need special handling
-- The 3 remaining EIP-8024 tests (stack_underflow, exchange tests) are also BAL issues, not opcode bugs
+- All remaining failures are BAL-related (BlockAccessListHashMismatch)
+- Empty accounts (no changes) ARE expected in some tests (failed CREATE targets)
+- The same pattern (checkpoint/restore) may apply to nonce_changes and code_changes
+- Progress: 64 → 58 → 54 failures (10 tests fixed total)

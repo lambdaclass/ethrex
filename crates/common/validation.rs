@@ -177,6 +177,42 @@ pub fn validate_block_access_list_hash(
         .unwrap_or(false);
 
     if !valid {
+        // Debug output: print computed BAL details when there's a mismatch
+        if std::env::var("DEBUG_BAL").is_ok() {
+            eprintln!("\n=== BAL MISMATCH DEBUG ===");
+            eprintln!("Expected hash: {:?}", header.block_access_list_hash);
+            eprintln!("Computed hash: {:?}", computed_hash);
+            eprintln!("Computed BAL accounts ({}):", computed_bal.accounts().len());
+            for account in computed_bal.accounts() {
+                eprintln!(
+                    "  {:?}: storage_changes={}, storage_reads={}, balance_changes={}, nonce_changes={}, code_changes={}",
+                    account.address(),
+                    account.storage_changes().len(),
+                    account.storage_reads().len(),
+                    account.balance_changes().len(),
+                    account.nonce_changes().len(),
+                    account.code_changes().len()
+                );
+                if !account.storage_reads().is_empty() {
+                    eprintln!("    storage_reads: {:?}", account.storage_reads());
+                }
+                if !account.storage_changes().is_empty() {
+                    for sc in account.storage_changes() {
+                        eprintln!("    storage_change slot={:?}, changes={:?}", sc.slot(), sc.changes());
+                    }
+                }
+                if !account.balance_changes().is_empty() {
+                    eprintln!("    balance_changes: {:?}", account.balance_changes().iter().map(|b| (b.block_access_index(), b.post_balance())).collect::<Vec<_>>());
+                }
+                if !account.nonce_changes().is_empty() {
+                    eprintln!("    nonce_changes: {:?}", account.nonce_changes().iter().map(|n| (n.block_access_index(), n.post_nonce())).collect::<Vec<_>>());
+                }
+                if !account.code_changes().is_empty() {
+                    eprintln!("    code_changes: {:?}", account.code_changes().iter().map(|c| (c.block_access_index(), c.new_code().len())).collect::<Vec<_>>());
+                }
+            }
+            eprintln!("=== END DEBUG ===\n");
+        }
         return Err(InvalidBlockError::BlockAccessListHashMismatch);
     }
 
