@@ -1205,7 +1205,7 @@ mod tests {
             })
         );
 
-        let record = handshake.record.clone().expect("expected ENR record");
+        let record = handshake.record.expect("expected ENR record");
         let pairs = record.decode_pairs();
         assert_eq!(pairs.id.as_deref(), Some("v4"));
         assert!(pairs.secp256k1.is_some());
