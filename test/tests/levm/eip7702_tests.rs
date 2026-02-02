@@ -20,6 +20,7 @@ use ethrex_common::{
 };
 use ethrex_levm::{
     EVMConfig, Environment,
+    constants::SET_CODE_DELEGATION_BYTES,
     db::gen_db::GeneralizedDatabase,
     gas_cost::COLD_ADDRESS_ACCESS_COST,
     tracing::LevmCallTracer,
@@ -31,12 +32,9 @@ use once_cell::sync::OnceCell;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
-// EIP-7702 delegation code prefix: 0xef0100
-const DELEGATION_PREFIX: [u8; 3] = [0xef, 0x01, 0x00];
-
 /// Creates EIP-7702 delegation bytecode: 0xef0100 || address
 fn create_delegation_code(target: Address) -> Bytes {
-    let mut code = DELEGATION_PREFIX.to_vec();
+    let mut code = SET_CODE_DELEGATION_BYTES.to_vec();
     code.extend_from_slice(target.as_bytes());
     Bytes::from(code)
 }
@@ -249,7 +247,7 @@ fn test_delegation_code_format() {
     // Should start with 0xef0100
     assert_eq!(
         &code[0..3],
-        &DELEGATION_PREFIX,
+        &SET_CODE_DELEGATION_BYTES,
         "Should have EIP-7702 prefix"
     );
 
