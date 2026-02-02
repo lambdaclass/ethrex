@@ -11,9 +11,11 @@ use ethrex_common::{
     constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE},
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal, bloom_from_logs,
-        calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
-        compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
+        ChainConfig, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal,
+        block_access_list::BlockAccessList,
+        bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
+        calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
+        compute_withdrawals_root,
         requests::{EncodedRequests, compute_requests_hash},
     },
 };
@@ -217,6 +219,8 @@ pub struct PayloadBuildContext {
     pub vm: Evm,
     pub account_updates: Vec<AccountUpdate>,
     pub payload_size: u64,
+    /// Block Access List for EIP-7928
+    pub block_access_list: Option<BlockAccessList>,
 }
 
 impl PayloadBuildContext {
@@ -239,7 +243,12 @@ impl PayloadBuildContext {
             .map_err(|e| EvmError::DB(e.to_string()))?
             .ok_or_else(|| EvmError::DB("parent header not found".to_string()))?;
         let vm_db = StoreVmDatabase::new(storage.clone(), parent_header)?;
-        let vm = new_evm(blockchain_type, vm_db)?;
+        let mut vm = new_evm(blockchain_type, vm_db)?;
+
+        // Enable BAL recording for Amsterdam and later forks (EIP-7928)
+        if config.is_amsterdam_activated(payload.header.timestamp) {
+            vm.enable_bal_recording();
+        }
 
         let payload_size = payload.length() as u64;
         Ok(PayloadBuildContext {
@@ -256,6 +265,7 @@ impl PayloadBuildContext {
             vm,
             account_updates: Vec::new(),
             payload_size,
+            block_access_list: None,
         })
     }
 
@@ -290,6 +300,8 @@ pub struct PayloadBuildResult {
     pub requests: Vec<EncodedRequests>,
     pub account_updates: Vec<AccountUpdate>,
     pub payload: Block,
+    /// Block Access List for EIP-7928
+    pub block_access_list: Option<BlockAccessList>,
 }
 
 impl From<PayloadBuildContext> for PayloadBuildResult {
@@ -301,6 +313,7 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
             receipts,
             account_updates,
             payload,
+            block_access_list,
             ..
         } = value;
 
@@ -311,6 +324,7 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
             receipts,
             account_updates,
             payload,
+            block_access_list,
         }
     }
 }
@@ -657,6 +671,9 @@ impl Blockchain {
     }
 
     pub fn finalize_payload(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
+        // Take BAL from VM before getting state transitions (which clears state)
+        let block_access_list = context.vm.take_bal();
+
         let account_updates = context.vm.get_state_transitions()?;
 
         let ret_acount_updates_list = self
@@ -676,6 +693,11 @@ impl Blockchain {
             .map(|requests| compute_requests_hash(requests));
         context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
         context.account_updates = account_updates;
+
+        // Set BAL hash in block header (EIP-7928)
+        context.payload.header.block_access_list_hash =
+            block_access_list.as_ref().map(|bal| bal.compute_hash());
+        context.block_access_list = block_access_list;
 
         let mut logs = vec![];
         for receipt in context.receipts.iter().cloned() {

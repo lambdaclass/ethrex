@@ -4,6 +4,7 @@ use levm::LEVM;
 use crate::db::{DynVmDatabase, VmDatabase};
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
+use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
     AccessList, AccountUpdate, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction,
@@ -73,8 +74,16 @@ impl Evm {
         }
     }
 
-    pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
-        LEVM::execute_block(block, &mut self.db, self.vm_type)
+    /// Execute a block and return the execution result.
+    ///
+    /// If `record_bal` is true, also records and returns the Block Access List (EIP-7928).
+    /// The BAL will be `None` if `record_bal` is false.
+    pub fn execute_block(
+        &mut self,
+        block: &Block,
+        record_bal: bool,
+    ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
+        LEVM::execute_block(block, &mut self.db, self.vm_type, record_bal)
     }
 
     #[instrument(
@@ -167,6 +176,22 @@ impl Evm {
         header: &BlockHeader,
     ) -> Result<Vec<Requests>, EvmError> {
         levm::extract_all_requests_levm(receipts, &mut self.db, header, self.vm_type)
+    }
+
+    /// Takes the Block Access List (BAL) from the database if recording was enabled.
+    /// Returns `None` if BAL recording was not enabled.
+    pub fn take_bal(&mut self) -> Option<BlockAccessList> {
+        self.db.take_bal()
+    }
+
+    /// Enables BAL (Block Access List) recording for EIP-7928.
+    pub fn enable_bal_recording(&mut self) {
+        self.db.enable_bal_recording();
+    }
+
+    /// Sets the current block access index for BAL recording per EIP-7928 spec (uint16).
+    pub fn set_bal_index(&mut self, index: u16) {
+        self.db.set_bal_index(index);
     }
 
     pub fn simulate_tx_from_generic(
