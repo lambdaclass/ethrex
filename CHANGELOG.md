@@ -57,7 +57,7 @@
 
 ### 2025-12-15
 
-- Parallelize storage merkelization [#5497](https://github.com/lambdaclass/ethrex/pull/5497)
+- Parallelize storage merkelization [#6079](https://github.com/lambdaclass/ethrex/pull/6079)
 
 ### 2025-12-02
 
