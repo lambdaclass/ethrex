@@ -102,15 +102,26 @@ impl Evm {
         remaining_gas: &mut u64,
         sender: Address,
     ) -> Result<(Receipt, u64), EvmError> {
+        let chain_config = self.db.store.get_chain_config()?;
+        let fork = chain_config.fork(block_header.timestamp);
+
         let execution_report =
             LEVM::execute_tx(tx, sender, block_header, &mut self.db, self.vm_type)?;
 
         *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
 
+        // EIP-7778: Set gas_spent for Amsterdam+ receipts
+        let gas_spent = if fork >= Fork::Amsterdam {
+            Some(execution_report.gas_spent)
+        } else {
+            None
+        };
+
         let receipt = Receipt::new(
             tx.tx_type(),
             execution_report.is_success(),
             block_header.gas_limit - *remaining_gas,
+            gas_spent,
             execution_report.logs.clone(),
         );
 
