@@ -81,6 +81,43 @@ struct StorageTask {
     end_hash: Option<H256>,
 }
 
+// =============================================================================
+// Snapshot Dumping Helpers
+// =============================================================================
+
+/// Ensures a directory exists, creating it if necessary
+fn ensure_dir_exists(dir: &Path) -> Result<(), SnapError> {
+    if !dir.exists() {
+        std::fs::create_dir_all(dir).map_err(|_| SnapError::dir_create_failed(dir.to_path_buf()))?;
+    }
+    Ok(())
+}
+
+/// Prepares and dumps account state snapshot to file
+fn dump_account_state_snapshot(
+    dir: &Path,
+    chunk_index: u64,
+    account_hashes: Vec<H256>,
+    account_states: Vec<AccountState>,
+) -> Result<(), DumpError> {
+    let chunk: Vec<(H256, AccountState)> = account_hashes
+        .into_iter()
+        .zip(account_states)
+        .collect();
+
+    let path = get_account_state_snapshot_file(dir, chunk_index);
+    dump_accounts_to_file(&path, chunk)
+}
+
+/// Prepares and dumps storage snapshot to file
+fn dump_storage_snapshot(
+    dir: &Path,
+    chunk_index: u64,
+    storages: Vec<AccountsWithStorage>,
+) -> Result<(), DumpError> {
+    let path = get_account_storages_snapshot_file(dir, chunk_index);
+    dump_storages_to_file(&path, storages)
+}
 
 /// Snap sync client methods for PeerHandler
 impl PeerHandler {
@@ -153,29 +190,15 @@ impl PeerHandler {
 
         loop {
             if all_accounts_state.len() * size_of::<AccountState>() >= RANGE_FILE_CHUNK_SIZE {
-                let current_account_hashes = std::mem::take(&mut all_account_hashes);
-                let current_account_states = std::mem::take(&mut all_accounts_state);
+                let hashes = std::mem::take(&mut all_account_hashes);
+                let states = std::mem::take(&mut all_accounts_state);
 
-                let account_state_chunk = current_account_hashes
-                    .into_iter()
-                    .zip(current_account_states)
-                    .collect::<Vec<(H256, AccountState)>>();
+                ensure_dir_exists(account_state_snapshots_dir)?;
 
-                if !std::fs::exists(account_state_snapshots_dir)
-                    .map_err(|_| SnapError::SnapshotDir("State snapshots directory does not exist".to_string()))?
-                {
-                    std::fs::create_dir_all(account_state_snapshots_dir)
-                        .map_err(|_| SnapError::SnapshotDir("Failed to create state snapshots directory".to_string()))?;
-                }
-
-                let account_state_snapshots_dir_cloned = account_state_snapshots_dir.to_path_buf();
+                let dir = account_state_snapshots_dir.to_path_buf();
+                let idx = chunk_file;
                 write_set.spawn(async move {
-                    let path = get_account_state_snapshot_file(
-                        &account_state_snapshots_dir_cloned,
-                        chunk_file,
-                    );
-                    // TODO: check the error type and handle it properly
-                    dump_accounts_to_file(&path, account_state_chunk)
+                    dump_account_state_snapshot(&dir, idx, hashes, states)
                 });
 
                 chunk_file += 1;
@@ -280,32 +303,17 @@ impl PeerHandler {
             .collect::<Result<Vec<()>, DumpError>>()
             .map_err(SnapError::from)?;
 
-        // TODO: This is repeated code, consider refactoring
+        // Dump remaining accounts
         {
-            let current_account_hashes = std::mem::take(&mut all_account_hashes);
-            let current_account_states = std::mem::take(&mut all_accounts_state);
+            let hashes = std::mem::take(&mut all_account_hashes);
+            let states = std::mem::take(&mut all_accounts_state);
 
-            let account_state_chunk = current_account_hashes
-                .into_iter()
-                .zip(current_account_states)
-                .collect::<Vec<(H256, AccountState)>>();
-
-            if !std::fs::exists(account_state_snapshots_dir)
-                .map_err(|_| SnapError::SnapshotDir("State snapshots directory does not exist".to_string()))?
-            {
-                std::fs::create_dir_all(account_state_snapshots_dir)
-                    .map_err(|_| SnapError::SnapshotDir("Failed to create state snapshots directory".to_string()))?;
+            if !hashes.is_empty() {
+                ensure_dir_exists(account_state_snapshots_dir)?;
+                dump_account_state_snapshot(account_state_snapshots_dir, chunk_file, hashes, states)
+                    .inspect_err(|err| error!("Error dumping accounts to disk: {}", err.error))
+                    .map_err(SnapError::from)?;
             }
-
-            let path = get_account_state_snapshot_file(account_state_snapshots_dir, chunk_file);
-            dump_accounts_to_file(&path, account_state_chunk)
-                .inspect_err(|err| {
-                    error!(
-                        "We had an error dumping the last accounts to disk {}",
-                        err.error
-                    )
-                })
-                .map_err(|_| SnapError::SnapshotDir(format!("Failed to write state snapshot chunk {}", chunk_file)))?;
         }
 
         METRICS
@@ -602,17 +610,12 @@ impl PeerHandler {
                 .sum::<usize>()
                 > RANGE_FILE_CHUNK_SIZE
             {
-                let current_account_storages = std::mem::take(&mut current_account_storages);
-                let snapshot = current_account_storages.into_values().collect::<Vec<_>>();
+                let storages = std::mem::take(&mut current_account_storages);
+                let snapshot = storages.into_values().collect::<Vec<_>>();
 
-                if !std::fs::exists(account_storages_snapshots_dir)
-                    .map_err(|_| SnapError::SnapshotDir("Storage snapshots directory does not exist".to_string()))?
-                {
-                    std::fs::create_dir_all(account_storages_snapshots_dir)
-                        .map_err(|_| SnapError::SnapshotDir("Failed to create storage snapshots directory".to_string()))?;
-                }
-                let account_storages_snapshots_dir_cloned =
-                    account_storages_snapshots_dir.to_path_buf();
+                ensure_dir_exists(account_storages_snapshots_dir)?;
+
+                // Wait for a pending write if any to avoid too many concurrent writes
                 if !disk_joinset.is_empty() {
                     debug!("Writing to disk");
                     disk_joinset
@@ -620,17 +623,14 @@ impl PeerHandler {
                         .await
                         .expect("Shouldn't be empty")
                         .expect("Shouldn't have a join error")
-                        .inspect_err(|err| {
-                            error!("We found this error while dumping to file {err:?}")
-                        })
+                        .inspect_err(|err| error!("Error dumping storage to file: {err:?}"))
                         .map_err(SnapError::from)?;
                 }
+
+                let dir = account_storages_snapshots_dir.to_path_buf();
+                let idx = chunk_index;
                 disk_joinset.spawn(async move {
-                    let path = get_account_storages_snapshot_file(
-                        &account_storages_snapshots_dir_cloned,
-                        chunk_index,
-                    );
-                    dump_storages_to_file(&path, snapshot)
+                    dump_storage_snapshot(&dir, idx, snapshot)
                 });
 
                 chunk_index += 1;
@@ -993,19 +993,15 @@ impl PeerHandler {
             ));
         }
 
+        // Dump remaining storages
         {
             let snapshot = current_account_storages.into_values().collect::<Vec<_>>();
 
-            if !std::fs::exists(account_storages_snapshots_dir)
-                .map_err(|_| SnapError::SnapshotDir("Storage snapshots directory does not exist".to_string()))?
-            {
-                std::fs::create_dir_all(account_storages_snapshots_dir)
-                    .map_err(|_| SnapError::SnapshotDir("Failed to create storage snapshots directory".to_string()))?;
+            if !snapshot.is_empty() {
+                ensure_dir_exists(account_storages_snapshots_dir)?;
+                dump_storage_snapshot(account_storages_snapshots_dir, chunk_index, snapshot)
+                    .map_err(SnapError::from)?;
             }
-            let path =
-                get_account_storages_snapshot_file(account_storages_snapshots_dir, chunk_index);
-            dump_storages_to_file(&path, snapshot)
-                .map_err(|_| SnapError::SnapshotDir(format!("Failed to write storage snapshot chunk {}", chunk_index)))?;
         }
         disk_joinset
             .join_all()
