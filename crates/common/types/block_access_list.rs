@@ -545,6 +545,11 @@ pub struct BlockAccessListRecorder {
     /// post-transaction balance is equal to its pre-transaction balance, then the
     /// change MUST NOT be recorded."
     tx_initial_balances: BTreeMap<Address, U256>,
+    /// Per-transaction initial storage values for net-zero filtering.
+    /// Per EIP-7928: "If a storage slot's value is changed but its post-transaction value
+    /// is equal to its pre-transaction value, the slot MUST NOT be recorded as modified."
+    /// Key is (address, slot), value is the pre-transaction value.
+    tx_initial_storage: BTreeMap<(Address, U256), U256>,
     /// Balance changes per address (list of (index, post_balance) pairs).
     balance_changes: BTreeMap<Address, Vec<(u16, U256)>>,
     /// Nonce changes per address (list of (index, post_nonce) pairs).
@@ -565,14 +570,71 @@ impl BlockAccessListRecorder {
     /// Per EIP-7928: "If an account's balance changes during a transaction, but its
     /// post-transaction balance is equal to its pre-transaction balance, then the
     /// change MUST NOT be recorded."
-    /// Clears per-transaction initial balances when switching to a new transaction.
+    /// Also filters net-zero storage writes before switching to a new transaction.
     pub fn set_block_access_index(&mut self, index: u16) {
-        // Clear per-transaction initial balances when switching transactions
+        // Filter net-zero changes and clear per-transaction initial values when switching transactions
         // This enables per-transaction round-trip detection as required by EIP-7928
         if self.current_index != index {
+            // Filter net-zero storage writes for the current transaction before switching
+            self.filter_net_zero_storage();
             self.tx_initial_balances.clear();
+            self.tx_initial_storage.clear();
         }
         self.current_index = index;
+    }
+
+    /// Filters net-zero storage writes for the current transaction.
+    /// Per EIP-7928: "If a storage slot's value is changed but its post-transaction value
+    /// is equal to its pre-transaction value, the slot MUST NOT be recorded as modified."
+    /// Net-zero writes are converted to reads instead.
+    fn filter_net_zero_storage(&mut self) {
+        let current_idx = self.current_index;
+
+        // Collect slots that need to be converted from writes to reads
+        let mut slots_to_convert: Vec<(Address, U256)> = Vec::new();
+
+        for ((addr, slot), pre_value) in &self.tx_initial_storage {
+            // Check if there are writes for this slot in the current transaction
+            if let Some(slots) = self.storage_writes.get(addr) {
+                if let Some(changes) = slots.get(slot) {
+                    // Find the final value for this transaction
+                    // (last entry with current_idx, or no entry means no change in this tx)
+                    let final_value = changes
+                        .iter()
+                        .filter(|(idx, _)| *idx == current_idx)
+                        .last()
+                        .map(|(_, val)| *val);
+
+                    if let Some(final_val) = final_value {
+                        if final_val == *pre_value {
+                            // Net-zero: final value equals pre-transaction value
+                            slots_to_convert.push((*addr, *slot));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Convert net-zero writes to reads
+        for (addr, slot) in slots_to_convert {
+            // Remove the write entries for the current transaction
+            if let Some(slots) = self.storage_writes.get_mut(&addr) {
+                if let Some(changes) = slots.get_mut(&slot) {
+                    changes.retain(|(idx, _)| *idx != current_idx);
+                    // If no changes remain for this slot, remove the slot entry
+                    if changes.is_empty() {
+                        slots.remove(&slot);
+                    }
+                }
+                // If no slots remain for this address, remove the address entry
+                if slots.is_empty() {
+                    self.storage_writes.remove(&addr);
+                }
+            }
+
+            // Add as a read instead
+            self.storage_reads.entry(addr).or_default().insert(slot);
+        }
     }
 
     /// Returns the current block access index per EIP-7928 spec (uint16).
@@ -619,20 +681,48 @@ impl BlockAccessListRecorder {
 
     /// Records a storage slot write.
     /// If the slot was previously recorded as a read, it is removed from reads.
+    ///
+    /// Per EIP-7928: Multiple writes to the same slot within the same transaction
+    /// (same block_access_index) only keep the final value.
     pub fn record_storage_write(&mut self, address: Address, slot: U256, post_value: U256) {
         // Remove from reads if present (reads that become writes are writes)
         if let Some(reads) = self.storage_reads.get_mut(&address) {
             reads.remove(&slot);
         }
-        // Add to writes
-        self.storage_writes
+
+        // Get or create the changes vector for this slot
+        let changes = self
+            .storage_writes
             .entry(address)
             .or_default()
             .entry(slot)
-            .or_default()
-            .push((self.current_index, post_value));
+            .or_default();
+
+        // Check if there's already an entry with the same block_access_index
+        // If so, update it with the new value, keeping only the final write
+        if let Some(last) = changes.last_mut() {
+            if last.0 == self.current_index {
+                // Update the existing entry with the new value
+                last.1 = post_value;
+                // Mark address as touched
+                self.touched_addresses.insert(address);
+                return;
+            }
+        }
+
+        // No existing entry for this index, push new change
+        changes.push((self.current_index, post_value));
         // Mark address as touched (include SYSTEM_ADDRESS for actual state changes)
         self.touched_addresses.insert(address);
+    }
+
+    /// Captures the pre-storage value for net-zero filtering.
+    /// Should be called BEFORE writing to a storage slot, with the current value.
+    /// Uses first-write-wins semantics: only the first call for a given (address, slot)
+    /// within a transaction will be recorded.
+    pub fn capture_pre_storage(&mut self, address: Address, slot: U256, value: U256) {
+        // First-write-wins: only capture if not already captured for this transaction
+        self.tx_initial_storage.entry((address, slot)).or_insert(value);
     }
 
     /// Records a balance change.
@@ -723,14 +813,17 @@ impl BlockAccessListRecorder {
     /// Builds the final BlockAccessList from accumulated data.
     ///
     /// This method:
-    /// 1. Filters out balance changes per-transaction where the final balance equals the initial balance
-    /// 2. Creates AccountChanges entries for all touched addresses
-    /// 3. Includes addresses even if they have no state changes (per EIP-7928)
+    /// 1. Filters net-zero storage writes for the current transaction
+    /// 2. Filters out balance changes per-transaction where the final balance equals the initial balance
+    /// 3. Creates AccountChanges entries for all touched addresses
+    /// 4. Includes addresses even if they have no state changes (per EIP-7928)
     ///
     /// Per EIP-7928: "If an account's balance changes during a transaction, but its
     /// post-transaction balance is equal to its pre-transaction balance, then the
     /// change MUST NOT be recorded."
-    pub fn build(self) -> BlockAccessList {
+    pub fn build(mut self) -> BlockAccessList {
+        // Filter net-zero storage writes for the current (last) transaction
+        self.filter_net_zero_storage();
         let mut bal = BlockAccessList::with_capacity(self.touched_addresses.len());
 
         // Process all touched addresses

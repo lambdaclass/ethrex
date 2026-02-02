@@ -1,60 +1,59 @@
 # EF Tests Work Log
 
 ## Current Investigation
-**Iteration:** 1
-**Focusing on:** BlockAccessListHashMismatch (323 failures)
-**Working hypothesis:** The `restore` function in BAL checkpoint incorrectly restores storage_reads, discarding reads made during reverted calls.
+**Iteration:** 2
+**Focusing on:** Remaining BlockAccessListHashMismatch failures (58 total)
+**Working hypothesis:** Additional BAL tracking issues remain for specific scenarios
 
 ## Test Summary
 - Total tests: 6158
-- Passed: 6094
-- Failed: 64 (official count, 330 logged failures due to duplicate reporting)
-- Main error: BlockAccessListHashMismatch (323)
-- Secondary: ReceiptsRootMismatch (3)
+- Passed: 6100
+- Failed: 58
+- Previous failures: 64
+
+## Breakdown of Remaining Failures
+- 30 EIP-7928 BAL tests (down from 31)
+- 21 EIP-7708 ETH transfer log tests (unchanged)
+- 4 EIP-7778 gas accounting tests (unchanged)
+- 3 EIP-8024 tests (down from 8) - still BAL-related errors
 
 ## Key Findings
-- Tests with only system contract calls (no user txs) PASS
-- Tests with transactions that REVERT fail
-- The execution-specs `merge_on_failure` function shows:
-  1. Storage reads should PERSIST on revert (union with parent)
-  2. Storage writes should be CONVERTED TO READS on revert
-- Our `restore` function DISCARDS storage_reads by restoring to checkpoint
+
+### Fix #2 Applied - Net-zero storage write filtering
+- Added `tx_initial_storage` to track pre-transaction storage values
+- Added `capture_pre_storage()` method for first-write-wins capture
+- Added `filter_net_zero_storage()` to convert net-zero writes to reads
+- Modified `record_storage_write()` to deduplicate same-index writes
+- Filtering happens at transaction boundaries and before build()
+
+### Remaining Issues to Investigate
+1. EIP-7708 ETH transfer logs - may need ETH transfer tracking in BAL
+2. EIP-7778 gas accounting - may be separate from BAL issues
+3. EIP-7928 specific tests - likely edge cases in:
+   - 7702 delegation scenarios
+   - Withdrawal handling
+   - Precompile interactions
+   - OOG (out-of-gas) scenarios
 
 ## Code Locations Identified
-- `crates/common/types/block_access_list.rs:871` - `restore()` function
-- `/data2/edgar/work/execution-specs/src/ethereum/forks/amsterdam/state_tracker.py:410` - `merge_on_failure`
+- `crates/common/types/block_access_list.rs:531` - BlockAccessListRecorder struct
+- `crates/common/types/block_access_list.rs:574` - set_block_access_index (triggers filtering)
+- `crates/common/types/block_access_list.rs:630` - filter_net_zero_storage
+- `crates/common/types/block_access_list.rs:676` - capture_pre_storage
+- `crates/vm/levm/src/db/gen_db.rs:676` - calls capture_pre_storage before writes
+- `/data2/edgar/work/execution-specs/src/ethereum/forks/amsterdam/state_tracker.py` - reference impl
 
 ## Attempted Approaches
-(None yet)
-
-## Bug Analysis
-The issue is in `BlockAccessListCheckpoint::restore()`:
-```rust
-self.storage_reads = checkpoint.storage_reads_snapshot;
-```
-This REPLACES storage_reads with the snapshot, DISCARDING any reads made during the reverted call.
-
-Should instead:
-1. Keep all storage_reads (reads persist on revert)
-2. Convert reverted writes to reads
-3. Only truncate state changes (balance, nonce, code, write values)
+1. Fix #1: Revert handling - storage reads persist on revert ✓ (3 tests fixed)
+2. Fix #2: Net-zero storage filtering ✓ (6 tests fixed)
 
 ## Next Steps
-1. [x] Identified root cause in `restore()` function
-2. [x] Fixed the restore function - reduced failures from 323 to 320
-3. [ ] Investigate remaining 320 BlockAccessListHashMismatch failures
-4. [ ] May involve EIP-7708 ETH transfer logs or value transfer handling
-
-## Investigation Notes for Next Session
-- Fix #1 addressed revert handling for storage reads
-- Remaining failures involve tests with:
-  - `with_value` scenarios (ETH transfers)
-  - `delegated_account` scenarios (EIP-7702)
-  - Various EIP-7708 ETH transfer log tests
-- Need to compare expected vs actual BAL for remaining failures
-- Possible issues: balance change recording during value transfers, delegation handling
+1. [ ] Investigate EIP-7708 ETH transfer log failures
+2. [ ] Check if ETH transfers need separate BAL tracking (balance changes vs transfer logs)
+3. [ ] Investigate EIP-7778 gas accounting - may be unrelated to BAL
+4. [ ] Look at remaining EIP-7928 edge cases (7702, withdrawals, precompiles)
 
 ## Notes
-- EIP-7928: "State changes from reverted calls are discarded, but all accessed addresses must be included."
-- Storage reads are accesses, not state changes, so they should persist
-- Storage writes that revert should become reads (slot was accessed but value didn't change)
+- All remaining failures are BlockAccessListHashMismatch (plus a few ReceiptsRootMismatch)
+- EIP-7708 defines ETH transfer logs - may need special handling
+- The 3 remaining EIP-8024 tests (stack_underflow, exchange tests) are also BAL issues, not opcode bugs
