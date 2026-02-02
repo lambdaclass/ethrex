@@ -17,7 +17,7 @@ use super::{
     compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
 };
 use crate::{
-    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH},
+    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, EMPTY_BLOCK_ACCESS_LIST_HASH},
     rkyv_utils,
 };
 
@@ -696,8 +696,13 @@ impl Genesis {
             .is_prague_activated(self.timestamp)
             .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH));
 
-        // Amsterdam fork fields - these are optional and only included if present in genesis
-        let block_access_list_hash = self.block_access_list_hash;
+        let block_access_list_hash = self
+            .config
+            .is_amsterdam_activated(self.timestamp)
+            .then_some(
+                self.block_access_list_hash
+                    .unwrap_or(*EMPTY_BLOCK_ACCESS_LIST_HASH),
+            );
         let slot_number = self.slot_number;
 
         BlockHeader {
