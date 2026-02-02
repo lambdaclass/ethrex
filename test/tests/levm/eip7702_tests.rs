@@ -174,10 +174,10 @@ fn test_initial_tx_to_delegated_account_no_cold_access_charge() {
     );
 }
 
-/// Test: Verify delegated address is warmed after initial transaction
+/// Test: Verify delegated address is added to accessed_addresses after resolution
 ///
-/// After the initial transaction to a delegated account, subsequent accesses
-/// to the delegated target should be warm (100 gas) not cold (2600 gas).
+/// After a transaction to a delegated account, the delegation target should be
+/// in accessed_addresses (warming it for subsequent operations within the same tx).
 #[test]
 fn test_delegated_address_is_warmed_after_resolution() {
     let sender = Address::from_low_u64_be(1);
