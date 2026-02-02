@@ -729,6 +729,11 @@ impl BlockAccessListRecorder {
     /// Per EIP-7928, only the final balance per (address, block_access_index) is recorded.
     /// If multiple balance changes occur within the same transaction, only the last one matters.
     /// Note: SYSTEM_ADDRESS balance changes are excluded (system calls backup/restore it).
+    ///
+    /// IMPORTANT: We always push new entries (never update in-place) to support checkpoint/restore.
+    /// The checkpoint mechanism captures lengths, not values. If we updated in-place, the restored
+    /// value would be the updated one, not the original at checkpoint time.
+    /// At build() time, we take only the last entry per transaction for each address.
     pub fn record_balance_change(&mut self, address: Address, post_balance: U256) {
         // SYSTEM_ADDRESS balance changes from system contract calls should not be recorded
         // (system calls backup and restore SYSTEM_ADDRESS state)
@@ -739,21 +744,10 @@ impl BlockAccessListRecorder {
         // Track initial balance for round-trip detection
         self.initial_balances.entry(address).or_insert(post_balance);
 
+        // Always push new entries to support checkpoint/restore.
+        // The last entry for each transaction will be used in build().
         let changes = self.balance_changes.entry(address).or_default();
-        // Update the last entry if it's for the same block_access_index,
-        // otherwise push a new entry
-        if let Some(last) = changes.last_mut() {
-            if last.0 == self.current_index {
-                // Update the balance for this index (same transaction)
-                last.1 = post_balance;
-            } else {
-                // New transaction, push new entry
-                changes.push((self.current_index, post_balance));
-            }
-        } else {
-            // First entry
-            changes.push((self.current_index, post_balance));
-        }
+        changes.push((self.current_index, post_balance));
 
         // Mark address as touched
         self.touched_addresses.insert(address);
@@ -859,6 +853,7 @@ impl BlockAccessListRecorder {
                 }
 
                 // For each transaction, check if balance round-tripped
+                // Per EIP-7928: only the FINAL balance per transaction is recorded
                 let mut prev_balance = self.initial_balances.get(address).copied();
                 for (index, tx_changes) in &changes_by_tx {
                     let initial_for_tx = prev_balance;
@@ -870,11 +865,11 @@ impl BlockAccessListRecorder {
                         _ => false, // Include if we can't determine
                     };
 
-                    // Only include changes if NOT a round-trip within this transaction
+                    // Only include the FINAL balance change if NOT a round-trip
                     if !is_round_trip {
-                        for post_balance in tx_changes {
+                        if let Some(final_balance) = final_for_tx {
                             account_changes
-                                .add_balance_change(BalanceChange::new(*index, *post_balance));
+                                .add_balance_change(BalanceChange::new(*index, final_balance));
                         }
                     }
 
