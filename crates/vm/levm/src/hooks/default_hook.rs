@@ -223,9 +223,16 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
         .checked_mul(priority_fee_per_gas)
         .ok_or(InternalError::Overflow)?;
 
+    // Per EIP-7928: Coinbase must appear in BAL when there's a user transaction,
+    // even if the priority fee is zero. System contract calls have gas_price = 0,
+    // so we use this to distinguish them from user transactions.
+    if !vm.env.gas_price.is_zero() {
+        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(vm.env.coinbase);
+        }
+    }
+
     // Only pay coinbase if there's actually a fee to pay.
-    // This avoids marking coinbase as touched when there's no actual balance change
-    // (e.g., during system contract calls with zero gas price).
     if !coinbase_fee.is_zero() {
         vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
     }
