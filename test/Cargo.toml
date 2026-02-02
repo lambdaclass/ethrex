@@ -21,6 +21,7 @@ ethrex-levm.workspace = true
 ethrex-rpc.workspace = true
 
 [dev-dependencies]
+rustc-hash.workspace = true
 hex.workspace = true
 hex-literal.workspace = true
 ethereum-types.workspace = true
