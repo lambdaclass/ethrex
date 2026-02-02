@@ -155,6 +155,267 @@ Each subdirectory in `bin/` contains a guest implementation for a specific zkVM.
 2. **Execution**: The guest program re-executes blocks inside the zkVM
 3. **Output**: `ProgramOutput` contains the resulting state/receipts roots
 
+## Integrating a New zkVM
+
+This section describes how to add support for a new zkVM backend to ethrex.
+
+### Overview
+
+Each zkVM integration requires:
+
+1. A guest binary crate in `bin/<zkvm>/`
+2. A build function in `build.rs`
+3. Feature flags in `Cargo.toml`
+4. ELF constants in `src/lib.rs`
+5. Makefile targets
+
+### Step-by-Step Guide
+
+#### 1. Create the Guest Binary Crate
+
+Create a new directory `bin/<zkvm>/` with the following structure:
+
+```
+bin/<zkvm>/
+├── Cargo.toml
+├── Cargo.lock
+└── src/
+    └── main.rs
+```
+
+**Cargo.toml**:
+
+```toml
+[package]
+name = "ethrex-guest-<zkvm>"
+version = "9.0.0"
+edition = "2024"
+
+[workspace]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[dependencies]
+# Add your zkVM SDK dependency
+<zkvm>-zkvm = { version = "=X.Y.Z" }
+
+# Required for input deserialization
+rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
+
+# The main guest program library
+ethrex-guest-program = { path = "../../" }
+
+# VM with zkVM-specific features (if needed)
+ethrex-vm = { path = "../../../vm", default-features = false, features = ["<zkvm>"] }
+
+# Add patches for cryptographic libraries optimized for your zkVM
+[patch.crates-io]
+# Example: SHA2, Keccak, secp256k1, etc.
+# tiny-keccak = { git = "https://github.com/<zkvm>-patches/tiny-keccak", tag = "..." }
+
+[features]
+l2 = ["ethrex-guest-program/l2"]
+```
+
+**src/main.rs**:
+
+```rust
+#![no_main]
+
+// Import L1 or L2 program based on feature flag
+#[cfg(feature = "l2")]
+use ethrex_guest_program::l2::{ProgramInput, execution_program};
+#[cfg(not(feature = "l2"))]
+use ethrex_guest_program::l1::{ProgramInput, execution_program};
+
+use rkyv::rancor::Error;
+
+// Use your zkVM's entrypoint macro
+<zkvm>::entrypoint!(main);
+
+pub fn main() {
+    // 1. Read input bytes using your zkVM's IO
+    let input = <zkvm>::io::read_vec();
+
+    // 2. Deserialize input
+    let input = rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap();
+
+    // 3. Execute the program (this is the same for all zkVMs)
+    let output = execution_program(input).unwrap();
+
+    // 4. Commit output using your zkVM's commit mechanism
+    //    Some zkVMs commit raw bytes, others require hashing first
+    <zkvm>::io::commit(&output.encode());
+}
+```
+
+The pattern for output commitment varies by zkVM:
+
+| zkVM | Output Commitment |
+|------|-------------------|
+| SP1 | `sp1_zkvm::io::commit_slice(&output.encode())` |
+| RISC0 | `risc0_zkvm::guest::env::commit_slice(&output.encode())` |
+| ZisK | Hash with SHA256, then `ziskos::set_output(idx, u32)` for each chunk |
+| OpenVM | Hash with Keccak256, then `openvm::io::reveal_bytes32(hash)` |
+
+#### 2. Add Build Function in `build.rs`
+
+Add a new build function for your zkVM:
+
+```rust
+#[cfg(all(not(clippy), feature = "<zkvm>"))]
+fn build_<zkvm>_program() {
+    use std::{fs, path::Path, process::{Command, Stdio}};
+
+    // 1. Build the guest binary using your zkVM's toolchain
+    let status = Command::new("cargo")
+        .arg("<zkvm>")  // or the appropriate build command
+        .arg("build")
+        .arg("--release")
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .current_dir("./bin/<zkvm>")
+        .status()
+        .expect("failed to build <zkvm> guest");
+
+    if !status.success() {
+        panic!("<zkvm> build failed");
+    }
+
+    // 2. Create output directory
+    let _ = fs::create_dir("./bin/<zkvm>/out");
+
+    // 3. Copy ELF to output directory
+    fs::copy(
+        "./bin/<zkvm>/target/<target-triple>/release/ethrex-guest-<zkvm>",
+        "./bin/<zkvm>/out/<target-triple>-<zkvm>-elf",
+    ).expect("failed to copy ELF");
+
+    // 4. (Optional) Generate verification key if your zkVM produces one
+}
+```
+
+Then call it from `main()`:
+
+```rust
+fn main() {
+    // ... existing code ...
+
+    #[cfg(all(not(clippy), feature = "<zkvm>"))]
+    build_<zkvm>_program();
+}
+```
+
+#### 3. Add Feature Flags in `Cargo.toml`
+
+Add to the root `Cargo.toml`:
+
+```toml
+[build-dependencies]
+# Add build-time SDK dependency if needed
+<zkvm>-build = { version = "=X.Y.Z", optional = true }
+
+[features]
+<zkvm> = ["dep:<zkvm>-build"]  # Add any other required features
+```
+
+If your zkVM requires feature flags in dependent crates:
+
+```toml
+[features]
+<zkvm> = [
+    "dep:<zkvm>-build",
+    "ethrex-common/<zkvm>",
+    "ethrex-vm/<zkvm>",
+    "ethrex-l2-common/<zkvm>",
+]
+```
+
+#### 4. Add ELF Constants in `src/lib.rs`
+
+Add static constants for the compiled ELF:
+
+```rust
+#[cfg(all(not(clippy), feature = "<zkvm>"))]
+pub static ZKVM_<ZKVM>_PROGRAM_ELF: &[u8] =
+    include_bytes!("../bin/<zkvm>/out/<target-triple>-<zkvm>-elf");
+#[cfg(any(clippy, not(feature = "<zkvm>")))]
+pub const ZKVM_<ZKVM>_PROGRAM_ELF: &[u8] = &[];
+
+// If your zkVM produces a verification key:
+#[cfg(all(not(clippy), feature = "<zkvm>"))]
+pub static ZKVM_<ZKVM>_PROGRAM_VK: &str =
+    include_str!("../bin/<zkvm>/out/<target-triple>-<zkvm>-vk");
+#[cfg(any(clippy, not(feature = "<zkvm>")))]
+pub const ZKVM_<ZKVM>_PROGRAM_VK: &str = "";
+```
+
+#### 5. Add Makefile Targets
+
+Add to `Makefile`:
+
+```makefile
+.PHONY: <zkvm> l2-<zkvm>
+
+<zkvm>:
+	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features <zkvm>
+
+l2-<zkvm>:
+	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features <zkvm>,l2
+```
+
+Update the `clean` target:
+
+```makefile
+clean:
+	rm -rf bin/sp1/out bin/risc0/out bin/zisk/out bin/openvm/out bin/<zkvm>/out
+```
+
+Update the `help` target to include your new zkVM.
+
+#### 6. Add Patches for Cryptographic Libraries
+
+Most zkVMs have optimized patches for cryptographic libraries. Common libraries that benefit from patches:
+
+- `tiny-keccak` (Keccak256 for state root hashing)
+- `sha2` (SHA256)
+- `secp256k1` / `k256` (ECDSA signature verification)
+- `p256` (P256 curve for EIP-7212)
+- `substrate-bn` (BN254 for EIP-196/197 precompiles)
+- `bls12_381` (BLS12-381 for EIP-2537)
+
+Check your zkVM's documentation or patches repository for available optimizations.
+
+#### 7. (Optional) Add CI Workflow
+
+Add your zkVM to the CI workflow in `.github/workflows/`. See existing workflows for SP1, RISC0, ZisK, and OpenVM as examples.
+
+### Testing Your Integration
+
+1. **Build the guest**:
+   ```bash
+   cd crates/guest-program
+   make <zkvm>
+   ```
+
+2. **Check ELF was created**:
+   ```bash
+   ls -la bin/<zkvm>/out/
+   ```
+
+3. **Run with the prover** (requires host-side integration):
+   The prover backend code in `crates/l2/prover/` needs to be updated to support your zkVM for end-to-end proving.
+
+### Architecture Notes
+
+- **Guest programs are deterministic**: The same input must always produce the same output
+- **No networking or filesystem access**: zkVMs execute in an isolated environment
+- **Memory constraints**: Some zkVMs have limited heap size; optimize for memory usage
+- **Cryptographic operations are expensive**: Use patched libraries when available
+- **Output format varies**: Some zkVMs commit raw bytes, others require hashing
+
 ## References
 
 - [SP1 Documentation](https://docs.succinct.xyz/docs/sp1/introduction)
