@@ -15,9 +15,9 @@ use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::sequencer::block_producer;
 use ethrex_l2::sequencer::l1_committer::{self, regenerate_state};
 use ethrex_p2p::{
-    discv4::peer_table::PeerTable,
     network::P2PContext,
     peer_handler::PeerHandler,
+    peer_table::PeerTable,
     rlpx::{initiator::RLPxInitiator, l2::l2_connection::P2PBasedContext},
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
