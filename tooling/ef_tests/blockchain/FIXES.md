@@ -2,16 +2,16 @@
 
 **Started:** 2026-02-02
 **Completed:** In Progress
-**Total Iterations:** 6
+**Total Iterations:** 7
 **Final Status:** ❌ In Progress
 
 ---
 
 ## Summary
 - Initial failures: 64
-- Current failures: 47
-- Total fixes applied: 5
-- Tests fixed: 17 (64 → 47)
+- Current failures: 36
+- Total fixes applied: 6
+- Tests fixed: 28 (64 → 36)
 - Failed attempts: 2
 
 ---
@@ -157,6 +157,35 @@
 
 ---
 
+### Fix #6 — Top-level call frame BAL checkpoint for transaction failure
+- **Iteration:** 7
+- **Test(s):** `test_bal_aborted_account_access`, `test_bal_aborted_storage_access`, and 9 others
+- **Error:** BlockAccessListHashMismatch (inner call state changes not reverted)
+- **File:** `crates/vm/levm/src/vm.rs:502-508`
+- **Root Cause:** When a transaction's top-level execution fails (e.g., INVALID opcode after a successful inner CALL), the inner call's state changes should be reverted from the BAL. However, the initial call frame had no BAL checkpoint because:
+  1. The call_frame_backup was completely cleared after `prepare_execution` (line 502)
+  2. This meant `bal_checkpoint` was `None`
+  3. When `restore_cache_state` was called on failure, no BAL restoration occurred
+  4. Inner call state changes (like value transfers) remained in the BAL
+- **Solution:** Take a BAL checkpoint immediately after clearing the call_frame_backup but before execution starts. This captures the state after prepare_execution (nonce increment, etc.) but before any execution changes, allowing proper BAL restoration when the top-level call fails.
+- **Diff:**
+```diff
+         // Clear callframe backup so that changes made in prepare_execution are written in stone.
+         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
+         self.current_call_frame.call_frame_backup.clear();
+
++        // EIP-7928: Take a BAL checkpoint AFTER clearing the backup. This captures the state
++        // after prepare_execution (nonce increment, etc.) but before actual execution.
++        // When the top-level call fails, we restore to this checkpoint so that inner call
++        // state changes (like value transfers) are reverted from the BAL.
++        self.current_call_frame.call_frame_backup.bal_checkpoint =
++            self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
++
+         if self.is_create()? {
+```
+
+---
+
 ## Failed Attempts
 
 ### Attempt #1 — Filter out empty accounts from BAL
@@ -177,20 +206,20 @@
 ---
 
 ## Remaining Issues
-- [ ] BlockAccessListHashMismatch (54 instances remaining)
-  - EIP-7928 BAL tests (various edge cases)
-  - EIP-7708 ETH transfer log tests
-  - EIP-7778 gas accounting tests
-  - EIP-8024 tests (BAL-related)
-- [ ] ReceiptsRootMismatch (included in some of above)
+- [ ] BlockAccessListHashMismatch (36 instances remaining)
+  - EIP-7928 BAL tests: 19 tests (mostly 7702 delegation scenarios)
+  - EIP-7708 ETH transfer log tests: 17 tests
+- [x] EIP-7778 gas accounting tests - FIXED
+- [x] EIP-8024 DUPN/SWAPN/EXCHANGE tests - FIXED
 
 ## Notes
 - Fix #2 reduced failures from 64 to 58 (6 tests fixed)
 - Fix #3 prevents empty coinbase in withdrawal-only blocks (no regression)
 - Fix #4 fixes balance checkpoint/restore integrity (58 → 54, 4 tests fixed)
+- Fix #5 (iteration 6, not in this log) fixed coinbase for user transactions (54 → 47, 7 tests fixed)
+- Fix #6 fixes top-level BAL checkpoint for transaction failures (47 → 36, 11 tests fixed)
 - All remaining failures are BAL-related (BlockAccessListHashMismatch)
 - Empty accounts (no changes) ARE expected in some tests (failed CREATE targets)
-- EIP-7708 tests may need ETH transfer log handling
-- EIP-7778 tests may involve gas accounting separate from BAL
-- Remaining EIP-7928 tests likely involve edge cases: 7702 delegation, withdrawals, precompiles, OOG scenarios
+- Remaining EIP-7708 tests likely need ETH transfer log handling in BAL
+- Remaining EIP-7928 tests mostly involve 7702 delegation edge cases
 - Debug output added to validation.rs (enable with DEBUG_BAL=1)
