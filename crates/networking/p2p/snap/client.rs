@@ -38,7 +38,7 @@ use ethrex_trie::{Node, verify_range};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     path::Path,
-    sync::atomic::Ordering,
+    sync::atomic::{AtomicU64, Ordering},
     time::{Duration, SystemTime},
 };
 use tracing::{debug, error, info, trace, warn};
@@ -88,6 +88,9 @@ struct AccountRangeInflightRequest {
     dispatched_at: std::time::Instant,
 }
 
+/// Monotonic counter for generating unique request IDs (avoids collision risk with rand::random())
+static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(0);
+
 /// Result from an account range worker task
 struct AccountRangeTaskResult {
     request_id: u64,
@@ -124,33 +127,17 @@ impl PeerHandler {
         // Create adaptive chunk manager for peer performance tracking
         let mut chunk_manager = AdaptiveChunkManager::new(start, limit);
 
-        // 1) split the range in chunks of same length
+        // Track the current position in the address space for dynamic chunk creation
         let start_u256 = U256::from_big_endian(&start.0);
         let limit_u256 = U256::from_big_endian(&limit.0);
 
-        // Use the chunk manager's default count instead of hardcoded value
-        let base_chunk_count = AdaptiveChunkManager::default_chunk_count();
-        let range = limit_u256 - start_u256;
-        let chunk_count = U256::from(base_chunk_count)
-            .min(range.max(U256::one()))
-            .as_usize();
-        let chunk_size = range / chunk_count;
+        // Current position tracks where we need to start the next chunk
+        // This allows us to create chunks dynamically based on peer performance
+        let mut current_position = start_u256;
 
-        // list of tasks to be executed
+        // Queue of tasks (chunks) that have been created but not yet dispatched
+        // Initially empty - chunks are created dynamically when dispatching
         let mut tasks_queue_not_started = VecDeque::<(H256, H256)>::new();
-        for i in 0..(chunk_count as u64) {
-            let chunk_start_u256 = chunk_size * i + start_u256;
-            // We subtract one because ranges are inclusive
-            let chunk_end_u256 = chunk_start_u256 + chunk_size - 1u64;
-            let chunk_start = H256::from_uint(&(chunk_start_u256));
-            let chunk_end = H256::from_uint(&(chunk_end_u256));
-            tasks_queue_not_started.push_back((chunk_start, chunk_end));
-        }
-        // Modify the last chunk to include the limit
-        let last_task = tasks_queue_not_started
-            .back_mut()
-            .ok_or(SnapError::NoTasks)?;
-        last_task.1 = limit;
 
         // 2) request the chunks from peers
 
@@ -169,7 +156,6 @@ impl PeerHandler {
 
         *METRICS.account_tries_download_start_time.lock().await = Some(SystemTime::now());
 
-        let mut completed_tasks = 0;
         let mut chunk_file = 0;
         let mut last_update: SystemTime = SystemTime::now();
         let mut write_set = tokio::task::JoinSet::new();
@@ -202,36 +188,31 @@ impl PeerHandler {
                         .remove(&request_id)
                         .map(|req| req.dispatched_at);
 
-                    // Handle remaining chunk if any
-                    if let Some((chunk_start, chunk_end)) = chunk_left {
-                        if chunk_start <= chunk_end {
-                            tasks_queue_not_started.push_back((chunk_start, chunk_end));
-                        } else {
-                            completed_tasks += 1;
-                        }
-                    } else {
-                        completed_tasks += 1;
+                    // Handle remaining chunk if any - re-queue incomplete chunks
+                    if let Some((chunk_start, chunk_end)) = chunk_left
+                        && chunk_start <= chunk_end
+                    {
+                        tasks_queue_not_started.push_back((chunk_start, chunk_end));
                     }
+                    // If chunk_left is None or chunk_start > chunk_end, the chunk completed successfully
 
                     // Score peer based on response
                     if accounts.is_empty() {
                         self.peer_table.record_failure(&peer_id).await?;
                     } else {
                         // Calculate latency and record success with latency tracking
-                        let latency_ms = if let Some(dispatched_at) = dispatched_at {
-                            let latency = dispatched_at.elapsed().as_millis() as u64;
+                        if let Some(dispatched_at) = dispatched_at {
+                            let latency_ms = dispatched_at.elapsed().as_millis() as u64;
                             self.peer_table
-                                .record_success_with_latency(&peer_id, latency)
+                                .record_success_with_latency(&peer_id, latency_ms)
                                 .await?;
-                            latency
+                            // Only record in chunk manager when we have valid timing info
+                            chunk_manager.record_response(peer_id, accounts.len(), latency_ms);
                         } else {
                             // Fallback if we don't have timing info (shouldn't happen)
+                            // Don't record in chunk_manager to avoid skewing throughput calculations
                             self.peer_table.record_success(&peer_id).await?;
-                            0
-                        };
-
-                        // Record response in chunk manager for adaptive sizing
-                        chunk_manager.record_response(peer_id, accounts.len(), latency_ms);
+                        }
 
                         downloaded_count += accounts.len() as u64;
 
@@ -309,8 +290,11 @@ impl PeerHandler {
                 last_update = SystemTime::now();
             }
 
-            // Check if we're done
-            if completed_tasks >= chunk_count
+            // Check if we're done:
+            // - All chunks have been created (current_position >= limit_u256)
+            // - No re-queued tasks pending
+            // - No in-flight requests
+            if current_position >= limit_u256
                 && tasks_queue_not_started.is_empty()
                 && in_flight_requests.is_empty()
             {
@@ -322,14 +306,17 @@ impl PeerHandler {
             let available_slots = (MAX_ACCOUNT_RANGE_IN_FLIGHT_REQUESTS as usize)
                 .saturating_sub(in_flight_requests.len());
 
-            // Dispatch multiple tasks if capacity available (up to batch size)
-            let tasks_to_dispatch = available_slots
-                .min(ACCOUNT_RANGE_BATCH_DISPATCH_SIZE.min(tasks_queue_not_started.len()));
+            // Check if there's work to do: either re-queued tasks or new chunks to create
+            let has_pending_work =
+                !tasks_queue_not_started.is_empty() || current_position < limit_u256;
 
-            if tasks_to_dispatch == 0 {
+            if available_slots == 0 || !has_pending_work {
                 // No capacity or no tasks - select! will wait for next event
                 continue;
             }
+
+            // Dispatch multiple tasks if capacity available (up to batch size)
+            let tasks_to_dispatch = available_slots.min(ACCOUNT_RANGE_BATCH_DISPATCH_SIZE);
 
             // Check for stale pivot once per dispatch batch
             if block_is_stale(pivot_header) {
@@ -363,12 +350,31 @@ impl PeerHandler {
                     break;
                 };
 
-                let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
-                    // No more tasks to dispatch
-                    break;
-                };
+                // Get a chunk to dispatch:
+                // 1. First priority: re-queued tasks (failed or partially completed chunks)
+                // 2. Second priority: create a new chunk dynamically based on peer performance
+                let (chunk_start, chunk_end) =
+                    if let Some(task) = tasks_queue_not_started.pop_front() {
+                        // Use re-queued task as-is
+                        task
+                    } else if current_position < limit_u256 {
+                        // Create a new chunk dynamically using adaptive chunk sizing
+                        let chunk_size = chunk_manager.get_chunk_size_for_peer(&peer_id);
+                        let chunk_start = H256::from_uint(&current_position);
+                        let chunk_end_u256 = (current_position + chunk_size).min(limit_u256);
+                        let chunk_end = H256::from_uint(&chunk_end_u256);
 
-                let request_id: u64 = rand::random();
+                        // Advance current position for the next chunk
+                        // Add 1 to avoid overlap (ranges are inclusive)
+                        current_position = chunk_end_u256.saturating_add(U256::one());
+
+                        (chunk_start, chunk_end)
+                    } else {
+                        // No more work to dispatch
+                        break;
+                    };
+
+                let request_id = NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
                 let tx = task_sender.clone();
                 let peer_table = self.peer_table.clone();
                 let state_root = pivot_header.state_root;
