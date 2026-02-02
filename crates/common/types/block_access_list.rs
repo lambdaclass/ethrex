@@ -596,8 +596,9 @@ impl BlockAccessListRecorder {
     ///
     /// Note: SYSTEM_ADDRESS is filtered out.
     pub fn extend_touched_addresses(&mut self, addresses: impl Iterator<Item = Address>) {
-        self.touched_addresses
-            .extend(addresses.filter(|addr| *addr != SYSTEM_ADDRESS));
+        for addr in addresses.filter(|addr| *addr != SYSTEM_ADDRESS) {
+            self.touched_addresses.insert(addr);
+        }
     }
 
     /// Records a storage slot read.

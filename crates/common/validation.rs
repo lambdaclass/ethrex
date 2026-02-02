@@ -177,21 +177,6 @@ pub fn validate_block_access_list_hash(
         .unwrap_or(false);
 
     if !valid {
-        // Debug: print BAL details for failing tests
-        eprintln!("BAL HASH MISMATCH:");
-        eprintln!("  Expected: {:?}", header.block_access_list_hash);
-        eprintln!("  Computed: {:?}", computed_hash);
-        eprintln!("  Block number: {}", header.number);
-        eprintln!("  Tx count: {}", transaction_count);
-        eprintln!("  BAL accounts: {}", computed_bal.accounts().len());
-        for account in computed_bal.accounts() {
-            eprintln!("    Account: {:?}", account.address());
-            eprintln!("      Storage changes: {:?}", account.storage_changes().len());
-            eprintln!("      Storage reads: {:?}", account.storage_reads().len());
-            eprintln!("      Balance changes: {:?}", account.balance_changes().len());
-            eprintln!("      Nonce changes: {:?}", account.nonce_changes().len());
-            eprintln!("      Code changes: {:?}", account.code_changes().len());
-        }
         return Err(InvalidBlockError::BlockAccessListHashMismatch);
     }
 
