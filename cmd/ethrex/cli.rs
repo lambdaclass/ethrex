@@ -929,11 +929,13 @@ pub async fn export_blocks(
             }
         };
         block.encode(&mut buffer);
+        file.write_all(&buffer).expect("Failed to write to file");
+        buffer.clear();
+        exported_count += 1;
 
         // Exporting the whole chain can take a while, so we need to show some output in the meantime
         if last_output.elapsed() > Duration::from_secs(5) {
-            let completed = n.saturating_sub(adjusted_start) + 1;
-            let percent = (completed * 100) / denom;
+            let percent = (exported_count * 100) / denom;
             info!(
                 current_block = n,
                 end_block = end,
@@ -943,10 +945,6 @@ pub async fn export_blocks(
             );
             last_output = Instant::now();
         }
-
-        file.write_all(&buffer).expect("Failed to write to file");
-        buffer.clear();
-        exported_count += 1;
     }
 
     info!(
