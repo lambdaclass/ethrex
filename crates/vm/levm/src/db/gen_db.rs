@@ -676,6 +676,9 @@ impl<'a> VM<'a> {
         if let Some(recorder) = self.db.bal_recorder.as_mut() {
             let slot = U256::from_big_endian(key.as_bytes());
             if new_value != current_value {
+                // Capture pre-storage value for net-zero filtering (first-write-wins)
+                // This captures the value BEFORE the first write in this transaction
+                recorder.capture_pre_storage(address, slot, current_value);
                 // Actual write
                 recorder.record_storage_write(address, slot, new_value);
             } else {
