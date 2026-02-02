@@ -14,10 +14,10 @@ use crate::{
     peer_table::{PeerTable, PeerTableError},
     rlpx::utils::compress_pubkey,
     types::{Node, NodeRecord},
-    utils::distance,
+    utils::{distance, node_id},
 };
 use bytes::{Bytes, BytesMut};
-use ethrex_common::H256;
+use ethrex_common::{H256, H512};
 use ethrex_storage::{Store, error::StoreError};
 use futures::StreamExt;
 use rand::{Rng, RngCore, rngs::OsRng};
@@ -299,11 +299,27 @@ impl DiscoveryServer {
         let src_pubkey = if let Some(contact) = self.peer_table.get_contact(src_id).await? {
             compress_pubkey(contact.node.public_key)
         } else if let Some(record) = &authdata.record {
-            // Get public key from ENR in handshake
+            // Validate ENR signature before trusting its contents
+            if !record.verify_signature() {
+                trace!(from = %src_id, "Handshake ENR signature verification failed");
+                return Ok(());
+            }
             let pairs = record.decode_pairs();
-            pairs
+            let pubkey = pairs
                 .secp256k1
-                .and_then(|pk| PublicKey::from_slice(pk.as_bytes()).ok())
+                .and_then(|pk| PublicKey::from_slice(pk.as_bytes()).ok());
+
+            // Verify that the ENR's public key matches the claimed src_id
+            if let Some(pk) = &pubkey {
+                let uncompressed = pk.serialize_uncompressed();
+                let derived_node_id = node_id(&H512::from_slice(&uncompressed[1..]));
+                if derived_node_id != src_id {
+                    trace!(from = %src_id, "Handshake ENR node_id mismatch");
+                    return Ok(());
+                }
+            }
+
+            pubkey
         } else {
             None
         };
@@ -344,7 +360,7 @@ impl DiscoveryServer {
             .set_session_info(src_id, session.clone())
             .await?;
 
-        // Decrypt the message and build the handshake
+        // Decrypt and handle the contained message
         let mut encrypted = packet.encrypted_message.clone();
         decrypt_message(&session.inbound_key, &packet, &mut encrypted)?;
         let message = Message::decode(&encrypted)?;
@@ -507,7 +523,7 @@ impl DiscoveryServer {
                 total: 1,
                 nodes: vec![],
             });
-            self.send_ordinary(&nodes_message, &contact.node).await?;
+            self.send_ordinary(nodes_message, &contact.node).await?;
         } else {
             for chunk in &chunks {
                 let nodes_message = Message::Nodes(NodesMessage {
@@ -515,7 +531,7 @@ impl DiscoveryServer {
                     total: chunks.len() as u64,
                     nodes: chunk.to_vec(),
                 });
-                self.send_ordinary(&nodes_message, &contact.node).await?;
+                self.send_ordinary(nodes_message, &contact.node).await?;
             }
         }
 
