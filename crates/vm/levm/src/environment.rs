@@ -40,6 +40,8 @@ pub struct Environment {
     pub block_gas_limit: u64,
     pub is_privileged: bool,
     pub fee_token: Option<Address>,
+    /// The slot number for the current block (EIP-7843).
+    pub slot_number: u64,
 }
 
 /// This struct holds special configuration variables specific to the

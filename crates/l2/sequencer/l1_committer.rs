@@ -813,12 +813,15 @@ impl L1Committer {
                     .ok_or(CommitterError::FailedToGetInformationFromStorage(
                         "no account updated".to_owned(),
                     ))?;
+                // For L2, use post-refund gas from last receipt (no EIP-7778 split)
+                let block_gas_used = receipts.last().map(|r| r.cumulative_gas_used).unwrap_or(0);
                 checkpoint_blockchain.store_block(
                     potential_batch_block.clone(),
                     account_updates_list,
                     BlockExecutionResult {
                         receipts,
                         requests: vec![],
+                        block_gas_used,
                     },
                 )?;
             } else {

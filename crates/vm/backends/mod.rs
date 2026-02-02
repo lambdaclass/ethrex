@@ -241,4 +241,8 @@ impl Evm {
 pub struct BlockExecutionResult {
     pub receipts: Vec<Receipt>,
     pub requests: Vec<Requests>,
+    /// Total gas used for block accounting (PRE-REFUND for Amsterdam+ per EIP-7778).
+    /// Used to validate against block header gas_used.
+    /// For pre-Amsterdam, this equals the last receipt's cumulative_gas_used.
+    pub block_gas_used: u64,
 }

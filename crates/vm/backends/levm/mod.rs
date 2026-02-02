@@ -72,9 +72,6 @@ impl LEVM {
 
         Self::prepare_block(block, db, vm_type)?;
 
-        let chain_config = db.store.get_chain_config()?;
-        let fork = chain_config.fork(block.header.timestamp);
-
         // Record coinbase if block has txs or withdrawals (per EIP-7928)
         if record_bal {
             let has_txs_or_withdrawals = !block.body.transactions.is_empty()
@@ -89,7 +86,10 @@ impl LEVM {
         }
 
         let mut receipts = Vec::new();
-        let mut cumulative_gas_used = 0;
+        // Cumulative gas for receipts (POST-REFUND per EIP-7778)
+        let mut cumulative_gas_used = 0_u64;
+        // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
+        let mut block_gas_used = 0_u64;
 
         let transactions_with_sender =
             block.body.get_transactions_with_sender().map_err(|error| {
@@ -97,7 +97,8 @@ impl LEVM {
             })?;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
-            if cumulative_gas_used + tx.gas_limit() > block.header.gas_limit {
+            // Use block_gas_used for limit check (pre-refund for Amsterdam+)
+            if block_gas_used + tx.gas_limit() > block.header.gas_limit {
                 return Err(EvmError::Transaction(format!(
                     "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
                     block.header.gas_limit,
@@ -121,21 +122,17 @@ impl LEVM {
 
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
 
-            // EIP-7778: Block accounting uses gas_used (pre-refund for Amsterdam+)
-            cumulative_gas_used += report.gas_used;
-
-            // EIP-7778: Set gas_spent for Amsterdam+ receipts
-            let gas_spent = if fork >= Fork::Amsterdam {
-                Some(report.gas_spent)
-            } else {
-                None
-            };
+            // EIP-7778: Separate gas tracking
+            // - gas_spent (POST-REFUND) for receipt cumulative_gas_used
+            // - gas_used (PRE-REFUND for Amsterdam+) for block accounting
+            cumulative_gas_used += report.gas_spent;
+            block_gas_used += report.gas_used;
 
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
                 cumulative_gas_used,
-                gas_spent,
+                None, // gas_spent not encoded in receipts
                 report.logs,
             );
 
@@ -170,7 +167,14 @@ impl LEVM {
         // Extract BAL if recording was enabled
         let bal = if record_bal { db.take_bal() } else { None };
 
-        Ok((BlockExecutionResult { receipts, requests }, bal))
+        Ok((
+            BlockExecutionResult {
+                receipts,
+                requests,
+                block_gas_used,
+            },
+            bal,
+        ))
     }
 
     pub fn execute_block_pipeline(
@@ -182,13 +186,13 @@ impl LEVM {
     ) -> Result<BlockExecutionResult, EvmError> {
         Self::prepare_block(block, db, vm_type)?;
 
-        let chain_config = db.store.get_chain_config()?;
-        let fork = chain_config.fork(block.header.timestamp);
-
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
         let mut receipts = Vec::new();
-        let mut cumulative_gas_used = 0;
+        // Cumulative gas for receipts (POST-REFUND per EIP-7778)
+        let mut cumulative_gas_used = 0_u64;
+        // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
+        let mut block_gas_used = 0_u64;
 
         // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
         // The value itself can be safely changed.
@@ -197,7 +201,8 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
-            if cumulative_gas_used + tx.gas_limit() > block.header.gas_limit {
+            // Use block_gas_used for limit check (pre-refund for Amsterdam+)
+            if block_gas_used + tx.gas_limit() > block.header.gas_limit {
                 return Err(EvmError::Transaction(format!(
                     "Gas allowance exceeded. Block gas limit {} can be surpassed by executing transaction with gas limit {}",
                     block.header.gas_limit,
@@ -220,21 +225,15 @@ impl LEVM {
                 tx_since_last_flush += 1;
             }
 
-            // EIP-7778: Block accounting uses gas_used (pre-refund for Amsterdam+)
-            cumulative_gas_used += report.gas_used;
-
-            // EIP-7778: Set gas_spent for Amsterdam+ receipts
-            let gas_spent = if fork >= Fork::Amsterdam {
-                Some(report.gas_spent)
-            } else {
-                None
-            };
+            // EIP-7778: Separate gas tracking
+            cumulative_gas_used += report.gas_spent;
+            block_gas_used += report.gas_used;
 
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
                 cumulative_gas_used,
-                gas_spent,
+                None, // gas_spent not encoded in receipts
                 report.logs,
             );
 
@@ -279,7 +278,11 @@ impl LEVM {
         };
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
-        Ok(BlockExecutionResult { receipts, requests })
+        Ok(BlockExecutionResult {
+            receipts,
+            requests,
+            block_gas_used,
+        })
     }
 
     /// Pre-warms state by executing all transactions in parallel, grouped by sender.
@@ -400,6 +403,7 @@ impl LEVM {
             difficulty: block_header.difficulty,
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
             fee_token: tx.fee_token(),
+            slot_number: block_header.slot_number.unwrap_or_default(),
         };
 
         Ok(env)
@@ -739,6 +743,11 @@ pub fn generic_system_contract_levm(
         data: calldata,
         ..Default::default()
     });
+
+    // Note: We don't explicitly record_touched_address here for system contracts.
+    // Per EIP-7928, system contracts should only appear in BAL if they have state changes.
+    // The address will be recorded via record_storage_write if there are actual writes.
+
     let mut vm =
         VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type).map_err(EvmError::from)?;
 
@@ -909,6 +918,7 @@ fn env_from_generic(
         difficulty: header.difficulty,
         is_privileged: false,
         fee_token: tx.fee_token,
+        slot_number: header.slot_number.unwrap_or_default(),
     })
 }
 

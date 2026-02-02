@@ -47,12 +47,13 @@ impl<'a> VM<'a> {
         };
 
         // Stack grows downwards, so we add the offset to get deeper elements
-        // SWAPN swaps the top element with the element at depth (relative_offset + 1)
+        // SWAPN swaps top with the (n+1)th element where n = decoded relative_offset
+        // The (n+1)th element (1-indexed) is at array index offset + n
         let absolute_offset = self
             .current_call_frame
             .stack
             .offset
-            .checked_add(usize::from(relative_offset).wrapping_add(1))
+            .checked_add(usize::from(relative_offset))
             .ok_or(ExceptionalHalt::StackUnderflow)?;
 
         // Verify the offset is within stack bounds

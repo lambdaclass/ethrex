@@ -71,6 +71,7 @@ pub enum Opcode {
     BASEFEE = 0x48,
     BLOBHASH = 0x49,
     BLOBBASEFEE = 0x4A,
+    SLOTNUM = 0x4B, // EIP-7843
 
     // Stack, Memory, Storage, and Flow Operations
     POP = 0x50,
@@ -593,6 +594,8 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::DUPN as usize] = OpCodeFn(VM::op_dupn);
         opcode_table[Opcode::SWAPN as usize] = OpCodeFn(VM::op_swapn);
         opcode_table[Opcode::EXCHANGE as usize] = OpCodeFn(VM::op_exchange);
+        // EIP-7843: SLOTNUM
+        opcode_table[Opcode::SLOTNUM as usize] = OpCodeFn(VM::op_slotnum);
         opcode_table
     }
 

@@ -165,12 +165,12 @@ pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
 
 /// Refunds unused gas to the sender.
 ///
-/// # EIP-7778 Changes
-/// - `gas_spent`: Post-refund gas (what the user actually pays)
-/// - `gas_used_pre_refund`: Pre-refund gas (for block-level accounting in Amsterdam+)
+/// # EIP-7778 Changes (Amsterdam+)
+/// - `gas_used`: PRE-REFUND gas for block accounting (max(pre_refund, floor))
+/// - `gas_spent`: POST-REFUND gas for receipt and user payment (max(post_refund, floor))
 ///
-/// For Amsterdam+, the block uses pre-refund gas (`gas_used`) while the user pays post-refund
-/// gas (`gas_spent`). Before Amsterdam, both values are the same (post-refund).
+/// For Amsterdam+, the block header gas_used is PRE-REFUND while receipts use POST-REFUND.
+/// Before Amsterdam, both values are the same (post-refund).
 pub fn refund_sender(
     vm: &mut VM<'_>,
     ctx_result: &mut ContextResult,
@@ -180,19 +180,19 @@ pub fn refund_sender(
 ) -> Result<(), VMError> {
     vm.substate.refunded_gas = refunded_gas;
 
-    // EIP-7778: Separate block vs user gas accounting for Amsterdam+
+    // EIP-7778: Separate block and user gas accounting
     if vm.env.config.fork >= Fork::Amsterdam {
-        // Block accounting uses pre-refund gas
-        ctx_result.gas_used = gas_used_pre_refund;
-        // User pays post-refund gas
+        // Block accounting uses PRE-REFUND gas (with floor applied)
+        ctx_result.gas_used = gas_used_pre_refund.max(vm.get_min_gas_used().unwrap_or(0));
+        // User pays POST-REFUND gas (with floor applied)
         ctx_result.gas_spent = gas_spent;
     } else {
-        // Pre-Amsterdam: both use post-refund value
+        // Pre-Amsterdam: both use POST-REFUND value
         ctx_result.gas_used = gas_spent;
         ctx_result.gas_spent = gas_spent;
     }
 
-    // Return unspent gas to the sender (based on what user pays)
+    // Return unspent gas to the sender (based on what user pays = gas_spent)
     let gas_to_return = vm
         .env
         .gas_limit

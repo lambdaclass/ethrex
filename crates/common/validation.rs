@@ -53,16 +53,16 @@ pub fn validate_block(
     Ok(())
 }
 
-/// Validates that the gas used in the receipts matches the block header.
+/// Validates that the block gas used matches the block header.
+/// For Amsterdam+ (EIP-7778), block_gas_used is PRE-REFUND and differs from
+/// receipt cumulative_gas_used which is POST-REFUND.
 pub fn validate_gas_used(
-    receipts: &[Receipt],
+    block_gas_used: u64,
     block_header: &BlockHeader,
 ) -> Result<(), InvalidBlockError> {
-    if let Some(last) = receipts.last()
-        && last.cumulative_gas_used != block_header.gas_used
-    {
+    if block_gas_used != block_header.gas_used {
         return Err(InvalidBlockError::GasUsedMismatch(
-            last.cumulative_gas_used,
+            block_gas_used,
             block_header.gas_used,
         ));
     }
@@ -177,6 +177,21 @@ pub fn validate_block_access_list_hash(
         .unwrap_or(false);
 
     if !valid {
+        // Debug: print BAL details for failing tests
+        eprintln!("BAL HASH MISMATCH:");
+        eprintln!("  Expected: {:?}", header.block_access_list_hash);
+        eprintln!("  Computed: {:?}", computed_hash);
+        eprintln!("  Block number: {}", header.number);
+        eprintln!("  Tx count: {}", transaction_count);
+        eprintln!("  BAL accounts: {}", computed_bal.accounts().len());
+        for account in computed_bal.accounts() {
+            eprintln!("    Account: {:?}", account.address());
+            eprintln!("      Storage changes: {:?}", account.storage_changes().len());
+            eprintln!("      Storage reads: {:?}", account.storage_reads().len());
+            eprintln!("      Balance changes: {:?}", account.balance_changes().len());
+            eprintln!("      Nonce changes: {:?}", account.nonce_changes().len());
+            eprintln!("      Code changes: {:?}", account.code_changes().len());
+        }
         return Err(InvalidBlockError::BlockAccessListHashMismatch);
     }
 

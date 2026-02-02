@@ -924,6 +924,64 @@ impl BlockAccessListRecorder {
         // Note: touched_addresses is intentionally NOT restored - per EIP-7928,
         // accessed addresses must be included even from reverted calls
     }
+
+    /// Converts storage writes to reads when a top-level transaction fails.
+    ///
+    /// Per EIP-7928: When a transaction fails, its writes don't persist but the
+    /// slots were still accessed (read). This function:
+    /// - Only converts writes from the CURRENT transaction (preserves system contract writes at index 0)
+    /// - Adds written slots to storage_reads (they were accessed)
+    /// - Removes current tx's writes (they didn't persist)
+    /// - Preserves existing storage reads (reads are always valid accesses)
+    ///
+    /// # Arguments
+    /// * `tx_index` - The block access index of the failed transaction (1-indexed)
+    pub fn convert_writes_to_reads_for_tx_failure(&mut self, tx_index: u16) {
+        // For each address with writes at the current tx_index:
+        for (address, slots) in &mut self.storage_writes {
+            for (slot, changes) in slots.iter_mut() {
+                // Check if any writes are from this transaction
+                let had_write_at_tx = changes.iter().any(|(idx, _)| *idx == tx_index);
+
+                if had_write_at_tx {
+                    // Add slot to storage_reads since it was accessed
+                    self.storage_reads
+                        .entry(*address)
+                        .or_default()
+                        .insert(*slot);
+
+                    // Remove writes from this transaction (keep system contract writes at index 0)
+                    changes.retain(|(idx, _)| *idx != tx_index);
+                }
+            }
+
+            // Remove empty slot entries
+            slots.retain(|_, changes| !changes.is_empty());
+        }
+
+        // Remove empty address entries from storage_writes
+        self.storage_writes.retain(|_, slots| !slots.is_empty());
+
+        // Also need to handle balance, nonce, code changes from the failed tx
+        // These should be removed since the transaction failed
+        for changes in self.balance_changes.values_mut() {
+            changes.retain(|(idx, _)| *idx != tx_index);
+        }
+        self.balance_changes.retain(|_, changes| !changes.is_empty());
+
+        for changes in self.nonce_changes.values_mut() {
+            changes.retain(|(idx, _)| *idx != tx_index);
+        }
+        self.nonce_changes.retain(|_, changes| !changes.is_empty());
+
+        for changes in self.code_changes.values_mut() {
+            changes.retain(|(idx, _)| *idx != tx_index);
+        }
+        self.code_changes.retain(|_, changes| !changes.is_empty());
+
+        // Note: touched_addresses are NOT removed - accessed addresses must be
+        // included even from failed transactions per EIP-7928
+    }
 }
 
 #[cfg(test)]
@@ -1510,5 +1568,53 @@ mod tests {
         assert!(account.storage_reads().contains(&U256::from(0x10)));
         // And not in writes
         assert!(account.storage_changes().is_empty());
+    }
+
+    #[test]
+    fn test_convert_writes_to_reads_for_tx_failure() {
+        // Test that when a top-level transaction fails, its writes are converted to reads
+        let mut recorder = BlockAccessListRecorder::new();
+
+        // System contract write at index 0 (should be preserved)
+        recorder.set_block_access_index(0);
+        recorder.record_storage_write(ALICE_ADDR, U256::from(0x01), U256::from(0x100));
+
+        // TX 1 writes and balances (will fail)
+        recorder.set_block_access_index(1);
+        recorder.record_storage_write(ALICE_ADDR, U256::from(0x10), U256::from(0x42));
+        recorder.record_storage_write(BOB_ADDR, U256::from(0x20), U256::from(0x84));
+        recorder.set_initial_balance(ALICE_ADDR, U256::from(1000));
+        recorder.record_balance_change(ALICE_ADDR, U256::from(500));
+
+        // TX 1 fails - convert its writes to reads
+        recorder.convert_writes_to_reads_for_tx_failure(1);
+
+        let bal = recorder.build();
+
+        // Find Alice's account
+        let alice = bal
+            .accounts()
+            .iter()
+            .find(|a| a.address() == ALICE_ADDR)
+            .unwrap();
+
+        // System contract write (index 0) should be preserved
+        assert_eq!(alice.storage_changes().len(), 1);
+        assert_eq!(alice.storage_changes()[0].slot(), U256::from(0x01));
+
+        // TX 1's write should be converted to a read
+        assert!(alice.storage_reads().contains(&U256::from(0x10)));
+
+        // TX 1's balance change should be removed
+        assert!(alice.balance_changes().is_empty());
+
+        // Bob's write should also be converted to a read
+        let bob = bal
+            .accounts()
+            .iter()
+            .find(|a| a.address() == BOB_ADDR)
+            .unwrap();
+        assert!(bob.storage_changes().is_empty());
+        assert!(bob.storage_reads().contains(&U256::from(0x20)));
     }
 }

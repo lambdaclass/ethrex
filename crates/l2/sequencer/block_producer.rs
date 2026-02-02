@@ -218,9 +218,16 @@ impl BlockProducer {
 
         let account_updates = payload_build_result.account_updates;
 
+        // For L2, use post-refund gas from last receipt (no EIP-7778 split)
+        let block_gas_used = payload_build_result
+            .receipts
+            .last()
+            .map(|r| r.cumulative_gas_used)
+            .unwrap_or(0);
         let execution_result = BlockExecutionResult {
             receipts: payload_build_result.receipts,
             requests: Vec::new(),
+            block_gas_used,
         };
 
         let account_updates_list = self

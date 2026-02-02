@@ -7,8 +7,8 @@ use crate::{
 };
 use ethrex_common::utils::u256_from_big_endian_const;
 
-// Block Information (11)
-// Opcodes: BLOCKHASH, COINBASE, TIMESTAMP, NUMBER, PREVRANDAO, GASLIMIT, CHAINID, SELFBALANCE, BASEFEE, BLOBHASH, BLOBBASEFEE
+// Block Information (12)
+// Opcodes: BLOCKHASH, COINBASE, TIMESTAMP, NUMBER, PREVRANDAO, GASLIMIT, CHAINID, SELFBALANCE, BASEFEE, BLOBHASH, BLOBBASEFEE, SLOTNUM
 
 impl<'a> VM<'a> {
     // BLOCKHASH operation
@@ -172,6 +172,18 @@ impl<'a> VM<'a> {
         self.current_call_frame
             .stack
             .push(self.env.base_blob_fee_per_gas)?;
+
+        Ok(OpcodeResult::Continue)
+    }
+
+    // SLOTNUM operation (EIP-7843)
+    pub fn op_slotnum(&mut self) -> Result<OpcodeResult, VMError> {
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::SLOTNUM)?;
+
+        self.current_call_frame
+            .stack
+            .push(self.env.slot_number.into())?;
 
         Ok(OpcodeResult::Continue)
     }
