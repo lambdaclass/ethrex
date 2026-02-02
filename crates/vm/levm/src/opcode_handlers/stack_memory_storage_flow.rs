@@ -296,8 +296,9 @@ impl<'a> VM<'a> {
         call_frame
             .bytecode
             .jump_targets
-            .binary_search(&jump_address)
-            .is_ok()
+            .as_ref()
+            .map(|targets| targets.binary_search(&jump_address).is_ok())
+            .unwrap_or(true)
     }
 
     /// JUMP* family (`JUMP` and `JUMP` ATTOW [DEC 2024]) helper

@@ -692,13 +692,28 @@ impl Store {
             return Ok(None);
         };
         let bytes = Bytes::from_owner(bytes);
-        let (bytecode_slice, targets) = decode_bytes(&bytes)?;
+        let (bytecode_slice, mut rest) = decode_bytes(&bytes)?;
         let bytecode = bytes.slice_ref(bytecode_slice);
+
+        // Decode Option<Vec<u32>> with marker:
+        // - First byte: 0 = None (skip validation), 1 = Some (runtime validation needed)
+        let jump_targets = if rest.is_empty() {
+            // Old format without marker - assume Some for backwards compatibility
+            Some(Vec::new())
+        } else {
+            let marker = rest[0];
+            rest = &rest[1..];
+            match marker {
+                0 => None,
+                1 => Some(<Vec<_>>::decode(rest)?),
+                _ => return Err(StoreError::DecodeError),
+            }
+        };
 
         let code = Code {
             hash: code_hash,
             bytecode,
-            jump_targets: <Vec<_>>::decode(targets)?,
+            jump_targets,
         };
 
         // insert into cache and evict if needed
@@ -2992,11 +3007,22 @@ fn snap_state_key(index: SnapStateIndex) -> Vec<u8> {
 }
 
 fn encode_code(code: &Code) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(
-        6 + code.bytecode.len() + std::mem::size_of_val(code.jump_targets.as_slice()),
-    );
+    // Encode Option<Vec<u32>> with a marker:
+    // - First byte: 0 = None (skip validation), 1 = Some (runtime validation needed)
+    // - Following bytes: RLP-encoded Vec<u32> if Some
+    let mut buf = Vec::new();
     code.bytecode.encode(&mut buf);
-    code.jump_targets.encode(&mut buf);
+
+    match &code.jump_targets {
+        None => {
+            buf.push(0); // Marker for None
+        }
+        Some(targets) => {
+            buf.push(1); // Marker for Some
+            targets.encode(&mut buf);
+        }
+    }
+
     buf
 }
 

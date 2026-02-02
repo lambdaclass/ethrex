@@ -33,7 +33,7 @@ pub struct Code {
     // The valid addresses are 32-bit because, despite EIP-3860 restricting initcode size,
     // this does not apply to previous forks. This is tested in the EEST tests, which would
     // panic in debug mode.
-    pub jump_targets: Vec<u32>,
+    pub jump_targets: Option<Vec<u32>>,
 }
 
 impl Code {
@@ -58,27 +58,70 @@ impl Code {
         }
     }
 
-    fn compute_jump_targets(code: &[u8]) -> Vec<u32> {
+    fn compute_jump_targets(code: &[u8]) -> Option<Vec<u32>> {
         debug_assert!(code.len() <= u32::MAX as usize);
         let mut targets = Vec::new();
+
+        // Track JUMP and JUMPI with static target addresses.
+        // If all of them are static and valid, skip jump target validation completely.
+        type StaticJumps<'a> = Option<(Option<&'a [u8]>, Vec<&'a [u8]>)>;
+        let mut static_jumps: StaticJumps = Some((None, Vec::new()));
+
         let mut i = 0;
         while i < code.len() {
-            // TODO: we don't use the constants from the vm module to avoid a circular dependency
-            match code[i] {
-                // OP_JUMPDEST
-                0x5B => {
-                    targets.push(i as u32);
+            let opcode = code[i];
+
+            // Process JUMP and JUMPI.
+            if let Some((prev_payload, jump_targets)) = &mut static_jumps {
+                let prev_payload = prev_payload.take();
+                if matches!(opcode, 0x56 | 0x57) {
+                    match prev_payload {
+                        Some(prev_payload) => jump_targets.push(prev_payload),
+                        None => static_jumps = None,
+                    }
                 }
+            }
+
+            // TODO: we don't use the constants from the vm module to avoid a circular dependency
+            match opcode {
+                // OP_JUMPDEST
+                0x5B => targets.push(i as u32),
                 // OP_PUSH1..32
-                c @ 0x60..0x80 => {
+                c @ 0x5F..0x80 => {
+                    if let Some((prev_payload, _)) = &mut static_jumps {
+                        *prev_payload = code.get(i + 1..i + 1 + (c - 0x5F) as usize);
+                    }
+
                     // OP_PUSH0
                     i += (c - 0x5F) as usize;
                 }
-                _ => (),
+                _ => {}
             }
+
             i += 1;
         }
-        targets
+
+        // Check static jumps validity.
+        if let Some((_, jump_targets)) = static_jumps
+            && jump_targets.iter().all(|&target_addr| {
+                // Validate that target_addr fits in a u32
+                if target_addr.len() > size_of::<u32>() {
+                    return false;
+                }
+
+                // Convert from big endian to u32
+                let mut addr_bytes = [0u8; 4];
+                addr_bytes[4 - target_addr.len()..].copy_from_slice(target_addr);
+                let addr = u32::from_be_bytes(addr_bytes);
+
+                // Ensure it exists in targets using binary search (targets are sorted)
+                targets.binary_search(&addr).is_ok()
+            })
+        {
+            None
+        } else {
+            Some(targets)
+        }
     }
 
     /// Estimates the size of the Code struct in bytes
@@ -92,7 +135,13 @@ impl Code {
     pub fn size(&self) -> usize {
         let hash_size = size_of::<H256>();
         let bytes_size = size_of::<Bytes>();
-        let vec_size = size_of::<Vec<u32>>() + self.jump_targets.len() * size_of::<u32>();
+        let vec_size = size_of::<Vec<u32>>()
+            + self
+                .jump_targets
+                .as_ref()
+                .map(|x| x.len())
+                .unwrap_or_default()
+                * size_of::<u32>();
         hash_size + bytes_size + vec_size
     }
 }
@@ -166,7 +215,7 @@ impl Default for Code {
         Self {
             bytecode: Bytes::new(),
             hash: *EMPTY_KECCACK_HASH,
-            jump_targets: Vec::new(),
+            jump_targets: None,
         }
     }
 }
