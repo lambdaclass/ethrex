@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
+license.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -16,7 +17,6 @@ ethrex-storage.workspace = true
 ethrex-trie.workspace = true
 ethrex-storage-rollup = { workspace = true, optional = true }
 ethrex-l2-common = { workspace = true, optional = true }
-ethrex-threadpool.workspace = true
 ethereum-types.workspace = true
 ethrex-metrics = { workspace = true, features = ["metrics"], optional = true }
 
@@ -59,7 +59,7 @@ rayon = "1.10.0"
 crossbeam.workspace = true
 
 [dev-dependencies]
-hex-literal = "0.4.1"
+hex-literal.workspace = true
 
 [lib]
 path = "./p2p.rs"

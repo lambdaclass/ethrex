@@ -3,7 +3,7 @@ use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
-    discv4::peer_table::PeerTable,
+    peer_table::PeerTable,
     sync::SyncMode,
     types::{Node, NodeRecord},
 };
@@ -158,17 +158,21 @@ pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {
     }
 }
 
-/// Returns a detailed client version string with git info.
-pub fn get_client_version() -> String {
-    format!(
-        "{}/v{}-{}-{}/{}/rustc-v{}",
-        env!("CARGO_PKG_NAME"),
-        env!("CARGO_PKG_VERSION"),
-        env!("VERGEN_GIT_BRANCH"),
-        env!("VERGEN_GIT_SHA"),
-        env!("VERGEN_RUSTC_HOST_TRIPLE"),
-        env!("VERGEN_RUSTC_SEMVER")
+/// Returns a detailed client version struct with git info.
+pub fn get_client_version() -> ethrex_rpc::ClientVersion {
+    ethrex_rpc::ClientVersion::new(
+        env!("CARGO_PKG_NAME").to_string(),
+        env!("CARGO_PKG_VERSION").to_string(),
+        env!("VERGEN_GIT_BRANCH").to_string(),
+        env!("VERGEN_GIT_SHA").to_string(),
+        env!("VERGEN_RUSTC_HOST_TRIPLE").to_string(),
+        env!("VERGEN_RUSTC_SEMVER").to_string(),
     )
+}
+
+/// Returns a detailed client version string with git info (for clap attributes).
+pub fn get_client_version_string() -> String {
+    get_client_version().to_string()
 }
 
 /// Returns a minimal client version string without git info.
@@ -191,4 +195,8 @@ pub fn display_chain_initialization(genesis: &Genesis) {
     let hash = genesis.get_block().hash();
     info!("Genesis Block Hash: {hash:x}");
     info!("{border}");
+}
+
+pub fn is_memory_datadir(datadir: &Path) -> bool {
+    datadir.ends_with("memory")
 }

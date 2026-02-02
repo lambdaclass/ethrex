@@ -10,6 +10,7 @@ on:
 permissions:
   contents: read
   actions: write
+  packages: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -35,7 +36,7 @@ jobs:
             run_tests:
               - "crates/l2/**"
               - "fixtures/keys/**"
-              - "fixtures/genesis/l1-dev.json"
+              - "fixtures/genesis/l1.json"
               - "fixtures/genesis/l2.json"
               - "fixtures/cache/**"
               - "fixtures/blobs/**"
@@ -45,11 +46,20 @@ jobs:
               - "crates/vm/levm/**"
               - ".github/workflows/pr-main_l2.yaml"
               - "cmd/ethrex/l2/**"
+            non_docs:
+              - "!docs/**"
+            code_changed:
+              - "**/*.rs"
+              - "**/*.toml"
+              - "**/*.lock"
       - name: finish
         id: finish
         run: |
-          if [[ "${GITHUB_EVENT_NAME}" == "merge_group" ]]; then
+          if [[ "${{ steps.filter.outputs.non_docs_count }}" == 0 ]]; then
               echo "run_tests=false" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_EVENT_NAME}" == "merge_group" ]]; then
+              # In merge queue, only run lint if code files changed
+              echo "run_tests=${{ steps.filter.outputs.code_changed }}" >> "$GITHUB_OUTPUT"
           elif [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
               echo "run_tests=true" >> "$GITHUB_OUTPUT"
           else
@@ -83,8 +93,8 @@ jobs:
 
       - name: Create placeholder SP1 ELF
         run: |
-          mkdir -p crates/l2/prover/src/guest_program/src/sp1/out
-          touch crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf
+          mkdir -p crates/guest-program/bin/sp1/out
+          touch crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-elf
 
       - name: Run cargo check
         run: cargo check --workspace --features l2,l2-sql
@@ -98,11 +108,30 @@ jobs:
         run: |
           cargo fmt --all -- --check
 
+  validate-blobs:
+    # Fast validation to catch stale blobs early
+    # This prevents waiting for state-diff-test to fail
+    name: Validate Blob Fixtures
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Validate blobs match genesis
+        run: |
+          cd crates/l2
+          make validate-blobs
+
   build-docker:
     name: Build docker image
     runs-on: ubuntu-latest
     needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -113,9 +142,13 @@ jobs:
       - name: Build L1 docker image
         uses: ./.github/actions/build-docker
         with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
+          dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
           tags: ethrex:main
+          variant: l1
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -129,7 +162,7 @@ jobs:
     name: Build docker image L2
     runs-on: ubuntu-latest
     needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -140,11 +173,15 @@ jobs:
       - name: Build L2 docker image
         uses: ./.github/actions/build-docker
         with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
+          dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
           tags: ethrex:main-l2
           artifact_path: ethrex_image_l2.tar
           build_args: BUILD_FLAGS=--features l2,l2-sql
+          variant: l2
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -156,7 +193,7 @@ jobs:
     name: Uniswap Swap Token Flow
     runs-on: ubuntu-latest
     needs: [detect-changes]
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     timeout-minutes: 60
     steps:
       - name: Checkout sources
@@ -267,7 +304,7 @@ jobs:
     name: Integration Test - ${{ matrix.name }}
     runs-on: ubuntu-latest
     needs: [detect-changes, build-docker, build-docker-l2]
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     strategy:
       matrix:
         include:
@@ -305,7 +342,7 @@ jobs:
         run: |
           cd crates/l2
           make build-prover-exec
-          mkdir -p prover/src/guest_program/src/sp1/out && touch prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254 && touch prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32
+          mkdir -p ../guest-program/bin/sp1/out && touch ../guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254 && touch ../guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32
 
       - name: Build test
         run: |
@@ -432,7 +469,7 @@ jobs:
     name: Integration Test - TDX
     runs-on: ubuntu-latest
     needs: [detect-changes, build-docker, build-docker-l2]
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -537,8 +574,8 @@ jobs:
   state-diff-test:
     name: State Reconstruction Tests
     runs-on: ubuntu-latest
-    needs: [detect-changes, build-docker, build-docker-l2]
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    needs: [detect-changes, build-docker, build-docker-l2, validate-blobs]
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -597,7 +634,7 @@ jobs:
     name: Integration Test Shared Bridge - ${{ matrix.name }}
     runs-on: ubuntu-latest
     needs: [detect-changes, build-docker, build-docker-l2]
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     strategy:
       matrix:
         include:
@@ -619,7 +656,7 @@ jobs:
         run: |
           cd crates/l2
           make build-prover-exec
-          mkdir -p prover/src/guest_program/src/sp1/out && touch prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254 && touch prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32
+          mkdir -p ../guest-program/bin/sp1/out && touch ../guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254 && touch ../guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32
 
       - name: Build test
         run: |

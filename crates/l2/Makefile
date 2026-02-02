@@ -26,7 +26,7 @@ restart: restart-l1-docker deploy-l1 restart-metrics restart-l2 ## 🔄 Restarts
 # ==============================================================================
 
 L2_GENESIS_FILE_PATH=../../fixtures/genesis/l2.json
-L1_GENESIS_FILE_PATH=../../fixtures/genesis/l1-dev.json
+L1_GENESIS_FILE_PATH=../../fixtures/genesis/l1.json
 
 ethrex_PATH=$(shell pwd)/../..
 ethrex_BIN_PATH=$(ethrex_PATH)/target/release/ethrex
@@ -96,8 +96,8 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--bridge-owner-pk ${BRIDGE_OWNER_PRIVATE_KEY} \
 	--deposit-rich \
 	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
-	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
-	--genesis-l2-path ../../fixtures/genesis/l2.json
+	--genesis-l1-path ${L1_GENESIS_FILE_PATH} \
+	--genesis-l2-path ${L2_GENESIS_FILE_PATH}
 
 ## Same as deploy-l1 but deploys the SP1 verifier
 deploy-l1-sp1: ## 📜 Deploys the L1 contracts
@@ -114,8 +114,8 @@ deploy-l1-sp1: ## 📜 Deploys the L1 contracts
 	--bridge-owner-pk ${BRIDGE_OWNER_PRIVATE_KEY} \
 	--deposit-rich \
 	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
-	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
-	--genesis-l2-path ../../fixtures/genesis/l2.json
+	--genesis-l1-path ${L1_GENESIS_FILE_PATH} \
+	--genesis-l2-path ${L2_GENESIS_FILE_PATH}
 
 # ==============================================================================
 # L2
@@ -273,3 +273,8 @@ state-diff-test:
 	docker compose -f docker-compose.yaml -f docker-compose-l2-store.overrides.yaml up --detach --no-deps ethrex_l2
 	docker logs --follow ethrex_l2 & \
 	cargo test state_reconstruct --release
+
+# Fast validation to check if blobs match genesis
+# Use this before state-diff-test to catch stale blobs early
+validate-blobs:
+	cargo test validate_blobs_match_genesis --release

@@ -13,7 +13,7 @@ use ethrex_l2::{
     },
 };
 use ethrex_l2_rpc::signer::{LocalSigner, RemoteSigner, Signer};
-use ethrex_prover_lib::{backend::Backend, config::ProverConfig};
+use ethrex_prover_lib::{backend::BackendType, config::ProverConfig};
 use ethrex_rpc::clients::eth::{
     BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
 };
@@ -174,6 +174,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .committer_opts
                     .on_chain_proposer_address
                     .ok_or(SequencerOptionsError::NoOnChainProposerAddress)?,
+                timelock_address: opts.committer_opts.timelock_address,
                 first_wake_up_time_ms: opts.committer_opts.first_wake_up_time_ms.unwrap_or(0),
                 commit_time_ms: opts.committer_opts.commit_time_ms,
                 batch_gas_limit: opts.committer_opts.batch_gas_limit,
@@ -611,6 +612,13 @@ pub struct CommitterOptions {
     )]
     pub on_chain_proposer_address: Option<Address>,
     #[arg(
+        long = "l1.timelock-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_TIMELOCK_ADDRESS",
+        help_heading = "L1 Committer options"
+    )]
+    pub timelock_address: Option<Address>,
+    #[arg(
         long = "committer.commit-time",
         default_value = "60000",
         value_name = "UINT64",
@@ -653,6 +661,7 @@ impl Default for CommitterOptions {
             )
             .ok(),
             on_chain_proposer_address: None,
+            timelock_address: None,
             commit_time_ms: 60000,
             batch_gas_limit: None,
             first_wake_up_time_ms: None,
@@ -680,6 +689,7 @@ impl CommitterOptions {
         self.on_chain_proposer_address = self
             .on_chain_proposer_address
             .or(defaults.on_chain_proposer_address);
+        self.timelock_address = self.timelock_address.or(defaults.timelock_address);
         self.batch_gas_limit = self.batch_gas_limit.or(defaults.batch_gas_limit);
         self.first_wake_up_time_ms = self
             .first_wake_up_time_ms
@@ -1045,7 +1055,7 @@ pub struct ProverClientOptions {
         help_heading = "Prover client options",
         value_enum
     )]
-    pub backend: Backend,
+    pub backend: BackendType,
     #[arg(
         long = "proof-coordinators",
         value_name = "URL",
@@ -1105,7 +1115,7 @@ impl Default for ProverClientOptions {
             ],
             proving_time_ms: 5000,
             log_level: Level::INFO,
-            backend: Backend::Exec,
+            backend: BackendType::Exec,
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: None,
         }
