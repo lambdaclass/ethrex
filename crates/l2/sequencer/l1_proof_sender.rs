@@ -45,6 +45,8 @@ use crate::{
 };
 
 #[cfg(feature = "sp1")]
+use ethrex_guest_program::ZKVM_SP1_PROGRAM_ELF;
+#[cfg(feature = "sp1")]
 use sp1_sdk::{HashableKey, Prover, SP1ProofWithPublicValues, SP1VerifyingKey};
 
 const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes)";
