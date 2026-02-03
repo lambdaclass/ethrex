@@ -1,0 +1,134 @@
+name: Ethrex Snapsync
+description: Run an ethrex snapsync assertion against a specified network.
+inputs:
+  network:
+    description: Network name to target.
+    required: true
+  timeout:
+    description: Assertoor test timeout.
+    required: true
+  ethrex_image:
+    description: Ethrex Docker image repository.
+    required: false
+    default: ghcr.io/lambdaclass/ethrex
+  ethrex_tag:
+    description: Ethrex Docker image tag.
+    required: false
+    default: main
+  build_local:
+    description: Build ethrex image locally instead of using a pre-built image.
+    required: false
+    default: "false"
+  build_profile:
+    description: Cargo profile to use when building locally (e.g., release, release-with-debug-assertions).
+    required: false
+    default: release
+  cl_type:
+    description: Consensus layer type (lighthouse, prysm, etc).
+    required: false
+    default: lighthouse
+  cl_image:
+    description: Consensus layer Docker image and tag.
+    required: false
+    default: sigp/lighthouse:v8.0.1
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+
+    # We need to run this step because kurtosis uses cached docker images but we want the latest ethrex image
+    - name: Remove cached ethrex image
+      shell: bash
+      run: docker image rm -f ${{ inputs.ethrex_image }}:${{ inputs.ethrex_tag }} || true
+
+    - name: Build local ethrex image
+      if: inputs.build_local == 'true'
+      shell: bash
+      env:
+        BUILD_PROFILE: ${{ inputs.build_profile }}
+        IMAGE_TAG: ${{ inputs.ethrex_tag }}
+      run: |
+        echo "Building ethrex with profile: ${BUILD_PROFILE}"
+        docker build \
+          --build-arg PROFILE="${BUILD_PROFILE}" \
+          -t ethrex-local:${IMAGE_TAG} \
+          -f Dockerfile .
+
+    - name: Generate Kurtosis args
+      shell: bash
+      env:
+        NETWORK_NAME: ${{ inputs.network }}
+        TIMEOUT: ${{ inputs.timeout }}
+        ETHREX_IMAGE: ${{ inputs.build_local == 'true' && 'ethrex-local' || inputs.ethrex_image }}
+        ETHREX_TAG: ${{ inputs.ethrex_tag }}
+        CL_TYPE: ${{ inputs.cl_type }}
+        CL_IMAGE: ${{ inputs.cl_image }}
+      run: |
+        cat > .github/config/assertoor/network_params.generated.yaml <<YAML
+        participants:
+          - el_type: ethrex
+            el_image: ${ETHREX_IMAGE}:${ETHREX_TAG}
+            el_extra_params:
+              - "--syncmode=snap"
+              - "--log.level=info"
+            cl_type: ${CL_TYPE}
+            cl_image: ${CL_IMAGE}
+            count: 1
+
+        network_params:
+          network: "${NETWORK_NAME}"
+
+        additional_services:
+          - assertoor
+
+        assertoor_params:
+          tests:
+            - file: https://raw.githubusercontent.com/lambdaclass/ethrex/${GITHUB_SHA}/.github/config/assertoor/syncing-check.yaml
+              timeout: "${TIMEOUT}"
+
+        YAML
+
+    - name: Show generated args
+      if: always()
+      shell: bash
+      run: |
+        echo '--- Generated Kurtosis args ---'
+        if [ -f .github/config/assertoor/network_params.generated.yaml ]; then
+          cat .github/config/assertoor/network_params.generated.yaml
+        else
+          echo 'Generated file not found'
+        fi
+
+    - name: Run assertoor
+      uses: ethpandaops/kurtosis-assertoor-github-action@v1
+      with:
+        enclave_name: ethrex-assertoor-${{ inputs.network }}-${{ inputs.cl_type }}
+        kurtosis_version: 1.10.2
+        ethereum_package_url: github.com/ethpandaops/ethereum-package
+        ethereum_package_branch: 82e5a7178138d892c0c31c3839c89d53ffd42d9a
+        ethereum_package_args: .github/config/assertoor/network_params.generated.yaml
+
+    - name: Summarize ethrex version
+      if: ${{ always() }}
+      shell: bash
+      env:
+        BUILD_LOCAL: ${{ inputs.build_local }}
+        BUILD_PROFILE: ${{ inputs.build_profile }}
+        ETHREX_IMAGE: ${{ inputs.ethrex_image }}
+        ETHREX_TAG: ${{ inputs.ethrex_tag }}
+      run: |
+        if [ "$BUILD_LOCAL" = "true" ]; then
+          image="ethrex-local:${ETHREX_TAG}"
+        else
+          image="${ETHREX_IMAGE}:${ETHREX_TAG}"
+        fi
+        version="$(docker run --rm "$image" --version 2>/dev/null || true)"
+        {
+          echo "### Ethrex Version"
+          echo ""
+          echo "- ${version:-unavailable}"
+          if [ "$BUILD_LOCAL" = "true" ]; then
+            echo "- Build Profile: ${BUILD_PROFILE}"
+          fi
+        } >> "${GITHUB_STEP_SUMMARY}"

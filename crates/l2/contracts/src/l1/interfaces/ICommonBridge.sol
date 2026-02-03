@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity =0.8.31;
 
 /// @title Interface for the CommonBridge contract.
 /// @author LambdaClass
@@ -15,7 +15,7 @@ interface ICommonBridge {
     /// @param value the value of the transaction.
     /// @param gasLimit the gas limit for the deposit transaction.
     /// @param data The calldata of the deposit transaction.
-    event PrivilegedTxSent (
+    event PrivilegedTxSent(
         address indexed l1From,
         address from,
         address to,
@@ -46,10 +46,41 @@ interface ICommonBridge {
         bytes data;
     }
 
+    /// @notice Structure representing token and value information.
+    struct AssetDiff {
+        address tokenL1;
+        address tokenL2;
+        address destTokenL2;
+        uint256 value;
+    }
+
+    /// @notice Structure representing the changes per chain id and token values.
+    struct BalanceDiff {
+        uint256 chainId;
+        uint256 value;
+        AssetDiff[] assetDiffs;
+        bytes32[] message_hashes;
+    }
+
+    struct L2MessageRollingHash {
+        uint256 chainId;
+        bytes32 rollingHash;
+    }
+
     /// @notice Method to retrieve all the pending transaction hashes.
     /// @dev This method is used by the L2 L1_Watcher to get the pending
     /// privileged transactions to be processed.
-    function getPendingTransactionHashes() external view returns (bytes32[] memory);
+    function getPendingTransactionHashes()
+        external
+        view
+        returns (bytes32[] memory);
+
+    /// @notice Method to retrieve all the pending L2 message hashes for a given chain.
+    /// @dev This method is used by the L1 watcher to get the pending L2 messages
+    /// to be processed for a given chain.
+    function getPendingL2MessagesHashes(
+        uint256 chainId
+    ) external view returns (bytes32[] memory);
 
     /// @notice Method that sends a transaction to L2.
     /// @dev The deposit process starts here by emitting a L1ToL2Message
@@ -72,6 +103,15 @@ interface ICommonBridge {
         uint16 number
     ) external view returns (bytes32);
 
+    /// @notice Method to retrieve the versioned hash of the first `number`
+    /// pending L2 messages.
+    /// @param chainId the chain id of the L2 messages to retrieve.
+    /// @param number of pending L2 messages to retrieve the versioned hash.
+    function getPendingL2MessagesVersionedHash(
+        uint256 chainId,
+        uint16 number
+    ) external view returns (bytes32);
+
     /// @notice Remove pending transaction hashes from the queue.
     /// @dev This method is used by the L2 OnChainOperator to remove the pending
     /// privileged transactions from the queue after the transaction is included.
@@ -79,6 +119,15 @@ interface ICommonBridge {
     /// As transactions are processed in order, we don't need to specify
     /// the transaction hashes to remove, only the number of them.
     function removePendingTransactionHashes(uint16 number) external;
+
+    /// @notice Remove pending L2 messages from the queue.
+    /// @dev This method is used by the L2 OnChainProposer to remove the pending
+    /// L2 messages from the queue after the messages are included.
+    /// @param chainId the chain id of the L2 messages to remove.
+    /// @param number of pending transaction hashes to remove.
+    /// As transactions are processed in order, we don't need to specify
+    /// the transaction hashes to remove, only the number of them.
+    function removePendingL2Messages(uint256 chainId, uint16 number) external;
 
     /// @notice Method to retrieve the merkle root of the withdrawal logs of a
     /// given block.
@@ -99,6 +148,29 @@ interface ICommonBridge {
         uint256 withdrawalLogsBatchNumber,
         bytes32 withdrawalsLogsMerkleRoot
     ) external;
+
+    /// @notice Publishes the L2 messages in the router contract.
+    /// @dev This method is used by the L2 OnChainProposer to publish the L2
+    /// messages when an L2 batch is committed.
+    /// @param balanceDiffs Array of balance differences and associated message hashes to be sent to different chains.
+    function publishL2Messages(BalanceDiff[] calldata balanceDiffs) external;
+
+    function pushMessageHashes(
+        uint256 chainId,
+        bytes32[] calldata message_hashes
+    ) external;
+
+    /// @notice Receives messages from another chain via shared bridge router.
+    function receiveETHFromSharedBridge() external payable;
+
+    /// @notice Receives an ERC20 message from another chain via shared bridge router.
+    /// @dev This method should only be called by the shared bridge router, as this
+    /// method will modify the token balances accordingly.
+    function receiveERC20FromSharedBridge(
+        address tokenL1,
+        address tokenL2,
+        uint256 amount
+    ) external payable;
 
     /// @notice Method that claims an L2 withdrawal.
     /// @dev For a user to claim a withdrawal, this method verifies:
@@ -151,4 +223,21 @@ interface ICommonBridge {
 
     /// @notice Allows the owner to unpause the contract
     function unpause() external;
+
+    /// @notice Register a new fee token on the L2.
+    /// @param newFeeToken Address of the token to authorize for fees.
+    function registerNewFeeToken(address newFeeToken) external;
+
+    /// @notice Unregister a fee token on the L2.
+    /// @param existingFeeToken Address of the token to be removed.
+    function unregisterFeeToken(address existingFeeToken) external;
+
+    /// @notice Set a new ratio for fee token on the L2.
+    /// @param feeToken Address of the token to set the ratio
+    /// @param ratio The ratio of the fee token to Eth in wei.
+    function setFeeTokenRatio(address feeToken, uint256 ratio) external;
+
+    /// @notice Unset a ratio for fee token on the L2.
+    /// @param feeToken Address of the token to unset the ratio.
+    function unsetFeeTokenRatio(address feeToken) external;
 }

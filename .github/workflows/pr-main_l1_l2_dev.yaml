@@ -1,0 +1,98 @@
+name: L2 Dev
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+  merge_group:
+  pull_request:
+    branches: ["**"]
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  DOCKER_ETHREX_WORKDIR: /usr/local/bin
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      run_tests: ${{ steps.finish.outputs.run_tests }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            run_tests:
+              - '!docs/**'
+      - name: finish
+        id: finish
+        run: echo "run_tests=${{ steps.filter.outputs.run_tests }}" >> "$GITHUB_OUTPUT"
+      - name: Print result
+        run: echo "run_tests=${{ steps.finish.outputs.run_tests }}"
+
+  integration-test-l1-l2-dev:
+    needs: detect-changes
+    if: ${{ github.event_name != 'merge_group' && needs.detect-changes.outputs.run_tests == 'true' }}
+    name: Integration Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Install solc
+        uses: ./.github/actions/install-solc
+
+      - name: Start ethrex
+        run: |
+          COMPILE_CONTRACTS=1 cargo run --release --bin ethrex -F l2,l2-sql -- l2 --dev \
+          --block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+          --block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+          --block-producer.l1-fee-vault-address 0x45681AE1768a8936FB87aB11453B4755e322ceec \
+          --block-producer.operator-fee-per-gas 1000000000 \
+          --no-monitor  2>&1 | tee /tmp/ethrex.log &
+
+      - name: Wait for ethrex L2
+        run: |
+          for i in {1..100}; do
+            echo "Checking if ethrex L2 is ready... (attempt $i)"
+            if nc -z localhost 3900; then
+              echo "ProofCoordinator ready!"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "ProofCoordinator not ready in time"
+          exit 1
+
+      - name: Init prover
+        run: |
+          target/release/ethrex l2 prover --proof-coordinators http://localhost:3900 2>&1 | tee /tmp/prover.log &
+
+      - name: Show ENVs
+        run: |
+          cat .env
+          cp .env cmd/.env
+
+      - name: Run test
+        run: |
+          cd crates/l2
+          tail -n +1 -f /tmp/ethrex.log &
+          tail -n +1 -f /tmp/prover.log &
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d \
+          cargo test l2 --release -- --nocapture --test-threads=1

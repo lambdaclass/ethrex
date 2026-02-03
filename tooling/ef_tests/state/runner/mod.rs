@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 
 use crate::report::EFTestsReport;
-#[cfg(feature = "revm")]
-use crate::runner::revm_runner::SpecId;
 use crate::{
     parser::SPECIFIC_IGNORED_TESTS,
     report::{self, EFTestReport, TestReRunReport, format_duration_as_mm_ss},
@@ -11,12 +9,15 @@ use crate::{
 use clap::Parser;
 use colored::Colorize;
 use ethrex_common::Address;
+use ethrex_common::types::Fork;
 use ethrex_levm::account::LevmAccount;
 use ethrex_levm::errors::{ExecutionReport, VMError};
+pub use revm::primitives::hardfork::SpecId;
 use serde::{Deserialize, Serialize};
 use spinoff::{Color, Spinner, spinners::Dots};
 
 pub mod levm_runner;
+pub mod revm_db;
 pub mod revm_runner;
 
 #[derive(Debug, thiserror::Error, Clone, Serialize, Deserialize)]
@@ -58,13 +59,21 @@ pub enum InternalError {
 #[derive(Parser, Debug, Default)]
 pub struct EFTestRunnerOptions {
     /// For running tests of specific forks.
+    // Amsterdam fork removed until EIPs are implemented.
+    // To re-enable: add "Amsterdam" back to default_value after implementing:
+    // - EIP-7928: Block-Level Access Lists
+    // - EIP-7708: ETH Transfers Emit a Log
+    // - EIP-7778: Block Gas Accounting without Refunds
+    // - EIP-7843: SLOTNUM Opcode
+    // - EIP-8024: DUPN/SWAPN/EXCHANGE
     #[arg(
         long,
         value_name = "FORK",
         value_delimiter = ',',
-        default_value = "Merge,Shanghai,Cancun,Prague,Osaka"
+        value_parser=parse_fork,
+        default_value = "Paris,Shanghai,Cancun,Prague,Osaka"
     )]
-    pub forks: Option<Vec<SpecId>>,
+    pub forks: Option<Vec<Fork>>,
     /// For running specific .json files
     #[arg(short, long, value_name = "TESTS", value_delimiter = ',')]
     pub tests: Vec<String>,
@@ -85,6 +94,33 @@ pub struct EFTestRunnerOptions {
     /// For running particular tests that have their specified paths listed with the tests flag.
     #[arg(long, value_name = "PATHS", default_value = "false")]
     pub paths: bool,
+}
+
+fn parse_fork(value: &str) -> Result<Fork, String> {
+    match value {
+        "Frontier" => Ok(Fork::Frontier),
+        "FrontierThawing" => Ok(Fork::FrontierThawing),
+        "Homestead" => Ok(Fork::Homestead),
+        "DaoFork" => Ok(Fork::DaoFork),
+        "Tangerine" => Ok(Fork::Tangerine),
+        "SpuriousDragon" => Ok(Fork::SpuriousDragon),
+        "Byzantium" => Ok(Fork::Byzantium),
+        "Constantinople" => Ok(Fork::Constantinople),
+        "Petersburg" => Ok(Fork::Petersburg),
+        "Istanbul" => Ok(Fork::Istanbul),
+        "MuirGlacier" => Ok(Fork::MuirGlacier),
+        "Berlin" => Ok(Fork::Berlin),
+        "London" => Ok(Fork::London),
+        "ArrowGlacier" => Ok(Fork::ArrowGlacier),
+        "GrayGlacier" => Ok(Fork::GrayGlacier),
+        "Paris" | "Merge" => Ok(Fork::Paris),
+        "Shanghai" => Ok(Fork::Shanghai),
+        "Cancun" => Ok(Fork::Cancun),
+        "Prague" => Ok(Fork::Prague),
+        "Osaka" => Ok(Fork::Osaka),
+        "Amsterdam" => Ok(Fork::Amsterdam),
+        other => Err(format!("Unknown fork: {other}")),
+    }
 }
 
 pub async fn run_ef_tests(

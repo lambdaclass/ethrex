@@ -1,6 +1,6 @@
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::types::{PrivilegedL2Transaction, Transaction};
-use keccak_hash::keccak;
+use ethrex_common::utils::keccak;
 use serde::{Deserialize, Serialize};
 
 /// Max privileged tx to allow per batch
@@ -30,11 +30,40 @@ pub enum PrivilegedTransactionError {
     LengthTooLarge(#[from] std::num::TryFromIntError),
 }
 
-pub fn get_block_privileged_transactions(txs: &[Transaction]) -> Vec<PrivilegedL2Transaction> {
+pub fn get_block_l1_in_messages(
+    txs: &[Transaction],
+    chain_id: u64,
+) -> Vec<PrivilegedL2Transaction> {
     txs.iter()
-        .filter_map(|tx| match tx {
-            Transaction::PrivilegedL2Transaction(tx) => Some(tx.clone()),
-            _ => None,
+        .filter_map(|tx| {
+            if let Transaction::PrivilegedL2Transaction(tx) = tx {
+                // The chain id of the L1-in message should match the chain id of the current chain
+                if tx.chain_id == chain_id {
+                    return Some(tx.clone());
+                }
+                None
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+pub fn get_block_l2_in_messages(
+    txs: &[Transaction],
+    chain_id: u64,
+) -> Vec<PrivilegedL2Transaction> {
+    txs.iter()
+        .filter_map(|tx| {
+            if let Transaction::PrivilegedL2Transaction(tx) = tx {
+                // The chain id of the L2-in message is the chain id of the source chain
+                if tx.chain_id != chain_id {
+                    return Some(tx.clone());
+                }
+                None
+            } else {
+                None
+            }
         })
         .collect()
 }

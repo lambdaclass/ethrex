@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
 };
 
-use ethrex_common::types::{Genesis, GenesisError};
+use ethrex_common::types::{ChainConfig, Genesis, GenesisError};
 use serde::{Deserialize, Serialize};
 
 //TODO: Look for a better place to move these files
@@ -21,8 +21,7 @@ pub const HOODI_GENESIS_CONTENTS: &str =
     include_str!("../../../cmd/ethrex/networks/hoodi/genesis.json");
 pub const SEPOLIA_GENESIS_CONTENTS: &str =
     include_str!("../../../cmd/ethrex/networks/sepolia/genesis.json");
-pub const LOCAL_DEVNET_GENESIS_CONTENTS: &str =
-    include_str!("../../../fixtures/genesis/l1-dev.json");
+pub const LOCAL_DEVNET_GENESIS_CONTENTS: &str = include_str!("../../../fixtures/genesis/l1.json");
 pub const LOCAL_DEVNETL2_GENESIS_CONTENTS: &str = include_str!("../../../fixtures/genesis/l2.json");
 
 pub const LOCAL_DEVNET_PRIVATE_KEYS: &str =
@@ -38,6 +37,7 @@ pub enum Network {
     PublicNetwork(PublicNetwork),
     LocalDevnet,
     LocalDevnetL2,
+    L2Chain(u64),
     #[serde(skip)]
     GenesisPath(PathBuf),
 }
@@ -98,6 +98,7 @@ impl fmt::Display for Network {
             Network::PublicNetwork(PublicNetwork::Sepolia) => write!(f, "sepolia"),
             Network::LocalDevnet => write!(f, "local-devnet"),
             Network::LocalDevnetL2 => write!(f, "local-devnet-l2"),
+            Network::L2Chain(chain_id) => write!(f, "l2-chain-{}", chain_id),
             Network::GenesisPath(path_buf) => write!(f, "{path_buf:?}"),
         }
     }
@@ -115,6 +116,14 @@ impl Network {
             }
             Network::LocalDevnet => Ok(serde_json::from_str(LOCAL_DEVNET_GENESIS_CONTENTS)?),
             Network::LocalDevnetL2 => Ok(serde_json::from_str(LOCAL_DEVNETL2_GENESIS_CONTENTS)?),
+            Network::L2Chain(chain_id) => Ok(Genesis {
+                config: ChainConfig {
+                    chain_id: *chain_id,
+                    prague_time: Some(0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
             Network::GenesisPath(s) => Genesis::try_from(s.as_path()),
         }
     }
@@ -142,7 +151,7 @@ fn get_genesis_contents(network: PublicNetwork) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use keccak_hash::H256;
+    use ethrex_common::H256;
 
     use super::*;
 

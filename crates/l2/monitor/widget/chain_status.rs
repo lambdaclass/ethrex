@@ -24,10 +24,10 @@ pub struct GlobalChainStatusTable {
 impl GlobalChainStatusTable {
     pub fn new(cfg: &SequencerConfig) -> Self {
         let sequencer_registry_address =
-            if cfg.based.state_updater.sequencer_registry == Address::default() {
+            if cfg.state_updater.sequencer_registry == Address::default() {
                 None
             } else {
-                Some(cfg.based.state_updater.sequencer_registry)
+                Some(cfg.state_updater.sequencer_registry)
             };
         Self {
             on_chain_proposer_address: cfg.l1_committer.on_chain_proposer_address,
@@ -130,7 +130,7 @@ impl GlobalChainStatusTable {
                     "Lead Sequencer:".to_string(),
                     format!("{lead_sequencer:#x}"),
                 ),
-                ("Current Batch:".to_string(), current_batch.to_string()),
+                ("Current Batch:".to_string(), current_batch),
                 ("Current Block:".to_string(), current_block.to_string()),
                 (
                     "Last Committed Batch:".to_string(),
@@ -152,7 +152,7 @@ impl GlobalChainStatusTable {
         } else {
             vec![
                 ("Last Update:".to_string(), last_update),
-                ("Current Batch:".to_string(), current_batch.to_string()),
+                ("Current Batch:".to_string(), current_batch),
                 ("Current Block:".to_string(), current_block.to_string()),
                 (
                     "Last Committed Batch:".to_string(),

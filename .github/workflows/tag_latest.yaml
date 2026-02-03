@@ -1,0 +1,79 @@
+name: Ethrex Latest Release
+
+on:
+  workflow_dispatch:
+  release:
+    types:
+      - edited
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  get_latest_release:
+    name: "Get latest release tag"
+    runs-on: ubuntu-latest
+    outputs:
+      latest_tag: ${{ steps.get_latest_release.outputs.latest_tag }}
+
+    steps:
+      - name: Get latest release tag from GH API
+        id: get_latest_release
+        run: |
+          tag=$(curl -s https://api.github.com/repos/${{ env.IMAGE_NAME }}/releases/latest | jq -r .tag_name)
+          echo "Latest release tag: $tag"
+          echo "latest_tag=$tag" >> $GITHUB_OUTPUT
+
+  retag_docker_images:
+    name: "Tag latest Docker images"
+    runs-on: ubuntu-latest
+    needs: [get_latest_release]
+    if: ${{ needs.get_latest_release.outputs.latest_tag == github.event.release.tag_name && github.event.changes.tag_name.from }}
+
+    # Sets the permissions granted to the `GITHUB_TOKEN` for the actions in this job.
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
+    steps:
+      - name: Set tags
+        run: |
+          echo "PREV_TAG=$(echo ${{ github.event.changes.tag_name.from }} | tr -d v)" >> $GITHUB_ENV
+          echo "NEW_TAG=$(echo ${{ github.event.release.tag_name }} | tr -d v)" >> $GITHUB_ENV
+
+      - name: Login to Docker registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Retag Docker images
+        run: |
+          docker buildx imagetools create \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.NEW_TAG }} \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:performance \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_TAG }}
+          docker buildx imagetools create \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.NEW_TAG }}-l2 \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:l2 \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:performance-l2 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_TAG }}-l2
+
+  publish-apt:
+    needs: [retag_docker_images]
+    uses: lambdaclass/ethrex-apt/.github/workflows/publish-apt.yml@main
+    permissions:
+      contents: write
+      actions: write
+    secrets:
+      APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+      APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+      APT_SSH_COMMIT_KEY: ${{ secrets.APT_SSH_COMMIT_KEY }}

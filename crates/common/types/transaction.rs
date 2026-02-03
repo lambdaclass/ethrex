@@ -1,18 +1,22 @@
 use std::{cmp::min, fmt::Display};
 
+use crate::{errors::EcdsaError, utils::keccak};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, Signature, U256};
-use keccak_hash::keccak;
+use hex_literal::hex;
 pub use mempool::MempoolTransaction;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
-use secp256k1::{Message, ecdsa::RecoveryId};
 use serde::{Serialize, ser::SerializeStruct};
-pub use serde_impl::{AccessListEntry, GenericTransaction, GenericTransactionError};
-use sha3::{Digest, Keccak256};
+pub use serde_impl::{
+    AccessListEntry, AuthorizationTupleEntry, GenericTransaction, GenericTransactionError,
+};
+
+/// The serialized length of a default eip1559 transaction
+pub const EIP1559_DEFAULT_SERIALIZED_LENGTH: usize = 15;
 
 use ethrex_rlp::{
     constants::RLP_NULL,
-    decode::{RLPDecode, get_rlp_bytes_item_payload, is_encoded_as_bytes},
+    decode::{RLPDecode, decode_rlp_item},
     encode::{PayloadRLPEncode, RLPEncode},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
@@ -38,10 +42,12 @@ pub enum Transaction {
     EIP4844Transaction(EIP4844Transaction),
     EIP7702Transaction(EIP7702Transaction),
     PrivilegedL2Transaction(PrivilegedL2Transaction),
+    FeeTokenTransaction(FeeTokenTransaction),
 }
 
 /// The same as a Transaction enum, only that blob transactions are in wrapped format, including
 /// the blobs bundle.
+/// PrivilegedL2Transaction is not included as it is not expected to be sent over P2P.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum P2PTransaction {
     LegacyTransaction(LegacyTransaction),
@@ -49,7 +55,7 @@ pub enum P2PTransaction {
     EIP1559Transaction(EIP1559Transaction),
     EIP4844TransactionWithBlobs(WrappedEIP4844Transaction),
     EIP7702Transaction(EIP7702Transaction),
-    PrivilegedL2Transaction(PrivilegedL2Transaction),
+    FeeTokenTransaction(FeeTokenTransaction),
 }
 
 impl TryInto<Transaction> for P2PTransaction {
@@ -61,9 +67,6 @@ impl TryInto<Transaction> for P2PTransaction {
             P2PTransaction::EIP2930Transaction(itx) => Ok(Transaction::EIP2930Transaction(itx)),
             P2PTransaction::EIP1559Transaction(itx) => Ok(Transaction::EIP1559Transaction(itx)),
             P2PTransaction::EIP7702Transaction(itx) => Ok(Transaction::EIP7702Transaction(itx)),
-            P2PTransaction::PrivilegedL2Transaction(itx) => {
-                Ok(Transaction::PrivilegedL2Transaction(itx))
-            }
             _ => Err("Can't convert blob p2p transaction into regular transaction. Blob bundle would be lost.".to_string()),
         }
     }
@@ -73,38 +76,37 @@ impl RLPEncode for P2PTransaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         match self {
             P2PTransaction::LegacyTransaction(t) => t.encode(buf),
-            tx => Bytes::copy_from_slice(&tx.encode_canonical_to_vec()).encode(buf),
+            tx => <[u8] as RLPEncode>::encode(&tx.encode_canonical_to_vec(), buf),
         };
     }
 }
 
 impl RLPDecode for P2PTransaction {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        if is_encoded_as_bytes(rlp)? {
-            // Adjust the encoding to get the payload
-            let payload = get_rlp_bytes_item_payload(rlp)?;
+        let (is_list, payload, remainder) = decode_rlp_item(rlp)?;
+        if !is_list {
             let tx_type = payload.first().ok_or(RLPDecodeError::InvalidLength)?;
             let tx_encoding = &payload.get(1..).ok_or(RLPDecodeError::InvalidLength)?;
             // Look at the first byte to check if it corresponds to a TransactionType
             match *tx_type {
                 // Legacy
-                0x0 => LegacyTransaction::decode_unfinished(tx_encoding)
-                    .map(|(tx, rem)| (P2PTransaction::LegacyTransaction(tx), rem)), // TODO: check if this is a real case scenario
+                0x0 => LegacyTransaction::decode(tx_encoding)
+                    .map(|tx| (P2PTransaction::LegacyTransaction(tx), remainder)), // TODO: check if this is a real case scenario
                 // EIP2930
-                0x1 => EIP2930Transaction::decode_unfinished(tx_encoding)
-                    .map(|(tx, rem)| (P2PTransaction::EIP2930Transaction(tx), rem)),
+                0x1 => EIP2930Transaction::decode(tx_encoding)
+                    .map(|tx| (P2PTransaction::EIP2930Transaction(tx), remainder)),
                 // EIP1559
-                0x2 => EIP1559Transaction::decode_unfinished(tx_encoding)
-                    .map(|(tx, rem)| (P2PTransaction::EIP1559Transaction(tx), rem)),
+                0x2 => EIP1559Transaction::decode(tx_encoding)
+                    .map(|tx| (P2PTransaction::EIP1559Transaction(tx), remainder)),
                 // EIP4844
-                0x3 => WrappedEIP4844Transaction::decode_unfinished(tx_encoding)
-                    .map(|(tx, rem)| (P2PTransaction::EIP4844TransactionWithBlobs(tx), rem)),
+                0x3 => WrappedEIP4844Transaction::decode(tx_encoding)
+                    .map(|tx| (P2PTransaction::EIP4844TransactionWithBlobs(tx), remainder)),
                 // EIP7702
-                0x4 => EIP7702Transaction::decode_unfinished(tx_encoding)
-                    .map(|(tx, rem)| (P2PTransaction::EIP7702Transaction(tx), rem)),
-                // PrivilegedL2
-                0x7e => PrivilegedL2Transaction::decode_unfinished(tx_encoding)
-                    .map(|(tx, rem)| (P2PTransaction::PrivilegedL2Transaction(tx), rem)),
+                0x4 => EIP7702Transaction::decode(tx_encoding)
+                    .map(|tx| (P2PTransaction::EIP7702Transaction(tx), remainder)),
+                // FeeToken
+                0x7d => FeeTokenTransaction::decode(tx_encoding)
+                    .map(|tx| (P2PTransaction::FeeTokenTransaction(tx), remainder)),
                 ty => Err(RLPDecodeError::Custom(format!(
                     "Invalid transaction type: {ty}"
                 ))),
@@ -120,6 +122,7 @@ impl RLPDecode for P2PTransaction {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WrappedEIP4844Transaction {
     pub tx: EIP4844Transaction,
+    pub wrapper_version: Option<u8>,
     pub blobs_bundle: BlobsBundle,
 }
 
@@ -128,6 +131,7 @@ impl RLPEncode for WrappedEIP4844Transaction {
         let encoder = Encoder::new(buf);
         encoder
             .encode_field(&self.tx)
+            .encode_optional_field(&self.wrapper_version)
             .encode_field(&self.blobs_bundle.blobs)
             .encode_field(&self.blobs_bundle.commitments)
             .encode_field(&self.blobs_bundle.proofs)
@@ -138,17 +142,33 @@ impl RLPEncode for WrappedEIP4844Transaction {
 impl RLPDecode for WrappedEIP4844Transaction {
     fn decode_unfinished(rlp: &[u8]) -> Result<(WrappedEIP4844Transaction, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
-        let (tx, decoder) = decoder.decode_field("tx")?;
+        let Ok((tx, decoder)) = decoder.decode_field("tx") else {
+            // Handle the case of blobless transaction
+            let (tx, rest) = EIP4844Transaction::decode_unfinished(rlp)?;
+            return Ok((
+                WrappedEIP4844Transaction {
+                    tx,
+                    wrapper_version: None,
+                    // Empty blobs bundles are not valid
+                    blobs_bundle: BlobsBundle::empty(),
+                },
+                rest,
+            ));
+        };
+
+        let (wrapper_version, decoder) = decoder.decode_optional_field();
         let (blobs, decoder) = decoder.decode_field("blobs")?;
         let (commitments, decoder) = decoder.decode_field("commitments")?;
         let (proofs, decoder) = decoder.decode_field("proofs")?;
 
         let wrapped = WrappedEIP4844Transaction {
             tx,
+            wrapper_version,
             blobs_bundle: BlobsBundle {
                 blobs,
                 commitments,
                 proofs,
+                version: wrapper_version.unwrap_or_default(),
             },
         };
         Ok((wrapped, decoder.finish()?))
@@ -158,7 +178,8 @@ impl RLPDecode for WrappedEIP4844Transaction {
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct LegacyTransaction {
     pub nonce: u64,
-    pub gas_price: u64,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub gas_price: U256,
     pub gas: u64,
     /// The recipient of the transaction.
     /// Create transactions contain a [`null`](RLP_NULL) value in this field.
@@ -181,7 +202,8 @@ pub struct LegacyTransaction {
 pub struct EIP2930Transaction {
     pub chain_id: u64,
     pub nonce: u64,
-    pub gas_price: u64,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub gas_price: U256,
     pub gas_limit: u64,
     pub to: TxKind,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
@@ -274,7 +296,6 @@ pub struct EIP7702Transaction {
     #[rkyv(with=rkyv::with::Skip)]
     pub inner_hash: OnceCell<H256>,
 }
-
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct PrivilegedL2Transaction {
     pub chain_id: u64,
@@ -303,6 +324,7 @@ pub enum TxType {
     EIP1559 = 0x02,
     EIP4844 = 0x03,
     EIP7702 = 0x04,
+    FeeToken = 0x7d,
     // We take the same approach as Optimism to define the privileged tx prefix
     // https://github.com/ethereum-optimism/specs/blob/c6903a3b2cad575653e1f5ef472debb573d83805/specs/protocol/deposits.md#the-deposited-transaction-type
     Privileged = 0x7e,
@@ -316,6 +338,7 @@ impl From<TxType> for u8 {
             TxType::EIP1559 => 0x02,
             TxType::EIP4844 => 0x03,
             TxType::EIP7702 => 0x04,
+            TxType::FeeToken => 0x7d,
             TxType::Privileged => 0x7e,
         }
     }
@@ -330,6 +353,7 @@ impl Display for TxType {
             TxType::EIP4844 => write!(f, "EIP4844"),
             TxType::EIP7702 => write!(f, "EIP7702"),
             TxType::Privileged => write!(f, "Privileged"),
+            TxType::FeeToken => write!(f, "FeeToken"),
         }
     }
 }
@@ -342,30 +366,31 @@ impl Transaction {
             Transaction::EIP1559Transaction(_) => TxType::EIP1559,
             Transaction::EIP4844Transaction(_) => TxType::EIP4844,
             Transaction::EIP7702Transaction(_) => TxType::EIP7702,
+            Transaction::FeeTokenTransaction(_) => TxType::FeeToken,
             Transaction::PrivilegedL2Transaction(_) => TxType::Privileged,
         }
     }
 
-    fn calc_effective_gas_price(&self, base_fee_per_gas: Option<u64>) -> Option<u64> {
-        if self.max_fee_per_gas()? < base_fee_per_gas? {
+    fn calc_effective_gas_price(&self, base_fee_per_gas: Option<u64>) -> Option<U256> {
+        let base_fee = base_fee_per_gas?;
+        let max_fee = self.max_fee_per_gas()?;
+        if max_fee < base_fee {
             // This is invalid, can't calculate
             return None;
         }
 
-        let priority_fee_per_gas = min(
-            self.max_priority_fee()?,
-            self.max_fee_per_gas()?.saturating_sub(base_fee_per_gas?),
-        );
-        Some(priority_fee_per_gas + base_fee_per_gas?)
+        let priority_fee_per_gas = min(self.max_priority_fee()?, max_fee.saturating_sub(base_fee));
+        Some(U256::from(priority_fee_per_gas) + U256::from(base_fee))
     }
 
-    pub fn effective_gas_price(&self, base_fee_per_gas: Option<u64>) -> Option<u64> {
+    pub fn effective_gas_price(&self, base_fee_per_gas: Option<u64>) -> Option<U256> {
         match self.tx_type() {
             TxType::Legacy => Some(self.gas_price()),
             TxType::EIP2930 => Some(self.gas_price()),
             TxType::EIP1559 => self.calc_effective_gas_price(base_fee_per_gas),
             TxType::EIP4844 => self.calc_effective_gas_price(base_fee_per_gas),
             TxType::EIP7702 => self.calc_effective_gas_price(base_fee_per_gas),
+            TxType::FeeToken => self.calc_effective_gas_price(base_fee_per_gas),
             TxType::Privileged => Some(self.gas_price()),
         }
     }
@@ -374,16 +399,25 @@ impl Transaction {
         let price = match self.tx_type() {
             TxType::Legacy => self.gas_price(),
             TxType::EIP2930 => self.gas_price(),
-            TxType::EIP1559 => self.max_fee_per_gas()?,
-            TxType::EIP4844 => self.max_fee_per_gas()?,
-            TxType::EIP7702 => self.max_fee_per_gas()?,
+            TxType::EIP1559 => U256::from(self.max_fee_per_gas()?),
+            TxType::EIP4844 => U256::from(self.max_fee_per_gas()?),
+            TxType::EIP7702 => U256::from(self.max_fee_per_gas()?),
+            TxType::FeeToken => U256::from(self.max_fee_per_gas()?),
             TxType::Privileged => self.gas_price(),
         };
 
         Some(U256::saturating_add(
-            U256::saturating_mul(price.into(), self.gas_limit().into()),
+            U256::saturating_mul(price, self.gas_limit().into()),
             self.value(),
         ))
+    }
+
+    pub fn fee_token(&self) -> Option<Address> {
+        if let Transaction::FeeTokenTransaction(tx) = self {
+            Some(tx.fee_token)
+        } else {
+            None
+        }
     }
 }
 
@@ -395,7 +429,7 @@ impl RLPEncode for Transaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         match self {
             Transaction::LegacyTransaction(t) => t.encode(buf),
-            tx => Bytes::copy_from_slice(&tx.encode_canonical_to_vec()).encode(buf),
+            tx => <[u8] as RLPEncode>::encode(&tx.encode_canonical_to_vec(), buf),
         };
     }
 }
@@ -406,31 +440,33 @@ impl RLPDecode for Transaction {
     /// B) Non legacy transactions: rlp(Bytes) where Bytes represents the canonical encoding for the transaction as a bytes object.
     /// Checkout [Transaction::decode_canonical] for more information
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        if is_encoded_as_bytes(rlp)? {
-            // Adjust the encoding to get the payload
-            let payload = get_rlp_bytes_item_payload(rlp)?;
+        let (is_list, payload, remainder) = decode_rlp_item(rlp)?;
+        if !is_list {
             let tx_type = payload.first().ok_or(RLPDecodeError::InvalidLength)?;
             let tx_encoding = &payload.get(1..).ok_or(RLPDecodeError::InvalidLength)?;
             // Look at the first byte to check if it corresponds to a TransactionType
             match *tx_type {
                 // Legacy
-                0x0 => LegacyTransaction::decode_unfinished(tx_encoding)
-                    .map(|(tx, rem)| (Transaction::LegacyTransaction(tx), rem)), // TODO: check if this is a real case scenario
+                0x0 => LegacyTransaction::decode(tx_encoding)
+                    .map(|tx| (Transaction::LegacyTransaction(tx), remainder)), // TODO: check if this is a real case scenario
                 // EIP2930
-                0x1 => EIP2930Transaction::decode_unfinished(tx_encoding)
-                    .map(|(tx, rem)| (Transaction::EIP2930Transaction(tx), rem)),
+                0x1 => EIP2930Transaction::decode(tx_encoding)
+                    .map(|tx| (Transaction::EIP2930Transaction(tx), remainder)),
                 // EIP1559
-                0x2 => EIP1559Transaction::decode_unfinished(tx_encoding)
-                    .map(|(tx, rem)| (Transaction::EIP1559Transaction(tx), rem)),
+                0x2 => EIP1559Transaction::decode(tx_encoding)
+                    .map(|tx| (Transaction::EIP1559Transaction(tx), remainder)),
                 // EIP4844
-                0x3 => EIP4844Transaction::decode_unfinished(tx_encoding)
-                    .map(|(tx, rem)| (Transaction::EIP4844Transaction(tx), rem)),
+                0x3 => EIP4844Transaction::decode(tx_encoding)
+                    .map(|tx| (Transaction::EIP4844Transaction(tx), remainder)),
                 // EIP7702
-                0x4 => EIP7702Transaction::decode_unfinished(tx_encoding)
-                    .map(|(tx, rem)| (Transaction::EIP7702Transaction(tx), rem)),
+                0x4 => EIP7702Transaction::decode(tx_encoding)
+                    .map(|tx| (Transaction::EIP7702Transaction(tx), remainder)),
+                // FeeToken
+                0x7d => FeeTokenTransaction::decode(tx_encoding)
+                    .map(|tx| (Transaction::FeeTokenTransaction(tx), remainder)),
                 // PrivilegedL2
-                0x7e => PrivilegedL2Transaction::decode_unfinished(tx_encoding)
-                    .map(|(tx, rem)| (Transaction::PrivilegedL2Transaction(tx), rem)),
+                0x7e => PrivilegedL2Transaction::decode(tx_encoding)
+                    .map(|tx| (Transaction::PrivilegedL2Transaction(tx), remainder)),
                 ty => Err(RLPDecodeError::Custom(format!(
                     "Invalid transaction type: {ty}"
                 ))),
@@ -566,11 +602,6 @@ impl EIP4844Transaction {
         self.rlp_encode_as_pooled_tx(&mut buf, blobs_bundle);
         buf.len()
     }
-    pub fn rlp_encode_as_pooled_tx_to_vec(&self, blobs_bundle: &BlobsBundle) -> Vec<u8> {
-        let mut buf = Vec::new();
-        self.rlp_encode_as_pooled_tx(&mut buf, blobs_bundle);
-        buf
-    }
 }
 
 impl RLPEncode for EIP7702Transaction {
@@ -610,6 +641,26 @@ impl RLPEncode for PrivilegedL2Transaction {
     }
 }
 
+impl RLPEncode for FeeTokenTransaction {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.chain_id)
+            .encode_field(&self.nonce)
+            .encode_field(&self.max_priority_fee_per_gas)
+            .encode_field(&self.max_fee_per_gas)
+            .encode_field(&self.gas_limit)
+            .encode_field(&self.to)
+            .encode_field(&self.value)
+            .encode_field(&self.data)
+            .encode_field(&self.access_list)
+            .encode_field(&self.fee_token)
+            .encode_field(&self.signature_y_parity)
+            .encode_field(&self.signature_r)
+            .encode_field(&self.signature_s)
+            .finish()
+    }
+}
+
 impl PayloadRLPEncode for Transaction {
     fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
         match self {
@@ -619,6 +670,7 @@ impl PayloadRLPEncode for Transaction {
             Transaction::EIP4844Transaction(tx) => tx.encode_payload(buf),
             Transaction::EIP7702Transaction(tx) => tx.encode_payload(buf),
             Transaction::PrivilegedL2Transaction(tx) => tx.encode_payload(buf),
+            Transaction::FeeTokenTransaction(tx) => tx.encode_payload(buf),
         }
     }
 }
@@ -715,6 +767,23 @@ impl PayloadRLPEncode for PrivilegedL2Transaction {
             .encode_field(&self.data)
             .encode_field(&self.access_list)
             .encode_field(&self.from)
+            .finish();
+    }
+}
+
+impl PayloadRLPEncode for FeeTokenTransaction {
+    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.chain_id)
+            .encode_field(&self.nonce)
+            .encode_field(&self.max_priority_fee_per_gas)
+            .encode_field(&self.max_fee_per_gas)
+            .encode_field(&self.gas_limit)
+            .encode_field(&self.to)
+            .encode_field(&self.value)
+            .encode_field(&self.data)
+            .encode_field(&self.access_list)
+            .encode_field(&self.fee_token)
             .finish();
     }
 }
@@ -933,8 +1002,47 @@ impl RLPDecode for PrivilegedL2Transaction {
     }
 }
 
+impl RLPDecode for FeeTokenTransaction {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(FeeTokenTransaction, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (chain_id, decoder) = decoder.decode_field("chain_id")?;
+        let (nonce, decoder) = decoder.decode_field("nonce")?;
+        let (max_priority_fee_per_gas, decoder) =
+            decoder.decode_field("max_priority_fee_per_gas")?;
+        let (max_fee_per_gas, decoder) = decoder.decode_field("max_fee_per_gas")?;
+        let (gas_limit, decoder) = decoder.decode_field("gas_limit")?;
+        let (to, decoder) = decoder.decode_field("to")?;
+        let (value, decoder) = decoder.decode_field("value")?;
+        let (data, decoder) = decoder.decode_field("data")?;
+        let (access_list, decoder) = decoder.decode_field("access_list")?;
+        let (fee_token, decoder) = decoder.decode_field("fee_token")?;
+        let (signature_y_parity, decoder) = decoder.decode_field("signature_y_parity")?;
+        let (signature_r, decoder) = decoder.decode_field("signature_r")?;
+        let (signature_s, decoder) = decoder.decode_field("signature_s")?;
+        let inner_hash = OnceCell::new();
+
+        let tx = FeeTokenTransaction {
+            chain_id,
+            nonce,
+            max_priority_fee_per_gas,
+            max_fee_per_gas,
+            gas_limit,
+            to,
+            value,
+            data,
+            access_list,
+            fee_token,
+            signature_y_parity,
+            signature_r,
+            signature_s,
+            inner_hash,
+        };
+        Ok((tx, decoder.finish()?))
+    }
+}
+
 impl Transaction {
-    pub fn sender(&self) -> Result<Address, secp256k1::Error> {
+    pub fn sender(&self) -> Result<Address, EcdsaError> {
         match self {
             Transaction::LegacyTransaction(tx) => {
                 let signature_y_parity = match self.chain_id() {
@@ -1048,6 +1156,26 @@ impl Transaction {
                 recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
             }
             Transaction::PrivilegedL2Transaction(tx) => Ok(tx.from),
+            Transaction::FeeTokenTransaction(tx) => {
+                let mut buf = vec![self.tx_type() as u8];
+                Encoder::new(&mut buf)
+                    .encode_field(&tx.chain_id)
+                    .encode_field(&tx.nonce)
+                    .encode_field(&tx.max_priority_fee_per_gas)
+                    .encode_field(&tx.max_fee_per_gas)
+                    .encode_field(&tx.gas_limit)
+                    .encode_field(&tx.to)
+                    .encode_field(&tx.value)
+                    .encode_field(&tx.data)
+                    .encode_field(&tx.access_list)
+                    .encode_field(&tx.fee_token)
+                    .finish();
+                let mut sig = [0u8; 65];
+                sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
+                sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
+                sig[64] = tx.signature_y_parity as u8;
+                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
+            }
         }
     }
 
@@ -1059,17 +1187,20 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => tx.gas_limit,
             Transaction::EIP4844Transaction(tx) => tx.gas,
             Transaction::PrivilegedL2Transaction(tx) => tx.gas_limit,
+            Transaction::FeeTokenTransaction(tx) => tx.gas_limit,
         }
     }
 
-    pub fn gas_price(&self) -> u64 {
+    //TODO: It's not very correct to return gas price for legacy and eip-2930 txs but return the max fee per gas for the others, make necessary changes for it to be technically correct.
+    pub fn gas_price(&self) -> U256 {
         match self {
             Transaction::LegacyTransaction(tx) => tx.gas_price,
             Transaction::EIP2930Transaction(tx) => tx.gas_price,
-            Transaction::EIP1559Transaction(tx) => tx.max_fee_per_gas,
-            Transaction::EIP7702Transaction(tx) => tx.max_fee_per_gas,
-            Transaction::EIP4844Transaction(tx) => tx.max_fee_per_gas,
-            Transaction::PrivilegedL2Transaction(tx) => tx.max_fee_per_gas,
+            Transaction::EIP1559Transaction(tx) => U256::from(tx.max_fee_per_gas),
+            Transaction::EIP7702Transaction(tx) => U256::from(tx.max_fee_per_gas),
+            Transaction::EIP4844Transaction(tx) => U256::from(tx.max_fee_per_gas),
+            Transaction::PrivilegedL2Transaction(tx) => U256::from(tx.max_fee_per_gas),
+            Transaction::FeeTokenTransaction(tx) => U256::from(tx.max_fee_per_gas),
         }
     }
 
@@ -1081,6 +1212,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => TxKind::Call(tx.to),
             Transaction::EIP7702Transaction(tx) => TxKind::Call(tx.to),
             Transaction::PrivilegedL2Transaction(tx) => tx.to.clone(),
+            Transaction::FeeTokenTransaction(tx) => tx.to.clone(),
         }
     }
 
@@ -1092,6 +1224,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => tx.value,
             Transaction::EIP7702Transaction(tx) => tx.value,
             Transaction::PrivilegedL2Transaction(tx) => tx.value,
+            Transaction::FeeTokenTransaction(tx) => tx.value,
         }
     }
 
@@ -1103,6 +1236,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => Some(tx.max_priority_fee_per_gas),
             Transaction::EIP7702Transaction(tx) => Some(tx.max_priority_fee_per_gas),
             Transaction::PrivilegedL2Transaction(tx) => Some(tx.max_priority_fee_per_gas),
+            Transaction::FeeTokenTransaction(tx) => Some(tx.max_priority_fee_per_gas),
         }
     }
 
@@ -1114,6 +1248,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => Some(tx.chain_id),
             Transaction::EIP7702Transaction(tx) => Some(tx.chain_id),
             Transaction::PrivilegedL2Transaction(tx) => Some(tx.chain_id),
+            Transaction::FeeTokenTransaction(tx) => Some(tx.chain_id),
         }
     }
 
@@ -1126,9 +1261,9 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => &tx.access_list,
             Transaction::EIP7702Transaction(tx) => &tx.access_list,
             Transaction::PrivilegedL2Transaction(tx) => &tx.access_list,
+            Transaction::FeeTokenTransaction(tx) => &tx.access_list,
         }
     }
-
     pub fn authorization_list(&self) -> Option<&AuthorizationList> {
         match self {
             Transaction::LegacyTransaction(_) => None,
@@ -1137,6 +1272,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(_) => None,
             Transaction::EIP7702Transaction(tx) => Some(&tx.authorization_list),
             Transaction::PrivilegedL2Transaction(_) => None,
+            Transaction::FeeTokenTransaction(_) => None,
         }
     }
 
@@ -1148,6 +1284,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => tx.nonce,
             Transaction::EIP7702Transaction(tx) => tx.nonce,
             Transaction::PrivilegedL2Transaction(tx) => tx.nonce,
+            Transaction::FeeTokenTransaction(tx) => tx.nonce,
         }
     }
 
@@ -1159,6 +1296,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => &tx.data,
             Transaction::EIP7702Transaction(tx) => &tx.data,
             Transaction::PrivilegedL2Transaction(tx) => &tx.data,
+            Transaction::FeeTokenTransaction(tx) => &tx.data,
         }
     }
 
@@ -1170,6 +1308,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => tx.blob_versioned_hashes.clone(),
             Transaction::EIP7702Transaction(_) => Vec::new(),
             Transaction::PrivilegedL2Transaction(_) => Vec::new(),
+            Transaction::FeeTokenTransaction(_) => Vec::new(),
         }
     }
 
@@ -1181,6 +1320,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => Some(tx.max_fee_per_blob_gas),
             Transaction::EIP7702Transaction(_) => None,
             Transaction::PrivilegedL2Transaction(_) => None,
+            Transaction::FeeTokenTransaction(_) => None,
         }
     }
 
@@ -1192,6 +1332,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(_) => false,
             Transaction::EIP7702Transaction(_) => false,
             Transaction::PrivilegedL2Transaction(t) => matches!(t.to, TxKind::Create),
+            Transaction::FeeTokenTransaction(t) => matches!(t.to, TxKind::Create),
         }
     }
 
@@ -1207,6 +1348,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => Some(tx.max_fee_per_gas),
             Transaction::EIP7702Transaction(tx) => Some(tx.max_fee_per_gas),
             Transaction::PrivilegedL2Transaction(tx) => Some(tx.max_fee_per_gas),
+            Transaction::FeeTokenTransaction(tx) => Some(tx.max_fee_per_gas),
         }
     }
 
@@ -1214,7 +1356,7 @@ impl Transaction {
         if let Transaction::PrivilegedL2Transaction(tx) = self {
             return tx.get_privileged_hash().unwrap_or_default();
         }
-        keccak_hash::keccak(self.encode_canonical_to_vec())
+        crate::utils::keccak(self.encode_canonical_to_vec())
     }
 
     pub fn hash(&self) -> H256 {
@@ -1225,17 +1367,18 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => &tx.inner_hash,
             Transaction::EIP7702Transaction(tx) => &tx.inner_hash,
             Transaction::PrivilegedL2Transaction(tx) => &tx.inner_hash,
+            Transaction::FeeTokenTransaction(tx) => &tx.inner_hash,
         };
 
         *inner_hash.get_or_init(|| self.compute_hash())
     }
 
     pub fn gas_tip_cap(&self) -> u64 {
-        self.max_priority_fee().unwrap_or(self.gas_price())
+        self.max_priority_fee().unwrap_or(self.gas_price().as_u64())
     }
 
     pub fn gas_fee_cap(&self) -> u64 {
-        self.max_fee_per_gas().unwrap_or(self.gas_price())
+        self.max_fee_per_gas().unwrap_or(self.gas_price().as_u64())
     }
 
     pub fn effective_gas_tip(&self, base_fee: Option<u64>) -> Option<u64> {
@@ -1263,26 +1406,90 @@ impl Transaction {
 pub fn recover_address_from_message(
     signature: Signature,
     message: &Bytes,
-) -> Result<Address, secp256k1::Error> {
+) -> Result<Address, EcdsaError> {
     // Hash message
-    let payload: [u8; 32] = Keccak256::new_with_prefix(message.as_ref())
-        .finalize()
-        .into();
-    recover_address(signature, H256::from_slice(&payload))
+    let payload = keccak(message);
+    recover_address(signature, payload).map_err(EcdsaError::from)
 }
 
+// Half the secp256k1 curve order (n/2), i.e. the upper bound for a valid `s` value per EIP-2.
+const SECP256K1_N_HALF: [u8; 32] =
+    hex!("7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0");
+
+fn signature_has_high_s(signature_bytes: &[u8; 65]) -> bool {
+    signature_bytes[32..64] > SECP256K1_N_HALF[..]
+}
+
+#[cfg(all(
+    not(feature = "zisk"),
+    not(feature = "risc0"),
+    not(feature = "sp1"),
+    feature = "secp256k1"
+))]
 pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, secp256k1::Error> {
     // Create signature
     let signature_bytes = signature.to_fixed_bytes();
+    // EIP-2: reject high-s signatures (s > secp256k1n/2).
+    if signature_has_high_s(&signature_bytes) {
+        return Err(secp256k1::Error::InvalidSignature);
+    }
     let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
         &signature_bytes[..64],
-        RecoveryId::from_i32(signature_bytes[64] as i32)?, // cannot fail
+        secp256k1::ecdsa::RecoveryId::try_from(signature_bytes[64] as i32)?,
     )?;
     // Recover public key
-    let public = secp256k1::SECP256K1
-        .recover_ecdsa(&Message::from_digest(payload.to_fixed_bytes()), &signature)?;
+    let public = secp256k1::SECP256K1.recover_ecdsa(
+        &secp256k1::Message::from_digest(payload.to_fixed_bytes()),
+        &signature,
+    )?;
     // Hash public key to obtain address
-    let hash = Keccak256::new_with_prefix(&public.serialize_uncompressed()[1..]).finalize();
+    let hash = ethrex_crypto::keccak::keccak_hash(&public.serialize_uncompressed()[1..]);
+    Ok(Address::from_slice(&hash[12..]))
+}
+
+#[cfg(any(
+    feature = "zisk",
+    feature = "risc0",
+    feature = "sp1",
+    not(feature = "secp256k1")
+))]
+pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, k256::ecdsa::Error> {
+    use sha2::Digest;
+    use sha3::Keccak256;
+
+    // Create signature
+    let signature_bytes = signature.to_fixed_bytes();
+    // EIP-2: signatures must use "low-s" (s <= secp256k1n/2).
+    // Standard k256 rejects high-s signatures by default but it's best to leave this for 3 reasons:
+    // 1. Make it more explicit
+    // 2. Sometimes it can happen that the zkVM patch can have a different behavior than the original crate (shouldn't happen, but has happened). So we put this just in case.
+    // 3. Fail fast
+    if signature_has_high_s(&signature_bytes) {
+        return Err(k256::ecdsa::Error::from_source("High-s signature"));
+    }
+
+    let signature = k256::ecdsa::Signature::from_slice(&signature_bytes[..64])?;
+
+    let recovery_id_byte = signature_bytes[64];
+    let recovery_id = k256::ecdsa::RecoveryId::from_byte(recovery_id_byte).ok_or(
+        k256::ecdsa::Error::from_source("Failed to parse recovery id"),
+    )?;
+
+    // Recover public key
+    let public = k256::ecdsa::VerifyingKey::recover_from_prehash(
+        payload.as_bytes(),
+        &signature,
+        recovery_id,
+    )?;
+
+    let uncompressed = public.to_encoded_point(false);
+
+    let mut uncompressed = uncompressed.to_bytes();
+
+    let xy = &mut uncompressed[1..65];
+
+    let hash = Keccak256::digest(xy);
+
     Ok(Address::from_slice(&hash[12..]))
 }
 
@@ -1303,6 +1510,7 @@ impl TxType {
             0x02 => Some(Self::EIP1559),
             0x03 => Some(Self::EIP4844),
             0x04 => Some(Self::EIP7702),
+            0x7d => Some(Self::FeeToken),
             0x7e => Some(Self::Privileged),
             _ => None,
         }
@@ -1312,7 +1520,7 @@ impl TxType {
 impl PrivilegedL2Transaction {
     /// Returns the formatted hash of the privileged transaction,
     /// or None if the transaction is not a privileged transaction.
-    /// The hash is computed as keccak256(from || to || transaction_id  || value || gas_limit || keccak256(calldata))
+    /// The hash is computed as keccak256(chain_id || from || to || transaction_id  || value || gas_limit || keccak256(calldata))
     pub fn get_privileged_hash(&self) -> Option<H256> {
         // Should this function be changed?
         let to = match self.to {
@@ -1327,8 +1535,9 @@ impl PrivilegedL2Transaction {
         let u256_nonce = U256::from(self.nonce);
         let nonce = u256_nonce.to_big_endian();
 
-        Some(keccak_hash::keccak(
+        Some(crate::utils::keccak(
             [
+                U256::from(self.chain_id).to_big_endian().as_ref(),
                 self.from.as_bytes(),
                 to.as_bytes(),
                 &nonce,
@@ -1339,6 +1548,31 @@ impl PrivilegedL2Transaction {
             .concat(),
         ))
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
+pub struct FeeTokenTransaction {
+    pub chain_id: u64,
+    pub nonce: u64,
+    pub max_priority_fee_per_gas: u64,
+    pub max_fee_per_gas: u64,
+    pub gas_limit: u64,
+    pub to: TxKind,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub value: U256,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
+    pub data: Bytes,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
+    pub access_list: AccessList,
+    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
+    pub fee_token: Address,
+    pub signature_y_parity: bool,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub signature_r: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub signature_s: U256,
+    #[rkyv(with=rkyv::with::Skip)]
+    pub inner_hash: OnceCell<H256>,
 }
 
 /// Canonical Transaction Encoding
@@ -1379,6 +1613,10 @@ mod canonic_encoding {
                         // EIP7702
                         0x4 => EIP7702Transaction::decode(tx_bytes)
                             .map(Transaction::EIP7702Transaction),
+                        // FeeTokenTransaction
+                        0x7d => FeeTokenTransaction::decode(tx_bytes)
+                            .map(Transaction::FeeTokenTransaction),
+                        // PrivilegedL2Transaction
                         0x7e => PrivilegedL2Transaction::decode(tx_bytes)
                             .map(Transaction::PrivilegedL2Transaction),
                         ty => Err(RLPDecodeError::Custom(format!(
@@ -1408,6 +1646,7 @@ mod canonic_encoding {
                 Transaction::EIP1559Transaction(t) => t.encode(buf),
                 Transaction::EIP4844Transaction(t) => t.encode(buf),
                 Transaction::EIP7702Transaction(t) => t.encode(buf),
+                Transaction::FeeTokenTransaction(t) => t.encode(buf),
                 Transaction::PrivilegedL2Transaction(t) => t.encode(buf),
             };
         }
@@ -1432,7 +1671,7 @@ mod canonic_encoding {
                 P2PTransaction::EIP1559Transaction(_) => TxType::EIP1559,
                 P2PTransaction::EIP4844TransactionWithBlobs(_) => TxType::EIP4844,
                 P2PTransaction::EIP7702Transaction(_) => TxType::EIP7702,
-                P2PTransaction::PrivilegedL2Transaction(_) => TxType::Privileged,
+                P2PTransaction::FeeTokenTransaction(_) => TxType::FeeToken,
             }
         }
 
@@ -1448,7 +1687,7 @@ mod canonic_encoding {
                 P2PTransaction::EIP1559Transaction(t) => t.encode(buf),
                 P2PTransaction::EIP4844TransactionWithBlobs(t) => t.encode(buf),
                 P2PTransaction::EIP7702Transaction(t) => t.encode(buf),
-                P2PTransaction::PrivilegedL2Transaction(t) => t.encode(buf),
+                P2PTransaction::FeeTokenTransaction(t) => t.encode(buf),
             };
         }
 
@@ -1475,8 +1714,8 @@ mod canonic_encoding {
                 P2PTransaction::EIP7702Transaction(t) => {
                     Transaction::EIP7702Transaction(t.clone()).compute_hash()
                 }
-                P2PTransaction::PrivilegedL2Transaction(t) => {
-                    Transaction::PrivilegedL2Transaction(t.clone()).compute_hash()
+                P2PTransaction::FeeTokenTransaction(t) => {
+                    Transaction::FeeTokenTransaction(t.clone()).compute_hash()
                 }
             }
         }
@@ -1827,6 +2066,46 @@ mod serde_impl {
         }
     }
 
+    impl Serialize for FeeTokenTransaction {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            let mut struct_serializer = serializer.serialize_struct("FeeTokenTransaction", 15)?;
+            struct_serializer.serialize_field("type", &TxType::FeeToken)?;
+            struct_serializer.serialize_field("nonce", &format!("{:#x}", self.nonce))?;
+            struct_serializer.serialize_field("to", &self.to)?;
+            struct_serializer.serialize_field("gas", &format!("{:#x}", self.gas_limit))?;
+            struct_serializer.serialize_field("value", &self.value)?;
+            struct_serializer.serialize_field("input", &format!("0x{:x}", self.data))?;
+            struct_serializer.serialize_field(
+                "maxPriorityFeePerGas",
+                &format!("{:#x}", self.max_priority_fee_per_gas),
+            )?;
+            struct_serializer
+                .serialize_field("maxFeePerGas", &format!("{:#x}", self.max_fee_per_gas))?;
+            struct_serializer
+                .serialize_field("gasPrice", &format!("{:#x}", self.max_fee_per_gas))?;
+            struct_serializer.serialize_field(
+                "accessList",
+                &self
+                    .access_list
+                    .iter()
+                    .map(AccessListEntry::from)
+                    .collect::<Vec<_>>(),
+            )?;
+            struct_serializer.serialize_field("feeToken", &format!("{:#x}", self.fee_token))?;
+            struct_serializer.serialize_field("chainId", &format!("{:#x}", self.chain_id))?;
+            struct_serializer
+                .serialize_field("yParity", &format!("{:#x}", self.signature_y_parity as u8))?;
+            struct_serializer
+                .serialize_field("v", &format!("{:#x}", self.signature_y_parity as u8))?;
+            struct_serializer.serialize_field("r", &self.signature_r)?;
+            struct_serializer.serialize_field("s", &self.signature_s)?;
+            struct_serializer.end()
+        }
+    }
+
     impl<'de> Deserialize<'de> for Transaction {
         fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
         where
@@ -1886,6 +2165,13 @@ mod serde_impl {
                 .map_err(|e| {
                     serde::de::Error::custom(format!("Couldn't Deserialize Privileged: {e}"))
                 }),
+                TxType::FeeToken => {
+                    FeeTokenTransaction::deserialize(serde::de::value::MapDeserializer::new(iter))
+                        .map(Transaction::FeeTokenTransaction)
+                        .map_err(|e| {
+                            serde::de::Error::custom(format!("Couldn't Deserialize FeeToken {e}"))
+                        })
+                }
             }
         }
     }
@@ -1936,7 +2222,7 @@ mod serde_impl {
 
             Ok(LegacyTransaction {
                 nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
-                gas_price: deserialize_field::<U256, D>(&mut map, "gasPrice")?.as_u64(),
+                gas_price: deserialize_field::<U256, D>(&mut map, "gasPrice")?,
                 gas: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
                 to: deserialize_field::<TxKind, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
@@ -1959,7 +2245,7 @@ mod serde_impl {
             Ok(EIP2930Transaction {
                 chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
                 nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
-                gas_price: deserialize_field::<U256, D>(&mut map, "gasPrice")?.as_u64(),
+                gas_price: deserialize_field::<U256, D>(&mut map, "gasPrice")?,
                 gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
                 to: deserialize_field::<TxKind, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
@@ -1987,7 +2273,6 @@ mod serde_impl {
             D: serde::Deserializer<'de>,
         {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
-
             Ok(EIP1559Transaction {
                 chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
                 nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
@@ -2134,12 +2419,52 @@ mod serde_impl {
         }
     }
 
+    impl<'de> Deserialize<'de> for FeeTokenTransaction {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
+
+            Ok(FeeTokenTransaction {
+                chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
+                nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
+                max_priority_fee_per_gas: deserialize_field::<U256, D>(
+                    &mut map,
+                    "maxPriorityFeePerGas",
+                )?
+                .as_u64(),
+                max_fee_per_gas: deserialize_field::<U256, D>(&mut map, "maxFeePerGas")?.as_u64(),
+                gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
+                to: deserialize_field::<TxKind, D>(&mut map, "to")?,
+                value: deserialize_field::<U256, D>(&mut map, "value")?,
+                data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
+                access_list: deserialize_field::<Vec<AccessListEntry>, D>(&mut map, "accessList")?
+                    .into_iter()
+                    .map(|v| (v.address, v.storage_keys))
+                    .collect::<Vec<_>>(),
+                fee_token: deserialize_field::<Address, D>(&mut map, "feeToken")?,
+                signature_y_parity: u8::from_str_radix(
+                    deserialize_field::<String, D>(&mut map, "yParity")?.trim_start_matches("0x"),
+                    16,
+                )
+                .map_err(serde::de::Error::custom)?
+                    != 0,
+                signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
+                signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
+                ..Default::default()
+            })
+        }
+    }
+
     #[derive(Debug, thiserror::Error)]
     pub enum GenericTransactionError {
         #[error("Invalid transaction type: {0}")]
         InvalidTxType(TxType),
         #[error("Blob bundle error: {0}")]
         BlobBundleError(#[from] BlobsBundleError),
+        #[error("Missing field: {0}")]
+        MissingField(String),
     }
 
     /// Unsigned Transaction struct generic to all types which may not contain all required transaction fields
@@ -2168,9 +2493,12 @@ mod serde_impl {
         #[serde(default)]
         pub access_list: Vec<AccessListEntry>,
         #[serde(default)]
+        pub fee_token: Option<Address>,
+        #[serde(default)]
         pub authorization_list: Option<Vec<AuthorizationTupleEntry>>,
         #[serde(default)]
         pub blob_versioned_hashes: Vec<H256>,
+        pub wrapper_version: Option<u8>,
         #[serde(default, with = "crate::serde_utils::bytes::vec")]
         pub blobs: Vec<Bytes>,
         #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
@@ -2233,9 +2561,11 @@ mod serde_impl {
                     .iter()
                     .map(AccessListEntry::from)
                     .collect(),
+                fee_token: None,
                 authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
+                wrapper_version: None,
                 chain_id: Some(value.chain_id),
                 from: Address::default(),
             }
@@ -2287,9 +2617,11 @@ mod serde_impl {
                     .iter()
                     .map(AccessListEntry::from)
                     .collect(),
+                fee_token: None,
                 authorization_list: None,
                 blob_versioned_hashes: value.blob_versioned_hashes,
                 blobs: vec![],
+                wrapper_version: None,
                 chain_id: Some(value.chain_id),
                 from: Address::default(),
             }
@@ -2312,9 +2644,11 @@ mod serde_impl {
                 })
                 .collect();
 
+            let wrapper_version = value.wrapper_version;
             Ok(Self {
                 tx: value.try_into()?,
-                blobs_bundle: BlobsBundle::create_from_blobs(&blobs)?,
+                wrapper_version,
+                blobs_bundle: BlobsBundle::create_from_blobs(&blobs, wrapper_version)?,
             })
         }
     }
@@ -2368,6 +2702,7 @@ mod serde_impl {
                     .iter()
                     .map(AccessListEntry::from)
                     .collect(),
+                fee_token: None,
                 authorization_list: Some(
                     value
                         .authorization_list
@@ -2377,9 +2712,45 @@ mod serde_impl {
                 ),
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
+                wrapper_version: None,
                 chain_id: Some(value.chain_id),
                 from: Address::default(),
             }
+        }
+    }
+
+    impl TryFrom<GenericTransaction> for EIP7702Transaction {
+        type Error = GenericTransactionError;
+
+        fn try_from(value: GenericTransaction) -> Result<Self, Self::Error> {
+            if value.r#type != TxType::EIP7702 {
+                return Err(GenericTransactionError::InvalidTxType(value.r#type));
+            }
+            let TxKind::Call(to) = value.to else {
+                return Err(GenericTransactionError::MissingField("to".to_owned()));
+            };
+            Ok(Self {
+                chain_id: value.chain_id.unwrap_or_default(),
+                nonce: value.nonce.unwrap_or_default(),
+                max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
+                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
+                gas_limit: value.gas.unwrap_or_default(),
+                to,
+                value: value.value,
+                data: value.input,
+                access_list: value
+                    .access_list
+                    .into_iter()
+                    .map(|v| (v.address, v.storage_keys))
+                    .collect::<Vec<_>>(),
+                authorization_list: value
+                    .authorization_list
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(AuthorizationTuple::from)
+                    .collect(),
+                ..Default::default()
+            })
         }
     }
 
@@ -2401,9 +2772,11 @@ mod serde_impl {
                     .iter()
                     .map(AccessListEntry::from)
                     .collect(),
+                fee_token: None,
                 authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
+                wrapper_version: None,
                 chain_id: Some(value.chain_id),
                 from: value.from,
             }
@@ -2437,6 +2810,67 @@ mod serde_impl {
         }
     }
 
+    impl From<FeeTokenTransaction> for GenericTransaction {
+        fn from(value: FeeTokenTransaction) -> Self {
+            Self {
+                r#type: TxType::FeeToken,
+                nonce: Some(value.nonce),
+                to: value.to,
+                gas: Some(value.gas_limit),
+                value: value.value,
+                input: value.data.clone(),
+                gas_price: value.max_fee_per_gas,
+                max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
+                max_fee_per_gas: Some(value.max_fee_per_gas),
+                max_fee_per_blob_gas: None,
+                access_list: value
+                    .access_list
+                    .iter()
+                    .map(AccessListEntry::from)
+                    .collect(),
+                fee_token: Some(value.fee_token),
+                authorization_list: None,
+                blob_versioned_hashes: vec![],
+                blobs: vec![],
+                chain_id: Some(value.chain_id),
+                from: Address::default(),
+                wrapper_version: None,
+            }
+        }
+    }
+
+    impl TryFrom<GenericTransaction> for FeeTokenTransaction {
+        type Error = GenericTransactionError;
+
+        fn try_from(value: GenericTransaction) -> Result<Self, Self::Error> {
+            if value.r#type != TxType::FeeToken {
+                return Err(GenericTransactionError::InvalidTxType(value.r#type));
+            }
+
+            Ok(Self {
+                nonce: value.nonce.unwrap_or_default(),
+                to: value.to,
+                gas_limit: value.gas.unwrap_or_default(),
+                value: value.value,
+                data: value.input.clone(),
+                max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
+                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
+                access_list: value
+                    .access_list
+                    .into_iter()
+                    .map(|v| (v.address, v.storage_keys))
+                    .collect::<Vec<_>>(),
+                fee_token: value
+                    .fee_token
+                    .ok_or(GenericTransactionError::MissingField(
+                        "fee token".to_owned(),
+                    ))?,
+                chain_id: value.chain_id.unwrap_or_default(),
+                ..Default::default()
+            })
+        }
+    }
+
     impl From<LegacyTransaction> for GenericTransaction {
         fn from(value: LegacyTransaction) -> Self {
             Self {
@@ -2446,14 +2880,16 @@ mod serde_impl {
                 from: Address::default(),
                 gas: Some(value.gas),
                 value: value.value,
-                gas_price: value.gas_price,
+                gas_price: value.gas_price.as_u64(),
                 max_priority_fee_per_gas: None,
                 max_fee_per_gas: None,
                 max_fee_per_blob_gas: None,
                 access_list: vec![],
+                fee_token: None,
                 authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
+                wrapper_version: None,
                 chain_id: None,
                 input: value.data,
             }
@@ -2469,7 +2905,7 @@ mod serde_impl {
                 from: Address::default(),
                 gas: Some(value.gas_limit),
                 value: value.value,
-                gas_price: value.gas_price,
+                gas_price: value.gas_price.as_u64(),
                 max_priority_fee_per_gas: None,
                 max_fee_per_gas: None,
                 max_fee_per_blob_gas: None,
@@ -2481,9 +2917,11 @@ mod serde_impl {
                         storage_keys,
                     })
                     .collect(),
+                fee_token: None,
                 authorization_list: None,
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
+                wrapper_version: None,
                 chain_id: Some(value.chain_id),
                 input: value.data,
             }
@@ -2499,6 +2937,7 @@ mod serde_impl {
                 Transaction::EIP4844Transaction(tx) => tx.into(),
                 Transaction::EIP7702Transaction(tx) => tx.into(),
                 Transaction::PrivilegedL2Transaction(tx) => tx.into(),
+                Transaction::FeeTokenTransaction(tx) => tx.into(),
             }
         }
     }
@@ -2620,7 +3059,7 @@ mod tests {
         let mut body = BlockBody::empty();
         let tx = LegacyTransaction {
             nonce: 0,
-            gas_price: 0x0a,
+            gas_price: U256::from(0x0a),
             gas: 0x05f5e100,
             to: TxKind::Call(hex!("1000000000000000000000000000000000000000").into()),
             value: 0.into(),
@@ -2647,7 +3086,7 @@ mod tests {
         let tx_eip2930 = EIP2930Transaction {
             chain_id: 3503995874084926u64,
             nonce: 7,
-            gas_price: 0x2dbf1f9a,
+            gas_price: U256::from(0x2dbf1f9a_u64),
             gas_limit: 0x186A0,
             to: TxKind::Call(hex!("7dcd17433742f4c0ca53122ab541d0ba67fc27df").into()),
             value: 2.into(),
@@ -2686,7 +3125,7 @@ mod tests {
         let succeeded = true;
         let cumulative_gas_used = 0x5208;
         let logs = vec![];
-        let receipt = Receipt::new(tx_type, succeeded, cumulative_gas_used, logs);
+        let receipt = Receipt::new(tx_type, succeeded, cumulative_gas_used, None, logs);
 
         let result = compute_receipts_root(&[receipt]);
         let expected_root =
@@ -2701,7 +3140,7 @@ mod tests {
         let tx = LegacyTransaction::decode(&encoded_tx_bytes).unwrap();
         let expected_tx = LegacyTransaction {
             nonce: 0,
-            gas_price: 1001000000,
+            gas_price: U256::from(1001000000u64),
             gas: 63000,
             to: TxKind::Call(Address::from_slice(
                 &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
@@ -2832,8 +3271,10 @@ mod tests {
                 ),
                 storage_keys: vec![H256::from_low_u64_be(12), H256::from_low_u64_be(8203)],
             }],
+            fee_token: None,
             blob_versioned_hashes: Default::default(),
             blobs: Default::default(),
+            wrapper_version: None,
             chain_id: Default::default(),
             authorization_list: None,
         };
@@ -2885,8 +3326,10 @@ mod tests {
                 ),
                 storage_keys: vec![H256::from_low_u64_be(12), H256::from_low_u64_be(8203)],
             }],
+            fee_token: None,
             blob_versioned_hashes: Default::default(),
             blobs: Default::default(),
+            wrapper_version: None,
             chain_id: Default::default(),
             authorization_list: None,
         };
@@ -3048,10 +3491,12 @@ mod tests {
 
         let encoded = PrivilegedL2Transaction::encode_to_vec(&privileged_l2);
         println!("encoded length: {}", encoded.len());
+        assert_eq!(encoded.len(), privileged_l2.length());
 
         let deserialized_tx = PrivilegedL2Transaction::decode(&encoded)?;
 
         assert_eq!(deserialized_tx, privileged_l2);
+
         Ok(())
     }
 
@@ -3059,7 +3504,7 @@ mod tests {
     fn test_legacy_transaction_into_generic() {
         let legacy_tx = LegacyTransaction {
             nonce: 1,
-            gas_price: 20_000_000_000,
+            gas_price: U256::from(20_000_000_000u64),
             gas: 21000,
             to: TxKind::Call(
                 Address::from_str("0x742d35Cc6634C0532925a3b844Bc454e4438f44e").unwrap(),
@@ -3098,7 +3543,7 @@ mod tests {
         let eip2930_tx = EIP2930Transaction {
             chain_id: 1,
             nonce: 1,
-            gas_price: 20_000_000_000,
+            gas_price: U256::from(20_000_000_000u64),
             gas_limit: 21000,
             to: TxKind::Call(
                 Address::from_str("0x742d35Cc6634C0532925a3b844Bc454e4438f44e").unwrap(),
@@ -3123,5 +3568,87 @@ mod tests {
         assert_eq!(generic_tx.access_list.len(), 1);
         assert_eq!(generic_tx.access_list[0].address, access_list[0].0);
         assert_eq!(generic_tx.access_list[0].storage_keys, access_list[0].1);
+    }
+
+    #[test]
+    fn recover_address_rejects_high_s_signatures() {
+        use k256::ecdsa::SigningKey;
+
+        // 1. Setup: Create a signer and a message
+        // A random private key for testing
+        let private_key = hex!("4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318");
+        let signing_key = SigningKey::from_bytes(&private_key.into()).expect("Valid private key");
+
+        // The message we want to sign
+        let msg = b"Test message for high-s signature rejection";
+        // Calculate the Keccak256 hash of the message (the payload)
+        let payload = keccak(msg);
+
+        // 2. Generate a valid low-s signature
+        // k256's sign_prehash_recoverable produces canonical low-s signatures by default.
+        // We use the pre-calculated hash (payload).
+        let (signature, recovery_id) = signing_key
+            .sign_prehash_recoverable(payload.as_bytes())
+            .expect("Signing failed");
+
+        // 3. Construct the signature bytes expected by recover_address
+        // Format: [r (32 bytes), s (32 bytes), v (1 byte)]
+        let mut sig_bytes = [0u8; 65];
+        sig_bytes[..64].copy_from_slice(&signature.to_bytes());
+        sig_bytes[64] = recovery_id.to_byte();
+
+        // 4. Verify that the valid low-s signature recovers the correct address
+        // Calculate the expected address from the public key
+        let uncompressed_pub = signing_key.verifying_key().to_encoded_point(false);
+        let pub_hash = ethrex_crypto::keccak::keccak_hash(&uncompressed_pub.as_bytes()[1..]);
+        let expected_address = Address::from_slice(&pub_hash[12..]);
+
+        let recovered = recover_address(Signature::from_slice(&sig_bytes), payload)
+            .expect("Valid low-s signature should recover successfully");
+        assert_eq!(recovered, expected_address, "Recovered address mismatch");
+
+        // 5. Create a high-s signature: s' = N - s
+        // The curve order N for secp256k1
+        let n = U256::from_big_endian(&hex!(
+            "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141"
+        ));
+        let s = U256::from_big_endian(&sig_bytes[32..64]);
+
+        // Ensure the generated signature was indeed low-s (standard requirement)
+        let half_n = n / 2;
+        assert!(
+            s <= half_n,
+            "Generated signature was not low-s, cannot test high-s rejection"
+        );
+
+        // Calculate high-s
+        let s_high = n - s;
+
+        let mut sig_high_bytes = sig_bytes;
+        // Replace s with s_high
+        sig_high_bytes[32..64].copy_from_slice(&s_high.to_big_endian());
+        // When flipping s to -s mod N, we must also flip the recovery ID (v) to maintain validity of the point R
+        sig_high_bytes[64] ^= 1;
+
+        // 6. Verify that the high-s signature is rejected
+        // EIP-2 requires rejecting s > N/2 to prevent malleability
+        assert!(
+            recover_address(Signature::from_slice(&sig_high_bytes), payload).is_err(),
+            "High-s signature should be rejected (EIP-2 compliance)"
+        );
+    }
+
+    #[test]
+    fn encode_decode_low_size_tx() {
+        let tx = Transaction::EIP2930Transaction(EIP2930Transaction::default());
+        let encoded = tx.encode_to_vec();
+        let decoded_tx = Transaction::decode(&encoded).unwrap();
+        assert_eq!(tx, decoded_tx);
+    }
+
+    #[test]
+    fn test_eip1559_simple_transfer_size() {
+        let tx = Transaction::EIP1559Transaction(EIP1559Transaction::default());
+        assert_eq!(tx.encode_to_vec().len(), EIP1559_DEFAULT_SERIALIZED_LENGTH);
     }
 }

@@ -2,6 +2,10 @@
 name = "revm_comparison"
 version = "0.1.0"
 edition = "2024"
+authors = ["LambdaClass"]
+license = "MIT OR Apache-2.0"
+
+[workspace]
 
 [lib]
 name = "revm_comparison"
@@ -9,15 +13,16 @@ path = "src/lib.rs"
 
 [dependencies]
 ethrex-levm = { path = "../../" }
-ethrex-vm.workspace = true
-ethrex-common.workspace = true
-ethrex-storage.workspace = true
-ethrex-blockchain.workspace = true
-hex.workspace = true
-bytes.workspace = true
+ethrex-vm = { path = "../../.." }
+ethrex-common = { path = "../../../../common" }
+ethrex-crypto = { path = "../../../../common/crypto" }
+ethrex-storage = { path = "../../../../storage" }
+ethrex-blockchain = { path = "../../../../blockchain" }
+rustc-hash = "2.1.1"
+hex = "0.4.3"
+bytes = { version = "1.6.0", features = ["serde"] }
 
 revm = "9.0.0"
-sha3 = "0.10.8"
 
 [[bin]]
 name = "compile"

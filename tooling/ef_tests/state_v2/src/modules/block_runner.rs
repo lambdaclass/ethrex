@@ -1,6 +1,6 @@
 use bytes::Bytes;
+use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::get_total_blob_gas;
-use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::constants::DEFAULT_REQUESTS_HASH;
 use ethrex_common::types::{
     Block, BlockBody, BlockHeader, Fork, Receipt, Transaction, compute_receipts_root,
@@ -53,6 +53,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
                 tx.tx_type(),
                 report.is_success(),
                 report.gas_used,
+                test_case.fork.gas_spent_for_receipt(report.gas_spent),
                 report.logs.clone(),
             );
             (vec![receipt], report.gas_used)
@@ -139,14 +140,16 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
         excess_blob_gas,
         parent_beacon_block_root,
         requests_hash,
+        block_access_list_hash: None,
+        slot_number: None,
     };
     let block = Block::new(header, body);
 
     // 3. Create Blockchain and add block.
 
-    let blockchain = Blockchain::new(store.clone(), BlockchainType::L1, false);
+    let blockchain = Blockchain::new(store, ethrex_blockchain::BlockchainOptions::default());
 
-    let result = blockchain.add_block(&block).await;
+    let result = blockchain.add_block_pipeline(block);
 
     if result.is_err() && test_case.post.expected_exceptions.is_none() {
         return Err(RunnerError::Custom(

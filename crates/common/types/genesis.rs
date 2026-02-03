@@ -1,10 +1,10 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
-use sha3::{Digest, Keccak256};
 use std::{
     collections::{BTreeMap, HashMap},
     io::{BufReader, Error},
@@ -17,7 +17,7 @@ use super::{
     compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
 };
 use crate::{
-    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH},
+    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, EMPTY_BLOCK_ACCESS_LIST_HASH},
     rkyv_utils,
 };
 
@@ -51,6 +51,10 @@ pub struct Genesis {
     #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
     pub excess_blob_gas: Option<u64>,
     pub requests_hash: Option<H256>,
+    // Amsterdam fork fields (EIP-7928)
+    pub block_access_list_hash: Option<H256>,
+    #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
+    pub slot_number: Option<u64>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -85,9 +89,7 @@ impl TryFrom<&Path> for Genesis {
             warn!("Invalid fork, only post-merge networks are supported.");
         }
 
-        if genesis.config.bpo1_time.is_some() && genesis.config.blob_schedule.bpo1.is_none()
-            || genesis.config.bpo2_time.is_some() && genesis.config.blob_schedule.bpo2.is_none()
-            || genesis.config.bpo3_time.is_some() && genesis.config.blob_schedule.bpo3.is_none()
+        if genesis.config.bpo3_time.is_some() && genesis.config.blob_schedule.bpo3.is_none()
             || genesis.config.bpo4_time.is_some() && genesis.config.blob_schedule.bpo4.is_none()
             || genesis.config.bpo5_time.is_some() && genesis.config.blob_schedule.bpo5.is_none()
         {
@@ -113,9 +115,9 @@ impl TryFrom<&Path> for Genesis {
 )]
 #[serde(rename_all = "camelCase")]
 pub struct ForkBlobSchedule {
-    pub target: u32,
-    pub max: u32,
     pub base_fee_update_fraction: u64,
+    pub max: u32,
+    pub target: u32,
 }
 
 #[allow(unused)]
@@ -130,16 +132,18 @@ pub struct BlobSchedule {
     pub prague: ForkBlobSchedule,
     #[serde(default = "default_osaka_schedule")]
     pub osaka: ForkBlobSchedule,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bpo1: Option<ForkBlobSchedule>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bpo2: Option<ForkBlobSchedule>,
+    #[serde(default = "default_bpo1_schedule")]
+    pub bpo1: ForkBlobSchedule,
+    #[serde(default = "default_bpo2_schedule")]
+    pub bpo2: ForkBlobSchedule,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bpo3: Option<ForkBlobSchedule>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bpo4: Option<ForkBlobSchedule>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bpo5: Option<ForkBlobSchedule>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amsterdam: Option<ForkBlobSchedule>,
 }
 
 impl Default for BlobSchedule {
@@ -148,11 +152,12 @@ impl Default for BlobSchedule {
             cancun: default_cancun_schedule(),
             prague: default_prague_schedule(),
             osaka: default_osaka_schedule(),
-            bpo1: None,
-            bpo2: None,
+            bpo1: default_bpo1_schedule(),
+            bpo2: default_bpo2_schedule(),
             bpo3: None,
             bpo4: None,
             bpo5: None,
+            amsterdam: None,
         }
     }
 }
@@ -181,6 +186,21 @@ fn default_osaka_schedule() -> ForkBlobSchedule {
     }
 }
 
+fn default_bpo1_schedule() -> ForkBlobSchedule {
+    ForkBlobSchedule {
+        target: 10,
+        max: 15,
+        base_fee_update_fraction: 8346193,
+    }
+}
+
+fn default_bpo2_schedule() -> ForkBlobSchedule {
+    ForkBlobSchedule {
+        target: 14,
+        max: 21,
+        base_fee_update_fraction: 11684671,
+    }
+}
 /// Blockchain settings defined per block
 #[allow(unused)]
 #[derive(
@@ -237,6 +257,7 @@ pub struct ChainConfig {
     pub bpo3_time: Option<u64>,
     pub bpo4_time: Option<u64>,
     pub bpo5_time: Option<u64>,
+    pub amsterdam_time: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     pub terminal_total_difficulty: Option<u128>,
@@ -290,6 +311,12 @@ pub enum Fork {
     Cancun = 17,
     Prague = 18,
     Osaka = 19,
+    BPO1 = 20,
+    BPO2 = 21,
+    BPO3 = 22,
+    BPO4 = 23,
+    BPO5 = 24,
+    Amsterdam = 25,
 }
 
 impl From<Fork> for &str {
@@ -315,29 +342,52 @@ impl From<Fork> for &str {
             Fork::Cancun => "Cancun",
             Fork::Prague => "Prague",
             Fork::Osaka => "Osaka",
+            Fork::BPO1 => "BPO1",
+            Fork::BPO2 => "BPO2",
+            Fork::BPO3 => "BPO3",
+            Fork::BPO4 => "BPO4",
+            Fork::BPO5 => "BPO5",
+            Fork::Amsterdam => "Amsterdam",
+        }
+    }
+}
+
+impl Fork {
+    /// Returns the gas_spent value for receipt encoding based on fork.
+    /// EIP-7778 (Amsterdam+): receipts include gas_spent field.
+    pub fn gas_spent_for_receipt(self, gas_spent: u64) -> Option<u64> {
+        if self >= Fork::Amsterdam {
+            Some(gas_spent)
+        } else {
+            None
         }
     }
 }
 
 impl ChainConfig {
-    pub fn is_bpo1_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo1_time.is_some_and(|time| time <= block_timestamp)
+    pub fn is_amsterdam_activated(&self, block_timestamp: u64) -> bool {
+        self.amsterdam_time
+            .is_some_and(|time| time <= block_timestamp)
     }
 
-    pub fn is_bpo2_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo2_time.is_some_and(|time| time <= block_timestamp)
-    }
-
-    pub fn is_bpo3_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo3_time.is_some_and(|time| time <= block_timestamp)
+    pub fn is_bpo5_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo5_time.is_some_and(|time| time <= block_timestamp)
     }
 
     pub fn is_bpo4_activated(&self, block_timestamp: u64) -> bool {
         self.bpo4_time.is_some_and(|time| time <= block_timestamp)
     }
 
-    pub fn is_bpo5_activated(&self, block_timestamp: u64) -> bool {
-        self.bpo5_time.is_some_and(|time| time <= block_timestamp)
+    pub fn is_bpo3_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo3_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    pub fn is_bpo2_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo2_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    pub fn is_bpo1_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo1_time.is_some_and(|time| time <= block_timestamp)
     }
 
     pub fn is_osaka_activated(&self, block_timestamp: u64) -> bool {
@@ -379,6 +429,7 @@ impl ChainConfig {
             ("Prague", self.prague_time),
             ("Verkle", self.verkle_time),
             ("Osaka", self.osaka_time),
+            ("Amsterdam", self.amsterdam_time),
         ];
 
         let active_forks: Vec<_> = post_merge_forks
@@ -398,7 +449,19 @@ impl ChainConfig {
     }
 
     pub fn get_fork(&self, block_timestamp: u64) -> Fork {
-        if self.is_osaka_activated(block_timestamp) {
+        if self.is_amsterdam_activated(block_timestamp) {
+            Fork::Amsterdam
+        } else if self.is_bpo5_activated(block_timestamp) {
+            Fork::BPO5
+        } else if self.is_bpo4_activated(block_timestamp) {
+            Fork::BPO4
+        } else if self.is_bpo3_activated(block_timestamp) {
+            Fork::BPO3
+        } else if self.is_bpo2_activated(block_timestamp) {
+            Fork::BPO2
+        } else if self.is_bpo1_activated(block_timestamp) {
+            Fork::BPO1
+        } else if self.is_osaka_activated(block_timestamp) {
             Fork::Osaka
         } else if self.is_prague_activated(block_timestamp) {
             Fork::Prague
@@ -412,16 +475,18 @@ impl ChainConfig {
     }
 
     pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
-        if self.is_bpo5_activated(block_timestamp) {
+        if self.is_amsterdam_activated(block_timestamp) {
+            Some(self.blob_schedule.amsterdam.unwrap_or_default())
+        } else if self.is_bpo5_activated(block_timestamp) {
             Some(self.blob_schedule.bpo5.unwrap_or_default())
         } else if self.is_bpo4_activated(block_timestamp) {
             Some(self.blob_schedule.bpo4.unwrap_or_default())
         } else if self.is_bpo3_activated(block_timestamp) {
             Some(self.blob_schedule.bpo3.unwrap_or_default())
         } else if self.is_bpo2_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo2.unwrap_or_default())
+            Some(self.blob_schedule.bpo2)
         } else if self.is_bpo1_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo1.unwrap_or_default())
+            Some(self.blob_schedule.bpo1)
         } else if self.is_osaka_activated(block_timestamp) {
             Some(self.blob_schedule.osaka)
         } else if self.is_prague_activated(block_timestamp) {
@@ -435,6 +500,103 @@ impl ChainConfig {
 
     pub fn fork(&self, block_timestamp: u64) -> Fork {
         self.get_fork(block_timestamp)
+    }
+
+    pub fn next_fork(&self, block_timestamp: u64) -> Option<Fork> {
+        let next = if self.is_amsterdam_activated(block_timestamp) {
+            None
+        } else if self.is_bpo5_activated(block_timestamp) && self.amsterdam_time.is_some() {
+            Some(Fork::Amsterdam)
+        } else if self.is_bpo4_activated(block_timestamp) && self.bpo5_time.is_some() {
+            Some(Fork::BPO5)
+        } else if self.is_bpo3_activated(block_timestamp) && self.bpo4_time.is_some() {
+            Some(Fork::BPO4)
+        } else if self.is_bpo2_activated(block_timestamp) && self.bpo3_time.is_some() {
+            Some(Fork::BPO3)
+        } else if self.is_bpo1_activated(block_timestamp) && self.bpo2_time.is_some() {
+            Some(Fork::BPO2)
+        } else if self.is_osaka_activated(block_timestamp) && self.bpo1_time.is_some() {
+            Some(Fork::BPO1)
+        } else if self.is_prague_activated(block_timestamp) && self.osaka_time.is_some() {
+            Some(Fork::Osaka)
+        } else if self.is_cancun_activated(block_timestamp) && self.prague_time.is_some() {
+            Some(Fork::Prague)
+        } else if self.is_shanghai_activated(block_timestamp) && self.cancun_time.is_some() {
+            Some(Fork::Cancun)
+        } else {
+            None
+        };
+        match next {
+            Some(fork) if fork > self.fork(block_timestamp) => next,
+            _ => None,
+        }
+    }
+
+    pub fn get_last_scheduled_fork(&self) -> Fork {
+        if self.amsterdam_time.is_some() {
+            Fork::Amsterdam
+        } else if self.bpo5_time.is_some() {
+            Fork::BPO5
+        } else if self.bpo4_time.is_some() {
+            Fork::BPO4
+        } else if self.bpo3_time.is_some() {
+            Fork::BPO3
+        } else if self.bpo2_time.is_some() {
+            Fork::BPO2
+        } else if self.bpo1_time.is_some() {
+            Fork::BPO1
+        } else if self.osaka_time.is_some() {
+            Fork::Osaka
+        } else if self.prague_time.is_some() {
+            Fork::Prague
+        } else if self.cancun_time.is_some() {
+            Fork::Cancun
+        } else {
+            Fork::Paris
+        }
+    }
+
+    pub fn get_activation_timestamp_for_fork(&self, fork: Fork) -> Option<u64> {
+        match fork {
+            Fork::Cancun => self.cancun_time,
+            Fork::Prague => self.prague_time,
+            Fork::Osaka => self.osaka_time,
+            Fork::BPO1 => self.bpo1_time,
+            Fork::BPO2 => self.bpo2_time,
+            Fork::BPO3 => self.bpo3_time,
+            Fork::BPO4 => self.bpo4_time,
+            Fork::BPO5 => self.bpo5_time,
+            Fork::Amsterdam => self.amsterdam_time,
+            Fork::Homestead => self.homestead_block,
+            Fork::DaoFork => self.dao_fork_block,
+            Fork::Byzantium => self.byzantium_block,
+            Fork::Constantinople => self.constantinople_block,
+            Fork::Petersburg => self.petersburg_block,
+            Fork::Istanbul => self.istanbul_block,
+            Fork::MuirGlacier => self.muir_glacier_block,
+            Fork::Berlin => self.berlin_block,
+            Fork::London => self.london_block,
+            Fork::ArrowGlacier => self.arrow_glacier_block,
+            Fork::GrayGlacier => self.gray_glacier_block,
+            Fork::Paris => self.merge_netsplit_block,
+            Fork::Shanghai => self.shanghai_time,
+            _ => None,
+        }
+    }
+
+    pub fn get_blob_schedule_for_fork(&self, fork: Fork) -> Option<ForkBlobSchedule> {
+        match fork {
+            Fork::Cancun => Some(self.blob_schedule.cancun),
+            Fork::Prague => Some(self.blob_schedule.prague),
+            Fork::Osaka => Some(self.blob_schedule.osaka),
+            Fork::BPO1 => Some(self.blob_schedule.bpo1),
+            Fork::BPO2 => Some(self.blob_schedule.bpo2),
+            Fork::BPO3 => self.blob_schedule.bpo3,
+            Fork::BPO4 => self.blob_schedule.bpo4,
+            Fork::BPO5 => self.blob_schedule.bpo5,
+            Fork::Amsterdam => self.blob_schedule.amsterdam,
+            _ => None,
+        }
     }
 
     pub fn gather_forks(&self, genesis_header: BlockHeader) -> (Vec<u64>, Vec<u64>) {
@@ -471,6 +633,13 @@ impl ChainConfig {
             self.shanghai_time,
             self.cancun_time,
             self.prague_time,
+            self.osaka_time,
+            self.bpo1_time,
+            self.bpo2_time,
+            self.bpo3_time,
+            self.bpo4_time,
+            self.bpo5_time,
+            self.amsterdam_time,
             self.verkle_time,
         ]
         .into_iter()
@@ -495,7 +664,7 @@ pub struct GenesisAccount {
     #[serde(default, with = "crate::serde_utils::bytes")]
     pub code: Bytes,
     #[serde(default)]
-    pub storage: HashMap<U256, U256>,
+    pub storage: BTreeMap<U256, U256>,
     #[serde(deserialize_with = "crate::serde_utils::u256::deser_hex_or_dec_str")]
     pub balance: U256,
     #[serde(default, with = "crate::serde_utils::u64::hex_str")]
@@ -511,11 +680,11 @@ impl Genesis {
         let mut blob_gas_used: Option<u64> = None;
         let mut excess_blob_gas: Option<u64> = None;
 
-        if let Some(cancun_time) = self.config.cancun_time {
-            if cancun_time <= self.timestamp {
-                blob_gas_used = Some(self.blob_gas_used.unwrap_or(0));
-                excess_blob_gas = Some(self.excess_blob_gas.unwrap_or(0));
-            }
+        if let Some(cancun_time) = self.config.cancun_time
+            && cancun_time <= self.timestamp
+        {
+            blob_gas_used = Some(self.blob_gas_used.unwrap_or(0));
+            excess_blob_gas = Some(self.excess_blob_gas.unwrap_or(0));
         }
         let base_fee_per_gas = self.base_fee_per_gas.or_else(|| {
             self.config
@@ -537,6 +706,15 @@ impl Genesis {
             .config
             .is_prague_activated(self.timestamp)
             .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH));
+
+        let block_access_list_hash = self
+            .config
+            .is_amsterdam_activated(self.timestamp)
+            .then_some(
+                self.block_access_list_hash
+                    .unwrap_or(*EMPTY_BLOCK_ACCESS_LIST_HASH),
+            );
+        let slot_number = self.slot_number;
 
         BlockHeader {
             parent_hash: H256::zero(),
@@ -560,6 +738,8 @@ impl Genesis {
             excess_blob_gas,
             parent_beacon_block_root,
             requests_hash,
+            block_access_list_hash,
+            slot_number,
             ..Default::default()
         }
     }
@@ -575,7 +755,7 @@ impl Genesis {
     pub fn compute_state_root(&self) -> H256 {
         let iter = self.alloc.iter().map(|(addr, account)| {
             (
-                Keccak256::digest(addr).to_vec(),
+                keccak_hash(addr).to_vec(),
                 AccountState::from(account).encode_to_vec(),
             )
         });

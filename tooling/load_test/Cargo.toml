@@ -1,7 +1,10 @@
 [package]
 name = "load_test"
-edition.workspace = true
 version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
 
 [dependencies]
 clap.workspace = true
@@ -15,6 +18,6 @@ ethrex-common.workspace = true
 ethrex-l2-common.workspace = true
 ethrex-l2-rpc.workspace = true
 eyre.workspace = true
-keccak-hash.workspace = true
 tokio = { workspace = true, features = ["full"] }
 futures = "0.3"
+url.workspace = true

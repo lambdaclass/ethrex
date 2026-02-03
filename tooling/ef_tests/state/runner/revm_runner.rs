@@ -1,38 +1,45 @@
+use super::revm_db::{RevmDynVmDatabase, RevmState};
+use crate::runner::revm_db::RevmError;
+use crate::types::EFTestTransaction;
 use crate::{
     report::{ComparisonReport, EFTestReport, EFTestReportForkResult, TestReRunReport, TestVector},
     runner::{EFTestRunnerError, InternalError, levm_runner::post_state_root},
     types::EFTest,
-    utils::{effective_gas_price, load_initial_state, load_initial_state_levm},
+    utils::{effective_gas_price, load_initial_state_levm, load_initial_state_revm},
 };
 use alloy_rlp::Encodable;
 use bytes::Bytes;
+use ethrex_common::types::{Code, TxType};
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address, H256,
     types::{Account, AccountUpdate, Fork, TxKind},
 };
+use ethrex_levm::constants::{BLOB_BASE_FEE_UPDATE_FRACTION, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE};
 use ethrex_levm::{
     account::LevmAccount,
     errors::{ExecutionReport, TxResult},
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_vm::{
-    DynVmDatabase, EvmError,
-    backends::{
-        self,
-        revm::{db::EvmState, helpers::fork_to_spec_id},
-    },
+use revm::primitives::{
+    Address as RevmAddress, TxKind as RevmTxKind, U256 as RevmU256, hardfork::SpecId,
 };
-use keccak_hash::keccak;
-pub use revm::primitives::{Address as RevmAddress, SpecId, U256 as RevmU256};
 use revm::{
-    Evm as Revm,
-    db::State,
-    inspectors::TracerEip3155 as RevmTracerEip3155,
-    primitives::{
-        AccessListItem, Authorization, B256, BlobExcessGasAndPrice, BlockEnv as RevmBlockEnv,
-        EVMError as REVMError, ExecutionResult as RevmExecutionResult, SignedAuthorization,
-        TxEnv as RevmTxEnv, TxKind as RevmTxKind,
+    Context, ExecuteCommitEvm, Journal, MainBuilder, MainContext,
+    context::{
+        BlockEnv as RevmBlockEnv, CfgEnv, Evm as Revm, TxEnv as RevmTxEnv, either::Either,
+        transaction::AccessList,
     },
+    context_interface::{
+        block::blob::BlobExcessGasAndPrice,
+        result::{EVMError as REVMError, ExecutionResult as RevmExecutionResult},
+        transaction::{AccessListItem, Authorization, SignedAuthorization},
+    },
+    database::State,
+    handler::{EthFrame, EthPrecompiles, instructions::EthInstructions},
+    inspector::inspectors::TracerEip3155 as RevmTracerEip3155,
+    interpreter::interpreter::EthInterpreter,
+    primitives::B256,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -142,12 +149,12 @@ pub async fn re_run_failed_ef_test_tx(
     re_run_report: &mut TestReRunReport,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
-    let (mut state, _block_hash, _store) = load_initial_state(test).await;
-    let mut revm = prepare_revm_for_tx(&mut state, vector, test, fork)?;
+    let (mut state, _block_hash, _store) = load_initial_state_revm(test).await;
+    let (mut revm, tx_env) = prepare_revm_for_tx(&mut state, vector, test, fork)?;
     if !test.post.has_vector_for_fork(vector, *fork) {
         return Ok(());
     }
-    let revm_execution_result = revm.transact_commit();
+    let revm_execution_result = revm.transact_commit(tx_env);
     drop(revm); // Need to drop the state mutable reference.
     compare_levm_revm_execution_results(
         vector,
@@ -160,12 +167,23 @@ pub async fn re_run_failed_ef_test_tx(
     Ok(())
 }
 
+type RevmStateT<'state> = &'state mut State<RevmDynVmDatabase>;
+type RevmContext<'state> =
+    Context<RevmBlockEnv, RevmTxEnv, CfgEnv, RevmStateT<'state>, Journal<RevmStateT<'state>>>;
+type RevmWithTracer<'state> = Revm<
+    RevmContext<'state>,
+    RevmTracerEip3155,
+    EthInstructions<EthInterpreter, RevmContext<'state>>,
+    EthPrecompiles,
+    EthFrame,
+>;
+
 pub fn prepare_revm_for_tx<'state>(
-    initial_state: &'state mut EvmState,
+    initial_state: &'state mut RevmState,
     vector: &TestVector,
     test: &EFTest,
     fork: &Fork,
-) -> Result<Revm<'state, RevmTracerEip3155, &'state mut State<DynVmDatabase>>, EFTestRunnerError> {
+) -> Result<(RevmWithTracer<'state>, RevmTxEnv), EFTestRunnerError> {
     let chain_spec = initial_state
         .chain_config()
         .map_err(|err| EFTestRunnerError::VMInitializationFailed(err.to_string()))?;
@@ -175,15 +193,24 @@ pub fn prepare_revm_for_tx<'state>(
     } else {
         Some(BlobExcessGasAndPrice::new(
             test.env.current_excess_blob_gas.unwrap().as_u64(),
-            *fork == Fork::Prague,
+            if fork >= &Fork::Prague {
+                BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
+            } else {
+                BLOB_BASE_FEE_UPDATE_FRACTION
+            },
         ))
     };
     let block_env = RevmBlockEnv {
         number: RevmU256::from_limbs(test.env.current_number.0),
-        coinbase: RevmAddress(test.env.current_coinbase.0.into()),
+        beneficiary: RevmAddress(test.env.current_coinbase.0.into()),
         timestamp: RevmU256::from_limbs(test.env.current_timestamp.0),
-        gas_limit: RevmU256::from(test.env.current_gas_limit),
-        basefee: RevmU256::from_limbs(test.env.current_base_fee.unwrap_or_default().0),
+        gas_limit: test.env.current_gas_limit,
+        basefee: test
+            .env
+            .current_base_fee
+            .unwrap_or_default()
+            .try_into()
+            .unwrap_or_default(),
         difficulty: RevmU256::from_limbs(test.env.current_difficulty.0),
         prevrandao: test.env.current_random.map(|v| v.0.into()),
         blob_excess_gas_and_price,
@@ -210,47 +237,52 @@ pub fn prepare_revm_for_tx<'state>(
         })
         .collect();
 
-    // The latest version of revm(19.3.0) is needed to run the ef-tests with the latest changes.
+    // The latest version of revm(27.0.3) is needed to run the ef-tests with the latest changes.
     // Update it in every Cargo.toml.
     // revm-inspectors and revm-primitives have to be bumped too.
     // NOTE:
-    // - rust 1.82.X is needed
-    // - rust-toolchain 1.82.X is needed (this can be found in ethrex/crates/vm/levm/rust-toolchain.toml)
-    let authorization_list = tx.authorization_list.clone().map(|list| {
-        list.iter()
-            .map(|auth_t| {
-                SignedAuthorization::new_unchecked(
-                    Authorization {
-                        // The latest spec defined chain_id as a U256
-                        chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_little_endian()),
-                        address: RevmAddress(auth_t.address.0.into()),
-                        nonce: auth_t.nonce,
-                    },
-                    auth_t.v.as_u32() as u8,
-                    RevmU256::from_le_bytes(auth_t.r.to_little_endian()),
-                    RevmU256::from_le_bytes(auth_t.s.to_little_endian()),
-                )
-            })
-            .collect::<Vec<SignedAuthorization>>()
-            .into()
-    });
+    // - rust 1.87.X is needed
+    // - rust-toolchain 1.87.X is needed (this can be found in ethrex/crates/vm/levm/rust-toolchain.toml)
+    let authorization_list = tx
+        .authorization_list
+        .clone()
+        .map(|list| {
+            list.iter()
+                .map(|auth_t| {
+                    Either::Left(SignedAuthorization::new_unchecked(
+                        Authorization {
+                            // The latest spec defined chain_id as a U256
+                            chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_little_endian()),
+                            address: RevmAddress(auth_t.address.0.into()),
+                            nonce: auth_t.nonce,
+                        },
+                        auth_t.v.as_u32() as u8,
+                        RevmU256::from_le_bytes(auth_t.r.to_little_endian()),
+                        RevmU256::from_le_bytes(auth_t.s.to_little_endian()),
+                    ))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
 
     let tx_env = RevmTxEnv {
         caller: tx.sender.0.into(),
         gas_limit: tx.gas_limit,
-        gas_price: RevmU256::from_limbs(effective_gas_price(test, tx)?.0),
-        transact_to: match tx.to {
+        gas_price: effective_gas_price(test, tx)?
+            .try_into()
+            .unwrap_or_default(),
+        kind: match tx.to {
             TxKind::Call(to) => RevmTxKind::Call(to.0.into()),
             TxKind::Create => RevmTxKind::Create,
         },
         value: RevmU256::from_limbs(tx.value.0),
         data: tx.data.to_vec().into(),
-        nonce: Some(tx.nonce),
+        nonce: tx.nonce,
         chain_id: Some(chain_spec.chain_id),
-        access_list: revm_access_list,
+        access_list: AccessList(revm_access_list),
         gas_priority_fee: tx
             .max_priority_fee_per_gas
-            .map(|fee| RevmU256::from_limbs(fee.0)),
+            .map(|fee| fee.try_into().unwrap_or_default()),
         blob_hashes: tx
             .blob_versioned_hashes
             .iter()
@@ -258,25 +290,30 @@ pub fn prepare_revm_for_tx<'state>(
             .collect::<Vec<B256>>(),
         max_fee_per_blob_gas: tx
             .max_fee_per_blob_gas
-            .map(|fee| RevmU256::from_limbs(fee.0)),
+            .unwrap_or_default()
+            .try_into()
+            .unwrap_or_default(),
         authorization_list,
+        tx_type: infer_tx_type(tx) as u8,
     };
 
-    let evm_builder = Revm::builder()
-        .with_block_env(block_env)
-        .with_tx_env(tx_env)
-        .modify_cfg_env(|cfg| cfg.chain_id = chain_spec.chain_id)
-        .with_spec_id(fork_to_spec_id(*fork))
-        .with_external_context(
-            RevmTracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
-        );
-    Ok(evm_builder.with_db(&mut initial_state.inner).build())
+    let mut evm_context = revm::context::Context::mainnet()
+        .with_block(block_env)
+        .with_db(&mut initial_state.inner);
+    evm_context.modify_cfg(|cfg| {
+        cfg.spec = fork_to_spec_id(*fork);
+        cfg.chain_id = chain_spec.chain_id;
+    });
+    let evm = evm_context.build_mainnet_with_inspector(
+        RevmTracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
+    );
+    Ok((evm, tx_env))
 }
 
 pub fn compare_levm_revm_execution_results(
     vector: &TestVector,
     levm_execution_report: &ExecutionReport,
-    revm_execution_result: Result<RevmExecutionResult, REVMError<EvmError>>,
+    revm_execution_result: Result<RevmExecutionResult, REVMError<RevmError>>,
     re_run_report: &mut TestReRunReport,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
@@ -377,7 +414,7 @@ pub fn compare_levm_revm_execution_results(
 pub async fn ensure_post_state(
     levm_cache: BTreeMap<Address, LevmAccount>,
     vector: &TestVector,
-    revm_state: &mut EvmState,
+    revm_state: &mut RevmState,
     test: &EFTest,
     re_run_report: &mut TestReRunReport,
     fork: &Fork,
@@ -387,12 +424,12 @@ pub async fn ensure_post_state(
         // We only want to compare account updates when no exception is expected.
         None => {
             let mut db = load_initial_state_levm(test).await;
-            db.current_accounts_state = levm_cache;
-            let levm_account_updates = backends::levm::LEVM::get_state_transitions(&mut db)
+            db.current_accounts_state = levm_cache.into_iter().collect();
+            let levm_account_updates = db.get_state_transitions()
                 .map_err(|_| {
                     InternalError::Custom(format!("Error at LEVM::get_state_transitions() thrown in REVM runner line: {} when executing ensure_post_state()",line!()).to_owned())
                 })?;
-            let revm_account_updates = backends::revm::REVM::get_state_transitions(revm_state);
+            let revm_account_updates = revm_state.get_state_transitions();
             let account_updates_report = compare_levm_revm_account_updates(
                 vector,
                 test,
@@ -429,7 +466,7 @@ pub async fn compare_levm_revm_account_updates(
                 .collect();
             let account = Account::new(
                 pre_state_value.balance,
-                pre_state_value.code.clone(),
+                Code::from_bytecode(pre_state_value.code.clone()),
                 pre_state_value.nonce,
                 account_storage,
             );
@@ -544,9 +581,9 @@ pub async fn _run_ef_test_tx_revm(
     test: &EFTest,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
-    let (mut state, _block_hash, _store) = load_initial_state(test).await;
-    let mut revm = prepare_revm_for_tx(&mut state, vector, test, fork)?;
-    let revm_execution_result = revm.transact_commit();
+    let (mut state, _block_hash, _store) = load_initial_state_revm(test).await;
+    let (mut revm, tx_env) = prepare_revm_for_tx(&mut state, vector, test, fork)?;
+    let revm_execution_result = revm.transact_commit(tx_env);
     drop(revm); // Need to drop the state mutable reference.
 
     _ensure_post_state_revm(revm_execution_result, vector, test, &mut state, fork).await?;
@@ -555,10 +592,10 @@ pub async fn _run_ef_test_tx_revm(
 }
 
 pub async fn _ensure_post_state_revm(
-    revm_execution_result: Result<RevmExecutionResult, REVMError<EvmError>>,
+    revm_execution_result: Result<RevmExecutionResult, REVMError<RevmError>>,
     vector: &TestVector,
     test: &EFTest,
-    revm_state: &mut EvmState,
+    revm_state: &mut RevmState,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
     match revm_execution_result {
@@ -574,6 +611,7 @@ pub async fn _ensure_post_state_revm(
                         Box::new(ExecutionReport {
                             result: TxResult::Success,
                             gas_used: 42,
+                            gas_spent: 42,
                             gas_refunded: 42,
                             logs: vec![],
                             output: Bytes::new(),
@@ -585,8 +623,7 @@ pub async fn _ensure_post_state_revm(
                 }
                 // Execution result was successful and no exception was expected.
                 None => {
-                    let revm_account_updates =
-                        backends::revm::REVM::get_state_transitions(revm_state);
+                    let revm_account_updates = revm_state.get_state_transitions();
                     let pos_state_root = post_state_root(&revm_account_updates, test).await;
                     let expected_post_state_root_hash =
                         test.post.vector_post_value(vector, *fork).hash;
@@ -596,6 +633,7 @@ pub async fn _ensure_post_state_revm(
                             Box::new(ExecutionReport {
                                 result: TxResult::Success,
                                 gas_used: 42,
+                                gas_spent: 42,
                                 gas_refunded: 42,
                                 logs: vec![],
                                 output: Bytes::new(),
@@ -635,4 +673,49 @@ pub async fn _ensure_post_state_revm(
         }
     };
     Ok(())
+}
+
+pub fn fork_to_spec_id(fork: Fork) -> SpecId {
+    match fork {
+        Fork::Frontier => SpecId::FRONTIER,
+        Fork::FrontierThawing => SpecId::FRONTIER_THAWING,
+        Fork::Homestead => SpecId::HOMESTEAD,
+        Fork::DaoFork => SpecId::DAO_FORK,
+        Fork::Tangerine => SpecId::TANGERINE,
+        Fork::SpuriousDragon => SpecId::SPURIOUS_DRAGON,
+        Fork::Byzantium => SpecId::BYZANTIUM,
+        Fork::Constantinople => SpecId::CONSTANTINOPLE,
+        Fork::Petersburg => SpecId::PETERSBURG,
+        Fork::Istanbul => SpecId::ISTANBUL,
+        Fork::MuirGlacier => SpecId::MUIR_GLACIER,
+        Fork::Berlin => SpecId::BERLIN,
+        Fork::London => SpecId::LONDON,
+        Fork::ArrowGlacier => SpecId::ARROW_GLACIER,
+        Fork::GrayGlacier => SpecId::GRAY_GLACIER,
+        Fork::Paris => SpecId::MERGE,
+        Fork::Shanghai => SpecId::SHANGHAI,
+        Fork::Cancun => SpecId::CANCUN,
+        Fork::Prague => SpecId::PRAGUE,
+        Fork::Osaka => SpecId::OSAKA,
+        Fork::BPO1 => SpecId::OSAKA,
+        Fork::BPO2 => SpecId::OSAKA,
+        Fork::BPO3 => SpecId::OSAKA,
+        Fork::BPO4 => SpecId::OSAKA,
+        Fork::BPO5 => SpecId::OSAKA,
+        Fork::Amsterdam => SpecId::OSAKA, // Amsterdam maps to OSAKA until revm adds AMSTERDAM SpecId
+    }
+}
+
+pub fn infer_tx_type(tx: &EFTestTransaction) -> TxType {
+    if tx.authorization_list.is_some() {
+        TxType::EIP7702
+    } else if !tx.blob_versioned_hashes.is_empty() {
+        TxType::EIP4844
+    } else if !tx.access_list.is_empty() {
+        TxType::EIP2930
+    } else if tx.max_priority_fee_per_gas.is_some() {
+        TxType::EIP1559
+    } else {
+        TxType::Legacy
+    }
 }

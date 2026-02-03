@@ -1,4 +1,5 @@
 use ethrex_common::types::{BlockHash, batch::Batch};
+use ethrex_rpc::types::block_identifier::BlockIdentifier;
 use ethrex_storage::Store;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -18,7 +19,7 @@ pub struct RpcBatch {
 }
 
 impl RpcBatch {
-    pub async fn build(batch: Batch, block_hashes: bool, store: &Store) -> Result<Self, RpcErr> {
+    pub fn build(batch: Batch, block_hashes: bool, store: &Store) -> Result<Self, RpcErr> {
         let block_hashes = if block_hashes {
             Some(get_block_hashes(
                 batch.first_block,
@@ -92,10 +93,72 @@ impl RpcHandler for GetBatchByBatchNumberRequest {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Requested batch with number: {}", self.batch_number);
-        let Some(batch) = context.rollup_store.get_batch(self.batch_number).await? else {
+        let l1_fork = context.l1_ctx.blockchain.current_fork().await?;
+        let Some(batch) = context
+            .rollup_store
+            .get_batch(self.batch_number, l1_fork)
+            .await?
+        else {
             return Ok(Value::Null);
         };
-        let rpc_batch = RpcBatch::build(batch, self.block_hashes, &context.l1_ctx.storage).await?;
+        let rpc_batch = RpcBatch::build(batch, self.block_hashes, &context.l1_ctx.storage)?;
+
+        serde_json::to_value(&rpc_batch).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+pub struct GetBatchByBatchBlockNumberRequest {
+    pub block: BlockIdentifier,
+}
+
+impl RpcHandler for GetBatchByBatchBlockNumberRequest {
+    fn parse(params: &Option<Vec<Value>>) -> Result<GetBatchByBatchBlockNumberRequest, RpcErr> {
+        let params = params.as_ref().ok_or(ethrex_rpc::RpcErr::BadParams(
+            "No params provided".to_owned(),
+        ))?;
+        if params.len() != 1 {
+            return Err(ethrex_rpc::RpcErr::BadParams("Expected 1 param".to_owned()))?;
+        };
+        Ok(GetBatchByBatchBlockNumberRequest {
+            block: BlockIdentifier::parse(params[0].clone(), 0)?,
+        })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        debug!("Requested batch with block: {}", self.block);
+        let l1_fork = context.l1_ctx.blockchain.current_fork().await?;
+
+        let block_number = self
+            .block
+            .resolve_block_number(&context.l1_ctx.storage)
+            .await?
+            .ok_or(RpcErr::Internal(format!(
+                "Block not found for identifier: {}",
+                self.block
+            )))?;
+
+        // Gets the batch number for the block
+        let batch_number = match context
+            .rollup_store
+            .get_batch_number_by_block(block_number)
+            .await?
+        {
+            Some(location) => location,
+            _ => return Ok(Value::Null),
+        };
+
+        let Some(batch) = context
+            .rollup_store
+            .get_batch(batch_number, l1_fork)
+            .await?
+        else {
+            return Err(RpcErr::Internal(format!(
+                "Batch not found for batch number: {}",
+                batch_number
+            )));
+        };
+
+        let rpc_batch = RpcBatch::build(batch, false, &context.l1_ctx.storage)?;
 
         serde_json::to_value(&rpc_batch).map_err(|error| RpcErr::Internal(error.to_string()))
     }

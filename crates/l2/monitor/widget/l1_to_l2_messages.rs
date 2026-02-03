@@ -1,10 +1,11 @@
 use std::fmt::Display;
 
+use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, U256};
-use ethrex_l2_sdk::{COMMON_BRIDGE_L2_ADDRESS, get_pending_privileged_transactions};
+use ethrex_l2_sdk::privileged_data::PrivilegedTransactionData;
+use ethrex_l2_sdk::{COMMON_BRIDGE_L2_ADDRESS, get_pending_l1_messages};
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 use ethrex_storage::Store;
-use keccak_hash::keccak;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Rect},
@@ -15,7 +16,7 @@ use ratatui::{
 
 use crate::{
     monitor::{self, utils::SelectableScroller, widget::HASH_LENGTH_IN_DIGITS},
-    sequencer::{errors::MonitorError, l1_watcher::PrivilegedTransactionData},
+    sequencer::errors::MonitorError,
 };
 
 // kind | status | L1 tx hash | L2 tx hash | amount
@@ -48,7 +49,7 @@ impl L1ToL2MessageStatus {
     ) -> Result<Self, MonitorError> {
         if let Ok(Some(_tx)) = store.get_transaction_by_hash(l2_tx_hash).await {
             Ok(Self::ProcessedOnL2)
-        } else if get_pending_privileged_transactions(eth_client, common_bridge_address)
+        } else if get_pending_l1_messages(eth_client, common_bridge_address)
             .await
             .map_err(|_| MonitorError::GetPendingPrivilegedTx)?
             .contains(&l2_tx_hash)

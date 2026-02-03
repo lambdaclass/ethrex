@@ -1,3 +1,11 @@
+//! Utility types and error handling for JSON-RPC.
+//!
+//! This module provides common types used across all RPC handlers:
+//! - [`RpcErr`]: Error type for RPC failures with proper JSON-RPC error codes
+//! - [`RpcRequest`]: Parsed JSON-RPC request
+//! - [`RpcNamespace`]: RPC method namespace (eth, engine, debug, etc.)
+//! - Response types for success and error cases
+
 use ethrex_common::U256;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
@@ -7,6 +15,15 @@ use serde_json::Value;
 use crate::{authentication::AuthenticationError, clients::EthClientError};
 use ethrex_blockchain::error::MempoolError;
 
+/// Error type for JSON-RPC method failures.
+///
+/// Each variant maps to a specific JSON-RPC error code when serialized:
+/// - `-32601`: Method not found
+/// - `-32602`: Invalid params
+/// - `-32603`: Internal error
+/// - `-32000`: Generic server error
+/// - `-38001` to `-38005`: Engine API specific errors
+/// - `3`: Execution reverted/halted
 #[derive(Debug, thiserror::Error)]
 pub enum RpcErr {
     #[error("Method not found: {0}")]
@@ -161,34 +178,67 @@ impl From<MempoolError> for RpcErr {
     }
 }
 
-impl From<secp256k1::Error> for RpcErr {
-    fn from(err: secp256k1::Error) -> Self {
+impl From<ethrex_common::EcdsaError> for RpcErr {
+    fn from(err: ethrex_common::EcdsaError) -> Self {
         Self::Internal(format!("Cryptography error: {err}"))
     }
 }
 
+/// JSON-RPC method namespace.
+///
+/// Methods are namespaced by prefix (e.g., `eth_getBalance` is in the `Eth` namespace).
+/// Different namespaces may have different authentication requirements.
 pub enum RpcNamespace {
+    /// Engine API methods for consensus client communication (requires JWT auth).
     Engine,
+    /// Standard Ethereum methods for querying state and sending transactions.
     Eth,
+    /// Node administration methods.
     Admin,
+    /// Debugging and tracing methods.
     Debug,
+    /// Web3 utility methods.
     Web3,
+    /// Network information methods.
     Net,
+    /// Transaction pool inspection methods (exposed as `txpool_*`).
     Mempool,
 }
 
+/// JSON-RPC request identifier.
+///
+/// Per the JSON-RPC 2.0 spec, request IDs can be either numbers or strings.
+/// The same ID must be returned in the response.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RpcRequestId {
+    /// Numeric request ID.
     Number(u64),
+    /// String request ID.
     String(String),
 }
 
+/// A parsed JSON-RPC 2.0 request.
+///
+/// # Example
+///
+/// ```json
+/// {
+///     "jsonrpc": "2.0",
+///     "id": 1,
+///     "method": "eth_getBalance",
+///     "params": ["0x...", "latest"]
+/// }
+/// ```
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RpcRequest {
+    /// Request identifier, echoed back in the response.
     pub id: RpcRequestId,
+    /// JSON-RPC version, must be "2.0".
     pub jsonrpc: String,
+    /// Method name (e.g., "eth_getBalance").
     pub method: String,
+    /// Optional array of method parameters.
     pub params: Option<Vec<Value>>,
 }
 
@@ -236,26 +286,49 @@ impl Default for RpcRequest {
     }
 }
 
+/// Error metadata for JSON-RPC error responses.
+///
+/// Contains the error code, message, and optional additional data.
+/// Error codes follow the JSON-RPC 2.0 and Ethereum conventions.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RpcErrorMetadata {
+    /// Numeric error code (negative for standard errors).
     pub code: i32,
+    /// Optional additional error data (e.g., revert reason).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<String>,
+    /// Human-readable error message.
     pub message: String,
 }
 
+/// A successful JSON-RPC 2.0 response.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RpcSuccessResponse {
+    /// Request identifier from the original request.
     pub id: RpcRequestId,
+    /// JSON-RPC version, always "2.0".
     pub jsonrpc: String,
+    /// The result value returned by the method.
     pub result: Value,
 }
 
+/// An error JSON-RPC 2.0 response.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RpcErrorResponse {
+    /// Request identifier from the original request.
     pub id: RpcRequestId,
+    /// JSON-RPC version, always "2.0".
     pub jsonrpc: String,
+    /// Error details including code and message.
     pub error: RpcErrorMetadata,
+}
+
+/// A JSON-RPC 2.0 response, either success or error.
+#[derive(Deserialize, Debug)]
+#[serde(untagged)]
+pub enum RpcResponse {
+    Success(RpcSuccessResponse),
+    Error(RpcErrorResponse),
 }
 
 /// Failure to read from DB will always constitute an internal error
@@ -321,103 +394,5 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
         maybe_parsed.map_err(|_| format!("Could not parse given hex {maybe_hex}"))
     } else {
         Err(format!("Could not parse given hex {hex}"))
-    }
-}
-
-#[cfg(test)]
-pub mod test_utils {
-    use std::{net::SocketAddr, str::FromStr, sync::Arc};
-
-    use ethrex_blockchain::Blockchain;
-    use ethrex_common::{H512, types::DEFAULT_BUILDER_GAS_CEIL};
-    use ethrex_p2p::{
-        peer_handler::PeerHandler,
-        sync_manager::SyncManager,
-        types::{Node, NodeRecord},
-    };
-    use ethrex_storage::{EngineType, Store};
-    use secp256k1::SecretKey;
-    use tokio::sync::Mutex as TokioMutex;
-
-    use crate::{
-        eth::gas_tip_estimator::GasTipEstimator,
-        rpc::{NodeData, RpcApiContext, start_api},
-    };
-
-    pub const TEST_GENESIS: &str = include_str!("../../../fixtures/genesis/l1.json");
-    pub fn example_p2p_node() -> Node {
-        let public_key_1 = H512::from_str("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").unwrap();
-        Node::new("127.0.0.1".parse().unwrap(), 30303, 30303, public_key_1)
-    }
-
-    pub fn example_local_node_record() -> NodeRecord {
-        let public_key_1 = H512::from_str("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").unwrap();
-        let node = Node::new("127.0.0.1".parse().unwrap(), 30303, 30303, public_key_1);
-        let signer = SecretKey::new(&mut rand::rngs::OsRng);
-
-        NodeRecord::from_node(&node, 1, &signer).unwrap()
-    }
-
-    // Util to start an api for testing on ports 8500 and 8501,
-    // mostly for when hive is missing some endpoints to test
-    // like eth_uninstallFilter.
-    // Here's how you would use it:
-    // ```
-    // let server_handle = tokio::spawn(async move { start_stest_api().await })
-    // ...
-    // assert!(something_that_needs_the_server)
-    // ...
-    // server_handle.abort()
-    // ```
-    pub async fn start_test_api() {
-        let http_addr: SocketAddr = "127.0.0.1:8500".parse().unwrap();
-        let authrpc_addr: SocketAddr = "127.0.0.1:8501".parse().unwrap();
-        let storage =
-            Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
-        storage
-            .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
-            .await
-            .expect("Failed to build test genesis");
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        let jwt_secret = Default::default();
-        let local_p2p_node = example_p2p_node();
-        let local_node_record = example_local_node_record();
-        start_api(
-            http_addr,
-            authrpc_addr,
-            storage,
-            blockchain,
-            jwt_secret,
-            local_p2p_node,
-            local_node_record,
-            SyncManager::dummy(),
-            PeerHandler::dummy(),
-            "ethrex/test".to_string(),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    }
-
-    pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        let local_node_record = example_local_node_record();
-        RpcApiContext {
-            storage,
-            blockchain,
-            active_filters: Default::default(),
-            syncer: Arc::new(SyncManager::dummy()),
-            peer_handler: PeerHandler::dummy(),
-            node_data: NodeData {
-                jwt_secret: Default::default(),
-                local_p2p_node: example_p2p_node(),
-                local_node_record,
-                client_version: "ethrex/test".to_string(),
-            },
-            gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
-            log_filter_handler: None,
-            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
-        }
     }
 }

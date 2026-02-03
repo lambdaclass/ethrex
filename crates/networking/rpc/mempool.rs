@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ethrex_common::{Address, H256};
+use ethrex_common::Address;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -24,16 +24,13 @@ struct MempoolStatus {
 }
 
 /// Handling of rpc endpoint `mempool_content`
-pub async fn content(context: RpcApiContext) -> Result<Value, RpcErr> {
+pub fn content(context: RpcApiContext) -> Result<Value, RpcErr> {
     let transactions = context.blockchain.mempool.content()?;
     // Group transactions by sender and nonce and map them to rpc transactions
     let mut mempool_content = MempoolContentEntry::new();
     for tx in transactions {
         let sender_entry = mempool_content.entry(tx.sender()?).or_default();
-        sender_entry.insert(
-            tx.nonce(),
-            RpcTransaction::build(tx, None, H256::zero(), None)?,
-        );
+        sender_entry.insert(tx.nonce(), RpcTransaction::build(tx, None, None, None)?);
     }
     let response = MempoolContent {
         pending: mempool_content,
@@ -43,7 +40,7 @@ pub async fn content(context: RpcApiContext) -> Result<Value, RpcErr> {
     Ok(serde_json::to_value(response)?)
 }
 
-pub async fn status(context: RpcApiContext) -> Result<Value, RpcErr> {
+pub fn status(context: RpcApiContext) -> Result<Value, RpcErr> {
     let pending = context.blockchain.mempool.status()?;
     // We have no concept of "queued" transactions yet so we will leave this as 0
     let queued = 0;

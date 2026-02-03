@@ -6,34 +6,17 @@ use bls12_381::{
     hash_to_curve::MapToCurve, multi_miller_loop,
 };
 use bytes::{Buf, Bytes};
+use ethrex_common::H160;
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
-    Address, H160, H256, U256, kzg::verify_kzg_proof, serde_utils::bool, types::Fork,
+    Address, H256, U256, serde_utils::bool, types::Fork, types::Fork::*,
     utils::u256_from_big_endian,
 };
-use ethrex_crypto::blake2f::blake2b_f;
-use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+use ethrex_crypto::{blake2f::blake2b_f, kzg::verify_kzg_proof};
 use k256::elliptic_curve::Field;
-use keccak_hash::keccak256;
 use lambdaworks_math::{
-    elliptic_curve::{
-        short_weierstrass::{
-            curves::bn_254::{
-                curve::{BN254Curve, BN254FieldElement, BN254TwistCurveFieldElement},
-                field_extension::{
-                    BN254_PRIME_FIELD_ORDER, BN254FieldModulus, Degree2ExtensionField,
-                    Degree12ExtensionField,
-                },
-                pairing::BN254AtePairing,
-                twist::BN254TwistCurve,
-            },
-            point::ShortWeierstrassProjectivePoint,
-        },
-        traits::{IsEllipticCurve, IsPairing},
-    },
-    field::{
-        element::FieldElement, extensions::quadratic::QuadraticExtensionFieldElement,
-        fields::montgomery_backed_prime_fields::MontgomeryBackendPrimeField,
+    elliptic_curve::short_weierstrass::curves::bls12_381::{
+        curve::BLS12381TwistCurveFieldElement, twist::BLS12381TwistCurve,
     },
     traits::ByteConversion,
     unsigned_integer::element::UnsignedInteger,
@@ -46,7 +29,7 @@ use p256::{
     ecdsa::{Signature as P256Signature, signature::hazmat::PrehashVerifier},
     elliptic_curve::bigint::U256 as P256Uint,
 };
-use sha3::Digest;
+use sha2::Digest;
 use std::borrow::Cow;
 use std::ops::Mul;
 
@@ -59,106 +42,16 @@ use crate::{
     gas_cost::{
         self, BLAKE2F_ROUND_COST, BLS12_381_G1_K_DISCOUNT, BLS12_381_G1ADD_COST,
         BLS12_381_G2_K_DISCOUNT, BLS12_381_G2ADD_COST, BLS12_381_MAP_FP_TO_G1_COST,
-        BLS12_381_MAP_FP2_TO_G2_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, G1_MUL_COST,
-        G2_MUL_COST, POINT_EVALUATION_COST,
+        BLS12_381_MAP_FP2_TO_G2_COST, ECADD_COST, ECMUL_COST, G1_MUL_COST, G2_MUL_COST,
+        POINT_EVALUATION_COST,
     },
 };
-
-pub const ECRECOVER_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x01,
-]);
-pub const SHA2_256_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x02,
-]);
-pub const RIPEMD_160_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x03,
-]);
-pub const IDENTITY_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x04,
-]);
-pub const MODEXP_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x05,
-]);
-pub const ECADD_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x06,
-]);
-pub const ECMUL_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x07,
-]);
-pub const ECPAIRING_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x08,
-]);
-pub const BLAKE2F_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x09,
-]);
-pub const POINT_EVALUATION_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x0a,
-]);
-pub const BLS12_G1ADD_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x0b,
-]);
-pub const BLS12_G1MSM_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x0c,
-]);
-pub const BLS12_G2ADD_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x0d,
-]);
-pub const BLS12_G2MSM_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x0e,
-]);
-pub const BLS12_PAIRING_CHECK_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x0f,
-]);
-pub const BLS12_MAP_FP_TO_G1_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x10,
-]);
-pub const BLS12_MAP_FP2_TO_G2_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x11,
-]);
-pub const P256_VERIFICATION_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x01, 0x00,
-]);
-
-pub const PRECOMPILES: [H160; 10] = [
-    ECRECOVER_ADDRESS,
-    SHA2_256_ADDRESS,
-    RIPEMD_160_ADDRESS,
-    IDENTITY_ADDRESS,
-    MODEXP_ADDRESS,
-    ECADD_ADDRESS,
-    ECMUL_ADDRESS,
-    ECPAIRING_ADDRESS,
-    BLAKE2F_ADDRESS,
-    POINT_EVALUATION_ADDRESS,
-];
-
-pub const PRECOMPILES_POST_CANCUN: [H160; 7] = [
-    BLS12_G1ADD_ADDRESS,
-    BLS12_G1MSM_ADDRESS,
-    BLS12_G2ADD_ADDRESS,
-    BLS12_G2MSM_ADDRESS,
-    BLS12_PAIRING_CHECK_ADDRESS,
-    BLS12_MAP_FP_TO_G1_ADDRESS,
-    BLS12_MAP_FP2_TO_G2_ADDRESS,
-];
+use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::curve::{
+    BLS12381Curve, BLS12381FieldElement,
+};
+use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::field_extension::BLS12381FieldModulus;
+use lambdaworks_math::elliptic_curve::short_weierstrass::traits::IsShortWeierstrass;
+use lambdaworks_math::field::fields::montgomery_backed_prime_fields::IsModulus;
 
 pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
 
@@ -169,9 +62,6 @@ pub const SIZE_PRECOMPILES_PRAGUE: u64 = 17;
 pub const BLS12_381_G1_MSM_PAIR_LENGTH: usize = 160;
 pub const BLS12_381_G2_MSM_PAIR_LENGTH: usize = 288;
 pub const BLS12_381_PAIRING_CHECK_PAIR_LENGTH: usize = 384;
-
-const BLS12_381_G1ADD_VALID_INPUT_LENGTH: usize = 256;
-const BLS12_381_G2ADD_VALID_INPUT_LENGTH: usize = 512;
 
 const BLS12_381_FP2_VALID_INPUT_LENGTH: usize = 128;
 const BLS12_381_FP_VALID_INPUT_LENGTH: usize = 64;
@@ -196,26 +86,205 @@ const FP2_ZERO_MAPPED_TO_G2: [u8; 256] = [
 pub const G1_POINT_AT_INFINITY: [u8; 128] = [0_u8; 128];
 pub const G2_POINT_AT_INFINITY: [u8; 256] = [0_u8; 256];
 
+pub struct Precompile {
+    pub address: H160,
+    pub name: &'static str,
+    pub active_since_fork: Fork,
+}
+
+pub const ECRECOVER: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x01,
+    ]),
+    name: "ECREC",
+    active_since_fork: Paris,
+};
+
+pub const SHA2_256: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x02,
+    ]),
+    name: "SHA256",
+    active_since_fork: Paris,
+};
+
+pub const RIPEMD_160: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x03,
+    ]),
+    name: "RIPEMD160",
+    active_since_fork: Paris,
+};
+
+pub const IDENTITY: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x04,
+    ]),
+    name: "ID",
+    active_since_fork: Paris,
+};
+
+pub const MODEXP: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x05,
+    ]),
+    name: "MODEXP",
+    active_since_fork: Paris,
+};
+
+pub const ECADD: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x06,
+    ]),
+    name: "BN254_ADD",
+    active_since_fork: Paris,
+};
+
+pub const ECMUL: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x07,
+    ]),
+    name: "BN254_MUL",
+    active_since_fork: Paris,
+};
+
+pub const ECPAIRING: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x08,
+    ]),
+    name: "BN254_PAIRING",
+    active_since_fork: Paris,
+};
+
+pub const BLAKE2F: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x09,
+    ]),
+    name: "BLAKE2F",
+    active_since_fork: Paris,
+};
+
+pub const POINT_EVALUATION: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x0a,
+    ]),
+    name: "KZG_POINT_EVALUATION",
+    active_since_fork: Cancun,
+};
+
+pub const BLS12_G1ADD: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x0b,
+    ]),
+    name: "BLS12_G1ADD",
+    active_since_fork: Prague,
+};
+
+pub const BLS12_G1MSM: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x0c,
+    ]),
+    name: "BLS12_G1MSM",
+    active_since_fork: Prague,
+};
+
+pub const BLS12_G2ADD: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x0d,
+    ]),
+    name: "BLS12_G2ADD",
+    active_since_fork: Prague,
+};
+
+pub const BLS12_G2MSM: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x0e,
+    ]),
+    name: "BLS12_G2MSM",
+    active_since_fork: Prague,
+};
+
+pub const BLS12_PAIRING_CHECK: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x0f,
+    ]),
+    name: "BLS12_PAIRING_CHECK",
+    active_since_fork: Prague,
+};
+
+pub const BLS12_MAP_FP_TO_G1: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x10,
+    ]),
+    name: "BLS12_MAP_FP_TO_G1",
+    active_since_fork: Prague,
+};
+
+pub const BLS12_MAP_FP2_TO_G2: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x11,
+    ]),
+    name: "BLS12_MAP_FP2_TO_G2",
+    active_since_fork: Prague,
+};
+
+pub const P256VERIFY: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01, 0x00,
+    ]),
+    name: "P256VERIFY",
+    active_since_fork: Osaka,
+};
+
+pub const PRECOMPILES: [Precompile; 19] = [
+    ECRECOVER,
+    SHA2_256,
+    RIPEMD_160,
+    IDENTITY,
+    MODEXP,
+    ECADD,
+    ECMUL,
+    ECPAIRING,
+    BLAKE2F,
+    POINT_EVALUATION,
+    BLS12_G1ADD,
+    BLS12_G1MSM,
+    BLS12_G2ADD,
+    BLS12_G2MSM,
+    BLS12_MAP_FP_TO_G1,
+    BLS12_MAP_FP2_TO_G2,
+    BLS12_MAP_FP_TO_G1,
+    BLS12_PAIRING_CHECK,
+    P256VERIFY,
+];
+
+pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
+    PRECOMPILES
+        .into_iter()
+        .filter(move |precompile| precompile.active_since_fork <= fork)
+}
+
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
-    // Cancun specs is the only one that allows point evaluation precompile
-    if *address == POINT_EVALUATION_ADDRESS && fork < Fork::Cancun {
-        return false;
-    }
-    // Prague or newers forks should only use these precompiles
-    // https://eips.ethereum.org/EIPS/eip-2537
-    if PRECOMPILES_POST_CANCUN.contains(address) && fork < Fork::Prague {
-        return false;
-    }
-
-    // P256 verify Precompile only existed on L2 before Osaka
-    if fork < Fork::Osaka && matches!(vm_type, VMType::L1) && address == &P256_VERIFICATION_ADDRESS
-    {
-        return false;
-    }
-
-    PRECOMPILES.contains(address)
-        || PRECOMPILES_POST_CANCUN.contains(address)
-        || address == &P256_VERIFICATION_ADDRESS
+    (matches!(vm_type, VMType::L2(_)) && *address == P256VERIFY.address)
+        || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
 }
 
 #[expect(clippy::as_conversions, clippy::indexing_slicing)]
@@ -229,35 +298,34 @@ pub fn execute_precompile(
 
     const PRECOMPILES: [Option<PrecompileFn>; 512] = const {
         let mut precompiles = [const { None }; 512];
-        precompiles[ECRECOVER_ADDRESS.0[19] as usize] = Some(ecrecover as PrecompileFn);
-        precompiles[IDENTITY_ADDRESS.0[19] as usize] = Some(identity as PrecompileFn);
-        precompiles[SHA2_256_ADDRESS.0[19] as usize] = Some(sha2_256 as PrecompileFn);
-        precompiles[RIPEMD_160_ADDRESS.0[19] as usize] = Some(ripemd_160 as PrecompileFn);
-        precompiles[MODEXP_ADDRESS.0[19] as usize] = Some(modexp as PrecompileFn);
-        precompiles[ECADD_ADDRESS.0[19] as usize] = Some(ecadd as PrecompileFn);
-        precompiles[ECMUL_ADDRESS.0[19] as usize] = Some(ecmul as PrecompileFn);
-        precompiles[ECPAIRING_ADDRESS.0[19] as usize] = Some(ecpairing as PrecompileFn);
-        precompiles[BLAKE2F_ADDRESS.0[19] as usize] = Some(blake2f as PrecompileFn);
-        precompiles[POINT_EVALUATION_ADDRESS.0[19] as usize] =
+        precompiles[ECRECOVER.address.0[19] as usize] = Some(ecrecover as PrecompileFn);
+        precompiles[IDENTITY.address.0[19] as usize] = Some(identity as PrecompileFn);
+        precompiles[SHA2_256.address.0[19] as usize] = Some(sha2_256 as PrecompileFn);
+        precompiles[RIPEMD_160.address.0[19] as usize] = Some(ripemd_160 as PrecompileFn);
+        precompiles[MODEXP.address.0[19] as usize] = Some(modexp as PrecompileFn);
+        precompiles[ECADD.address.0[19] as usize] = Some(ecadd as PrecompileFn);
+        precompiles[ECMUL.address.0[19] as usize] = Some(ecmul as PrecompileFn);
+        precompiles[ECPAIRING.address.0[19] as usize] = Some(ecpairing as PrecompileFn);
+        precompiles[BLAKE2F.address.0[19] as usize] = Some(blake2f as PrecompileFn);
+        precompiles[POINT_EVALUATION.address.0[19] as usize] =
             Some(point_evaluation as PrecompileFn);
-        precompiles[BLS12_G1ADD_ADDRESS.0[19] as usize] = Some(bls12_g1add as PrecompileFn);
-        precompiles[BLS12_G1MSM_ADDRESS.0[19] as usize] = Some(bls12_g1msm as PrecompileFn);
-        precompiles[BLS12_G2ADD_ADDRESS.0[19] as usize] = Some(bls12_g2add as PrecompileFn);
-        precompiles[BLS12_G2MSM_ADDRESS.0[19] as usize] = Some(bls12_g2msm as PrecompileFn);
-        precompiles[BLS12_PAIRING_CHECK_ADDRESS.0[19] as usize] =
+        precompiles[BLS12_G1ADD.address.0[19] as usize] = Some(bls12_g1add as PrecompileFn);
+        precompiles[BLS12_G1MSM.address.0[19] as usize] = Some(bls12_g1msm as PrecompileFn);
+        precompiles[BLS12_G2ADD.address.0[19] as usize] = Some(bls12_g2add as PrecompileFn);
+        precompiles[BLS12_G2MSM.address.0[19] as usize] = Some(bls12_g2msm as PrecompileFn);
+        precompiles[BLS12_PAIRING_CHECK.address.0[19] as usize] =
             Some(bls12_pairing_check as PrecompileFn);
-        precompiles[BLS12_MAP_FP_TO_G1_ADDRESS.0[19] as usize] =
+        precompiles[BLS12_MAP_FP_TO_G1.address.0[19] as usize] =
             Some(bls12_map_fp_to_g1 as PrecompileFn);
-        precompiles[BLS12_MAP_FP2_TO_G2_ADDRESS.0[19] as usize] =
+        precompiles[BLS12_MAP_FP2_TO_G2.address.0[19] as usize] =
             Some(bls12_map_fp2_tp_g2 as PrecompileFn);
-        precompiles[u16::from_be_bytes([
-            P256_VERIFICATION_ADDRESS.0[18],
-            P256_VERIFICATION_ADDRESS.0[19],
-        ]) as usize] = Some(p_256_verify as PrecompileFn);
+        precompiles
+            [u16::from_be_bytes([P256VERIFY.address.0[18], P256VERIFY.address.0[19]]) as usize] =
+            Some(p_256_verify as PrecompileFn);
         precompiles
     };
 
-    if address[0..17] != [0u8; 17] {
+    if address[0..18] != [0u8; 18] {
         return Err(VMError::Internal(InternalError::InvalidPrecompileAddress));
     }
     let index = u16::from_be_bytes([address[18], address[19]]) as usize;
@@ -268,7 +336,19 @@ pub fn execute_precompile(
         .flatten()
         .ok_or(VMError::Internal(InternalError::InvalidPrecompileAddress))?;
 
-    precompile(calldata, gas_remaining, fork)
+    #[cfg(feature = "perf_opcode_timings")]
+    let precompile_time_start = std::time::Instant::now();
+
+    let result = precompile(calldata, gas_remaining, fork);
+
+    #[cfg(feature = "perf_opcode_timings")]
+    {
+        let time = precompile_time_start.elapsed();
+        let mut timings = crate::timings::PRECOMPILES_TIMINGS.lock().expect("poison");
+        timings.update(address, time);
+    }
+
+    result
 }
 
 /// Consumes gas and if it's higher than the gas limit returns an error.
@@ -295,6 +375,87 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
     padded_calldata.into()
 }
 
+#[expect(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+#[cfg(all(
+    not(feature = "sp1"),
+    not(feature = "risc0"),
+    not(feature = "zisk"),
+    feature = "secp256k1"
+))]
+#[inline(always)]
+fn copy_segment(calldata: &Bytes, dst: &mut [u8], start: usize) {
+    if start >= calldata.len() {
+        return;
+    }
+    let end = (start + dst.len()).min(calldata.len());
+    let src = &calldata[start..end];
+    dst[..src.len()].copy_from_slice(src);
+}
+
+#[cfg(all(
+    not(feature = "sp1"),
+    not(feature = "risc0"),
+    not(feature = "zisk"),
+    feature = "secp256k1"
+))]
+pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+    use crate::gas_cost::ECRECOVER_COST;
+
+    increase_precompile_consumed_gas(ECRECOVER_COST, gas_remaining)?;
+
+    const WORD: usize = 32;
+    const SIG_LEN: usize = 64;
+
+    // Total input size = 128
+    let mut raw_hash = [0u8; WORD];
+    let mut raw_v = [0u8; WORD];
+    let mut raw_sig = [0u8; SIG_LEN];
+
+    copy_segment(calldata, &mut raw_hash, 0);
+    copy_segment(calldata, &mut raw_v, WORD);
+    copy_segment(calldata, &mut raw_sig, WORD * 2);
+
+    // EVM expects v ∈ {27, 28}. Anything else is invalid → empty return.
+    if raw_v[..(WORD - 1)].iter().any(|&b| b != 0) {
+        return Ok(Bytes::new());
+    }
+    let recovery_id_byte = match raw_v[WORD - 1] {
+        27 => 0_i32,
+        28 => 1_i32,
+        _ => return Ok(Bytes::new()),
+    };
+
+    // Recovery id from the adjusted byte.
+    let Ok(recovery_id) = secp256k1::ecdsa::RecoveryId::try_from(recovery_id_byte) else {
+        return Ok(Bytes::new());
+    };
+
+    let Ok(recoverable_signature) =
+        secp256k1::ecdsa::RecoverableSignature::from_compact(&raw_sig, recovery_id)
+    else {
+        return Ok(Bytes::new());
+    };
+
+    let message = secp256k1::Message::from_digest(raw_hash);
+
+    let Ok(public_key) = recoverable_signature.recover(&message) else {
+        return Ok(Bytes::new());
+    };
+
+    // We need to take the 64 bytes from the public key (discarding the first pos of the slice)
+    let public_key_hash =
+        ethrex_crypto::keccak::keccak_hash(&public_key.serialize_uncompressed()[1..]);
+
+    // Address is the last 20 bytes of the hash.
+    let recovered_address_bytes = &public_key_hash[12..];
+
+    let mut out = [0u8; 32];
+
+    out[12..32].copy_from_slice(recovered_address_bytes);
+
+    Ok(Bytes::copy_from_slice(&out))
+}
+
 /// ## ECRECOVER precompile.
 /// Elliptic curve digital signature algorithm (ECDSA) public key recovery function.
 ///
@@ -304,7 +465,18 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
 ///   [64..128): r||s (64 bytes)
 ///
 /// Returns the recovered address.
+#[cfg(any(
+    feature = "sp1",
+    feature = "risc0",
+    feature = "zisk",
+    not(feature = "secp256k1"),
+))]
 pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+    use ethrex_common::utils::keccak;
+    use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+
+    use crate::gas_cost::ECRECOVER_COST;
+
     increase_precompile_consumed_gas(ECRECOVER_COST, gas_remaining)?;
 
     const INPUT_LEN: usize = 128;
@@ -316,18 +488,15 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     let (raw_v, raw_sig) = tail.split_at(WORD);
 
     // EVM expects v ∈ {27, 28}. Anything else is invalid → empty return.
-    let v = match u8::try_from(u256_from_big_endian(raw_v)) {
-        Ok(v @ (27 | 28)) => v,
+    let mut recid_byte = match u8::try_from(u256_from_big_endian(raw_v)) {
+        Ok(27) => 0,
+        Ok(28) => 1,
         _ => return Ok(Bytes::new()),
     };
 
-    #[allow(clippy::arithmetic_side_effects, reason = "v ∈ {27, 28}")]
-    let mut recid_byte = v - 27;
-
     // Parse signature (r||s). If malformed → empty return.
-    let mut sig = match Signature::from_slice(raw_sig) {
-        Ok(s) => s,
-        Err(_) => return Ok(Bytes::new()),
+    let Ok(mut sig) = Signature::from_slice(raw_sig) else {
+        return Ok(Bytes::new());
     };
 
     // k256 enforces canonical low-S for recovery.
@@ -338,15 +507,13 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     }
 
     // Recovery id from the adjusted byte.
-    let recid = match RecoveryId::from_byte(recid_byte) {
-        Some(id) => id,
-        None => return Ok(Bytes::new()),
+    let Some(recid) = RecoveryId::from_byte(recid_byte) else {
+        return Ok(Bytes::new());
     };
 
     // Recover the verifying key from the prehash (32-byte digest).
-    let vk = match VerifyingKey::recover_from_prehash(raw_hash, &sig, recid) {
-        Ok(k) => k,
-        Err(_) => return Ok(Bytes::new()),
+    let Ok(vk) = VerifyingKey::recover_from_prehash(raw_hash, &sig, recid) else {
+        return Ok(Bytes::new());
     };
 
     // SEC1 uncompressed: 0x04 || X(32) || Y(32). We need X||Y (64 bytes).
@@ -356,7 +523,7 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     let xy = &mut uncompressed[1..65];
 
     // keccak256(X||Y).
-    keccak256(xy);
+    let xy = keccak(xy);
 
     // Address is the last 20 bytes of the hash.
     let mut out = [0u8; 32];
@@ -382,9 +549,7 @@ pub fn sha2_256(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resul
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     let digest = sha2::Sha256::digest(calldata);
-    let result = digest.as_slice();
-
-    Ok(Bytes::copy_from_slice(result))
+    Ok(Bytes::copy_from_slice(&digest))
 }
 
 /// Returns the calldata hashed by ripemd-160 algorithm, padded by zeros at left
@@ -509,16 +674,16 @@ fn get_slice_or_default<'c>(
     size_to_expand: usize,
 ) -> Cow<'c, [u8]> {
     let upper_limit = calldata.len().min(upper_limit);
-    if let Some(data) = calldata.get(lower_limit..upper_limit) {
-        if !data.is_empty() {
-            if data.len() == size_to_expand {
-                return data.into();
-            }
-            let mut extended = vec![0u8; size_to_expand];
-            let copy_size = size_to_expand.min(data.len());
-            extended[..copy_size].copy_from_slice(&data[..copy_size]);
-            return extended.into();
+    if let Some(data) = calldata.get(lower_limit..upper_limit)
+        && !data.is_empty()
+    {
+        if data.len() == size_to_expand {
+            return data.into();
         }
+        let mut extended = vec![0u8; size_to_expand];
+        let copy_size = size_to_expand.min(data.len());
+        extended[..copy_size].copy_from_slice(&data[..copy_size]);
+        return extended.into();
     }
     Vec::new().into()
 }
@@ -531,8 +696,22 @@ fn mod_exp(base: Natural, exponent: Natural, modulus: Natural) -> Natural {
     } else if exponent == Natural::ZERO {
         Natural::from(1_u8) % modulus
     } else {
-        let base_mod = base % &modulus; // malachite requires base to be reduced to modulus first
-        base_mod.mod_pow(&exponent, &modulus)
+        #[cfg(not(feature = "zisk"))]
+        {
+            let base_mod = base % &modulus; // malachite requires base to be reduced to modulus first
+            base_mod.mod_pow(&exponent, &modulus)
+        }
+
+        #[cfg(feature = "zisk")]
+        {
+            use ziskos::zisklib::modexp_u64;
+            let (mut base, mut exponent, mut modulus) = (base, exponent, modulus);
+            let base_limbs = base.to_limbs_asc();
+            let exponent_limbs = exponent.to_limbs_asc();
+            let modulus_limbs = modulus.to_limbs_asc();
+            let result_limbs = modexp_u64(&base_limbs, &exponent_limbs, &modulus_limbs);
+            Natural::from_owned_limbs_asc(result_limbs)
+        }
     }
 }
 
@@ -563,23 +742,23 @@ pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
 
     increase_precompile_consumed_gas(ECADD_COST, gas_remaining)?;
 
-    let first_point_x = calldata.get(0..32).ok_or(InternalError::Slicing)?;
-    let first_point_y = calldata.get(32..64).ok_or(InternalError::Slicing)?;
-    let second_point_x = calldata.get(64..96).ok_or(InternalError::Slicing)?;
-    let second_point_y = calldata.get(96..128).ok_or(InternalError::Slicing)?;
+    let (Some(first_point), Some(second_point)) =
+        (parse_bn254_g1(&calldata, 0), parse_bn254_g1(&calldata, 64))
+    else {
+        return Err(InternalError::Slicing.into());
+    };
+    validate_bn254_g1_coords(&first_point)?;
+    validate_bn254_g1_coords(&second_point)?;
+    bn254_g1_add(first_point, second_point)
+}
 
-    if u256_from_big_endian(first_point_x) >= ALT_BN128_PRIME
-        || u256_from_big_endian(first_point_y) >= ALT_BN128_PRIME
-        || u256_from_big_endian(second_point_x) >= ALT_BN128_PRIME
-        || u256_from_big_endian(second_point_y) >= ALT_BN128_PRIME
-    {
-        return Err(PrecompileError::InvalidPoint.into());
-    }
-
-    let first_point_x = ark_bn254::Fq::from_be_bytes_mod_order(first_point_x);
-    let first_point_y = ark_bn254::Fq::from_be_bytes_mod_order(first_point_y);
-    let second_point_x = ark_bn254::Fq::from_be_bytes_mod_order(second_point_x);
-    let second_point_y = ark_bn254::Fq::from_be_bytes_mod_order(second_point_y);
+#[cfg(not(feature = "zisk"))]
+#[inline]
+pub fn bn254_g1_add(first_point: G1, second_point: G1) -> Result<Bytes, VMError> {
+    let first_point_x = ark_bn254::Fq::from_be_bytes_mod_order(&first_point.0.to_big_endian());
+    let first_point_y = ark_bn254::Fq::from_be_bytes_mod_order(&first_point.1.to_big_endian());
+    let second_point_x = ark_bn254::Fq::from_be_bytes_mod_order(&second_point.0.to_big_endian());
+    let second_point_y = ark_bn254::Fq::from_be_bytes_mod_order(&second_point.1.to_big_endian());
 
     let first_point_is_zero = first_point_x.is_zero() && first_point_y.is_zero();
     let second_point_is_zero = second_point_x.is_zero() && second_point_y.is_zero();
@@ -629,25 +808,109 @@ pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
     Ok(Bytes::from(out))
 }
 
+#[cfg(feature = "zisk")]
+#[inline]
+pub fn bn254_g1_add(first_point: G1, second_point: G1) -> Result<Bytes, VMError> {
+    // SP1 patches the substrate-bn crate too, but some Ethereum Mainnet blocks fail to execute with it with a GasMismatch error
+    // so for now we will only use it for ZisK.
+    use substrate_bn::{AffineG1, Fq, G1 as SubstrateG1, Group};
+
+    if first_point.is_zero() && second_point.is_zero() {
+        return Ok(Bytes::from([0u8; 64].to_vec()));
+    }
+
+    if first_point.is_zero() {
+        let (g1_x, g1_y) = (
+            Fq::from_slice(&second_point.0.to_big_endian())
+                .map_err(|_| PrecompileError::ParsingInputError)?,
+            Fq::from_slice(&second_point.1.to_big_endian())
+                .map_err(|_| PrecompileError::ParsingInputError)?,
+        );
+        // Validate that the point is on the curve
+        AffineG1::new(g1_x, g1_y).map_err(|_| PrecompileError::InvalidPoint)?;
+
+        let mut x_bytes = [0u8; 32];
+        let mut y_bytes = [0u8; 32];
+        g1_x.to_big_endian(&mut x_bytes);
+        g1_y.to_big_endian(&mut y_bytes);
+        return Ok(Bytes::from([x_bytes, y_bytes].concat()));
+    }
+
+    if second_point.is_zero() {
+        let (g1_x, g1_y) = (
+            Fq::from_slice(&first_point.0.to_big_endian())
+                .map_err(|_| PrecompileError::ParsingInputError)?,
+            Fq::from_slice(&first_point.1.to_big_endian())
+                .map_err(|_| PrecompileError::ParsingInputError)?,
+        );
+        // Validate that the point is on the curve
+        AffineG1::new(g1_x, g1_y).map_err(|_| PrecompileError::InvalidPoint)?;
+
+        let mut x_bytes = [0u8; 32];
+        let mut y_bytes = [0u8; 32];
+        g1_x.to_big_endian(&mut x_bytes);
+        g1_y.to_big_endian(&mut y_bytes);
+        return Ok(Bytes::from([x_bytes, y_bytes].concat()));
+    }
+
+    let (first_x, first_y) = (
+        Fq::from_slice(&first_point.0.to_big_endian())
+            .map_err(|_| PrecompileError::ParsingInputError)?,
+        Fq::from_slice(&first_point.1.to_big_endian())
+            .map_err(|_| PrecompileError::ParsingInputError)?,
+    );
+
+    let (second_x, second_y) = (
+        Fq::from_slice(&second_point.0.to_big_endian())
+            .map_err(|_| PrecompileError::ParsingInputError)?,
+        Fq::from_slice(&second_point.1.to_big_endian())
+            .map_err(|_| PrecompileError::ParsingInputError)?,
+    );
+
+    let first: SubstrateG1 = AffineG1::new(first_x, first_y)
+        .map_err(|_| PrecompileError::InvalidPoint)?
+        .into();
+
+    let second: SubstrateG1 = AffineG1::new(second_x, second_y)
+        .map_err(|_| PrecompileError::InvalidPoint)?
+        .into();
+
+    #[allow(
+        clippy::arithmetic_side_effects,
+        reason = "G1 addition doesn't overflow, intermediate operations that could overflow should be handled correctly by the library"
+    )]
+    let result = first + second;
+
+    let mut x_bytes = [0u8; 32];
+    let mut y_bytes = [0u8; 32];
+    result.x().to_big_endian(&mut x_bytes);
+    result.y().to_big_endian(&mut y_bytes);
+    let out = [x_bytes, y_bytes].concat();
+
+    Ok(Bytes::from(out))
+}
+
 /// Makes a scalar multiplication on the elliptic curve 'alt_bn128'
 pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96);
-
     increase_precompile_consumed_gas(ECMUL_COST, gas_remaining)?;
 
-    let point_x = calldata.get(0..32).ok_or(InternalError::Slicing)?;
-    let point_y = calldata.get(32..64).ok_or(InternalError::Slicing)?;
-    let scalar = calldata.get(64..96).ok_or(InternalError::Slicing)?;
+    let (Some(g1), Some(scalar)) = (
+        parse_bn254_g1(&calldata, 0),
+        parse_bn254_scalar(&calldata, 64),
+    ) else {
+        return Err(InternalError::Slicing.into());
+    };
+    validate_bn254_g1_coords(&g1)?;
+    bn254_g1_mul(g1, scalar)
+}
 
-    if u256_from_big_endian(point_x) >= ALT_BN128_PRIME
-        || u256_from_big_endian(point_y) >= ALT_BN128_PRIME
-    {
-        return Err(PrecompileError::InvalidPoint.into());
-    }
-
-    let x = ark_bn254::Fq::from_be_bytes_mod_order(point_x);
-    let y = ark_bn254::Fq::from_be_bytes_mod_order(point_y);
+#[cfg(not(any(feature = "sp1", feature = "zisk")))]
+#[inline]
+pub fn bn254_g1_mul(point: G1, scalar: U256) -> Result<Bytes, VMError> {
+    let x = ark_bn254::Fq::from_be_bytes_mod_order(&point.0.to_big_endian());
+    let y = ark_bn254::Fq::from_be_bytes_mod_order(&point.1.to_big_endian());
 
     if x.is_zero() && y.is_zero() {
         return Ok(Bytes::from([0u8; 64].to_vec()));
@@ -658,7 +921,7 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
         return Err(PrecompileError::InvalidPoint.into());
     }
 
-    let scalar = FrArk::from_be_bytes_mod_order(scalar);
+    let scalar = FrArk::from_be_bytes_mod_order(&scalar.to_big_endian());
     if scalar.is_zero() {
         return Ok(Bytes::from([0u8; 64].to_vec()));
     }
@@ -674,6 +937,44 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
     Ok(Bytes::from(out))
 }
 
+#[cfg(any(feature = "sp1", feature = "zisk"))]
+#[inline]
+pub fn bn254_g1_mul(g1: G1, scalar: U256) -> Result<Bytes, VMError> {
+    use substrate_bn::{AffineG1, Fq, Fr, G1, Group};
+
+    if g1.is_zero() || scalar.is_zero() {
+        return Ok(Bytes::from([0u8; 64].to_vec()));
+    }
+
+    let (g1_x, g1_y) = (
+        Fq::from_slice(&g1.0.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?,
+        Fq::from_slice(&g1.1.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?,
+    );
+
+    let g1 = AffineG1::new(g1_x, g1_y).map_err(|_| PrecompileError::InvalidPoint)?;
+
+    // Small difference between the patched versions of substrate-bn
+    #[cfg(feature = "zisk")]
+    let g1: G1 = g1.into();
+
+    let scalar =
+        Fr::from_slice(&scalar.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?;
+
+    #[allow(
+        clippy::arithmetic_side_effects,
+        reason = "G1 scalar multiplication doesn't overflow, intermediate operations that could overflow should be handled correctly by the library"
+    )]
+    let result = g1 * scalar;
+
+    let mut x_bytes = [0u8; 32];
+    let mut y_bytes = [0u8; 32];
+    result.x().to_big_endian(&mut x_bytes);
+    result.y().to_big_endian(&mut y_bytes);
+    let out = [x_bytes, y_bytes].concat();
+
+    Ok(Bytes::from(out))
+}
+
 const ALT_BN128_PRIME: U256 = U256([
     0x3c208c16d87cfd47,
     0x97816a916871ca8d,
@@ -681,193 +982,212 @@ const ALT_BN128_PRIME: U256 = U256([
     0x30644e72e131a029,
 ]);
 
-type FirstPointCoordinates = (
-    FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
-    FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
-);
-
-/// Parses first point coordinates and makes verification of invalid infinite
-#[inline]
-fn parse_first_point_coordinates(input_data: &[u8; 192]) -> Result<FirstPointCoordinates, VMError> {
-    let first_point_x = UnsignedInteger::from_bytes_be(&input_data[..32])
-        .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
-    let first_point_y = UnsignedInteger::from_bytes_be(&input_data[32..64])
-        .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
-    // Infinite is defined by (0,0). Any other zero-combination is invalid
-    if (first_point_x == UnsignedInteger::default()) ^ (first_point_y == UnsignedInteger::default())
-    {
-        return Err(PrecompileError::InvalidPoint.into());
+pub struct G1(U256, U256);
+impl G1 {
+    /// According to EIP-197, the point at infinity (also called neutral element of G1 or zero) is encoded as (0, 0)
+    pub fn is_zero(&self) -> bool {
+        self.0.is_zero() && self.1.is_zero()
     }
+}
+pub struct G2(U256, U256, U256, U256);
+impl G2 {
+    /// According to EIP-197, the point at infinity (also called neutral element of G2 or zero) is encoded as (0, 0, 0, 0)
+    pub fn is_zero(&self) -> bool {
+        self.0.is_zero() && self.1.is_zero() && self.2.is_zero() && self.3.is_zero()
+    }
+}
 
-    if first_point_x > BN254_PRIME_FIELD_ORDER || first_point_y > BN254_PRIME_FIELD_ORDER {
+/// Parses 32 bytes as BN254 scalar
+#[inline]
+fn parse_bn254_scalar(buf: &[u8], offset: usize) -> Option<U256> {
+    buf.get(offset..offset.checked_add(32)?)
+        .map(u256_from_big_endian)
+}
+
+/// Parses 64 bytes as a BN254 G1 point
+#[inline]
+fn parse_bn254_g1(buf: &[u8], offset: usize) -> Option<G1> {
+    let chunk = buf.get(offset..offset.checked_add(64)?)?;
+    let (x_bytes, y_bytes) = chunk.split_at_checked(32)?;
+    Some(G1(
+        u256_from_big_endian(x_bytes),
+        u256_from_big_endian(y_bytes),
+    ))
+}
+
+/// Parses 128 bytes as a BN254 G2 point
+fn parse_bn254_g2(buf: &[u8], offset: usize) -> Option<G2> {
+    let chunk = buf.get(offset..offset.checked_add(128)?)?;
+    let (g2_xy, rest) = chunk.split_at_checked(32)?;
+    let (g2_xx, rest) = rest.split_at_checked(32)?;
+    let (g2_yy, g2_yx) = rest.split_at_checked(32)?;
+    Some(G2(
+        u256_from_big_endian(g2_xx),
+        u256_from_big_endian(g2_xy),
+        u256_from_big_endian(g2_yx),
+        u256_from_big_endian(g2_yy),
+    ))
+}
+
+#[inline]
+fn validate_bn254_g1_coords(g1: &G1) -> Result<(), VMError> {
+    // check each element is in field
+    if g1.0 >= ALT_BN128_PRIME || g1.1 >= ALT_BN128_PRIME {
         return Err(PrecompileError::CoordinateExceedsFieldModulus.into());
     }
-
-    let first_point_x = BN254FieldElement::from(&first_point_x);
-    let first_point_y = BN254FieldElement::from(&first_point_y);
-
-    Ok((first_point_x, first_point_y))
+    Ok(())
 }
 
-/// Parses second point coordinates and makes verification of invalid infinite and curve belonging.
-///
-/// Slice must have len of 192. This function is only called from ecpairing which ensures that.
-fn parse_second_point_coordinates(
-    input_data: &[u8; 192],
-) -> Result<
-    (
-        FieldElement<Degree2ExtensionField>,
-        FieldElement<Degree2ExtensionField>,
-    ),
-    VMError,
-> {
-    let second_point_x_first_part = &input_data[96..128];
-    let second_point_x_second_part = &input_data[64..96];
-
-    // Infinite is defined by (0,0). Any other zero-combination is invalid
-    if (u256_from_big_endian(second_point_x_first_part) == U256::zero())
-        ^ (u256_from_big_endian(second_point_x_second_part) == U256::zero())
+#[inline]
+fn validate_bn254_g2_coords(g2: &G2) -> Result<(), VMError> {
+    // check each element is in field
+    if g2.0 >= ALT_BN128_PRIME
+        || g2.1 >= ALT_BN128_PRIME
+        || g2.2 >= ALT_BN128_PRIME
+        || g2.3 >= ALT_BN128_PRIME
     {
-        return Err(PrecompileError::InvalidPoint.into());
+        return Err(PrecompileError::CoordinateExceedsFieldModulus.into());
     }
-
-    let second_point_y_first_part = &input_data[160..192];
-    let second_point_y_second_part = &input_data[128..160];
-
-    // Infinite is defined by (0,0). Any other zero-combination is invalid
-    if (u256_from_big_endian(second_point_y_first_part) == U256::zero())
-        ^ (u256_from_big_endian(second_point_y_second_part) == U256::zero())
-    {
-        return Err(PrecompileError::InvalidPoint.into());
-    }
-
-    // Check if the second point belongs to the curve (this happens if it's lower than the prime)
-    if u256_from_big_endian(second_point_x_first_part) >= ALT_BN128_PRIME
-        || u256_from_big_endian(second_point_x_second_part) >= ALT_BN128_PRIME
-        || u256_from_big_endian(second_point_y_first_part) >= ALT_BN128_PRIME
-        || u256_from_big_endian(second_point_y_second_part) >= ALT_BN128_PRIME
-    {
-        return Err(PrecompileError::PointNotInTheCurve.into());
-    }
-
-    let second_point_x_bytes = [second_point_x_first_part, second_point_x_second_part].concat();
-    let second_point_y_bytes = [second_point_y_first_part, second_point_y_second_part].concat();
-
-    let second_point_x = BN254TwistCurveFieldElement::from_bytes_be(&second_point_x_bytes)
-        .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
-    let second_point_y = BN254TwistCurveFieldElement::from_bytes_be(&second_point_y_bytes)
-        .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
-
-    Ok((second_point_x, second_point_y))
-}
-
-/// Handles pairing given a certain elements, and depending on if elements represent infinity, then
-/// verifies errors on the other point returning None or returns the pairing
-#[inline(always)] // called only from one place, so inlining always wont increase code size.
-#[expect(clippy::type_complexity)]
-fn validate_pairing(
-    first_point_x: FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
-    first_point_y: FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
-    second_point_x: FieldElement<Degree2ExtensionField>,
-    second_point_y: FieldElement<Degree2ExtensionField>,
-) -> Result<
-    Option<(
-        ShortWeierstrassProjectivePoint<BN254Curve>,
-        ShortWeierstrassProjectivePoint<BN254TwistCurve>,
-    )>,
-    VMError,
-> {
-    let zero_element = BN254FieldElement::zero();
-    let twcurve_zero_element = BN254TwistCurveFieldElement::zero();
-    let first_point_is_infinity =
-        first_point_x.eq(&zero_element) && first_point_y.eq(&zero_element);
-    let second_point_is_infinity =
-        second_point_x.eq(&twcurve_zero_element) && second_point_y.eq(&twcurve_zero_element);
-
-    match (first_point_is_infinity, second_point_is_infinity) {
-        (true, true) => {
-            // If both points are infinity, then continue to the next input
-            Ok(None)
-        }
-        (true, false) => {
-            // If the first point is infinity, then do the checks for the second
-            let p2 = BN254TwistCurve::create_point_from_affine(second_point_x, second_point_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?;
-
-            if !p2.is_in_subgroup() {
-                return Err(PrecompileError::PointNotInSubgroup.into());
-            }
-            Ok(None)
-        }
-        (false, true) => {
-            // If the second point is infinity, then do the checks for the first
-            BN254Curve::create_point_from_affine(first_point_x, first_point_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?;
-            Ok(None)
-        }
-        (false, false) => {
-            // Define the pairing points
-            let first_point = BN254Curve::create_point_from_affine(first_point_x, first_point_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?;
-
-            let second_point =
-                BN254TwistCurve::create_point_from_affine(second_point_x, second_point_y)
-                    .map_err(|_| PrecompileError::InvalidPoint)?;
-            if !second_point.is_in_subgroup() {
-                return Err(PrecompileError::PointNotInSubgroup.into());
-            }
-            Ok(Some((first_point, second_point)))
-        }
-    }
+    Ok(())
 }
 
 /// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
 pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     // The input must always be a multiple of 192 (6 32-byte values)
-    if calldata.len() % 192 != 0 {
+    if !calldata.len().is_multiple_of(192) {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
     let inputs_amount = calldata.len() / 192;
-
-    // Consume gas
     let gas_cost = gas_cost::ecpairing(inputs_amount)?;
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
-    let mut valid_pairs = Vec::new();
-    let mut mul: FieldElement<Degree12ExtensionField> = QuadraticExtensionFieldElement::one();
-
+    let mut batch = Vec::new();
     for input in calldata.chunks_exact(192) {
-        #[expect(unsafe_code, reason = "chunks_exact ensures the conversion is valid")]
-        let input: [u8; 192] = unsafe { input.try_into().unwrap_unchecked() };
-
-        let (first_point_x, first_point_y) = parse_first_point_coordinates(&input)?;
-
-        let (second_point_x, second_point_y) = parse_second_point_coordinates(&input)?;
-
-        if let Some(pair) =
-            validate_pairing(first_point_x, first_point_y, second_point_x, second_point_y)?
-        {
-            valid_pairs.push(pair);
-        }
+        let (Some(g1), Some(g2)) = (parse_bn254_g1(input, 0), parse_bn254_g2(input, 64)) else {
+            return Err(InternalError::Slicing.into());
+        };
+        validate_bn254_g1_coords(&g1)?;
+        validate_bn254_g2_coords(&g2)?;
+        batch.push((g1, g2));
     }
 
-    #[allow(
-        clippy::arithmetic_side_effects,
-        reason = "library will not panic on mul overflow"
-    )]
-    if !valid_pairs.is_empty() {
-        let batch: Vec<_> = valid_pairs.iter().map(|(p1, p2)| (p1, p2)).collect();
-        let pairing_result = BN254AtePairing::compute_batch(&batch)
-            .map_err(|_| PrecompileError::BN254AtePairingError)?;
-        mul *= pairing_result;
-    }
+    let pairing_check = if batch.is_empty() {
+        true
+    } else {
+        pairing_check(&batch)?
+    };
 
-    // Generate the result from the variable mul
-    let success = mul.eq(&QuadraticExtensionFieldElement::one());
     let mut result = [0; 32];
-    result[31] = u8::from(success);
-    Ok(Bytes::from(result.to_vec()))
+    result[31] = u8::from(pairing_check);
+    Ok(Bytes::from_owner(result))
+}
+
+#[cfg(any(feature = "sp1", feature = "risc0", feature = "zisk"))]
+#[inline]
+pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
+    use substrate_bn::{AffineG1, AffineG2, Fq, Fq2, G1 as SubstrateG1, G2 as SubstrateG2, Group};
+
+    if batch.is_empty() {
+        return Ok(true);
+    }
+    let mut valid_batch = Vec::with_capacity(batch.len());
+    for (g1, g2) in batch {
+        let g1: SubstrateG1 = if g1.is_zero() {
+            SubstrateG1::zero()
+        } else {
+            let (g1_x, g1_y) = (
+                Fq::from_slice(&g1.0.to_big_endian())
+                    .map_err(|_| PrecompileError::ParsingInputError)?,
+                Fq::from_slice(&g1.1.to_big_endian())
+                    .map_err(|_| PrecompileError::ParsingInputError)?,
+            );
+            AffineG1::new(g1_x, g1_y)
+                .map_err(|_| PrecompileError::InvalidPoint)?
+                .into()
+        };
+        let g2: SubstrateG2 = if g2.is_zero() {
+            SubstrateG2::zero()
+        } else {
+            let (g2_x, g2_y) = (
+                Fq2::new(
+                    Fq::from_slice(&g2.0.to_big_endian())
+                        .map_err(|_| PrecompileError::ParsingInputError)?,
+                    Fq::from_slice(&g2.1.to_big_endian())
+                        .map_err(|_| PrecompileError::ParsingInputError)?,
+                ),
+                Fq2::new(
+                    Fq::from_slice(&g2.2.to_big_endian())
+                        .map_err(|_| PrecompileError::ParsingInputError)?,
+                    Fq::from_slice(&g2.3.to_big_endian())
+                        .map_err(|_| PrecompileError::ParsingInputError)?,
+                ),
+            );
+            AffineG2::new(g2_x, g2_y)
+                .map_err(|_| PrecompileError::InvalidPoint)?
+                .into()
+        };
+
+        if g1.is_zero() || g2.is_zero() {
+            continue;
+        }
+        valid_batch.push((g1, g2));
+    }
+
+    let result = substrate_bn::pairing_batch(&valid_batch);
+
+    Ok(result == substrate_bn::Gt::one())
+}
+
+#[cfg(all(not(feature = "sp1"), not(feature = "risc0"), not(feature = "zisk")))]
+#[inline]
+pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
+    use ark_bn254::{Bn254, G1Affine, G2Affine};
+    use ark_ec::pairing::Pairing;
+    use ark_ff::{Fp, One, QuadExtField};
+
+    let mut g1_points = Vec::with_capacity(batch.len());
+    let mut g2_points = Vec::with_capacity(batch.len());
+
+    for (g1, g2) in batch {
+        g1_points.push(if g1.is_zero() {
+            G1Affine::identity()
+        } else {
+            let p = G1Affine::new_unchecked(
+                Fp::from_le_bytes_mod_order(&g1.0.to_little_endian()),
+                Fp::from_le_bytes_mod_order(&g1.1.to_little_endian()),
+            );
+
+            if !p.is_on_curve() || !p.is_in_correct_subgroup_assuming_on_curve() {
+                return Err(PrecompileError::InvalidPoint.into());
+            }
+
+            p
+        });
+
+        g2_points.push(if g2.is_zero() {
+            G2Affine::identity()
+        } else {
+            let p = G2Affine::new_unchecked(
+                QuadExtField::new(
+                    Fp::from_le_bytes_mod_order(&g2.0.to_little_endian()),
+                    Fp::from_le_bytes_mod_order(&g2.1.to_little_endian()),
+                ),
+                QuadExtField::new(
+                    Fp::from_le_bytes_mod_order(&g2.2.to_little_endian()),
+                    Fp::from_le_bytes_mod_order(&g2.3.to_little_endian()),
+                ),
+            );
+
+            if !p.is_on_curve() || !p.is_in_correct_subgroup_assuming_on_curve() {
+                return Err(PrecompileError::InvalidPoint.into());
+            }
+
+            p
+        });
+    }
+
+    Ok(Bn254::multi_pairing(g1_points, g2_points).0 == QuadExtField::one())
 }
 
 /// Returns the result of Blake2 hashing algorithm given a certain parameters from the calldata.
@@ -992,39 +1312,6 @@ fn point_evaluation(
     Ok(Bytes::from(output))
 }
 
-#[expect(clippy::indexing_slicing, reason = "slicing bounds checked at start")]
-pub fn bls12_g1add(
-    calldata: &Bytes,
-    gas_remaining: &mut u64,
-    _fork: Fork,
-) -> Result<Bytes, VMError> {
-    // Two inputs of 128 bytes are required
-    if calldata.len() != BLS12_381_G1ADD_VALID_INPUT_LENGTH {
-        return Err(PrecompileError::ParsingInputError.into());
-    }
-
-    // GAS
-    increase_precompile_consumed_gas(BLS12_381_G1ADD_COST, gas_remaining)
-        .map_err(|_| PrecompileError::NotEnoughGas)?;
-
-    let first_g1_point = parse_g1_point(&calldata[0..128], true)?;
-    let second_g1_point = parse_g1_point(&calldata[128..256], true)?;
-
-    let result_of_addition = first_g1_point.add(&second_g1_point);
-
-    if result_of_addition.is_identity().into() {
-        return Ok(Bytes::copy_from_slice(&G1_POINT_AT_INFINITY));
-    }
-
-    let result_bytes = G1Affine::from(result_of_addition).to_uncompressed();
-
-    let mut padded_result = Vec::with_capacity(128);
-    add_padded_coordinate(&mut padded_result, &result_bytes[0..48]);
-    add_padded_coordinate(&mut padded_result, &result_bytes[48..96]);
-
-    Ok(Bytes::from(padded_result))
-}
-
 /// Signature verification in the “secp256r1” elliptic curve
 /// If the verification succeeds, returns 1 in a 32-bit big-endian format.
 /// If the verification fails, returns an empty `Bytes` object.
@@ -1114,12 +1401,107 @@ pub fn p_256_verify(
     }
 }
 
+pub fn bls12_g1add(
+    calldata: &Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+) -> Result<Bytes, VMError> {
+    // TODO: Use `as_chunks` after upgrading to Rust 1.88.0.
+    let (x_data, calldata) = calldata
+        .split_first_chunk::<128>()
+        .ok_or(PrecompileError::ParsingInputError)?;
+    let (y_data, calldata) = calldata
+        .split_first_chunk::<128>()
+        .ok_or(PrecompileError::ParsingInputError)?;
+    if !calldata.is_empty() {
+        return Err(PrecompileError::ParsingInputError.into());
+    }
+
+    // Apply precompile gas cost.
+    increase_precompile_consumed_gas(BLS12_381_G1ADD_COST, gas_remaining)
+        .map_err(|_| PrecompileError::NotEnoughGas)?;
+
+    type FElem = BLS12381FieldElement;
+    type U384 = UnsignedInteger<6>;
+    fn parse_g1_point(data: &[u8; 128]) -> Result<Option<(FElem, FElem)>, PrecompileError> {
+        if data[0..16] != [0; 16] || data[64..80] != [0; 16] {
+            return Err(PrecompileError::ParsingInputError);
+        }
+
+        let x = U384::from_bytes_be(&data[16..64]).unwrap_or_default();
+        let y = U384::from_bytes_be(&data[80..128]).unwrap_or_default();
+        if x >= BLS12381FieldModulus::MODULUS || y >= BLS12381FieldModulus::MODULUS {
+            return Err(PrecompileError::ParsingInputError);
+        }
+
+        if x == U384::from_u64(0) && y == U384::from_u64(0) {
+            return Ok(None);
+        }
+
+        let x = FElem::new(x);
+        let y = FElem::new(y);
+        if BLS12381Curve::defining_equation(&x, &y) != FElem::zero() {
+            return Err(PrecompileError::BLS12381G1PointNotInCurve);
+        }
+
+        Ok(Some((x, y)))
+    }
+
+    let p0 = parse_g1_point(x_data)?;
+    let p1 = parse_g1_point(y_data)?;
+
+    #[expect(clippy::arithmetic_side_effects, reason = "modular arithmetic")]
+    let p2 = match (p0, p1) {
+        (None, None) => (FElem::zero(), FElem::zero()),
+        (None, Some(p1)) => p1,
+        (Some(p0), None) => p0,
+        (Some(p0), Some(p1)) => 'block: {
+            if p0.0 == p1.0 {
+                if p0.1 == p1.1 {
+                    // The division may panic only when `p0.1.double()` has no inverse. This can
+                    // only happen if `p0.1 == 0`, which is impossible as long as the defining
+                    // equation holds since it has no solutions for an `x` coordinate where `y` is
+                    // zero within the prime field space.
+                    let x_squared = p0.0.square();
+                    let s = ((x_squared.double() + &x_squared + BLS12381Curve::a())
+                        / p0.1.double())
+                    .map_err(|_e| VMError::Internal(InternalError::DivisionByZero))?;
+
+                    let x = s.square() - p0.0.double();
+                    let y = s * (p0.0 - &x) - p0.1;
+                    break 'block (x, y);
+                } else if &p0.1 + &p1.1 == FElem::zero() {
+                    break 'block (FElem::zero(), FElem::zero());
+                }
+            }
+
+            // The division may panic only when `t` has no inverse. This can only happen if
+            // `p0.0 == p1.0`, for which the defining equation gives us two possible values for
+            // `p0.1` and `p1.1`, which are 2 and -2. Both cases have already been handled before.
+            let l = ((&p0.1 - p1.1) / (&p0.0 - &p1.0))
+                .map_err(|_e| VMError::Internal(InternalError::DivisionByZero))?;
+
+            let x = l.square() - &p0.0 - p1.0;
+            let y = l * (p0.0 - &x) - p0.1;
+            (x, y)
+        }
+    };
+
+    let x = p2.0.representative().limbs.map(|x| x.to_be_bytes());
+    let y = p2.1.representative().limbs.map(|x| x.to_be_bytes());
+    let buffer: [[u8; 8]; 16] = [
+        [0; 8], [0; 8], x[0], x[1], x[2], x[3], x[4], x[5], // Padded x coordinate.
+        [0; 8], [0; 8], y[0], y[1], y[2], y[3], y[4], y[5], // Padded y coordinate.
+    ];
+    Ok(Bytes::copy_from_slice(buffer.as_flattened()))
+}
+
 pub fn bls12_g1msm(
     calldata: &Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
-    if calldata.is_empty() || calldata.len() % BLS12_381_G1_MSM_PAIR_LENGTH != 0 {
+    if calldata.is_empty() || !calldata.len().is_multiple_of(BLS12_381_G1_MSM_PAIR_LENGTH) {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
@@ -1168,41 +1550,126 @@ pub fn bls12_g1msm(
     Ok(Bytes::copy_from_slice(&output))
 }
 
-#[expect(clippy::indexing_slicing, reason = "slicing bounds checked at start")]
 pub fn bls12_g2add(
     calldata: &Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
-    if calldata.len() != BLS12_381_G2ADD_VALID_INPUT_LENGTH {
+    // TODO: Use `as_chunks` after upgrading to Rust 1.88.0.
+    let (x_data, calldata) = calldata
+        .split_first_chunk::<256>()
+        .ok_or(PrecompileError::ParsingInputError)?;
+    let (y_data, calldata) = calldata
+        .split_first_chunk::<256>()
+        .ok_or(PrecompileError::ParsingInputError)?;
+    if !calldata.is_empty() {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
-    // GAS
+    // Apply precompile gas cost.
     increase_precompile_consumed_gas(BLS12_381_G2ADD_COST, gas_remaining)
         .map_err(|_| PrecompileError::NotEnoughGas)?;
 
-    // slices are ok because the len has been validated
-    let first_g2_point = parse_g2_point(&calldata[0..256], true)?;
-    let second_g2_point = parse_g2_point(&calldata[256..512], true)?;
+    type FElem = BLS12381TwistCurveFieldElement;
+    type U384 = UnsignedInteger<6>;
+    fn parse_g2_point(data: &[u8; 256]) -> Result<Option<(FElem, FElem)>, PrecompileError> {
+        if data[0..16] != [0; 16]
+            || data[64..80] != [0; 16]
+            || data[128..144] != [0; 16]
+            || data[192..208] != [0; 16]
+        {
+            return Err(PrecompileError::ParsingInputError);
+        }
 
-    let result_of_addition = first_g2_point.add(&second_g2_point);
+        let x = [
+            U384::from_bytes_be(&data[16..64]).unwrap_or_default(),
+            U384::from_bytes_be(&data[80..128]).unwrap_or_default(),
+        ];
+        let y = [
+            U384::from_bytes_be(&data[144..192]).unwrap_or_default(),
+            U384::from_bytes_be(&data[208..256]).unwrap_or_default(),
+        ];
+        if x[0] >= BLS12381FieldModulus::MODULUS
+            || x[1] >= BLS12381FieldModulus::MODULUS
+            || y[0] >= BLS12381FieldModulus::MODULUS
+            || y[1] >= BLS12381FieldModulus::MODULUS
+        {
+            return Err(PrecompileError::ParsingInputError);
+        }
 
-    if result_of_addition.is_identity().into() {
-        return Ok(Bytes::copy_from_slice(&G2_POINT_AT_INFINITY));
+        if x[0] == U384::from_u64(0)
+            && x[1] == U384::from_u64(0)
+            && y[0] == U384::from_u64(0)
+            && y[1] == U384::from_u64(0)
+        {
+            return Ok(None);
+        }
+
+        let x = FElem::from_raw(x.map(BLS12381FieldElement::new));
+        let y = FElem::from_raw(y.map(BLS12381FieldElement::new));
+        if BLS12381TwistCurve::defining_equation(&x, &y) != FElem::zero() {
+            return Err(PrecompileError::BLS12381G2PointNotInCurve);
+        }
+
+        Ok(Some((x, y)))
     }
 
-    let result_bytes = G2Affine::from(result_of_addition).to_uncompressed();
+    let p0 = parse_g2_point(x_data)?;
+    let p1 = parse_g2_point(y_data)?;
 
-    let mut padded_result = Vec::with_capacity(256);
-    // The crate bls12_381 deserialize the G2 point as x_1 || x_0 || y_1 || y_0
-    // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#284-299
-    add_padded_coordinate(&mut padded_result, &result_bytes[48..96]);
-    add_padded_coordinate(&mut padded_result, &result_bytes[0..48]);
-    add_padded_coordinate(&mut padded_result, &result_bytes[144..192]);
-    add_padded_coordinate(&mut padded_result, &result_bytes[96..144]);
+    #[expect(clippy::arithmetic_side_effects, reason = "modular arithmetic")]
+    let p2 = match (p0, p1) {
+        (None, None) => (FElem::zero(), FElem::zero()),
+        (None, Some(p1)) => p1,
+        (Some(p0), None) => p0,
+        (Some(p0), Some(p1)) => 'block: {
+            if p0.0 == p1.0 {
+                if p0.1 == p1.1 {
+                    // The division may panic only when `p0.1.double()` has no inverse. This can
+                    // only happen if `p0.1 == 0`, which is impossible as long as the defining
+                    // equation holds since it has no solutions for an `x` coordinate where `y` is
+                    // zero within the prime field space.
+                    let x_squared = p0.0.square();
+                    let s = ((x_squared.double() + &x_squared + BLS12381TwistCurve::a())
+                        / p0.1.double())
+                    .map_err(|_e| VMError::Internal(InternalError::DivisionByZero))?;
 
-    Ok(Bytes::from(padded_result))
+                    let x = s.square() - p0.0.double();
+                    let y = s * (p0.0 - &x) - p0.1;
+                    break 'block (x, y);
+                } else if &p0.1 + &p1.1 == FElem::zero() {
+                    break 'block (FElem::zero(), FElem::zero());
+                }
+            }
+
+            // The division may panic only when `t` has no inverse. This can only happen if
+            // `p0.0 == p1.0`, for which the defining equation gives us two possible values for
+            // `p0.1` and `p1.1`, which are 2 and -2. Both cases have already been handled before.
+            let l = ((&p0.1 - p1.1) / (&p0.0 - &p1.0))
+                .map_err(|_e| VMError::Internal(InternalError::DivisionByZero))?;
+
+            let x = l.square() - &p0.0 - p1.0;
+            let y = l * (p0.0 - &x) - p0.1;
+            (x, y)
+        }
+    };
+
+    let p2 = (p2.0.to_raw(), p2.1.to_raw());
+    let x = (
+        p2.0[0].representative().limbs.map(|x| x.to_be_bytes()),
+        p2.0[1].representative().limbs.map(|x| x.to_be_bytes()),
+    );
+    let y = (
+        p2.1[0].representative().limbs.map(|x| x.to_be_bytes()),
+        p2.1[1].representative().limbs.map(|x| x.to_be_bytes()),
+    );
+    let buffer: [[u8; 8]; 32] = [
+        [0; 8], [0; 8], x.0[0], x.0[1], x.0[2], x.0[3], x.0[4], x.0[5], //
+        [0; 8], [0; 8], x.1[0], x.1[1], x.1[2], x.1[3], x.1[4], x.1[5], //
+        [0; 8], [0; 8], y.0[0], y.0[1], y.0[2], y.0[3], y.0[4], y.0[5], //
+        [0; 8], [0; 8], y.1[0], y.1[1], y.1[2], y.1[3], y.1[4], y.1[5], //
+    ];
+    Ok(Bytes::copy_from_slice(buffer.as_flattened()))
 }
 
 pub fn bls12_g2msm(
@@ -1210,7 +1677,7 @@ pub fn bls12_g2msm(
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
-    if calldata.is_empty() || calldata.len() % BLS12_381_G2_MSM_PAIR_LENGTH != 0 {
+    if calldata.is_empty() || !calldata.len().is_multiple_of(BLS12_381_G2_MSM_PAIR_LENGTH) {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
@@ -1265,7 +1732,11 @@ pub fn bls12_pairing_check(
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
-    if calldata.is_empty() || calldata.len() % BLS12_381_PAIRING_CHECK_PAIR_LENGTH != 0 {
+    if calldata.is_empty()
+        || !calldata
+            .len()
+            .is_multiple_of(BLS12_381_PAIRING_CHECK_PAIR_LENGTH)
+    {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
@@ -1598,155 +2069,4 @@ fn parse_scalar(scalar_bytes: &[u8]) -> Result<Scalar, VMError> {
         ]),
     ];
     Ok(Scalar::from_raw(scalar_le))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn test_ec_pairing(calldata: &str, expected_output: &str, mut gas: u64) {
-        let calldata = Bytes::from(hex::decode(calldata).unwrap());
-        let expected_output = Bytes::from(hex::decode(expected_output).unwrap());
-        let output = ecpairing(&calldata, &mut gas, Fork::Cancun).unwrap();
-        assert_eq!(output, expected_output);
-        assert!(gas.is_zero());
-    }
-
-    // ec pairing precompile test data taken from https://github.com/ethereum/go-ethereum/blob/master/core/vm/testdata/precompiles/bn256Pairing.json
-
-    #[test]
-    fn test_ec_pairing_a() {
-        test_ec_pairing(
-            "1c76476f4def4bb94541d57ebba1193381ffa7aa76ada664dd31c16024c43f593034dd2920f673e204fee2811c678745fc819b55d3e9d294e45c9b03a76aef41209dd15ebff5d46c4bd888e51a93cf99a7329636c63514396b4a452003a35bf704bf11ca01483bfa8b34b43561848d28905960114c8ac04049af4b6315a416782bb8324af6cfc93537a2ad1a445cfd0ca2a71acd7ac41fadbf933c2a51be344d120a2a4cf30c1bf9845f20c6fe39e07ea2cce61f0c9bb048165fe5e4de877550111e129f1cf1097710d41c4ac70fcdfa5ba2023c6ff1cbeac322de49d1b6df7c2032c61a830e3c17286de9462bf242fca2883585b93870a73853face6a6bf411198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            113000,
-        );
-    }
-
-    #[test]
-    fn test_ec_pairing_b() {
-        test_ec_pairing(
-            "2eca0c7238bf16e83e7a1e6c5d49540685ff51380f309842a98561558019fc0203d3260361bb8451de5ff5ecd17f010ff22f5c31cdf184e9020b06fa5997db841213d2149b006137fcfb23036606f848d638d576a120ca981b5b1a5f9300b3ee2276cf730cf493cd95d64677bbb75fc42db72513a4c1e387b476d056f80aa75f21ee6226d31426322afcda621464d0611d226783262e21bb3bc86b537e986237096df1f82dff337dd5972e32a8ad43e28a78a96a823ef1cd4debe12b6552ea5f06967a1237ebfeca9aaae0d6d0bab8e28c198c5a339ef8a2407e31cdac516db922160fa257a5fd5b280642ff47b65eca77e626cb685c84fa6d3b6882a283ddd1198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            113000,
-        );
-    }
-    #[test]
-    fn test_ec_pairing_c() {
-        test_ec_pairing(
-            "0f25929bcb43d5a57391564615c9e70a992b10eafa4db109709649cf48c50dd216da2f5cb6be7a0aa72c440c53c9bbdfec6c36c7d515536431b3a865468acbba2e89718ad33c8bed92e210e81d1853435399a271913a6520736a4729cf0d51eb01a9e2ffa2e92599b68e44de5bcf354fa2642bd4f26b259daa6f7ce3ed57aeb314a9a87b789a58af499b314e13c3d65bede56c07ea2d418d6874857b70763713178fb49a2d6cd347dc58973ff49613a20757d0fcc22079f9abd10c3baee245901b9e027bd5cfc2cb5db82d4dc9677ac795ec500ecd47deee3b5da006d6d049b811d7511c78158de484232fc68daf8a45cf217d1c2fae693ff5871e8752d73b21198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            113000,
-        )
-    }
-
-    #[test]
-    fn test_ec_pairing_d() {
-        test_ec_pairing(
-            "2f2ea0b3da1e8ef11914acf8b2e1b32d99df51f5f4f206fc6b947eae860eddb6068134ddb33dc888ef446b648d72338684d678d2eb2371c61a50734d78da4b7225f83c8b6ab9de74e7da488ef02645c5a16a6652c3c71a15dc37fe3a5dcb7cb122acdedd6308e3bb230d226d16a105295f523a8a02bfc5e8bd2da135ac4c245d065bbad92e7c4e31bf3757f1fe7362a63fbfee50e7dc68da116e67d600d9bf6806d302580dc0661002994e7cd3a7f224e7ddc27802777486bf80f40e4ca3cfdb186bac5188a98c45e6016873d107f5cd131f3a3e339d0375e58bd6219347b008122ae2b09e539e152ec5364e7e2204b03d11d3caa038bfc7cd499f8176aacbee1f39e4e4afc4bc74790a4a028aff2c3d2538731fb755edefd8cb48d6ea589b5e283f150794b6736f670d6a1033f9b46c6f5204f50813eb85c8dc4b59db1c5d39140d97ee4d2b36d99bc49974d18ecca3e7ad51011956051b464d9e27d46cc25e0764bb98575bd466d32db7b15f582b2d5c452b36aa394b789366e5e3ca5aabd415794ab061441e51d01e94640b7e3084a07e02c78cf3103c542bc5b298669f211b88da1679b0b64a63b7e0e7bfe52aae524f73a55be7fe70c7e9bfc94b4cf0da1213d2149b006137fcfb23036606f848d638d576a120ca981b5b1a5f9300b3ee2276cf730cf493cd95d64677bbb75fc42db72513a4c1e387b476d056f80aa75f21ee6226d31426322afcda621464d0611d226783262e21bb3bc86b537e986237096df1f82dff337dd5972e32a8ad43e28a78a96a823ef1cd4debe12b6552ea5f",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            147000,
-        )
-    }
-
-    #[test]
-    fn test_ec_pairing_e() {
-        test_ec_pairing(
-            "20a754d2071d4d53903e3b31a7e98ad6882d58aec240ef981fdf0a9d22c5926a29c853fcea789887315916bbeb89ca37edb355b4f980c9a12a94f30deeed30211213d2149b006137fcfb23036606f848d638d576a120ca981b5b1a5f9300b3ee2276cf730cf493cd95d64677bbb75fc42db72513a4c1e387b476d056f80aa75f21ee6226d31426322afcda621464d0611d226783262e21bb3bc86b537e986237096df1f82dff337dd5972e32a8ad43e28a78a96a823ef1cd4debe12b6552ea5f1abb4a25eb9379ae96c84fff9f0540abcfc0a0d11aeda02d4f37e4baf74cb0c11073b3ff2cdbb38755f8691ea59e9606696b3ff278acfc098fa8226470d03869217cee0a9ad79a4493b5253e2e4e3a39fc2df38419f230d341f60cb064a0ac290a3d76f140db8418ba512272381446eb73958670f00cf46f1d9e64cba057b53c26f64a8ec70387a13e41430ed3ee4a7db2059cc5fc13c067194bcc0cb49a98552fd72bd9edb657346127da132e5b82ab908f5816c826acb499e22f2412d1a2d70f25929bcb43d5a57391564615c9e70a992b10eafa4db109709649cf48c50dd2198a1f162a73261f112401aa2db79c7dab1533c9935c77290a6ce3b191f2318d198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            147000,
-        )
-    }
-
-    #[test]
-    fn test_ec_pairing_f() {
-        test_ec_pairing(
-            "1c76476f4def4bb94541d57ebba1193381ffa7aa76ada664dd31c16024c43f593034dd2920f673e204fee2811c678745fc819b55d3e9d294e45c9b03a76aef41209dd15ebff5d46c4bd888e51a93cf99a7329636c63514396b4a452003a35bf704bf11ca01483bfa8b34b43561848d28905960114c8ac04049af4b6315a416782bb8324af6cfc93537a2ad1a445cfd0ca2a71acd7ac41fadbf933c2a51be344d120a2a4cf30c1bf9845f20c6fe39e07ea2cce61f0c9bb048165fe5e4de877550111e129f1cf1097710d41c4ac70fcdfa5ba2023c6ff1cbeac322de49d1b6df7c103188585e2364128fe25c70558f1560f4f9350baf3959e603cc91486e110936198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa",
-            "0000000000000000000000000000000000000000000000000000000000000000",
-            113000,
-        )
-    }
-
-    #[test]
-    fn test_ec_pairing_g() {
-        test_ec_pairing(
-            "",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            45000,
-        )
-    }
-
-    #[test]
-    fn test_ec_pairing_h() {
-        test_ec_pairing(
-            "00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa",
-            "0000000000000000000000000000000000000000000000000000000000000000",
-            79000,
-        )
-    }
-
-    #[test]
-    fn test_ec_pairing_i() {
-        test_ec_pairing(
-            "00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed275dc4a288d1afb3cbb1ac09187524c7db36395df7be3b99e673b13a075a65ec1d9befcd05a5323e6da4d435f3b617cdb3af83285c2df711ef39c01571827f9d",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            113000,
-        )
-    }
-
-    #[test]
-    fn test_ec_pairing_j() {
-        test_ec_pairing(
-            "00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002203e205db4f19b37b60121b83a7333706db86431c6d835849957ed8c3928ad7927dc7234fd11d3e8c36c59277c3e6f149d5cd3cfa9a62aee49f8130962b4b3b9195e8aa5b7827463722b8c153931579d3505566b4edf48d498e185f0509de15204bb53b8977e5f92a0bc372742c4830944a59b4fe6b1c0466e2a6dad122b5d2e030644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd31a76dae6d3272396d0cbe61fced2bc532edac647851e3ac53ce1cc9c7e645a83198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            113000,
-        )
-    }
-
-    #[test]
-    fn test_ec_pairing_k() {
-        test_ec_pairing(
-            "105456a333e6d636854f987ea7bb713dfd0ae8371a72aea313ae0c32c0bf10160cf031d41b41557f3e7e3ba0c51bebe5da8e6ecd855ec50fc87efcdeac168bcc0476be093a6d2b4bbf907172049874af11e1b6267606e00804d3ff0037ec57fd3010c68cb50161b7d1d96bb71edfec9880171954e56871abf3d93cc94d745fa114c059d74e5b6c4ec14ae5864ebe23a71781d86c29fb8fb6cce94f70d3de7a2101b33461f39d9e887dbb100f170a2345dde3c07e256d1dfa2b657ba5cd030427000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000021a2c3013d2ea92e13c800cde68ef56a294b883f6ac35d25f587c09b1b3c635f7290158a80cd3d66530f74dc94c94adb88f5cdb481acca997b6e60071f08a115f2f997f3dbd66a7afe07fe7862ce239edba9e05c5afff7f8a1259c9733b2dfbb929d1691530ca701b4a106054688728c9972c8512e9789e9567aae23e302ccd75",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            113000,
-        )
-    }
-
-    #[test]
-    fn test_ec_pairing_l() {
-        test_ec_pairing(
-            "00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed275dc4a288d1afb3cbb1ac09187524c7db36395df7be3b99e673b13a075a65ec1d9befcd05a5323e6da4d435f3b617cdb3af83285c2df711ef39c01571827f9d00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed275dc4a288d1afb3cbb1ac09187524c7db36395df7be3b99e673b13a075a65ec1d9befcd05a5323e6da4d435f3b617cdb3af83285c2df711ef39c01571827f9d00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed275dc4a288d1afb3cbb1ac09187524c7db36395df7be3b99e673b13a075a65ec1d9befcd05a5323e6da4d435f3b617cdb3af83285c2df711ef39c01571827f9d00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed275dc4a288d1afb3cbb1ac09187524c7db36395df7be3b99e673b13a075a65ec1d9befcd05a5323e6da4d435f3b617cdb3af83285c2df711ef39c01571827f9d00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed275dc4a288d1afb3cbb1ac09187524c7db36395df7be3b99e673b13a075a65ec1d9befcd05a5323e6da4d435f3b617cdb3af83285c2df711ef39c01571827f9d",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            385000,
-        )
-    }
-
-    #[test]
-    fn test_ec_pairing_m() {
-        test_ec_pairing(
-            "00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002203e205db4f19b37b60121b83a7333706db86431c6d835849957ed8c3928ad7927dc7234fd11d3e8c36c59277c3e6f149d5cd3cfa9a62aee49f8130962b4b3b9195e8aa5b7827463722b8c153931579d3505566b4edf48d498e185f0509de15204bb53b8977e5f92a0bc372742c4830944a59b4fe6b1c0466e2a6dad122b5d2e030644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd31a76dae6d3272396d0cbe61fced2bc532edac647851e3ac53ce1cc9c7e645a83198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002203e205db4f19b37b60121b83a7333706db86431c6d835849957ed8c3928ad7927dc7234fd11d3e8c36c59277c3e6f149d5cd3cfa9a62aee49f8130962b4b3b9195e8aa5b7827463722b8c153931579d3505566b4edf48d498e185f0509de15204bb53b8977e5f92a0bc372742c4830944a59b4fe6b1c0466e2a6dad122b5d2e030644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd31a76dae6d3272396d0cbe61fced2bc532edac647851e3ac53ce1cc9c7e645a83198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002203e205db4f19b37b60121b83a7333706db86431c6d835849957ed8c3928ad7927dc7234fd11d3e8c36c59277c3e6f149d5cd3cfa9a62aee49f8130962b4b3b9195e8aa5b7827463722b8c153931579d3505566b4edf48d498e185f0509de15204bb53b8977e5f92a0bc372742c4830944a59b4fe6b1c0466e2a6dad122b5d2e030644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd31a76dae6d3272396d0cbe61fced2bc532edac647851e3ac53ce1cc9c7e645a83198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002203e205db4f19b37b60121b83a7333706db86431c6d835849957ed8c3928ad7927dc7234fd11d3e8c36c59277c3e6f149d5cd3cfa9a62aee49f8130962b4b3b9195e8aa5b7827463722b8c153931579d3505566b4edf48d498e185f0509de15204bb53b8977e5f92a0bc372742c4830944a59b4fe6b1c0466e2a6dad122b5d2e030644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd31a76dae6d3272396d0cbe61fced2bc532edac647851e3ac53ce1cc9c7e645a83198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002203e205db4f19b37b60121b83a7333706db86431c6d835849957ed8c3928ad7927dc7234fd11d3e8c36c59277c3e6f149d5cd3cfa9a62aee49f8130962b4b3b9195e8aa5b7827463722b8c153931579d3505566b4edf48d498e185f0509de15204bb53b8977e5f92a0bc372742c4830944a59b4fe6b1c0466e2a6dad122b5d2e030644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd31a76dae6d3272396d0cbe61fced2bc532edac647851e3ac53ce1cc9c7e645a83198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            385000,
-        )
-    }
-
-    #[test]
-    fn test_ec_pairing_n() {
-        test_ec_pairing(
-            "105456a333e6d636854f987ea7bb713dfd0ae8371a72aea313ae0c32c0bf10160cf031d41b41557f3e7e3ba0c51bebe5da8e6ecd855ec50fc87efcdeac168bcc0476be093a6d2b4bbf907172049874af11e1b6267606e00804d3ff0037ec57fd3010c68cb50161b7d1d96bb71edfec9880171954e56871abf3d93cc94d745fa114c059d74e5b6c4ec14ae5864ebe23a71781d86c29fb8fb6cce94f70d3de7a2101b33461f39d9e887dbb100f170a2345dde3c07e256d1dfa2b657ba5cd030427000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000021a2c3013d2ea92e13c800cde68ef56a294b883f6ac35d25f587c09b1b3c635f7290158a80cd3d66530f74dc94c94adb88f5cdb481acca997b6e60071f08a115f2f997f3dbd66a7afe07fe7862ce239edba9e05c5afff7f8a1259c9733b2dfbb929d1691530ca701b4a106054688728c9972c8512e9789e9567aae23e302ccd75",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            113000,
-        )
-    }
-
-    #[test]
-    // Calldata taken from failed transaction https://sepolia.etherscan.io/tx/0x4355d49be46e61a53c71f45a128ebefb52cb38df08ed55833c2c162d26396819
-    fn test_ec_pairing_coordinate_out_of_bounds() {
-        let calldata = Bytes::from(hex::decode("30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd4830644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd49198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa").unwrap());
-        let mut gas_remaining = u64::MAX;
-        assert_eq!(
-            ecpairing(&calldata, &mut gas_remaining, Fork::Cancun),
-            Err(PrecompileError::CoordinateExceedsFieldModulus.into())
-        );
-    }
 }

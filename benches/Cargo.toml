@@ -1,0 +1,35 @@
+[package]
+name = "ethrex-benches"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
+
+[dependencies]
+ethrex.workspace = true
+ethrex-blockchain.workspace = true
+ethrex-common.workspace = true
+ethrex-config.workspace = true
+ethrex-storage.workspace = true
+
+bytes.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.5.1", features = [
+    "html_reports",
+    "async_futures",
+    "async_tokio",
+] }
+secp256k1.workspace = true
+tempfile.workspace = true
+ethrex-l2-rpc.workspace = true
+
+[[bench]]
+name = "build_block_benchmark"
+harness = false
+
+[lints]
+workspace = true

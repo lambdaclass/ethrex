@@ -2,17 +2,26 @@ name: Ethrex Release
 
 on:
   push:
+    # On tags, this generates a release and pushes docker images with the tag name
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
-      - "v[0-9]+.[0-9]+.[0-9]+-*"
+      - "v*.*.*-*"
+    # On pushes to main, this silently builds and pushes docker images tagged as 'main'
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
   contents: write
   packages: write
+  actions: write
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  PROVER_REPRODUCIBLE_BUILD: true
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
 
 jobs:
   build-ethrex:
@@ -20,47 +29,58 @@ jobs:
       matrix:
         platform:
           - ubuntu-22.04
-          - ubuntu-24.04-arm
+          - ubuntu-22.04-arm
           - macos-latest
-        gpu:
-          - true
-          - false
+        stack:
+          - l1
+          - l2
+          - l2_gpu
+        exclude:
+          - platform: macos-latest
+            stack: l2_gpu
         include:
           - platform: ubuntu-22.04
             os: linux
             arch: x86_64
-            prover_features: sp1,risc0
-            cpu_flags: RUSTFLAGS='-C target-cpu=x86-64-v2'
-          - platform: ubuntu-24.04-arm
+          - platform: ubuntu-22.04-arm
             os: linux
             arch: aarch64
-            prover_features: sp1
           - platform: macos-latest
             os: macos
             arch: aarch64
-          - gpu: true
-            gpu_flags: NVCC_PREPEND_FLAGS='-arch=sm_70'
-            gpu_feature: ",gpu"
-            gpu_suffix: "-gpu"
-        exclude:
           - platform: macos-latest
-            gpu: true
+            os: macos
+            stack: l2
+            features: l2,l2-sql
+          - platform: ubuntu-22.04
+            stack: l2
+            features: l2,l2-sql,sp1,risc0
+          - platform: ubuntu-22.04
+            stack: l2_gpu
+            features: l2,l2-sql,sp1,risc0,gpu
+          - platform: ubuntu-22.04-arm
+            stack: l2
+            features: l2,l2-sql,sp1
+          - platform: ubuntu-22.04-arm
+            stack: l2_gpu
+            features: l2,l2-sql,sp1,gpu
+          - stack: l2_gpu
+            gpu_flags: NVCC_PREPEND_FLAGS='-arch=sm_70'
+            l2_suffix: "-l2"
+            gpu_suffix: "-gpu"
+          - stack: l2
+            l2_suffix: "-l2"
     runs-on: ${{ matrix.platform }}
     steps:
-      - name: Free Disk Space (Ubuntu)
-        if: ${{ matrix.os == 'linux' }}
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          large-packages: false
-
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
+      - name: Free Disk Space
+        if: ${{ matrix.os == 'linux' }}
+        uses: ./.github/actions/free-disk
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Install SP1 (only Linux)
         if: ${{ matrix.os == 'linux' }}
@@ -70,9 +90,8 @@ jobs:
         run: |
           curl -L https://sp1up.succinct.xyz | bash
           ~/.sp1/bin/sp1up --version 5.0.8
-
       - name: Set up QEMU (only Linux ARM)
-        if: ${{ matrix.platform == 'ubuntu-24.04-arm' }}
+        if: ${{ matrix.platform == 'ubuntu-22.04-arm' }}
         uses: docker/setup-qemu-action@v3
         with:
           platforms: amd64
@@ -81,58 +100,187 @@ jobs:
         if: ${{ matrix.platform == 'ubuntu-22.04' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -L https://risczero.com/install | bash
-          ~/.risc0/bin/rzup install cargo-risczero 3.0.3
-          ~/.risc0/bin/rzup install risc0-groth16
-          ~/.risc0/bin/rzup install rust
+        uses: ./.github/actions/install-risc0
 
       - name: Install CUDA (only Linux x86 GPU)
         uses: Jimver/cuda-toolkit@v0.2.24
-        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.gpu }}
+        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }}
         id: cuda-toolkit
         with:
           cuda: "12.9.0"
           method: "network"
           sub-packages: '["nvcc"]'
 
-      - name: Install solc
-        if: ${{ matrix.platform != 'ubuntu-24.04-arm' }}
-        uses: lambdaclass/get-solc@master
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
         with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install solc (Linux ARM)
-        if: ${{ matrix.platform == 'ubuntu-24.04-arm' }}
-        run: |
-          sudo curl -L -o /usr/local/bin/solc https://github.com/nikitastupin/solc/raw/refs/heads/main/linux/aarch64/solc-v0.8.29
-          sudo chmod +x /usr/local/bin/solc
+      - name: Install solc
+        uses: ./.github/actions/install-solc
 
       - name: Build ethrex
         run: |
-          COMPILE_CONTRACTS=true ${{ matrix.cpu_flags }} ${{ matrix.gpu_flags }} cargo build --release --features "${{ matrix.prover_features }}${{ matrix.gpu_feature }}" --bin ethrex
-          mv target/release/ethrex ethrex-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.gpu_suffix }}
+          COMPILE_CONTRACTS=true ${{ matrix.gpu_flags }} cargo build --release --features "${{ matrix.features }}" --bin ethrex
+          chmod +x target/release/ethrex
+          mv target/release/ethrex ethrex${{ matrix.l2_suffix }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.gpu_suffix }}
 
       - name: Copy verification keys
-        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.gpu }} # Run only once
+        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
         run: |
           mkdir -p ./verification_keys
-          mv crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk verification_keys/ethrex-riscv32im-risc0-vk
-          mv crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk verification_keys/ethrex-riscv32im-succinct-zkvm-vk
+          mv crates/guest-program/bin/risc0/out/riscv32im-risc0-vk verification_keys/ethrex-riscv32im-risc0-vk
+          mv crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254 verification_keys/ethrex-riscv32im-succinct-zkvm-vk-bn254
+          mv crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32 verification_keys/ethrex-riscv32im-succinct-zkvm-vk-u32
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ethrex-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.gpu_suffix }}
-          path: ethrex-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.gpu_suffix }}
+          name: ethrex${{ matrix.l2_suffix }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.gpu_suffix }}
+          path: ethrex${{ matrix.l2_suffix }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.gpu_suffix }}
 
       - name: Upload verification keys
-        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.gpu }} # Run only once
+        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
         uses: actions/upload-artifact@v4
         with:
           name: verification_keys
           path: verification_keys/
+
+  # There's a separate job to build the guest programs for SP1 and RISC0 since
+  # they need to be built without the l2 features.
+  build-ethrex-guest:
+    strategy:
+      matrix:
+        zkvm:
+          - sp1
+          - risc0
+          - zisk
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Install SP1
+        if: ${{ matrix.zkvm == 'sp1' }}
+        env:
+          SHELL: /bin/bash
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -L https://sp1up.succinct.xyz | bash
+          ~/.sp1/bin/sp1up --version 5.0.8
+
+      - name: Install RISC0
+        if: ${{ matrix.zkvm == 'risc0' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/install-risc0
+
+      - name: Install ZisK
+        if: ${{ matrix.zkvm == 'zisk' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SETUP_KEY: none
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xz-utils jq curl build-essential qemu-system libomp-dev libgmp-dev nlohmann-json3-dev protobuf-compiler uuid-dev libgrpc++-dev libsecp256k1-dev libsodium-dev libpqxx-dev nasm libopenmpi-dev openmpi-bin openmpi-common libclang-dev clang gcc-riscv64-unknown-elf
+          curl https://raw.githubusercontent.com/0xPolygonHermez/zisk/main/ziskup/install.sh | bash
+          echo "$HOME/.zisk/bin" >> $GITHUB_PATH
+
+      - name: Build ethrex elf - ${{ matrix.zkvm }}
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          # Sanitize ref name by replacing '/' with '-' for valid file names
+          SANITIZED_REF=$(echo "$REF_NAME" | tr '/' '-')
+          cargo build --release --package ethrex-guest-program --features "${{ matrix.zkvm }},ci"
+          mkdir -p ${{ matrix.zkvm }}_verification_keys
+          if [ "${{ matrix.zkvm }}" = "sp1" ]; then
+            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-elf ethrex-riscv32im-${{ matrix.zkvm }}-elf-$SANITIZED_REF
+            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-vk-bn254 ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-bn254-$SANITIZED_REF
+            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-vk-u32 ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-u32-$SANITIZED_REF
+            echo "ELF_ARTIFACT=ethrex-riscv32im-${{ matrix.zkvm }}-elf-$SANITIZED_REF" >> $GITHUB_ENV
+          elif [ "${{ matrix.zkvm }}" = "risc0" ]; then
+            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-risc0-elf ethrex-riscv32im-${{ matrix.zkvm }}-elf-$SANITIZED_REF
+            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-risc0-vk ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-$SANITIZED_REF
+            echo "ELF_ARTIFACT=ethrex-riscv32im-${{ matrix.zkvm }}-elf-$SANITIZED_REF" >> $GITHUB_ENV
+          elif [ "${{ matrix.zkvm }}" = "zisk" ]; then
+            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv64ima-zisk-elf ethrex-riscv64ima-${{ matrix.zkvm }}-elf-$SANITIZED_REF
+            echo "ELF_ARTIFACT=ethrex-riscv64ima-${{ matrix.zkvm }}-elf-$SANITIZED_REF" >> $GITHUB_ENV
+          fi
+
+      - name: Upload ethrex guest elf artifact - ${{ matrix.zkvm }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ELF_ARTIFACT }}
+          path: ${{ env.ELF_ARTIFACT }}
+
+      - name: Upload ethrex guest verification keys - ${{ matrix.zkvm }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.zkvm }}_verification_keys
+          path: ${{ matrix.zkvm }}_verification_keys/
+
+  # Creates ethrex-guests.tar.gz artifact including both SP1 and
+  # RISC0 elf and verification keys.
+  package-ethrex-guest:
+    needs:
+      - build-ethrex-guest
+    runs-on: ubuntu-latest
+    env:
+      # Sanitize ref name by replacing '/' with '-' to match artifact names
+      SANITIZED_REF: ${{ github.ref_name }}
+    steps:
+      - name: Sanitize ref name
+        run: |
+          SANITIZED=$(echo "${{ github.ref_name }}" | tr '/' '-')
+          echo "SANITIZED_REF=$SANITIZED" >> $GITHUB_ENV
+
+      - name: Download SP1 elf artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex-riscv32im-sp1-elf-${{ env.SANITIZED_REF }}
+          path: ethrex_guests/sp1/
+
+      - name: Download SP1 verification keys artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: sp1_verification_keys
+          path: ethrex_guests/sp1/
+
+      - name: Download RISC0 elf artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex-riscv32im-risc0-elf-${{ env.SANITIZED_REF }}
+          path: ethrex_guests/risc0/
+
+      - name: Download RISC0 verification keys artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: risc0_verification_keys
+          path: ethrex_guests/risc0/
+
+      - name: Download ZisK elf artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex-riscv64ima-zisk-elf-${{ env.SANITIZED_REF }}
+          path: ethrex_guests/zisk/
+
+      - name: Archive ethrex guests
+        run: |
+          cd ethrex_guests/
+          tar -czvf ../ethrex-guests.tar.gz .
+
+      - name: Upload ethrex guests artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethrex-guests.tar.gz
+          path: ethrex-guests.tar.gz
 
   package-contracts:
     needs:
@@ -160,40 +308,119 @@ jobs:
           path: ethrex-contracts.tar.gz
 
   build-docker:
-    name: "Build and publish ethrex docker image"
-    runs-on: ubuntu-latest
+    name: "Build ethrex docker images"
+    strategy:
+      matrix:
+        platform:
+          - ubuntu-latest
+          - ubuntu-22.04-arm
+        include:
+          - platform: ubuntu-latest
+            arch: amd64
+          - platform: ubuntu-22.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.platform }}
+    outputs:
+      tag: ${{ steps.tag_version.outputs.tag }}
 
     # Sets the permissions granted to the `GITHUB_TOKEN` for the actions in this job.
     permissions:
       contents: read
       packages: write
-      attestations: write
-      id-token: write
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Format name
-        run: echo "TAG_VERSION=$(echo ${{ github.ref_name }} | tr -d v)" >> $GITHUB_ENV
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
 
-      # Pushes to ghcr.io/lambdaclass/ethrex
-      - name: Build and push Docker image
-        id: push
+      - name: Determine tag version
+        id: tag_version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          # For branch builds (main) we want docker images tagged as 'main'. For tag pushes
+          # use the tag name (stripped of a leading 'v').
+          # Replace '/' with '-' to make branch names valid Docker tags.
+          if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
+            echo "TAG_VERSION=main" >> $GITHUB_ENV
+            echo "tag=main" >> $GITHUB_OUTPUT
+          else
+            SANITIZED_REF=$(echo "$REF_NAME" | tr -d v | tr '/' '-')
+            echo "TAG_VERSION=$SANITIZED_REF" >> $GITHUB_ENV
+            echo "tag=$SANITIZED_REF" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build L1 Docker image
+        id: build_l1
         uses: ./.github/actions/build-docker
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-          push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}
+          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
+          dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
+          push: ${{ github.event_name != 'workflow_dispatch'}}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-${{ matrix.arch }}
+          platforms: linux/${{ matrix.arch }}
+          variant: l1
 
-  # Creates a draft release on GitHub with the binaries
+      - name: Build L2 Docker image
+        id: build_l2
+        uses: ./.github/actions/build-docker
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
+          dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
+          push: ${{ github.event_name != 'workflow_dispatch'}}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-l2-${{ matrix.arch }}
+          build_args: BUILD_FLAGS=--features l2,l2-sql
+          platforms: linux/${{ matrix.arch }}
+          variant: l2
+
+  publish-docker:
+    name: "Create and push multi-arch Docker manifests"
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_dispatch'}}
+    needs: build-docker
+
+    permissions:
+      packages: write
+      contents: read
+
+    steps:
+      - name: Login to Docker registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-arch image
+        run: |
+          docker buildx imagetools create \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-docker.outputs.tag }} \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-docker.outputs.tag }}-amd64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-docker.outputs.tag }}-arm64
+
+          docker buildx imagetools create \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-docker.outputs.tag }}-l2 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-docker.outputs.tag }}-l2-amd64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-docker.outputs.tag }}-l2-arm64
+
+  # Creates a release on GitHub with the binaries
   finalize-release:
+    if: github.ref_type == 'tag' && github.event_name != 'workflow_dispatch'
     needs:
       - build-ethrex
+      - build-ethrex-guest
       - build-docker
+      - publish-docker
       - package-contracts
+      - package-ethrex-guest
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -205,13 +432,15 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: ./bin
-          pattern: "ethrex*"
+          pattern: "ethrex*" # This includes the binaries, elf files, ethrex-verification-keys.tar.gz, and ethrex-contracts.tar.gz
 
       - name: Get previous tag
         run: |
-          name=$(git --no-pager tag --sort=creatordate --merged ${{ github.ref_name }} | tail -2 | head -1)
-          echo "PREVIOUS_TAG: $name"
-          echo "PREVIOUS_TAG=$name" >> $GITHUB_ENV
+          last_tag=$(git --no-pager tag --sort=creatordate | grep -v -E '^v[0-9]+\.[0-9]+\.[0-9]+-' | grep -v '${{ github.ref_name }}' | tail -1)
+          echo "Last tag: $last_tag"
+          common_parent=$(git merge-base ${{ github.ref_name }} $last_tag)
+          echo "PREVIOUS_TAG: $common_parent"
+          echo "PREVIOUS_TAG=$common_parent" >> $GITHUB_ENV
 
       - name: Update CHANGELOG
         id: changelog
@@ -229,7 +458,7 @@ jobs:
         with:
           files: ./bin/**/*
           draft: false
-          prerelease: false
+          prerelease: true
           tag_name: ${{ github.ref_name }}
           name: "ethrex: ${{ github.ref_name }}"
           body: >

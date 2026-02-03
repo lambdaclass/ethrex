@@ -1,11 +1,11 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes};
 use ethereum_types::{H256, U256};
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_trie::Trie;
-use keccak_hash::keccak;
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use sha3::{Digest as _, Keccak256};
 
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -15,30 +15,130 @@ use ethrex_rlp::{
 };
 
 use super::GenesisAccount;
-use crate::constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH};
+use crate::{
+    constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
+    utils::keccak,
+};
 
-#[allow(unused)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub struct Code {
+    // hash is only used for bytecodes stored in the DB, either for reading it from the DB
+    // or with the CODEHASH opcode, which needs an account address as argument and
+    // thus only accessed persisted bytecodes.
+    // We use a bogus H256::zero() value for initcodes as there is no way for the VM or
+    // endpoints to access that hash, saving one expensive Keccak hash.
+    pub hash: H256,
+    pub bytecode: Bytes,
+    // TODO: Consider using Arc<[u32]> (needs to enable serde rc feature)
+    // The valid addresses are 32-bit because, despite EIP-3860 restricting initcode size,
+    // this does not apply to previous forks. This is tested in the EEST tests, which would
+    // panic in debug mode.
+    pub jump_targets: Vec<u32>,
+}
+
+impl Code {
+    // SAFETY: hash will be stored as-is, so it either needs to match
+    // the real code hash (i.e. it was precomputed and we're reusing)
+    // or never be read (e.g. for initcode).
+    pub fn from_bytecode_unchecked(code: Bytes, hash: H256) -> Self {
+        let jump_targets = Self::compute_jump_targets(&code);
+        Self {
+            hash,
+            bytecode: code,
+            jump_targets,
+        }
+    }
+
+    pub fn from_bytecode(code: Bytes) -> Self {
+        let jump_targets = Self::compute_jump_targets(&code);
+        Self {
+            hash: keccak(code.as_ref()),
+            bytecode: code,
+            jump_targets,
+        }
+    }
+
+    fn compute_jump_targets(code: &[u8]) -> Vec<u32> {
+        debug_assert!(code.len() <= u32::MAX as usize);
+        let mut targets = Vec::new();
+        let mut i = 0;
+        while i < code.len() {
+            // TODO: we don't use the constants from the vm module to avoid a circular dependency
+            match code[i] {
+                // OP_JUMPDEST
+                0x5B => {
+                    targets.push(i as u32);
+                }
+                // OP_PUSH1..32
+                c @ 0x60..0x80 => {
+                    // OP_PUSH0
+                    i += (c - 0x5F) as usize;
+                }
+                _ => (),
+            }
+            i += 1;
+        }
+        targets
+    }
+
+    /// Estimates the size of the Code struct in bytes
+    /// (including stack size and heap allocation).
+    ///
+    /// Note: This is an estimation and may not be exact.
+    ///
+    /// # Returns
+    ///
+    /// usize - Estimated size in bytes
+    pub fn size(&self) -> usize {
+        let hash_size = size_of::<H256>();
+        let bytes_size = size_of::<Bytes>();
+        let vec_size = size_of::<Vec<u32>>() + self.jump_targets.len() * size_of::<u32>();
+        hash_size + bytes_size + vec_size
+    }
+}
+
+impl AsRef<Bytes> for Code {
+    fn as_ref(&self) -> &Bytes {
+        &self.bytecode
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeMetadata {
+    pub length: u64,
+}
+
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Account {
     pub info: AccountInfo,
-    pub code: Bytes,
-    pub storage: BTreeMap<H256, U256>,
+    pub code: Code,
+    pub storage: FxHashMap<H256, U256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash)]
 pub struct AccountInfo {
     pub code_hash: H256,
     pub balance: U256,
     pub nonce: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AccountState {
     pub nonce: u64,
     pub balance: U256,
     pub storage_root: H256,
     pub code_hash: H256,
 }
+
+/// A slim codec for an [`AccountState`].
+///
+/// The slim codec will optimize both the [storage root](AccountState::storage_root) and the
+/// [code hash](AccountState::code_hash)'s encoding so that it does not take space when empty.
+///
+/// The correct way to use it is to wrap the [`AccountState`] and encode it using this codec, and
+/// not to store the codec as a field in a struct.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct AccountStateSlimCodec(pub AccountState);
 
 impl Default for AccountInfo {
     fn default() -> Self {
@@ -61,15 +161,26 @@ impl Default for AccountState {
     }
 }
 
+impl Default for Code {
+    fn default() -> Self {
+        Self {
+            bytecode: Bytes::new(),
+            hash: *EMPTY_KECCACK_HASH,
+            jump_targets: Vec::new(),
+        }
+    }
+}
+
 impl From<GenesisAccount> for Account {
     fn from(genesis: GenesisAccount) -> Self {
+        let code = Code::from_bytecode(genesis.code);
         Self {
             info: AccountInfo {
-                code_hash: code_hash(&genesis.code),
+                code_hash: code.hash,
                 balance: genesis.balance,
                 nonce: genesis.nonce,
             },
-            code: genesis.code,
+            code,
             storage: genesis
                 .storage
                 .iter()
@@ -80,7 +191,7 @@ impl From<GenesisAccount> for Account {
 }
 
 pub fn code_hash(code: &Bytes) -> H256 {
-    keccak_hash::keccak(code.as_ref())
+    keccak(code.as_ref())
 }
 
 impl RLPEncode for AccountInfo {
@@ -136,12 +247,104 @@ impl RLPDecode for AccountState {
     }
 }
 
-pub fn compute_storage_root(storage: &HashMap<U256, U256>) -> H256 {
-    let iter = storage.iter().filter_map(|(k, v)| {
-        (!v.is_zero()).then_some((
-            Keccak256::digest(k.to_big_endian()).to_vec(),
-            v.encode_to_vec(),
+impl RLPEncode for AccountStateSlimCodec {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        struct StorageRootCodec<'a>(&'a H256);
+        impl RLPEncode for StorageRootCodec<'_> {
+            fn encode(&self, buf: &mut dyn BufMut) {
+                let data = if *self.0 != *EMPTY_TRIE_HASH {
+                    self.0.as_bytes()
+                } else {
+                    &[]
+                };
+
+                data.encode(buf);
+            }
+        }
+
+        struct CodeHashCodec<'a>(&'a H256);
+        impl RLPEncode for CodeHashCodec<'_> {
+            fn encode(&self, buf: &mut dyn BufMut) {
+                let data = if *self.0 != *EMPTY_KECCACK_HASH {
+                    self.0.as_bytes()
+                } else {
+                    &[]
+                };
+
+                data.encode(buf);
+            }
+        }
+
+        Encoder::new(buf)
+            .encode_field(&self.0.nonce)
+            .encode_field(&self.0.balance)
+            .encode_field(&StorageRootCodec(&self.0.storage_root))
+            .encode_field(&CodeHashCodec(&self.0.code_hash))
+            .finish();
+    }
+}
+
+impl RLPDecode for AccountStateSlimCodec {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        struct StorageRootCodec(H256);
+        impl RLPDecode for StorageRootCodec {
+            fn decode_unfinished(mut rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+                let value = match rlp.split_off_first() {
+                    Some(0x80) => *EMPTY_TRIE_HASH,
+                    Some(0xA0) => {
+                        let data;
+                        (data, rlp) = rlp
+                            .split_first_chunk::<32>()
+                            .ok_or(RLPDecodeError::InvalidLength)?;
+                        H256(*data)
+                    }
+                    _ => return Err(RLPDecodeError::InvalidLength),
+                };
+
+                Ok((Self(value), rlp))
+            }
+        }
+
+        struct CodeHashCodec(H256);
+        impl RLPDecode for CodeHashCodec {
+            fn decode_unfinished(mut rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+                let value = match rlp.split_off_first() {
+                    Some(0x80) => *EMPTY_KECCACK_HASH,
+                    Some(0xA0) => {
+                        let data;
+                        (data, rlp) = rlp
+                            .split_first_chunk::<32>()
+                            .ok_or(RLPDecodeError::InvalidLength)?;
+                        H256(*data)
+                    }
+                    _ => return Err(RLPDecodeError::InvalidLength),
+                };
+
+                Ok((Self(value), rlp))
+            }
+        }
+
+        let decoder = Decoder::new(rlp)?;
+        let (nonce, decoder) = decoder.decode_field("nonce")?;
+        let (balance, decoder) = decoder.decode_field("balance")?;
+        let (StorageRootCodec(storage_root), decoder) = decoder.decode_field("storage_root")?;
+        let (CodeHashCodec(code_hash), decoder) = decoder.decode_field("code_hash")?;
+
+        Ok((
+            Self(AccountState {
+                nonce,
+                balance,
+                storage_root,
+                code_hash,
+            }),
+            decoder.finish()?,
         ))
+    }
+}
+
+pub fn compute_storage_root(storage: &BTreeMap<U256, U256>) -> H256 {
+    let iter = storage.iter().filter_map(|(k, v)| {
+        (!v.is_zero()).then_some((keccak_hash(k.to_big_endian()).to_vec(), v.encode_to_vec()))
     });
     Trie::compute_hash_from_unsorted_iter(iter)
 }
@@ -158,11 +361,11 @@ impl From<&GenesisAccount> for AccountState {
 }
 
 impl Account {
-    pub fn new(balance: U256, code: Bytes, nonce: u64, storage: BTreeMap<H256, U256>) -> Self {
+    pub fn new(balance: U256, code: Code, nonce: u64, storage: FxHashMap<H256, U256>) -> Self {
         Self {
             info: AccountInfo {
                 balance,
-                code_hash: keccak(code.as_ref()).0.into(),
+                code_hash: code.hash,
                 nonce,
             },
             code,

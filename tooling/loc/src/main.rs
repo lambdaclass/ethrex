@@ -51,7 +51,7 @@ fn count_crates_loc(crates_path: &PathBuf, config: &Config) -> Vec<(String, usiz
 
 fn count_loc(path: PathBuf, config: &Config) -> Option<Language> {
     let mut languages = Languages::new();
-    languages.get_statistics(&[path], &["tests"], config);
+    languages.get_statistics(&[path], &["tests", "test", "tooling"], config);
     languages.get(&LanguageType::Rust).cloned()
 }
 

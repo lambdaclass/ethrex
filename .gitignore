@@ -15,6 +15,11 @@ tooling/ef_tests/state/vectors
 tooling/ef_tests/state/runner_v2/failure_report.txt
 tooling/ef_tests/state/runner_v2/success_report.txt
 
+tooling/reorgs/data
+
+tooling/sync/logs/
+tooling/sync/multisync_logs/
+
 # Repos checked out by make target
 /hive/
 ethereum-package/
@@ -34,7 +39,7 @@ jwt.hex
 # Used by the make test target
 /tmp
 
-tests*.tar.gz
+*tests*.tar.gz
 
 .env
 
@@ -48,6 +53,10 @@ loc_report.md
 loc_report_slack.txt
 loc_report_github.txt
 loc_report.json
+performance_report_github.txt
+performance_report_slack.json
+block_time_report_github.txt
+block_time_report_slack.json
 
 # used by Flamegraph and Samply
 tooling/ef_tests/state/levm_perfgraphs
@@ -70,3 +79,17 @@ GEMINI.md
 
 # RKYV
 *.bin
+
+# Documentation Graphs
+!docs/internal/l1/healing/*.svg
+
+# Default database directories for Ethrex in Dev mode
+dev_ethrex_l1/
+dev_ethrex_l2/
+
+# Logs
+logs/
+
+# Node/npm (root tooling)
+node_modules/
+/package-lock.json

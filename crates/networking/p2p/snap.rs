@@ -3,12 +3,13 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
 
 use crate::rlpx::{
-    error::RLPxError,
+    error::PeerConnectionError,
     snap::{
-        AccountRange, AccountRangeUnit, AccountStateSlim, ByteCodes, GetAccountRange, GetByteCodes,
-        GetStorageRanges, GetTrieNodes, StorageRanges, StorageSlot, TrieNodes,
+        AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges,
+        GetTrieNodes, StorageRanges, StorageSlot, TrieNodes,
     },
 };
+use ethrex_common::types::AccountStateSlimCodec;
 
 // Request Processing
 
@@ -21,8 +22,7 @@ pub async fn process_account_range_request(
         let mut bytes_used = 0;
         for (hash, account) in store.iter_accounts_from(request.root_hash, request.starting_hash)? {
             debug_assert!(hash >= request.starting_hash);
-            let account = AccountStateSlim::from(account);
-            bytes_used += 32 + account.length() as u64;
+            bytes_used += 32 + AccountStateSlimCodec(account).length() as u64;
             accounts.push(AccountRangeUnit { hash, account });
             if hash >= request.limit_hash || bytes_used >= request.response_bytes {
                 break;
@@ -112,7 +112,7 @@ pub fn process_byte_codes_request(
     let mut codes = vec![];
     let mut bytes_used = 0;
     for code_hash in request.hashes {
-        if let Some(code) = store.get_account_code(code_hash)? {
+        if let Some(code) = store.get_account_code(code_hash)?.map(|c| c.bytecode) {
             bytes_used += code.len() as u64;
             codes.push(code);
         }
@@ -129,13 +129,13 @@ pub fn process_byte_codes_request(
 pub async fn process_trie_nodes_request(
     request: GetTrieNodes,
     store: Store,
-) -> Result<TrieNodes, RLPxError> {
+) -> Result<TrieNodes, PeerConnectionError> {
     tokio::task::spawn_blocking(move || {
         let mut nodes = vec![];
         let mut remaining_bytes = request.bytes;
         for paths in request.paths {
             if paths.is_empty() {
-                return Err(RLPxError::BadRequest(
+                return Err(PeerConnectionError::BadRequest(
                     "zero-item pathset requested".to_string(),
                 ));
             }
@@ -177,11 +177,10 @@ pub(crate) fn encodable_to_proof(proof: &[Bytes]) -> Vec<Vec<u8>> {
 mod tests {
     use std::str::FromStr;
 
-    use ethrex_common::{BigEndianHash, H256, types::AccountState};
+    use ethrex_common::{BigEndianHash, H256, types::AccountStateSlimCodec};
     use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
     use ethrex_storage::EngineType;
-
-    use crate::rlpx::snap::AccountStateSlim;
+    use ethrex_trie::EMPTY_TRIE_HASH;
 
     use super::*;
 
@@ -996,10 +995,10 @@ mod tests {
 
         // Create a store and load it up with the accounts
         let store = Store::new("null", EngineType::InMemory).unwrap();
-        let mut state_trie = store.new_state_trie_for_test()?;
+        let mut state_trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
         for (address, account) in accounts {
             let hashed_address = H256::from_str(address).unwrap().as_bytes().to_vec();
-            let account = AccountState::from(AccountStateSlim::decode(&account).unwrap());
+            let AccountStateSlimCodec(account) = RLPDecode::decode(&account).unwrap();
             state_trie
                 .insert(hashed_address, account.encode_to_vec())
                 .unwrap();

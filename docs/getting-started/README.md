@@ -3,52 +3,109 @@
 Ethrex is a minimalist, stable, modular and fast implementation of the Ethereum protocol in [Rust](https://www.rust-lang.org/).
 The client supports running in two different modes:
 
-- As a regular Ethereum execution client
-- As a multi-prover ZK-Rollup (supporting SP1, RISC Zero and TEEs), where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security. Support for based sequencing is currently in the works.
+* **ethrex L1** - As a regular Ethereum execution client
+* **ethrex L2** - As a multi-prover ZK-Rollup (supporting SP1, RISC Zero and TEEs), where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security. Support for based sequencing is currently in the works.
 
-We call the first one "ethrex L1" and the second one "ethrex L2".
+## Quickstart L1
 
-## Quickstart
+> [!CAUTION]
+> Before starting, ensure your hardware meets the [hardware requirements](../getting-started/hardware_requirements.md).
 
-### L1: Run an Ethereum Node
+Follow these steps to sync an ethrex node on the Hoodi testnet.
 
-Follow these steps to quickly launch an Ethereum L1 (mainnet) node using Docker. For advanced details, see the links at the end.
+### MacOS
 
-#### Supported Networks
-
-- **mainnet**
-- **sepolia**
-- **holesky**
-- **hoodi**
-
-By default, the command below runs a node on mainnet. To use a different network, change the `ETHREX_NETWORK` environment variable with one of the networks above.
+Install ethrex and lighthouse:
 
 ```sh
-curl -LO https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/docker-compose.yaml
-ETHREX_NETWORK=mainnet docker compose up
+# create secrets directory and jwt secret
+mkdir -p ethereum/secrets/
+cd ethereum/
+openssl rand -hex 32 | tr -d "\n" | tee ./secrets/jwt.hex
+
+# install lightouse and ethrex
+brew install lambdaclass/tap/ethrex
+brew install lighthouse
 ```
 
-This will start an ethrex node along with a Lighthouse consensus client that syncs with the Ethereum network.
-
-### L2: Run an L2 Node
-
-Follow these steps to quickly launch an L2 node using Docker. For advanced details, see the links at the end.
+On one terminal:
 
 ```sh
-docker run -p 1729:1729 ghcr.io/lambdaclass/ethrex:main l2 --dev
+ethrex --authrpc.jwtsecret ./secrets/jwt.hex --network hoodi
 ```
 
-This will start a local L1 and L2 network.
+and on another one:
+
+```sh
+lighthouse bn --network hoodi --execution-endpoint http://localhost:8551 --execution-jwt ./secrets/jwt.hex --checkpoint-sync-url https://hoodi.checkpoint.sigp.io --http
+```
+
+### Linux x86
+
+Install ethrex and lighthouse:
+
+> [!NOTE]
+> Go to https://github.com/sigp/lighthouse/releases/ and use the latest package there and replace that in the below commands
+
+```sh
+# create secrets directory and jwt secret
+mkdir -p ethereum/secrets/
+cd ethereum/
+openssl rand -hex 32 | tr -d "\n" | tee ./secrets/jwt.hex
+
+# install lightouse and ethrex
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux-x86_64 -o ethrex
+chmod +x ethrex
+curl -LO https://github.com/sigp/lighthouse/releases/download/v8.0.0/lighthouse-v8.0.0-x86_64-unknown-linux-gnu.tar.gz
+tar -xvf lighthouse-v8.0.0-x86_64-unknown-linux-gnu.tar.gz
+```
+
+On one terminal:
+
+```sh
+./ethrex --authrpc.jwtsecret ./secrets/jwt.hex --network hoodi
+```
+
+and on another one:
+
+```sh
+./lighthouse bn --network hoodi --execution-endpoint http://localhost:8551 --execution-jwt ./secrets/jwt.hex --checkpoint-sync-url https://hoodi.checkpoint.sigp.io --http
+```
+
+For other CPU architectures, see the [releases page](https://github.com/lambdaclass/ethrex/releases/).
+
+## Quickstart L2
+
+Follow these steps to quickly launch a local L2 node. For advanced options and real deployments, see the links at the end.
+
+### MacOS
+
+```sh
+# install ethrex
+brew install lambdaclass/tap/ethrex
+ethrex l2 --dev
+```
+
+### Linux x86
+
+```sh
+# install ethrex
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux-x86_64 -o ethrex
+chmod +x ethrex
+./ethrex l2 --dev
+```
+
+For other CPU architectures, see the [releases page](https://github.com/lambdaclass/ethrex/releases/).
 
 ## Where to Start
 
-- **Just want to run an Ethereum node?**
+- **Want to run ethrex in production as an execution client?**
 
-  Start with the [Quickstart](#quickstart) or see [Node operation](../l1/running) for setup, configuration, monitoring, and best practices.
+  See [Node operation](../l1/running) for setup, configuration, monitoring, and best practices.
 
-- **Interested in building your own L2?**
+- **Interested in deploying your own L2?**
 
-  Begin with the [L2 introduction](../l2/introduction.md), [L2 quickstart](../getting-started/quickstart-l2.md), and see [L2 rollup deployment](../l2/deploy.md) for launching your own rollup, deploying contracts, and interacting with your L2.
+  See [L2 rollup deployment](../l2/deployment/overview.md) for launching your own rollup, deploying contracts, and interacting with your L2.
 
 - **Looking to contribute or develop?**
 

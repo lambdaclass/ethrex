@@ -30,7 +30,7 @@ fn main() {
             .join("lib/openzeppelin-contracts-upgradeable")
             .to_str()
             .expect("Failed to convert path to str"),
-        None,
+        Some("release-v5.4"),
         true,
     )
     .unwrap();
@@ -41,8 +41,10 @@ fn main() {
         &contracts_path,
         &proxy_contract_path,
         false,
+        false,
         None,
         &[&contracts_path],
+        Some(999999),
     )
     .expect("failed to compile ERC1967Proxy contract");
 

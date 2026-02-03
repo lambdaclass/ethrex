@@ -4,7 +4,10 @@
 // - Ethereum's reference: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_newfilter
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
-    types::{block_identifier::BlockIdentifier, receipt::RpcLog},
+    types::{
+        block_identifier::{BlockIdentifier, BlockTag},
+        receipt::RpcLog,
+    },
     utils::RpcErr,
 };
 use ethrex_common::{H160, H256};
@@ -12,6 +15,7 @@ use ethrex_storage::Store;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashSet;
+
 #[derive(Deserialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum AddressFilter {
@@ -19,7 +23,16 @@ pub enum AddressFilter {
     Many(Vec<H160>),
 }
 
-#[derive(Deserialize, Debug, Clone)]
+impl AsRef<[H160]> for AddressFilter {
+    fn as_ref(&self) -> &[H160] {
+        match self {
+            AddressFilter::Single(address) => std::slice::from_ref(address),
+            AddressFilter::Many(addresses) => addresses.as_ref(),
+        }
+    }
+}
+
+#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum TopicFilter {
     Topic(Option<H256>),
@@ -49,21 +62,24 @@ impl RpcHandler for LogsFilter {
                     .ok_or(RpcErr::BadParams("Param is not a object".to_owned()))?;
                 let from_block = param
                     .get("fromBlock")
-                    .ok_or_else(|| RpcErr::MissingParam("fromBlock".to_string()))
-                    .and_then(|block_number| BlockIdentifier::parse(block_number.clone(), 0))?;
+                    .map(|block_number| BlockIdentifier::parse(block_number.clone(), 0))
+                    .transpose()?
+                    .unwrap_or(BlockIdentifier::Tag(BlockTag::Latest));
                 let to_block = param
                     .get("toBlock")
-                    .ok_or_else(|| RpcErr::MissingParam("toBlock".to_string()))
-                    .and_then(|block_number| BlockIdentifier::parse(block_number.clone(), 0))?;
+                    .map(|block_number| BlockIdentifier::parse(block_number.clone(), 0))
+                    .transpose()?
+                    .unwrap_or(BlockIdentifier::Tag(BlockTag::Latest));
                 let address_filters = param
                     .get("address")
-                    .ok_or_else(|| RpcErr::MissingParam("address".to_string()))
-                    .and_then(|address| {
+                    .map(|address| {
                         match serde_json::from_value::<Option<AddressFilter>>(address.clone()) {
                             Ok(filters) => Ok(filters),
                             _ => Err(RpcErr::WrongParam("address".to_string())),
                         }
-                    })?;
+                    })
+                    .transpose()?
+                    .flatten();
                 let topics_filters = param
                     .get("topics")
                     .ok_or_else(|| RpcErr::MissingParam("topics".to_string()))
@@ -191,11 +207,9 @@ pub(crate) async fn fetch_logs_with_filter(
                 }
                 for (i, topic_filter) in filter.topics.iter().enumerate() {
                     match topic_filter {
-                        TopicFilter::Topic(t) => {
-                            if let Some(topic) = t {
-                                if rpc_log.log.topics[i] != *topic {
-                                    return false;
-                                }
+                        TopicFilter::Topic(topic) => {
+                            if topic.is_some_and(|topic| rpc_log.log.topics[i] != topic) {
+                                return false;
                             }
                         }
                         TopicFilter::Topics(sub_topics) => {
@@ -215,4 +229,55 @@ pub(crate) async fn fetch_logs_with_filter(
     };
 
     Ok(filtered_logs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_get_logs_with_defaults() {
+        let params = Some(vec![
+            json!({"topics": ["0x0000000000000000000000000000000000000000000000000000000000000000"]}),
+        ]);
+        let request = LogsFilter::parse(&params).unwrap();
+
+        assert!(request.address_filters.is_none(), "{request:?}");
+        assert!(
+            matches!(request.from_block, BlockIdentifier::Tag(BlockTag::Latest)),
+            "{request:?}"
+        );
+        assert!(
+            matches!(request.to_block, BlockIdentifier::Tag(BlockTag::Latest)),
+            "{request:?}"
+        );
+        assert_eq!(request.topics, vec![TopicFilter::Topic(Some(H256::zero()))]);
+    }
+
+    #[test]
+    fn test_get_logs_multiple_addresses() {
+        let params = Some(vec![json!({
+            "address": [
+                "0x0000000000000000000000000000000000000001",
+                "0x0000000000000000000000000000000000000002"
+            ],
+            "topics": ["0x0000000000000000000000000000000000000000000000000000000000000000"]
+        })]);
+        let request = LogsFilter::parse(&params).unwrap();
+
+        assert_eq!(
+            request.address_filters.as_ref().unwrap().as_ref(),
+            [H160::from_low_u64_be(1), H160::from_low_u64_be(2)],
+        );
+        assert!(
+            matches!(request.from_block, BlockIdentifier::Tag(BlockTag::Latest)),
+            "{request:?}"
+        );
+        assert!(
+            matches!(request.to_block, BlockIdentifier::Tag(BlockTag::Latest)),
+            "{request:?}"
+        );
+        assert_eq!(request.topics, vec![TopicFilter::Topic(Some(H256::zero()))]);
+    }
 }

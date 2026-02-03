@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use ethrex_common::types::{
-    Account as ethrexAccount, AccountInfo, Block as CoreBlock, BlockBody, EIP1559Transaction,
+    Account as ethrexAccount, AccountInfo, Block as CoreBlock, BlockBody, Code, EIP1559Transaction,
     EIP2930Transaction, EIP4844Transaction, EIP7702Transaction, LegacyTransaction,
     Transaction as ethrexTransaction, TxKind, code_hash,
 };
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::deserialize::deserialize_block_expected_exception;
-use crate::network::Network;
+use crate::fork::Fork;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -22,11 +22,12 @@ pub struct TestUnit {
     #[serde(rename = "genesisRLP", with = "ethrex_common::serde_utils::bytes")]
     pub genesis_rlp: Bytes,
     pub lastblockhash: H256,
-    pub network: Network,
-    pub post_state: HashMap<Address, Account>,
+    pub network: Fork,
+    pub post_state: Option<HashMap<Address, Account>>,
+    pub post_state_hash: Option<H256>,
     pub pre: HashMap<Address, Account>,
     pub seal_engine: serde_json::Value,
-    pub config: FixtureConfig,
+    pub config: Option<FixtureConfig>,
 }
 
 /// General information about the test. Matches the `_info` field in the `.json` file.
@@ -100,6 +101,7 @@ pub struct BlobSchedule {
     pub bpo4: Option<ForkBlobSchedule>,
     #[serde(rename = "BPO5")]
     pub bpo5: Option<ForkBlobSchedule>,
+    pub amsterdam: Option<ForkBlobSchedule>,
 }
 
 impl From<BlobSchedule> for ethrex_common::types::BlobSchedule {
@@ -115,10 +117,10 @@ impl From<BlobSchedule> for ethrex_common::types::BlobSchedule {
             blob_schedule.osaka = osaka_schedule.into()
         }
         if let Some(bpo1_schedule) = val.bpo1 {
-            blob_schedule.bpo1 = Some(bpo1_schedule.into())
+            blob_schedule.bpo1 = bpo1_schedule.into()
         }
         if let Some(bpo2_schedule) = val.bpo2 {
-            blob_schedule.bpo2 = Some(bpo2_schedule.into())
+            blob_schedule.bpo2 = bpo2_schedule.into()
         }
         if let Some(bpo3_schedule) = val.bpo3 {
             blob_schedule.bpo3 = Some(bpo3_schedule.into())
@@ -128,6 +130,9 @@ impl From<BlobSchedule> for ethrex_common::types::BlobSchedule {
         }
         if let Some(bpo5_schedule) = val.bpo5 {
             blob_schedule.bpo5 = Some(bpo5_schedule.into())
+        }
+        if let Some(amsterdam_schedule) = val.amsterdam {
+            blob_schedule.amsterdam = Some(amsterdam_schedule.into())
         }
         blob_schedule
     }
@@ -157,7 +162,9 @@ impl TestUnit {
     pub fn get_genesis(&self) -> Genesis {
         let mut config = *self.network.chain_config();
         // Overwrite default blob schedule with test's blob schedule
-        if let Some(ref schedule) = self.config.blob_schedule {
+        if let Some(test_config) = &self.config
+            && let Some(ref schedule) = test_config.blob_schedule
+        {
             config.blob_schedule = schedule.clone().into();
         }
         Genesis {
@@ -185,6 +192,8 @@ impl TestUnit {
                 .excess_blob_gas
                 .map(|v| v.as_u64()),
             requests_hash: self.genesis_block_header.requests_hash,
+            block_access_list_hash: self.genesis_block_header.block_access_list_hash,
+            slot_number: self.genesis_block_header.slot_number.map(|v| v.as_u64()),
         }
     }
 }
@@ -263,6 +272,9 @@ pub struct Header {
     pub excess_blob_gas: Option<U256>,
     pub parent_beacon_block_root: Option<H256>,
     pub requests_hash: Option<H256>,
+    // Amsterdam fork fields (EIP-7928)
+    pub block_access_list_hash: Option<H256>,
+    pub slot_number: Option<U256>,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
@@ -347,7 +359,7 @@ pub struct Transaction {
     pub max_priority_fee_per_gas: Option<U256>,
     pub blob_versioned_hashes: Option<Vec<H256>>,
     pub hash: Option<H256>,
-    pub sender: Address,
+    pub sender: Option<Address>,
     pub to: TxKind,
 }
 
@@ -376,6 +388,8 @@ impl From<Header> for BlockHeader {
             excess_blob_gas: val.excess_blob_gas.map(|x| x.as_u64()),
             parent_beacon_block_root: val.parent_beacon_block_root,
             requests_hash: val.requests_hash,
+            block_access_list_hash: val.block_access_list_hash,
+            slot_number: val.slot_number.map(|x| x.as_u64()),
             ..Default::default()
         }
     }
@@ -511,7 +525,7 @@ impl From<Transaction> for LegacyTransaction {
     fn from(val: Transaction) -> Self {
         LegacyTransaction {
             nonce: val.nonce.as_u64(),
-            gas_price: val.gas_price.unwrap_or_default().as_u64(), // TODO: Consider converting this into Option
+            gas_price: val.gas_price.unwrap_or_default(), // TODO: Consider converting this into Option
             gas: val.gas_limit.as_u64(),
             // to: match val.to {
             //     zero if zero == H160::zero() => TxKind::Create,
@@ -533,7 +547,7 @@ impl From<Transaction> for EIP2930Transaction {
         EIP2930Transaction {
             chain_id: val.chain_id.map(|id: U256| id.as_u64()).unwrap_or(1),
             nonce: val.nonce.as_u64(),
-            gas_price: val.gas_price.unwrap_or_default().as_u64(),
+            gas_price: val.gas_price.unwrap_or_default(),
             gas_limit: val.gas_limit.as_u64(),
             // to: match val.to {
             //     zero if zero == H160::zero() => TxKind::Create,
@@ -564,7 +578,7 @@ impl From<Account> for ethrexAccount {
                 balance: val.balance,
                 nonce: val.nonce.as_u64(),
             },
-            code: val.code,
+            code: Code::from_bytecode(val.code),
             storage: val
                 .storage
                 .into_iter()
@@ -578,7 +592,7 @@ impl From<Account> for GenesisAccount {
     fn from(val: Account) -> Self {
         GenesisAccount {
             code: val.code,
-            storage: val.storage,
+            storage: val.storage.into_iter().collect(),
             balance: val.balance,
             nonce: val.nonce.as_u64(),
         }
@@ -602,5 +616,6 @@ pub enum BlockExpectedException {
     IncorrectBlockFormat,
     InvalidRequest,
     SystemContractCallFailed,
+    RlpBlockLimitExceeded,
     Other, //TODO: Implement exceptions
 }

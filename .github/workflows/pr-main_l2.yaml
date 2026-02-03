@@ -2,14 +2,15 @@ name: L2 (without proving)
 on:
   push:
     branches: ["main"]
+  merge_group:
   pull_request:
     branches: ["**"]
-    paths:
-      - "crates/l2/**"
-      - "fixtures/**"
-      - "crates/blockchain/dev/**"
-      - "crates/vm/levm/**"
-      - ".github/workflows/pr-main_l2.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+  packages: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -17,15 +18,69 @@ concurrency:
 
 env:
   DOCKER_ETHREX_WORKDIR: /usr/local/bin
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
 
 jobs:
-  lint:
-    # "Lint" is a required check, don't change the name
-    name: Lint
+  detect-changes:
     runs-on: ubuntu-latest
+    outputs:
+      run_tests: ${{ steps.finish.outputs.run_tests }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            run_tests:
+              - "crates/l2/**"
+              - "fixtures/keys/**"
+              - "fixtures/genesis/l1.json"
+              - "fixtures/genesis/l2.json"
+              - "fixtures/cache/**"
+              - "fixtures/blobs/**"
+              - "fixtures/blockchain/**"
+              - "fixtures/contracts/**"
+              - "crates/blockchain/dev/**"
+              - "crates/vm/levm/**"
+              - ".github/workflows/pr-main_l2.yaml"
+              - "cmd/ethrex/l2/**"
+            non_docs:
+              - "!docs/**"
+            code_changed:
+              - "**/*.rs"
+              - "**/*.toml"
+              - "**/*.lock"
+      - name: finish
+        id: finish
+        run: |
+          if [[ "${{ steps.filter.outputs.non_docs_count }}" == 0 ]]; then
+              echo "run_tests=false" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_EVENT_NAME}" == "merge_group" ]]; then
+              # In merge queue, only run lint if code files changed
+              echo "run_tests=${{ steps.filter.outputs.code_changed }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
+              echo "run_tests=true" >> "$GITHUB_OUTPUT"
+          else
+              echo "run_tests=${{ steps.filter.outputs.run_tests }}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Print result
+        run: echo "run_tests=${{ steps.finish.outputs.run_tests }}"
+
+  lint:
+    # "Lint L2" is a required check, don't change the name
+    name: Lint L2
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
@@ -34,32 +89,49 @@ jobs:
       - name: Install RISC0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -L https://risczero.com/install | bash
-          ~/.risc0/bin/rzup install cargo-risczero 3.0.3
-          ~/.risc0/bin/rzup install risc0-groth16
-          ~/.risc0/bin/rzup install rust
+        uses: ./.github/actions/install-risc0
 
       - name: Create placeholder SP1 ELF
         run: |
-          mkdir -p crates/l2/prover/src/guest_program/src/sp1/out
-          touch crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf
+          mkdir -p crates/guest-program/bin/sp1/out
+          touch crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-elf
 
       - name: Run cargo check
-        run: cargo check --workspace
+        run: cargo check --workspace --features l2,l2-sql
 
       - name: Run cargo clippy
         run: |
-          cargo clippy --workspace -- -D warnings
+          cargo clippy --workspace --features l2,l2-sql -- -D warnings
           make lint
 
       - name: Run cargo fmt
         run: |
           cargo fmt --all -- --check
 
+  validate-blobs:
+    # Fast validation to catch stale blobs early
+    # This prevents waiting for state-diff-test to fail
+    name: Validate Blob Fixtures
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Validate blobs match genesis
+        run: |
+          cd crates/l2
+          make validate-blobs
+
   build-docker:
     name: Build docker image
     runs-on: ubuntu-latest
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -70,9 +142,13 @@ jobs:
       - name: Build L1 docker image
         uses: ./.github/actions/build-docker
         with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
+          dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
           tags: ethrex:main
+          variant: l1
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -80,26 +156,179 @@ jobs:
           name: ethrex_image
           path: /tmp/ethrex_image.tar
 
+  # We build the docker image for the l2 usage. It needs to add
+  # The build args for l2.
+  build-docker-l2:
+    name: Build docker image L2
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build L2 docker image
+        uses: ./.github/actions/build-docker
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
+          dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
+          tags: ethrex:main-l2
+          artifact_path: ethrex_image_l2.tar
+          build_args: BUILD_FLAGS=--features l2,l2-sql
+          variant: l2
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethrex_image_l2
+          path: /tmp/ethrex_image_l2.tar
+
+  uniswap-swap:
+    name: Uniswap Swap Token Flow
+    runs-on: ubuntu-latest
+    needs: [detect-changes]
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
+    timeout-minutes: 60
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Yarn
+        run: npm install -g yarn
+
+      - name: Install solc
+        uses: ./.github/actions/install-solc
+
+      - name: Install rex
+        run: |
+          git clone https://github.com/lambdaclass/rex.git /tmp/rex
+          cd /tmp/rex
+          git checkout f853445
+          cargo build --release
+          sudo cp target/release/rex /usr/local/bin
+
+      - name: Build ethrex with L2 features and contracts
+        env:
+          COMPILE_CONTRACTS: "true"
+        run: |
+          cargo build --release --features "l2,l2-sql" --bin ethrex
+
+      - name: Run L2 dev node and Uniswap Swap Token Script
+        env:
+          COMPILE_CONTRACTS: "true"
+        run: |
+          set -euo pipefail
+
+          echo "Starting ethrex L2 dev node (logging to /tmp/ethrex.log)..."
+          ./target/release/ethrex \
+            l2 --dev \
+            --osaka-activation-time 1761677592 \
+            --no-monitor \
+            --log.level debug > /tmp/ethrex.log 2>&1 &
+          ETHREX_PID=$!
+
+          trap 'kill "$ETHREX_PID" 2>/dev/null || true' EXIT
+
+          if ! kill -0 "$ETHREX_PID" 2>/dev/null; then
+            echo "ethrex l2 --dev process exited unexpectedly"
+            exit 1
+          fi
+
+          echo "Waiting until rich account 0x0000bd19F707CA481886244bDd20Bd6B8a81bd3e has funds on the L2..."
+          MAX_BALANCE_TRIES=300
+          BALANCE_SLEEP_SECS=2
+          balance_wei=0
+          balance_output=""
+
+          for ((i = 1; i <= MAX_BALANCE_TRIES; i++)); do
+            if ! balance_output=$(rex balance 0x0000bd19F707CA481886244bDd20Bd6B8a81bd3e http://localhost:1729 2>/dev/null); then
+              sleep "${BALANCE_SLEEP_SECS}"
+              continue
+            fi
+
+            balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
+
+            if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
+              echo "Detected L2 balance for rich account: ${balance_wei} wei"
+              break
+            fi
+
+            sleep "${BALANCE_SLEEP_SECS}"
+          done
+
+          if [[ ! "${balance_wei}" =~ ^[0-9]+$ ]] || (( balance_wei == 0 )); then
+            echo "Timed out waiting for non-zero L2 balance for rich account."
+            echo "Last rex balance output:"
+            echo "${balance_output:-'<none>'}"
+            exit 1
+          fi
+
+          echo "Cloning ethrex-l2-contracts-kit..."
+          git clone https://github.com/lambdaclass/ethrex-l2-contracts-kit.git \
+            /tmp/ethrex-l2-contracts-kit
+
+          cd /tmp/ethrex-l2-contracts-kit
+
+          echo "Running Uniswap swap_token script..."
+          chmod +x examples/uniswap/swap_token
+          examples/uniswap/swap_token
+
+      - name: Dump ethrex logs on failure
+        if: ${{ failure() }}
+        run: |
+          echo "===== ethrex logs (/tmp/ethrex.log) ====="
+          if [ -f /tmp/ethrex.log ]; then
+            grep -E "INFO|WARN|ERROR" /tmp/ethrex.log
+          else
+            echo "Log file /tmp/ethrex.log not found"
+          fi
+
   integration-test:
     name: Integration Test - ${{ matrix.name }}
     runs-on: ubuntu-latest
-    needs: build-docker
+    needs: [detect-changes, build-docker, build-docker-l2]
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     strategy:
       matrix:
         include:
           - name: "Validium"
             validium: true
             web3signer: false
+            based: false
             compose_targets: [docker-compose.yaml]
           - name: "Vanilla"
             validium: false
             web3signer: false
+            based: false
             compose_targets: [docker-compose.yaml]
           - name: "Vanilla with Web3signer"
             validium: false
             web3signer: true
+            based: false
             compose_targets:
               [docker-compose.yaml, docker-compose-l2-web3signer.yaml]
+          - name: "Based"
+            validium: false
+            web3signer: false
+            based: true
+            compose_targets: [docker-compose.yaml]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -107,21 +336,17 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
+        uses: ./.github/actions/install-solc
 
-      # also creates empty verification keys (as workflow runs with exec backend)
       - name: Build prover
         run: |
           cd crates/l2
-          make build-prover
-          mkdir -p prover/src/guest_program/src/sp1/out && touch prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk
+          make build-prover-exec
+          mkdir -p ../guest-program/bin/sp1/out && touch ../guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254 && touch ../guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32
 
       - name: Build test
         run: |
-          cargo test l2 --no-run --release
+          cargo test l2 --features l2 --no-run --release
 
       - name: Start Web3Signer
         if: matrix.web3signer
@@ -139,84 +364,23 @@ jobs:
         run: |
           docker load --input /tmp/ethrex_image.tar
 
-      - name: Start L1 & Deploy contracts
-        run: |
-          touch cmd/.env
-          cd crates/l2
-          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
-          docker compose up contract_deployer
-
-      - name: Start Sequencer
-        run: |
-          cd crates/l2
-          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
-          ETHREX_WATCHER_BLOCK_DELAY=0 \
-          ETHREX_COMMITTER_COMMIT_TIME=15000 \
-          ETHREX_WATCHER_WATCH_INTERVAL=1000 \
-          docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach --no-deps ethrex_l2
-
-      - name: Run test
-        run: |
-          sudo chmod -R a+rw crates/l2
-          cd crates/l2
-          RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
-          docker logs --follow ethrex_l2 &
-          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
-          killall ethrex -s SIGINT
-
-  integration-test-based:
-    name: Integration Test - Based
-    runs-on: ubuntu-latest
-    needs: build-docker
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-      - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
-
-      - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
-
-      - name: Download ethrex image artifact
+      - name: Download ethrex L2 image artifact
         uses: actions/download-artifact@v4
         with:
-          name: ethrex_image
+          name: ethrex_image_l2
           path: /tmp
 
-      - name: Load ethrex image
+      - name: Load ethrex L2 image
         run: |
-          docker load --input /tmp/ethrex_image.tar
+          docker load --input /tmp/ethrex_image_l2.tar
 
-      # also creates empty verification keys (as workflow runs with exec backend)
-      - name: Build prover
+      - name: Start L1
         run: |
           cd crates/l2
-          make build-prover
-          mkdir -p prover/src/guest_program/src/sp1/out && touch prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk
-
-      - name: Start L1 & Deploy contracts
-        run: |
-          touch cmd/.env
-          cd crates/l2
-          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true \
-          COMPILE_CONTRACTS=true \
-          docker compose up contract_deployer
+          ETHREX_LOG_LEVEL=debug docker compose up --detach ethrex_l1
 
       - name: Install rex
+        if: ${{ matrix.based }}
         run: |
           cd ..
           git clone https://github.com/lambdaclass/rex.git
@@ -225,7 +389,37 @@ jobs:
           make cli
           echo "rex install successfully at $(which rex)"
 
+      - name: Deploy contracts
+        run: |
+          #
+          # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries
+          # in the contract_deployer service in crates/l2/docker-compose.yaml
+          #
+          touch cmd/.env
+          cd crates/l2
+          if  [ "${{ matrix.based }}" = true ]; then
+            export ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true
+            export COMPILE_CONTRACTS=true
+          fi
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_DEPLOYER_DEPLOY_RICH=true \
+          ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
+          docker compose up contract_deployer
+
+          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
+          if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
+            echo "If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
+            docker logs contract_deployer
+            exit 1
+          fi
+
+      - name: Copy env to host
+        run: |
+          docker cp contract_deployer:/env/.env cmd/.env
+          cat cmd/.env
+
       - name: Register sequencer
+        if: matrix.based
         run: |
           cd cmd
           SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
@@ -240,51 +434,54 @@ jobs:
 
       - name: Start Sequencer
         run: |
-          cd cmd
-          SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
-          export SEQUENCER_REGISTRY
-          cd ../crates/l2
-
+          if  [ "${{ matrix.based }}" = true ]; then
+            cd cmd
+            ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
+            export ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY
+            export ETHREX_BASED=true
+            cd ..
+          else
+            export ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127
+            export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=0xd5d2a85751b6F158e5b9B8cD509206A865672362
+            export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=1000000000
+            export ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=0x45681AE1768a8936FB87aB11453B4755e322ceec
+          fi
+          cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_COMMITTER_VALIDIUM=false \
-          ETHREX_COMMITTER_COMMIT_TIME=15000 \
+          ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
-          ETHREX_BASED=true \
-          ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY="$SEQUENCER_REGISTRY" \
+          ETHREX_COMMITTER_COMMIT_TIME=15000 \
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
-          docker compose up --detach --no-deps ethrex_l2
+          ETHREX_LOG_LEVEL=debug \
+          docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach --no-deps ethrex_l2
 
       - name: Run test
         run: |
           sudo chmod -R a+rw crates/l2
           cd crates/l2
-          RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
-          docker logs --follow ethrex_l2 &
+          RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec &
+          docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow ethrex_l1 | grep -E "INFO|WARN|ERROR" &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
 
   integration-test-tdx:
     name: Integration Test - TDX
     runs-on: ubuntu-latest
-    needs: build-docker
+    needs: [detect-changes, build-docker, build-docker-l2]
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          large-packages: false
-
       - name: Checkout sources
         uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
       - name: Install solc
-        uses: lambdaclass/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
+        uses: ./.github/actions/install-solc
 
       - name: Download ethrex image artifact
         uses: actions/download-artifact@v4
@@ -295,6 +492,16 @@ jobs:
       - name: Load ethrex image
         run: |
           docker load --input /tmp/ethrex_image.tar
+
+      - name: Download ethrex L2 image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_image_l2
+          path: /tmp
+
+      - name: Load ethrex L2 image
+        run: |
+          docker load --input /tmp/ethrex_image_l2.tar
 
       - name: Set up Nix
         uses: cachix/install-nix-action@v31
@@ -309,6 +516,7 @@ jobs:
           cd /tmp
           git clone https://github.com/lambdaclass/rex
           cd rex
+          git checkout 18466ec1c3dbcbbf22a68fc1f850d660cb2fbf1f
           cargo build --release
           cp target/release/rex /usr/local/bin
 
@@ -317,7 +525,7 @@ jobs:
           sudo sysctl kernel.unprivileged_userns_apparmor_policy=0
           sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0
           cd crates/l2/tee/quote-gen
-          make image.raw
+          make image.raw || { echo "if fails run in the root of the project: make update-cargo-lock"; exit 1; }
 
       - name: Start L1 & Deploy contracts
         run: |
@@ -325,20 +533,28 @@ jobs:
           cd crates/l2
           make init-l1-docker;
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true \
+          ETHREX_L2_TDX=true \
           ETHREX_TDX_DEV_MODE=true \
           make deploy-l1
 
-      - name: Start Sequencer and test
+      - name: Start Sequencer
         run: |
           cd crates/l2
           ETHREX_WATCHER_BLOCK_DELAY=0 \
-          PROOF_COORDINATOR_ADDRESS=0.0.0.0 \
+          ETHREX_WATCHER_WATCH_INTERVAL=1000 \
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_COMMITTER_COMMIT_TIME=15000 \
-          ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY=0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
-          make init-l2 &
-          sleep 30
-          cd tee/quote-gen/
+          ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+          ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+          ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=1000000000 \
+          ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=0x45681AE1768a8936FB87aB11453B4755e322ceec \
+          ETHREX_PROOF_COORDINATOR_ADDRESS=0.0.0.0 \
+          ETHREX_LOG_LEVEL=debug \
+          docker compose -f docker-compose.yaml -f docker-compose-l2-tdx.yaml up --detach --no-deps ethrex_l2
+
+      - name: Run test
+        run: |
+          cd crates/l2/tee/quote-gen/
           qemu-system-x86_64 \
             -daemonize \
             -serial file:tdx_prover.log \
@@ -351,14 +567,15 @@ jobs:
             -device ide-hd,bus=ide.0,drive=main,bootindex=0 -drive "if=none,media=disk,id=main,file.filename=./image.raw,discard=unmap,detect-zeroes=unmap"
           tail -f tdx_prover.log &
           cd ../../
-          docker logs --follow ethrex_l1 &
+          docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           pkill -9 -f ethrex_tdx_prover
 
   state-diff-test:
     name: State Reconstruction Tests
     runs-on: ubuntu-latest
-    needs: build-docker
+    needs: [detect-changes, build-docker, build-docker-l2, validate-blobs]
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -375,43 +592,254 @@ jobs:
         run: |
           docker load --input /tmp/ethrex_image.tar
 
-      - name: Install solc
-        uses: lambdaclass/get-solc@master
+      - name: Download ethrex L2 image artifact
+        uses: actions/download-artifact@v4
         with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
+          name: ethrex_image_l2
+          path: /tmp
+
+      - name: Load ethrex L2 image
+        run: |
+          docker load --input /tmp/ethrex_image_l2.tar
+
+      - name: Install solc
+        uses: ./.github/actions/install-solc
 
       - name: Start L1 & Deploy contracts
         run: |
+          #
+          # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries
+          # in the contract_deployer service in crates/l2/docker-compose.yaml
+          #
           touch cmd/.env
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           COMPILE_CONTRACTS=true \
           docker compose up contract_deployer
+
+          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
+          if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
+            echo "If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
+            docker logs contract_deployer
+            exit 1
+          fi
 
       - name: Run tests
         run: |
           cd crates/l2
           make state-diff-test
 
+  integration-test-shared-bridge:
+    name: Integration Test Shared Bridge - ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-docker, build-docker-l2]
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
+    strategy:
+      matrix:
+        include:
+          - name: "Normal"
+            forced_inclusion: false
+          - name: "Forced Inclusion"
+            forced_inclusion: true
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Install solc
+        uses: ./.github/actions/install-solc
+
+      - name: Build prover
+        run: |
+          cd crates/l2
+          make build-prover-exec
+          mkdir -p ../guest-program/bin/sp1/out && touch ../guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254 && touch ../guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32
+
+      - name: Build test
+        run: |
+          cargo test l2 --features l2 --no-run --release
+
+      - name: Download ethrex image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_image
+          path: /tmp
+
+      - name: Load ethrex image
+        run: |
+          docker load --input /tmp/ethrex_image.tar
+
+      - name: Download ethrex L2 image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_image_l2
+          path: /tmp
+
+      - name: Load ethrex L2 image
+        run: |
+          docker load --input /tmp/ethrex_image_l2.tar
+
+      - name: Start L1
+        run: |
+          cd crates/l2
+          ETHREX_LOG_LEVEL=debug docker compose up --detach ethrex_l1
+
+      - name: Deploy contracts L2A
+        run: |
+          #
+          # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries
+          # in the contract_deployer service in crates/l2/docker-compose.yaml
+          #
+          touch cmd/.env
+          cd crates/l2
+          if  [ "${{ matrix.forced_inclusion }}" = true ]; then
+            # We set the inclusion max wait to 0 to force expired messages
+            export ETHREX_ON_CHAIN_PROPOSER_INCLUSION_MAX_WAIT=0
+          fi
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_DEPLOYER_DEPLOY_RICH=true \
+          ETHREX_SHARED_BRIDGE_DEPLOY_ROUTER=true \
+          docker compose up contract_deployer
+
+          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
+          if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
+            echo "If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
+            docker logs contract_deployer
+            exit 1
+          fi
+
+      - name: Copy env to host
+        run: |
+          docker cp contract_deployer:/env/.env cmd/.env_l2a
+          cat cmd/.env_l2a
+
+      - name: Deploy contracts L2B
+        run: |
+          jq '.config.chainId = 1730' fixtures/genesis/l2.json > fixtures/genesis/l2b.json
+          #
+          # If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries
+          # in the contract_deployer service in crates/l2/docker-compose.yaml
+          #
+          touch cmd/.env
+          cd crates/l2
+          export $(grep -v '^#' ../../cmd/.env_l2a | xargs)
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_DEPLOYER_DEPLOY_RICH=true \
+          ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS=$ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS \
+          docker compose -f docker-compose.yaml -f docker-compose-l2-shared-bridge.overrides.yaml up contract_deployer
+
+          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
+          if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
+            echo "If this job fails due to connection refused to ethrex_l1 consider increasing the failure retries in the contract_deployer service in crates/l2/docker-compose.yaml"
+            docker logs contract_deployer
+            exit 1
+          fi
+
+      - name: Copy env to host
+        run: |
+          docker cp contract_deployer:/env/.env cmd/.env_l2b
+          cat cmd/.env_l2b
+
+      - name: Start Sequencer L2A
+        run: |
+          cp cmd/.env_l2a cmd/.env
+          export ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127
+          export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=0xd5d2a85751b6F158e5b9B8cD509206A865672362
+          export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=1000000000
+          export ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=0x45681AE1768a8936FB87aB11453B4755e322ceec
+          if  [ "${{ matrix.forced_inclusion }}" = false ]; then
+            # In forced_inclusion, we ommit these variables to avoid including messages from L2B into L2A
+            export ETHREX_WATCHER_L2_RPCS=http://ethrex_l2_b:1730
+            export ETHREX_WATCHER_L2_CHAIN_IDS=1730
+          fi
+          cd crates/l2
+          export $(xargs < ../../cmd/.env_l2a)
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_WATCHER_BLOCK_DELAY=0 \
+          ETHREX_COMMITTER_COMMIT_TIME=15000 \
+          ETHREX_WATCHER_WATCH_INTERVAL=1000 \
+          ETHREX_LOG_LEVEL=debug \
+          ETHREX_WATCHER_ROUTER_ADDRESS=$ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS \
+          docker compose -f docker-compose.yaml up --detach --no-deps ethrex_l2
+
+      - name: Start Sequencer L2B
+        run: |
+          cp cmd/.env_l2b cmd/.env
+          export ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127
+          export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=0xd5d2a85751b6F158e5b9B8cD509206A865672362
+          export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=1000000000
+          export ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=0x45681AE1768a8936FB87aB11453B4755e322ceec
+          cd crates/l2
+          export $(xargs < ../../cmd/.env_l2b)
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_WATCHER_BLOCK_DELAY=0 \
+          ETHREX_COMMITTER_COMMIT_TIME=15000 \
+          ETHREX_WATCHER_WATCH_INTERVAL=1000 \
+          ETHREX_WATCHER_L2_RPCS=http://ethrex_l2:1729 \
+          ETHREX_WATCHER_L2_CHAIN_IDS=65536999 \
+          ETHREX_LOG_LEVEL=debug \
+          ETHREX_WATCHER_ROUTER_ADDRESS=$ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS \
+          docker compose -f docker-compose.yaml -f docker-compose-l2-shared-bridge.overrides.yaml up --detach --no-deps ethrex_l2_b
+
+      - name: Run Shared Bridge Tests
+        if: matrix.forced_inclusion == false
+        run: |
+          sudo chmod -R a+rw crates/l2
+          cd crates/l2
+          cargo run --release --features "l2,l2-sql" --manifest-path ../../Cargo.toml -- \
+          l2 prover \
+          --proof-coordinators tcp://127.0.0.1:3900 tcp://127.0.0.1:3901 \
+          --backend exec &
+          docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow ethrex_l2_b | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow ethrex_l1 | grep -E "INFO|WARN|ERROR" &
+          cp ../../cmd/.env_l2a ../../cmd/.env
+          export $(xargs < ../../cmd/.env_l2a)
+          cargo test shared_bridge --release -- --nocapture --test-threads=1
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH=true cargo test l2 --release -- --nocapture --test-threads=1
+          cp ../../cmd/.env_l2b ../../cmd/.env
+          export $(xargs < ../../cmd/.env_l2b)
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH=true INTEGRATION_TEST_L2_RPC=http://localhost:1730 cargo test l2 --release -- --nocapture --test-threads=1
+          cp ../../cmd/.env_l2a ../../cmd/.env
+          export $(xargs < ../../cmd/.env_l2a)
+          cargo test shared_bridge --release -- --nocapture --test-threads=1
+          killall ethrex -s SIGINT
+
+      - name: Run Forced Inclusion Test
+        if: matrix.forced_inclusion
+        run: |
+          sudo chmod -R a+rw crates/l2
+          cd crates/l2
+          cargo run --release --features "l2,l2-sql" --manifest-path ../../Cargo.toml -- \
+          l2 prover \
+          --proof-coordinators tcp://127.0.0.1:3900 tcp://127.0.0.1:3901 \
+          --backend exec &
+          docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow ethrex_l2_b | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow ethrex_l1 | grep -E "INFO|WARN|ERROR" &
+          cp ../../cmd/.env_l2a ../../cmd/.env
+          cargo test forced_inclusion --release -- --nocapture --test-threads=1
+          killall ethrex -s SIGINT
+
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
-    # "Integration Test" is a required check, don't change the name
-    name: Integration Test
+    # "Integration Test L2" is a required check, don't change the name
+    name: Integration Test L2
     runs-on: ubuntu-latest
     needs:
       [
+        detect-changes,
         integration-test,
         state-diff-test,
-        integration-test-based,
         integration-test-tdx,
+        uniswap-swap,
+        integration-test-shared-bridge,
       ]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-based.result != 'skipped' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' && needs.uniswap-swap.result != 'skipped' && needs.integration-test-shared-bridge.result != 'skipped' }}
     steps:
       - name: Check if any job failed
         run: |
@@ -425,7 +853,12 @@ jobs:
             exit 1
           fi
 
-          if [ "${{ needs.integration-test-based.result }}" != "success" ]; then
-            echo "Job Integration Tests Based failed"
+          if [ "${{ needs.uniswap-swap.result }}" != "success" ]; then
+            echo "Job Uniswap Swap Token Flow failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.integration-test-shared-bridge.result }}" != "success" ]; then
+            echo "Job Integration test shared bridge failed"
             exit 1
           fi

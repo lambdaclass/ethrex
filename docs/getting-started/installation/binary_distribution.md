@@ -13,7 +13,7 @@ Download the latest ethrex release for your OS from the <a href="https://github.
 ### Linux x86_64
 
 ```sh
-curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_x86_64 -o ethrex
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux-x86_64 -o ethrex
 ```
 
 #### Linux x86_64 with GPU support (for L2 prover)
@@ -21,13 +21,13 @@ curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-li
 If you want to run an L2 prover with GPU acceleration, download the GPU-enabled binary:
 
 ```sh
-curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_x86_64-gpu -o ethrex
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux-x86_64-gpu -o ethrex
 ```
 
 ### Linux ARM (aarch64)
 
 ```sh
-curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_aarch64 -o ethrex
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux-aarch64 -o ethrex
 ```
 
 #### Linux ARM (aarch64) with GPU support (for L2 prover)
@@ -35,13 +35,13 @@ curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-li
 If you want to run an L2 prover with GPU acceleration, download the GPU-enabled binary:
 
 ```sh
-curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_aarch64-gpu -o ethrex
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux-aarch64-gpu -o ethrex
 ```
 
 ### macOS (Apple Silicon, aarch64)
 
 ```sh
-curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-macos_aarch64 -o ethrex
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-macos-aarch64 -o ethrex
 ```
 
 ## Set execution permissions
@@ -67,10 +67,3 @@ Check that Ethrex is installed and working:
 ```sh
 ethrex --version
 ```
-
----
-
-**Next steps:**
-
-- [L1 Quickstart](../quickstart-l1.md)
-- [L2 Quickstart](../quickstart-l2.md)

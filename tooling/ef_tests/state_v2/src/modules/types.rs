@@ -8,9 +8,8 @@ use crate::modules::{
 };
 use std::str::FromStr;
 
-use ::bytes::Bytes;
 use ethrex_common::{
-    Address, H160, H256, U256,
+    Address, Bytes, H160, H256, U256,
     constants::GAS_PER_BLOB,
     types::{
         AuthorizationTuple, BASE_FEE_MAX_CHANGE_DENOMINATOR, Fork, Genesis, GenesisAccount, TxKind,
@@ -277,6 +276,9 @@ fn get_chain_config_from_fork(fork: &Fork) -> ChainConfig {
     if *fork >= Fork::Osaka {
         basic_chain_config.osaka_time = Some(0);
     }
+    if *fork >= Fork::Amsterdam {
+        basic_chain_config.amsterdam_time = Some(0);
+    }
 
     basic_chain_config
 }
@@ -430,7 +432,7 @@ impl From<&AccountState> for GenesisAccount {
     fn from(value: &AccountState) -> Self {
         Self {
             code: value.code.clone(),
-            storage: value.storage.clone(),
+            storage: value.storage.iter().map(|(&k, &v)| (k, v)).collect(),
             balance: value.balance,
             nonce: value.nonce,
         }
@@ -447,6 +449,7 @@ pub enum TransactionExpectedException {
     Type3TxInvalidBlobVersionedHash,
     Type4TxContractCreation,
     IntrinsicGasTooLow,
+    IntrinsicGasBelowFloorGasCost,
     InsufficientAccountFunds,
     SenderNotEoa,
     PriorityGreaterThanMaxFeePerGas,

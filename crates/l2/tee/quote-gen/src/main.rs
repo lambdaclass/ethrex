@@ -2,14 +2,14 @@ mod sender;
 
 use configfs_tsm::create_tdx_quote;
 use ethrex_common::Bytes;
-use ethrex_l2::sequencer::proof_coordinator::get_commit_hash;
+use ethrex_common::utils::keccak;
+use ethrex_l2::sequencer::utils::get_git_commit_hash;
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofCalldata, ProverType},
     utils::get_address_from_secret_key,
 };
-use guest_program::input::ProgramInput;
-use keccak_hash::keccak;
+use ethrex_guest_program::input::ProgramInput;
 use secp256k1::{Message, SecretKey, generate_keypair, rand};
 use sender::{get_batch, submit_proof, submit_quote};
 use std::time::Duration;
@@ -32,19 +32,19 @@ fn sign_eip191(msg: &[u8], private_key: &SecretKey) -> Vec<u8> {
 
     let (msg_signature_recovery_id, msg_signature) = signed_msg.serialize_compact();
 
-    let msg_signature_recovery_id = msg_signature_recovery_id.to_i32() + 27;
+    let msg_signature_recovery_id = Into::<i32>::into(msg_signature_recovery_id) + 27;
 
     [&msg_signature[..], &[msg_signature_recovery_id as u8]].concat()
 }
 
 fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
-    let output = guest_program::execution::execution_program(input).map_err(|e| e.to_string())?;
+    let output = ethrex_guest_program::execution::execution_program(input).map_err(|e| e.to_string())?;
 
     Ok(output.encode())
 }
 
 fn get_quote(private_key: &SecretKey) -> Result<Bytes, String> {
-    let address = get_address_from_secret_key(private_key)
+    let address = get_address_from_secret_key(&private_key.secret_bytes())
         .map_err(|e| format!("Error deriving address: {e}"))?;
     let mut digest_slice = [0u8; 64];
     digest_slice
@@ -65,7 +65,7 @@ async fn do_loop(private_key: &SecretKey, commit_hash: String) -> Result<u64, St
     let signature = sign_eip191(&output, private_key);
     let calldata = ProofCalldata {
         prover_type: ProverType::TDX,
-        calldata: vec![Value::Bytes(output.into()), Value::Bytes(signature.into())],
+        calldata: vec![Value::Bytes(signature.into())],
     };
 
     submit_proof(batch_number, BatchProof::ProofCalldata(calldata)).await?;
@@ -82,7 +82,7 @@ async fn setup(private_key: &SecretKey) -> Result<(), String> {
 #[tokio::main]
 async fn main() {
     let (private_key, _) = generate_keypair(&mut rand::rngs::OsRng);
-    let commit_hash = get_commit_hash();
+    let commit_hash = get_git_commit_hash();
     while let Err(err) = setup(&private_key).await {
         println!("Error sending quote: {}", err);
         sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;

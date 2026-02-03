@@ -1,13 +1,13 @@
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     sync::{Arc, Mutex},
 };
 
 use ethrex_rlp::decode::RLPDecode;
 
-use crate::{Node, NodeHash, Trie, TrieDB, TrieError};
+use crate::{Nibbles, Node, NodeHash, Trie, TrieDB, TrieError};
 
-pub type TrieWitness = Arc<Mutex<HashSet<Vec<u8>>>>;
+pub type TrieWitness = Arc<Mutex<HashMap<NodeHash, Node>>>;
 
 pub struct TrieLogger {
     inner_db: Box<dyn TrieDB>,
@@ -15,7 +15,7 @@ pub struct TrieLogger {
 }
 
 impl TrieLogger {
-    pub fn get_witness(&self) -> Result<HashSet<Vec<u8>>, TrieError> {
+    pub fn get_witness(&self) -> Result<HashMap<NodeHash, Node>, TrieError> {
         let lock = self.witness.lock().map_err(|_| TrieError::LockError)?;
         Ok(lock.clone())
     }
@@ -23,7 +23,7 @@ impl TrieLogger {
     pub fn open_trie(trie: Trie) -> (TrieWitness, Trie) {
         let root = trie.hash_no_commit();
         let db = trie.db;
-        let witness = Arc::new(Mutex::new(HashSet::new()));
+        let witness = Arc::new(Mutex::new(HashMap::new()));
         let logger = TrieLogger {
             inner_db: db,
             witness: witness.clone(),
@@ -33,22 +33,22 @@ impl TrieLogger {
 }
 
 impl TrieDB for TrieLogger {
-    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let result = self.inner_db.get(key)?;
-        if let Some(result) = result.as_ref() {
-            if let Ok(decoded) = Node::decode(result) {
-                let mut lock = self.witness.lock().map_err(|_| TrieError::LockError)?;
-                lock.insert(decoded.encode_raw());
-            };
+        if let Some(result) = result.as_ref()
+            && let Ok(decoded) = Node::decode(result)
+        {
+            let mut lock = self.witness.lock().map_err(|_| TrieError::LockError)?;
+            lock.insert(decoded.compute_hash(), decoded);
         }
         Ok(result)
     }
 
-    fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
+    fn put(&self, key: Nibbles, value: Vec<u8>) -> Result<(), TrieError> {
         self.inner_db.put(key, value)
     }
 
-    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         self.inner_db.put_batch(key_values)
     }
 }

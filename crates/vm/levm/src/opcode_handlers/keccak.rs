@@ -6,7 +6,7 @@ use crate::{
     vm::VM,
 };
 use ethrex_common::utils::u256_from_big_endian;
-use sha3::{Digest, Keccak256};
+use ethrex_crypto::keccak::keccak_hash;
 
 // KECCAK256 (1)
 // Opcodes: KECCAK256
@@ -25,12 +25,9 @@ impl<'a> VM<'a> {
             size,
         )?)?;
 
-        let mut hasher = Keccak256::new();
-        hasher.update(current_call_frame.memory.load_range(offset, size)?);
-        current_call_frame
-            .stack
-            .push1(u256_from_big_endian(&hasher.finalize()))?;
+        let hash = keccak_hash(current_call_frame.memory.load_range(offset, size)?);
+        current_call_frame.stack.push(u256_from_big_endian(&hash))?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 }

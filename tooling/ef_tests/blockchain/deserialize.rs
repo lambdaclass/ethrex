@@ -32,9 +32,7 @@ where
                     )
                 }
                 "TransactionException.TYPE_3_TX_CONTRACT_CREATION" => {
-                    BlockChainExpectedException::TxtException(
-                        "Contract creation in blob transaction".to_string(),
-                    )
+                    BlockChainExpectedException::RLPException
                 }
                 "TransactionException.TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH" => {
                     BlockChainExpectedException::TxtException(
@@ -42,7 +40,7 @@ where
                     )
                 }
                 "TransactionException.INTRINSIC_GAS_TOO_LOW" => {
-                    BlockChainExpectedException::TxtException("Intrinsic gas too low".to_string())
+                    BlockChainExpectedException::TxtException("Transaction gas limit lower than the minimum gas cost to execute the transaction".to_string())
                 }
                 "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS" => {
                     BlockChainExpectedException::TxtException(
@@ -86,6 +84,11 @@ where
                         "Insufficient max fee per blob gas".to_string(),
                     )
                 }
+                "TransactionException.GAS_LIMIT_EXCEEDS_MAXIMUM" => {
+                    BlockChainExpectedException::TxtException(
+                        "Transaction gas limit exceeds maximum.".to_string(),
+                    )
+                }
                 "BlockException.RLP_STRUCTURES_ENCODING" => {
                     BlockChainExpectedException::RLPException
                 }
@@ -117,6 +120,9 @@ where
                         BlockExpectedException::SystemContractCallFailed,
                     )
                 }
+                "BlockException.RLP_BLOCK_LIMIT_EXCEEDED" => BlockChainExpectedException::BlockException(
+                    BlockExpectedException::RlpBlockLimitExceeded,
+                ),
                 _ => BlockChainExpectedException::Other,
             })
             .collect();

@@ -1,11 +1,6 @@
 use colored::Colorize;
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use secp256k1::SecretKey;
-use std::{
-    fs::{self, OpenOptions},
-    io::Write,
-    path::PathBuf,
-};
 
 use ethrex_common::{
     U256,
@@ -14,11 +9,14 @@ use ethrex_common::{
         LegacyTransaction, Transaction, TxKind,
     },
 };
-use ethrex_levm::{EVMConfig, Environment, tracing::LevmCallTracer, vm::VM, vm::VMType};
+use ethrex_levm::{
+    EVMConfig, Environment, tracing::LevmCallTracer, utils::get_base_fee_per_blob_gas, vm::VM,
+    vm::VMType,
+};
 
 use crate::modules::{
     error::RunnerError,
-    report::add_test_to_report,
+    report::{add_test_to_report, ensure_reports_dir},
     result_check::check_test_case_results,
     types::{Env, Test, TestCase},
     utils::{effective_gas_price, load_initial_state},
@@ -26,19 +24,8 @@ use crate::modules::{
 
 /// Runs all the tests that have been parsed.
 pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
-    // Remove previous report if it exists.
-    let successful_report_path = PathBuf::from("./success_report.txt");
-    let _ = fs::remove_file(&successful_report_path);
-    let _ = fs::remove_file("./failure_report.txt");
-
-    let mut success_report = OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(successful_report_path)
-        .unwrap();
-    success_report
-        .write_all("Successful tests: \n".as_bytes())
-        .unwrap();
+    // Ensure reports directory exists
+    ensure_reports_dir()?;
     let mut passing_tests = 0;
     let mut failing_tests = 0;
     let mut total_run = 0;
@@ -128,6 +115,9 @@ pub fn get_vm_env_for_test(
     let blob_schedule = EVMConfig::canonical_values(test_case.fork);
     let config = EVMConfig::new(test_case.fork, blob_schedule);
     let gas_price = effective_gas_price(&test_env, test_case)?;
+    let base_blob_fee_per_gas =
+        get_base_fee_per_blob_gas(test_env.current_excess_blob_gas, &config)
+            .map_err(|e| RunnerError::Custom(format!("Failed to get blob base fee: {e}")))?;
     Ok(Environment {
         origin: test_case.sender,
         gas_limit: test_case.gas,
@@ -139,6 +129,7 @@ pub fn get_vm_env_for_test(
         difficulty: test_env.current_difficulty,
         chain_id: U256::from(1),
         base_fee_per_gas: test_env.current_base_fee.unwrap_or_default(),
+        base_blob_fee_per_gas,
         gas_price,
         block_excess_blob_gas: test_env.current_excess_blob_gas,
         block_blob_gas_used: None,
@@ -149,6 +140,7 @@ pub fn get_vm_env_for_test(
         tx_nonce: test_case.nonce,
         block_gas_limit: test_env.current_gas_limit,
         is_privileged: false,
+        fee_token: None,
     })
 }
 
@@ -221,7 +213,7 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
         Transaction::EIP2930Transaction(EIP2930Transaction {
             chain_id,
             nonce,
-            gas_price: test_case.gas_price.unwrap().as_u64(),
+            gas_price: test_case.gas_price.unwrap(),
             gas_limit: test_case.gas,
             to,
             value,
@@ -232,7 +224,7 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
     } else {
         Transaction::LegacyTransaction(LegacyTransaction {
             nonce,
-            gas_price: test_case.gas_price.unwrap().as_u64(),
+            gas_price: test_case.gas_price.unwrap(),
             gas: test_case.gas,
             to,
             value,

@@ -263,14 +263,13 @@ mod tests {
             logs::{AddressFilter, LogsFilter, TopicFilter},
         },
         rpc::{FILTER_DURATION, map_http_requests},
-        utils::test_utils::{self, default_context_with_storage, start_test_api},
+        test_utils::{TEST_GENESIS, default_context_with_storage, start_test_api},
     };
     use crate::{types::block_identifier::BlockIdentifier, utils::RpcRequest};
     use ethrex_common::types::Genesis;
     use ethrex_storage::{EngineType, Store};
 
     use serde_json::{Value, json};
-    use test_utils::TEST_GENESIS;
 
     #[tokio::test]
     async fn filter_request_smoke_test_valid_params() {
@@ -532,7 +531,7 @@ mod tests {
     async fn background_job_removes_filter_smoke_test() {
         // Start a test server to start the cleanup
         // task in the background
-        let server_handle = tokio::spawn(async move { start_test_api().await });
+        let server_handle = start_test_api().await;
 
         // Give the server some time to start
         tokio::time::sleep(Duration::from_secs(1)).await;

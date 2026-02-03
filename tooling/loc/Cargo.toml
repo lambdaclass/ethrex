@@ -1,7 +1,10 @@
 [package]
 name = "loc"
-edition.workspace = true
 version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
 
 [dependencies]
 tokei = "12.1.2"

@@ -9,9 +9,10 @@ use crate::{
 };
 
 use bytes::Bytes;
-use ethrex_common::{Address, U256, types::Fork};
-
-use std::cmp::max;
+use ethrex_common::{
+    Address, H256, U256,
+    types::{Code, Fork},
+};
 
 pub const MAX_REFUND_QUOTIENT: u64 = 5;
 
@@ -32,6 +33,14 @@ impl Hook for DefaultHook {
 
         if vm.env.config.fork >= Fork::Prague {
             validate_min_gas_limit(vm)?;
+            if vm.env.config.fork >= Fork::Osaka && vm.tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP {
+                return Err(VMError::TxValidation(
+                    TxValidationError::TxMaxGasLimitExceeded {
+                        tx_hash: vm.tx.hash(),
+                        tx_gas_limit: vm.tx.gas_limit(),
+                    },
+                ));
+            }
         }
 
         // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
@@ -79,19 +88,18 @@ impl Hook for DefaultHook {
         if let (Some(tx_max_priority_fee), Some(tx_max_fee_per_gas)) = (
             vm.env.tx_max_priority_fee_per_gas,
             vm.env.tx_max_fee_per_gas,
-        ) {
-            if tx_max_priority_fee > tx_max_fee_per_gas {
-                return Err(TxValidationError::PriorityGreaterThanMaxFeePerGas {
-                    priority_fee: tx_max_priority_fee,
-                    max_fee_per_gas: tx_max_fee_per_gas,
-                }
-                .into());
+        ) && tx_max_priority_fee > tx_max_fee_per_gas
+        {
+            return Err(TxValidationError::PriorityGreaterThanMaxFeePerGas {
+                priority_fee: tx_max_priority_fee,
+                max_fee_per_gas: tx_max_fee_per_gas,
             }
+            .into());
         }
 
         // (9) SENDER_NOT_EOA
         let code = vm.db.get_code(sender_info.code_hash)?;
-        validate_sender(sender_address, code)?;
+        validate_sender(sender_address, &code.bytecode)?;
 
         // (10) GAS_ALLOWANCE_EXCEEDED
         validate_gas_allowance(vm)?;
@@ -128,11 +136,15 @@ impl Hook for DefaultHook {
             undo_value_transfer(vm)?;
         }
 
-        let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
-        let actual_gas_used = compute_actual_gas_used(vm, gas_refunded, ctx_result.gas_used)?;
-        refund_sender(vm, ctx_result, gas_refunded, actual_gas_used)?;
+        // Save pre-refund gas for EIP-7778 block accounting
+        let gas_used_pre_refund = ctx_result.gas_used;
 
-        pay_coinbase(vm, actual_gas_used)?;
+        let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
+        let gas_spent = compute_actual_gas_used(vm, gas_refunded, gas_used_pre_refund)?;
+
+        refund_sender(vm, ctx_result, gas_refunded, gas_spent, gas_used_pre_refund)?;
+
+        pay_coinbase(vm, gas_spent)?;
 
         delete_self_destruct_accounts(vm)?;
 
@@ -151,21 +163,40 @@ pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
     Ok(())
 }
 
+/// Refunds unused gas to the sender.
+///
+/// # EIP-7778 Changes
+/// - `gas_spent`: Post-refund gas (what the user actually pays)
+/// - `gas_used_pre_refund`: Pre-refund gas (for block-level accounting in Amsterdam+)
+///
+/// For Amsterdam+, the block uses pre-refund gas (`gas_used`) while the user pays post-refund
+/// gas (`gas_spent`). Before Amsterdam, both values are the same (post-refund).
 pub fn refund_sender(
     vm: &mut VM<'_>,
     ctx_result: &mut ContextResult,
     refunded_gas: u64,
-    actual_gas_used: u64,
+    gas_spent: u64,
+    gas_used_pre_refund: u64,
 ) -> Result<(), VMError> {
-    // c. Update gas used and refunded.
-    ctx_result.gas_used = actual_gas_used;
     vm.substate.refunded_gas = refunded_gas;
 
-    // d. Finally, return unspent gas to the sender.
+    // EIP-7778: Separate block vs user gas accounting for Amsterdam+
+    if vm.env.config.fork >= Fork::Amsterdam {
+        // Block accounting uses pre-refund gas
+        ctx_result.gas_used = gas_used_pre_refund;
+        // User pays post-refund gas
+        ctx_result.gas_spent = gas_spent;
+    } else {
+        // Pre-Amsterdam: both use post-refund value
+        ctx_result.gas_used = gas_spent;
+        ctx_result.gas_spent = gas_spent;
+    }
+
+    // Return unspent gas to the sender (based on what user pays)
     let gas_to_return = vm
         .env
         .gas_limit
-        .checked_sub(actual_gas_used)
+        .checked_sub(gas_spent)
         .ok_or(InternalError::Underflow)?;
 
     let wei_return_amount = vm
@@ -222,6 +253,33 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
 
 // In Cancun the only addresses destroyed are contracts created in this transaction
 pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
+    // EIP-7708: Emit Selfdestruct logs for accounts with non-zero balance
+    // This handles the case where a contract receives ETH after being flagged for SELFDESTRUCT
+    // Must emit in lexicographical order of address
+    if vm.env.config.fork >= Fork::Amsterdam {
+        let mut addresses_with_balance: Vec<(Address, U256)> = vm
+            .substate
+            .iter_selfdestruct()
+            .filter_map(|addr| {
+                let balance = vm.db.get_account(*addr).ok()?.info.balance;
+                if !balance.is_zero() {
+                    Some((*addr, balance))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Sort by address (lexicographical order per EIP-7708)
+        addresses_with_balance.sort_by_key(|(addr, _)| *addr);
+
+        for (addr, balance) in addresses_with_balance {
+            let log = create_selfdestruct_log(addr, balance);
+            vm.substate.add_log(log);
+        }
+    }
+
+    // Delete the accounts
     for address in vm.substate.iter_selfdestruct() {
         let account_to_remove = vm.db.get_account_mut(*address)?;
         vm.current_call_frame
@@ -229,7 +287,7 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
             .backup_account_info(*address, account_to_remove)?;
 
         *account_to_remove = LevmAccount::default();
-        vm.db.destroyed_accounts.insert(*address);
+        account_to_remove.mark_destroyed();
     }
 
     Ok(())
@@ -239,6 +297,10 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
     // check for gas limit is grater or equal than the minimum required
     let calldata = vm.current_call_frame.calldata.clone();
     let intrinsic_gas: u64 = vm.get_intrinsic_gas()?;
+
+    if vm.current_call_frame.gas_limit < intrinsic_gas {
+        return Err(TxValidationError::IntrinsicGasTooLow.into());
+    }
 
     // calldata_cost = tokens_in_calldata * 4
     let calldata_cost: u64 = gas_cost::tx_calldata(&calldata)?;
@@ -253,9 +315,8 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
         .checked_add(TX_BASE_COST)
         .ok_or(InternalError::Overflow)?;
 
-    let min_gas_limit = max(intrinsic_gas, floor_cost_by_tokens);
-    if vm.current_call_frame.gas_limit < min_gas_limit {
-        return Err(TxValidationError::IntrinsicGasTooLow.into());
+    if vm.current_call_frame.gas_limit < floor_cost_by_tokens {
+        return Err(TxValidationError::IntrinsicGasBelowFloorGasCost.into());
     }
 
     Ok(())
@@ -265,8 +326,7 @@ pub fn validate_max_fee_per_blob_gas(
     vm: &mut VM<'_>,
     tx_max_fee_per_blob_gas: U256,
 ) -> Result<(), VMError> {
-    let base_fee_per_blob_gas =
-        get_base_fee_per_blob_gas(vm.env.block_excess_blob_gas, &vm.env.config)?;
+    let base_fee_per_blob_gas = vm.env.base_blob_fee_per_gas;
     if tx_max_fee_per_blob_gas < base_fee_per_blob_gas {
         return Err(TxValidationError::InsufficientMaxFeePerBlobGas {
             base_fee_per_blob_gas,
@@ -313,10 +373,11 @@ pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     // (13) TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH
     for blob_hash in blob_hashes {
         let blob_hash = blob_hash.as_bytes();
-        if let Some(first_byte) = blob_hash.first() {
-            if !VALID_BLOB_PREFIXES.contains(first_byte) {
-                return Err(TxValidationError::Type3TxInvalidBlobVersionedHash.into());
-            }
+        if blob_hash
+            .first()
+            .is_some_and(|first_byte| !VALID_BLOB_PREFIXES.contains(first_byte))
+        {
+            return Err(TxValidationError::Type3TxInvalidBlobVersionedHash.into());
         }
     }
 
@@ -446,7 +507,7 @@ pub fn deduct_caller(
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
     let value = vm.current_call_frame.msg_value;
 
-    let blob_gas_cost = get_blob_gas_price(
+    let blob_gas_cost = calculate_blob_gas_cost(
         &vm.env.tx_blob_hashes,
         vm.env.block_excess_blob_gas,
         &vm.env.config,
@@ -472,7 +533,18 @@ pub fn deduct_caller(
 /// Transfer msg_value to transaction recipient
 pub fn transfer_value(vm: &mut VM<'_>) -> Result<(), VMError> {
     if !vm.is_create()? {
-        vm.increase_account_balance(vm.current_call_frame.to, vm.current_call_frame.msg_value)?;
+        let value = vm.current_call_frame.msg_value;
+        let to = vm.current_call_frame.to;
+
+        vm.increase_account_balance(to, value)?;
+
+        // EIP-7708: Emit transfer log for nonzero-value transactions to DIFFERENT accounts
+        // Self-transfers (origin == to) should NOT emit a log per the EIP spec
+        let from = vm.env.origin;
+        if vm.env.config.fork >= Fork::Amsterdam && !value.is_zero() && from != to {
+            let log = create_eth_transfer_log(from, to, value);
+            vm.substate.add_log(log);
+        }
     }
     Ok(())
 }
@@ -483,7 +555,11 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
     let (bytecode, code_address) = if vm.is_create()? {
         // Here bytecode is the calldata and the code_address is just the created contract address.
         let calldata = std::mem::take(&mut vm.current_call_frame.calldata);
-        (calldata, vm.current_call_frame.to)
+        (
+            // SAFETY: we don't need the hash for the initcode
+            Code::from_bytecode_unchecked(calldata, H256::zero()),
+            vm.current_call_frame.to,
+        )
     } else {
         // Here bytecode and code_address could be either from the account or from the delegated account.
         let to = vm.current_call_frame.to;

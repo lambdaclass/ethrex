@@ -1,7 +1,25 @@
+use ethrex_common::types::{
+    Block, blobs_bundle, block_execution_witness::ExecutionWitness, fee_config::FeeConfig,
+};
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
 use std::fmt::{Debug, Display};
 
 use crate::calldata::Value;
+
+#[serde_as]
+#[derive(Serialize, Deserialize, RDeserialize, RSerialize, Archive)]
+pub struct ProverInputData {
+    pub blocks: Vec<Block>,
+    pub execution_witness: ExecutionWitness,
+    pub elasticity_multiplier: u64,
+    #[serde_as(as = "[_; 48]")]
+    pub blob_commitment: blobs_bundle::Commitment,
+    #[serde_as(as = "[_; 48]")]
+    pub blob_proof: blobs_bundle::Proof,
+    pub fee_configs: Vec<FeeConfig>,
+}
 
 /// Enum used to identify the different proving systems.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -9,7 +27,6 @@ pub enum ProverType {
     Exec,
     RISC0,
     SP1,
-    Aligned,
     TDX,
 }
 
@@ -19,8 +36,7 @@ impl From<ProverType> for u32 {
             ProverType::Exec => 0,
             ProverType::RISC0 => 1,
             ProverType::SP1 => 2,
-            ProverType::Aligned => 4,
-            ProverType::TDX => 5,
+            ProverType::TDX => 3,
         }
     }
 }
@@ -32,7 +48,6 @@ impl ProverType {
             ProverType::Exec,
             ProverType::RISC0,
             ProverType::SP1,
-            ProverType::Aligned,
             ProverType::TDX,
         ]
         .into_iter()
@@ -43,26 +58,25 @@ impl ProverType {
     pub fn empty_calldata(&self) -> Vec<Value> {
         match self {
             ProverType::RISC0 => {
-                vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
+                vec![Value::Bytes(vec![].into())]
             }
             ProverType::SP1 => {
-                vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
+                vec![Value::Bytes(vec![].into())]
             }
             ProverType::TDX => {
-                vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
+                vec![Value::Bytes(vec![].into())]
             }
             ProverType::Exec => unimplemented!("Doesn't need to generate an empty calldata."),
-            ProverType::Aligned => unimplemented!("Doesn't need to generate an empty calldata."),
         }
     }
 
+    /// Used to call a getter for the REQUIRE_*_PROOF boolean in the OnChainProposer contract
     pub fn verifier_getter(&self) -> Option<String> {
         // These values have to match with the OnChainProposer.sol contract
         match self {
-            Self::Aligned => Some("ALIGNEDPROOFAGGREGATOR()".to_string()),
-            Self::RISC0 => Some("R0VERIFIER()".to_string()),
-            Self::SP1 => Some("SP1VERIFIER()".to_string()),
-            Self::TDX => Some("TDXVERIFIER()".to_string()),
+            Self::RISC0 => Some("REQUIRE_RISC0_PROOF()".to_string()),
+            Self::SP1 => Some("REQUIRE_SP1_PROOF()".to_string()),
+            Self::TDX => Some("REQUIRE_TDX_PROOF()".to_string()),
             Self::Exec => None,
         }
     }
@@ -75,7 +89,6 @@ impl Display for ProverType {
             Self::RISC0 => write!(f, "RISC0"),
             Self::SP1 => write!(f, "SP1"),
             Self::TDX => write!(f, "TDX"),
-            Self::Aligned => write!(f, "Aligned"),
         }
     }
 }
@@ -93,7 +106,7 @@ impl BatchProof {
     pub fn prover_type(&self) -> ProverType {
         match self {
             BatchProof::ProofCalldata(proof) => proof.prover_type,
-            BatchProof::ProofBytes(_) => ProverType::Aligned,
+            BatchProof::ProofBytes(proof) => proof.prover_type,
         }
     }
 
@@ -104,10 +117,10 @@ impl BatchProof {
         }
     }
 
-    pub fn proof(&self) -> Vec<u8> {
+    pub fn compressed(&self) -> Option<Vec<u8>> {
         match self {
-            BatchProof::ProofCalldata(_) => vec![],
-            BatchProof::ProofBytes(proof) => proof.proof.clone(),
+            BatchProof::ProofCalldata(_) => None,
+            BatchProof::ProofBytes(proof) => Some(proof.proof.clone()),
         }
     }
 
@@ -123,6 +136,7 @@ impl BatchProof {
 /// It is used to send the proof to Aligned.
 #[derive(PartialEq, Serialize, Deserialize, Clone, Debug)]
 pub struct ProofBytes {
+    pub prover_type: ProverType,
     pub proof: Vec<u8>,
     pub public_values: Vec<u8>,
 }
@@ -132,4 +146,14 @@ pub struct ProofBytes {
 pub struct ProofCalldata {
     pub prover_type: ProverType,
     pub calldata: Vec<Value>,
+}
+
+/// Indicates the prover which proof *format* to generate
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default)]
+pub enum ProofFormat {
+    #[default]
+    /// A compressed proof wrapped over groth16. EVM friendly.
+    Groth16,
+    /// Fixed size STARK execution proof.
+    Compressed,
 }

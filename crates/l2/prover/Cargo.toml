@@ -2,6 +2,9 @@
 name = "ethrex-prover"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
 
 [dependencies]
 serde_json.workspace = true
@@ -16,7 +19,6 @@ hex.workspace = true
 thiserror.workspace = true
 clap.workspace = true
 kzg-rs.workspace = true
-cfg-if.workspace = true
 rkyv.workspace = true
 bincode = "1.3.3"
 anyhow = "1.0.86"
@@ -34,13 +36,21 @@ ethrex-l2 = { path = "../", default-features = false }
 ethrex-l2-common = { workspace = true }
 ethrex-sdk.workspace = true
 
-guest_program = { path = "./src/guest_program", default-features = false }
+ethrex-guest-program = { path = "../../guest-program" }
 
-risc0-zkvm = { version = "=3.0.3", optional = true }
+risc0-zkvm = { version = "=3.0.3", optional = true, features = ["getrandom"] }
 risc0-zkp = { version = "=3.0.2", optional = true }
 
 sp1-sdk = { version = "=5.0.8", optional = true }
+sp1-prover = { version = "=5.0.8", optional = true }
 sp1-recursion-gnark-ffi = { version = "=5.0.8", optional = true }
+
+openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", package = "openvm-sdk", optional = true, features = [
+    "evm-prove",
+    "parallel",
+] }
+openvm-continuations = { git = "https://github.com/openvm-org/openvm.git", package = "openvm-continuations", optional = true }
+openvm-stark-sdk = { git = "https://github.com/openvm-org/stark-backend.git", package = "openvm-stark-sdk", tag = "v1.2.1", optional = true }
 
 [dev-dependencies]
 ethrex-storage.workspace = true
@@ -53,15 +63,27 @@ path = "src/lib.rs"
 # TODO(#2662) Prover shouldn't have l2 as a default but cargo complains about missing field in struct
 default = ["l2"]
 # prover backends
-risc0 = ["guest_program/risc0", "dep:risc0-zkvm", "dep:risc0-zkp"]
-sp1 = ["guest_program/sp1", "dep:sp1-sdk"]
+risc0 = [
+    "ethrex-guest-program/risc0",
+    "dep:risc0-zkvm",
+    "dep:risc0-zkp",
+    "ethrex-common/risc0",
+]
+sp1 = ["ethrex-guest-program/sp1", "dep:sp1-sdk", "dep:sp1-prover"]
+zisk = ["ethrex-guest-program/zisk"]
+openvm = [
+    "ethrex-guest-program/openvm",
+    "dep:openvm-sdk",
+    "dep:openvm-stark-sdk",
+    "dep:openvm-continuations",
+]
 profiling = ["sp1-sdk?/profiling"]
 
-gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda"]
-l2 = [
-    "guest_program/l2",
-    "ethrex-l2/l2",
-] # the prover can work with either l1 or l2 blocks
+gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda", "openvm-sdk?/cuda"]
+l2 = ["ethrex-guest-program/l2", "ethrex-l2/l2"]
+
+# temporary feature until we fix cargo-zisk setup-rom from failing in the CI
+ci = ["ethrex-guest-program/ci"]
 
 [lints.clippy]
 unwrap_used = "deny"
@@ -70,3 +92,4 @@ indexing_slicing = "deny"
 as_conversions = "deny"
 unnecessary_cast = "warn"
 panic = "deny"
+redundant_clone = "warn"

@@ -2,51 +2,114 @@
 
 There are two L1 contracts: OnChainProposer and CommonBridge. Both contracts are deployed using UUPS proxies, so they are upgradeables.
 
-## L1 side
+## L1 Contracts
 
 ### `CommonBridge`
+The `CommonBridge` is an upgradeable smart contract that facilitates cross-chain transfers between L1 and L2.
 
-Allows L1<->L2 communication from L1. It both sends messages from L1 to L2 and receives messages from L2.
+#### **State Variables**
 
-#### Deposit Functions
+- **`pendingTxHashes`**: Array storing hashed pending privileged transactions
+- **`batchWithdrawalLogsMerkleRoots`**: Mapping of L2 batch numbers to merkle roots of withdrawal logs
+- **`deposits`**: Tracks how much of each L1 token was deposited for each L2 token (L1 → L2 → amount)
+- **`claimedWithdrawalIDs`**: Tracks which withdrawals have been claimed by message ID
+- **`ON_CHAIN_PROPOSER`**: Address of the contract that can commit and verify batches
+- **`L2_BRIDGE_ADDRESS`**: Constant address (0xffff) representing the L2 bridge
 
-##### Simple Deposits
+#### **Core Functionality**
 
-- Send ETH directly to the contract address using a standard transfer
-- The contract's `receive()` function automatically forwards funds to your identical address on L2
-- No additional parameters needed
+1. **Deposits (L1 → L2)**
+    - **`deposit()`**: Allows users to deposit ETH to L2
+    - **`depositERC20()`**: Allows users to deposit ERC20 tokens to L2
+    - **`receive()`**: Fallback function for ETH deposits, forwarding to the sender's address on the L2
+    - **`sendToL2()`**: Sends arbitrary data to L2 via privileged transaction
 
-##### Deposits with Contract Interaction
+    Internally the deposit functions will use the `SendValues` struct defined as:
 
-```solidity
-function deposit(DepositValues calldata depositValues) public payable
-```
-
-Parameters:
-
-- `to`: Target address on L2
-- `recipient`: Address that will receive the ETH on L2 (can differ from sender)
-- `gasLimit`: Maximum gas for L2 execution
-- `data`: Calldata to execute on the target L2 contract
-
-This method enables atomic operations like:
-
-- Depositing ETH while simultaneously interacting with L2 contracts
-- Funding another user's L2 account
+    ```solidity
+    struct SendValues {
+        address to; // Target address on L2
+        uint256 gasLimit; // Maximum gas for L2 execution
+        uint256 value; // The value of the transaction
+        bytes data; // Calldata to execute on the target L2 contract
+    }
+    ```
+    This expresivity allows for arbitrary cross-chain actions, e.g., depositing ETH then interacting with an L2 contract.
+2. **Withdrawals (L2 → L1)**
+    - **`claimWithdrawal()`**: Withdraw ETH from `CommonBridge` via Merkle proof
+    - **`claimWithdrawalERC20()`**: Withdraw ERC20 tokens from `CommonBridge` via Merkle proof
+    - **`publishWithdrawals()`**: Priviledged function to add merkle root of L2 withdrawal logs to `batchWithdrawalLogsMerkleRoots` mapping to make them claimable
+3. **Transaction Management**
+    - **`getPendingTransactionHashes()`**: Returns pending privileged transaction hashes
+    - **`removePendingTransactionHashes()`**: Removes processed privileged transactions (only callable by OnChainProposer)
+    - **`getPendingTransactionsVersionedHash()`**: Returns a versioned hash of the first `number` of pending privileged transactions
 
 ### `OnChainOperator`
+The `OnChainProposer` is an upgradeable smart contract that ensures the advancement of the L2. It's used by sequencers to commit batches of L2 blocks and verify their proofs.
 
-Ensures the advancement of the L2. It is used by the operator to commit batches of blocks and verify batch proofs.
+#### **State Variables**
 
-### `Verifier`
+- **`batchCommitments`**: Mapping of batch numbers to submitted `BatchCommitmentInfo` structs
+- **`lastVerifiedBatch`**: The latest verified batch number (all batches ≤ this are considered verified) 
+- **`lastCommittedBatch`**: The latest committed batch number (all batches ≤ this are considered committed)
+- **`authorizedSequencerAddresses`**: Mapping of authorized sequencer addresses that can commit and verify batches
 
-TODO
+#### **Core Functionality**
 
-## L2 side
+1. **Batch Commitment**
+    - **`commitBatch()`**: Commits a batch of L2 blocks by storing its commitment data and publishing withdrawals
+    - **`revertBatch()`**: Removes unverified batches (only callable when paused)
 
-### `L1MessageSender`
+2. **Proof Verification**
+    - **`verifyBatch()`**: Verifies a single batch using RISC0, SP1, or TDX proofs
+    - **`verifyBatchesAligned()`**: Verifies multiple batches in sequence using aligned proofs with Merkle verification
 
-TODO
+## L2 Contracts
+
+### `CommonBridgeL2`
+The `CommonBridgeL2` is an L2 smart contract that facilitates cross-chain transfers between L1 and L2.
+
+#### **State Variables**
+
+- **`L1_MESSENGER`**: Constant address (`0x000000000000000000000000000000000000FFFE`) representing the L2-to-L1 messenger contract
+- **`BURN_ADDRESS`**: Constant address (`0x0000000000000000000000000000000000000000`) used to burn ETH during withdrawals
+- **`ETH_TOKEN`**: Constant address (`0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE`) representing ETH as a token
+
+#### **Core Functionality**
+
+1. **ETH Operations**
+    - **`withdraw()`**: Initiates ETH withdrawal to L1 by burning ETH on L2 and sending a message to L1
+    - **`mintETH()`**: Transfers ETH to a recipient (called by privileged L1 bridge transactions). If it fails a withdrawal is queued.
+
+2. **ERC20 Token Operations**
+    - **`mintERC20()`**: Attempts to mint ERC20 tokens on L2 (only callable by the bridge itself via privileged transactions). If it fails a withdrawal is queued.
+    - **`tryMintERC20()`**: Internal function that validates token L1 address and performs a cross-chain mint
+    - **`withdrawERC20()`**: Initiates ERC20 token withdrawal to L1 by burning tokens on L2 and sending a message to L1
+
+3. **Cross-Chain Messaging**
+    - **`_withdraw()`**: Private function that sends withdrawal messages to L1 via the L2-to-L1 messenger
+    - Uses keccak256 hashing to encode withdrawal data for L1 processing
+
+4. **Access Control**
+    - **`onlySelf`**: Modifier ensuring only the bridge contract itself can call privileged functions
+    - Validates that privileged operations (like minting) are only performed by the bridge
+
+### `Messenger`
+The `Messenger` is a simple L2 smart contract that enables cross-chain communication. It supports L2 to L1 messaging by emitting `L1Message` events for sequencers to pick up (currently used exclusively for withdrawals), and L2 to L2 messaging by emitting `L2Message` events.
+
+#### **State Variables**
+
+- **`lastMessageId`**: Counter that tracks the ID of the last emitted message (incremented before each message is sent)
+- **`BRIDGE`**: Constant address (`0x000000000000000000000000000000000000FFff`) representing the `CommonBridgeL2` contract
+
+#### **Core Functionality**
+
+1. **Message Sending**
+    - **`sendMessageToL1()`**: Sends a message to L1 by emitting an `L1Message` event with the sender, data, and `lastMessageId`. Only the `CommonBridgeL2` contract can call this function.
+    - **`sendMessageToL2()`**: Sends a message to another L2 chain by emitting an `L2Message` event. Only the `CommonBridgeL2` contract can call this function.
+
+2. **Access Control**
+    - **`onlyBridge`**: Modifier ensuring only the `CommonBridgeL2` contract can call messaging functions
 
 ## Upgrade the contracts
 

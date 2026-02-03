@@ -1,26 +1,36 @@
 [package]
 name = "ethrex"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
 build = "build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ethrex-config.workspace = true
 ethrex-blockchain.workspace = true
-ethrex-rpc.workspace = true
 ethrex-common.workspace = true
+ethrex-config.workspace = true
+ethrex-crypto.workspace = true
+ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
+ethrex-l2 = { workspace = true, optional = true }
+ethrex-l2-common = { workspace = true, optional = true }
+ethrex-l2-rpc = { workspace = true, optional = true }
+ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 ethrex-p2p.workspace = true
-ethrex-storage.workspace = true
-ethrex-vm.workspace = true
+ethrex-prover = { workspace = true, optional = true, features = ["l2"] }
 ethrex-rlp.workspace = true
-ethrex-storage-rollup.workspace = true
-ethrex-l2.workspace = true
-ethrex-l2-common.workspace = true
-ethrex-sdk.workspace = true
-ethrex-l2-rpc.workspace = true
-
+ethrex-rpc.workspace = true
+ethrex-sdk = { workspace = true, optional = true }
+ethrex-storage.workspace = true
+ethrex-storage-rollup = { workspace = true, optional = true }
+ethrex-vm.workspace = true
+tikv-jemallocator = { version = "0.6.0", optional = true, features = [
+  "stats",
+  "unprefixed_malloc_on_supported_platforms",
+] }
 bytes.workspace = true
 hex.workspace = true
 tracing.workspace = true
@@ -34,22 +44,30 @@ serde_json.workspace = true
 tokio = { workspace = true, features = ["full"] }
 anyhow = "1.0.86"
 rand = "0.8.5"
+rayon.workspace = true
 local-ip-address = "0.6"
 tokio-util.workspace = true
 lazy_static.workspace = true
 secp256k1.workspace = true
-keccak-hash.workspace = true
 reqwest.workspace = true
 thiserror.workspace = true
 itertools = "0.14.0"
-tui-logger.workspace = true
-
-cfg-if = "1.0.0"
-
-ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
-ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 url.workspace = true
-ethrex-prover = { workspace = true, features = ["l2"] }
+tracing-appender = "0.2"
+
+spawned-rt.workspace = true
+spawned-concurrency.workspace = true
+
+# L2 external dependencies
+
+tui-logger = { workspace = true, optional = true }
+
+[target.'cfg(linux)'.dependencies]
+tikv-jemallocator = { version = "0.6.0", optional = true, features = [
+  "stats",
+  "unprefixed_malloc_on_supported_platforms",
+  "background_threads",
+] }
 
 [[bin]]
 name = "ethrex"
@@ -61,50 +79,62 @@ path = "./lib.rs"
 
 [features]
 debug = ["ethrex-vm/debug"]
-default = ["libmdbx", "c-kzg", "rollup_storage_sql", "dev", "metrics"]
+default = ["rocksdb", "c-kzg", "secp256k1", "metrics", "jemalloc", "dev"]
 dev = ["dep:ethrex-dev"]
+secp256k1 = [
+  "ethrex-vm/secp256k1",
+  "ethrex-common/secp256k1",
+  "ethrex-blockchain/secp256k1",
+]
 c-kzg = [
   "ethrex-vm/c-kzg",
   "ethrex-common/c-kzg",
   "ethrex-blockchain/c-kzg",
   "ethrex-p2p/c-kzg",
+  "ethrex-crypto/c-kzg",
 ]
-metrics = ["ethrex-blockchain/metrics", "ethrex-l2/metrics"]
-libmdbx = ["ethrex-storage/libmdbx"]
-rocksdb = ["ethrex-storage/rocksdb"]
-rollup_storage_sql = ["ethrex-storage-rollup/sql"]
+metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics", "ethrex-p2p/metrics"]
+rocksdb = ["ethrex-storage/rocksdb", "ethrex-p2p/rocksdb", "ethrex-l2?/rocksdb"]
+jemalloc = ["dep:tikv-jemallocator"]
+jemalloc_profiling = [
+  "jemalloc",
+  "tikv-jemallocator/profiling",
+  # forward to the RPC crate so its handlers and dependency are enabled
+  "ethrex-rpc/jemalloc_profiling",
+]
 sync-test = ["ethrex-p2p/sync-test"]
-sp1 = ["ethrex-prover/sp1"]
+# discv5 is currently experimental and should only be enabled for development purposes
+experimental-discv5 = ["ethrex-p2p/experimental-discv5"]
+
+l2 = [
+  "ethrex-l2",
+  "ethrex-l2-common",
+  "ethrex-l2-rpc",
+  "ethrex-sdk",
+  "ethrex-p2p/l2",
+  "ethrex-prover",
+  "ethrex-storage-rollup",
+  "dep:tui-logger",
+  "dep:bytes",
+  "dep:thiserror",
+  "dep:serde_json",
+  "dep:hex",
+]
+l2-sql = ["ethrex-storage-rollup/sql"]
+sp1 = ["ethrex-prover/sp1", "ethrex-l2/sp1"]
 gpu = ["ethrex-prover/gpu"]
-risc0 = ["ethrex-prover/risc0"]
-revm = ["ethrex-vm/revm"]
+risc0 = ["ethrex-prover/risc0", "ethrex-l2/risc0"]
 
-[dev-dependencies]
-criterion = { version = "0.5.1", features = [
-  "html_reports",
-  "async_futures",
-  "async_tokio",
-] }
-ethrex-sdk.workspace = true
-secp256k1.workspace = true
-tempfile.workspace = true
-
-[[bench]]
-path = "./bench/import_blocks_benchmark.rs"
-name = "import_blocks_benchmark"
-harness = false
-
-[[bench]]
-path = "./bench/build_block_benchmark.rs"
-name = "build_block_benchmark"
-harness = false
+perf_opcode_timings = ["ethrex-vm/perf_opcode_timings"]
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.7", features = ["rustc"] }
-ethrex-sdk.workspace = true
-hex.workspace = true
-bytes.workspace = true
-ethrex-common.workspace = true
-serde_json.workspace = true
-genesis-tool = { path = "../../tooling/genesis" }
-thiserror.workspace = true
+ethrex-sdk = { workspace = true, optional = true }
+hex = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
+ethrex-common = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+
+[lints]
+workspace = true

@@ -2,9 +2,10 @@ use crate::{
     errors::{ExceptionalHalt, OpcodeResult, VMError},
     vm::VM,
 };
+use ethrex_common::types::Fork;
 use strum::EnumString;
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, EnumString)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, EnumString, Hash)]
 pub enum Opcode {
     // Stop and Arithmetic Operations
     STOP = 0x00,
@@ -164,7 +165,11 @@ pub enum Opcode {
     LOG2 = 0xA2,
     LOG3 = 0xA3,
     LOG4 = 0xA4,
-    // // System Operations
+    // EIP-8024
+    DUPN = 0xE6,
+    SWAPN = 0xE7,
+    EXCHANGE = 0xE8,
+    // System Operations
     CREATE = 0xF0,
     CALL = 0xF1,
     CALLCODE = 0xF2,
@@ -324,6 +329,9 @@ impl From<u8> for Opcode {
             table[0x5E] = Opcode::MCOPY;
             table[0x5C] = Opcode::TLOAD;
             table[0x5D] = Opcode::TSTORE;
+            table[0xE6] = Opcode::DUPN;
+            table[0xE7] = Opcode::SWAPN;
+            table[0xE8] = Opcode::EXCHANGE;
             table[0xF0] = Opcode::CREATE;
             table[0xF1] = Opcode::CALL;
             table[0xF2] = Opcode::CALLCODE;
@@ -368,14 +376,26 @@ impl<'a> OpCodeFn<'a> {
 }
 
 impl<'a> VM<'a> {
-    /// The opcode table mapping opcodes to opcode handlers for fast lookup.
-    pub(crate) const OPCODE_TABLE: [OpCodeFn<'a>; 256] = VM::build_opcode_table();
-
-    /// Setups the opcode lookup function pointer table.
+    /// Setups the opcode lookup function pointer table, configured according the given fork.
     ///
     /// This is faster than a conventional match.
     #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    pub(crate) const fn build_opcode_table() -> [OpCodeFn<'a>; 256] {
+    pub(crate) fn build_opcode_table(fork: Fork) -> [OpCodeFn<'a>; 256] {
+        if fork >= Fork::Amsterdam {
+            Self::build_opcode_table_amsterdam()
+        } else if fork >= Fork::Osaka {
+            Self::build_opcode_table_osaka()
+        } else if fork >= Fork::Cancun {
+            Self::build_opcode_table_pre_osaka()
+        } else if fork >= Fork::Shanghai {
+            Self::build_opcode_table_pre_cancun()
+        } else {
+            Self::build_opcode_table_pre_shanghai()
+        }
+    }
+
+    #[allow(clippy::as_conversions, clippy::indexing_slicing)]
+    const fn build_opcode_table_pre_shanghai() -> [OpCodeFn<'a>; 256] {
         let mut opcode_table: [OpCodeFn<'a>; 256] = [OpCodeFn(VM::on_invalid_opcode); 256];
 
         opcode_table[Opcode::STOP as usize] = OpCodeFn(VM::op_stop);
@@ -387,8 +407,6 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::SSTORE as usize] = OpCodeFn(VM::op_sstore);
         opcode_table[Opcode::MSIZE as usize] = OpCodeFn(VM::op_msize);
         opcode_table[Opcode::GAS as usize] = OpCodeFn(VM::op_gas);
-        opcode_table[Opcode::MCOPY as usize] = OpCodeFn(VM::op_mcopy);
-        opcode_table[Opcode::PUSH0 as usize] = OpCodeFn(VM::op_push0);
         opcode_table[Opcode::PUSH1 as usize] = OpCodeFn(VM::op_push::<1>);
         opcode_table[Opcode::PUSH2 as usize] = OpCodeFn(VM::op_push::<2>);
         opcode_table[Opcode::PUSH3 as usize] = OpCodeFn(VM::op_push::<3>);
@@ -483,7 +501,6 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::CALLVALUE as usize] = OpCodeFn(VM::op_callvalue);
         opcode_table[Opcode::CODECOPY as usize] = OpCodeFn(VM::op_codecopy);
         opcode_table[Opcode::SIGNEXTEND as usize] = OpCodeFn(VM::op_signextend);
-        opcode_table[Opcode::CLZ as usize] = OpCodeFn(VM::op_clz);
         opcode_table[Opcode::LT as usize] = OpCodeFn(VM::op_lt);
         opcode_table[Opcode::GT as usize] = OpCodeFn(VM::op_gt);
         opcode_table[Opcode::SLT as usize] = OpCodeFn(VM::op_slt);
@@ -505,8 +522,6 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::GASLIMIT as usize] = OpCodeFn(VM::op_gaslimit);
         opcode_table[Opcode::CHAINID as usize] = OpCodeFn(VM::op_chainid);
         opcode_table[Opcode::BASEFEE as usize] = OpCodeFn(VM::op_basefee);
-        opcode_table[Opcode::BLOBHASH as usize] = OpCodeFn(VM::op_blobhash);
-        opcode_table[Opcode::BLOBBASEFEE as usize] = OpCodeFn(VM::op_blobbasefee);
         opcode_table[Opcode::AND as usize] = OpCodeFn(VM::op_and);
         opcode_table[Opcode::OR as usize] = OpCodeFn(VM::op_or);
         opcode_table[Opcode::XOR as usize] = OpCodeFn(VM::op_xor);
@@ -515,8 +530,6 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::SHL as usize] = OpCodeFn(VM::op_shl);
         opcode_table[Opcode::SHR as usize] = OpCodeFn(VM::op_shr);
         opcode_table[Opcode::SAR as usize] = OpCodeFn(VM::op_sar);
-        opcode_table[Opcode::TLOAD as usize] = OpCodeFn(VM::op_tload);
-        opcode_table[Opcode::TSTORE as usize] = OpCodeFn(VM::op_tstore);
         opcode_table[Opcode::SELFBALANCE as usize] = OpCodeFn(VM::op_selfbalance);
         opcode_table[Opcode::CODESIZE as usize] = OpCodeFn(VM::op_codesize);
         opcode_table[Opcode::GASPRICE as usize] = OpCodeFn(VM::op_gasprice);
@@ -533,6 +546,53 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::LOG3 as usize] = OpCodeFn(VM::op_log::<3>);
         opcode_table[Opcode::LOG4 as usize] = OpCodeFn(VM::op_log::<4>);
 
+        opcode_table
+    }
+
+    #[allow(clippy::as_conversions, clippy::indexing_slicing)]
+    const fn build_opcode_table_pre_cancun() -> [OpCodeFn<'a>; 256] {
+        let mut opcode_table: [OpCodeFn<'a>; 256] = Self::build_opcode_table_pre_shanghai();
+
+        // [EIP-3855] - PUSH0 is only available from SHANGHAI
+        opcode_table[Opcode::PUSH0 as usize] = OpCodeFn(VM::op_push0);
+        opcode_table
+    }
+
+    #[allow(clippy::as_conversions, clippy::indexing_slicing)]
+    const fn build_opcode_table_pre_osaka() -> [OpCodeFn<'a>; 256] {
+        const {
+            let mut opcode_table: [OpCodeFn<'a>; 256] = Self::build_opcode_table_pre_cancun();
+
+            // [EIP-5656] - MCOPY is only available from CANCUN
+            opcode_table[Opcode::MCOPY as usize] = OpCodeFn(VM::op_mcopy);
+
+            // [EIP-1153] - TLOAD is only available from CANCUN
+            opcode_table[Opcode::TLOAD as usize] = OpCodeFn(VM::op_tload);
+            opcode_table[Opcode::TSTORE as usize] = OpCodeFn(VM::op_tstore);
+
+            // [EIP-7516] - BLOBBASEFEE is only available from CANCUN
+            opcode_table[Opcode::BLOBBASEFEE as usize] = OpCodeFn(VM::op_blobbasefee);
+            // [EIP-4844] - BLOBHASH is only available from CANCUN
+            opcode_table[Opcode::BLOBHASH as usize] = OpCodeFn(VM::op_blobhash);
+            opcode_table
+        }
+    }
+
+    #[allow(clippy::as_conversions, clippy::indexing_slicing)]
+    const fn build_opcode_table_osaka() -> [OpCodeFn<'a>; 256] {
+        let mut opcode_table: [OpCodeFn<'a>; 256] = Self::build_opcode_table_pre_osaka();
+
+        opcode_table[Opcode::CLZ as usize] = OpCodeFn(VM::op_clz);
+        opcode_table
+    }
+
+    #[expect(clippy::as_conversions, clippy::indexing_slicing)]
+    const fn build_opcode_table_amsterdam() -> [OpCodeFn<'a>; 256] {
+        let mut opcode_table: [OpCodeFn<'a>; 256] = Self::build_opcode_table_osaka();
+
+        opcode_table[Opcode::DUPN as usize] = OpCodeFn(VM::op_dupn);
+        opcode_table[Opcode::SWAPN as usize] = OpCodeFn(VM::op_swapn);
+        opcode_table[Opcode::EXCHANGE as usize] = OpCodeFn(VM::op_exchange);
         opcode_table
     }
 

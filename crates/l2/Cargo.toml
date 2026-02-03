@@ -1,7 +1,10 @@
 [package]
 name = "ethrex-l2"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -13,7 +16,7 @@ tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 ethereum-types.workspace = true
-ethrex-common.workspace = true
+ethrex-common = { workspace = true, features = ["c-kzg"] }
 ethrex-config.workspace = true
 ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
@@ -33,7 +36,6 @@ hex.workspace = true
 bytes.workspace = true
 jsonwebtoken.workspace = true
 secp256k1.workspace = true
-keccak-hash.workspace = true
 envy = "0.4.2"
 rand.workspace = true
 thiserror.workspace = true
@@ -44,9 +46,8 @@ directories = "5.0.1"
 bincode = "1.3.3"
 serde_with.workspace = true
 lazy_static.workspace = true
-aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", tag = "v0.16.1" }
+aligned-sdk.workspace = true
 ethers = "2.0"
-cfg-if.workspace = true
 chrono = "0.4.41"
 clap.workspace = true
 crossterm = { version = "0.29.0", features = ["event-stream"] }
@@ -58,7 +59,7 @@ tabwriter = "1.4.1"
 color-eyre = "0.6.5"
 axum.workspace = true
 
-guest_program = { path = "./prover/src/guest_program/" }
+ethrex-guest-program = { path = "../guest-program" }
 
 
 [build-dependencies]
@@ -77,8 +78,16 @@ indexing_slicing = "deny"
 as_conversions = "deny"
 unnecessary_cast = "warn"
 panic = "deny"
+redundant_clone = "warn"
 
 [features]
 default = ["l2"]
+
+sp1 = ["ethrex-guest-program/sp1"]
+risc0 = ["ethrex-guest-program/risc0"]
+
+rocksdb = []
+
 metrics = ["ethrex-blockchain/metrics"]
-l2 = ["guest_program/l2"]
+
+l2 = ["ethrex-guest-program/l2"]

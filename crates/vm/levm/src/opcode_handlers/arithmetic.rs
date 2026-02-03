@@ -1,24 +1,25 @@
 use crate::{
-    errors::{ExceptionalHalt, OpcodeResult, VMError},
+    errors::{OpcodeResult, VMError},
     gas_cost,
     vm::VM,
 };
-use ethrex_common::{U256, U512, types::Fork};
+use ethrex_common::{U256, U512};
 
 // Arithmetic Operations (11)
 // Opcodes: ADD, SUB, MUL, DIV, SDIV, MOD, SMOD, ADDMOD, MULMOD, EXP, SIGNEXTEND
 
 impl<'a> VM<'a> {
     // ADD operation
+    #[inline]
     pub fn op_add(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::ADD)?;
 
         let [augend, addend] = *current_call_frame.stack.pop()?;
         let sum = augend.overflowing_add(addend).0;
-        current_call_frame.stack.push1(sum)?;
+        current_call_frame.stack.push(sum)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // SUB operation
@@ -28,9 +29,9 @@ impl<'a> VM<'a> {
 
         let [minuend, subtrahend] = *current_call_frame.stack.pop()?;
         let difference = minuend.overflowing_sub(subtrahend).0;
-        current_call_frame.stack.push1(difference)?;
+        current_call_frame.stack.push(difference)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // MUL operation
@@ -40,9 +41,9 @@ impl<'a> VM<'a> {
 
         let [multiplicand, multiplier] = *current_call_frame.stack.pop()?;
         let product = multiplicand.overflowing_mul(multiplier).0;
-        current_call_frame.stack.push1(product)?;
+        current_call_frame.stack.push(product)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // DIV operation
@@ -52,12 +53,12 @@ impl<'a> VM<'a> {
 
         let [dividend, divisor] = *current_call_frame.stack.pop()?;
         let Some(quotient) = dividend.checked_div(divisor) else {
-            current_call_frame.stack.push1(U256::zero())?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            current_call_frame.stack.push_zero()?;
+            return Ok(OpcodeResult::Continue);
         };
-        current_call_frame.stack.push1(quotient)?;
+        current_call_frame.stack.push(quotient)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // SDIV operation
@@ -67,8 +68,8 @@ impl<'a> VM<'a> {
 
         let [dividend, divisor] = *current_call_frame.stack.pop()?;
         if divisor.is_zero() || dividend.is_zero() {
-            current_call_frame.stack.push1(U256::zero())?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            current_call_frame.stack.push_zero()?;
+            return Ok(OpcodeResult::Continue);
         }
 
         let abs_dividend = abs(dividend);
@@ -86,9 +87,9 @@ impl<'a> VM<'a> {
             None => U256::zero(),
         };
 
-        current_call_frame.stack.push1(quotient)?;
+        current_call_frame.stack.push(quotient)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // MOD operation
@@ -100,9 +101,9 @@ impl<'a> VM<'a> {
 
         let remainder = dividend.checked_rem(divisor).unwrap_or_default();
 
-        current_call_frame.stack.push1(remainder)?;
+        current_call_frame.stack.push(remainder)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // SMOD operation
@@ -113,8 +114,8 @@ impl<'a> VM<'a> {
         let [unchecked_dividend, unchecked_divisor] = *current_call_frame.stack.pop()?;
 
         if unchecked_divisor.is_zero() || unchecked_dividend.is_zero() {
-            current_call_frame.stack.push1(U256::zero())?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            current_call_frame.stack.push_zero()?;
+            return Ok(OpcodeResult::Continue);
         }
 
         let divisor = abs(unchecked_divisor);
@@ -123,8 +124,8 @@ impl<'a> VM<'a> {
         let unchecked_remainder = match dividend.checked_rem(divisor) {
             Some(remainder) => remainder,
             None => {
-                current_call_frame.stack.push1(U256::zero())?;
-                return Ok(OpcodeResult::Continue { pc_increment: 1 });
+                current_call_frame.stack.push_zero()?;
+                return Ok(OpcodeResult::Continue);
             }
         };
 
@@ -134,9 +135,9 @@ impl<'a> VM<'a> {
             unchecked_remainder
         };
 
-        current_call_frame.stack.push1(remainder)?;
+        current_call_frame.stack.push(remainder)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // ADDMOD operation
@@ -147,8 +148,8 @@ impl<'a> VM<'a> {
         let [augend, addend, modulus] = *current_call_frame.stack.pop()?;
 
         if modulus.is_zero() {
-            current_call_frame.stack.push1(U256::zero())?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            current_call_frame.stack.push_zero()?;
+            return Ok(OpcodeResult::Continue);
         }
 
         let new_augend: U512 = augend.into();
@@ -170,9 +171,9 @@ impl<'a> VM<'a> {
             .try_into()
             .expect("can't fail because we applied % mod where mod is a U256 value");
 
-        current_call_frame.stack.push1(sum_mod)?;
+        current_call_frame.stack.push(sum_mod)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // MULMOD operation
@@ -183,29 +184,42 @@ impl<'a> VM<'a> {
         let [multiplicand, multiplier, modulus] = *current_call_frame.stack.pop()?;
 
         if modulus.is_zero() || multiplicand.is_zero() || multiplier.is_zero() {
-            current_call_frame.stack.push1(U256::zero())?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            current_call_frame.stack.push_zero()?;
+            return Ok(OpcodeResult::Continue);
         }
 
-        let multiplicand: U512 = multiplicand.into();
-        let multiplier: U512 = multiplier.into();
+        #[cfg(feature = "zisk")]
+        let product_mod = {
+            use ziskos::zisklib::mulmod256_c;
+            let mut product_mod = U256::zero();
+            unsafe {
+                mulmod256_c(
+                    multiplicand.0.as_ptr(),
+                    multiplier.0.as_ptr(),
+                    modulus.0.as_ptr(),
+                    product_mod.0.as_mut_ptr(),
+                );
+            }
+            product_mod
+        };
 
-        #[allow(
-            clippy::arithmetic_side_effects,
-            reason = "both values come from a u256, so the product can fit in a U512"
-        )]
-        let product = multiplicand * multiplier;
-        #[allow(clippy::arithmetic_side_effects, reason = "can't overflow")]
-        let product_mod = product % modulus;
+        #[cfg(not(feature = "zisk"))]
+        let product_mod = {
+            let product = multiplicand.full_mul(multiplier);
 
-        #[allow(clippy::expect_used, reason = "can't overflow")]
-        let product_mod: U256 = product_mod
-            .try_into()
-            .expect("can't fail because we applied % mod where mod is a U256 value");
+            #[allow(clippy::arithmetic_side_effects, reason = "modulus isn't zero")]
+            let product_mod = product % modulus;
 
-        current_call_frame.stack.push1(product_mod)?;
+            #[allow(clippy::expect_used, reason = "modulus is a U256, so result fits")]
+            let product_mod: U256 = product_mod
+                .try_into()
+                .expect("can't fail because we applied % mod where mod is a U256 value");
+            product_mod
+        };
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        current_call_frame.stack.push(product_mod)?;
+
+        Ok(OpcodeResult::Continue)
     }
 
     // EXP operation
@@ -218,9 +232,9 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost)?;
 
         let power = base.overflowing_pow(exponent).0;
-        current_call_frame.stack.push1(power)?;
+        current_call_frame.stack.push(power)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // SIGNEXTEND operation
@@ -231,8 +245,8 @@ impl<'a> VM<'a> {
         let [byte_size_minus_one, value_to_extend] = *current_call_frame.stack.pop()?;
 
         if byte_size_minus_one > U256::from(31) {
-            current_call_frame.stack.push1(value_to_extend)?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            current_call_frame.stack.push(value_to_extend)?;
+            return Ok(OpcodeResult::Continue);
         }
 
         #[allow(
@@ -255,17 +269,13 @@ impl<'a> VM<'a> {
                 value_to_extend | !mask
             };
 
-            current_call_frame.stack.push1(result)?;
+            current_call_frame.stack.push(result)?;
 
-            Ok(OpcodeResult::Continue { pc_increment: 1 })
+            Ok(OpcodeResult::Continue)
         }
     }
 
     pub fn op_clz(&mut self) -> Result<OpcodeResult, VMError> {
-        if self.env.config.fork < Fork::Osaka {
-            return Err(ExceptionalHalt::InvalidOpcode.into());
-        }
-
         self.current_call_frame
             .increase_consumed_gas(gas_cost::CLZ)?;
 
@@ -273,9 +283,9 @@ impl<'a> VM<'a> {
 
         self.current_call_frame
             .stack
-            .push1(U256::from(value.leading_zeros()))?;
+            .push(U256::from(value.leading_zeros()))?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 }
 

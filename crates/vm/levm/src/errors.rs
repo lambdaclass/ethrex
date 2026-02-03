@@ -1,6 +1,9 @@
 use bytes::Bytes;
 use derive_more::derive::Display;
-use ethrex_common::{Address, U256, types::Log};
+use ethrex_common::{
+    Address, H256, U256,
+    types::{FakeExponentialError, Log},
+};
 use serde::{Deserialize, Serialize};
 use thiserror;
 
@@ -96,8 +99,10 @@ pub enum TxValidationError {
         priority_fee: U256,
         max_fee_per_gas: U256,
     },
-    #[error("Intrinsic gas too low")]
+    #[error("Transaction gas limit lower than the minimum gas cost to execute the transaction")]
     IntrinsicGasTooLow,
+    #[error("Transaction gas limit lower than the gas cost floor for calldata tokens")]
+    IntrinsicGasBelowFloorGasCost,
     #[error(
         "Gas allowance exceeded. Block gas limit: {block_gas_limit}, transaction gas limit: {tx_gas_limit}"
     )]
@@ -137,6 +142,10 @@ pub enum TxValidationError {
     Type4TxContractCreation,
     #[error("Gas limit price product overflow")]
     GasLimitPriceProductOverflow,
+    #[error(
+        "Transaction gas limit exceeds maximum. Transaction hash: {tx_hash}, transaction gas limit: {tx_gas_limit}"
+    )]
+    TxMaxGasLimitExceeded { tx_hash: H256, tx_gas_limit: u64 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
@@ -170,6 +179,8 @@ pub enum InternalError {
     /// Unexpected error when accessing the database, used in trait `Database`.
     #[error("Database access error: {0}")]
     Database(#[from] DatabaseError),
+    #[error("{0}")]
+    FakeExponentialError(#[from] FakeExponentialError),
 }
 
 impl InternalError {
@@ -184,16 +195,10 @@ pub enum PrecompileError {
     ParsingInputError,
     #[error("There is not enough gas to execute precompiled contract")]
     NotEnoughGas,
-    #[error("Kzg error: {0}")]
-    KzgError(String),
     #[error("Invalid point")]
     InvalidPoint,
-    #[error("The point is not in the curve")]
-    PointNotInTheCurve,
     #[error("The point is not in the subgroup")]
     PointNotInSubgroup,
-    #[error("BN254 ate pairing error")]
-    BN254AtePairingError,
     #[error("The G1 point is not in the curve")]
     BLS12381G1PointNotInCurve,
     #[error("The G2 point is not in the curve")]
@@ -214,12 +219,9 @@ pub enum DatabaseError {
     Custom(String),
 }
 
-#[derive(Debug, Clone)]
-/// Note: "Halt" does not mean "Error during execution" it simply
-/// means that the execution stopped. It's not called "Stop" because
-/// "Stop" is an Opcode
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum OpcodeResult {
-    Continue { pc_increment: usize },
+    Continue,
     Halt,
 }
 
@@ -232,7 +234,15 @@ pub enum TxResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionReport {
     pub result: TxResult,
+    /// Gas used before refunds (for block-level accounting).
+    /// Pre-EIP-7778: This is the post-refund gas.
+    /// Post-EIP-7778: This is the pre-refund gas.
     pub gas_used: u64,
+    /// Gas spent after refunds (what the user actually pays).
+    /// This is always the post-refund gas value.
+    /// Pre-EIP-7778: Same as gas_used.
+    /// Post-EIP-7778: gas_used - refunds (capped).
+    pub gas_spent: u64,
     pub gas_refunded: u64,
     pub output: Bytes,
     pub logs: Vec<Log>,
@@ -247,7 +257,10 @@ impl ExecutionReport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextResult {
     pub result: TxResult,
+    /// Gas used before refunds (for block-level accounting).
     pub gas_used: u64,
+    /// Gas spent after refunds (what the user actually pays).
+    pub gas_spent: u64,
     pub output: Bytes,
 }
 

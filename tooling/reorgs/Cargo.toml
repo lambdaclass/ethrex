@@ -1,0 +1,25 @@
+[package]
+name = "reorgs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ethrex = { workspace = true, features = ["l2"] }
+ethrex-common.workspace = true
+ethrex-blockchain.workspace = true
+ethrex-rpc.workspace = true
+ethrex-config.workspace = true
+ethrex-l2-common.workspace = true
+ethrex-l2-rpc.workspace = true
+ethrex-p2p.workspace = true
+
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+rand.workspace = true
+sha2.workspace = true
+hex.workspace = true
+nix = { version = "0.30", features = ["signal"] }
+secp256k1.workspace = true
+url.workspace = true

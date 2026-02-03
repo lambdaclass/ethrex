@@ -5,7 +5,8 @@ lazy_static::lazy_static! {
 use clap::{ArgGroup, Parser};
 use ethrex::initializers::open_store;
 use ethrex::utils::{default_datadir, init_datadir};
-use ethrex_common::types::BlockHash;
+use ethrex_common::types::{BlockHash, Code};
+use ethrex_common::utils::keccak;
 use ethrex_common::{Address, serde_utils};
 use ethrex_common::{BigEndianHash, Bytes, H256, U256, types::BlockNumber};
 use ethrex_common::{
@@ -14,14 +15,14 @@ use ethrex_common::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_rpc::clients::auth::RpcResponse;
+use ethrex_rpc::utils::RpcResponse;
 use ethrex_storage::Store;
-use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read, Write};
+use std::path::PathBuf;
 use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
@@ -132,7 +133,7 @@ pub async fn archive_sync(
 /// This could be improved in the future to use an in_memory trie with async db writes
 async fn process_dump(dump: Dump, store: Store, current_root: H256) -> eyre::Result<H256> {
     let mut storage_tasks = JoinSet::new();
-    let mut state_trie = store.open_state_trie(current_root)?;
+    let mut state_trie = store.open_direct_state_trie(current_root)?;
     for (address, dump_account) in dump.accounts.into_iter() {
         let hashed_address = dump_account
             .hashed_address
@@ -146,7 +147,7 @@ async fn process_dump(dump: Dump, store: Store, current_root: H256) -> eyre::Res
         // Add code to DB if it is not empty
         if dump_account.code_hash != *EMPTY_KECCACK_HASH {
             store
-                .add_account_code(dump_account.code_hash, dump_account.code.clone())
+                .add_account_code(Code::from_bytecode(dump_account.code.clone()))
                 .await?;
         }
         // Process storage trie if it is not empty
@@ -171,7 +172,7 @@ async fn process_dump_storage(
     hashed_address: H256,
     storage_root: H256,
 ) -> eyre::Result<()> {
-    let mut trie = store.open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)?;
+    let mut trie = store.open_direct_storage_trie(hashed_address, *EMPTY_TRIE_HASH)?;
     for (key, val) in dump_storage {
         // The key we receive is the preimage of the one stored in the trie
         trie.insert(keccak(key.0).0.to_vec(), val.encode_to_vec())?;
@@ -332,7 +333,7 @@ impl DumpProcessor {
 
             store.add_block(block).await?;
             store
-                .forkchoice_update(Some(block_hashes), block_number, block_hash, None, None)
+                .forkchoice_update(block_hashes, block_number, block_hash, None, None)
                 .await?;
             info!("Head of local chain is now block {block_number} with hash {block_hash}");
         }
@@ -431,10 +432,11 @@ impl DumpReader {
     /// Create a new DumpReader that will read state data from the given directory
     fn new_from_dir(dirname: String, prev_checkpoint: &Option<CheckPoint>) -> eyre::Result<Self> {
         let mut dir_reader = DumpDirReader::new(dirname)?;
-        if let Some(checkpoint) = prev_checkpoint {
-            if let Some(current) = checkpoint.reading.current_file {
-                dir_reader.current_file = current
-            }
+        if let Some(current) = prev_checkpoint
+            .as_ref()
+            .and_then(|checkpoint| checkpoint.reading.current_file)
+        {
+            dir_reader.current_file = current
         }
         Ok(Self::Dir(dir_reader))
     }
@@ -446,10 +448,11 @@ impl DumpReader {
         prev_checkpoint: &Option<CheckPoint>,
     ) -> eyre::Result<Self> {
         let mut ipc_reader = DumpIpcReader::new(archive_ipc_path, block_number).await?;
-        if let Some(checkpoint) = prev_checkpoint {
-            if let Some(start) = checkpoint.reading.start_hash {
-                ipc_reader.start = start
-            }
+        if let Some(start) = prev_checkpoint
+            .as_ref()
+            .and_then(|checkpoint| checkpoint.reading.start_hash)
+        {
+            ipc_reader.start = start
         }
         Ok(Self::Ipc(ipc_reader))
     }
@@ -689,12 +692,12 @@ struct Args {
     #[arg(
         long = "datadir",
         value_name = "DATABASE_DIRECTORY",
-        default_value_t = default_datadir(),
+        default_value = default_datadir().into_os_string(),
         help = "Receives the name of the directory where the Database is located.",
         long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
         env = "ETHREX_DATADIR"
     )]
-    pub datadir: String,
+    pub datadir: PathBuf,
     #[arg(
         long = "ipc_path",
         value_name = "IPC_PATH",
@@ -734,8 +737,8 @@ pub async fn main() -> eyre::Result<()> {
     let args = Args::parse();
     tracing::subscriber::set_global_default(FmtSubscriber::new())
         .expect("setting default subscriber failed");
-    let data_dir = init_datadir(&args.datadir);
-    let store = open_store(&data_dir);
+    init_datadir(&args.datadir);
+    let store = open_store(&args.datadir).expect("Failed to open Store");
     archive_sync(
         args.ipc_path,
         args.block_number,

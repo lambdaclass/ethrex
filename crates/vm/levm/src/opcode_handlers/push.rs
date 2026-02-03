@@ -1,37 +1,26 @@
 use crate::{
-    errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
+    errors::{InternalError, OpcodeResult, VMError},
     gas_cost,
     vm::VM,
 };
-use ethrex_common::{U256, types::Fork, utils::u256_from_big_endian_const};
+use ethrex_common::{U256, utils::u256_from_big_endian_const};
 
 // Push Operations
 // Opcodes: PUSH0, PUSH1 ... PUSH32
 
 impl<'a> VM<'a> {
     // Generic PUSH operation, optimized at compile time for the given N.
+    #[inline]
     pub fn op_push<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::PUSHN)?;
-
-        let current_pc = current_call_frame.pc;
+        let call_frame = &mut self.current_call_frame;
+        call_frame.increase_consumed_gas(gas_cost::PUSHN)?;
 
         // Check to avoid multiple checks.
-        if current_pc.checked_add(N.wrapping_add(1)).is_none() {
-            Err(InternalError::Overflow)?;
-        }
+        let Some(new_pc) = call_frame.pc.checked_add(N) else {
+            return Err(InternalError::Overflow.into());
+        };
 
-        let pc_offset = current_pc
-            // Add 1 to the PC because we don't want to include the
-            // Bytecode of the current instruction in the data we're about
-            // to read. We only want to read the data _NEXT_ to that
-            // bytecode
-            .wrapping_add(1);
-
-        let value = if let Some(slice) = current_call_frame
-            .bytecode
-            .get(pc_offset..pc_offset.wrapping_add(N))
-        {
+        let value = if let Some(slice) = call_frame.bytecode.bytecode.get(call_frame.pc..new_pc) {
             u256_from_big_endian_const(
                 // SAFETY: If the get succeeded, we got N elements so the cast is safe.
                 #[expect(unsafe_code)]
@@ -40,31 +29,24 @@ impl<'a> VM<'a> {
                 },
             )
         } else {
+            // NOTE: this isn't exactly correct, since a PUSHN with insufficient bytes should pad with zeros,
+            // but if we're out of bytes, the next instruction will halt, discarding the stack anyway.
             U256::zero()
         };
 
-        current_call_frame.stack.push1(value)?;
+        call_frame.stack.push(value)?;
 
-        // The n_bytes that you push to the stack + 1 for the next instruction
-        let increment_pc_by = N.wrapping_add(1);
+        // Advance the PC by the number of bytes in this instruction's payload.
+        call_frame.pc = new_pc;
 
-        Ok(OpcodeResult::Continue {
-            pc_increment: increment_pc_by,
-        })
+        Ok(OpcodeResult::Continue)
     }
 
     // PUSH0
     pub fn op_push0(&mut self) -> Result<OpcodeResult, VMError> {
-        // [EIP-3855] - PUSH0 is only available from SHANGHAI
-        if self.env.config.fork < Fork::Shanghai {
-            return Err(ExceptionalHalt::InvalidOpcode.into());
-        }
-        let current_call_frame = &mut self.current_call_frame;
-
-        current_call_frame.increase_consumed_gas(gas_cost::PUSH0)?;
-
-        current_call_frame.stack.push1(U256::zero())?;
-
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::PUSH0)?;
+        self.current_call_frame.stack.push_zero()?;
+        Ok(OpcodeResult::Continue)
     }
 }

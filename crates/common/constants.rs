@@ -1,6 +1,6 @@
+use crate::H256;
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::constants::RLP_NULL;
-use keccak_hash::H256;
-use sha3::{Digest as _, Keccak256};
 use std::{str::FromStr, sync::LazyLock};
 
 // = Keccak256(RLP([])) as of EIP-3675
@@ -35,19 +35,20 @@ pub static EMPTY_KECCACK_HASH: LazyLock<H256> = LazyLock::new(|| {
     )
 });
 
-pub static EMPTY_TRIE_HASH: LazyLock<H256> = LazyLock::new(|| {
-    H256::from_slice(
-        Keccak256::new()
-            .chain_update([RLP_NULL])
-            .finalize()
-            .as_slice(),
-    )
-});
+pub static EMPTY_TRIE_HASH: LazyLock<H256> = LazyLock::new(|| H256(keccak_hash([RLP_NULL])));
 
 // Request related
 pub static DEPOSIT_TOPIC: LazyLock<H256> = LazyLock::new(|| {
     H256::from_str("649bbc62d0e31342afea4e5cd82d4049e7e1ee912fc0889aa790803be39038c5")
         .expect("Failed to decode hex from string")
+});
+
+// = Keccak256(RLP([])) as of EIP-7928
+pub static EMPTY_BLOCK_ACCESS_LIST_HASH: LazyLock<H256> = LazyLock::new(|| {
+    H256::from_slice(
+        &hex::decode("1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347")
+            .expect("Failed to decode hex from string"),
+    )
 });
 
 // === EIP-4844 constants ===
@@ -65,3 +66,7 @@ pub const RLP_BLOCK_SIZE_SAFETY_MARGIN: u64 = 2_097_152;
 pub const MAX_RLP_BLOCK_SIZE: u64 = MAX_BLOCK_SIZE - RLP_BLOCK_SIZE_SAFETY_MARGIN;
 // Blob base cost defined in EIP-7918
 pub const BLOB_BASE_COST: u64 = 8192;
+
+// === EIP-7825 constants ===
+// https://eips.ethereum.org/EIPS/eip-7825
+pub const POST_OSAKA_GAS_LIMIT_CAP: u64 = 16777216;

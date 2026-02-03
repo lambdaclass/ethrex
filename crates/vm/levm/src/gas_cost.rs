@@ -80,6 +80,7 @@ pub const PUSH0: u64 = 2;
 pub const PUSHN: u64 = 3;
 pub const DUPN: u64 = 3;
 pub const SWAPN: u64 = 3;
+pub const EXCHANGE: u64 = 3;
 pub const LOGN_STATIC: u64 = 375;
 pub const LOGN_DYNAMIC_BASE: u64 = 375;
 pub const LOGN_DYNAMIC_BYTE_BASE: u64 = 8;
@@ -107,7 +108,7 @@ pub const SSTORE_COLD_DYNAMIC: u64 = 2100;
 pub const SSTORE_DEFAULT_DYNAMIC: u64 = 100;
 pub const SSTORE_STORAGE_CREATION: u64 = 20000;
 pub const SSTORE_STORAGE_MODIFICATION: u64 = 2900;
-pub const SSTORE_STIPEND: u64 = 2300;
+pub const SSTORE_STIPEND: i64 = 2300;
 
 pub const BALANCE_STATIC: u64 = DEFAULT_STATIC;
 pub const BALANCE_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
@@ -574,17 +575,6 @@ pub fn tx_calldata(calldata: &Bytes) -> Result<u64, VMError> {
     Ok(calldata_cost)
 }
 
-pub fn tx_creation(code_length: u64, number_of_words: u64) -> Result<u64, VMError> {
-    let mut creation_cost = code_length.checked_mul(CODE_DEPOSIT_COST).ok_or(OutOfGas)?;
-    creation_cost = creation_cost
-        .checked_add(CREATE_BASE_COST)
-        .ok_or(OutOfGas)?;
-
-    // GInitCodeword * number_of_words rounded up. GinitCodeWord = 2
-    let words_cost = number_of_words.checked_mul(2).ok_or(OutOfGas)?;
-    creation_cost.checked_add(words_cost).ok_or(OutOfGas.into())
-}
-
 fn address_access_cost(
     address_was_cold: bool,
     static_cost: u64,
@@ -781,52 +771,6 @@ pub fn staticcall(
     calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
 }
 
-/// Approximates factor * e ** (numerator / denominator) using Taylor expansion
-/// https://eips.ethereum.org/EIPS/eip-4844#helpers
-pub fn fake_exponential(factor: U256, numerator: U256, denominator: u64) -> Result<U256, VMError> {
-    if denominator == 0 {
-        return Err(InternalError::DivisionByZero.into());
-    }
-
-    if numerator.is_zero() {
-        return Ok(factor);
-    }
-
-    let mut output: U256 = U256::zero();
-    let denominator_u256: U256 = denominator.into();
-
-    // Initial multiplication: factor * denominator
-    let mut numerator_accum = factor
-        .checked_mul(denominator_u256)
-        .ok_or(InternalError::Overflow)?;
-
-    let mut denominator_by_i = denominator_u256;
-
-    #[expect(
-        clippy::arithmetic_side_effects,
-        reason = "division can't overflow since denominator is not 0"
-    )]
-    {
-        while !numerator_accum.is_zero() {
-            // Safe addition to output
-            output = output
-                .checked_add(numerator_accum)
-                .ok_or(InternalError::Overflow)?;
-
-            // Safe multiplication and division within loop
-            numerator_accum = numerator_accum
-                .checked_mul(numerator)
-                .ok_or(InternalError::Overflow)?
-                / denominator_by_i;
-
-            // denominator comes from a u64 value, will never overflow before other variables.
-            denominator_by_i += denominator_u256;
-        }
-
-        Ok(output / denominator)
-    }
-}
-
 pub fn sha2_256(data_size: usize) -> Result<u64, VMError> {
     precompile(data_size, SHA2_256_STATIC_COST, SHA2_256_DYNAMIC_BASE)
 }
@@ -953,14 +897,14 @@ pub fn ecpairing(groups_number: usize) -> Result<u64, VMError> {
 
 /// Max message call gas is all but one 64th of the remaining gas in the current context.
 /// https://eips.ethereum.org/EIPS/eip-150
+#[expect(clippy::arithmetic_side_effects, reason = "can't overflow")]
+#[expect(clippy::as_conversions, reason = "remaining gas conversion")]
 pub fn max_message_call_gas(current_call_frame: &CallFrame) -> Result<u64, VMError> {
     let mut remaining_gas = current_call_frame.gas_remaining;
 
-    remaining_gas = remaining_gas
-        .checked_sub(remaining_gas / 64)
-        .ok_or(InternalError::Underflow)?;
+    remaining_gas -= remaining_gas / 64;
 
-    Ok(remaining_gas)
+    Ok(remaining_gas as u64)
 }
 
 fn calculate_cost_and_gas_limit_call(

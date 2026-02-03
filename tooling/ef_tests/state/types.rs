@@ -156,6 +156,7 @@ pub enum TransactionExpectedException {
     Type3TxInvalidBlobVersionedHash,
     Type4TxContractCreation,
     IntrinsicGasTooLow,
+    IntrinsicGasBelowFloorGasCost,
     InsufficientAccountFunds,
     SenderNotEoa,
     PriorityGreaterThanMaxFeePerGas,
@@ -165,6 +166,7 @@ pub enum TransactionExpectedException {
     GasLimitPriceProductOverflow,
     Type3TxPreFork,
     InsufficientMaxFeePerBlobGas,
+    TxMaxGasLimitExceeded,
     Other, //TODO: Implement exceptions
 }
 
@@ -204,7 +206,7 @@ impl From<&EFTestPreValue> for GenesisAccount {
     fn from(value: &EFTestPreValue) -> Self {
         Self {
             code: value.code.clone(),
-            storage: value.storage.clone(),
+            storage: value.storage.iter().map(|(k, v)| (*k, *v)).collect(),
             balance: value.balance,
             nonce: value.nonce,
         }

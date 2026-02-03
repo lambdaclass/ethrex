@@ -23,7 +23,7 @@ ethrex --network fixtures/genesis/perf-ci.json import  fixtures/blockchain/l2-1k
 The CLI import subcommand executes `cmd/ethrex/cli.rs:import_blocks`, which can be summarized as:
 
 ```rust
-let store = init_store(&data_dir, network).await;
+let store = init_store(&datadir, network).await;
 let blockchain = init_blockchain(evm, store.clone());
 for block in parse(rlp_file) {
     blockchain.add_block(block)
@@ -96,7 +96,7 @@ As mentioned in the previous point, the VM execution doesn't directly mutate the
 This is a key piece of code in `Blockchain.execute_block`:
 
 ```rust
-let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
+let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
 let mut vm = Evm::new(vm_db);
 let execution_result = vm.execute_block(block)?;
 let account_updates = vm.get_state_transitions()?;

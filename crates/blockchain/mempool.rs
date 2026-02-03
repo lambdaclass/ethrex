@@ -1,6 +1,6 @@
 use std::{
-    collections::{BTreeMap, HashMap},
-    sync::{Mutex, RwLock},
+    collections::{BTreeMap, HashMap, VecDeque},
+    sync::RwLock,
 };
 
 use crate::{
@@ -17,66 +17,135 @@ use ethrex_common::{
 };
 use ethrex_storage::error::StoreError;
 use std::collections::HashSet;
+use tracing::warn;
+
+#[derive(Debug, Default)]
+struct MempoolInner {
+    broadcast_pool: HashSet<H256>,
+    transaction_pool: HashMap<H256, MempoolTransaction>,
+    blobs_bundle_pool: HashMap<H256, BlobsBundle>,
+    txs_by_sender_nonce: BTreeMap<(H160, u64), H256>,
+    txs_order: VecDeque<H256>,
+    max_mempool_size: usize,
+    // Max number of transactions to let the mempool order queue grow before pruning it
+    mempool_prune_threshold: usize,
+}
+
+impl MempoolInner {
+    fn new(max_mempool_size: usize) -> Self {
+        MempoolInner {
+            txs_order: VecDeque::with_capacity(max_mempool_size * 2),
+            transaction_pool: HashMap::with_capacity(max_mempool_size),
+            max_mempool_size,
+            mempool_prune_threshold: max_mempool_size + max_mempool_size / 2,
+            ..Default::default()
+        }
+    }
+
+    /// Remove a transaction from the pool with the transaction pool lock already taken
+    fn remove_transaction_with_lock(&mut self, hash: &H256) -> Result<(), StoreError> {
+        if let Some(tx) = self.transaction_pool.get(hash) {
+            if matches!(tx.tx_type(), TxType::EIP4844) {
+                self.blobs_bundle_pool.remove(hash);
+            }
+
+            self.txs_by_sender_nonce.remove(&(tx.sender(), tx.nonce()));
+            self.transaction_pool.remove(hash);
+            self.broadcast_pool.remove(hash);
+        };
+
+        Ok(())
+    }
+
+    /// Remove the oldest transaction in the pool
+    fn remove_oldest_transaction(&mut self) -> Result<(), StoreError> {
+        // Remove elements from the order queue until one is present in the pool
+        while self.transaction_pool.len() >= self.max_mempool_size {
+            if let Some(oldest_hash) = self.txs_order.pop_front() {
+                self.remove_transaction_with_lock(&oldest_hash)?;
+            } else {
+                warn!(
+                    "Mempool is full but there are no transactions to remove, this should not happen and will make the mempool grow indefinitely"
+                );
+                break;
+            }
+        }
+
+        Ok(())
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct Mempool {
-    broadcast_pool: RwLock<HashSet<H256>>,
-    transaction_pool: RwLock<HashMap<H256, MempoolTransaction>>,
-    blobs_bundle_pool: Mutex<HashMap<H256, BlobsBundle>>,
-    txs_by_sender_nonce: RwLock<BTreeMap<(H160, u64), H256>>,
+    inner: RwLock<MempoolInner>,
 }
+
 impl Mempool {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(max_mempool_size: usize) -> Self {
+        Mempool {
+            inner: RwLock::new(MempoolInner::new(max_mempool_size)),
+        }
+    }
+
+    fn write(&self) -> Result<std::sync::RwLockWriteGuard<'_, MempoolInner>, StoreError> {
+        self.inner
+            .write()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))
+    }
+
+    fn read(&self) -> Result<std::sync::RwLockReadGuard<'_, MempoolInner>, StoreError> {
+        self.inner
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))
     }
 
     /// Add transaction to the pool without doing validity checks
     pub fn add_transaction(
         &self,
         hash: H256,
+        sender: Address,
         transaction: MempoolTransaction,
     ) -> Result<(), StoreError> {
-        self.txs_by_sender_nonce
-            .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
-            .insert((transaction.sender(), transaction.nonce()), hash);
-        self.transaction_pool
-            .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
-            .insert(hash, transaction);
-        self.broadcast_pool
-            .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
-            .insert(hash);
+        let mut inner = self.write()?;
+        // Prune the order queue if it has grown too much
+        if inner.txs_order.len() > inner.mempool_prune_threshold {
+            // NOTE: we do this to avoid borrow checker errors
+            let txpool = core::mem::take(&mut inner.transaction_pool);
+            inner.txs_order.retain(|tx| txpool.contains_key(tx));
+            inner.transaction_pool = txpool;
+        }
+        if inner.transaction_pool.len() >= inner.max_mempool_size {
+            inner.remove_oldest_transaction()?;
+        }
+        inner.txs_order.push_back(hash);
+        inner
+            .txs_by_sender_nonce
+            .insert((sender, transaction.nonce()), hash);
+        inner.transaction_pool.insert(hash, transaction);
+        inner.broadcast_pool.insert(hash);
 
         Ok(())
     }
 
     pub fn get_txs_for_broadcast(&self) -> Result<Vec<MempoolTransaction>, StoreError> {
-        let txs = self
+        let inner = self.read()?;
+        let txs = inner
             .transaction_pool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))
-            .map(|pool| {
-                pool.iter()
-                    .filter_map(|(hash, tx)| {
-                        if !self.broadcast_pool.read().ok()?.contains(hash) {
-                            None
-                        } else {
-                            Some(tx.clone())
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            })?;
+            .iter()
+            .filter_map(|(hash, tx)| {
+                if !inner.broadcast_pool.contains(hash) {
+                    None
+                } else {
+                    Some(tx.clone())
+                }
+            })
+            .collect::<Vec<_>>();
         Ok(txs)
     }
 
-    pub fn clear_broadcasted_txs(&self) {
-        self.broadcast_pool
-            .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))
-            .map(|mut pool| pool.clear())
-            .unwrap_or_default();
+    pub fn clear_broadcasted_txs(&self) -> Result<(), StoreError> {
+        self.write()?.broadcast_pool.clear();
+        Ok(())
     }
 
     /// Add a blobs bundle to the pool by its blob transaction hash
@@ -85,49 +154,21 @@ impl Mempool {
         tx_hash: H256,
         blobs_bundle: BlobsBundle,
     ) -> Result<(), StoreError> {
-        self.blobs_bundle_pool
-            .lock()
-            .map_err(|error| StoreError::Custom(error.to_string()))?
+        self.write()?
+            .blobs_bundle_pool
             .insert(tx_hash, blobs_bundle);
         Ok(())
     }
 
     /// Get a blobs bundle to the pool given its blob transaction hash
     pub fn get_blobs_bundle(&self, tx_hash: H256) -> Result<Option<BlobsBundle>, StoreError> {
-        Ok(self
-            .blobs_bundle_pool
-            .lock()
-            .map_err(|error| StoreError::Custom(error.to_string()))?
-            .get(&tx_hash)
-            .cloned())
+        Ok(self.read()?.blobs_bundle_pool.get(&tx_hash).cloned())
     }
 
     /// Remove a transaction from the pool
     pub fn remove_transaction(&self, hash: &H256) -> Result<(), StoreError> {
-        let mut tx_pool = self
-            .transaction_pool
-            .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
-        let mut broadcast_pool = self
-            .broadcast_pool
-            .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
-        if let Some(tx) = tx_pool.get(hash) {
-            if matches!(tx.tx_type(), TxType::EIP4844) {
-                self.blobs_bundle_pool
-                    .lock()
-                    .map_err(|error| StoreError::Custom(error.to_string()))?
-                    .remove(hash);
-            }
-
-            self.txs_by_sender_nonce
-                .write()
-                .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
-                .remove(&(tx.sender(), tx.nonce()));
-            tx_pool.remove(hash);
-            broadcast_pool.remove(hash);
-        };
-
+        let mut inner = self.write()?;
+        inner.remove_transaction_with_lock(hash)?;
         Ok(())
     }
 
@@ -160,10 +201,11 @@ impl Mempool {
             }
 
             // Filter by blob gas fee
-            if let (true, Some(blob_fee)) = (is_blob_tx, filter.blob_fee) {
-                if tx.max_fee_per_blob_gas().is_none_or(|fee| fee < blob_fee) {
-                    return false;
-                }
+            if is_blob_tx
+                && let Some(blob_fee) = filter.blob_fee
+                && tx.max_fee_per_blob_gas().is_none_or(|fee| fee < blob_fee)
+            {
+                return false;
             }
             true
         };
@@ -176,10 +218,7 @@ impl Mempool {
     ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
         let mut txs_by_sender: HashMap<Address, Vec<MempoolTransaction>> =
             HashMap::with_capacity(128);
-        let tx_pool = self
-            .transaction_pool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        let tx_pool = &self.read()?.transaction_pool;
 
         for (_, tx) in tx_pool.iter() {
             txs_by_sender
@@ -200,10 +239,7 @@ impl Mempool {
     ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
         let mut txs_by_sender: HashMap<Address, Vec<MempoolTransaction>> =
             HashMap::with_capacity(128);
-        let tx_pool = self
-            .transaction_pool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        let tx_pool = &self.read()?.transaction_pool;
 
         for (_, tx) in tx_pool.iter() {
             if filter(tx) {
@@ -223,10 +259,7 @@ impl Mempool {
         &self,
         possible_hashes: &[H256],
     ) -> Result<Vec<H256>, StoreError> {
-        let tx_pool = self
-            .transaction_pool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        let tx_pool = &self.read()?.transaction_pool;
 
         Ok(possible_hashes
             .iter()
@@ -240,9 +273,8 @@ impl Mempool {
         transaction_hash: H256,
     ) -> Result<Option<Transaction>, StoreError> {
         let tx = self
+            .read()?
             .transaction_pool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?
             .get(&transaction_hash)
             .map(|e| e.transaction().clone());
 
@@ -251,9 +283,8 @@ impl Mempool {
 
     pub fn get_nonce(&self, address: &Address) -> Result<Option<u64>, MempoolError> {
         Ok(self
+            .read()?
             .txs_by_sender_nonce
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?
             .range((*address, 0)..=(*address, u64::MAX))
             .last()
             .map(|((_address, nonce), _hash)| nonce + 1))
@@ -261,17 +292,11 @@ impl Mempool {
 
     pub fn get_mempool_size(&self) -> Result<(u64, u64), MempoolError> {
         let txs_size = {
-            let pool_lock = self
-                .transaction_pool
-                .read()
-                .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+            let pool_lock = &self.read()?.transaction_pool;
             pool_lock.len()
         };
         let blobs_size = {
-            let pool_lock = self
-                .blobs_bundle_pool
-                .lock()
-                .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+            let pool_lock = &self.read()?.blobs_bundle_pool;
             pool_lock.len()
         };
 
@@ -280,10 +305,7 @@ impl Mempool {
 
     /// Returns all transactions currently in the pool
     pub fn content(&self) -> Result<Vec<Transaction>, MempoolError> {
-        let pooled_transactions = self
-            .transaction_pool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        let pooled_transactions = &self.read()?.transaction_pool;
         Ok(pooled_transactions
             .values()
             .map(MempoolTransaction::transaction)
@@ -293,20 +315,14 @@ impl Mempool {
 
     /// Returns all blobs bundles currently in the pool
     pub fn get_blobs_bundle_pool(&self) -> Result<Vec<BlobsBundle>, MempoolError> {
-        let blobs_bundle_pool = self
-            .blobs_bundle_pool
-            .lock()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        let blobs_bundle_pool = &self.read()?.blobs_bundle_pool;
         Ok(blobs_bundle_pool.values().cloned().collect())
     }
 
     /// Returns the status of the mempool, which is the number of transactions currently in
     /// the pool. Until we add "queue" transactions.
     pub fn status(&self) -> Result<u64, MempoolError> {
-        let pool_lock = self
-            .transaction_pool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        let pool_lock = &self.read()?.transaction_pool;
 
         Ok(pool_lock.len() as u64)
     }
@@ -318,9 +334,8 @@ impl Mempool {
         received_hash: H256,
     ) -> Result<Option<MempoolTransaction>, MempoolError> {
         let Some(hash) = self
+            .read()?
             .txs_by_sender_nonce
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?
             .get(&(sender, nonce))
             .cloned()
         else {
@@ -330,19 +345,14 @@ impl Mempool {
             return Ok(None);
         }
 
-        let transaction_pool = self
-            .transaction_pool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        let transaction_pool = &self.read()?.transaction_pool;
         let tx = transaction_pool.get(&hash).cloned();
         Ok(tx)
     }
 
     pub fn contains_tx(&self, tx_hash: H256) -> Result<bool, MempoolError> {
-        self.transaction_pool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()).into())
-            .map(|pool| pool.contains_key(&tx_hash))
+        let contains = self.read()?.transaction_pool.contains_key(&tx_hash);
+        Ok(contains)
     }
 
     pub fn find_tx_to_replace(
@@ -354,7 +364,6 @@ impl Mempool {
         let Some(tx_in_pool) = self.contains_sender_nonce(sender, nonce, tx.hash())? else {
             return Ok(None);
         };
-
         let is_a_replacement_tx = {
             // EIP-1559 values
             let old_tx_max_fee_per_gas = tx_in_pool.max_fee_per_gas().unwrap_or_default();
@@ -386,7 +395,7 @@ impl Mempool {
         };
 
         if !is_a_replacement_tx {
-            return Err(MempoolError::NonceTooLow);
+            return Err(MempoolError::UnderpricedReplacement);
         }
 
         Ok(Some(tx_in_pool.hash()))
@@ -461,409 +470,4 @@ pub fn transaction_intrinsic_gas(
         .ok_or(MempoolError::TxGasOverflowError)?;
 
     Ok(gas)
-}
-#[cfg(test)]
-mod tests {
-    use crate::Blockchain;
-    use crate::constants::MAX_INITCODE_SIZE;
-    use crate::error::MempoolError;
-    use crate::mempool::{
-        Mempool, TX_ACCESS_LIST_ADDRESS_GAS, TX_ACCESS_LIST_STORAGE_KEY_GAS, TX_CREATE_GAS_COST,
-        TX_DATA_NON_ZERO_GAS, TX_DATA_NON_ZERO_GAS_EIP2028, TX_DATA_ZERO_GAS_COST, TX_GAS_COST,
-        TX_INIT_CODE_WORD_GAS_COST,
-    };
-    use std::collections::HashMap;
-
-    use super::transaction_intrinsic_gas;
-    use ethrex_common::types::{
-        BYTES_PER_BLOB, BlobsBundle, BlockHeader, ChainConfig, EIP1559Transaction,
-        EIP4844Transaction, MempoolTransaction, Transaction, TxKind,
-    };
-    use ethrex_common::{Address, Bytes, H256, U256};
-    use ethrex_storage::EngineType;
-    use ethrex_storage::{Store, error::StoreError};
-
-    async fn setup_storage(config: ChainConfig, header: BlockHeader) -> Result<Store, StoreError> {
-        let store = Store::new("test", EngineType::InMemory)?;
-        let block_number = header.number;
-        let block_hash = header.hash();
-        store.add_block_header(block_hash, header).await?;
-        store
-            .forkchoice_update(None, block_number, block_hash, None, None)
-            .await?;
-        store.set_chain_config(&config).await?;
-        Ok(store)
-    }
-
-    fn build_basic_config_and_header(
-        istanbul_active: bool,
-        shanghai_active: bool,
-    ) -> (ChainConfig, BlockHeader) {
-        let config = ChainConfig {
-            shanghai_time: Some(if shanghai_active { 1 } else { 10 }),
-            istanbul_block: Some(if istanbul_active { 1 } else { 10 }),
-            ..Default::default()
-        };
-
-        let header = BlockHeader {
-            number: 5,
-            timestamp: 5,
-            gas_limit: 100_000_000,
-            gas_used: 0,
-            ..Default::default()
-        };
-
-        (config, header)
-    }
-
-    #[test]
-    fn normal_transaction_intrinsic_gas() {
-        let (config, header) = build_basic_config_and_header(false, false);
-
-        let tx = EIP1559Transaction {
-            nonce: 3,
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
-            gas_limit: 100_000,
-            to: TxKind::Call(Address::from_low_u64_be(1)), // Normal tx
-            value: U256::zero(),                           // Value zero
-            data: Bytes::default(),                        // No data
-            access_list: Default::default(),               // No access list
-            ..Default::default()
-        };
-
-        let tx = Transaction::EIP1559Transaction(tx);
-        let expected_gas_cost = TX_GAS_COST;
-        let intrinsic_gas =
-            transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
-        assert_eq!(intrinsic_gas, expected_gas_cost);
-    }
-
-    #[test]
-    fn create_transaction_intrinsic_gas() {
-        let (config, header) = build_basic_config_and_header(false, false);
-
-        let tx = EIP1559Transaction {
-            nonce: 3,
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
-            gas_limit: 100_000,
-            to: TxKind::Create,              // Create tx
-            value: U256::zero(),             // Value zero
-            data: Bytes::default(),          // No data
-            access_list: Default::default(), // No access list
-            ..Default::default()
-        };
-
-        let tx = Transaction::EIP1559Transaction(tx);
-        let expected_gas_cost = TX_CREATE_GAS_COST;
-        let intrinsic_gas =
-            transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
-        assert_eq!(intrinsic_gas, expected_gas_cost);
-    }
-
-    #[test]
-    fn transaction_intrinsic_data_gas_pre_istanbul() {
-        let (config, header) = build_basic_config_and_header(false, false);
-
-        let tx = EIP1559Transaction {
-            nonce: 3,
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
-            gas_limit: 100_000,
-            to: TxKind::Call(Address::from_low_u64_be(1)), // Normal tx
-            value: U256::zero(),                           // Value zero
-            data: Bytes::from(vec![0x0, 0x1, 0x1, 0x0, 0x1, 0x1]), // 6 bytes of data
-            access_list: Default::default(),               // No access list
-            ..Default::default()
-        };
-
-        let tx = Transaction::EIP1559Transaction(tx);
-        let expected_gas_cost = TX_GAS_COST + 2 * TX_DATA_ZERO_GAS_COST + 4 * TX_DATA_NON_ZERO_GAS;
-        let intrinsic_gas =
-            transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
-        assert_eq!(intrinsic_gas, expected_gas_cost);
-    }
-
-    #[test]
-    fn transaction_intrinsic_data_gas_post_istanbul() {
-        let (config, header) = build_basic_config_and_header(true, false);
-
-        let tx = EIP1559Transaction {
-            nonce: 3,
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
-            gas_limit: 100_000,
-            to: TxKind::Call(Address::from_low_u64_be(1)), // Normal tx
-            value: U256::zero(),                           // Value zero
-            data: Bytes::from(vec![0x0, 0x1, 0x1, 0x0, 0x1, 0x1]), // 6 bytes of data
-            access_list: Default::default(),               // No access list
-            ..Default::default()
-        };
-
-        let tx = Transaction::EIP1559Transaction(tx);
-        let expected_gas_cost =
-            TX_GAS_COST + 2 * TX_DATA_ZERO_GAS_COST + 4 * TX_DATA_NON_ZERO_GAS_EIP2028;
-        let intrinsic_gas =
-            transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
-        assert_eq!(intrinsic_gas, expected_gas_cost);
-    }
-
-    #[test]
-    fn transaction_create_intrinsic_gas_pre_shanghai() {
-        let (config, header) = build_basic_config_and_header(false, false);
-
-        let n_words: u64 = 10;
-        let n_bytes: u64 = 32 * n_words - 3; // Test word rounding
-
-        let tx = EIP1559Transaction {
-            nonce: 3,
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
-            gas_limit: 100_000,
-            to: TxKind::Create,                                // Create tx
-            value: U256::zero(),                               // Value zero
-            data: Bytes::from(vec![0x1_u8; n_bytes as usize]), // Bytecode data
-            access_list: Default::default(),                   // No access list
-            ..Default::default()
-        };
-
-        let tx = Transaction::EIP1559Transaction(tx);
-        let expected_gas_cost = TX_CREATE_GAS_COST + n_bytes * TX_DATA_NON_ZERO_GAS;
-        let intrinsic_gas =
-            transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
-        assert_eq!(intrinsic_gas, expected_gas_cost);
-    }
-
-    #[test]
-    fn transaction_create_intrinsic_gas_post_shanghai() {
-        let (config, header) = build_basic_config_and_header(false, true);
-
-        let n_words: u64 = 10;
-        let n_bytes: u64 = 32 * n_words - 3; // Test word rounding
-
-        let tx = EIP1559Transaction {
-            nonce: 3,
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
-            gas_limit: 100_000,
-            to: TxKind::Create,                                // Create tx
-            value: U256::zero(),                               // Value zero
-            data: Bytes::from(vec![0x1_u8; n_bytes as usize]), // Bytecode data
-            access_list: Default::default(),                   // No access list
-            ..Default::default()
-        };
-
-        let tx = Transaction::EIP1559Transaction(tx);
-        let expected_gas_cost = TX_CREATE_GAS_COST
-            + n_bytes * TX_DATA_NON_ZERO_GAS
-            + n_words * TX_INIT_CODE_WORD_GAS_COST;
-        let intrinsic_gas =
-            transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
-        assert_eq!(intrinsic_gas, expected_gas_cost);
-    }
-
-    #[test]
-    fn transaction_intrinsic_gas_access_list() {
-        let (config, header) = build_basic_config_and_header(false, false);
-
-        let access_list = vec![
-            (Address::zero(), vec![H256::default(); 10]),
-            (Address::zero(), vec![]),
-            (Address::zero(), vec![H256::default(); 5]),
-        ];
-
-        let tx = EIP1559Transaction {
-            nonce: 3,
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
-            gas_limit: 100_000,
-            to: TxKind::Call(Address::from_low_u64_be(1)), // Normal tx
-            value: U256::zero(),                           // Value zero
-            data: Bytes::default(),                        // No data
-            access_list,
-            ..Default::default()
-        };
-
-        let tx = Transaction::EIP1559Transaction(tx);
-        let expected_gas_cost =
-            TX_GAS_COST + 3 * TX_ACCESS_LIST_ADDRESS_GAS + 15 * TX_ACCESS_LIST_STORAGE_KEY_GAS;
-        let intrinsic_gas =
-            transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
-        assert_eq!(intrinsic_gas, expected_gas_cost);
-    }
-
-    #[tokio::test]
-    async fn transaction_with_big_init_code_in_shanghai_fails() {
-        let (config, header) = build_basic_config_and_header(false, true);
-
-        let store = setup_storage(config, header).await.expect("Storage setup");
-        let blockchain = Blockchain::default_with_store(store);
-
-        let tx = EIP1559Transaction {
-            nonce: 3,
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
-            gas_limit: 99_000_000,
-            to: TxKind::Create,  // Create tx
-            value: U256::zero(), // Value zero
-            data: Bytes::from(vec![0x1; MAX_INITCODE_SIZE as usize + 1]), // Large init code
-            access_list: Default::default(), // No access list
-            ..Default::default()
-        };
-
-        let tx = Transaction::EIP1559Transaction(tx);
-        let validation = blockchain.validate_transaction(&tx, Address::random());
-        assert!(matches!(
-            validation.await,
-            Err(MempoolError::TxMaxInitCodeSizeError)
-        ));
-    }
-
-    #[tokio::test]
-    async fn transaction_with_gas_limit_higher_than_of_the_block_should_fail() {
-        let (config, header) = build_basic_config_and_header(false, false);
-
-        let store = setup_storage(config, header).await.expect("Storage setup");
-        let blockchain = Blockchain::default_with_store(store);
-
-        let tx = EIP1559Transaction {
-            nonce: 3,
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
-            gas_limit: 100_000_001,
-            to: TxKind::Call(Address::from_low_u64_be(1)), // Normal tx
-            value: U256::zero(),                           // Value zero
-            data: Bytes::default(),                        // No data
-            access_list: Default::default(),               // No access list
-            ..Default::default()
-        };
-
-        let tx = Transaction::EIP1559Transaction(tx);
-        let validation = blockchain.validate_transaction(&tx, Address::random());
-        assert!(matches!(
-            validation.await,
-            Err(MempoolError::TxGasLimitExceededError)
-        ));
-    }
-
-    #[tokio::test]
-    async fn transaction_with_priority_fee_higher_than_gas_fee_should_fail() {
-        let (config, header) = build_basic_config_and_header(false, false);
-
-        let store = setup_storage(config, header).await.expect("Storage setup");
-        let blockchain = Blockchain::default_with_store(store);
-
-        let tx = EIP1559Transaction {
-            nonce: 3,
-            max_priority_fee_per_gas: 101,
-            max_fee_per_gas: 100,
-            gas_limit: 50_000_000,
-            to: TxKind::Call(Address::from_low_u64_be(1)), // Normal tx
-            value: U256::zero(),                           // Value zero
-            data: Bytes::default(),                        // No data
-            access_list: Default::default(),               // No access list
-            ..Default::default()
-        };
-
-        let tx = Transaction::EIP1559Transaction(tx);
-        let validation = blockchain.validate_transaction(&tx, Address::random());
-        assert!(matches!(
-            validation.await,
-            Err(MempoolError::TxTipAboveFeeCapError)
-        ));
-    }
-
-    #[tokio::test]
-    async fn transaction_with_gas_limit_lower_than_intrinsic_gas_should_fail() {
-        let (config, header) = build_basic_config_and_header(false, false);
-        let store = setup_storage(config, header).await.expect("Storage setup");
-        let blockchain = Blockchain::default_with_store(store);
-        let intrinsic_gas_cost = TX_GAS_COST;
-
-        let tx = EIP1559Transaction {
-            nonce: 3,
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
-            gas_limit: intrinsic_gas_cost - 1,
-            to: TxKind::Call(Address::from_low_u64_be(1)), // Normal tx
-            value: U256::zero(),                           // Value zero
-            data: Bytes::default(),                        // No data
-            access_list: Default::default(),               // No access list
-            ..Default::default()
-        };
-
-        let tx = Transaction::EIP1559Transaction(tx);
-        let validation = blockchain.validate_transaction(&tx, Address::random());
-        assert!(matches!(
-            validation.await,
-            Err(MempoolError::TxIntrinsicGasCostAboveLimitError)
-        ));
-    }
-
-    #[tokio::test]
-    async fn transaction_with_blob_base_fee_below_min_should_fail() {
-        let (config, header) = build_basic_config_and_header(false, false);
-        let store = setup_storage(config, header).await.expect("Storage setup");
-        let blockchain = Blockchain::default_with_store(store);
-
-        let tx = EIP4844Transaction {
-            nonce: 3,
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
-            max_fee_per_blob_gas: 0.into(),
-            gas: 15_000_000,
-            to: Address::from_low_u64_be(1), // Normal tx
-            value: U256::zero(),             // Value zero
-            data: Bytes::default(),          // No data
-            access_list: Default::default(), // No access list
-            ..Default::default()
-        };
-
-        let tx = Transaction::EIP4844Transaction(tx);
-        let validation = blockchain.validate_transaction(&tx, Address::random());
-        assert!(matches!(
-            validation.await,
-            Err(MempoolError::TxBlobBaseFeeTooLowError)
-        ));
-    }
-
-    #[test]
-    fn test_filter_mempool_transactions() {
-        let plain_tx_decoded = Transaction::decode_canonical(&hex::decode("f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap();
-        let plain_tx_sender = plain_tx_decoded.sender().unwrap();
-        let plain_tx = MempoolTransaction::new(plain_tx_decoded, plain_tx_sender);
-        let blob_tx_decoded = Transaction::decode_canonical(&hex::decode("03f88f0780843b9aca008506fc23ac00830186a09400000000000000000000000000000000000001008080c001e1a0010657f37554c781402a22917dee2f75def7ab966d7b770905398eba3c44401401a0840650aa8f74d2b07f40067dc33b715078d73422f01da17abdbd11e02bbdfda9a04b2260f6022bf53eadb337b3e59514936f7317d872defb891a708ee279bdca90").unwrap()).unwrap();
-        let blob_tx_sender = blob_tx_decoded.sender().unwrap();
-        let blob_tx = MempoolTransaction::new(blob_tx_decoded, blob_tx_sender);
-        let plain_tx_hash = plain_tx.hash();
-        let blob_tx_hash = blob_tx.hash();
-        let mempool = Mempool::new();
-        let filter =
-            |tx: &Transaction| -> bool { matches!(tx, Transaction::EIP4844Transaction(_)) };
-        mempool
-            .add_transaction(blob_tx_hash, blob_tx.clone())
-            .unwrap();
-        mempool.add_transaction(plain_tx_hash, plain_tx).unwrap();
-        let txs = mempool.filter_transactions_with_filter_fn(&filter).unwrap();
-        assert_eq!(txs, HashMap::from([(blob_tx.sender(), vec![blob_tx])]));
-    }
-
-    #[test]
-    fn blobs_bundle_loadtest() {
-        // Write a bundle of 6 blobs 10 times
-        // If this test fails please adjust the max_size in the DB config
-        let mempool = Mempool::new();
-        for i in 0..300 {
-            let blobs = [[i as u8; BYTES_PER_BLOB]; 6];
-            let commitments = [[i as u8; 48]; 6];
-            let proofs = [[i as u8; 48]; 6];
-            let bundle = BlobsBundle {
-                blobs: blobs.to_vec(),
-                commitments: commitments.to_vec(),
-                proofs: proofs.to_vec(),
-            };
-            mempool.add_blobs_bundle(H256::random(), bundle).unwrap();
-        }
-    }
 }

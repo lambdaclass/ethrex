@@ -27,12 +27,12 @@ the following feature can be enable with `--features <features>`
 
 |Feature|Description|
 |-------|-----------|
-|**default**|Enables "libmdbx", "c-kzg", "rollup_storage_sql", "dev", "metrics" features|
+|**default**|Enables "rocksdb", "c-kzg", "rollup_storage_sql", "dev", "metrics" features|
 |debug|Enables [debug mode](../vm/levm/debug.md) for LEVM|
 |**dev**|Makes the [--dev](./l1/dev-mode.md) flag available|
 |**metrics**|Enables metrics gathering for use with a monitoring stack|
 |**c-kzg**|Enables the c-kzg crate instead of kzg-rs|
-|**libmdbx**|Enables libmdbx as the database for the ethereum state|
+|**rocksdb**|Enables rocksdb as the database for the ethereum state|
 |**rollup_storage_sql**|Enables sql as the database for the L2 batch data|
 |sp1|Enables the sp1 backend for the L2 prover|
 |risc0|Enables the risc0 backend for the L2 prover|
@@ -50,8 +50,17 @@ The Dockerfile is located at the root of the repository and can be built by runn
 docker build -t ethrex .
 ```
 
-The `BUILD_FLAGS` argument can be used to pass flags to cargo, for example
+Build arguments:
+- `PROFILE`: Cargo profile to use (default: `release`). Example: `release-with-debug-assertions`
+- `BUILD_FLAGS`: Additional cargo flags (features, etc.)
 
 ```
-docker build -t ethrex --build-arg BUILD_FLAGS="--features <features>" .
+# Custom profile
+docker build -t ethrex --build-arg PROFILE="release-with-debug-assertions" .
+
+# With features
+docker build -t ethrex --build-arg BUILD_FLAGS="--features l2" .
+
+# Both
+docker build -t ethrex --build-arg PROFILE="release-with-debug-assertions" --build-arg BUILD_FLAGS="--features l2" .
 ```

@@ -3,6 +3,10 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   # Enforces the update of a changelog file on every pull request
   # We only want this for perf-related changes for now, so we add a few labels
