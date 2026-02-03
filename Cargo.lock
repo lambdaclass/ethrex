@@ -4168,6 +4168,7 @@ dependencies = [
  "hasher",
  "hex",
  "hex-literal 0.4.1",
+ "once_cell",
  "proptest",
  "rand 0.8.5",
  "rkyv",

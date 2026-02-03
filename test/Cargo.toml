@@ -42,6 +42,9 @@ ethrex-sdk.workspace = true
 # Enable SQL for tests so we don't need `cargo test -p ethrex-test --features sql`.
 ethrex-storage-rollup = { workspace = true, features = ["sql"] }
 anyhow.workspace = true
+# Needed for L2 hook tests
+rustc-hash.workspace = true
+once_cell = "1.20.2"
 
 [[test]]
 name = "ethrex_tests"

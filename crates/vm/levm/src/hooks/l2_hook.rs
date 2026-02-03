@@ -35,14 +35,18 @@ pub const FEE_TOKEN_RATIO_ADDRESS: Address = H160([
     0x00, 0x00, 0xff, 0xfb,
 ]);
 
-// lockFee(address payer, uint256 amount) public onlyBridge
-const LOCK_FEE_SELECTOR: [u8; 4] = [0x89, 0x9c, 0x86, 0xe2];
-// payFee(address receiver, uint256 amount) public onlyBridge
-const PAY_FEE_SELECTOR: [u8; 4] = [0x72, 0x74, 0x6e, 0xaf];
-// isFeeToken(address token) external view override returns (bool)
-const IS_FEE_TOKEN_SELECTOR: [u8; 4] = [0x16, 0xad, 0x82, 0xd7];
-// getFeeTokenRatio(address token) external view returns (uint256)
-const FEE_TOKEN_RATIO_SELECTOR: [u8; 4] = [0xc6, 0xab, 0x85, 0xd8];
+/// lockFee(address payer, uint256 amount) public onlyBridge
+#[doc(hidden)]
+pub const LOCK_FEE_SELECTOR: [u8; 4] = [0x89, 0x9c, 0x86, 0xe2];
+/// payFee(address receiver, uint256 amount) public onlyBridge
+#[doc(hidden)]
+pub const PAY_FEE_SELECTOR: [u8; 4] = [0x72, 0x74, 0x6e, 0xaf];
+/// isFeeToken(address token) external view override returns (bool)
+#[doc(hidden)]
+pub const IS_FEE_TOKEN_SELECTOR: [u8; 4] = [0x16, 0xad, 0x82, 0xd7];
+/// getFeeTokenRatio(address token) external view returns (uint256)
+#[doc(hidden)]
+pub const FEE_TOKEN_RATIO_SELECTOR: [u8; 4] = [0xc6, 0xab, 0x85, 0xd8];
 const SIMULATION_GAS_LIMIT: u64 = 21000 * 100;
 const SIMULATION_MAX_FEE: u64 = 100;
 
@@ -565,7 +569,8 @@ pub fn deduct_caller_fee_token(
 
 /// Helper function to encode the calldata for the fee token contract calls.
 /// <function>(address,uint256)
-fn encode_fee_token_call(selector: [u8; 4], address: Address, amount: U256) -> Bytes {
+#[doc(hidden)]
+pub fn encode_fee_token_call(selector: [u8; 4], address: Address, amount: U256) -> Bytes {
     let mut data = Vec::with_capacity(4 + 32 + 32);
     data.extend_from_slice(&selector);
     data.extend_from_slice(&[0u8; 12]);
@@ -574,7 +579,8 @@ fn encode_fee_token_call(selector: [u8; 4], address: Address, amount: U256) -> B
     data.into()
 }
 
-fn encode_is_fee_token_call(token: Address) -> Bytes {
+#[doc(hidden)]
+pub fn encode_is_fee_token_call(token: Address) -> Bytes {
     let mut data = Vec::with_capacity(4 + 32);
     data.extend_from_slice(&IS_FEE_TOKEN_SELECTOR);
     data.extend_from_slice(&[0u8; 12]);
@@ -582,7 +588,8 @@ fn encode_is_fee_token_call(token: Address) -> Bytes {
     data.into()
 }
 
-fn encode_fee_token_ratio_call(token: Address) -> Bytes {
+#[doc(hidden)]
+pub fn encode_fee_token_ratio_call(token: Address) -> Bytes {
     let mut data = Vec::with_capacity(4 + 32);
     data.extend_from_slice(&FEE_TOKEN_RATIO_SELECTOR);
     data.extend_from_slice(&[0u8; 12]);
@@ -744,7 +751,8 @@ fn refund_sender_fee_token(
 /// Calculates the L1 fee based on the account diffs size and the L1 fee config.
 /// This is done according to the formula:
 /// L1 Fee = (L1 Fee per Blob Gas * GAS_PER_BLOB / SAFE_BYTES_PER_BLOB) * account_diffs_size
-fn calculate_l1_fee(
+#[doc(hidden)]
+pub fn calculate_l1_fee(
     fee_config: &L1FeeConfig,
     transaction_size: usize,
 ) -> Result<U256, crate::errors::VMError> {
