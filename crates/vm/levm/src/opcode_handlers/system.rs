@@ -103,11 +103,15 @@ impl<'a> VM<'a> {
         // Record address touch for BAL (after gas checks pass per EIP-7928)
         if let Some(recorder) = self.db.bal_recorder.as_mut() {
             recorder.record_touched_address(callee);
+            // If EIP-7702 delegation, also record the delegation target (code source)
+            if is_delegation_7702 {
+                recorder.record_touched_address(code_address);
+            }
         }
 
         // OPERATION
         let from = callframe.to; // The new sender will be the current contract.
-        let to = callee; // In this case code_address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
+        let to = callee; // Sub-context account. Note: code_address may differ if EIP-7702 delegation is active.
         let is_static = callframe.is_static;
         let data = self.get_calldata(args_offset, args_size)?;
 
@@ -205,6 +209,10 @@ impl<'a> VM<'a> {
         // Record address touch for BAL (after gas checks pass per EIP-7928)
         if let Some(recorder) = self.db.bal_recorder.as_mut() {
             recorder.record_touched_address(address);
+            // If EIP-7702 delegation, also record the delegation target (code source)
+            if is_delegation_7702 {
+                recorder.record_touched_address(code_address);
+            }
         }
 
         // Sender and recipient are the same in this case. But the code executed is from another account.
@@ -326,6 +334,10 @@ impl<'a> VM<'a> {
         // Record address touch for BAL (after gas checks pass per EIP-7928)
         if let Some(recorder) = self.db.bal_recorder.as_mut() {
             recorder.record_touched_address(address);
+            // If EIP-7702 delegation, also record the delegation target (code source)
+            if is_delegation_7702 {
+                recorder.record_touched_address(code_address);
+            }
         }
 
         // OPERATION
@@ -393,7 +405,7 @@ impl<'a> VM<'a> {
         };
 
         // CHECK EIP7702
-        let (is_delegation_7702, eip7702_gas_consumed, _, bytecode) =
+        let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(self.db, &mut self.substate, address)?;
 
         // GAS
@@ -428,12 +440,16 @@ impl<'a> VM<'a> {
         // Record address touch for BAL (after gas checks pass per EIP-7928)
         if let Some(recorder) = self.db.bal_recorder.as_mut() {
             recorder.record_touched_address(address);
+            // If EIP-7702 delegation, also record the delegation target (code source)
+            if is_delegation_7702 {
+                recorder.record_touched_address(code_address);
+            }
         }
 
         // OPERATION
         let value = U256::zero();
         let from = callframe.to; // The new sender will be the current contract.
-        let to = address; // In this case address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
+        let to = address; // Sub-context account. Note: code_address may differ if EIP-7702 delegation is active.
         let data = self.get_calldata(args_offset, args_size)?;
 
         self.tracer
