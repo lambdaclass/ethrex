@@ -108,7 +108,7 @@ This plan identifies **50+ actionable improvements** across 4 categories to enha
 | `tracing.rs` | 76, 161-162 | "Unexpected Runtime Error" / "Tracing timeout" |
 | `vm.rs` | 102 | "LockError" - generic |
 
-**Solution:** Use `.context()` from anyhow or include source error:
+**Solution:** Replace with typed error variants that preserve the original error:
 ```rust
 // Before
 .map_err(|_| StoreError::Custom("Failed to acquire lock".to_string()))
