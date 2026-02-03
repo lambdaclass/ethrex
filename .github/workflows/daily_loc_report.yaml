@@ -5,6 +5,15 @@ on:
     # Every day at UTC midnight
     - cron: "0 0 * * 1,2,3,4,5"
   workflow_dispatch:
+    inputs:
+      slack_channel:
+        description: "Slack channel to post to"
+        required: true
+        default: "test"
+        type: choice
+        options:
+          - test
+          - prod
 
 permissions:
   contents: read
@@ -184,9 +193,9 @@ jobs:
       - name: Post results to Slack
         env:
           SLACK_WEBHOOKS: >
-            ${{ github.event_name == 'workflow_dispatch'
-              && secrets.TEST_CHANNEL_SLACK
-              || secrets.ETHREX_GENERAL_SLACK_WEBHOOK
+            ${{ github.event_name == 'schedule' && secrets.ETHREX_GENERAL_SLACK_WEBHOOK
+              || (inputs.slack_channel == 'prod' && secrets.ETHREX_GENERAL_SLACK_WEBHOOK)
+              || secrets.ETHREX_TEST_SLACK_WEBHOOK
             }}
         run: |
           for webhook in $SLACK_WEBHOOKS; do
