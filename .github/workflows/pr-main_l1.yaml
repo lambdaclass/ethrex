@@ -221,9 +221,7 @@ jobs:
             artifact_prefix: engine_auth_ec
           - name: "Cancun Engine tests"
             simulation: ethereum/engine
-            # Exclude "Invalid Missing Ancestor Syncing ReOrg, Timestamp, EmptyTxs=False" tests due to hive framework bug
-            # See: https://github.com/ethereum/hive/issues/TBD (same issue as InvalidPrevRandao in hive's tests.go)
-            limit: "engine-cancun/(?!Invalid Missing Ancestor Syncing ReOrg, Timestamp, EmptyTxs=False, CanonicalReOrg=(False|True), Invalid P8)"
+            limit: "engine-cancun"
             artifact_prefix: engine_cancun
           - name: "Paris Engine tests"
             simulation: ethereum/engine
