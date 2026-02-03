@@ -5,7 +5,8 @@ start-sepolia-metrics-docker start-holesky-metrics-docker start-hoodi-metrics-do
 start-metrics-docker tail-syncing-logs tail-metrics-logs copy_flamegraph import-with-metrics \
 multisync-up multisync-down multisync-clean multisync-logs multisync-status \
 multisync-restart multisync-monitor multisync-run multisync-loop multisync-loop-auto \
-benchmark-parse benchmark-compare benchmark-compare-csv benchmark-compare-md benchmark-diff benchmark-latest benchmark-help
+benchmark-parse benchmark-compare benchmark-compare-csv benchmark-compare-md benchmark-diff benchmark-latest benchmark-help \
+benchmark-parse-prefix benchmark-merge
 
 ETHREX_DIR ?= "../.."
 
@@ -394,3 +395,15 @@ endif
 benchmark-latest: ## Parse logs and show comparison of recent runs.
 	@make benchmark-parse
 	@make benchmark-compare
+
+benchmark-parse-prefix: ## Parse all runs with a server prefix. Usage: make benchmark-parse-prefix PREFIX=server1
+ifndef PREFIX
+	$(error PREFIX is required. Usage: make benchmark-parse-prefix PREFIX=server1)
+endif
+	python3 sync_benchmark.py parse-all $(BENCHMARK_LOGS_DIR) --prefix $(PREFIX) --output $(PREFIX)_results.json
+
+benchmark-merge: ## Merge multiple result files. Usage: make benchmark-merge FILES="server1_results.json server2_results.json"
+ifndef FILES
+	$(error FILES is required. Usage: make benchmark-merge FILES="server1_results.json server2_results.json")
+endif
+	python3 sync_benchmark.py merge $(FILES) --output $(BENCHMARK_RESULTS)

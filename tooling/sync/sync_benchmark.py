@@ -16,6 +16,12 @@ Usage:
 
     # Compare two specific runs
     python3 sync_benchmark.py diff <run1_id> <run2_id> --results <results.json>
+
+    # Parse with server prefix (for cross-server comparison)
+    python3 sync_benchmark.py parse-all <logs_dir> --prefix server1 --output server1_results.json
+
+    # Merge results from multiple servers
+    python3 sync_benchmark.py merge server1_results.json server2_results.json --output combined.json
 """
 
 import argparse
@@ -257,18 +263,52 @@ def parse_run_directory(run_dir: Path) -> dict:
     return results
 
 
-def parse_all_runs(logs_dir: Path) -> dict:
-    """Parse all runs in the multisync_logs directory."""
+def parse_all_runs(logs_dir: Path, prefix: str = "") -> dict:
+    """Parse all runs in the multisync_logs directory.
+
+    Args:
+        logs_dir: Path to the logs directory
+        prefix: Optional prefix to add to run IDs (e.g., "server1" -> "server1_20260201_082422")
+    """
     all_results = {}
 
     for run_dir in sorted(logs_dir.glob("run_*")):
         if run_dir.is_dir():
             run_id = run_dir.name.replace("run_", "")
+            if prefix:
+                run_id = f"{prefix}_{run_id}"
             run_results = parse_run_directory(run_dir)
             if run_results:
+                # Update run_id in each network's metrics
+                for network in run_results:
+                    run_results[network]['run_id'] = run_id
                 all_results[run_id] = run_results
 
     return all_results
+
+
+def merge_results(*result_files: Path) -> dict:
+    """Merge multiple result JSON files into one.
+
+    Args:
+        result_files: Paths to JSON result files to merge
+
+    Returns:
+        Combined results dictionary
+    """
+    merged = {}
+    for result_file in result_files:
+        if not result_file.exists():
+            print(f"Warning: File not found: {result_file}")
+            continue
+        with open(result_file) as f:
+            data = json.load(f)
+            # Check for duplicate run IDs
+            for run_id in data:
+                if run_id in merged:
+                    print(f"Warning: Duplicate run ID '{run_id}' - use --prefix when parsing to avoid collisions")
+            merged.update(data)
+    return merged
 
 
 def format_duration(secs: float) -> str:
@@ -494,6 +534,8 @@ def main():
     parse_all_parser.add_argument("--output", "-o", type=Path,
                                   default=Path("benchmark_results.json"),
                                   help="Output JSON file")
+    parse_all_parser.add_argument("--prefix", "-p", type=str, default="",
+                                  help="Prefix to add to run IDs (e.g., 'server1' -> 'server1_20260201_082422')")
 
     # Compare runs
     compare_parser = subparsers.add_parser("compare", help="Compare benchmark results")
@@ -509,6 +551,14 @@ def main():
                             help="Results JSON file")
     diff_parser.add_argument("--network", "-n", default="mainnet", help="Network to compare")
 
+    # Merge results from multiple files
+    merge_parser = subparsers.add_parser("merge", help="Merge results from multiple JSON files")
+    merge_parser.add_argument("files", type=Path, nargs="+",
+                             help="JSON result files to merge")
+    merge_parser.add_argument("--output", "-o", type=Path,
+                             default=Path("merged_results.json"),
+                             help="Output JSON file")
+
     args = parser.parse_args()
 
     if args.command == "parse":
@@ -522,10 +572,11 @@ def main():
                 print_metrics_table(metrics.to_dict(), f"Run: {args.log_file.name}")
 
     elif args.command == "parse-all":
-        results = parse_all_runs(args.logs_dir)
+        results = parse_all_runs(args.logs_dir, args.prefix)
         with open(args.output, 'w') as f:
             json.dump(results, f, indent=2)
-        print(f"Parsed {len(results)} runs, saved to {args.output}")
+        prefix_msg = f" with prefix '{args.prefix}'" if args.prefix else ""
+        print(f"Parsed {len(results)} runs{prefix_msg}, saved to {args.output}")
         compare_runs(results, "table")
 
     elif args.command == "compare":
@@ -537,6 +588,13 @@ def main():
         with open(args.results) as f:
             results = json.load(f)
         diff_runs(args.run1, args.run2, results, args.network)
+
+    elif args.command == "merge":
+        results = merge_results(*args.files)
+        with open(args.output, 'w') as f:
+            json.dump(results, f, indent=2)
+        print(f"Merged {len(args.files)} files ({len(results)} total runs), saved to {args.output}")
+        compare_runs(results, "table")
 
     else:
         parser.print_help()
