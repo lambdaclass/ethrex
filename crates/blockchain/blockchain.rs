@@ -548,10 +548,13 @@ impl Blockchain {
             let mut hashed_updates: Vec<_> = updates
                 .into_iter()
                 .map(|u| {
-                    let hashed_address = hashed_address_cache
-                        .entry(u.address)
-                        .or_insert_with(|| keccak(u.address));
-                    (*hashed_address, u)
+                    // Use pre-computed hash if available, otherwise compute and cache
+                    let hashed_address = u.hashed_address.unwrap_or_else(|| {
+                        *hashed_address_cache
+                            .entry(u.address)
+                            .or_insert_with(|| keccak(u.address))
+                    });
+                    (hashed_address, u)
                 })
                 .collect();
             hashed_updates.sort_by_key(|(h, _)| h.0[0]);
@@ -681,10 +684,13 @@ impl Blockchain {
             let hashed_updates: Vec<_> = updates
                 .into_iter()
                 .map(|u| {
-                    let hashed_address = hashed_address_cache
-                        .entry(u.address)
-                        .or_insert_with(|| keccak(u.address));
-                    (*hashed_address, u)
+                    // Use pre-computed hash if available, otherwise compute and cache
+                    let hashed_address = u.hashed_address.unwrap_or_else(|| {
+                        *hashed_address_cache
+                            .entry(u.address)
+                            .or_insert_with(|| keccak(u.address))
+                    });
+                    (hashed_address, u)
                 })
                 .collect();
             state_trie_hash = Self::process_incoming_update_message(
