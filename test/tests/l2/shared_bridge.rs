@@ -207,8 +207,9 @@ async fn deploy_l1_erc20(
     signer: &Signer,
     sender_address: Address,
 ) -> Result<Address> {
-    let init_code_bytes = std::fs::read("../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin")
-        .context("failed to read L1 ERC20 bytecode file")?;
+    let init_code_bytes =
+        std::fs::read(workspace_root().join("fixtures/contracts/ERC20/ERC20.bin/TestToken.bin"))
+            .context("failed to read L1 ERC20 bytecode file")?;
     let init_code_l1 =
         hex::decode(init_code_bytes).context("failed to decode L1 ERC20 bytecode")?;
 
