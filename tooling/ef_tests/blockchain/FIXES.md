@@ -2,16 +2,16 @@
 
 **Started:** 2026-02-02
 **Completed:** In Progress
-**Total Iterations:** 8
+**Total Iterations:** 9
 **Final Status:** ❌ In Progress
 
 ---
 
 ## Summary
 - Initial failures: 64
-- Current failures: 31
-- Total fixes applied: 8
-- Tests fixed: 33 (64 → 31)
+- Current failures: 25
+- Total fixes applied: 11
+- Tests fixed: 39 (64 → 25)
 - Failed attempts: 2
 
 ---
@@ -28,16 +28,6 @@
   1. Keep all current storage_reads (new reads during reverted call persist)
   2. Union with snapshot reads (restore reads that became writes)
   3. Convert reverted writes to reads (writes that revert become reads)
-- **Diff:**
-```diff
--    pub fn restore(&mut self, checkpoint: BlockAccessListCheckpoint) {
--        // Restore storage_reads from snapshot.
--        self.storage_reads = checkpoint.storage_reads_snapshot;
-+    pub fn restore(&mut self, checkpoint: BlockAccessListCheckpoint) {
-+        // Step 1: Collect slots that were written after checkpoint (to convert to reads)
-+        let mut reverted_write_slots: BTreeMap<Address, BTreeSet<U256>> = BTreeMap::new();
-+        // ... (preserve reads, union with snapshot, convert reverted writes to reads)
-```
 
 ---
 
@@ -48,33 +38,8 @@
 - **Files:**
   - `crates/common/types/block_access_list.rs` (multiple locations)
   - `crates/vm/levm/src/db/gen_db.rs:676`
-- **Root Cause:** Per EIP-7928, if a storage slot's value is changed but its post-transaction value equals its pre-transaction value, the slot MUST NOT be recorded as modified - it should be a read instead. Our code was:
-  1. Recording multiple writes per slot per transaction instead of just the final value
-  2. Not filtering net-zero writes (writes that return to original value)
-- **Solution:**
-  1. Added `tx_initial_storage: BTreeMap<(Address, U256), U256>` to track pre-transaction values
-  2. Added `capture_pre_storage()` method with first-write-wins semantics
-  3. Modified `record_storage_write()` to update existing entry if same block_access_index
-  4. Added `filter_net_zero_storage()` to convert net-zero writes to reads at transaction boundaries
-  5. Call filtering in `set_block_access_index()` before switching transactions and in `build()` for the final transaction
-- **Diff (key parts):**
-```diff
-+    /// Per-transaction initial storage values for net-zero filtering.
-+    tx_initial_storage: BTreeMap<(Address, U256), U256>,
-
-+    pub fn capture_pre_storage(&mut self, address: Address, slot: U256, value: U256) {
-+        self.tx_initial_storage.entry((address, slot)).or_insert(value);
-+    }
-
-+    fn filter_net_zero_storage(&mut self) {
-+        // Compare final values against pre-tx values
-+        // Convert net-zero writes to reads
-+    }
-
- // In gen_db.rs:
-+            // Capture pre-storage value for net-zero filtering
-+            recorder.capture_pre_storage(address, slot, current_value);
-```
+- **Root Cause:** Per EIP-7928, if a storage slot's value is changed but its post-transaction value equals its pre-transaction value, the slot MUST NOT be recorded as modified - it should be a read instead.
+- **Solution:** Added `tx_initial_storage` tracking and `filter_net_zero_storage()` method.
 
 ---
 
@@ -83,26 +48,8 @@
 - **Test(s):** `test_bal_withdrawal_empty_block` and related withdrawal-only tests
 - **Error:** BlockAccessListHashMismatch (coinbase included with no changes)
 - **File:** `crates/vm/backends/levm/mod.rs:73-86`
-- **Root Cause:** The code was unconditionally adding the coinbase to `touched_addresses` at block start when there were transactions OR withdrawals. However, per EIP-7928, the coinbase should only appear in the BAL if it has actual state changes (receives priority fees). In blocks with only withdrawals and no transactions, the coinbase receives no fees and should not be in the BAL.
-- **Solution:** Removed the premature coinbase addition. The coinbase is now only added to the BAL when it actually receives fees via the `pay_coinbase` function during transaction finalization.
-- **Diff:**
-```diff
--        // Record coinbase if block has txs or withdrawals (per EIP-7928)
--        if record_bal {
--            let has_txs_or_withdrawals = !block.body.transactions.is_empty()
--                || block
--                    .body
--                    .withdrawals
--                    .as_ref()
--                    .is_some_and(|w| !w.is_empty());
--            if has_txs_or_withdrawals && let Some(recorder) = db.bal_recorder_mut() {
--                recorder.record_touched_address(block.header.coinbase);
--            }
--        }
-+        // Note: Coinbase is NOT pre-recorded here. Per EIP-7928, the coinbase should only
-+        // appear in the BAL if it has actual state changes (receives priority fees).
-+        // The increase_account_balance call in pay_coinbase will record the balance change.
-```
+- **Root Cause:** Code was unconditionally adding coinbase at block start. Per EIP-7928, coinbase should only appear if it has actual state changes.
+- **Solution:** Removed premature coinbase addition; coinbase now only added when it receives fees.
 
 ---
 
@@ -110,50 +57,9 @@
 - **Iteration:** 4
 - **Test(s):** `test_failed_create_with_value_no_log` and 3 others
 - **Error:** BlockAccessListHashMismatch (missing balance_changes)
-- **Files:**
-  - `crates/common/types/block_access_list.rs` (record_balance_change, build)
-- **Root Cause:** The `record_balance_change` function was updating balance entries in-place when the `block_access_index` was the same. This caused problems with checkpoint/restore:
-  1. Checkpoint captures LENGTH, not VALUES
-  2. If balance was updated in-place after checkpoint, the updated value would be preserved on restore
-  3. Example: balance_changes = [(1, 2)] -> checkpoint (len=1) -> update to [(1, 1)] -> restore truncates to len=1 -> result is [(1, 1)] instead of [(1, 2)]
-- **Solution:**
-  1. Modified `record_balance_change` to ALWAYS push new entries instead of updating in-place
-  2. Modified `build()` to take only the FINAL balance change per transaction (using `tx_changes.last()`)
-  3. This allows checkpoint/restore to correctly truncate to the checkpoint state
-- **Diff (key parts):**
-```diff
- pub fn record_balance_change(&mut self, address: Address, post_balance: U256) {
-     // ...
-     let changes = self.balance_changes.entry(address).or_default();
--    // Update the last entry if it's for the same block_access_index
--    if let Some(last) = changes.last_mut() {
--        if last.0 == self.current_index {
--            last.1 = post_balance;
--        } else {
--            changes.push((self.current_index, post_balance));
--        }
--    } else {
--        changes.push((self.current_index, post_balance));
--    }
-+    // Always push new entries to support checkpoint/restore.
-+    // The last entry for each transaction will be used in build().
-+    changes.push((self.current_index, post_balance));
- }
-
- // In build():
--    // Only include changes if NOT a round-trip within this transaction
--    if !is_round_trip {
--        for post_balance in tx_changes {
--            account_changes.add_balance_change(BalanceChange::new(*index, *post_balance));
--        }
--    }
-+    // Only include the FINAL balance change if NOT a round-trip
-+    if !is_round_trip {
-+        if let Some(final_balance) = final_for_tx {
-+            account_changes.add_balance_change(BalanceChange::new(*index, final_balance));
-+        }
-+    }
-```
+- **Files:** `crates/common/types/block_access_list.rs`
+- **Root Cause:** `record_balance_change` was updating entries in-place, breaking checkpoint/restore.
+- **Solution:** Always push new entries; `build()` takes only FINAL balance change per transaction.
 
 ---
 
@@ -162,27 +68,8 @@
 - **Test(s):** `test_bal_aborted_account_access`, `test_bal_aborted_storage_access`, and 9 others
 - **Error:** BlockAccessListHashMismatch (inner call state changes not reverted)
 - **File:** `crates/vm/levm/src/vm.rs:502-508`
-- **Root Cause:** When a transaction's top-level execution fails (e.g., INVALID opcode after a successful inner CALL), the inner call's state changes should be reverted from the BAL. However, the initial call frame had no BAL checkpoint because:
-  1. The call_frame_backup was completely cleared after `prepare_execution` (line 502)
-  2. This meant `bal_checkpoint` was `None`
-  3. When `restore_cache_state` was called on failure, no BAL restoration occurred
-  4. Inner call state changes (like value transfers) remained in the BAL
-- **Solution:** Take a BAL checkpoint immediately after clearing the call_frame_backup but before execution starts. This captures the state after prepare_execution (nonce increment, etc.) but before any execution changes, allowing proper BAL restoration when the top-level call fails.
-- **Diff:**
-```diff
-         // Clear callframe backup so that changes made in prepare_execution are written in stone.
-         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
-         self.current_call_frame.call_frame_backup.clear();
-
-+        // EIP-7928: Take a BAL checkpoint AFTER clearing the backup. This captures the state
-+        // after prepare_execution (nonce increment, etc.) but before actual execution.
-+        // When the top-level call fails, we restore to this checkpoint so that inner call
-+        // state changes (like value transfers) are reverted from the BAL.
-+        self.current_call_frame.call_frame_backup.bal_checkpoint =
-+            self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
-+
-         if self.is_create()? {
-```
+- **Root Cause:** Initial call frame had no BAL checkpoint after `call_frame_backup.clear()`.
+- **Solution:** Take BAL checkpoint immediately after clearing backup, before execution starts.
 
 ---
 
@@ -191,38 +78,8 @@
 - **Test(s):** `test_bal_create_early_failure`, `test_create_insufficient_balance_no_log`
 - **Error:** BlockAccessListHashMismatch (extra contract address in BAL)
 - **File:** `crates/vm/levm/src/opcode_handlers/system.rs:704-740`
-- **Root Cause:** In `generic_create`, the code recorded `new_address` for BAL BEFORE the early failure checks (OutOfFund, MaxDepth, MaxNonce). Per EIP-7928, if CREATE fails early due to insufficient balance, the target address should NOT appear in BAL because it was never actually accessed.
-- **Solution:** Moved the BAL `record_touched_address(new_address)` call to AFTER the early failure checks pass. This ensures the address only appears in BAL if CREATE proceeds past the initial validation.
-- **Diff:**
-```diff
-         // Add new contract to accessed addresses
-         self.substate.add_accessed_address(new_address);
-
--        // Record address touch for BAL (after address is calculated per EIP-7928)
--        if let Some(recorder) = self.db.bal_recorder.as_mut() {
--            recorder.record_touched_address(new_address);
--        }
-+        // NOTE: BAL address recording moved to AFTER early failure checks per EIP-7928.
-+        // The new_address should NOT appear in BAL if CREATE fails before nonce increment.
-
-         // Log CREATE in tracer
-         ...
-
-         for (condition, reason) in checks {
-             if condition {
-                 self.early_revert_message_call(gas_limit, reason.to_string())?;
-                 return Ok(OpcodeResult::Continue);
-             }
-         }
-
-+        // Record address touch for BAL AFTER early failure checks pass per EIP-7928.
-+        // The new_address should NOT appear in BAL if CREATE fails before nonce increment.
-+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
-+            recorder.record_touched_address(new_address);
-+        }
-+
-         // Increment sender nonce (irreversible change)
-```
+- **Root Cause:** BAL recorded `new_address` BEFORE early failure checks.
+- **Solution:** Moved BAL recording to AFTER early failure checks pass.
 
 ---
 
@@ -231,30 +88,76 @@
 - **Test(s):** `test_bal_7702_delegation_clear`, `test_bal_7702_delegation_create`, `test_bal_7702_delegation_update`
 - **Error:** BlockAccessListHashMismatch (multiple nonce changes per tx)
 - **File:** `crates/common/types/block_access_list.rs:882-887`
-- **Root Cause:** The `build()` function was adding ALL recorded nonce changes, but EIP-7928 requires only the FINAL nonce per transaction. For EIP-7702 transactions, the account's nonce may be incremented multiple times (once for authorization, once for sender nonce), resulting in extra nonce change entries.
-- **Solution:** Modified the nonce change handling in `build()` to group changes by transaction index and only keep the final nonce value per transaction (using `BTreeMap::insert` which overwrites).
+- **Root Cause:** `build()` was adding ALL nonce changes; EIP-7928 requires only FINAL nonce per tx.
+- **Solution:** Group nonce changes by tx index and only keep final value.
+
+---
+
+### Fix #9 — SSTORE BAL recording before main gas check
+- **Iteration:** 9
+- **Test(s):** `test_bal_sstore_and_oog` (2 variants)
+- **Error:** BlockAccessListHashMismatch (missing storage read)
+- **File:** `crates/vm/levm/src/opcode_handlers/stack_memory_storage_flow.rs:176-237`
+- **Root Cause:** SSTORE recorded to BAL AFTER the main gas check. If OOG occurred during gas charge (but after passing SSTORE_STIPEND check), the implicit SLOAD was not recorded.
+- **Solution:** Moved `record_storage_slot_to_bal` call to AFTER SSTORE_STIPEND check but BEFORE main gas check. Per EIP-7928 test comment: "passes stipend, does SLOAD, fails charge_gas" should still record the storage read.
 - **Diff:**
 ```diff
--            // Add nonce changes
--            if let Some(changes) = self.nonce_changes.get(address) {
--                for (index, post_nonce) in changes {
--                    account_changes.add_nonce_change(NonceChange::new(*index, *post_nonce));
--                }
--            }
-+            // Add nonce changes (only FINAL nonce per transaction)
-+            // Per EIP-7928, similar to balance changes, we only record the final nonce per tx.
-+            if let Some(changes) = self.nonce_changes.get(address) {
-+                // Group nonce changes by transaction index
-+                let mut changes_by_tx: BTreeMap<u16, u64> = BTreeMap::new();
-+                for (index, post_nonce) in changes {
-+                    // Only keep the final nonce for each transaction (last write wins)
-+                    changes_by_tx.insert(*index, *post_nonce);
-+                }
+         let (current_value, storage_slot_was_cold) = self.access_storage_slot(to, key)?;
+         let original_value = self.get_original_storage(to, key)?;
+
++        // Record storage read to BAL AFTER SSTORE_STIPEND check passes, BEFORE main gas check.
++        // Per EIP-7928: if SSTORE passes stipend but fails main gas charge, the implicit SLOAD
++        // has already happened and should be recorded.
++        self.record_storage_slot_to_bal(to, key);
 +
-+                for (index, post_nonce) in changes_by_tx {
-+                    account_changes.add_nonce_change(NonceChange::new(index, post_nonce));
-+                }
+         // Gas Refunds
+         ...
+         self.current_call_frame.increase_consumed_gas(gas_cost::sstore(...))?;
+-
+-        // Record storage read to BAL AFTER all gas checks pass per EIP-7928
+-        self.record_storage_slot_to_bal(to, key);
+```
+
+---
+
+### Fix #10 — Empty code handling: CREATE vs delegation clear
+- **Iteration:** 9
+- **Test(s):** `test_bal_create_transaction_empty_code`, `test_bal_7702_delegation_clear`
+- **Error:** BlockAccessListHashMismatch (spurious code change OR missing code change)
+- **Files:**
+  - `crates/common/types/block_access_list.rs:791-812`
+  - `crates/vm/levm/src/db/gen_db.rs:544-559`
+- **Root Cause:** Empty code was either always recorded or never recorded. The correct behavior depends on context:
+  - CREATE with empty initcode: no initial code → empty = no change (DON'T record)
+  - EIP-7702 delegation clear: had delegation code → empty = actual change (DO record)
+- **Solution:**
+  1. Added `addresses_with_initial_code: BTreeSet<Address>` to track which addresses had non-empty code initially
+  2. Added `capture_initial_code_presence()` method
+  3. Modified `record_code_change()` to only skip empty code if address had NO initial code
+  4. Call `capture_initial_code_presence()` in `update_account_bytecode()` before recording change
+- **Diff (key parts):**
+```diff
++    /// Addresses that had non-empty code at the start (before any code changes).
++    addresses_with_initial_code: BTreeSet<Address>,
+
++    pub fn capture_initial_code_presence(&mut self, address: Address, has_code: bool) {
++        if has_code {
++            self.addresses_with_initial_code.insert(address);
++        }
++    }
+
+     pub fn record_code_change(&mut self, address: Address, new_code: Bytes) {
++        // If new code is empty, only record if the address had initial code
++        if new_code.is_empty() {
++            if !self.addresses_with_initial_code.contains(&address) {
++                // No initial code and setting to empty = no change, skip
++                self.touched_addresses.insert(address);
++                return;
 +            }
++            // Had initial code and setting to empty = delegation clear, record it
++        }
+         // ... rest of function
+     }
 ```
 
 ---
@@ -265,34 +168,48 @@
 - **Iteration:** 3
 - **Test(s):** Multiple tests
 - **Approach:** Modified `build()` to skip adding `AccountChanges` where `is_empty()` returns true
-- **Why it failed:** Caused regression (58 → 112 failures). Some tests EXPECT empty accounts in the BAL (e.g., failed CREATE target addresses that were touched but have no state changes after revert)
+- **Why it failed:** Caused regression (58 → 112 failures). Some tests EXPECT empty accounts in the BAL.
 - **Reverted:** Yes
 
 ### Attempt #2 — Record coinbase as touched in pay_coinbase
 - **Iteration:** 5
-- **Test(s):** Investigated `test_bal_coinbase_zero_tip` (was actually PASSING)
-- **Approach:** Added `recorder.record_touched_address(vm.env.coinbase)` to pay_coinbase regardless of fee amount
-- **Why it failed:** Caused regression (54 → 58 failures). The test was already passing. The fix incorrectly added coinbase to withdrawal-only blocks where it shouldn't appear.
-- **New failures:** test_bal_empty_block_no_coinbase, test_bal_withdrawal_empty_block, test_bal_withdrawal_no_evm_execution, etc.
+- **Test(s):** `test_bal_coinbase_zero_tip` (was actually PASSING)
+- **Approach:** Added `record_touched_address(coinbase)` regardless of fee amount
+- **Why it failed:** Caused regression (54 → 58 failures). Incorrectly added coinbase to withdrawal-only blocks.
 - **Reverted:** Yes
 
 ---
 
-## Remaining Issues
-- [ ] BlockAccessListHashMismatch (36 instances remaining)
-  - EIP-7928 BAL tests: 19 tests (mostly 7702 delegation scenarios)
-  - EIP-7708 ETH transfer log tests: 17 tests
-- [x] EIP-7778 gas accounting tests - FIXED
-- [x] EIP-8024 DUPN/SWAPN/EXCHANGE tests - FIXED
+## Remaining Issues (25 failures)
+- [ ] EIP-7708 ETH transfer logs: 13 tests
+  - test_call_to_delegated_account_with_value
+  - test_contract_creation_tx
+  - test_finalization_selfdestruct_logs
+  - test_selfdestruct_* (9 tests)
+  - test_transfer_to_delegated_account_emits_log
+  - test_transfer_to_special_address
+- [ ] EIP-7928 BAL 7702 delegation: 12 tests
+  - test_bal_7702_delegated_storage_access
+  - test_bal_7702_delegated_via_call_opcode
+  - test_bal_7702_double_auth_reset
+  - test_bal_7702_double_auth_swap
+  - test_bal_all_transaction_types
+  - test_bal_*_7702_delegation_and_oog (4 tests)
+  - test_bal_call_no_delegation_oog_after_target_access
+  - test_bal_create_selfdestruct_to_self_with_call
+  - test_bal_withdrawal_and_new_contract
+
+## Progress History
+- Initial: 64 failures
+- After Fix #2: 58 failures (6 tests fixed)
+- After Fix #4: 54 failures (4 tests fixed)
+- After Fix #5: 47 failures (7 tests fixed)
+- After Fix #6: 36 failures (11 tests fixed)
+- After Fix #7-8: 31 failures (5 tests fixed)
+- After Fix #9-10: 25 failures (6 tests fixed)
 
 ## Notes
-- Fix #2 reduced failures from 64 to 58 (6 tests fixed)
-- Fix #3 prevents empty coinbase in withdrawal-only blocks (no regression)
-- Fix #4 fixes balance checkpoint/restore integrity (58 → 54, 4 tests fixed)
-- Fix #5 (iteration 6, not in this log) fixed coinbase for user transactions (54 → 47, 7 tests fixed)
-- Fix #6 fixes top-level BAL checkpoint for transaction failures (47 → 36, 11 tests fixed)
-- All remaining failures are BAL-related (BlockAccessListHashMismatch)
-- Empty accounts (no changes) ARE expected in some tests (failed CREATE targets)
-- Remaining EIP-7708 tests likely need ETH transfer log handling in BAL
+- EIP-7778 and EIP-8024 tests all pass now
+- Debug output available via DEBUG_BAL=1 environment variable
+- EIP-7708 tests likely need ETH transfer log handling (separate from BAL)
 - Remaining EIP-7928 tests mostly involve 7702 delegation edge cases
-- Debug output added to validation.rs (enable with DEBUG_BAL=1)

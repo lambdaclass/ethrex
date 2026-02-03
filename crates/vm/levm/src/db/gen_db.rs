@@ -548,6 +548,15 @@ impl<'a> VM<'a> {
     ) -> Result<(), InternalError> {
         // Record code change for BAL
         if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            // Capture initial code presence BEFORE recording the change.
+            // This is needed to distinguish:
+            // - CREATE empty code: no initial code → empty = no change (skip)
+            // - Delegation clear: had code → empty = actual change (record)
+            if let Some(account) = self.db.current_accounts_state.get(&address) {
+                let current_code = self.db.codes.get(&account.info.code_hash);
+                let has_code = current_code.is_some_and(|c| !c.bytecode.is_empty());
+                recorder.capture_initial_code_presence(address, has_code);
+            }
             recorder.record_code_change(address, new_bytecode.bytecode.clone());
         }
 

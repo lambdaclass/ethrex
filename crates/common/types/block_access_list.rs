@@ -556,6 +556,10 @@ pub struct BlockAccessListRecorder {
     nonce_changes: BTreeMap<Address, Vec<(u16, u64)>>,
     /// Code changes per address (list of (index, new_code) pairs).
     code_changes: BTreeMap<Address, Vec<(u16, Bytes)>>,
+    /// Addresses that had non-empty code at the start (before any code changes).
+    /// Used to distinguish CREATE-with-empty-code (no initial code → empty = no change)
+    /// from delegation-clear (had code → empty = actual change).
+    addresses_with_initial_code: BTreeSet<Address>,
 }
 
 impl BlockAccessListRecorder {
@@ -787,8 +791,32 @@ impl BlockAccessListRecorder {
         self.touched_addresses.insert(address);
     }
 
+    /// Marks that an address has non-empty code at the start (before any code changes).
+    /// This is used to distinguish:
+    /// - CREATE with empty code: no initial code → empty = no change (skip)
+    /// - Delegation clear: had code → empty = actual change (record)
+    pub fn capture_initial_code_presence(&mut self, address: Address, has_code: bool) {
+        if has_code {
+            self.addresses_with_initial_code.insert(address);
+        }
+    }
+
     /// Records a code change (contract deployment or EIP-7702 delegation).
+    /// Per EIP-7928:
+    /// - Empty code on CREATE (no initial code → empty) is NOT recorded (test_bal_create_transaction_empty_code)
+    /// - Empty code on delegation clear (had code → empty) IS recorded (test_bal_7702_delegation_clear)
     pub fn record_code_change(&mut self, address: Address, new_code: Bytes) {
+        // If new code is empty, only record if the address had initial code
+        // (i.e., this is an actual code change like delegation clear, not just CREATE empty)
+        if new_code.is_empty() {
+            if !self.addresses_with_initial_code.contains(&address) {
+                // No initial code and setting to empty = no change, skip
+                self.touched_addresses.insert(address);
+                return;
+            }
+            // Had initial code and setting to empty = delegation clear, record it
+        }
+
         self.code_changes
             .entry(address)
             .or_default()
