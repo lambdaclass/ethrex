@@ -2,7 +2,13 @@ name: PR Review - Kimi
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to review'
+        required: true
+        type: number
 
 permissions:
   contents: read
@@ -16,6 +22,8 @@ jobs:
   kimi-review:
     name: Kimi Code Review
     runs-on: ubuntu-latest
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -27,7 +35,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh pr diff ${{ github.event.pull_request.number }} > pr_diff.txt
+          gh pr diff ${{ env.PR_NUMBER }} > pr_diff.txt
           # Truncate if too large (Kimi has context limits)
           head -c 100000 pr_diff.txt > pr_diff_truncated.txt
 
@@ -35,13 +43,14 @@ jobs:
         id: kimi_review
         env:
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ -z "$KIMI_API_KEY" ]; then
             echo "Error: KIMI_API_KEY secret is not set" > kimi_review.txt
             exit 0
           fi
 
+          PR_TITLE=$(gh pr view ${{ env.PR_NUMBER }} --json title -q '.title')
           DIFF_CONTENT=$(cat pr_diff_truncated.txt)
 
           # Build the request body
@@ -92,7 +101,7 @@ jobs:
         run: |
           REVIEW_CONTENT=$(cat kimi_review.txt)
 
-          gh pr comment ${{ github.event.pull_request.number }} --body "## Kimi AI Code Review
+          gh pr comment ${{ env.PR_NUMBER }} --body "## Kimi AI Code Review
 
           $REVIEW_CONTENT
 
