@@ -303,6 +303,11 @@ impl DiscoveryServer {
                 .secp256k1
                 .and_then(|pk| PublicKey::from_slice(pk.as_bytes()).ok());
 
+            // Add the peer to the peer table
+            self.peer_table
+                .new_contact_records(vec![record.clone()], self.local_node.node_id())
+                .await?;
+
             // Verify that the ENR's public key matches the claimed src_id
             if let Some(pk) = &pubkey {
                 let uncompressed = pk.serialize_uncompressed();
