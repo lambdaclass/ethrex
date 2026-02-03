@@ -26,14 +26,10 @@ use ethrex_rpc::{
 };
 use reqwest::Url;
 use secp256k1::SecretKey;
-use std::{fs::File, io::BufRead};
-use std::{
-    io::BufReader,
-    path::{Path, PathBuf},
-    str::FromStr,
-    time::Duration,
-};
+use std::{path::Path, str::FromStr, time::Duration};
 use tokio::time::sleep;
+
+use super::common::{read_env_file_by_config, workspace_root};
 
 const L1_RPC_URL: &str = "http://localhost:8545";
 const L2A_RPC_URL: &str = "http://localhost:1729";
@@ -70,33 +66,6 @@ fn on_chain_proposer_address() -> Address {
     std::env::var("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS")
         .map(|address| address.parse().expect("Invalid proposer address"))
         .unwrap_or(DEFAULT_ON_CHAIN_PROPOSER_ADDRESS)
-}
-
-pub fn read_env_file_by_config() {
-    let env_file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../cmd/.env");
-    let Ok(env_file) = File::open(env_file_path) else {
-        println!(".env file not found, skipping");
-        return;
-    };
-
-    let reader = BufReader::new(env_file);
-
-    for line in reader.lines() {
-        let line = line.expect("Failed to read line");
-        if line.starts_with("#") {
-            // Skip comments
-            continue;
-        };
-        match line.split_once('=') {
-            Some((key, value)) => {
-                if std::env::vars().any(|(k, _)| k == key) {
-                    continue;
-                }
-                unsafe { std::env::set_var(key, value) }
-            }
-            None => continue,
-        };
-    }
 }
 
 #[ignore] // Requires L2 running - use --ignored flag
@@ -260,20 +229,24 @@ async fn deploy_l1_erc20(
 }
 
 fn build_fee_token_bytecode(l1_erc20_contract_address: Address) -> Result<Vec<u8>> {
-    let contracts_path = Path::new("contracts");
-    get_contract_dependencies(contracts_path);
+    let contracts_path = workspace_root().join("crates/l2/contracts");
+    get_contract_dependencies(&contracts_path);
 
-    let fee_token_path = Path::new("../crates/l2/contracts/src/example");
-    let interfaces_path = Path::new("../crates/l2/contracts/src/l2");
+    let fee_token_path = contracts_path.join("src/example");
+    let interfaces_path = contracts_path.join("src/l2");
     let remappings = [(
         "@openzeppelin/contracts",
         contracts_path
             .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
     )];
-    let allow_paths = [fee_token_path, interfaces_path, contracts_path];
+    let allow_paths = [
+        fee_token_path.as_path(),
+        interfaces_path.as_path(),
+        contracts_path.as_path(),
+    ];
 
     compile_contract(
-        fee_token_path,
+        &fee_token_path,
         &fee_token_path.join("FeeToken.sol"),
         false,
         false,
@@ -712,22 +685,22 @@ async fn compile_and_deploy_counter(
     l2_client: EthClient,
     rich_wallet_private_key: SecretKey,
 ) -> Result<Address> {
-    let contracts_path = Path::new("contracts");
-    let counter_path = Path::new("../crates/l2/contracts/src/example");
+    let contracts_path = workspace_root().join("crates/l2/contracts");
+    let counter_path = contracts_path.join("src/example");
 
-    get_contract_dependencies(contracts_path);
+    get_contract_dependencies(&contracts_path);
     let remappings = [(
         "@openzeppelin/contracts",
         contracts_path
             .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
     )];
     compile_contract(
-        counter_path,
+        &counter_path,
         &counter_path.join("Counter.sol"),
         false,
         false,
         Some(&remappings),
-        &[counter_path, contracts_path],
+        &[counter_path.as_path(), contracts_path.as_path()],
         None,
     )?;
     let init_code_l2 = hex::decode(String::from_utf8(std::fs::read(

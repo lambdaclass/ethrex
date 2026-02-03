@@ -219,11 +219,9 @@ jobs:
 
       - name: Install rex
         run: |
-          git clone https://github.com/lambdaclass/rex.git /tmp/rex
-          cd /tmp/rex
-          git checkout f853445
-          cargo build --release
-          sudo cp target/release/rex /usr/local/bin
+          curl -L https://github.com/lambdaclass/rex/releases/download/v8.0.0/rex-x86_64-unknown-linux-gnu -o /tmp/rex
+          chmod +x /tmp/rex
+          sudo mv /tmp/rex /usr/local/bin/rex
 
       - name: Build ethrex with L2 features and contracts
         env:
@@ -259,7 +257,7 @@ jobs:
           balance_output=""
 
           for ((i = 1; i <= MAX_BALANCE_TRIES; i++)); do
-            if ! balance_output=$(rex balance 0x0000bd19F707CA481886244bDd20Bd6B8a81bd3e http://localhost:1729 2>/dev/null); then
+            if ! balance_output=$(rex balance 0x0000bd19F707CA481886244bDd20Bd6B8a81bd3e --rpc-url http://localhost:1729 2>/dev/null); then
               sleep "${BALANCE_SLEEP_SECS}"
               continue
             fi
@@ -382,11 +380,9 @@ jobs:
 
       - name: Install rex
         run: |
-          git clone https://github.com/lambdaclass/rex.git /tmp/rex
-          cd /tmp/rex
-          git checkout 18466ec1c3dbcbbf22a68fc1f850d660cb2fbf1f
-          cargo build --release
-          sudo cp target/release/rex /usr/local/bin
+          curl -L https://github.com/lambdaclass/rex/releases/download/v8.0.0/rex-x86_64-unknown-linux-gnu -o /tmp/rex
+          chmod +x /tmp/rex
+          sudo mv /tmp/rex /usr/local/bin/rex
 
       - name: Deploy contracts
         run: |
@@ -459,13 +455,13 @@ jobs:
           # Wait until test account deposits are processed on L2
           # Get the first test account private key (last line, since tests use pop())
           FIRST_TEST_PK=$(tail -n1 fixtures/keys/private_keys_tests.txt)
-          RICH_ADDRESS=$(rex address --from-private-key "$FIRST_TEST_PK")
+          RICH_ADDRESS=$(rex address --private-key "$FIRST_TEST_PK")
           echo "Waiting for test account $RICH_ADDRESS deposits to be processed on L2..."
           MAX_TRIES=300
           SLEEP_SECS=2
           for i in $(seq 1 $MAX_TRIES); do
             echo "Checking L2 balance... (attempt $i)"
-            if balance_output=$(rex balance "$RICH_ADDRESS" http://localhost:1729 2>/dev/null); then
+            if balance_output=$(rex balance "$RICH_ADDRESS" --rpc-url http://localhost:1729 2>/dev/null); then
               balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
               if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
                 echo "Rich account has balance on L2: ${balance_wei} wei"
@@ -535,12 +531,9 @@ jobs:
 
       - name: Install rex
         run: |
-          cd /tmp
-          git clone https://github.com/lambdaclass/rex
-          cd rex
-          git checkout 18466ec1c3dbcbbf22a68fc1f850d660cb2fbf1f
-          cargo build --release
-          cp target/release/rex /usr/local/bin
+          curl -L https://github.com/lambdaclass/rex/releases/download/v8.0.0/rex-x86_64-unknown-linux-gnu -o /tmp/rex
+          chmod +x /tmp/rex
+          sudo mv /tmp/rex /usr/local/bin/rex
 
       - name: Build prover
         run: |
@@ -579,13 +572,13 @@ jobs:
           # Wait until test account deposits are processed on L2
           # Get the first test account private key (last line, since tests use pop())
           FIRST_TEST_PK=$(tail -n1 fixtures/keys/private_keys_tests.txt)
-          RICH_ADDRESS=$(rex address --from-private-key "$FIRST_TEST_PK")
+          RICH_ADDRESS=$(rex address --private-key "$FIRST_TEST_PK")
           echo "Waiting for test account $RICH_ADDRESS deposits to be processed on L2..."
           MAX_TRIES=300
           SLEEP_SECS=2
           for i in $(seq 1 $MAX_TRIES); do
             echo "Checking L2 balance... (attempt $i)"
-            if balance_output=$(rex balance "$RICH_ADDRESS" http://localhost:1729 2>/dev/null); then
+            if balance_output=$(rex balance "$RICH_ADDRESS" --rpc-url http://localhost:1729 2>/dev/null); then
               balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
               if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
                 echo "Rich account has balance on L2: ${balance_wei} wei"
@@ -699,11 +692,9 @@ jobs:
 
       - name: Install rex
         run: |
-          git clone https://github.com/lambdaclass/rex.git /tmp/rex
-          cd /tmp/rex
-          git checkout 18466ec1c3dbcbbf22a68fc1f850d660cb2fbf1f
-          cargo build --release
-          sudo cp target/release/rex /usr/local/bin
+          curl -L https://github.com/lambdaclass/rex/releases/download/v8.0.0/rex-x86_64-unknown-linux-gnu -o /tmp/rex
+          chmod +x /tmp/rex
+          sudo mv /tmp/rex /usr/local/bin/rex
 
       - name: Build prover
         run: |
@@ -847,7 +838,7 @@ jobs:
           SLEEP_SECS=2
           for i in $(seq 1 $MAX_TRIES); do
             echo "Checking L2A balance... (attempt $i)"
-            if balance_output=$(rex balance "$SENDER_ADDRESS" http://localhost:1729 2>/dev/null); then
+            if balance_output=$(rex balance "$SENDER_ADDRESS" --rpc-url http://localhost:1729 2>/dev/null); then
               balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
               if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
                 echo "Shared bridge test account has balance on L2A: ${balance_wei} wei"
@@ -869,7 +860,7 @@ jobs:
           SLEEP_SECS=2
           for i in $(seq 1 $MAX_TRIES); do
             echo "Checking L2B balance... (attempt $i)"
-            if balance_output=$(rex balance "$SENDER_ADDRESS" http://localhost:1730 2>/dev/null); then
+            if balance_output=$(rex balance "$SENDER_ADDRESS" --rpc-url http://localhost:1730 2>/dev/null); then
               balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
               if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
                 echo "Shared bridge test account has balance on L2B: ${balance_wei} wei"

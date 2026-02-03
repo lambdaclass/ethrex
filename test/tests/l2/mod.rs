@@ -1,3 +1,4 @@
+mod common;
 mod integration_tests;
 mod sdk;
 mod shared_bridge;
