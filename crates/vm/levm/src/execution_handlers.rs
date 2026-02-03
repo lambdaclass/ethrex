@@ -2,11 +2,12 @@ use crate::{
     constants::*,
     errors::{ContextResult, ExceptionalHalt, InternalError, TxResult, VMError},
     gas_cost::CODE_DEPOSIT_COST,
+    utils::create_eth_transfer_log,
     vm::VM,
 };
 
 use bytes::Bytes;
-use ethrex_common::types::Code;
+use ethrex_common::types::{Code, Fork};
 
 impl<'a> VM<'a> {
     pub fn handle_precompile_result(
@@ -119,7 +120,15 @@ impl<'a> VM<'a> {
             }));
         }
 
-        self.increase_account_balance(new_contract_address, self.current_call_frame.msg_value)?;
+        let value = self.current_call_frame.msg_value;
+        self.increase_account_balance(new_contract_address, value)?;
+
+        // EIP-7708: Emit transfer log for nonzero-value contract creation transactions.
+        // Origin is sender, new_contract_address is the recipient.
+        if self.env.config.fork >= Fork::Amsterdam && !value.is_zero() {
+            let log = create_eth_transfer_log(self.env.origin, new_contract_address, value);
+            self.substate.add_log(log);
+        }
 
         self.increment_account_nonce(new_contract_address)?;
 
