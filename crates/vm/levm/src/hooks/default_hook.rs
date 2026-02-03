@@ -136,11 +136,15 @@ impl Hook for DefaultHook {
             undo_value_transfer(vm)?;
         }
 
-        let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
-        let actual_gas_used = compute_actual_gas_used(vm, gas_refunded, ctx_result.gas_used)?;
-        refund_sender(vm, ctx_result, gas_refunded, actual_gas_used)?;
+        // Save pre-refund gas for EIP-7778 block accounting
+        let gas_used_pre_refund = ctx_result.gas_used;
 
-        pay_coinbase(vm, actual_gas_used)?;
+        let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
+        let gas_spent = compute_actual_gas_used(vm, gas_refunded, gas_used_pre_refund)?;
+
+        refund_sender(vm, ctx_result, gas_refunded, gas_spent, gas_used_pre_refund)?;
+
+        pay_coinbase(vm, gas_spent)?;
 
         delete_self_destruct_accounts(vm)?;
 
@@ -159,21 +163,40 @@ pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
     Ok(())
 }
 
+/// Refunds unused gas to the sender.
+///
+/// # EIP-7778 Changes
+/// - `gas_spent`: Post-refund gas (what the user actually pays)
+/// - `gas_used_pre_refund`: Pre-refund gas (for block-level accounting in Amsterdam+)
+///
+/// For Amsterdam+, the block uses pre-refund gas (`gas_used`) while the user pays post-refund
+/// gas (`gas_spent`). Before Amsterdam, both values are the same (post-refund).
 pub fn refund_sender(
     vm: &mut VM<'_>,
     ctx_result: &mut ContextResult,
     refunded_gas: u64,
-    actual_gas_used: u64,
+    gas_spent: u64,
+    gas_used_pre_refund: u64,
 ) -> Result<(), VMError> {
-    // c. Update gas used and refunded.
-    ctx_result.gas_used = actual_gas_used;
     vm.substate.refunded_gas = refunded_gas;
 
-    // d. Finally, return unspent gas to the sender.
+    // EIP-7778: Separate block vs user gas accounting for Amsterdam+
+    if vm.env.config.fork >= Fork::Amsterdam {
+        // Block accounting uses pre-refund gas
+        ctx_result.gas_used = gas_used_pre_refund;
+        // User pays post-refund gas
+        ctx_result.gas_spent = gas_spent;
+    } else {
+        // Pre-Amsterdam: both use post-refund value
+        ctx_result.gas_used = gas_spent;
+        ctx_result.gas_spent = gas_spent;
+    }
+
+    // Return unspent gas to the sender (based on what user pays)
     let gas_to_return = vm
         .env
         .gas_limit
-        .checked_sub(actual_gas_used)
+        .checked_sub(gas_spent)
         .ok_or(InternalError::Underflow)?;
 
     let wei_return_amount = vm

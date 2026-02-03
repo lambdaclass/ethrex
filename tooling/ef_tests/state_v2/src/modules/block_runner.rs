@@ -53,6 +53,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
                 tx.tx_type(),
                 report.is_success(),
                 report.gas_used,
+                test_case.fork.gas_spent_for_receipt(report.gas_spent),
                 report.logs.clone(),
             );
             (vec![receipt], report.gas_used)

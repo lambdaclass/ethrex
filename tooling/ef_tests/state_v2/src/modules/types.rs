@@ -276,6 +276,9 @@ fn get_chain_config_from_fork(fork: &Fork) -> ChainConfig {
     if *fork >= Fork::Osaka {
         basic_chain_config.osaka_time = Some(0);
     }
+    if *fork >= Fork::Amsterdam {
+        basic_chain_config.amsterdam_time = Some(0);
+    }
 
     basic_chain_config
 }
