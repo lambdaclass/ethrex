@@ -466,51 +466,95 @@ async fn test_storage_trie_branches_reorg(simulator: Arc<Mutex<Simulator>>) {
     }
 
     // Sanity check: all storage slots are initially empty
-    assert_eq!(node0.get_storage_at(contract_address, slot0a).await, U256::zero());
-    assert_eq!(node0.get_storage_at(contract_address, slot0b).await, U256::zero());
-    assert_eq!(node0.get_storage_at(contract_address, slot1a).await, U256::zero());
-    assert_eq!(node0.get_storage_at(contract_address, slot1b).await, U256::zero());
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot0a).await,
+        U256::zero()
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot0b).await,
+        U256::zero()
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot1a).await,
+        U256::zero()
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot1b).await,
+        U256::zero()
+    );
 
     // Fork the chain
     let mut side_chain = base_chain.fork();
 
     // On the base chain: set slot0a and slot1a (creating branches in storage trie)
-    let calldata = [slot0a.to_big_endian(), value_a.to_big_endian()].concat().into();
+    let calldata = [slot0a.to_big_endian(), value_a.to_big_endian()]
+        .concat()
+        .into();
     node1.send_call(&signer, contract_address, calldata).await;
     base_chain = node1.build_payload(base_chain).await;
     node1.notify_new_payload(&base_chain).await;
     node1.update_forkchoice(&base_chain).await;
 
-    let calldata = [slot1a.to_big_endian(), value_a.to_big_endian()].concat().into();
+    let calldata = [slot1a.to_big_endian(), value_a.to_big_endian()]
+        .concat()
+        .into();
     node1.send_call(&signer, contract_address, calldata).await;
     base_chain = node1.build_payload(base_chain).await;
     node1.notify_new_payload(&base_chain).await;
     node1.update_forkchoice(&base_chain).await;
 
     // On the side chain: set slot0b and slot1b (the sibling branches)
-    let calldata = [slot0b.to_big_endian(), value_b.to_big_endian()].concat().into();
+    let calldata = [slot0b.to_big_endian(), value_b.to_big_endian()]
+        .concat()
+        .into();
     node0.send_call(&signer, contract_address, calldata).await;
     side_chain = node0.build_payload(side_chain).await;
     node0.notify_new_payload(&side_chain).await;
     node0.update_forkchoice(&side_chain).await;
 
-    let calldata = [slot1b.to_big_endian(), value_b.to_big_endian()].concat().into();
+    let calldata = [slot1b.to_big_endian(), value_b.to_big_endian()]
+        .concat()
+        .into();
     node0.send_call(&signer, contract_address, calldata).await;
     side_chain = node0.build_payload(side_chain).await;
     node0.notify_new_payload(&side_chain).await;
     node0.update_forkchoice(&side_chain).await;
 
     // Verify side chain state (node0)
-    assert_eq!(node0.get_storage_at(contract_address, slot0a).await, U256::zero());
-    assert_eq!(node0.get_storage_at(contract_address, slot0b).await, value_b);
-    assert_eq!(node0.get_storage_at(contract_address, slot1a).await, U256::zero());
-    assert_eq!(node0.get_storage_at(contract_address, slot1b).await, value_b);
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot0a).await,
+        U256::zero()
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot0b).await,
+        value_b
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot1a).await,
+        U256::zero()
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot1b).await,
+        value_b
+    );
 
     // Verify base chain state (node1)
-    assert_eq!(node1.get_storage_at(contract_address, slot0a).await, value_a);
-    assert_eq!(node1.get_storage_at(contract_address, slot0b).await, U256::zero());
-    assert_eq!(node1.get_storage_at(contract_address, slot1a).await, value_a);
-    assert_eq!(node1.get_storage_at(contract_address, slot1b).await, U256::zero());
+    assert_eq!(
+        node1.get_storage_at(contract_address, slot0a).await,
+        value_a
+    );
+    assert_eq!(
+        node1.get_storage_at(contract_address, slot0b).await,
+        U256::zero()
+    );
+    assert_eq!(
+        node1.get_storage_at(contract_address, slot1a).await,
+        value_a
+    );
+    assert_eq!(
+        node1.get_storage_at(contract_address, slot1b).await,
+        U256::zero()
+    );
 
     // Make base chain longer so it becomes canonical
     for _ in 0..5 {
@@ -526,8 +570,20 @@ async fn test_storage_trie_branches_reorg(simulator: Arc<Mutex<Simulator>>) {
     // After reorg, node0 should have the base chain state:
     // - slot0a and slot1a should have value_a
     // - slot0b and slot1b should be zero (reverted)
-    assert_eq!(node0.get_storage_at(contract_address, slot0a).await, value_a);
-    assert_eq!(node0.get_storage_at(contract_address, slot0b).await, U256::zero());
-    assert_eq!(node0.get_storage_at(contract_address, slot1a).await, value_a);
-    assert_eq!(node0.get_storage_at(contract_address, slot1b).await, U256::zero());
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot0a).await,
+        value_a
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot0b).await,
+        U256::zero()
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot1a).await,
+        value_a
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot1b).await,
+        U256::zero()
+    );
 }
