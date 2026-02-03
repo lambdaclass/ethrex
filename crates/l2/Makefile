@@ -232,7 +232,7 @@ clean-tee-contract-deps: ## 🧹 Cleans the dependencies for the TEE contracts.
 # ==============================================================================
 
 test: ## 🚧 Runs the L2's integration test, run `make init` and in a new terminal make test
-	cargo test -p ethrex-test l2_integration_test --profile release-with-debug -- --ignored --nocapture || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)
+	cargo test -p ethrex-test l2_integration_test --profile release-with-debug --features l2 -- --nocapture || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)
 
 integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply because if the file
 	# does not exist, the container fails to write to it.
@@ -244,7 +244,7 @@ integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply becaus
 	RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec & \
 	ETHREX_WATCHER_BRIDGE_ADDRESS=$(shell make bridge-address) \
 	ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=$(shell make on-chain-proposer-address) \
-	cargo test -p ethrex-test l2:: --release -- --ignored --nocapture --test-threads=1
+	cargo test -p ethrex-test l2:: --release --features l2 -- --nocapture --test-threads=1
 	killall ethrex -s SIGINT
 
 integration-test-gpu: rm-db-l2 rm-db-l1
@@ -257,7 +257,7 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	docker compose up --detach --build
 
 	RUST_LOG=info,ethrex_prover_lib=debug GPU=true make init-prover-sp1 & \
-	cargo test -p ethrex-test l2:: --release -- --ignored --nocapture --test-threads=1
+	cargo test -p ethrex-test l2:: --release --features l2 -- --nocapture --test-threads=1
 	killall ethrex -s SIGINT # if sent a SIGTERM, SP1 does not shuts down the sp1-gpu container
 
 # State reconstruction tests
@@ -272,7 +272,7 @@ state-diff-test:
 	ETHREX_WATCHER_BLOCK_DELAY=0 \
 	docker compose -f docker-compose.yaml -f docker-compose-l2-store.overrides.yaml up --detach --no-deps ethrex_l2
 	docker logs --follow ethrex_l2 & \
-	cargo test -p ethrex-test test_state_reconstruct --release -- --ignored
+	cargo test -p ethrex-test test_state_reconstruct --release --features l2
 
 # Fast validation to check if blobs match genesis
 # Use this before state-diff-test to catch stale blobs early

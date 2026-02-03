@@ -13,7 +13,7 @@ use ethrex_rlp::decode::RLPDecode;
 use std::fs::File;
 use std::io::BufReader;
 
-use super::common::workspace_root;
+use super::utils::workspace_root;
 
 /// Validates that the fixture blobs are compatible with the current genesis file.
 ///

@@ -12,7 +12,7 @@ use secp256k1::SecretKey;
 
 use std::fs;
 
-use super::common::workspace_root;
+use super::utils::workspace_root;
 
 const ETH_RPC_URL: &str = "http://localhost:1729";
 
@@ -30,7 +30,6 @@ const ETH_RPC_URL: &str = "http://localhost:1729";
 // 5. blob_5: Batch of blocks 17 through 21
 //
 // - Each block contains exactly 10 deposit transactions
-#[ignore] // Requires L2 running - use --ignored flag
 #[tokio::test]
 async fn test_state_reconstruct() {
     let pks_path = std::env::var("PRIVATE_KEYS_PATH").unwrap_or_else(|_| {

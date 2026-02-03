@@ -29,7 +29,7 @@ use secp256k1::SecretKey;
 use std::{path::Path, str::FromStr, time::Duration};
 use tokio::time::sleep;
 
-use super::common::{read_env_file_by_config, workspace_root};
+use super::utils::{read_env_file_by_config, workspace_root};
 
 const L1_RPC_URL: &str = "http://localhost:8545";
 const L2A_RPC_URL: &str = "http://localhost:1729";
@@ -68,7 +68,6 @@ fn on_chain_proposer_address() -> Address {
         .unwrap_or(DEFAULT_ON_CHAIN_PROPOSER_ADDRESS)
 }
 
-#[ignore] // Requires L2 running - use --ignored flag
 #[tokio::test]
 async fn test_shared_bridge() -> Result<()> {
     test_counter().await?;
@@ -101,8 +100,7 @@ async fn test_transfer_erc_20() -> Result<()> {
         .get_balance(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
     println!(
-        "test_transfer_erc_20: sender_address={:#x}, initial L2A balance={} wei, initial L2B balance={} wei",
-        sender_address, sender_l2a_balance, sender_l2b_balance
+        "test_transfer_erc_20: sender_address={sender_address:#x}, initial L2A balance={sender_l2a_balance} wei, initial L2B balance={sender_l2b_balance} wei"
     );
 
     let l1_erc20_contract_address = deploy_l1_erc20(&l1_client, &signer, sender_address).await?;
@@ -365,12 +363,10 @@ async fn test_counter() -> Result<()> {
         .expect("Error getting balance");
 
     println!(
-        "test_counter: sender_address={:#x}, initial L2B balance={} wei",
-        sender_address, sender_balance
+        "test_counter: sender_address={sender_address:#x}, initial L2B balance={sender_balance} wei"
     );
     println!(
-        "test_counter: receiver_address={:#x}, initial L2A balance={} wei",
-        receiver_address, receiver_balance
+        "test_counter: receiver_address={receiver_address:#x}, initial L2A balance={receiver_balance} wei"
     );
 
     let private_key = SecretKey::from_str(SENDER_PRIVATE_KEY).unwrap();
@@ -511,7 +507,6 @@ async fn test_counter() -> Result<()> {
     Ok(())
 }
 
-#[ignore] // Requires L2 running - use --ignored flag
 #[tokio::test]
 async fn test_forced_inclusion() {
     // The porpuse of this test is to verify that an L2 (L2A) that ignores messages from another L2 (L2B)

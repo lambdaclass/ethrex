@@ -9,6 +9,7 @@ path = "src/lib.rs"
 
 [features]
 rocksdb = ["ethrex-storage/rocksdb"]
+l2 = []
 
 [dependencies]
 ethrex-common.workspace = true

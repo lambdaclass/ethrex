@@ -51,7 +51,7 @@ use std::{
 };
 use tokio::task::JoinSet;
 
-use super::common::{read_env_file_by_config, workspace_root};
+use super::utils::{read_env_file_by_config, workspace_root};
 
 /// Test the full flow of depositing, depositing with contract call, transferring, and withdrawing funds
 /// from L1 to L2 and back.
@@ -101,7 +101,6 @@ const DEFAULT_ON_CHAIN_PROPOSER_ADDRESS: Address = H160([
 const DEFAULT_RICH_KEYS_FILE_PATH: &str = "fixtures/keys/private_keys_l1.txt";
 const DEFAULT_TEST_KEYS_FILE_PATH: &str = "fixtures/keys/private_keys_tests.txt";
 
-#[ignore] // Requires L2 running - use --ignored flag
 #[tokio::test]
 async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     read_env_file_by_config();
@@ -1117,8 +1116,7 @@ async fn test_deposit(
         .await?;
 
     println!(
-        "test_deposit: rich_wallet_address={:#x}, initial L2 balance={} wei",
-        rich_wallet_address, deposit_recipient_l2_initial_balance
+        "test_deposit: rich_wallet_address={rich_wallet_address:#x}, initial L2 balance={deposit_recipient_l2_initial_balance} wei"
     );
 
     let bridge_initial_balance = l1_client
@@ -2589,18 +2587,16 @@ fn clean_contracts_dir() {
 
     for path in &paths_to_clean {
         let _ = std::fs::remove_dir_all(path).inspect_err(|e| {
-            println!("Failed to remove {}: {}", path.display(), e);
+            println!("Failed to remove {}: {e}", path.display());
         });
     }
 
-    println!(
-        "Cleaned up: {}",
-        paths_to_clean
-            .iter()
-            .map(|p| p.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
+    let cleaned_paths = paths_to_clean
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    println!("Cleaned up: {cleaned_paths}");
 }
 
 fn transfer_value() -> U256 {
