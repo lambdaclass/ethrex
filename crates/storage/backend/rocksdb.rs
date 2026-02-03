@@ -62,8 +62,23 @@ impl RocksDBBackend {
         opts.set_enable_write_thread_adaptive_yield(true);
         opts.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
         opts.set_advise_random_on_open(false);
-        opts.set_compression_type(rocksdb::DBCompressionType::None);
 
+        // Per-level compression strategy:
+        // - L0-L1: No compression for fast writes and recent data access
+        // - L2-L3: LZ4 for good balance of speed and compression
+        // - L4+: ZSTD for maximum compression of cold data (rarely accessed)
+        // This reduces I/O for deeper levels while keeping hot data fast
+        opts.set_compression_per_level(&[
+            rocksdb::DBCompressionType::None, // L0 - memtable flushes, fast writes
+            rocksdb::DBCompressionType::None, // L1 - recent data, frequently accessed
+            rocksdb::DBCompressionType::Lz4,  // L2 - warming data
+            rocksdb::DBCompressionType::Lz4,  // L3 - cooling data
+            rocksdb::DBCompressionType::Zstd, // L4 - cold data
+            rocksdb::DBCompressionType::Zstd, // L5 - cold data
+            rocksdb::DBCompressionType::Zstd, // L6 - coldest data
+        ]);
+
+        // Tables that benefit from compression across all levels
         let compressible_tables = [
             BLOCK_NUMBERS,
             HEADERS,
@@ -92,10 +107,30 @@ impl RocksDBBackend {
             cf_opts.set_level_zero_slowdown_writes_trigger(20);
             cf_opts.set_level_zero_stop_writes_trigger(36);
 
+            // Per-level compression for column families
+            // Compressible tables get more aggressive compression (LZ4 starts at L1)
+            // Other tables keep L0-L1 uncompressed for faster access to recent data
             if compressible_tables.contains(&cf_name.as_str()) {
-                cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+                cf_opts.set_compression_per_level(&[
+                    rocksdb::DBCompressionType::None, // L0 - fast flushes
+                    rocksdb::DBCompressionType::Lz4,  // L1 - start compressing early
+                    rocksdb::DBCompressionType::Lz4,  // L2
+                    rocksdb::DBCompressionType::Lz4,  // L3
+                    rocksdb::DBCompressionType::Zstd, // L4+
+                    rocksdb::DBCompressionType::Zstd,
+                    rocksdb::DBCompressionType::Zstd,
+                ]);
             } else {
-                cf_opts.set_compression_type(rocksdb::DBCompressionType::None);
+                // Trie nodes and state data: keep top levels fast, compress deeper levels
+                cf_opts.set_compression_per_level(&[
+                    rocksdb::DBCompressionType::None, // L0
+                    rocksdb::DBCompressionType::None, // L1 - hot data stays fast
+                    rocksdb::DBCompressionType::Lz4,  // L2
+                    rocksdb::DBCompressionType::Lz4,  // L3
+                    rocksdb::DBCompressionType::Zstd, // L4+
+                    rocksdb::DBCompressionType::Zstd,
+                    rocksdb::DBCompressionType::Zstd,
+                ]);
             }
 
             match cf_name.as_str() {
