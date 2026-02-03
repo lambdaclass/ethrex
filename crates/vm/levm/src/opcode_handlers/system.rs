@@ -704,10 +704,8 @@ impl<'a> VM<'a> {
         // Add new contract to accessed addresses
         self.substate.add_accessed_address(new_address);
 
-        // Record address touch for BAL (after address is calculated per EIP-7928)
-        if let Some(recorder) = self.db.bal_recorder.as_mut() {
-            recorder.record_touched_address(new_address);
-        }
+        // NOTE: BAL address recording moved to AFTER early failure checks per EIP-7928.
+        // The new_address should NOT appear in BAL if CREATE fails before nonce increment.
 
         // Log CREATE in tracer
         let call_type = match salt {
@@ -737,6 +735,12 @@ impl<'a> VM<'a> {
                 self.early_revert_message_call(gas_limit, reason.to_string())?;
                 return Ok(OpcodeResult::Continue);
             }
+        }
+
+        // Record address touch for BAL AFTER early failure checks pass per EIP-7928.
+        // The new_address should NOT appear in BAL if CREATE fails before nonce increment.
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(new_address);
         }
 
         // Increment sender nonce (irreversible change)

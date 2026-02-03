@@ -879,10 +879,18 @@ impl BlockAccessListRecorder {
                 }
             }
 
-            // Add nonce changes
+            // Add nonce changes (only FINAL nonce per transaction)
+            // Per EIP-7928, similar to balance changes, we only record the final nonce per tx.
             if let Some(changes) = self.nonce_changes.get(address) {
+                // Group nonce changes by transaction index
+                let mut changes_by_tx: BTreeMap<u16, u64> = BTreeMap::new();
                 for (index, post_nonce) in changes {
-                    account_changes.add_nonce_change(NonceChange::new(*index, *post_nonce));
+                    // Only keep the final nonce for each transaction (last write wins)
+                    changes_by_tx.insert(*index, *post_nonce);
+                }
+
+                for (index, post_nonce) in changes_by_tx {
+                    account_changes.add_nonce_change(NonceChange::new(index, post_nonce));
                 }
             }
 

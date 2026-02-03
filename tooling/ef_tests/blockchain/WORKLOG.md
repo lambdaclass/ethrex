@@ -1,9 +1,9 @@
 # EF Tests Work Log
 
 ## Current Investigation
-**Iteration:** 7
-**Status:** Fix #6 applied successfully - 11 tests fixed (47 → 36)
-**Working hypothesis:** Investigate remaining 36 failures (EIP-7708 and EIP-7928 7702 delegation)
+**Iteration:** 8
+**Status:** Investigating CREATE early failure BAL issue
+**Working hypothesis:** BAL records new_address BEFORE early failure checks in generic_create
 
 ## Test Summary
 - Total tests: 6158

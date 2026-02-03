@@ -2,16 +2,16 @@
 
 **Started:** 2026-02-02
 **Completed:** In Progress
-**Total Iterations:** 7
+**Total Iterations:** 8
 **Final Status:** ❌ In Progress
 
 ---
 
 ## Summary
 - Initial failures: 64
-- Current failures: 36
-- Total fixes applied: 6
-- Tests fixed: 28 (64 → 36)
+- Current failures: 31
+- Total fixes applied: 8
+- Tests fixed: 33 (64 → 31)
 - Failed attempts: 2
 
 ---
@@ -182,6 +182,79 @@
 +            self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
 +
          if self.is_create()? {
+```
+
+---
+
+### Fix #7 — Move CREATE BAL recording after early failure checks
+- **Iteration:** 8
+- **Test(s):** `test_bal_create_early_failure`, `test_create_insufficient_balance_no_log`
+- **Error:** BlockAccessListHashMismatch (extra contract address in BAL)
+- **File:** `crates/vm/levm/src/opcode_handlers/system.rs:704-740`
+- **Root Cause:** In `generic_create`, the code recorded `new_address` for BAL BEFORE the early failure checks (OutOfFund, MaxDepth, MaxNonce). Per EIP-7928, if CREATE fails early due to insufficient balance, the target address should NOT appear in BAL because it was never actually accessed.
+- **Solution:** Moved the BAL `record_touched_address(new_address)` call to AFTER the early failure checks pass. This ensures the address only appears in BAL if CREATE proceeds past the initial validation.
+- **Diff:**
+```diff
+         // Add new contract to accessed addresses
+         self.substate.add_accessed_address(new_address);
+
+-        // Record address touch for BAL (after address is calculated per EIP-7928)
+-        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+-            recorder.record_touched_address(new_address);
+-        }
++        // NOTE: BAL address recording moved to AFTER early failure checks per EIP-7928.
++        // The new_address should NOT appear in BAL if CREATE fails before nonce increment.
+
+         // Log CREATE in tracer
+         ...
+
+         for (condition, reason) in checks {
+             if condition {
+                 self.early_revert_message_call(gas_limit, reason.to_string())?;
+                 return Ok(OpcodeResult::Continue);
+             }
+         }
+
++        // Record address touch for BAL AFTER early failure checks pass per EIP-7928.
++        // The new_address should NOT appear in BAL if CREATE fails before nonce increment.
++        if let Some(recorder) = self.db.bal_recorder.as_mut() {
++            recorder.record_touched_address(new_address);
++        }
++
+         // Increment sender nonce (irreversible change)
+```
+
+---
+
+### Fix #8 — Only record final nonce per transaction in BAL
+- **Iteration:** 8
+- **Test(s):** `test_bal_7702_delegation_clear`, `test_bal_7702_delegation_create`, `test_bal_7702_delegation_update`
+- **Error:** BlockAccessListHashMismatch (multiple nonce changes per tx)
+- **File:** `crates/common/types/block_access_list.rs:882-887`
+- **Root Cause:** The `build()` function was adding ALL recorded nonce changes, but EIP-7928 requires only the FINAL nonce per transaction. For EIP-7702 transactions, the account's nonce may be incremented multiple times (once for authorization, once for sender nonce), resulting in extra nonce change entries.
+- **Solution:** Modified the nonce change handling in `build()` to group changes by transaction index and only keep the final nonce value per transaction (using `BTreeMap::insert` which overwrites).
+- **Diff:**
+```diff
+-            // Add nonce changes
+-            if let Some(changes) = self.nonce_changes.get(address) {
+-                for (index, post_nonce) in changes {
+-                    account_changes.add_nonce_change(NonceChange::new(*index, *post_nonce));
+-                }
+-            }
++            // Add nonce changes (only FINAL nonce per transaction)
++            // Per EIP-7928, similar to balance changes, we only record the final nonce per tx.
++            if let Some(changes) = self.nonce_changes.get(address) {
++                // Group nonce changes by transaction index
++                let mut changes_by_tx: BTreeMap<u16, u64> = BTreeMap::new();
++                for (index, post_nonce) in changes {
++                    // Only keep the final nonce for each transaction (last write wins)
++                    changes_by_tx.insert(*index, *post_nonce);
++                }
++
++                for (index, post_nonce) in changes_by_tx {
++                    account_changes.add_nonce_change(NonceChange::new(index, post_nonce));
++                }
++            }
 ```
 
 ---
