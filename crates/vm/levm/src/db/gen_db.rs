@@ -69,6 +69,12 @@ impl GeneralizedDatabase {
         }
     }
 
+    /// Returns the number of accounts currently in the pending state cache.
+    /// Used for adaptive batching to determine when to flush state transitions.
+    pub fn pending_accounts_count(&self) -> usize {
+        self.current_accounts_state.len()
+    }
+
     // ================== Account related functions =====================
     /// Loads account
     /// If it's the first time it's loaded store it in `initial_accounts_state` and also cache it in `current_accounts_state` for making changes to it
