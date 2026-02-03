@@ -797,13 +797,16 @@ contract OnChainProposer is
     }
 
     uint256 constant ZISK_PUBLIC_VALUES_SIZE = 256;
+    /// @dev Number of u32 output values from ZisK guest (SHA256 hash = 8 x u32).
+    uint8 constant ZISK_OUTPUT_COUNT = 8;
 
     /// @notice Build the 256-byte ZisK publicValues from publicInputs bytes.
     function buildZiskPublicValues(bytes memory publicInputs) public pure returns (bytes memory ziskPublicValues) {
         bytes32 outputHash = sha256(publicInputs);
         bytes32 swappedHash = swapHashBytes(outputHash);
         ziskPublicValues = new bytes(ZISK_PUBLIC_VALUES_SIZE);
-        ziskPublicValues[3] = 0x08;
+        // Byte 3 is the least significant byte of a big-endian u32 output count header
+        ziskPublicValues[3] = ZISK_OUTPUT_COUNT;
         for (uint256 i = 0; i < 32; i++) {
             ziskPublicValues[4 + i] = swappedHash[i];
         }
