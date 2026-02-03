@@ -27,12 +27,12 @@ jobs:
 
       - name: Restore cache
         id: cache-loc-report
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: tooling/loc/loc_report.json
-          key: loc-report-${{ github.ref_name }}
+          key: loc-report-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
-            loc-report-
+            loc-report-${{ github.ref_name }}-
 
       - name: Rename cached loc_report.json to loc_report.json.old
         if: steps.cache-loc-report.outputs.cache-hit != ''
@@ -165,10 +165,10 @@ jobs:
 
       - name: Save new loc_report.json to cache
         if: success()
-        uses: actions/cache@v4
+        uses: actions/cache/save@v4
         with:
           path: tooling/loc/loc_report.json
-          key: loc-report-${{ github.ref_name }}
+          key: loc-report-${{ github.ref_name }}-${{ github.run_id }}
 
       - name: Post results in summary
         run: |
