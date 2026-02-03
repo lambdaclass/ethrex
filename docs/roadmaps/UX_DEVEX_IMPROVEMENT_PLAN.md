@@ -816,7 +816,7 @@ services:
 
 ---
 
-## Category 4: Documentation (Priority: MEDIUM)
+## Category 4: Documentation (Priority: CRITICAL)
 
 ### 4.1 Storage/Database API Reference
 
@@ -924,11 +924,11 @@ services:
 | 2 | 1.1 continued + 1.4 Error Types + 1.5 RPC bug | 2.3 continued + 3.5 .env.example |
 | 3 | 1.3 Context-Discarding Errors | 3.1 Env Var Coverage |
 | 4 | 1.2 Replace unreachable!() | 2.6 Health Status Metrics + 2.4 Mempool |
-| 5 | 1.6 Address Error TODOs | 2.1 Startup Banner + 2.7 Shutdown |
+| 5 | 1.6 Address Error TODOs | 2.1 Startup Banner + 2.7 Shutdown + 4.4 Troubleshooting |
 | 6 | 1.7 Improve Logging | 2.2 CLI Status Command |
 | 7 | 3.3 Replace Init Panics | 3.6 Health Endpoint + Docker + 3.2 Network Detection |
-| 8 | (buffer / stretch goals) | 2.12 Grafana Dashboards |
-| 9-10 | Documentation & polish | Documentation & polish |
+| 8 | (buffer / stretch goals) | 4.2 Deployment Guide |
+| 9-10 | Dashboards, docs & polish | Dashboards, docs & polish |
 
 ---
 
@@ -978,7 +978,7 @@ services:
 
 ---
 
-### Week 5-6: Error TODOs + Operator UX
+### Week 5-6: Error TODOs + Operator UX + Troubleshooting
 
 **Track A - Stability:**
 | Item | Effort | Why Now |
@@ -986,12 +986,13 @@ services:
 | **1.6 Address Error TODOs** | 3-4 days | Close known gaps |
 | **1.7 Improve Logging** | 2-3 days | Structured log fields |
 
-**Track B - Operator Experience:**
+**Track B - Operator Experience + Critical Docs:**
 | Item | Effort | Why Now |
 |------|--------|---------|
 | **2.1 Enhance Startup Banner** | 4-6 hours | Operators see config at launch |
 | **2.7 Shutdown Messages** | 4-6 hours | Clean shutdown feedback |
 | **2.2 CLI Status Command** | 2-3 days | Query node without RPC tools |
+| **4.4 Troubleshooting Guide** | 2 days | Critical - helps operators |
 
 **Week 5-6 Deliverables:**
 - `ethrex status` command works
@@ -999,38 +1000,38 @@ services:
 - Shutdown shows session summary
 - All known error TODOs addressed
 - Logs have structured fields
+- Troubleshooting guide for common operator issues
 
 ---
 
-### Week 7-8: Init Stability + Dashboards
+### Week 7-8: Init Stability + Monitoring + Deployment Guide
 
 **Track A - Stability:**
 | Item | Effort | Why Now |
 |------|--------|---------|
 | **3.3 Replace Init Panics** | 1-2 days | Graceful startup failures |
 
-**Track B - Monitoring:**
+**Track B - Monitoring + Critical Docs:**
 | Item | Effort | Why Now |
 |------|--------|---------|
 | **3.6 Health Endpoint + Docker Health Checks** | 1 day | Container orchestration (endpoint first, then compose) |
 | **3.2 Improve Network Detection** | 4 hours | Better error on typos |
-| **2.12 Grafana Dashboards** | 2-3 days | Visualize new metrics |
+| **4.2 Production Deployment Guide** | 3 days | Critical - needed for adoption |
 
 **Week 7-8 Deliverables:**
 - `/health` endpoint available on RPC server
-- Grafana dashboard for sync progress
 - Docker health checks in compose files
 - Startup errors don't panic, return Results
+- Production deployment guide with sizing, tuning, and HA guidance
 
 ---
 
-### Week 9-10: Documentation & Polish
+### Week 9-10: Dashboards, Docs & Polish
 
-**Both Tracks - Documentation:**
+**Both Tracks - Documentation & Monitoring:**
 | Item | Effort | Priority |
 |------|--------|----------|
-| **4.4 Troubleshooting Guide** | 2 days | High - helps operators |
-| **4.2 Production Deployment Guide** | 3 days | High - needed for adoption |
+| **2.12 Grafana Dashboards** | 2-3 days | Medium - visualize new metrics |
 | **2.13 Systemd Service Files** | 4-6 hours | Medium - easy production setup |
 | **4.3 Crate-Level READMEs** | 2-3 days | Medium - developer onboarding |
 
@@ -1075,9 +1076,9 @@ Each category of change requires corresponding verification:
 |-------|-------|---------|---------|
 | Foundation | 1-2 | Panics, error types, RPC bug (all breaking changes) | Sync metrics, .env |
 | Error + Config | 3-4 | Context errors, unreachable | Env vars, health metrics |
-| TODOs + UX | 5-6 | Error TODOs, logging | Banner, status cmd |
-| Init + Dash | 7-8 | Init panics | Health endpoint, Docker, dashboards |
-| Docs | 9-10 | Shared | Shared |
+| TODOs + UX + Troubleshooting | 5-6 | Error TODOs, logging | Banner, status cmd, troubleshooting guide |
+| Init + Monitoring + Deployment | 7-8 | Init panics | Health endpoint, Docker, deployment guide |
+| Dashboards + Polish | 9-10 | Shared | Dashboards, systemd, crate READMEs |
 
 **Total Effort:** 14-16 developer-weeks (2 developers)
 **Timeline:** 10-12 weeks (includes buffer for review cycles and testing)
@@ -1103,9 +1104,9 @@ Each category of change requires corresponding verification:
 |------|-----------|
 | 2 | Panics removed, error types improved, sync metrics in Prometheus |
 | 4 | Env vars added (High/Medium), health metrics working |
-| 6 | `ethrex status` command, startup/shutdown banners |
-| 8 | Grafana dashboards, logging improvements |
-| 10 | Documentation complete |
+| 6 | `ethrex status` command, startup/shutdown banners, troubleshooting guide |
+| 8 | Health endpoint, Docker health checks, production deployment guide |
+| 10 | Grafana dashboards, remaining documentation complete |
 
 ---
 
