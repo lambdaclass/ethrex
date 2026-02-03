@@ -175,10 +175,18 @@ impl<'a> VM<'a> {
 
         // Get current and original (pre-tx) values.
         // Note: access_storage_slot does NOT record to BAL per EIP-7928.
-        // BAL recording must happen AFTER all gas checks pass.
+        // BAL recording happens AFTER the SSTORE_STIPEND check but BEFORE the main gas check.
         let key = u256_to_h256(storage_slot_key);
         let (current_value, storage_slot_was_cold) = self.access_storage_slot(to, key)?;
         let original_value = self.get_original_storage(to, key)?;
+
+        // Record storage read to BAL AFTER SSTORE_STIPEND check passes, BEFORE main gas check.
+        // Per EIP-7928 test_bal_sstore_and_oog: if SSTORE passes the stipend check but fails the
+        // main gas charge (charge_gas), the slot MUST appear as a read because the implicit SLOAD
+        // has already happened (to get current_value and original_value).
+        // "If SSTORE fails the GAS_CALL_STIPEND check, the storage slot MUST NOT appear in BAL"
+        // only refers to the stipend check, NOT the main gas check.
+        self.record_storage_slot_to_bal(to, key);
 
         // Gas Refunds
         // Sync gas refund with global env, ensuring consistency accross contexts.
@@ -231,10 +239,8 @@ impl<'a> VM<'a> {
                 storage_slot_was_cold,
             )?)?;
 
-        // Record storage read to BAL AFTER all gas checks pass per EIP-7928:
-        // "If pre-state validation fails, the target is never accessed and must not appear in BAL."
-        // Note: update_account_storage will record the write if value changes.
-        self.record_storage_slot_to_bal(to, key);
+        // Note: BAL read already recorded above (after stipend check, before gas check).
+        // If value changes, update_account_storage will record the write.
 
         if new_storage_slot_value != current_value {
             self.update_account_storage(to, key, new_storage_slot_value, current_value)?;
