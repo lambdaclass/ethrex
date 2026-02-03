@@ -22,6 +22,8 @@ ethrex-levm.workspace = true
 ethrex-rpc.workspace = true
 
 [dev-dependencies]
+ethrex-vm.workspace = true
+once_cell = "1.21"
 rustc-hash.workspace = true
 hex.workspace = true
 hex-literal.workspace = true
