@@ -257,7 +257,7 @@ jobs:
           balance_output=""
 
           for ((i = 1; i <= MAX_BALANCE_TRIES; i++)); do
-            if ! balance_output=$(rex balance 0x0000bd19F707CA481886244bDd20Bd6B8a81bd3e --rpc-url http://localhost:1729 2>/dev/null); then
+            if ! balance_output=$(rex balance 0x0000bd19F707CA481886244bDd20Bd6B8a81bd3e http://localhost:1729 2>/dev/null); then
               sleep "${BALANCE_SLEEP_SECS}"
               continue
             fi
@@ -461,7 +461,7 @@ jobs:
           SLEEP_SECS=2
           for i in $(seq 1 $MAX_TRIES); do
             echo "Checking L2 balance... (attempt $i)"
-            if balance_output=$(rex balance "$RICH_ADDRESS" --rpc-url http://localhost:1729 2>/dev/null); then
+            if balance_output=$(rex balance "$RICH_ADDRESS" http://localhost:1729 2>/dev/null); then
               balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
               if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
                 echo "Rich account has balance on L2: ${balance_wei} wei"
@@ -578,7 +578,7 @@ jobs:
           SLEEP_SECS=2
           for i in $(seq 1 $MAX_TRIES); do
             echo "Checking L2 balance... (attempt $i)"
-            if balance_output=$(rex balance "$RICH_ADDRESS" --rpc-url http://localhost:1729 2>/dev/null); then
+            if balance_output=$(rex balance "$RICH_ADDRESS" http://localhost:1729 2>/dev/null); then
               balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
               if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
                 echo "Rich account has balance on L2: ${balance_wei} wei"
@@ -838,7 +838,7 @@ jobs:
           SLEEP_SECS=2
           for i in $(seq 1 $MAX_TRIES); do
             echo "Checking L2A balance... (attempt $i)"
-            if balance_output=$(rex balance "$SENDER_ADDRESS" --rpc-url http://localhost:1729 2>/dev/null); then
+            if balance_output=$(rex balance "$SENDER_ADDRESS" http://localhost:1729 2>/dev/null); then
               balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
               if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
                 echo "Shared bridge test account has balance on L2A: ${balance_wei} wei"
@@ -860,7 +860,7 @@ jobs:
           SLEEP_SECS=2
           for i in $(seq 1 $MAX_TRIES); do
             echo "Checking L2B balance... (attempt $i)"
-            if balance_output=$(rex balance "$SENDER_ADDRESS" --rpc-url http://localhost:1730 2>/dev/null); then
+            if balance_output=$(rex balance "$SENDER_ADDRESS" http://localhost:1730 2>/dev/null); then
               balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
               if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
                 echo "Shared bridge test account has balance on L2B: ${balance_wei} wei"
