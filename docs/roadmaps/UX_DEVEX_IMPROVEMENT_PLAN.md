@@ -1,12 +1,5 @@
 # ethrex UX/DevEx Improvement Plan
 
-> **Prepared for:** Team Lead Review
-> **Date:** 2026-02-02
-> **Scope:** Node Operator Experience, Error Handling, Configuration, Documentation (non-SDK)
-> **Related:** SDK improvements moved to `SDK_IMPROVEMENT_PLAN.md`
-
----
-
 ## Executive Summary
 
 This plan identifies **50+ actionable improvements** across 4 categories to enhance the experience for node operators running ethrex in production. The analysis covers:
@@ -1159,6 +1152,3 @@ Each category of change requires corresponding verification:
 3. Missing crate READMEs (7 crates)
 4. No troubleshooting guide
 
----
-
-*This document should be reviewed and approved before implementation begins.*
